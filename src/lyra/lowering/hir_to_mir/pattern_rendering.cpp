@@ -9,6 +9,7 @@
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -22,9 +23,7 @@
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -54,21 +53,6 @@ constexpr std::int32_t kNoField = 0;
 // this entry has one.
 constexpr base::ComponentIndex kVisitedIndex{1};
 
-// Which rule of LRM 21.2.1.6 a type reads under, at the grain the rendering is
-// built by. `kValueDecides` is every type the clause sends to the value's own
-// unformatted rendering, which the runtime formatter answers; the rest each
-// name a fact only a declaration carries. What leaves this file is the coarser
-// question a caller assembling an operand asks, derived from this one so the
-// two cannot disagree.
-enum class RenderingKind : std::uint8_t {
-  kValueDecides,
-  kEnumeration,
-  kUnpackedAggregate,
-  kPackedAggregate,
-  kIndexedElements,
-  kAssociativeEntries,
-};
-
 auto Read(const WalkFrame& frame, mir::LocalId local, mir::TypeId type)
     -> mir::ExprId {
   return frame.current_block->exprs.Add(mir::MakeLocalRefExpr(local, type));
@@ -85,38 +69,20 @@ auto Assign(
           .type = type});
 }
 
-auto RenderingKindOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
-    -> RenderingKind {
-  const hir::Type& t = unit_lowerer.Hir().types.Get(type);
-  if (t.Is<hir::EnumType>()) return RenderingKind::kEnumeration;
-  if (t.Is<hir::UnpackedStructType>() || t.Is<hir::UnpackedUnionType>()) {
-    return RenderingKind::kUnpackedAggregate;
-  }
-  if (t.Is<hir::PackedStructType>() || t.Is<hir::PackedUnionType>()) {
-    return RenderingKind::kPackedAggregate;
-  }
-  if (t.Is<hir::AssociativeArrayType>()) {
-    return RenderingKind::kAssociativeEntries;
-  }
-  if (t.Is<hir::UnpackedArrayType>() || t.Is<hir::DynamicArrayType>() ||
-      t.Is<hir::QueueType>()) {
-    return RenderingKind::kIndexedElements;
-  }
-  return RenderingKind::kValueDecides;
-}
-
-// Builds one type's rendering and every rendering it reaches. Each homes on the
-// class the print site is being lowered into, which is what the per-unit cache
-// keys it beside.
+// Builds one type's text out of the texts of the types it reaches. Each is a
+// function of the unit over one value parameter and no object, and reads
+// nothing but the type, so every site in the unit reading a value of that type
+// shares the one body.
 class Renderer {
  public:
-  Renderer(UnitLowerer& unit_lowerer, WalkFrame home, diag::SourceSpan span)
-      : unit_lowerer_(&unit_lowerer), home_(home), span_(span) {
+  explicit Renderer(UnitLowerer& unit_lowerer) : unit_lowerer_(&unit_lowerer) {
   }
 
   // The text a value of `type` reads as, written into the block `frame` names.
   auto Render(const WalkFrame& frame, mir::ExprId value, hir::TypeId type)
-      -> diag::Result<mir::ExprId>;
+      -> mir::ExprId;
+
+  auto BuildCode(hir::TypeId type) -> mir::CallableCode;
 
  private:
   auto Owner() -> UnitLowerer& {
@@ -144,44 +110,40 @@ class Renderer {
       const WalkFrame& frame, const std::string& name, mir::ExprId element_text)
       -> mir::ExprId;
 
-  auto Helper(hir::TypeId type) -> diag::Result<mir::CallableTarget>;
-  auto Synthesize(hir::TypeId type) -> diag::Result<mir::CallableId>;
   auto BuildBody(const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-      -> diag::Result<mir::ExprId>;
+      -> mir::ExprId;
 
   auto UnpackedMember(
       const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
       const hir::UnpackedAggregateField& field, base::ComponentIndex index)
-      -> diag::Result<mir::ExprId>;
+      -> mir::ExprId;
   auto PackedMember(
       const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
       const PackedProjection& projection,
       const hir::PackedAggregateField& field, base::ComponentIndex index)
-      -> diag::Result<mir::ExprId>;
+      -> mir::ExprId;
 
   auto BuildUnpackedAggregate(
       const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-      -> diag::Result<mir::ExprId>;
+      -> mir::ExprId;
   auto BuildPackedAggregate(
       const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-      -> diag::Result<mir::ExprId>;
+      -> mir::ExprId;
   auto BuildEnumeration(
       const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-      -> diag::Result<mir::ExprId>;
+      -> mir::ExprId;
   auto BuildIndexedElements(
       const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-      -> diag::Result<mir::ExprId>;
+      -> mir::ExprId;
   auto BuildAssociativeEntries(
       const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-      -> diag::Result<mir::ExprId>;
+      -> mir::ExprId;
   auto TraversalStep(
       const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
       mir::LocalId key, mir::TypeId key_type, mir::TypeId visit_type,
       support::BuiltinFn entry) -> mir::ExprId;
 
   UnitLowerer* unit_lowerer_;
-  WalkFrame home_;
-  diag::SourceSpan span_;
 };
 
 auto Renderer::Text(const WalkFrame& frame, std::string_view literal)
@@ -244,82 +206,111 @@ auto Renderer::Named(
 
 auto Renderer::Render(
     const WalkFrame& frame, mir::ExprId value, hir::TypeId type)
-    -> diag::Result<mir::ExprId> {
-  if (RenderingKindOf(Owner(), type) == RenderingKind::kValueDecides) {
-    return FormatLeaf(frame, value, Owner().TranslateType(type));
+    -> mir::ExprId {
+  switch (PatternReadingOf(Owner().Hir(), type)) {
+    case PatternReading::kTheValueAnswers:
+      return FormatLeaf(frame, value, Owner().TranslateType(type));
+    case PatternReading::kTheTypeNamesTheValue:
+    case PatternReading::kTheTypeNamesItsMembers:
+      return frame.current_block->exprs.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{
+                              .target = Owner().TypeOwnedReadingOf(
+                                  TypeOwnedReadingKey{
+                                      .reading = TypeOwnedReading::
+                                          kAssignmentPatternText,
+                                      .type = type})},
+                      .arguments = {value}},
+              .type = StringType()});
+    case PatternReading::kNothingCanAnswer:
+      throw InternalError(
+          "Renderer::Render: a type nothing can answer for is reached from a "
+          "text a containing type states, which a containing type holding one "
+          "does not state");
   }
-  auto target_or = Helper(type);
-  if (!target_or) return std::unexpected(std::move(target_or.error()));
-  return frame.current_block->exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Direct{.target = *target_or},
-                  .arguments = {value}},
-          .type = StringType()});
+  throw InternalError("Renderer::Render: unknown pattern reading");
 }
 
-auto Renderer::Helper(hir::TypeId type) -> diag::Result<mir::CallableTarget> {
-  auto& cache = Owner().PatternRenderHelpers();
-  if (const auto it = cache.find(type); it != cache.end()) {
-    return it->second;
-  }
-  auto slot_or = Synthesize(type);
-  if (!slot_or) return std::unexpected(std::move(slot_or.error()));
-  const mir::CallableTarget target{
-      .owner = home_.current_class_id, .slot = *slot_or};
-  cache.emplace(type, target);
-  return target;
-}
-
-auto Renderer::Synthesize(hir::TypeId type) -> diag::Result<mir::CallableId> {
+auto Renderer::BuildCode(hir::TypeId type) -> mir::CallableCode {
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(Unit(), code);
   const mir::LocalId value = code.AddLocal(Owner().TranslateType(type));
   code.params = {value};
   code.result_type = StringType();
 
-  WalkFrame frame = home_;
+  // The body reads its one parameter and calls the runtime and the texts of
+  // the types it reaches, so the frame it is built against carries a binding
+  // context and a block and nothing else.
+  WalkFrame frame;
   frame.bindings = &bindings;
   frame.current_block = &code.Body();
 
-  auto text_or = BuildBody(frame, value, type);
-  if (!text_or) return std::unexpected(std::move(text_or.error()));
-  code.Body().AppendStmt(mir::ReturnStmt{.value = *text_or});
-
-  return home_.current_class->callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = std::nullopt,
-          .virtual_dispatch = std::nullopt});
+  code.Body().AppendStmt(
+      mir::ReturnStmt{.value = BuildBody(frame, value, type)});
+  return code;
 }
 
+// Which alternative the type is chooses the walk, because what the clause asks
+// for -- member names, the tag, elements by position, entries by index -- is
+// exactly what tells those alternatives apart.
 auto Renderer::BuildBody(
     const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-    -> diag::Result<mir::ExprId> {
-  switch (RenderingKindOf(Owner(), type)) {
-    case RenderingKind::kEnumeration:
-      return BuildEnumeration(frame, value, type);
-    case RenderingKind::kUnpackedAggregate:
-      return BuildUnpackedAggregate(frame, value, type);
-    case RenderingKind::kPackedAggregate:
-      return BuildPackedAggregate(frame, value, type);
-    case RenderingKind::kIndexedElements:
-      return BuildIndexedElements(frame, value, type);
-    case RenderingKind::kAssociativeEntries:
-      return BuildAssociativeEntries(frame, value, type);
-    case RenderingKind::kValueDecides:
-      throw InternalError(
-          "Renderer::BuildBody: a type whose value decides its own rendering "
-          "has no rendering to synthesize");
-  }
-  throw InternalError("Renderer::BuildBody: unknown rendering kind");
+    -> mir::ExprId {
+  const auto members = [&](const auto&) {
+    return BuildUnpackedAggregate(frame, value, type);
+  };
+  const auto packed_members = [&](const auto&) {
+    return BuildPackedAggregate(frame, value, type);
+  };
+  const auto elements = [&](const auto&) {
+    return BuildIndexedElements(frame, value, type);
+  };
+  const auto none = [&](const auto&) -> mir::ExprId {
+    throw InternalError(
+        "Renderer::BuildBody: a type the unit owns no text for was asked to "
+        "build one");
+  };
+  return HirType(type).Visit(
+      Overloaded{
+          [&](const hir::EnumType&) {
+            return BuildEnumeration(frame, value, type);
+          },
+          [&](const hir::UnpackedStructType& t) { return members(t); },
+          [&](const hir::UnpackedUnionType& t) { return members(t); },
+          [&](const hir::PackedStructType& t) { return packed_members(t); },
+          [&](const hir::PackedUnionType& t) { return packed_members(t); },
+          [&](const hir::UnpackedArrayType& t) { return elements(t); },
+          [&](const hir::DynamicArrayType& t) { return elements(t); },
+          [&](const hir::QueueType& t) { return elements(t); },
+          [&](const hir::AssociativeArrayType&) {
+            return BuildAssociativeEntries(frame, value, type);
+          },
+          [&](const hir::ScalarBitType& t) { return none(t); },
+          [&](const hir::PackedArrayType& t) { return none(t); },
+          [&](const hir::WildcardIndexType& t) { return none(t); },
+          [&](const hir::StringType& t) { return none(t); },
+          [&](const hir::EventType& t) { return none(t); },
+          [&](const hir::RealType& t) { return none(t); },
+          [&](const hir::ShortRealType& t) { return none(t); },
+          [&](const hir::RealTimeType& t) { return none(t); },
+          [&](const hir::ChandleType& t) { return none(t); },
+          [&](const hir::ClassHandleType& t) { return none(t); },
+          [&](const hir::OpaqueObjectHandleType& t) { return none(t); },
+          [&](const hir::ImportedClassHandleType& t) { return none(t); },
+          [&](const hir::UnitObjectType& t) { return none(t); },
+          [&](const hir::OpaqueScopeType& t) { return none(t); },
+          [&](const hir::NullType& t) { return none(t); },
+          [&](const hir::VoidType& t) { return none(t); },
+      });
 }
 
 auto Renderer::UnpackedMember(
     const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
     const hir::UnpackedAggregateField& field, base::ComponentIndex index)
-    -> diag::Result<mir::ExprId> {
+    -> mir::ExprId {
   // LRM 7.3.2 allows a tagged union member declared `void`, which is all
   // information in the tag: the name is the whole of what there is to print.
   if (HirType(field.type).Is<hir::VoidType>()) {
@@ -330,9 +321,7 @@ auto Renderer::UnpackedMember(
   const mir::ExprId member = block.exprs.Add(
       mir::MakePartAccessExpr(
           subject, index, Owner().TranslateType(field.type)));
-  auto text_or = Render(frame, member, field.type);
-  if (!text_or) return std::unexpected(std::move(text_or.error()));
-  return Named(frame, field.name, *text_or);
+  return Named(frame, field.name, Render(frame, member, field.type));
 }
 
 // Reads the run the member occupies rather than the member the source named:
@@ -343,21 +332,25 @@ auto Renderer::UnpackedMember(
 auto Renderer::PackedMember(
     const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
     const PackedProjection& projection, const hir::PackedAggregateField& field,
-    base::ComponentIndex index) -> diag::Result<mir::ExprId> {
+    base::ComponentIndex index) -> mir::ExprId {
+  // LRM 7.3.2 allows a tagged union member declared `void`, which is all
+  // information in the tag: the name is the whole of what there is to print,
+  // and the member occupies no run to read.
+  if (HirType(field.type).Is<hir::VoidType>()) {
+    return Text(frame, field.name);
+  }
   mir::Block& block = *frame.current_block;
   const ProjectedMember& run = projection.members.at(index.value);
   const mir::ExprId subject = Read(frame, value, mir_type);
   const mir::ExprId member = block.exprs.Add(BuildPackedRunRead(
       Owner(), block, subject, run.bit_offset, run.bit_width,
       Owner().TranslateType(field.type)));
-  auto text_or = Render(frame, member, field.type);
-  if (!text_or) return std::unexpected(std::move(text_or.error()));
-  return Named(frame, field.name, *text_or);
+  return Named(frame, field.name, Render(frame, member, field.type));
 }
 
 auto Renderer::BuildUnpackedAggregate(
     const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-    -> diag::Result<mir::ExprId> {
+    -> mir::ExprId {
   const hir::Type& t = HirType(type);
   const bool is_union = t.Is<hir::UnpackedUnionType>();
   const bool tagged = is_union && t.Get<hir::UnpackedUnionType>().tagged;
@@ -380,14 +373,13 @@ auto Renderer::BuildUnpackedAggregate(
       const mir::ExprId live = block.exprs.Add(
           mir::MakeTagMatchesExpr(
               subject, index, Unit().builtins.machine_bool));
-      auto member_or = UnpackedMember(frame, value, mir_type, fields[i], index);
-      if (!member_or) return std::unexpected(std::move(member_or.error()));
       chain = block.exprs.Add(
           mir::Expr{
               .data =
                   mir::ConditionalExpr{
                       .condition = ReduceToCondition(Unit(), block, live),
-                      .then_value = *member_or,
+                      .then_value = UnpackedMember(
+                          frame, value, mir_type, fields[i], index),
                       .else_value = chain},
               .type = StringType()});
     }
@@ -399,9 +391,7 @@ auto Renderer::BuildUnpackedAggregate(
     for (std::size_t i = 0; i < count; ++i) {
       if (i != 0) parts.push_back(Text(frame, kSeparator));
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      auto member_or = UnpackedMember(frame, value, mir_type, fields[i], index);
-      if (!member_or) return std::unexpected(std::move(member_or.error()));
-      parts.push_back(*member_or);
+      parts.push_back(UnpackedMember(frame, value, mir_type, fields[i], index));
     }
   }
   parts.push_back(Text(frame, kClose));
@@ -410,7 +400,7 @@ auto Renderer::BuildUnpackedAggregate(
 
 auto Renderer::BuildPackedAggregate(
     const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-    -> diag::Result<mir::ExprId> {
+    -> mir::ExprId {
   const hir::Type& t = HirType(type);
   const bool is_union = t.Is<hir::PackedUnionType>();
   const bool tagged = is_union && t.Get<hir::PackedUnionType>().tagged;
@@ -430,15 +420,13 @@ auto Renderer::BuildPackedAggregate(
       const mir::ExprId subject = Read(frame, value, mir_type);
       const mir::ExprId live =
           BuildPackedTagTest(Owner(), block, subject, projection, index);
-      auto member_or =
-          PackedMember(frame, value, mir_type, projection, fields[i], index);
-      if (!member_or) return std::unexpected(std::move(member_or.error()));
       chain = block.exprs.Add(
           mir::Expr{
               .data =
                   mir::ConditionalExpr{
                       .condition = ReduceToCondition(Unit(), block, live),
-                      .then_value = *member_or,
+                      .then_value = PackedMember(
+                          frame, value, mir_type, projection, fields[i], index),
                       .else_value = chain},
               .type = StringType()});
     }
@@ -448,10 +436,8 @@ auto Renderer::BuildPackedAggregate(
     for (std::size_t i = 0; i < count; ++i) {
       if (i != 0) parts.push_back(Text(frame, kSeparator));
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      auto member_or =
-          PackedMember(frame, value, mir_type, projection, fields[i], index);
-      if (!member_or) return std::unexpected(std::move(member_or.error()));
-      parts.push_back(*member_or);
+      parts.push_back(
+          PackedMember(frame, value, mir_type, projection, fields[i], index));
     }
   }
   parts.push_back(Text(frame, kClose));
@@ -466,14 +452,12 @@ auto Renderer::BuildPackedAggregate(
 // string rather than of an enumeration.
 auto Renderer::BuildEnumeration(
     const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-    -> diag::Result<mir::ExprId> {
+    -> mir::ExprId {
   const mir::TypeId mir_type = Owner().TranslateType(type);
   mir::Block& block = *frame.current_block;
 
-  auto name_or = BuildEnumNameCallExpr(
-      Owner(), frame, Read(frame, value, mir_type), mir_type, span_);
-  if (!name_or) return std::unexpected(std::move(name_or.error()));
-  const mir::ExprId name = block.exprs.Add(*std::move(name_or));
+  const mir::ExprId name = block.exprs.Add(
+      BuildEnumNameCallExpr(Owner(), Read(frame, value, mir_type), type));
   const mir::ExprId base_text =
       FormatLeaf(frame, Read(frame, value, mir_type), mir_type);
 
@@ -510,7 +494,7 @@ auto Renderer::BuildEnumeration(
 // its own -- the ordinal beside it is what the separator and the bound read.
 auto Renderer::BuildIndexedElements(
     const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-    -> diag::Result<mir::ExprId> {
+    -> mir::ExprId {
   const hir::Type& t = HirType(type);
   const hir::TypeId element_type = *t.ContainerElementType();
   const mir::TypeId mir_type = Owner().TranslateType(type);
@@ -577,13 +561,9 @@ auto Renderer::BuildIndexedElements(
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
         Owner(), loop_body, Read(body_frame, value, mir_type),
         Read(body_frame, index, IntType()), element_mir));
-    auto element_text_or = Render(body_frame, element, element_type);
-    if (!element_text_or) {
-      return std::unexpected(std::move(element_text_or.error()));
-    }
     const mir::ExprId grown = Join(
-        body_frame,
-        {Read(body_frame, text, StringType()), separator, *element_text_or});
+        body_frame, {Read(body_frame, text, StringType()), separator,
+                     Render(body_frame, element, element_type)});
     loop_body.AppendStmt(
         mir::ExprStmt{.expr = Assign(body_frame, text, StringType(), grown)});
   }
@@ -672,7 +652,7 @@ auto Renderer::TraversalStep(
 // container whose positions are otherwise unknowable needs.
 auto Renderer::BuildAssociativeEntries(
     const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
-    -> diag::Result<mir::ExprId> {
+    -> mir::ExprId {
   const auto& array = HirType(type).Get<hir::AssociativeArrayType>();
   const mir::TypeId mir_type = Owner().TranslateType(type);
   const mir::TypeId key_type = Owner().TranslateType(array.key_type);
@@ -719,22 +699,15 @@ auto Renderer::BuildAssociativeEntries(
                         .then_value = Text(body_frame, kSeparator),
                         .else_value = Text(body_frame, "")},
                 .type = StringType()});
-    auto index_text_or =
+    const mir::ExprId index_text =
         Render(body_frame, Read(body_frame, key, key_type), array.key_type);
-    if (!index_text_or) {
-      return std::unexpected(std::move(index_text_or.error()));
-    }
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
         Owner(), loop_body, Read(body_frame, value, mir_type),
         Read(body_frame, key, key_type), element_mir));
-    auto element_text_or = Render(body_frame, element, array.element_type);
-    if (!element_text_or) {
-      return std::unexpected(std::move(element_text_or.error()));
-    }
     const mir::ExprId grown = Join(
-        body_frame,
-        {Read(body_frame, text, StringType()), separator, *index_text_or,
-         Text(body_frame, kNameMark), *element_text_or});
+        body_frame, {Read(body_frame, text, StringType()), separator,
+                     index_text, Text(body_frame, kNameMark),
+                     Render(body_frame, element, array.element_type)});
     loop_body.AppendStmt(
         mir::ExprStmt{.expr = Assign(body_frame, text, StringType(), grown)});
   }
@@ -773,46 +746,104 @@ auto Renderer::BuildAssociativeEntries(
 
 }  // namespace
 
-auto BuildPatternRendering(
+auto BuildAssignmentPatternText(
     UnitLowerer& unit_lowerer, WalkFrame frame, mir::ExprId value,
-    hir::TypeId type, diag::SourceSpan span) -> diag::Result<mir::ExprId> {
-  // The callables home on a class an intra-unit call can name; a package
-  // namespace has none.
-  if (frame.current_class == nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "the assignment-pattern format of a declared type in a package "
-        "context is not yet supported");
-  }
-  Renderer renderer(unit_lowerer, frame, span);
+    hir::TypeId type) -> mir::ExprId {
+  Renderer renderer(unit_lowerer);
   return renderer.Render(frame, value, type);
 }
 
-auto PatternRenderingOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
-    -> PatternRendering {
-  switch (RenderingKindOf(unit_lowerer, type)) {
-    case RenderingKind::kValueDecides:
-      return PatternRendering::kValueDecides;
-    case RenderingKind::kEnumeration:
-      return PatternRendering::kBesideTheValue;
-    case RenderingKind::kUnpackedAggregate:
-    case RenderingKind::kPackedAggregate:
-    case RenderingKind::kIndexedElements:
-    case RenderingKind::kAssociativeEntries:
-      return PatternRendering::kInsteadOfTheValue;
-  }
-  throw InternalError("PatternRenderingOf: unknown rendering kind");
+auto BuildAssignmentPatternTextCode(UnitLowerer& unit_lowerer, hir::TypeId type)
+    -> mir::CallableCode {
+  Renderer renderer(unit_lowerer);
+  return renderer.BuildCode(type);
 }
 
-auto TypeStatesItsRendering(PatternRendering rendering) -> bool {
-  switch (rendering) {
-    case PatternRendering::kValueDecides:
+auto PatternReadingOf(const hir::CompilationUnit& hir, hir::TypeId type)
+    -> PatternReading {
+  // A type states a text by naming what its value holds, so it states one only
+  // where everything it names states one too.
+  const auto through = [&](hir::TypeId component) {
+    return PatternReadingOf(hir, component) != PatternReading::kNothingCanAnswer
+               ? PatternReading::kTheTypeNamesItsMembers
+               : PatternReading::kNothingCanAnswer;
+  };
+  const auto all_of = [&](const auto& fields) {
+    for (const auto& field : fields) {
+      // LRM 7.3.2 allows a tagged union member declared `void`, which is all
+      // information in the tag: the name is the whole of what there is to
+      // print, so the member asks nothing of a type that has no text.
+      if (hir.types.Get(field.type).template Is<hir::VoidType>()) continue;
+      if (through(field.type) == PatternReading::kNothingCanAnswer) {
+        return PatternReading::kNothingCanAnswer;
+      }
+    }
+    return PatternReading::kTheTypeNamesItsMembers;
+  };
+  // What the clause converts is a value. A declaration that stands for an
+  // instance or a scope is not one, so nothing it is held in has a text either.
+  const auto not_a_value = [](const auto&) {
+    return PatternReading::kNothingCanAnswer;
+  };
+  const auto value_answers = [](const auto&) {
+    return PatternReading::kTheValueAnswers;
+  };
+  return hir.types.Get(type).Visit(
+      Overloaded{
+          [](const hir::EnumType&) {
+            return PatternReading::kTheTypeNamesTheValue;
+          },
+          [&](const hir::UnpackedStructType& t) { return all_of(t.fields); },
+          [&](const hir::UnpackedUnionType& t) { return all_of(t.fields); },
+          [&](const hir::PackedStructType& t) { return all_of(t.fields); },
+          [&](const hir::PackedUnionType& t) { return all_of(t.fields); },
+          [&](const hir::UnpackedArrayType& t) {
+            return through(t.element_type);
+          },
+          [&](const hir::DynamicArrayType& t) {
+            return through(t.element_type);
+          },
+          [&](const hir::QueueType& t) { return through(t.element_type); },
+          [&](const hir::AssociativeArrayType& t) {
+            return through(t.key_type) == PatternReading::kNothingCanAnswer
+                       ? PatternReading::kNothingCanAnswer
+                       : through(t.element_type);
+          },
+          [&](const hir::ScalarBitType& t) { return value_answers(t); },
+          [&](const hir::PackedArrayType& t) { return value_answers(t); },
+          [&](const hir::StringType& t) { return value_answers(t); },
+          [&](const hir::EventType& t) { return value_answers(t); },
+          [&](const hir::RealType& t) { return value_answers(t); },
+          [&](const hir::ShortRealType& t) { return value_answers(t); },
+          [&](const hir::RealTimeType& t) { return value_answers(t); },
+          [&](const hir::ChandleType& t) { return value_answers(t); },
+          [&](const hir::ClassHandleType& t) { return value_answers(t); },
+          [&](const hir::OpaqueObjectHandleType& t) {
+            return value_answers(t);
+          },
+          [&](const hir::ImportedClassHandleType& t) {
+            return value_answers(t);
+          },
+          [&](const hir::NullType& t) { return value_answers(t); },
+          // An index of no declared type is a place a key of any integral width
+          // is stored under, never a type a value has (LRM 7.8.1).
+          [&](const hir::WildcardIndexType& t) { return not_a_value(t); },
+          [&](const hir::UnitObjectType& t) { return not_a_value(t); },
+          [&](const hir::OpaqueScopeType& t) { return not_a_value(t); },
+          [&](const hir::VoidType& t) { return not_a_value(t); },
+      });
+}
+
+auto TypeOwnsItsText(PatternReading reading) -> bool {
+  switch (reading) {
+    case PatternReading::kTheValueAnswers:
+    case PatternReading::kNothingCanAnswer:
       return false;
-    case PatternRendering::kBesideTheValue:
-    case PatternRendering::kInsteadOfTheValue:
+    case PatternReading::kTheTypeNamesTheValue:
+    case PatternReading::kTheTypeNamesItsMembers:
       return true;
   }
-  throw InternalError("TypeStatesItsRendering: unknown pattern rendering");
+  throw InternalError("TypeOwnsItsText: unknown pattern reading");
 }
 
 }  // namespace lyra::lowering::hir_to_mir

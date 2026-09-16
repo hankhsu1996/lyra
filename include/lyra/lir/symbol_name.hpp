@@ -96,12 +96,13 @@ auto StructDefinitionSymbol(std::string_view unit_name, SymbolPart record)
 auto ClosureDefinitionSymbol(std::string_view unit_name, SymbolPart closure)
     -> std::string;
 
-// The symbols of what a unit's namespace owns directly. A body here always
-// answers to the identifier the source declared it under -- what a namespace
-// holds that nothing names is storage, never code -- so unlike a class's
-// callable this composes from a name and no position arises.
-auto NamespaceCallableSymbol(
-    std::string_view unit_name, std::string_view callable_name) -> std::string;
+// The symbols of what a unit's namespace owns directly. A body the source
+// declared answers to the identifier it declared it under, which is what
+// another unit reaches it by; a body the compiler synthesized into the
+// namespace answers to none and takes its position instead, exactly as a
+// class's own bodies and as this namespace's storage already do.
+auto NamespaceCallableSymbol(std::string_view unit_name, SymbolPart callable)
+    -> std::string;
 
 // The symbols of the two bodies a unit's namespace is brought up through. The
 // source declares neither, so neither is composed from a name: a category over

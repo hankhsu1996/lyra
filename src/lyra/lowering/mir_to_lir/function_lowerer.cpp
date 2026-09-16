@@ -331,14 +331,25 @@ auto FunctionLowerer::LowerCallTarget(
                       return lir::CallTarget{
                           lir::BuiltinTarget{.fn = fn, .position = d.position}};
                     },
+                    [&](const mir::UnitCallableTarget& t)
+                        -> diag::Result<lir::CallTarget> {
+                      // A body this unit's own namespace owns is reached by the
+                      // symbol this unit emits it under, which it composes from
+                      // the position the body sits at where nothing names it.
+                      return lir::CallTarget{lir::ForeignTarget{
+                          .symbol = unit_->UnitCallableSymbol(t.slot)}};
+                    },
                     [&](const mir::ExternalUnitCallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
                       // A callable of another unit's namespace is outside this
                       // unit and is reached by its symbol, which carries that
                       // unit because a namespace name is unique only inside it.
+                      // Only a body that unit published can be named this way,
+                      // so the name is the whole of the part.
                       return lir::CallTarget{lir::ForeignTarget{
                           .symbol = lir::NamespaceCallableSymbol(
-                              t.unit_name, t.callable_name)}};
+                              t.unit_name,
+                              lir::SymbolPart::Name(t.callable_name))}};
                     },
                     [&](const mir::ExternalUnitClassMethodTarget& t)
                         -> diag::Result<lir::CallTarget> {

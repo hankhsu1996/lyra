@@ -1,6 +1,8 @@
 # How a value reads is program computation, not data handed to a formatter
 
-Date: 2026-09-11 Status: accepted
+Date: 2026-09-11 Status: accepted; point 3's homing is revised by
+[a-type-owned-computation-has-no-object](a-type-owned-computation-has-no-object.md) and its timing
+by [a-types-readings-exist-because-the-type-does](a-types-readings-exist-because-the-type-does.md)
 
 ## Why this decision matters
 
@@ -66,10 +68,11 @@ returns.**
    [aggregate-names-are-type-content](aggregate-names-are-type-content.md) point 4 otherwise
    required a second type for.
 
-3. **Each rendering is synthesized on first use and shared by every site in the unit**, homed on the
-   class the print site lowers into, exactly as the LRM 6.19.5 `name` callable already is. Two
-   values of one type therefore cannot render differently, and no site re-derives a fact belonging
-   to the type.
+3. **Each rendering is shared by every site in the unit**, homed on the class the print site lowers
+   into, exactly as the LRM 6.19.5 `name` callable already is. Two values of one type therefore
+   cannot render differently, and no site re-derives a fact belonging to the type. _When the
+   rendering is built, and where it is homed, are both revised by the two entries named beside the
+   status above._
 
 4. **A container's rendering is a loop, not composed text.** That is what reaches an element count
    known only at run time, and it is the whole difference from the alternative

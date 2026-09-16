@@ -64,6 +64,21 @@ auto FlattenCallArgs(const hir::CallExpr& call) -> std::vector<hir::ExprId> {
   return args;
 }
 
+// LRM 21.2.1.6 asks for the entries of a container, and an associative array
+// with a wildcard index is one no traversal reaches: LRM 7.9.4 through 7.9.7
+// each refuse it `first`, `last`, `next` and `prev`, and LRM 7.8.1 refuses it a
+// `foreach`. So the text the clause describes has nothing to be built out of.
+template <ExprLowerer Lowerer>
+auto RefuseAssignmentPatternText(Lowerer& lowerer, hir::ExprId hir_arg)
+    -> std::unexpected<diag::Diagnostic> {
+  return diag::Fail(
+      lowerer.HirExprs().Get(hir_arg).span,
+      diag::DiagCode::kUnsupportedAssignmentPatternText,
+      "the assignment pattern conversion is not yet supported for an operand "
+      "holding an associative array with a wildcard index type, whose entries "
+      "the standard gives no way to enumerate (LRM 7.8.1, 21.2.1.6)");
+}
+
 // The returned expression is detached for the caller to intern.
 template <ExprLowerer Lowerer>
 auto LowerFormatOperand(Lowerer& lowerer, WalkFrame frame, hir::ExprId hir_arg)
@@ -120,19 +135,23 @@ auto BuildPrintValueItem(
   const mir::TypeId type = lowered.type;
   const mir::ExprId value = block.exprs.Add(std::move(lowered));
 
-  // A type that decides how a value of it reads (LRM 21.2.1.6) is rendered
-  // where that type is still in hand, and what reaches the runtime is the text
-  // -- occupying whatever field the directive asked of the operand as a whole.
-  if (spec.kind == value::FormatKind::kAssignmentPattern &&
-      TypeStatesItsRendering(
-          PatternRenderingOf(lowerer.Owner(), source_type))) {
-    auto text_or = BuildPatternRendering(
-        lowerer.Owner(), frame, value, source_type,
-        lowerer.HirExprs().Get(hir_arg).span);
-    if (!text_or) return std::unexpected(std::move(text_or.error()));
-    return mir::RuntimePrintValue(
-        *text_or, lowerer.Owner().Unit().builtins.string,
-        mir::FormatSpec(value::FormatKind::kString, spec.modifiers));
+  // A type that names how a value of it reads (LRM 21.2.1.6) is rendered where
+  // that type is still in hand, and what reaches the runtime is the text --
+  // occupying whatever field the directive asked of the operand as a whole.
+  if (spec.kind == value::FormatKind::kAssignmentPattern) {
+    switch (PatternReadingOf(lowerer.Owner().Hir(), source_type)) {
+      case PatternReading::kNothingCanAnswer:
+        return RefuseAssignmentPatternText(lowerer, hir_arg);
+      case PatternReading::kTheTypeNamesTheValue:
+      case PatternReading::kTheTypeNamesItsMembers:
+        return mir::RuntimePrintValue(
+            BuildAssignmentPatternText(
+                lowerer.Owner(), frame, value, source_type),
+            lowerer.Owner().Unit().builtins.string,
+            mir::FormatSpec(value::FormatKind::kString, spec.modifiers));
+      case PatternReading::kTheValueAnswers:
+        break;
+    }
   }
 
   return mir::RuntimePrintValue(value, type, std::move(spec));
@@ -178,30 +197,23 @@ auto BuildRuntimeFormatOperand(
 
   // The text is named too, so the two halves of an operand that reads only as
   // its pattern are one object rather than two renderings of one value.
-  const auto bind_text = [&]() -> diag::Result<mir::LocalId> {
-    auto text_or = BuildPatternRendering(
-        lowerer.Owner(), frame, read_value(), source.type, source.span);
-    if (!text_or) return std::unexpected(std::move(text_or.error()));
+  const auto bind_text = [&] {
     const mir::LocalId text =
         frame.bindings->DeclareAnonymous(unit.builtins.string);
-    block.AppendStmt(mir::LocalDeclStmt{.target = text, .init = *text_or});
-    return text;
-  };
-  const auto read = [&](mir::LocalId text) {
+    block.AppendStmt(
+        mir::LocalDeclStmt{
+            .target = text,
+            .init = BuildAssignmentPatternText(
+                lowerer.Owner(), frame, read_value(), source.type)});
     return block.exprs.Add(mir::MakeLocalRefExpr(text, unit.builtins.string));
   };
 
-  switch (PatternRenderingOf(lowerer.Owner(), source.type)) {
-    case PatternRendering::kValueDecides:
+  switch (PatternReadingOf(lowerer.Owner().Hir(), source.type)) {
+    case PatternReading::kTheValueAnswers:
       return make_arg({read_value()});
-    case PatternRendering::kBesideTheValue: {
-      auto text_or = bind_text();
-      if (!text_or) return std::unexpected(std::move(text_or.error()));
-      return make_arg({read_value(), read(*text_or)});
-    }
-    case PatternRendering::kInsteadOfTheValue: {
-      auto text_or = bind_text();
-      if (!text_or) return std::unexpected(std::move(text_or.error()));
+    case PatternReading::kTheTypeNamesTheValue:
+      return make_arg({read_value(), bind_text()});
+    case PatternReading::kTheTypeNamesItsMembers:
       return block.exprs.Add(
           mir::Expr{
               .data =
@@ -210,11 +222,12 @@ auto BuildRuntimeFormatOperand(
                           mir::Direct{
                               .target =
                                   support::BuiltinFn::kMakeRenderedFormatArg},
-                      .arguments = {read(*text_or)}},
+                      .arguments = {bind_text()}},
               .type = unit.builtins.format_arg});
-    }
+    case PatternReading::kNothingCanAnswer:
+      return RefuseAssignmentPatternText(lowerer, hir_arg);
   }
-  throw InternalError("BuildRuntimeFormatOperand: unknown pattern rendering");
+  throw InternalError("BuildRuntimeFormatOperand: unknown pattern reading");
 }
 
 // The string LRM 21.2.1.5 `%m` names: the hierarchical name of the scope the

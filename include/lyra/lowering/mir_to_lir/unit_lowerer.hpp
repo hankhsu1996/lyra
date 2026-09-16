@@ -131,6 +131,14 @@ class UnitLowerer {
   [[nodiscard]] auto ConstructorFunction(mir::ClassId cls) const
       -> lir::FunctionId;
 
+  // The symbol a callable of this unit's namespace is emitted and linked under:
+  // whatever reaches it where anything does, and the position it sits at where
+  // nothing does, composed for the linker. A call written inside this unit
+  // composes the same symbol from the same parts, so the two agree with no
+  // table between them.
+  [[nodiscard]] auto UnitCallableSymbol(mir::CallableId id) const
+      -> std::string;
+
  private:
   // The declaration a closure's captures are members of, and the function its
   // invoke lowers to.
@@ -184,12 +192,6 @@ class UnitLowerer {
       const mir::CallableDecl& callable,
       const std::optional<lir::FunctionId>& body)
       -> std::optional<lir::DispatchTakeover>;
-
-  // The symbol a callable of this unit's namespace is emitted and linked under,
-  // which is whatever reaches it from outside the unit, composed for the
-  // linker.
-  [[nodiscard]] auto UnitCallableSymbol(mir::CallableId id) const
-      -> std::string;
 
   // The symbol one body of `cls` is emitted and linked under. Which body it is
   // decides that: a body the source declared is reached by its name, and one

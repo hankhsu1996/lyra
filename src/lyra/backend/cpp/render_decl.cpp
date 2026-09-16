@@ -530,14 +530,18 @@ auto RenderUnitClasses(const mir::CompilationUnit& unit) -> ClassText {
 // export's entry point name the unit's classes the way every other body does.
 auto RenderUnitCallables(const mir::CompilationUnit& unit) -> UnitCallableText {
   UnitCallableText text;
+  // Every one is declared before any class of the unit, because a class's body
+  // may call one -- a type-associated function the compiler synthesized is
+  // reached from wherever the source wrote the construct that needs it -- and
+  // the definitions land after the classes so an export's entry point can name
+  // them. Only a callable this program defines has a definition to land.
   for (const mir::CallableId id : unit.callables.Ids()) {
     const mir::CallableDecl& callable = unit.callables.Get(id);
-    if (!callable.code.body.has_value()) {
-      text.declarations +=
-          RenderFreeCallableSignature(unit, id, callable) + ";\n";
-      continue;
+    text.declarations +=
+        RenderFreeCallableSignature(unit, id, callable) + ";\n";
+    if (callable.code.body.has_value()) {
+      AppendSection(text.definitions, RenderFreeCallable(unit, id, callable));
     }
-    AppendSection(text.definitions, RenderFreeCallable(unit, id, callable));
   }
   return text;
 }

@@ -57,6 +57,11 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
         intra-unit call does (LRM 13.5): output and inout are copied back after the call, and ref /
         const ref alias the caller's cell. Covers a function whose return value and an output
         argument are written back together, and a task whose output crosses a suspension.
+  - [x] A package or `$unit` subroutine asks for what a type's own declaration decides about a
+        value: an enumeration's declared name and its neighbour in the declared order (LRM 6.19.5),
+        and the assignment-pattern format of a declared type (LRM 21.2.1.6), including an
+        enumeration the traversal reaches inside an aggregate. What answers for a type takes no
+        object, so a namespace needs none to supply.
 - [x] PK3 -- Package variables. A package variable is static storage owned by the namespace -- one
       program-global cell, shared, not a member of any instance -- read and written from other units
       by name. It is the same type-associated storage a class static property uses, not a

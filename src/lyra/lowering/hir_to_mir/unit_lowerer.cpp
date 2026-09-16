@@ -29,7 +29,9 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
+#include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
@@ -476,12 +478,66 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     unit_.callables.Add(MakeForeignImportDecl(unit_, import));
   }
 
+  PublishTypeOwnedReadings();
+
   // Every class this unit declares is declared by one of its structural scopes
   // (LRM 23.9), which settles that class's shape and lowers its bodies -- so a
   // class body stands where the scope stands and reaches what it reaches. A
   // class identity is minted on first reference, which a scope's own shape may
   // be, so nothing is minted ahead of the walk.
   return {};
+}
+
+void UnitLowerer::PublishTypeOwnedReadings() {
+  const auto names_its_text = [&](hir::TypeId type) {
+    return TypeOwnsItsText(PatternReadingOf(*hir_, type));
+  };
+  const auto is_enumeration = [&](hir::TypeId type) {
+    return hir_->types.Get(type).Is<hir::EnumType>();
+  };
+  const auto declare = [&](TypeOwnedReading reading, hir::TypeId type) {
+    type_owned_readings_.emplace(
+        TypeOwnedReadingKey{.reading = reading, .type = type},
+        unit_.callables.Declare());
+  };
+  const auto define = [&](TypeOwnedReading reading, hir::TypeId type,
+                          mir::CallableCode code) {
+    unit_.callables.Define(
+        type_owned_readings_.at(
+            TypeOwnedReadingKey{.reading = reading, .type = type}),
+        mir::CallableDecl{
+            .code = std::move(code),
+            .foreign = std::nullopt,
+            .virtual_dispatch = std::nullopt});
+  };
+
+  // Every identity first, because one reading's body reaches the readings of
+  // the types it names and a type is free to name one interned after it.
+  for (const hir::TypeId type : hir_->types.Ids()) {
+    if (names_its_text(type)) {
+      declare(TypeOwnedReading::kAssignmentPatternText, type);
+    }
+    if (is_enumeration(type)) {
+      declare(TypeOwnedReading::kEnumerationName, type);
+      declare(TypeOwnedReading::kEnumerationStep, type);
+    }
+  }
+
+  for (const hir::TypeId type : hir_->types.Ids()) {
+    if (names_its_text(type)) {
+      define(
+          TypeOwnedReading::kAssignmentPatternText, type,
+          BuildAssignmentPatternTextCode(*this, type));
+    }
+    if (is_enumeration(type)) {
+      define(
+          TypeOwnedReading::kEnumerationName, type,
+          BuildEnumerationNameCode(*this, type));
+      define(
+          TypeOwnedReading::kEnumerationStep, type,
+          BuildEnumerationStepCode(*this, type));
+    }
+  }
 }
 
 auto UnitLowerer::RunObjectRoot() -> diag::Result<mir::CompilationUnit> {
@@ -601,10 +657,24 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     }
   }
 
-  // The callable each package subroutine lowered to, recorded where it is
-  // created so an export below names its own by identity.
+  // The callable each package subroutine lowered to, so an export below names
+  // its own by identity. Every identity and every name is published before any
+  // body is lowered: a body may call a sibling the source declared after it, or
+  // itself, and what such a call names is the position -- which has to exist,
+  // and to answer to the identifier the source spelled, before the body that
+  // spells it is walked.
   base::Translation<hir::StructuralSubroutineId, mir::CallableId>
       subroutine_callables{scope.structural_subroutines.size()};
+  for (const hir::StructuralSubroutineId id :
+       scope.structural_subroutines.Ids()) {
+    const mir::CallableId body = unit_.callables.Declare();
+    // A package subroutine is what another unit spells (LRM 26.3), so the
+    // unit's namespace records the name against the body it reaches.
+    unit_.named_callables.push_back(
+        mir::NamedCallable{
+            .name = scope.structural_subroutines.Get(id).name, .body = body});
+    subroutine_callables.Append(body);
+  }
   for (const hir::StructuralSubroutineId id :
        scope.structural_subroutines.Ids()) {
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
@@ -613,35 +683,26 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
         WalkFrame{}, package_scope_nodes, subroutine_statics.Get(id));
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
-    const mir::CallableId body = unit_.callables.Add(
-        mir::CallableDecl{
-            .code = *std::move(code_or),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt});
-    // A package subroutine is what another unit spells (LRM 26.3), so the
-    // unit's namespace records the name against the body it reaches.
-    unit_.named_callables.push_back(
-        mir::NamedCallable{.name = src.name, .body = body});
-    subroutine_callables.Append(body);
+    unit_.callables.Define(
+        subroutine_callables.Get(id), mir::CallableDecl{
+                                          .code = *std::move(code_or),
+                                          .foreign = std::nullopt,
+                                          .virtual_dispatch = std::nullopt});
   }
 
   // Each exported package subroutine (LRM 26.3, 35.7) is receiver-less: its
-  // C entry point recovers the run's services instead of a calling
-  // instance and calls the package's own free function by name.
+  // C entry point recovers the run's services instead of a calling instance,
+  // and enters the body this unit's namespace already holds.
   for (const hir::ForeignExportDecl& export_decl : scope.foreign_exports) {
     const mir::CallableId callable_id =
         subroutine_callables.Get(export_decl.subroutine);
     const mir::TypeId result_type =
         unit_.callables.Get(callable_id).code.result_type;
-    // A package subroutine has no receiver and a package has one form, so its
-    // entry is reached by a plain linked name: the unit's own namespace defines
-    // the program-global symbol directly.
+    // A package subroutine has no receiver and a package has one form, so the
+    // entry calls the body this unit's own namespace holds, naming the position
+    // it already has in hand.
     ForeignExportEntry entry = SynthesizeForeignExportEntry(
-        *this, WalkFrame{},
-        mir::ExternalUnitCallableTarget{
-            .unit_name = unit_.name,
-            .callable_name =
-                scope.structural_subroutines.Get(export_decl.subroutine).name},
+        *this, WalkFrame{}, mir::UnitCallableTarget{.slot = callable_id},
         result_type, export_decl);
     // A name a namespace owns needs no entry beside its callable: that callable
     // is the program-global symbol and carries the prototype it publishes.
@@ -808,9 +869,22 @@ auto UnitLowerer::MakeExternalVirtualSlot(const hir::ExternalDispatchSlot& slot)
       .ordinal = mir::BehaviorOrdinal{slot.behavior.value}};
 }
 
-auto UnitLowerer::MakeExternalCallableTarget(
-    const hir::ExternalUnitSubroutineRef& ref)
-    -> mir::ExternalUnitCallableTarget {
+auto UnitLowerer::MakeNamespaceCallableTarget(
+    const hir::ExternalUnitSubroutineRef& ref) -> mir::DirectTarget {
+  // A call into this unit's own namespace has the arena the body lives in, so
+  // it names the position; one into another unit has only the identifier that
+  // unit published, and consuming that promise is what makes the unit a
+  // dependency whose header and link edge the backend then emits.
+  if (ref.unit_name == unit_.name) {
+    const std::optional<mir::CallableId> body =
+        mir::CallableNamed(unit_.named_callables, ref.subroutine_name);
+    if (!body.has_value()) {
+      throw InternalError(
+          "MakeNamespaceCallableTarget: this unit's namespace publishes no "
+          "subroutine under the identifier a call inside it spells");
+    }
+    return mir::UnitCallableTarget{.slot = *body};
+  }
   unit_.AddExternalReferencedUnit(ref.unit_name);
   return mir::ExternalUnitCallableTarget{
       .unit_name = ref.unit_name, .callable_name = ref.subroutine_name};

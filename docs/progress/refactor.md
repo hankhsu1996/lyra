@@ -1498,6 +1498,38 @@ enough to warrant its own focused review.
       other's contract. Until there is one, such a case says in its own text which of the two it
       is.
 
+- [ ] R95 -- A body a unit's namespace owns takes no LIR function identity, so a call to one inside
+      the very unit that defines it is lowered as a reach for a linker symbol rather than as a call
+      to a function the unit holds. Every class body is reserved an identity before any body is
+      lowered, which is what lets a call name the callee directly; the namespace's own bodies are
+      appended as they are lowered instead, so nothing can name one and a caller composes the symbol
+      string a second time.
+
+      The symbol is composed from the same parts at both ends, so the two agree and nothing is
+      wrong today. What it costs is that an intra-unit call carries a string where an identity
+      exists, and the string is the one thing that cannot be checked: a caller and a definition that
+      compose it differently fail at link time with no compiler in between. Reserving an identity
+      per namespace body before the bodies are lowered, exactly as a class's are, makes the call a
+      `FunctionTarget` and leaves the symbol to the definition alone.
+
+- [ ] R96 -- Nothing drops a body no reachable body calls, and there is now a set of bodies for
+      which that question is both cheap and decidable. A unit's callables include the readings every
+      declared type owns, which exist because the type does rather than because anything reads a
+      value of it, so a design that prints nothing still carries one per aggregate, container and
+      enumeration it declares. Measured on a 47-unit RISC-V core: 337 such bodies, and the sites ask
+      for none of them, because that design writes no assignment-pattern conversion and no
+      enumeration method anywhere.
+
+      What makes this decidable where a general dead-code pass is not: a unit callable that no
+      identifier answers to is exactly one no other unit can name, so reachability from the unit's
+      named and foreign-linked entry points settles it with a call-graph walk and no analysis. What
+      makes it worth doing at MIR rather than in either backend is that both consume the same
+      callables, and the emitted C++ translation unit -- already the slowest thing in an iteration
+      -- is where the unused ones would otherwise land.
+
+      Deliberately not folded into the change that created the set: what a layer states and what an
+      optimizer removes are separate, so the readings are correct whether or not this exists.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

@@ -100,6 +100,11 @@ constexpr std::array kEntries{
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported,
             .name = "unsupported_conversion_form"}},
+    std::pair{
+        DiagCode::kUnsupportedAssignmentPatternText,
+        DiagCodeInfo{
+            .kind = DiagKind::kUnsupported,
+            .name = "unsupported_assignment_pattern_text"}},
 
     std::pair{
         DiagCode::kErrorTopLevelPortMustBeConnected,

@@ -161,13 +161,12 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             const mir::ExternalUnitObject& object =
                 unit.external_unit_objects.Get(e.object);
             return std::format(
-                "{}::{}", UnitNamespaceOf(object.unit_name),
+                "{}::{}", CppUnitScope(object.unit_name),
                 ToCppName(object.class_name));
           },
           [](const mir::CrossUnitClassType& e) -> std::string {
             return std::format(
-                "{}::{}", UnitNamespaceOf(e.unit_name),
-                ToCppName(e.class_name));
+                "{}::{}", CppUnitScope(e.unit_name), ToCppName(e.class_name));
           },
           // An object this unit has no class to name has no spelling here
           // either, and nothing asks for one: a reference to such an object is
@@ -501,8 +500,7 @@ auto RenderClassRefAsCpp(
           },
           [](const mir::CrossUnitClassRef& e) -> std::string {
             return std::format(
-                "{}::{}", UnitNamespaceOf(e.unit_name),
-                ToCppName(e.class_name));
+                "{}::{}", CppUnitScope(e.unit_name), ToCppName(e.class_name));
           },
           [](const mir::RuntimeClassRef& e) -> std::string {
             return e.symbol;

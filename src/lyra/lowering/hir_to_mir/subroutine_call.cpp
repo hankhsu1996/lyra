@@ -312,7 +312,8 @@ auto PlanSubroutineCall(
             plan.form = NamedCallee{
                 .callee =
                     mir::Direct{
-                        .target = unit_lowerer.MakeExternalCallableTarget(ref)},
+                        .target =
+                            unit_lowerer.MakeNamespaceCallableTarget(ref)},
                 .handle = AmbientHandle{AmbientRuntimeHandle{}}};
             return plan;
           },
