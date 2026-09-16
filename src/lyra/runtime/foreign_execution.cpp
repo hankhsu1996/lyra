@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 
 namespace lyra::runtime {
@@ -103,6 +104,21 @@ ForeignExecutionGuard::ForeignExecutionGuard(
 ForeignExecutionGuard::~ForeignExecutionGuard() {
   process_->current_foreign_execution_ = previous_execution_;
   ForeignProcessSlot() = previous_process_;
+}
+
+void DriveOnForeignStack(CoroutineHandle frame) {
+  frame->self.resume();
+  while (!frame->self.done()) {
+    YieldForeignExecution();
+    frame->self.resume();
+  }
+}
+
+auto EnterForeignTask(
+    RuntimeEffects& effects, CoroutineHandle continuation,
+    std::unique_ptr<ForeignExecution> fiber) -> bool {
+  return effects.CurrentProcess().EnterForeignExecution(
+      continuation, std::move(fiber));
 }
 
 auto CurrentForeignProcess() -> RuntimeProcess& {

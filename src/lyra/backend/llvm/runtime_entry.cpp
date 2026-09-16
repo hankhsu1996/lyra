@@ -475,12 +475,6 @@ auto RuntimeSymbol(
 }
 
 auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
-  // A foreign call that can suspend runs the SV side on a stack the runtime did
-  // not create (LRM 35.5.6, 35.8), which the value library reaches only through
-  // types the host compiler laid out for it. Nothing crosses a C ABI that
-  // stands for one.
-  constexpr std::string_view kCrossesAForeignStack =
-      "carries an execution across a stack the runtime does not own";
   // A value crosses this boundary as a handle a copy may alias, so nothing here
   // may answer with the part of one: a write through such an answer would be
   // visible through every copy. What this backend needs instead is the
@@ -695,12 +689,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kWriteMemWithin:
       return NamedByValue{.operand = 1};
 
-    case support::BuiltinFn::kRunForeignTaskOnFiber:
-    case support::BuiltinFn::kRunExportedTaskToCompletion:
-    case support::BuiltinFn::kCurrentExportScope:
-    case support::BuiltinFn::kFindExportEntry:
-      return NotRealized{.shape = kCrossesAForeignStack};
-
     case support::BuiltinFn::kTrigger:
     case support::BuiltinFn::kTriggered:
     case support::BuiltinFn::kCurrentRuntime:
@@ -800,6 +788,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEnterDpiScope:
     case support::BuiltinFn::kLeaveDpiScope:
     case support::BuiltinFn::kClaimNamespaceInitialize:
+    case support::BuiltinFn::kCurrentExportScope:
+    case support::BuiltinFn::kFindExportEntry:
+    case support::BuiltinFn::kRunForeignTaskOnFiber:
+    case support::BuiltinFn::kRunExportedTaskToCompletion:
     case support::BuiltinFn::kMakeDynamicArrayDefault:
     case support::BuiltinFn::kMakeDynamicArrayNew:
     case support::BuiltinFn::kMakeDynamicArrayNewCopy:

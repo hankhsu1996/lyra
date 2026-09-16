@@ -10,6 +10,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/foreign_execution.hpp"
+#include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 
@@ -29,6 +30,8 @@ RuntimeProcess::RuntimeProcess(
   // can recover the RuntimeProcess identity from within await_suspend.
   coroutine_.BindProcess(*this);
 }
+
+RuntimeProcess::~RuntimeProcess() = default;
 
 auto RuntimeProcess::Kind() const -> ProcessKind {
   return kind_;
@@ -196,18 +199,31 @@ void RuntimeProcess::ReleaseTerminatedLineage(RuntimeProcess& process) {
 
 auto RuntimeProcess::DriveForeignVehicle(ForeignExecution& fe) -> bool {
   const ForeignExecutionGuard guard(*this, fe);
+  // Foreign code reached from here may call back into generated code (LRM
+  // 35.7), which is a crossing into it like any other. The scope is one stretch
+  // of the call rather than the whole of it, because the stack parks between
+  // two stretches and a scope open across that would still be the innermost one
+  // while some other execution ran; what has to outlive a park is held by the
+  // call itself instead.
+  const GeneratedCallScope stretch(&fe.Values());
   fe.Resume();
   return fe.IsDone();
 }
 
 auto RuntimeProcess::EnterForeignExecution(
-    CoroutineHandle continuation, ForeignExecution& fe) -> bool {
-  foreign_continuation_ = continuation;
+    CoroutineHandle continuation, std::unique_ptr<ForeignExecution> fe)
+    -> bool {
+  ForeignExecution& entered =
+      *foreign_calls_
+           .emplace_back(
+               ForeignCall{
+                   .vehicle = std::move(fe), .continuation = continuation})
+           .vehicle;
   // The call returned without suspending: nothing snapshotted the vehicle, and
   // the caller continues inline. If instead it suspended, an inner frame parked
   // with this vehicle as its resume target, and the scheduler will drive it.
-  if (DriveForeignVehicle(fe)) {
-    foreign_continuation_ = nullptr;
+  if (DriveForeignVehicle(entered)) {
+    foreign_calls_.pop_back();
     return true;
   }
   return false;
@@ -295,9 +311,9 @@ auto RuntimeProcess::ResumeWith(
       // Otherwise an inner frame re-blocked and re-snapshotted the vehicle, so
       // the process stays waiting on that new wait.
       if (DriveForeignVehicle(*resume_target_)) {
-        current_leaf_ = foreign_continuation_;
+        current_leaf_ = foreign_calls_.back().continuation;
         resume_target_ = nullptr;
-        foreign_continuation_ = nullptr;
+        foreign_calls_.pop_back();
         current_leaf_->self.resume();
       }
     } else {

@@ -118,7 +118,9 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // not a single owner.
   RuntimeProcess(RuntimeProcess&&) noexcept = delete;
   auto operator=(RuntimeProcess&&) noexcept -> RuntimeProcess& = delete;
-  ~RuntimeProcess() = default;
+  // Out of line: a foreign call this process holds is carried on a vehicle this
+  // header only names, so destroying one cannot be written here.
+  ~RuntimeProcess();
 
   [[nodiscard]] auto Kind() const -> ProcessKind;
 
@@ -211,12 +213,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     // place a resume reads it -- the same field the execution backend, which
     // has no awaiter, sets where it registers its wakeup.
     leaf->wait_is_report_flush_point = wait->IsReportFlushPoint();
-    // The vehicle carrying this thread when it blocks is the vehicle the
-    // scheduler must drive to resume it. It is retained past the block (unlike
-    // the registration), because resume runs from another process's context
-    // where the ambient vehicle is that caller's, not this leaf's.
-    resume_target_ = current_foreign_execution_;
-    EnrolInEnclosingTargets(leaf);
+    LeafIsBlocked(leaf);
   }
 
   // Hands the frame that parks to whatever will wake it, and enrols it in the
@@ -235,7 +232,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     // the frame here, where the wait kind is known, for the resume to read (LRM
     // 12.4.2.1).
     leaf->wait_is_report_flush_point = wait_is_report_flush_point;
-    EnrolInEnclosingTargets(leaf);
+    LeafIsBlocked(leaf);
     park(leaf);
   }
 
@@ -264,9 +261,13 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // frame to resume once the whole foreign call returns. Returns true if the
   // call returned without suspending (the caller continues inline), false if it
   // suspended across the boundary (an inner SV frame blocked and snapshotted
-  // `fe` as its resume vehicle, so the scheduler resumes it later). The caller
-  // owns `fe` and must keep it alive until the call returns.
-  auto EnterForeignExecution(CoroutineHandle continuation, ForeignExecution& fe)
+  // `fe` as its resume vehicle, so the scheduler resumes it later).
+  //
+  // A suspended call outlives the frame that made it, and the vehicle has to
+  // stand until the call returns, so this takes it: the process is what the
+  // call belongs to and what resumes it.
+  auto EnterForeignExecution(
+      CoroutineHandle continuation, std::unique_ptr<ForeignExecution> fe)
       -> bool;
 
   // Enter (LRM 9.6.2) a disable target: until the target is left, a `disable`
@@ -450,6 +451,17 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // which it sets and restores around a foreign call.
   friend class ForeignExecutionGuard;
 
+  // What blocking a frame records, whichever way its wakeup was registered: the
+  // vehicle carrying this thread when it blocks is the vehicle the scheduler
+  // must drive to resume it, retained past the block (unlike the registration)
+  // because a resume runs from another process's context where the ambient
+  // vehicle is that caller's, not this leaf's; and a blocked frame waits on the
+  // targets it is inside as well.
+  void LeafIsBlocked(CoroutineHandle leaf) {
+    resume_target_ = current_foreign_execution_;
+    EnrolInEnclosingTargets(leaf);
+  }
+
   // Blocking inside a disable target is also waiting on that target (LRM
   // 9.6.2), so the leaf enrols in each the same way it enrols in the event or
   // delay it blocks on. Any one of them releases the wait, and releasing it
@@ -491,6 +503,19 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // The activations this thread is inside beyond its own body, innermost last,
   // each called by the one before it. Empty while it runs its own body.
   std::vector<Coroutine<void>> nested_activations_;
+  // One foreign call this thread has entered and not yet returned from: the
+  // vehicle carrying it, and the SV frame to resume once it returns -- the
+  // frame that made the call. An exported task the call reaches suspends and
+  // completes inside the vehicle, so its completion is not what continues the
+  // process; this frame is. Both belong to the call rather than to the process,
+  // because a call reached from inside another has its own of each.
+  struct ForeignCall {
+    std::unique_ptr<ForeignExecution> vehicle;
+    CoroutineHandle continuation;
+  };
+  // Innermost last. Each is held until its own call returns, which is after the
+  // frame that made it has parked, so nothing shorter-lived can own one.
+  std::vector<ForeignCall> foreign_calls_;
   // The foreign execution this thread is running under right now, valid only
   // while a foreign call is on the stack; the guard sets and clears it. Null
   // outside any foreign call, which is every plain-coroutine process.
@@ -499,11 +524,6 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // from the ambient foreign execution when the leaf blocks and retained until
   // it blocks again. Null means resume the coroutine frame directly.
   ForeignExecution* resume_target_ = nullptr;
-  // The SV frame to resume once the outermost foreign call returns -- the
-  // import frame that entered it. An exported task suspends and completes
-  // internally to the fiber, so its completion is not what continues the
-  // process; this frame is. Null when no foreign call is outstanding.
-  CoroutineHandle foreign_continuation_ = nullptr;
   // Held by every deferred report this process has pending; null when it has
   // none, which is also the state a flush point leaves it in.
   std::shared_ptr<DeferredReportEpoch> deferred_report_epoch_;

@@ -20,6 +20,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/activation_value_cell.hpp"
+#include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
@@ -551,14 +552,19 @@ using lyra::runtime::ClosureValue;
 using lyra::runtime::Coroutine;
 using lyra::runtime::CoroutineHandle;
 using lyra::runtime::current_runtime;
+using lyra::runtime::CurrentExportScope;
+using lyra::runtime::CurrentForeignProcess;
 using lyra::runtime::DelayTicks;
 using lyra::runtime::DelayTicksReal;
 using lyra::runtime::DiagnosticDispatcher;
+using lyra::runtime::DriveOnForeignStack;
 using lyra::runtime::DriverOf;
 using lyra::runtime::EnterCancellationTarget;
+using lyra::runtime::EnterForeignTask;
 using lyra::runtime::EvaluationAttempts;
 using lyra::runtime::FileTable;
 using lyra::runtime::FindBehavior;
+using lyra::runtime::FindExportEntry;
 using lyra::runtime::FindProperty;
 using lyra::runtime::ForkWaitAllMustPark;
 using lyra::runtime::ForkWaitFirstMustPark;
@@ -568,6 +574,7 @@ using lyra::runtime::GeneratedScope;
 using lyra::runtime::Held;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::LeaveCancellationTarget;
+using lyra::runtime::MakeForeignExecution;
 using lyra::runtime::ManagedObject;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
@@ -1358,6 +1365,43 @@ auto lyra_rt_claim_namespace_initialize(void* runtime, const char* name)
     -> std::int64_t {
   return ClaimNamespaceInitialization(
       *static_cast<RuntimeEffects*>(runtime), name);
+}
+
+auto lyra_rt_current_export_scope() -> void* {
+  return CurrentExportScope();
+}
+
+auto lyra_rt_find_export_entry(void* scope, const void* subroutine)
+    -> void (*)() {
+  return FindExportEntry(
+      static_cast<Scope*>(scope), static_cast<const char*>(subroutine));
+}
+
+auto lyra_rt_run_foreign_task_on_fiber(void* runtime, void* closure) -> bool {
+  auto& effects = *static_cast<RuntimeEffects*>(runtime);
+  return !EnterForeignTask(
+      effects, effects.CurrentProcess().CurrentLeaf(),
+      MakeForeignExecution(TakeClosure(closure)));
+}
+
+void lyra_rt_run_exported_task_to_completion(void* activation) {
+  // A wait this thread registers parks its innermost activation, and the body
+  // reached here is one: it runs in the thread that entered the foreign call
+  // (LRM 9.5), so entering it is what makes a delay inside it park the right
+  // frame rather than the one that called out.
+  RuntimeProcess& process = CurrentForeignProcess();
+  const CoroutineHandle called = process.PushActivation(
+      std::move(*static_cast<Coroutine<void>*>(activation)));
+  DriveOnForeignStack(called);
+  // A run-time error that left the body was stored rather than allowed to
+  // travel, and the entry point is one statement of the foreign caller, so it
+  // continues from here -- taken before the activation is released, which
+  // destroys what holds it.
+  std::exception_ptr raised = process.TakeInnermostRaisedError();
+  process.PopActivation();
+  if (raised) {
+    std::rethrow_exception(raised);
+  }
 }
 
 auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void* {
@@ -4935,6 +4979,16 @@ auto lyra_rt_read_canonical_logic_vec(const void* src, const void* type)
   return Own(
       lyra::value::ReadCanonicalLogicVec(
           static_cast<const svLogicVecVal*>(src), Read<PackedType>(type)));
+}
+
+void lyra_rt_write_canonical_bit_vec(void* dst, const void* sv) {
+  lyra::value::WriteCanonicalBitVec(
+      static_cast<svBitVecVal*>(dst), Read<PackedArray>(sv));
+}
+
+void lyra_rt_write_canonical_logic_vec(void* dst, const void* sv) {
+  lyra::value::WriteCanonicalLogicVec(
+      static_cast<svLogicVecVal*>(dst), Read<PackedArray>(sv));
 }
 
 auto lyra_rt_to_sv_logic(const void* sv) -> std::uint8_t {

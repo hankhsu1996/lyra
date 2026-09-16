@@ -244,8 +244,6 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"lyra::value::DpiOpenArray"};
               case mir::RuntimeLibraryKind::kDpiOpenArrayHandle:
                 return std::string{"const svOpenArrayHandle"};
-              case mir::RuntimeLibraryKind::kForeignTaskAwaitable:
-                return std::string{"lyra::runtime::ForeignTaskAwaitable"};
               case mir::RuntimeLibraryKind::kPropertyCoordinate:
                 return std::string{"lyra::runtime::PropertyCoordinate"};
               case mir::RuntimeLibraryKind::kBehaviorCoordinate:

@@ -63,6 +63,24 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   return EmittedModule{std::move(context_), std::move(module_)};
 }
 
+namespace {
+
+// What the linker is told to do where a second artifact defines the same name.
+// A definition several of them write is one the session keeps one of, which is
+// what every target spells as a weak definition; one this artifact owns is
+// written once and a repeat of it is a program that does not link.
+auto LinkageOf(lir::Definition definition) -> llvm::GlobalValue::LinkageTypes {
+  switch (definition) {
+    case lir::Definition::kOwned:
+      return llvm::Function::ExternalLinkage;
+    case lir::Definition::kShared:
+      return llvm::Function::WeakODRLinkage;
+  }
+  throw InternalError("llvm codegen: unknown definition kind");
+}
+
+}  // namespace
+
 auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
   const lir::Function& fn = unit_->functions.Get(id);
   std::vector<llvm::Type*> params;
@@ -73,7 +91,7 @@ auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
   auto* fn_ty =
       llvm::FunctionType::get(types_.Map(fn.result_type), params, false);
   return llvm::Function::Create(
-      fn_ty, llvm::Function::ExternalLinkage, fn.name, module_.get());
+      fn_ty, LinkageOf(fn.definition), fn.name, module_.get());
 }
 
 auto CodeGenModule::UnitFunction(lir::FunctionId function) -> llvm::Function* {

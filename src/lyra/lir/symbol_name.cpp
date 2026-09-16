@@ -47,6 +47,8 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'k';
     case SymbolCategory::kClosureInvoke:
       return 'i';
+    case SymbolCategory::kScopeEntry:
+      return 'x';
     case SymbolCategory::kStruct:
       return 's';
     case SymbolCategory::kTypeDescription:
@@ -188,6 +190,14 @@ auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
   return SymbolName(
       SymbolCategory::kClosureInvoke,
       {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
+}
+
+auto ScopeEntrySymbol(
+    std::string_view unit_name, SymbolPart cls, std::uint32_t ordinal)
+    -> std::string {
+  return SymbolName(
+      SymbolCategory::kScopeEntry, {SymbolPart::Name(unit_name), std::move(cls),
+                                    SymbolPart::Ordinal(ordinal)});
 }
 
 namespace {

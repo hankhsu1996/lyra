@@ -591,12 +591,21 @@ struct BasicBlock {
 // that fact in its `result_type` (a `CoroutineType`): it may hold
 // `SuspendTerm`s and its completion is a coroutine completion, which a backend
 // realizes through the scheduling protocol rather than a single call.
+// Whether this artifact is the only one that writes the function's definition.
+// A name no unit owns is defined by every unit that declares it, from the name
+// and the prototype alone, so each writes the same text and whatever resolves
+// names across artifacts keeps one of them (LRM 35.4). Everything else is
+// written once, and a second definition of it would be a program that does not
+// link.
+enum class Definition : std::uint8_t { kOwned, kShared };
+
 struct Function {
   std::string name;
   base::Arena<Local, ValueId> values;
   std::vector<ValueId> params;
   TypeId result_type;
   std::vector<BasicBlock> blocks;
+  Definition definition = Definition::kOwned;
 };
 
 // The type of a value operand: the type of the value a use names, or of a
