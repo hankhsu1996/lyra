@@ -146,7 +146,7 @@ the modern idiom -- `std::format`, `std::span` / `std::string_view`, `std::array
   so gaining an alternative breaks the build until every consumer says what it means. That last
   clause is what a catch-all switches off, so it takes three rules in
   `tools/policy/check_architecture.py`: A013 for the comparison, A020 for a `default:` arm, and A021
-  for a visit arm declared `auto`.
+  for a visit arm that names no alternative.
 - **One namespace per directory**; a sub-namespace with no corresponding folder is not one.
 - **ASCII only in source and docs**, enforced by `tools/policy/check_ascii.py`. In markdown,
   backtick underscored SV keywords (`always_comb` and friends) or Prettier mangles them and the

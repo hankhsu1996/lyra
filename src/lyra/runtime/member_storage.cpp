@@ -352,11 +352,38 @@ auto MemberStorage::HeldValue() -> void* {
                 "MemberStorage: a concurrent assertion's attempts hold no "
                 "value of the design, so nothing is read out of them");
           },
-          [](auto& object) -> void* { return &object; }},
+
+          // A value the owner holds inline. Nothing can write it again behind a
+          // reader's back -- what fills it is the owner's own construction --
+          // so the storage itself is what crosses as the handle.
+          [](value::PackedArray& value) -> void* { return &value; },
+          [](value::String& value) -> void* { return &value; },
+          [](value::Real& value) -> void* { return &value; },
+          [](value::ShortReal& value) -> void* { return &value; },
+          [](value::RuntimeTuple& value) -> void* { return &value; },
+          [](value::RuntimeUnion& value) -> void* { return &value; },
+          [](value::RuntimeTaggedUnion& value) -> void* { return &value; },
+          [](value::RuntimeDynamicArray& value) -> void* { return &value; },
+          [](value::RuntimeUnpackedArray& value) -> void* { return &value; },
+          [](value::RuntimeQueue& value) -> void* { return &value; },
+          [](value::RuntimeAssociativeArray& value) -> void* { return &value; },
+          [](value::ManagedRef& value) -> void* { return &value; },
+
+          // A runtime object the design reaches by pointer: a named event,
+          // whose identity is fixed for the life of the scope that owns it (LRM
+          // 15.5), the target a `disable` names, and the view a submission
+          // asks whether its channels were closed under it. Each is reached
+          // where it lives, so the object itself is what crosses.
+          [](NamedEvent& event) -> void* { return &event; },
+          [](CancellationTarget& target) -> void* { return &target; },
+          [](ChannelCancellation& view) -> void* { return &view; }},
       object_);
 }
 
 void MemberStorage::AdoptFrom(void* handle) {
+  const auto adopt = [handle]<typename T>(T& value) {
+    value = Read<T>(handle);
+  };
   std::visit(
       Overloaded{
           // A pointer-shaped value is the handle, so there is nothing behind it
@@ -408,7 +435,26 @@ void MemberStorage::AdoptFrom(void* handle) {
                 "and settled through their own access, never copied into "
                 "storage");
           },
-          [&]<typename T>(T& value) { value = Read<T>(handle); }},
+          // A value the owner holds inline, which is what this takes a copy
+          // into: the owner fills it once at construction and nothing writes
+          // it again through an access of its own. A channel's cancellation is
+          // one of these rather than one of the three above: storage holding
+          // it starts as a view over no channels and takes the view it will
+          // carry by copy, which is what makes it the odd one out among the
+          // runtime objects a scope owns.
+          [&](ChannelCancellation& view) { adopt(view); },
+          [&](value::PackedArray& value) { adopt(value); },
+          [&](value::String& value) { adopt(value); },
+          [&](value::Real& value) { adopt(value); },
+          [&](value::ShortReal& value) { adopt(value); },
+          [&](value::RuntimeTuple& value) { adopt(value); },
+          [&](value::RuntimeUnion& value) { adopt(value); },
+          [&](value::RuntimeTaggedUnion& value) { adopt(value); },
+          [&](value::RuntimeDynamicArray& value) { adopt(value); },
+          [&](value::RuntimeUnpackedArray& value) { adopt(value); },
+          [&](value::RuntimeQueue& value) { adopt(value); },
+          [&](value::RuntimeAssociativeArray& value) { adopt(value); },
+          [&](value::ManagedRef& value) { adopt(value); }},
       object_);
 }
 

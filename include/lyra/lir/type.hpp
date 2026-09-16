@@ -441,6 +441,16 @@ struct EvaluationAttemptsType {
   auto operator==(const EvaluationAttemptsType&) const -> bool = default;
 };
 
+// The declaration a type names: a class this unit compiles, an object or a
+// class another unit declares, or one of the two a lowering introduces that no
+// source declaration stands behind. What identifies each differs -- a position
+// in this unit's registry, a name its own unit gave it, the position that unit
+// counted it at -- so a consumer reaching what the declaration holds asks which
+// of the five it met rather than asking every type there is.
+using TypeDeclaration = std::variant<
+    ObjectType, ExternalUnitObjectType, CrossUnitClassType, ClosureType,
+    StructType>;
+
 // A type one LIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
 // that names each one rather than defaulting is what makes an alternative added
@@ -474,6 +484,12 @@ class Type {
   // a dimension would lengthen the name without changing what the reader does
   // next.
   [[nodiscard]] auto KindName() const -> std::string_view;
+
+  // The declaration this type names, absent for a type that names none. What
+  // that declaration holds -- its members, the class it extends, the names it
+  // was emitted under -- is reached through the unit it belongs to, so this
+  // answers which declaration it is and not what is in it.
+  [[nodiscard]] auto Declaration() const -> std::optional<TypeDeclaration>;
 
   // The type this one refers to; absent when it refers to nothing. This is the
   // narrow relation of indirection -- storage that lives elsewhere -- which is

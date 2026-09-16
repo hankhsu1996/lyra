@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -222,7 +223,12 @@ struct DeclarationParts {
 
 auto PartsOf(const CompilationUnit& unit, TypeId type)
     -> std::optional<DeclarationParts> {
-  return unit.types.Get(type).Visit(
+  const std::optional<TypeDeclaration> declaration =
+      unit.types.Get(type).Declaration();
+  if (!declaration) {
+    return std::nullopt;
+  }
+  return std::visit(
       Overloaded{
           [&](const ObjectType& o) -> std::optional<DeclarationParts> {
             return DeclarationParts{
@@ -261,10 +267,8 @@ auto PartsOf(const CompilationUnit& unit, TypeId type)
                 .kind = DeclarationKind::kStruct,
                 .unit_name = unit.name,
                 .part = SymbolPart::Ordinal(s.struct_id.value)};
-          },
-          [](const auto&) -> std::optional<DeclarationParts> {
-            return std::nullopt;
-          }});
+          }},
+      *declaration);
 }
 
 }  // namespace

@@ -216,7 +216,68 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::ManagedRefType&) -> Domain {
             return support::ValueDomain::kManagedRef;
           },
-          [](const auto&) -> Domain { return std::nullopt; }});
+
+          // An index names an entry rather than being one: LRM 7.8.1 gives a
+          // wildcard-indexed array no index data type, so nothing of that type
+          // is ever held.
+          [](const lir::WildcardIndexType&) -> Domain { return std::nullopt; },
+
+          // Machine data crosses to a target on the target's own terms, so it
+          // is emitted as the target's own scalar, array, or code address and
+          // never reaches the runtime's value library at all.
+          [](const lir::MachineIntType&) -> Domain { return std::nullopt; },
+          [](const lir::MachineFloatType&) -> Domain { return std::nullopt; },
+          [](const lir::MachineBoolType&) -> Domain { return std::nullopt; },
+          [](const lir::MachineCStringType&) -> Domain { return std::nullopt; },
+          [](const lir::MachineArrayType&) -> Domain { return std::nullopt; },
+          [](const lir::MachineFunctionType&) -> Domain {
+            return std::nullopt;
+          },
+
+          // The absence of a type is not a value of one.
+          [](const lir::VoidType&) -> Domain { return std::nullopt; },
+
+          // An object, and the several ways of naming one. A value of an
+          // object's own type is never handed about: what travels is a
+          // reference to it, which is the domain above.
+          [](const lir::ObjectType&) -> Domain { return std::nullopt; },
+          [](const lir::ExternalUnitObjectType&) -> Domain {
+            return std::nullopt;
+          },
+          [](const lir::CrossUnitClassType&) -> Domain { return std::nullopt; },
+          [](const lir::OpaqueObjectType&) -> Domain { return std::nullopt; },
+          [](const lir::RuntimeClassType&) -> Domain { return std::nullopt; },
+          [](const lir::StructType&) -> Domain { return std::nullopt; },
+          [](const lir::ClosureType&) -> Domain { return std::nullopt; },
+
+          // Storage the runtime owns and services it provides. Each holds or
+          // answers with a value, and that value has a domain of its own; the
+          // storage is reached through its own access rather than being handed
+          // over as a value. A named event is storage of this kind too: LRM
+          // 15.5 fixes its identity for the life of its scope, so it is never
+          // copied.
+          [](const lir::ObservableType&) -> Domain { return std::nullopt; },
+          [](const lir::ResolvedType&) -> Domain { return std::nullopt; },
+          [](const lir::DriverType&) -> Domain { return std::nullopt; },
+          [](const lir::SampledHistoryType&) -> Domain { return std::nullopt; },
+          [](const lir::EvaluationAttemptsType&) -> Domain {
+            return std::nullopt;
+          },
+          [](const lir::EventType&) -> Domain { return std::nullopt; },
+          [](const lir::RuntimeEffectsType&) -> Domain { return std::nullopt; },
+          [](const lir::FilesType&) -> Domain { return std::nullopt; },
+          [](const lir::DiagnosticType&) -> Domain { return std::nullopt; },
+          [](const lir::RuntimeLibraryType&) -> Domain { return std::nullopt; },
+
+          // An address, and a run of storage reached through one. What has a
+          // domain is whatever sits at the far end.
+          [](const lir::RefType&) -> Domain { return std::nullopt; },
+          [](const lir::PointerType&) -> Domain { return std::nullopt; },
+          [](const lir::VectorType&) -> Domain { return std::nullopt; },
+
+          // A body in flight, which carries a value out at its end rather than
+          // being one.
+          [](const lir::CoroutineType&) -> Domain { return std::nullopt; }});
 }
 
 auto RuntimeSymbol(RuntimeOp op) -> std::string {

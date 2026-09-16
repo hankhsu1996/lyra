@@ -1286,31 +1286,30 @@ enough to warrant its own focused review.
       remaining life: threading a result through the fold touches every entry in it and collides with
       any other work in render.
 
-- [ ] R81 -- Eleven files answer a question about a closed set by visiting it and letting one arm
-      declared `auto` take whatever the named arms did not. A021 records them and admits no more, so
-      what is left is the record, and it is not transcription: ten of the thirteen arms ask a
-      question of a forty-odd-alternative type set and answer for a handful, so writing the rest out
-      would produce forty lines saying nothing. The subset is the answer, and what states it belongs
-      on the type beside the total questions already there -- `lir::Type::KindName`,
-      `hir::Type::IsValueChangeObservable`, `mir::Type::ContainerElementType`.
+- [x] R81 -- A question asked of a closed set answers for every alternative it has, and no arm
+      stands for the ones nobody named. Every remaining arm is one of three answers -- a value, a
+      refusal naming the construct, or a statement of why that alternative cannot arrive -- and the
+      third is what most of them are, which is why writing them out reads as long and is not
+      transcription. The record of standing exceptions is gone rather than empty, so the next
+      generic arm is new by construction.
 
-      Four of them ask one question in four spellings: which declaration a type names.
-      `lir/place_query.cpp` asks it twice, once for the base and once for the member list;
-      `lir/symbol_name.cpp` asks it for the name parts; `mir_to_lir/function_lowerer.cpp` asks it one
-      layer up for the class. One question on each type answers all four, and each caller then
-      dispatches on an answer with about five alternatives rather than on a set with forty-eight.
-      **That concept is R79's, not this entry's** -- what a declaration's names are and which the
-      source wrote is being settled there, and a second statement of it built here would be one
-      concept with two designs. Reach this from R79 rather than ahead of it.
+      **What the record was hiding is a legal program that aborted the compiler.** Printing an
+      associative array whose index is a wildcard reached the arm answering "what does a value of
+      this type start out as" for every type nobody had written, and told the user to report a bug
+      rather than naming a construct. The walk such a printed form is built from needs a value of
+      the index type, and a wildcard index is not a data type at all (LRM 7.8, 7.8.1) -- which is
+      also why the standard forbids walking such an array by index. That construct is refused by
+      name now, settled one layer above where it aborted by the work that gave a declared type its
+      own readings, so what this entry is left holding is the mechanism rather than the case: an
+      alternative nobody named can no longer turn a legal program into a bug report, whichever
+      program reaches one next.
 
-      A third mechanism is unmeasured and no check sees it: an `As<T>()` / `Is<T>()` chain falling
-      off its end, which is the same opt-out spelled a third way. `lir::Type::DerefTarget` and
-      `IsAddressOnly` are written that way, and so is `IsArrayContainerType` in the HIR-to-MIR
-      default-value lowering, so it is not one layer's habit. Seventy-two sites use `As<`, and how
-      many of them are a chain over a closed set has not been counted. A021 and A020 hold the other
-      two.
-
-      Not blocked, and each entry is independent of the others.
+      **What emptied the rest was not transcription.** Four sites asked one question in four
+      spellings -- which declaration a type names -- so the question moved onto the type, beside the
+      ones already stated there, and each site now dispatches on the five alternatives that answer
+      it rather than on every type there is. The sites that were left genuinely had something to say
+      per alternative: which value domain the runtime realizes, what crosses the foreign boundary,
+      what a place opens, what a memory task accepts.
 
 - [ ] R82 -- Every value domain names its two realizations the same way: the monomorphized one takes
       the domain's own word and the erased one takes that word behind `Runtime`, so a reader meeting
@@ -1529,6 +1528,20 @@ enough to warrant its own focused review.
 
       Deliberately not folded into the change that created the set: what a layer states and what an
       optimizer removes are separate, so the readings are correct whether or not this exists.
+
+- [ ] R97 -- A question about a closed set can also be answered by a chain of one-alternative tests
+      falling off its end, and no check sees that one: the set gains an alternative, the chain
+      answers "no" for it, and nothing fails. It is not one layer's habit -- a type's own family
+      predicates are written that way in two IR layers, and so is the container test in the
+      default-value lowering. Seventy-two sites reach for a single alternative that way, and how
+      many of them are a chain over a whole set has not been counted.
+
+      Target: count them, then separate a family predicate, whose members a total answer stated
+      beside the type should give, from an ordinary test for one alternative, which is what a call
+      site is entitled to write. The other three spellings of the same opt-out each have a check
+      already, so what this needs is the rule said in terms a check can decide.
+
+      Not blocked.
 
 ## Out of Scope
 
