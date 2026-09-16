@@ -7,7 +7,6 @@
 #
 # A case may appear in this file or in the defect record, never both.
 07_aggregate_data_types/associative_array_wildcard_index: "an associative array indexed by a wildcard index type is not yet ordered on this backend"
-07_aggregate_data_types/unpacked_structure_whole_assignment: "local is not addressable storage"
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"
 08_classes/interface_class_implements: "dispatching on a behavior an interface class states is not yet supported"
 08_classes/this_names_the_current_instance: "the self_handle builtin answers with the handle referring to the object a body runs on"
@@ -15,11 +14,8 @@
 09_processes/fork_branch_shares_enclosing_variables: "storage kept alive by a shared owner needs a slot the collector can see, which generated storage is not yet"
 09_processes/fork_in_loop_captures_iteration_value: "storage kept alive by a shared owner needs a slot the collector can see, which generated storage is not yet"
 09_processes/fork_in_task_blocks_the_caller: "storage of this kind is not yet lendable by reference"
-10_assignments/array_assignment_pattern: "local is not addressable storage"
-13_tasks_and_functions/aggregate_argument_passed_by_value: "local is not addressable storage"
 13_tasks_and_functions/class_method_argument_directions: "mir_to_lir: storage of this kind is not yet lendable by reference"
 13_tasks_and_functions/function_ref_argument_targets: "mir_to_lir: storage of this kind is not yet lendable by reference"
-13_tasks_and_functions/function_struct_return: "local is not addressable storage"
 13_tasks_and_functions/task_enables_subroutine: "storage of this kind is not yet lendable by reference"
 16_assertions/procedural_concurrent_assertion_queues_where_it_runs: "a concurrent assertion embedded in a procedure is not yet lowered"
 21_output/assignment_pattern_format_of_a_wildcard_indexed_array: "an operand holding an associative array with a wildcard index type"

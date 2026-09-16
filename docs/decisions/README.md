@@ -237,6 +237,11 @@ the detail lives in the entry itself.
   other backend already runs. The ownership question its reopening left open is answered by
   [storage-owns-its-value](storage-owns-its-value.md), and the contract it asked for is written by
   [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md).
+- [a-declared-local-is-storage](a-declared-local-is-storage.md) -- a local has storage because the
+  source declared a variable, so the lowering asks nothing about what the body does with it; where
+  that storage lives follows the local's own lifetime. Deciding a variable need not exist is a
+  saving taken by whoever sees the whole function, and taken upstream it refused legal programs
+  wherever its idea of a write was narrower than a write.
 - [inline-member-slots](inline-member-slots.md) -- a storage block whose owner cannot move holds its
   slots inline, one allocation for the block rather than one per member: an object's properties and
   a scope's members qualify, and a closure's captures did not until

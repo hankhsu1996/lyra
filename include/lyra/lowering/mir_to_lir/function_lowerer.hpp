@@ -88,20 +88,16 @@ class FunctionLowerer {
     std::size_t cleanup_depth{};
   };
 
-  // What a source local resolves to. A local is frame storage exactly when the
-  // canonical lowering needs an address for it: when its address is taken, or
-  // when it is assigned after its initialization. Otherwise it stays the value
-  // it was bound to, with no storage. A value-typed local in a suspending body
-  // is an activation value instead: its value crosses suspensions, so it lives
-  // in a cell of the running execution's own store, reached through a handle
-  // the cell operations read and write. A local whose storage is lent by
-  // reference lives in a cell too, since that is the one storage a reference
-  // can name, and the binding holds the reference the lowering built over it.
+  // Where a source local's storage lives. Every local has some, because the
+  // source declared a variable; what varies is only where, and a frame slot is
+  // the ordinary home. A value-typed local in a suspending body is an
+  // activation value: its value crosses suspensions, so it lives in a cell of
+  // the running execution's own store, reached through a handle the cell
+  // operations read and write. A local whose storage is lent by reference lives
+  // in a cell too, since that is the one storage a reference can name, and the
+  // binding holds the reference the lowering built over it.
   struct PlaceBinding {
     lir::ValueId slot;
-  };
-  struct ValueBinding {
-    lir::Operand value;
   };
   struct ActivationValueBinding {
     lir::Operand handle;
@@ -109,8 +105,8 @@ class FunctionLowerer {
   struct CellBinding {
     lir::Operand reference;
   };
-  using LocalBinding = std::variant<
-      PlaceBinding, ValueBinding, ActivationValueBinding, CellBinding>;
+  using LocalBinding =
+      std::variant<PlaceBinding, ActivationValueBinding, CellBinding>;
 
   // What entering one class's constructor takes: the type the object it runs on
   // is opened as, and the callee. Both are answered from the class's identity
@@ -426,11 +422,9 @@ class FunctionLowerer {
   std::vector<LoopTargets> loops_;
   std::vector<PendingCleanup> cleanups_;
   std::vector<RegionTargets> regions_;
-  // Where each local's value lives: a frame place the body writes through or
-  // addresses, an activation value (a value-typed local in a suspending body),
-  // or a lent cell (a local whose storage a reference binds). The last holds
-  // what each local has resolved to so far.
-  std::vector<bool> placed_;
+  // Which locals need a home other than a frame slot: a value-typed local in a
+  // suspending body, and a local whose storage a reference binds. The last
+  // holds what each local has resolved to so far.
   std::vector<bool> activation_value_local_;
   std::vector<bool> cell_local_;
   std::vector<std::optional<LocalBinding>> locals_;

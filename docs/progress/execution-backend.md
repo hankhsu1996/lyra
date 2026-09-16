@@ -54,11 +54,18 @@ the stretch that made it.
       stays in the caller's scope). Settled in
       `../decisions/activation-frame-and-transient-scope.md`.
 
-- [ ] **One ownership model for a procedural value, instead of three.** A local's value has three
-      possible homes here -- the per-stretch scope, the execution's own store, or a slot of the
-      generated frame -- and which one it gets follows from whether the body can suspend and whether
-      anything lends the local, neither of which is a property of the variable. The declaration says
-      the whole of what the lifetime is, so it is the only thing that should decide.
+- [ ] **One ownership model for a procedural value, instead of three.** A local's storage has three
+      possible homes here -- a slot of the generated frame, a cell of the execution's own store, or
+      a cell built where the declaration runs -- and which one it gets follows from whether the body
+      can suspend and whether anything lends the local, neither of which is a property of the
+      variable. The declaration says the whole of what the lifetime is, so it is the only thing that
+      should decide.
+
+      A fourth home is gone: a local the body never wrote used to have no storage at all, its initial
+      value standing in at every read. That was not a home but an optimization -- deciding a variable
+      need not exist, from a scan of the whole body, in a step that translates one node at a time --
+      and it refused legal programs wherever the scan's idea of a write was narrower than a write
+      (`../decisions/a-declared-local-is-storage.md`).
 
       Two things are established and one is not. **Established:** the third home arrived because a
       lending requirement was allowed to decide how every storage is represented, which is backwards
@@ -466,13 +473,29 @@ each meets the same lifetime question above.
       realization needs and a traced one does not, since there the handle is that pointer. So this
       waits on the reclamation model rather than on an entry: what it costs to add now is the record
       the tracing would make unnecessary.
-- [ ] `compile` end to end against this backend, so a design becomes a program that outlives the
-      session. `dump llvm` and `run` already go through it; what neither produces is an artifact
-      that can be handed on, which is what the CI job below waits on as well.
+- [ ] **An artifact this path produces, rather than only a session it runs in.** `dump llvm` and
+      `run` reach this backend and neither leaves anything behind. `run` names two modes that would
+      -- one compiling and linking the module ahead of the run, one handing it to an external
+      interpreter -- and both refuse as unimplemented, while `compile` writes a C++ project and does
+      not reach this backend at all. So a design cannot yet become a program that outlives the
+      session here, which is what the CI job below waits on as well. Ahead-of-time and just-in-time
+      are link-time choices over this one backend, so what is missing is the link step and what
+      drives it, never a second backend.
 - [ ] An AOT CI job, waiting on a design that survives this path. Neither the smoke job nor the
       benchmark waits on it any longer: both run against the C++ path, per merge and nightly
       respectively. Measuring this path beside them needs an artifact that can be timed on its own,
       which the run modes do not produce.
+- [ ] **An optimization pipeline.** The module this backend produces runs through the passes that
+      make a suspending body executable and through nothing else, so every saving an optimizer takes
+      -- a variable promoted out of its slot, a body no reachable body calls dropped, a repeated
+      load folded -- is either taken upstream of this backend or not taken at all. `--release` does
+      not reach here either: it selects the level the host compiler builds the C++ path at, so this
+      path has no setting that turns anything up and no axis to measure along. Two things follow and
+      neither announces itself. A shape defended upstream on the ground that nothing below it
+      removes the cost has been decided by this gap rather than by which layer owns the saving,
+      which is the failure `../design-process.md` names. And an artifact this path produces is not
+      yet something a simulation can be timed with, which is the other half of what the job above
+      waits on.
 - [x] **An array of owned children.** A child scope -- a module instance, a generate block, a
       procedural block scope -- is constructed, reached by name and per-axis index, and reports its
       hierarchical name, whether it stands alone or is one of an array. Each element is its own
