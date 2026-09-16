@@ -63,6 +63,20 @@ layer directly.
       which is abandoned at its first refusal. `decisions/reporting-every-gap-in-one-run.md` settles
       the shape.
 
+- [ ] D11 -- A design's translation units are compiled one after another, so the per-unit artifact
+      boundary buys lower memory and not less time. Measured on the Ibex Simple System testbench, 49
+      translation units, unoptimized: built as one translation unit it takes 1:21 at a 3.2 GB peak;
+      built as 49 in sequence, 1:42 at 660 MB; built as 49 four at a time, 0:55 at the same 660 MB.
+      So the boundary already pays on memory -- a single translation unit at that peak is the shape
+      this machine has killed outright -- and compiling concurrently is what turns the remaining
+      quarter into a gain of half again.
+
+      What it needs settled first is who owns the bound. A conformance run drives sixteen of these
+      builds at once, so a fan-out each build chooses for itself multiplies rather than adds, and
+      the machine it exhausts is the one running the editor. The answer is a bound the outer
+      scheduler states rather than one the build picks, which is why this is not a loop with a job
+      count in it.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

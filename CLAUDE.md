@@ -70,10 +70,10 @@ machine -- `-o`, `--release`, `--backend`, `--cxx` -- is refused by name, becaus
 committed and shared. `docs/decisions/project-file.md` holds the schema and the precedence rule:
 material accumulates, selection is replaced.
 
-**`--release` trades build time for simulation speed.** By default the design's translation unit is
-compiled unoptimized, because iterating pays that compile on every edit; `--release` optimizes it
-for a run long enough to earn the compile back. The runtime library the program links is prebuilt
-and always optimized, so it is not on this axis and costs nothing either way.
+**`--release` trades build time for simulation speed.** By default the design's translation units
+are compiled unoptimized, because iterating pays that compile on every edit; `--release` optimizes
+them for a run long enough to earn the compile back. The runtime library the program links is
+prebuilt and always optimized, so it is not on this axis and costs nothing either way.
 
 ## SystemVerilog version
 

@@ -127,8 +127,21 @@ if [ "$USE_PCH" = "1" ]; then
   fi
   PCH_FLAG="-include-pch $PCH"
 fi
-@DPICOMPILE@"$CXX" @STD@ @OPT@ -I @INCLUDE@ $PCH_FLAG @MAIN@@DPIOBJS@ @LIBDIR@/@LIB@ -o @PROG@
+@DPICOMPILE@"$CXX" @STD@ @OPT@ -I @INCLUDE@ $PCH_FLAG @SOURCES@@DPIOBJS@ @LIBDIR@/@LIB@ -o @PROG@
 )sh";
+
+// The design's translation units on one command line, in the order they were
+// emitted. Each is compiled on its own and the results linked, so no unit's
+// text is read while another is compiled.
+auto RenderSourceList(std::span<const std::string> translation_units)
+    -> std::string {
+  std::string out;
+  for (const std::string& source : translation_units) {
+    if (!out.empty()) out += " ";
+    out += source;
+  }
+  return out;
+}
 
 // Where a DPI-C source sits once copied into the project, relative to it. The
 // recipe and the copy read the location from here, so neither restates it.
@@ -168,9 +181,11 @@ auto RenderDpiRecipe(
 
 auto RenderBuildScript(
     const std::filesystem::path& cxx, std::span<const DpiLinkInput> dpi_inputs,
-    Optimization optimization) -> std::string {
+    std::span<const std::string> translation_units, Optimization optimization)
+    -> std::string {
   const std::string_view optimization_flag = OptimizationFlag(optimization);
   const DpiRecipe dpi = RenderDpiRecipe(dpi_inputs, optimization_flag);
+  const std::string sources = RenderSourceList(translation_units);
   // Named locals, because the bindings below hold `string_view`s and are read
   // after this statement: a temporary would already have died.
   const std::string cxx_exe = cxx.string();
@@ -186,7 +201,7 @@ auto RenderBuildScript(
           {"@OPT@", optimization_flag},
           {"@OPTTAG@", optimization_tag},
           {"@CXX@", cxx_exe},
-          {"@MAIN@", kMainSource},
+          {"@SOURCES@", sources},
           {"@LIBDIR@", kRuntimeLibDir},
           {"@LIB@", kRuntimeLibFile},
           {"@PROG@", kProgramName},
@@ -284,18 +299,18 @@ auto PrepareDpiLinkInput(
 }
 
 auto CompileProgram(
-    const std::filesystem::path& main_cpp,
+    const std::filesystem::path& dir,
+    std::span<const std::string> translation_units,
     const std::filesystem::path& include_root, const std::filesystem::path& lib,
     const std::filesystem::path& program, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void> {
-  // The generated ABI header sits beside the emitted program source, so that
-  // directory is the include path a foreign source resolves it through.
-  const std::filesystem::path header_dir = main_cpp.parent_path();
   std::vector<std::string> link_inputs;
   link_inputs.reserve(dpi_inputs.size());
+  // The generated ABI header sits beside the emitted sources, so the directory
+  // holding them is the include path a foreign source resolves it through.
   for (const DpiLinkInput& input : dpi_inputs) {
     auto prepared =
-        PrepareDpiLinkInput(host, input, header_dir, program.parent_path());
+        PrepareDpiLinkInput(host, input, dir, program.parent_path());
     if (!prepared) {
       return std::unexpected(std::move(prepared.error()));
     }
@@ -311,7 +326,9 @@ auto CompileProgram(
     args.emplace_back("-include-pch");
     args.push_back(cached->string());
   }
-  args.push_back(main_cpp.string());
+  for (const std::string& source : translation_units) {
+    args.push_back((dir / source).string());
+  }
   for (const std::string& in : link_inputs) {
     args.push_back(in);
   }
@@ -339,7 +356,7 @@ auto CppProjectSink::Take(const mir::CompilationUnit& unit)
   if (auto refusal = backend::cpp::RefusalFor(unit); refusal.has_value()) {
     return std::unexpected(std::move(*refusal));
   }
-  if (auto r = Write(backend::cpp::EmitCppUnit(unit)); !r) {
+  if (auto r = WriteUnit(unit); !r) {
     return r;
   }
   dpi::CollectAbiFragment(unit, dpi_fragments_);
@@ -348,16 +365,31 @@ auto CppProjectSink::Take(const mir::CompilationUnit& unit)
 
 auto CppProjectSink::Finish(const mir::CompilationUnit& root)
     -> diag::Result<void> {
-  if (auto r = Write(backend::cpp::EmitCppUnit(root)); !r) {
+  if (auto r = WriteUnit(root); !r) {
     return r;
   }
-  if (auto r = Write(backend::cpp::EmitCppHostMain(root)); !r) {
+  if (auto r = WriteTranslationUnit(backend::cpp::EmitCppHostMain(root)); !r) {
     return r;
   }
   if (formatting_ == SourceFormatting::kOn) {
     return FormatSources(written_, dir_);
   }
   return {};
+}
+
+auto CppProjectSink::WriteUnit(const mir::CompilationUnit& unit)
+    -> diag::Result<void> {
+  backend::cpp::CppUnitArtifacts files = backend::cpp::EmitCppUnit(unit);
+  if (auto r = Write(std::move(files.signature)); !r) {
+    return r;
+  }
+  return WriteTranslationUnit(std::move(files.code));
+}
+
+auto CppProjectSink::WriteTranslationUnit(backend::cpp::CppArtifact file)
+    -> diag::Result<void> {
+  translation_units_.push_back(file.relpath);
+  return Write(std::move(file));
 }
 
 auto CppProjectSink::Write(backend::cpp::CppArtifact file)
@@ -370,11 +402,10 @@ auto CppProjectSink::Write(backend::cpp::CppArtifact file)
 }
 
 auto AssembleProject(
-    const RuntimeLocation& runtime,
-    std::span<const dpi::AbiFragment> dpi_fragments,
+    const RuntimeLocation& runtime, const EmittedCppSources& sources,
     const std::filesystem::path& dir, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void> {
-  if (auto r = WriteDpiSurface(runtime, dpi_fragments, dir); !r) {
+  if (auto r = WriteDpiSurface(runtime, sources.dpi_fragments, dir); !r) {
     return r;
   }
   if (auto r = CopyDpiSources(dpi_inputs, dir); !r) {
@@ -383,8 +414,9 @@ auto AssembleProject(
 
   const auto script_path = dir / "build.sh";
   if (auto r = WriteFile(
-          script_path,
-          RenderBuildScript(host.cxx, dpi_inputs, host.optimization));
+          script_path, RenderBuildScript(
+                           host.cxx, dpi_inputs, sources.translation_units,
+                           host.optimization));
       !r) {
     return r;
   }
@@ -405,12 +437,13 @@ auto AssembleProject(
 }
 
 auto BuildProject(
-    const std::filesystem::path& dir, const HostBuild& host,
+    const std::filesystem::path& dir,
+    std::span<const std::string> translation_units, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs)
     -> diag::Result<std::filesystem::path> {
   const auto program = dir / kProgramName;
   if (auto r = CompileProgram(
-          dir / kMainSource, dir / kRuntimeIncludeDir,
+          dir, translation_units, dir / kRuntimeIncludeDir,
           dir / kRuntimeLibDir / kRuntimeLibFile, program, host, dpi_inputs);
       !r) {
     return std::unexpected(std::move(r.error()));
@@ -419,18 +452,17 @@ auto BuildProject(
 }
 
 auto RunInPlace(
-    const RuntimeLocation& runtime,
-    std::span<const dpi::AbiFragment> dpi_fragments,
+    const RuntimeLocation& runtime, const EmittedCppSources& sources,
     const std::filesystem::path& work_dir, const HostBuild& host,
     std::span<const std::string> child_args,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<int> {
-  if (auto r = WriteDpiSurface(runtime, dpi_fragments, work_dir); !r) {
+  if (auto r = WriteDpiSurface(runtime, sources.dpi_fragments, work_dir); !r) {
     return std::unexpected(std::move(r.error()));
   }
   const auto program = work_dir / kProgramName;
   if (auto r = CompileProgram(
-          work_dir / kMainSource, runtime.include_root, runtime.lib, program,
-          host, dpi_inputs);
+          work_dir, sources.translation_units, runtime.include_root,
+          runtime.lib, program, host, dpi_inputs);
       !r) {
     return std::unexpected(std::move(r.error()));
   }

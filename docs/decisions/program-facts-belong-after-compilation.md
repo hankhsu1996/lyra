@@ -76,9 +76,9 @@ that exports the name defines the symbol; the definition is generated from the n
 prototype alone, so every one of them is the same text; and the party that resolves names across
 artifacts keeps one. Which party that is follows from what the artifact is: a linker for a backend
 that emits object files, an execution session for one that loads modules, and the preprocessor for
-one that assembles the program by textual inclusion. Only the last is exercised today, because the
-execution backend does not yet publish a foreign entry point at all; a backend states its own rule
-when it gains one, and nothing above the artifact varies with the answer.
+one that assembles the program by textual inclusion. The linker is the party exercised today. The
+execution backend does not yet publish a foreign entry point at all and states its own rule when it
+gains one; nothing above the artifact varies with the answer.
 
 **Which of the two a name is, is stated by where the unit states it, and by nothing else.** A unit
 publishes what its own namespace owns and, separately, what it declares of a name whose entries sit

@@ -84,10 +84,9 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
       the same design produces the same order every run.
   - [ ] An initializer read reached through a called function runs that package's initializers
         first, the way a read written directly in an initializer does.
-  - [ ] Two units that reference each other emit a C++ project that compiles. Two packages are the
-        shortest case and it is not specific to them, nor to variables: a unit's declarations and
-        its bodies share one emitted file, so mutual reference makes the two files include each
-        other. The execution backend runs such a design.
+  - [x] Two units that reference each other emit a C++ project that compiles. A unit's declarations
+        and its bodies are two artifacts, so a referrer compiles against the declarations alone and
+        the bodies meet each other once every declaration is in scope.
   - [ ] A package variable whose type is outside the supported storage families is rejected rather
         than mis-emitted.
   - [ ] A net declared at package scope (LRM 26.2) is rejected; a package holds variables, not nets.

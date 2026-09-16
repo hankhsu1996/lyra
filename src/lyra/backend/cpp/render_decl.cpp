@@ -156,7 +156,7 @@ auto RenderClassCallableDef(
   if (!code.body.has_value()) return "";
   const bool has_receiver = code.HasReceiver(s.self_pointer_type);
   std::string out = std::format(
-      "inline auto {}::{}({}) -> {} {{\n", CppClassName(s, cls_id),
+      "auto {}::{}({}) -> {} {{\n", CppClassName(s, cls_id),
       CppClassCallableName(s, id),
       RenderUserParams(unit, code, has_receiver ? 1 : 0),
       RenderTypeAsCpp(unit, code.result_type));
@@ -189,7 +189,7 @@ auto RenderAbiAdapterDef(
     const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s,
     mir::AbiAdapterId id, const mir::AbiAdapter& a) -> std::string {
   return std::format(
-      "inline auto {}::{}({}) -> {} {{\n{}}}\n", CppClassName(s, cls_id),
+      "auto {}::{}({}) -> {} {{\n{}}}\n", CppClassName(s, cls_id),
       CppAbiAdapterName(id), RenderUserParams(unit, a.code, 0),
       RenderTypeAsCpp(unit, a.code.result_type),
       RenderBlockStatements(ScopeView::ForRoot(unit, cls_id, s, a.code), 1));
@@ -208,14 +208,9 @@ auto RenderAbiAdapterDef(
 // body, already in the order LRM 8.7 requires. The body is threaded through a
 // static `init(self, ...)` helper so a body-local `self` reference resolves the
 // same way it does in every other method render.
-struct ConstructorText {
-  std::string declaration;
-  std::string definitions;
-};
-
 auto RenderConstructor(
     const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s)
-    -> ConstructorText {
+    -> UnitText {
   const ScopeView scope_view =
       ScopeView::ForRoot(unit, cls_id, s, s.constructor.code);
   const auto& ctor_code = s.constructor.code;
@@ -277,14 +272,14 @@ auto RenderConstructor(
     init_call_args.push_back(name);
   }
   const std::string init_signature = JoinCommaSeparated(init_params);
-  return ConstructorText{
-      .declaration = std::format(
+  return UnitText{
+      .signature = std::format(
           "{0}{1}({2});\n"
           "{0}static auto init({3}) -> void;\n",
           Indent(1), cpp_name, params, init_signature),
-      .definitions = std::format(
-          "inline {0}::{0}({1}){2} {{ init({3}); }}\n"
-          "inline auto {0}::init({4}) -> void {{\n"
+      .code = std::format(
+          "{0}::{0}({1}){2} {{ init({3}); }}\n"
+          "auto {0}::init({4}) -> void {{\n"
           "{5}"
           "}}\n",
           cpp_name, params, base_clause.value_or(std::string{}),
@@ -323,7 +318,7 @@ auto RenderStaticConstant(
 
 auto RenderClass(
     const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s)
-    -> ClassText;
+    -> UnitText;
 
 // Appends a class and every intra-unit base it depends on, in an order that
 // guarantees each base is a complete C++ type before its derived (C++ requires
@@ -332,7 +327,7 @@ auto RenderClass(
 // first and marks visited classes in `emitted`.
 void AppendClassInDependencyOrder(
     const mir::CompilationUnit& unit, mir::ClassId id,
-    std::vector<bool>& emitted, ClassText& text) {
+    std::vector<bool>& emitted, UnitText& text) {
   if (emitted[id.value]) return;
   const mir::Class& cls = unit.GetClass(id);
   if (cls.base.has_value()) {
@@ -342,16 +337,16 @@ void AppendClassInDependencyOrder(
   }
   if (emitted[id.value]) return;
   emitted[id.value] = true;
-  const ClassText rendered = RenderClass(unit, id, cls);
-  AppendSection(text.declaration, rendered.declaration);
-  AppendSection(text.definitions, rendered.definitions);
+  const UnitText rendered = RenderClass(unit, id, cls);
+  AppendSection(text.signature, rendered.signature);
+  AppendSection(text.code, rendered.code);
 }
 
 auto RenderClass(
     const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s)
-    -> ClassText {
-  ClassText text;
-  std::string& out = text.declaration;
+    -> UnitText {
+  UnitText text;
+  std::string& out = text.signature;
   out += "class " + CppClassName(s, id);
   if (s.is_final) {
     out += " final";
@@ -388,9 +383,9 @@ auto RenderClass(
   // makes the class implicitly abstract by virtue of the pure virtual
   // methods and forbids `new` on it.
   if (!s.is_interface_class) {
-    const ConstructorText ctor = RenderConstructor(unit, id, s);
-    AppendSection(out, ctor.declaration);
-    AppendSection(text.definitions, ctor.definitions);
+    const UnitText ctor = RenderConstructor(unit, id, s);
+    AppendSection(out, ctor.signature);
+    AppendSection(text.code, ctor.code);
   }
 
   // Members are public so cross-unit references can reach them directly.
@@ -410,8 +405,7 @@ auto RenderClass(
     const mir::CallableDecl& callable = s.callables.Get(callable_id);
     callable_decls += RenderClassCallableDecl(unit, s, callable_id, callable);
     AppendSection(
-        text.definitions,
-        RenderClassCallableDef(unit, id, s, callable_id, callable));
+        text.code, RenderClassCallableDef(unit, id, s, callable_id, callable));
   }
   AppendSection(out, callable_decls);
 
@@ -422,8 +416,7 @@ auto RenderClass(
   for (const mir::AbiAdapterId adapter_id : s.abi_adapters.Ids()) {
     const mir::AbiAdapter& a = s.abi_adapters.Get(adapter_id);
     adapter_decls += RenderAbiAdapterDecl(unit, adapter_id, a);
-    AppendSection(
-        text.definitions, RenderAbiAdapterDef(unit, id, s, adapter_id, a));
+    AppendSection(text.code, RenderAbiAdapterDef(unit, id, s, adapter_id, a));
   }
   AppendSection(out, adapter_decls);
 
@@ -441,23 +434,23 @@ auto RenderClass(
   return text;
 }
 
-// How a free callable's definition is reached. A plain callable is `inline`,
-// because its definition sits in the header every caller includes; a foreign
-// one takes C linkage, since its symbol is program-global (LRM 35.4) and is
-// reached from outside this language, which is also why it is defined outright
-// rather than inline.
-auto RenderFreeCallableStorage(const mir::CallableDecl& callable)
+// The language linkage a free callable is reached by. A foreign one takes C
+// linkage, since its symbol is program-global (LRM 35.4) and is reached from
+// outside this language; a callable of the unit's own namespace is reached by
+// every referrer through the declaration it publishes, which the default
+// linkage already serves.
+auto RenderFreeCallableLinkage(const mir::CallableDecl& callable)
     -> std::string_view {
-  return callable.foreign.has_value() ? R"(extern "C")" : "inline";
+  return callable.foreign.has_value() ? R"(extern "C" )" : "";
 }
 
-// The signature of a function emitted at the unit's own scope: its storage
-// class, the symbol it is reached by, its named parameters, and its result
+// The signature of a function emitted at the unit's own scope: its language
+// linkage, the symbol it is reached by, its named parameters, and its result
 // type. Every use of this -- an import's declaration, an export entry point's
 // definition, a package function's definition -- reads the one signature its
 // code carries, so no two of them can disagree.
 auto RenderFreeSignature(
-    const mir::CompilationUnit& unit, std::string_view storage,
+    const mir::CompilationUnit& unit, std::string_view linkage,
     std::string_view symbol, const mir::CallableCode& code) -> std::string {
   std::vector<std::string> params;
   params.reserve(code.params.size());
@@ -465,7 +458,7 @@ auto RenderFreeSignature(
     params.push_back(RenderCallableParam(unit, code, param));
   }
   return std::format(
-      "{} auto {}({}) -> {}", storage, symbol, JoinCommaSeparated(params),
+      "{}auto {}({}) -> {}", linkage, symbol, JoinCommaSeparated(params),
       RenderTypeAsCpp(unit, code.result_type));
 }
 
@@ -473,7 +466,7 @@ auto RenderFreeCallableSignature(
     const mir::CompilationUnit& unit, mir::CallableId id,
     const mir::CallableDecl& callable) -> std::string {
   return RenderFreeSignature(
-      unit, RenderFreeCallableStorage(callable), CppUnitCallableName(unit, id),
+      unit, RenderFreeCallableLinkage(callable), CppUnitCallableName(unit, id),
       callable.code);
 }
 
@@ -497,11 +490,8 @@ auto RenderFreeCallable(
 
 }  // namespace
 
-// Every class of the unit, declarations first and definitions after, together
-// with the forward declarations that let a field or a signature name a class
-// whose own declaration has not been reached yet.
-auto RenderUnitClasses(const mir::CompilationUnit& unit) -> ClassText {
-  ClassText text;
+auto RenderUnitClasses(const mir::CompilationUnit& unit) -> UnitText {
+  UnitText text;
   std::string forward_declarations;
   std::string struct_definitions;
   for (const mir::ClassId id : unit.classes.Ids()) {
@@ -514,8 +504,8 @@ auto RenderUnitClasses(const mir::CompilationUnit& unit) -> ClassText {
     forward_declarations += std::format("struct {};\n", CppStructName(id));
     struct_definitions += RenderStruct(unit, id, unit.GetStruct(id));
   }
-  AppendSection(text.declaration, forward_declarations);
-  AppendSection(text.declaration, struct_definitions);
+  AppendSection(text.signature, forward_declarations);
+  AppendSection(text.signature, struct_definitions);
   std::vector<bool> emitted(unit.classes.size(), false);
   for (const mir::ClassId id : unit.classes.Ids()) {
     AppendClassInDependencyOrder(unit, id, emitted, text);
@@ -528,8 +518,8 @@ auto RenderUnitClasses(const mir::CompilationUnit& unit) -> ClassText {
 // C language linkage delivers wherever the declaration is written -- so writing
 // it among the unit's declarations costs the symbol nothing and lets an
 // export's entry point name the unit's classes the way every other body does.
-auto RenderUnitCallables(const mir::CompilationUnit& unit) -> UnitCallableText {
-  UnitCallableText text;
+auto RenderUnitCallables(const mir::CompilationUnit& unit) -> UnitText {
+  UnitText text;
   // Every one is declared before any class of the unit, because a class's body
   // may call one -- a type-associated function the compiler synthesized is
   // reached from wherever the source wrote the construct that needs it -- and
@@ -537,35 +527,59 @@ auto RenderUnitCallables(const mir::CompilationUnit& unit) -> UnitCallableText {
   // them. Only a callable this program defines has a definition to land.
   for (const mir::CallableId id : unit.callables.Ids()) {
     const mir::CallableDecl& callable = unit.callables.Get(id);
-    text.declarations +=
-        RenderFreeCallableSignature(unit, id, callable) + ";\n";
+    text.signature += RenderFreeCallableSignature(unit, id, callable) + ";\n";
     if (callable.code.body.has_value()) {
-      AppendSection(text.definitions, RenderFreeCallable(unit, id, callable));
+      AppendSection(text.code, RenderFreeCallable(unit, id, callable));
     }
   }
   return text;
 }
 
-// The symbol this unit writes for each foreign name it declares on a scope. The
-// same text arrives from every unit declaring such a scope, and whichever party
-// resolves names across artifacts keeps one; here that party is the
-// preprocessor, because this backend assembles the program by including every
-// artifact into one translation unit, so a guard is what tells it to hold the
-// first and drop the rest.
+// A package variable is one program-global observable cell (LRM 26.2), so a
+// referrer's own artifact carries none of the storage of the unit it reached. A
+// unit rooted in a design element declares none at all: its storage is
+// per-instance.
+auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText {
+  UnitText text;
+  for (const mir::StaticVariableId id : unit.static_variables.Ids()) {
+    const std::string type =
+        RenderTypeAsCpp(unit, unit.static_variables.Get(id).type);
+    const std::string name =
+        CppStaticVariableName(unit.named_static_variables, id);
+    text.signature += std::format("extern {} {};\n", type, name);
+    text.code += std::format("{} {}{{}};\n", type, name);
+  }
+  return text;
+}
+
+auto RenderExternalObjectDeclarations(const mir::CompilationUnit& unit)
+    -> std::string {
+  std::string out;
+  for (const mir::ExternalUnitObjectId id : unit.external_unit_objects.Ids()) {
+    const mir::ExternalUnitObject& object = unit.external_unit_objects.Get(id);
+    out += std::format(
+        "namespace {} {{\nclass {};\n}}\n", UnitNamespaceOf(object.unit_name),
+        ToCppName(object.class_name));
+  }
+  return out;
+}
+
+// The merge rule has to be one that holds a definition nothing in this language
+// references, because such a symbol is reached only from outside it (LRM 35.4,
+// 35.7): a rule free to drop an unreferenced definition drops it from every
+// artifact at once and the program fails to link.
 auto RenderForeignScopeSymbols(const mir::CompilationUnit& unit)
     -> std::string {
   std::string out;
   for (const mir::ForeignScopeEntry& entry : unit.foreign_scope_entries) {
-    const std::string symbol = CppForeignSymbolName(entry.linkage.foreign_name);
-    const std::string guard = CppOneDefinitionGuard(symbol);
-    std::string definition =
-        std::format("#ifndef {}\n#define {}\n", guard, guard);
-    definition += std::format(
-        "{} {{\n",
-        RenderFreeSignature(unit, R"(extern "C")", symbol, entry.definition));
+    std::string definition = std::format(
+        "{} {{\n", RenderFreeSignature(
+                       unit, R"(extern "C" [[gnu::weak]] )",
+                       CppForeignSymbolName(entry.linkage.foreign_name),
+                       entry.definition));
     definition += RenderBlockStatements(
         ScopeView::ForNamespace(unit, entry.definition), 1);
-    definition += "}\n#endif\n";
+    definition += "}\n";
     AppendSection(out, definition);
   }
   return out;

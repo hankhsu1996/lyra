@@ -140,10 +140,18 @@ why nothing a signature states may rest on it.
       that unit's signature, the property's slot is counted out of what it published, and an
       inherited one is found by walking what each class promised about the class it extends.
 
-- [ ] S10 -- The C++ backend emits a unit's signature as a declaration-only artifact distinct from
+- [x] S10 -- The C++ backend emits a unit's signature as a declaration-only artifact distinct from
       the artifact carrying its bodies, and a referrer consumes only the first. The published prefix
-      is expressed so the target language guarantees the same placement rule S9 states. A change
-      confined to a unit's bodies re-emits no referrer.
+      is expressed so the target language guarantees the same placement rule S9 states: the
+      declaring unit writes its members in that order and the target's own compiler places them. A
+      change confined to a unit's bodies changes no signature, so nothing a referrer compiles
+      against moves. The program is formed by compiling each artifact and linking the results.
+
+      A signature reaches another unit through a pointer, so it names the class without the file it
+      was declared in. The exception is a class it extends, which the target language needs whole;
+      that is the only edge one unit's declarations have to another's, and two units that each
+      extend a class the other declares have no target-language form and are refused.
+
 - [ ] S11 -- A referrer that only holds a handle to another unit's instance consumes that unit's
       signature and nothing more. Constructing an instance reaches the declaring unit's own entry
       point rather than requiring its full layout at the instantiation site, so a declaration the
@@ -151,8 +159,6 @@ why nothing a signature states may rest on it.
 
 ## Out of scope
 
-- Compiling and linking per-unit artifacts separately. The design still compiles as one translation
-  unit; the signature split is what makes the separation possible, not the separation itself.
 - Caching compiled units across runs. A signature is the key such a cache would need, so this
   workstream produces its input, but the cache is its own subject. What makes such a cache sound is
   that a lowering reaches another unit only through its signature (S1), and every fact still read

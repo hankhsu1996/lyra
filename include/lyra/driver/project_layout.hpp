@@ -25,7 +25,6 @@ inline constexpr std::string_view kRuntimeIncludeDir = "runtime/include";
 inline constexpr std::string_view kRuntimeLibDir = "runtime/lib";
 inline constexpr std::string_view kRuntimeLibFile = "libcpp_runtime.a";
 inline constexpr std::string_view kRuntimeCacheDir = "runtime/cache";
-inline constexpr std::string_view kMainSource = "main.cpp";
 inline constexpr std::string_view kProgramName = "program";
 inline constexpr std::string_view kCxxStandardFlag = "-std=c++23";
 // The DPI-C boundary surface a user's foreign sources compile against (LRM 35):

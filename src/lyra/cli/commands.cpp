@@ -111,13 +111,12 @@ auto DesignOf(const CommandContext& ctx)
 }
 
 // Writes the design's emitted C++ sources into `dir` and answers with what
-// assembling the program around them still needs, which is what each unit
-// stated of the foreign name space. Every command that produces a C++ project
-// does exactly this first, whether the project is the one the user asked for or
-// a temporary one about to be built and run.
+// assembling and building the program around them still needs. Every command
+// that produces a C++ project does exactly this first, whether the project is
+// the one the user asked for or a temporary one about to be built and run.
 auto WriteCppSources(
     const CommandContext& ctx, const std::filesystem::path& dir)
-    -> std::optional<std::vector<dpi::AbiFragment>> {
+    -> std::optional<driver::EmittedCppSources> {
   auto design = DesignOf(ctx);
   if (!design) {
     return std::nullopt;
@@ -135,7 +134,7 @@ auto WriteCppSources(
     ctx.sink->Report(std::move(written.error()));
     return std::nullopt;
   }
-  return sources.TakeDpiFragments();
+  return sources.TakeSources();
 }
 
 auto RunDumpHir(const CommandContext& ctx) -> int {
@@ -220,22 +219,23 @@ auto RunDumpLlvm(const CommandContext& ctx) -> int {
 // project's own build recipe, which is why a command that never builds
 // anything still has to name one.
 auto AssemblePortableProject(
-    const CommandContext& ctx, const driver::HostBuild& host) -> bool {
+    const CommandContext& ctx, const driver::HostBuild& host)
+    -> std::optional<driver::EmittedCppSources> {
   auto runtime = ResolveRuntime(ctx);
   if (!runtime) {
-    return false;
+    return std::nullopt;
   }
-  auto fragments = WriteCppSources(ctx, ctx.args->out_dir);
-  if (!fragments) {
-    return false;
+  auto sources = WriteCppSources(ctx, ctx.args->out_dir);
+  if (!sources) {
+    return std::nullopt;
   }
   if (auto assembled = driver::AssembleProject(
-          *runtime, *fragments, ctx.args->out_dir, host, ctx.dpi_inputs);
+          *runtime, *sources, ctx.args->out_dir, host, ctx.dpi_inputs);
       !assembled) {
     ctx.sink->Report(std::move(assembled.error()));
-    return false;
+    return std::nullopt;
   }
-  return true;
+  return sources;
 }
 
 auto RunEmitCpp(const CommandContext& ctx) -> int {
@@ -255,10 +255,12 @@ auto RunCompile(const CommandContext& ctx) -> int {
   if (!host) {
     return 1;
   }
-  if (!AssemblePortableProject(ctx, *host)) {
+  auto sources = AssemblePortableProject(ctx, *host);
+  if (!sources) {
     return 1;
   }
-  auto built = driver::BuildProject(ctx.args->out_dir, *host, ctx.dpi_inputs);
+  auto built = driver::BuildProject(
+      ctx.args->out_dir, sources->translation_units, *host, ctx.dpi_inputs);
   if (!built) {
     ctx.sink->Report(std::move(built.error()));
     return 1;
@@ -282,12 +284,12 @@ auto RunCppBackend(const CommandContext& ctx) -> int {
   if (!host) {
     return 1;
   }
-  auto fragments = WriteCppSources(ctx, *work_dir);
-  if (!fragments) {
+  auto sources = WriteCppSources(ctx, *work_dir);
+  if (!sources) {
     return 1;
   }
   auto exit_code = driver::RunInPlace(
-      *runtime, *fragments, *work_dir, *host, ctx.args->child_args,
+      *runtime, *sources, *work_dir, *host, ctx.args->child_args,
       ctx.dpi_inputs);
   if (!exit_code) {
     ctx.sink->Report(std::move(exit_code.error()));
