@@ -35,8 +35,8 @@ auto CopyTree(
     // Lexical relative only: runfiles entries are symlinks into the build
     // cache, and a filesystem-resolving `relative` would canonicalize them
     // back to their source locations and escape the destination tree.
-    if (auto r = CopyFileWritable(
-            entry.path(), to / entry.path().lexically_relative(from));
+    if (auto r =
+            CopyFile(entry.path(), to / entry.path().lexically_relative(from));
         !r) {
       return r;
     }
@@ -99,8 +99,7 @@ auto ExportRuntimeTree(
       !r) {
     return r;
   }
-  return CopyFileWritable(
-      runtime.lib, dest_dir / kRuntimeLibDir / kRuntimeLibFile);
+  return CopyFile(runtime.lib, dest_dir / kRuntimeLibDir / kRuntimeLibFile);
 }
 
 }  // namespace lyra::driver

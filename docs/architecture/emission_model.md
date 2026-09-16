@@ -17,9 +17,10 @@ a relaxation of the contract.
 The artifact rules below are met. Each unit specialization is emitted as two files -- the
 declarations a referrer compiles against, and the translation unit realizing them -- and the program
 is formed by compiling each and linking the results, so no unit's bodies are read while another is
-compiled. What the boundary buys is not yet taken: nothing records which artifact a change
-invalidated and nothing compiles two of them at once, so every build still recompiles every unit.
-The independence is available rather than spent.
+compiled. A build may compile several at once, and how many is stated by whoever invoked it rather
+than chosen by the build. What the boundary still does not buy is recompiling less than everything:
+nothing records which artifact a change invalidated, so every build compiles every unit, however
+many of them it works on at a time.
 
 ## Owns
 

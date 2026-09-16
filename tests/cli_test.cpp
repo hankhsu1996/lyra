@@ -178,6 +178,78 @@ TEST(LyraCompile, RebuildsAfterSwitchingOptimization) {
   }
 }
 
+// How many units are compiled at once is the caller's to say, at both things
+// that build a design, and it changes nothing about the program produced. What
+// a width buys is measured elsewhere; asserting on it here would be asserting
+// on the machine the test happens to run on.
+TEST(LyraCompile, TakesTheWidthItIsGiven) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteTrivialSource(src);
+  const auto out_dir = *tmp_or / "out";
+  const auto program = out_dir / "program";
+
+  const std::vector<std::string> args = {
+      "compile", "--top", "Test",           "-j",
+      "4",       "-o",    out_dir.string(), src.string()};
+  const auto compiled = RunChildProcess(lyra, args, 120s);
+  ASSERT_EQ(compiled.exit_code, 0) << compiled.stderr_text;
+  const auto ran = RunChildProcess(program, {}, 30s);
+  EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
+      << "stdout: " << ran.stdout_text;
+
+  auto sh_or = lyra::support::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  // Zero asks the recipe for one compile per processor, which is the spelling
+  // a caller uses to say the machine is its own.
+  for (const std::string_view width : {"1", "0"}) {
+    std::filesystem::remove(program);
+    const std::vector<std::string> rebuild = {
+        "-c",
+        std::format("cd '{}' && sh build.sh -j {}", out_dir.string(), width)};
+    const auto built = RunChildProcess(*sh_or, rebuild, 120s);
+    ASSERT_EQ(built.exit_code, 0) << width << ": " << built.stderr_text;
+
+    const auto run = RunChildProcess(program, {}, 30s);
+    EXPECT_EQ(run.exit_code, 0) << width << ": " << run.stderr_text;
+    EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
+        << width << " stdout: " << run.stdout_text;
+  }
+}
+
+// Building twice into one directory, with nothing about the design changed.
+// The second run rewrites the same runtime headers, and the precompiled header
+// it was handed is validated by their modification times rather than by the
+// content its cache key is built from -- so a generator that rewrote an
+// unchanged file would make the build reject a header it had just produced.
+TEST(LyraCompile, BuildsTwiceIntoOneDirectory) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteTrivialSource(src);
+  const auto out_dir = *tmp_or / "out";
+  const auto program = out_dir / "program";
+
+  const std::vector<std::string> args = {
+      "compile", "--top", "Test", "-o", out_dir.string(), src.string()};
+  for (const std::string_view pass : {"first", "second"}) {
+    const auto compiled = RunChildProcess(lyra, args, 120s);
+    ASSERT_EQ(compiled.exit_code, 0) << pass << ": " << compiled.stderr_text;
+
+    const auto run = RunChildProcess(program, {}, 30s);
+    EXPECT_EQ(run.exit_code, 0) << pass << ": " << run.stderr_text;
+    EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
+        << pass << " stdout: " << run.stdout_text;
+  }
+}
+
 TEST(LyraEmit, PortableProjectBuildsItsDpiSources) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();

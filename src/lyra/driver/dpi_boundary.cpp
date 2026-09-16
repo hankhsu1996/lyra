@@ -40,11 +40,11 @@ auto ValidateDpiLinkInputs(std::span<const std::string> sources)
           diag::DiagCode::kHostInvalidCliArgs,
           std::format("DPI-C link input '{}' is not a readable file", source));
     }
-    // Every path that consumes these inputs lands their intermediates and their
-    // copies side by side in one directory, keyed by file name, so two inputs
-    // that share one would overwrite each other rather than both reach the
-    // link. Reject the ambiguity here instead of letting each consumer discover
-    // it -- or, worse, not discover it.
+    // Every path that consumes these inputs names what it derives from them by
+    // file name -- a copy of the source, an object -- so two inputs sharing one
+    // would overwrite each other rather than both reach the link. Reject the
+    // ambiguity here instead of letting each consumer discover it -- or, worse,
+    // not discover it.
     const auto same_name = [&](const DpiLinkInput& seen) {
       return seen.source.filename() == path.filename();
     };
@@ -73,7 +73,7 @@ auto WriteDpiSurface(
       !r) {
     return r;
   }
-  return CopyFileWritable(runtime.svdpi_header, dir / kSvdpiHeader);
+  return CopyFile(runtime.svdpi_header, dir / kSvdpiHeader);
 }
 
 auto CompileDpiObjects(

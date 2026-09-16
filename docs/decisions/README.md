@@ -570,6 +570,12 @@ the detail lives in the entry itself.
   needing a complete type, so it is the only edge between two units' declarations, and a cycle of
   those is refused by whoever assembles the program. Ordering one file's contents, a third
   forward-declaration artifact, and publishing a unit's cells as header definitions are rejected.
+- [a-build-is-told-how-wide-to-run](a-build-is-told-how-wide-to-run.md) -- how many units a build
+  compiles at once is stated by whoever invoked it and never chosen by the build, and told nothing
+  it runs one at a time; each unit compiles to its own object, which concurrency requires rather
+  than reuse, and every compile is attempted so every failure is reported. Defaulting to one per
+  processor, a field in the design declaration, emitting a graph for a build tool, and giving a
+  foreign source a schedule of its own are rejected.
 - [reaching-past-a-published-class](reaching-past-a-published-class.md) -- a class promises what it
   declares and the class it extends, never what it inherited, so a referrer resolves an inherited
   property or behavior by walking that chain and the coordinate names where the walk landed; reading

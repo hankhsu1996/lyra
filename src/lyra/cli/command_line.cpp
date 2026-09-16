@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <expected>
 #include <filesystem>
@@ -13,6 +14,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -260,6 +262,11 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "host C++ compiler for the C++ backend: a path, or a name found on PATH",
       "<program>");
   cmd.add(
+      "-j,--jobs", opts.jobs,
+      "how many of the design's translation units to compile at once; "
+      "0 asks for one per processor",
+      "<count>");
+  cmd.add(
       "-o,--out-dir", opts.out_dir, "write output to this directory", "<dir>",
       slang::CommandLineFlags::FilePath);
   cmd.add(
@@ -346,6 +353,30 @@ auto MakePchOptions(const CliOptions& cli) -> driver::pch::Options {
     opts.cache_dir_override = std::filesystem::path(*cli.pch_cache_dir);
   }
   return opts;
+}
+
+// How many host compiles this invocation may run at once, resolved to a
+// positive count here so no later step has to read a zero as a request.
+//
+// One unless asked otherwise. How much of a machine to take is a claim about
+// what else is running on it, and an invocation that was told nothing has no
+// basis for one -- a conformance run drives sixteen of these builds at a time,
+// and a width each of them picked for itself would multiply rather than add.
+// Zero is how the caller says "this machine is mine", which is the claim a
+// person at a terminal is making and a wrapping tool is not.
+auto ResolveCompileWidth(std::optional<std::int32_t> jobs)
+    -> std::expected<std::size_t, std::string> {
+  if (!jobs.has_value()) {
+    return 1;
+  }
+  if (*jobs < 0) {
+    return std::unexpected(std::format("-j: '{}' is not a count", *jobs));
+  }
+  if (*jobs > 0) {
+    return static_cast<std::size_t>(*jobs);
+  }
+  const unsigned detected = std::thread::hardware_concurrency();
+  return detected == 0 ? 1 : static_cast<std::size_t>(detected);
 }
 
 auto ResolveDesignDeclaration(
@@ -441,6 +472,11 @@ auto ResolveCliOptions(
                          : driver::Optimization::kIterate;
   out.pch = MakePchOptions(opts);
   out.cxx = opts.cxx.value_or("clang++");
+  auto width = ResolveCompileWidth(opts.jobs);
+  if (!width) {
+    return std::unexpected(std::move(width.error()));
+  }
+  out.compile_width = *width;
   out.out_dir = opts.out_dir.value_or("");
 
   // The design's own foreign sources are the base; the command line's are

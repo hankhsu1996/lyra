@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <span>
@@ -22,14 +23,20 @@ namespace lyra::driver {
 enum class SourceFormatting : std::uint8_t { kOff, kOn };
 
 // How this host turns emitted C++ into a program: which compiler to invoke,
-// what to do about the precompiled header, and how hard to optimize. Resolved
-// once at the CLI boundary and passed unchanged down every path, so the recipe
-// an emitted project carries and the compile Lyra performs cannot disagree
-// about any of the three.
+// what to do about the precompiled header, how hard to optimize, and how much
+// of the machine to take while doing it. Resolved once at the CLI boundary and
+// passed unchanged down every path, so the recipe an emitted project carries
+// and the compile Lyra performs cannot disagree about the toolchain.
+//
+// What a build produces, and whether it works at all, is baked into that
+// recipe. How much of a machine to take is not: it is true of one machine at
+// one moment, so the recipe asks its own caller.
 struct HostBuild {
   std::filesystem::path cxx;
   pch::Options pch;
   Optimization optimization = Optimization::kIterate;
+  // How many host compiles may run at once, already a positive count.
+  std::size_t compile_width = 1;
 };
 
 // What the steps after emission need, carried rather than recovered by reading

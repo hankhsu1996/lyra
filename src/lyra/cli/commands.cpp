@@ -62,7 +62,8 @@ auto ResolveHostBuild(const CommandContext& ctx)
   return driver::HostBuild{
       .cxx = *std::move(cxx_or),
       .pch = ctx.args->pch,
-      .optimization = ctx.args->optimization};
+      .optimization = ctx.args->optimization,
+      .compile_width = ctx.args->compile_width};
 }
 
 // The front end's own account of the design, upstream of every form Lyra
