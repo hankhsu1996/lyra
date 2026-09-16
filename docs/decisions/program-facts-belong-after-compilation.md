@@ -24,11 +24,19 @@ moves, so moving them separately keeps it alive across three changes.
 
 Two of the three are settled by IEEE 1800 itself, in the verbs it chose.
 
-**Initialization order.** LRM 26.2 fixes a barrier and not an order: every package's variable
-declaration assignments happen before any `initial` or `always` procedure starts, and nothing orders
-the packages against each other. So an order is a quality-of-implementation choice, and the reason
-to want one is that a run's output match the next run's -- which is reproducibility, not
-correctness.
+**Initialization order.** The standard states a barrier four times and an order nowhere. LRM 26.2: a
+package's "variable declaration assignments shall occur before any initial or always procedures are
+started". LRM 6.8 and 10.5 say it of any static variable, and 6.7.3 of a net with a user-defined
+nettype. Nothing orders one initialization against another, and LRM 26.3's "the compilation of a
+package shall precede the compilation of scopes in which the package is imported" is about
+compilation rather than about when an initializer runs.
+
+**So an order is not required, and Lyra chooses one anyway.** Reproducibility is not the reason --
+any fixed order gives that, including sorting by name. The reason is that an initializer reading
+another package's variable is written expecting that package's value, every established simulator
+answers that way, and a design ported to Lyra that got a default instead would be wrong in a way
+nothing reports. That is a quality-of-implementation choice, and stating it as one is the point: a
+conformance case may not assert it, because a conforming simulator is free to answer otherwise.
 
 **The foreign name space.** LRM 35.4 says an imported subroutine "shall **eventually** resolve to a
 global symbol", and that these names "have their own global name space of linkage names, **different
@@ -72,6 +80,22 @@ one that assembles the program by textual inclusion. Only the last is exercised 
 execution backend does not yet publish a foreign entry point at all; a backend states its own rule
 when it gains one, and nothing above the artifact varies with the answer.
 
+**Which of the two a name is, is stated by where the unit states it, and by nothing else.** A unit
+publishes what its own namespace owns and, separately, what it declares of a name whose entries sit
+on scopes; a definition goes with the statement it belongs to. That placement is the whole of the
+distinction: a consumer emitting a definition from the second reaches for a merge rule and one
+emitting from the first does not, and neither asks which kind it is holding.
+
+This reverses the second half of [dpi-foreign-boundary](dpi-foreign-boundary.md)'s rejection of "the
+program-global export symbol as its own species beside the callable arena". That rejection argues
+from the symbol being "owned by the unit that defines it", which D3 has just shown is false here,
+and from such a container leaving the export with no prototype record, which does not arise because
+the record holding the definition is the one that already held the prototype. Its remaining cost is
+real and is paid: the name is reached by a second walk wherever a unit's definitions are enumerated.
+What that buys is the removal of a discriminator every one of those walks had to read and read
+correctly -- and a body naming nothing the unit owns does not belong among the unit's own, which is
+the same statement from the other side.
+
 ### D4. The union of the foreign name space is assembled by the build
 
 Each unit writes what it states of the boundary. The header a foreign source includes names those
@@ -103,6 +127,19 @@ one of several inputs fails.
 - **Initialize a namespace on first read, as Java does for a class (JLS 12.4).** LRM 26.2's barrier
   means every namespace's initializers must have run before any procedure starts, so laziness saves
   nothing and puts a check on every package-variable access.
+- **Impose no order at all, which is what the standard permits.** The cheapest answer, and it is
+  conforming: bring the namespaces up in any fixed order. It is rejected on the ground above -- a
+  design ported from another simulator would read a default where it expects a value, with nothing
+  reporting it -- and the ground is worth keeping visible, because it is the only one. Nothing in
+  IEEE 1800 is being satisfied here.
+- **Take the initializer's reads from the front end's flow analysis rather than from the lowered
+  unit.** That is where every other read set in this compiler comes from, and the reason is
+  precision: a sensitivity set that over-collects wakes a body that had no reason to run, which
+  costs simulation time. Neither half transfers. Over-collecting here adds a call to an entry that
+  answers immediately, and the reads being looked for are a closed set of two cross-unit reference
+  forms in the lowered body rather than leaves of an arbitrary procedural expression, so no must-def
+  or local-symbol reasoning arises. What the walk must not become is a general reader of bodies; it
+  reads two node kinds and stops.
 - **Register each namespace's initializer with the runtime and let it sort them.** It needs a
   vocabulary for the address of a unit-level callable, a registry, and a topological sort -- to
   express an order the calls already express.
@@ -115,6 +152,11 @@ one of several inputs fails.
 - **A per-symbol owner chosen by rule -- say, the lexically first declaring unit.** It restores a
   single definition without a merge rule, and it needs every unit to know which of them was first,
   which is the whole-design read again wearing a tie-break.
+- **Keep the definition among the unit's own callables and tag which kind it is.** The shape this
+  started as, and the tag is what condemns it: it says of a body sitting in the pool of what a unit
+  owns that this one is not owned, which is a receipt for the wrong placement rather than a fact
+  worth stating. It also states the same thing twice, since the name is already on one list and not
+  the other, and two statements of one fact are held in step by nothing.
 
 ## Consequences
 

@@ -451,25 +451,30 @@ auto RenderFreeCallableStorage(const mir::CallableDecl& callable)
   return callable.foreign.has_value() ? R"(extern "C")" : "inline";
 }
 
-// The free-function signature of a callable the unit's namespace or the DPI-C
-// name space owns: its storage class, the symbol it is reached by, its named
-// parameters, and its result type. Every use of this -- an import's
-// declaration, an export entry point's definition, a package function's
-// definition -- reads the one signature the callable carries, so no two of them
-// can disagree.
-auto RenderFreeCallableSignature(
-    const mir::CompilationUnit& unit, mir::CallableId id,
-    const mir::CallableDecl& callable) -> std::string {
-  const mir::CallableCode& code = callable.code;
+// The signature of a function emitted at the unit's own scope: its storage
+// class, the symbol it is reached by, its named parameters, and its result
+// type. Every use of this -- an import's declaration, an export entry point's
+// definition, a package function's definition -- reads the one signature its
+// code carries, so no two of them can disagree.
+auto RenderFreeSignature(
+    const mir::CompilationUnit& unit, std::string_view storage,
+    std::string_view symbol, const mir::CallableCode& code) -> std::string {
   std::vector<std::string> params;
   params.reserve(code.params.size());
   for (const mir::LocalId param : code.params) {
     params.push_back(RenderCallableParam(unit, code, param));
   }
   return std::format(
-      "{} auto {}({}) -> {}", RenderFreeCallableStorage(callable),
-      CppUnitCallableName(unit, id), JoinCommaSeparated(params),
+      "{} auto {}({}) -> {}", storage, symbol, JoinCommaSeparated(params),
       RenderTypeAsCpp(unit, code.result_type));
+}
+
+auto RenderFreeCallableSignature(
+    const mir::CompilationUnit& unit, mir::CallableId id,
+    const mir::CallableDecl& callable) -> std::string {
+  return RenderFreeSignature(
+      unit, RenderFreeCallableStorage(callable), CppUnitCallableName(unit, id),
+      callable.code);
 }
 
 // A callable the unit owns directly, rendered as a free function definition:
@@ -483,26 +488,10 @@ auto RenderFreeCallable(
     const mir::CompilationUnit& unit, mir::CallableId id,
     const mir::CallableDecl& callable) -> std::string {
   std::string out;
-  // A symbol several artifacts may each define is kept once by whichever party
-  // resolves names across them. Here that party is the preprocessor: this
-  // backend assembles the program by including every artifact into one
-  // translation unit, so the first definition to arrive is the one the program
-  // holds and the rest state nothing. Each is generated from the name and the
-  // prototype alone, so they are the same text.
-  const bool kept_once = callable.foreign.has_value() &&
-                         mir::ExpectsOtherDefinitions(*callable.foreign);
-  if (kept_once) {
-    const std::string guard =
-        CppOneDefinitionGuard(callable.foreign->foreign_name);
-    out += std::format("#ifndef {}\n#define {}\n", guard, guard);
-  }
   out +=
       std::format("{} {{\n", RenderFreeCallableSignature(unit, id, callable));
   out += RenderBlockStatements(ScopeView::ForNamespace(unit, callable.code), 1);
   out += "}\n";
-  if (kept_once) {
-    out += "#endif\n";
-  }
   return out;
 }
 
@@ -551,6 +540,31 @@ auto RenderUnitCallables(const mir::CompilationUnit& unit) -> UnitCallableText {
     AppendSection(text.definitions, RenderFreeCallable(unit, id, callable));
   }
   return text;
+}
+
+// The symbol this unit writes for each foreign name it declares on a scope. The
+// same text arrives from every unit declaring such a scope, and whichever party
+// resolves names across artifacts keeps one; here that party is the
+// preprocessor, because this backend assembles the program by including every
+// artifact into one translation unit, so a guard is what tells it to hold the
+// first and drop the rest.
+auto RenderForeignScopeSymbols(const mir::CompilationUnit& unit)
+    -> std::string {
+  std::string out;
+  for (const mir::ForeignScopeEntry& entry : unit.foreign_scope_entries) {
+    const std::string symbol = CppForeignSymbolName(entry.linkage.foreign_name);
+    const std::string guard = CppOneDefinitionGuard(symbol);
+    std::string definition =
+        std::format("#ifndef {}\n#define {}\n", guard, guard);
+    definition += std::format(
+        "{} {{\n",
+        RenderFreeSignature(unit, R"(extern "C")", symbol, entry.definition));
+    definition += RenderBlockStatements(
+        ScopeView::ForNamespace(unit, entry.definition), 1);
+    definition += "}\n#endif\n";
+    AppendSection(out, definition);
+  }
+  return out;
 }
 
 }  // namespace lyra::backend::cpp

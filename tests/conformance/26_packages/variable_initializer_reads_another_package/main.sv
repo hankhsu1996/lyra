@@ -1,10 +1,16 @@
 // A package's declarations may be referenced within another package, by a
-// resolved name or by an import, and the compilation of the referenced package
-// precedes the compilation of the scope importing it (LRM 26.2, 26.3). Since
-// every package's variable declaration assignments happen before any initial or
-// always procedure is started (LRM 26.2), a variable whose initializer reads
-// another package's variable observes that variable already initialized rather
-// than at its default value.
+// resolved name or by an import (LRM 26.2, 26.3). Every package's variable
+// declaration assignments happen before any initial or always procedure is
+// started (LRM 26.2), so both packages are initialized by the time the values
+// below are read.
+//
+// The values themselves pin more than the standard fixes. LRM 26.2 states a
+// barrier and orders no package's initializers against another's, and LRM 26.3
+// orders compilation rather than execution, so a conforming simulator may run
+// these in either order and answer 1 where this expects 11. What this case
+// therefore checks is the order Lyra chooses: an initializer reading another
+// package's variable sees that package's value, which is what every
+// established simulator answers and what the code was written expecting.
 package base_pkg;
   int seed = 10;
   int offset = 9;

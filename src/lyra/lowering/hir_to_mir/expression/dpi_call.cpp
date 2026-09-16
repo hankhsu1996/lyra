@@ -1296,8 +1296,6 @@ void PublishForeignScopeName(
   if (already) {
     return;
   }
-  unit.foreign_scope_entries.push_back(
-      mir::ForeignScopeEntry{.linkage = linkage, .signature = signature});
 
   // Held by value: defining the symbol interns into the same pool this is read
   // from.
@@ -1378,11 +1376,11 @@ void PublishForeignScopeName(
     body.AppendStmt(mir::ReturnStmt{.value = call});
   }
 
-  unit.callables.Add(
-      mir::CallableDecl{
-          .code = std::move(code),
-          .foreign = linkage,
-          .virtual_dispatch = std::nullopt});
+  unit.foreign_scope_entries.push_back(
+      mir::ForeignScopeEntry{
+          .linkage = linkage,
+          .signature = signature,
+          .definition = std::move(code)});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

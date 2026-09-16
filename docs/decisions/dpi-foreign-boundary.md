@@ -235,6 +235,14 @@ usage inflate the scope.
   the runtime holds it by address in the scope's table, which is what a scope's lifecycle entries
   already are, so it joins that species instead of inventing one, and it carries the linkage too --
   so neither direction is left without a prototype.
+
+  **What holds here is the half about a symbol a unit owns**, and
+  [program-facts-belong-after-compilation](program-facts-belong-after-compilation.md) reverses the
+  other half and argues it there. The premise above is that such a symbol is "owned by the unit that
+  defines it"; for a name whose entries sit on scopes that is false, so the reasoning does not reach
+  it. The prototype objection does not reach it either -- what holds that name's definition is the
+  same record that already held its prototype, so nothing is left without one.
+
 - **The C prototype as a record beside the callable rather than the callable's signature.** A
   bodyless callable looks like it has no signature to put it on, so the prototype gets its own home
   and only the bodyless direction reads it -- which forces a second signature-rendering path for

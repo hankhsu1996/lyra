@@ -342,9 +342,12 @@ cross-check predicts. This file owns only which instances are known and what is 
       something: with no field saying what a declaration is, four sites across the two backends read
       an absent body and each attaches its own meaning -- one calls a class callable with none a
       pure virtual and emits the marker that makes its class abstract, another concludes only that
-      no code identity is needed. They agree today because the inputs make both right. **Gated on**
-      the external callable form and a co-design with the foreign-symbol contract, which needs the
-      same declaration shape.
+      no code identity is needed. They agree today because the inputs make both right. The same root
+      has a second half nobody has counted: two more sites read an absent **foreign linkage** rather
+      than an absent body -- one to pick a target storage class, one to decide a refusal -- while a
+      third answer to that same question already sits in the semantic layer as a closed set that
+      nothing obliges either of them to ask. **Gated on** the external callable form and a co-design
+      with the foreign-symbol contract, which needs the same declaration shape.
 - [x] T24 -- An operation a runtime library carries out is named in one namespace, whichever library
       class the source reaches it through. A second namespace had stood beside the shared one for
       the six methods of the imported `process` class (LRM 9.7), and what decides a namespace is the

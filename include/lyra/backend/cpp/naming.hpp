@@ -318,6 +318,15 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
   return MintedCppName("constant", id.value);
 }
 
+// The C++ identifier a DPI-C linkage name is emitted under. It is an identifier
+// of C rather than of SystemVerilog (LRM 35.4), already spelled the way the
+// foreign side must see it, so it crosses as itself -- and it must, since the
+// user's own C source names it and nothing maps that.
+[[nodiscard]] inline auto CppForeignSymbolName(std::string_view linkage_name)
+    -> std::string {
+  return std::string{linkage_name};
+}
+
 // The preprocessor guard that keeps one definition of a symbol several units
 // may each define. This backend assembles the program by including every unit's
 // artifact into one translation unit, so what resolves a name across artifacts
@@ -351,7 +360,7 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
   return std::visit(
       Overloaded{
           [](const mir::ReachedByLinkageName& r) {
-            return std::string{r.name};
+            return CppForeignSymbolName(r.name);
           },
           [](const mir::ReachedByName& r) { return ToCppName(r.name); },
           [](const mir::ReachedByStoragePhase& r) {

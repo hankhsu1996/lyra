@@ -2438,9 +2438,6 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         unit_lowerer, ctor_frame,
         mir::CallableTarget{.owner = class_id_, .slot = method_id},
         method_result_type, export_decl);
-    // No unit owns the name, so this one defines it knowing another may define
-    // the same one, and the party that assembles the program keeps one.
-    entry.linkage.definition = mir::ForeignDefinition::kEachDeclarer;
     // Two scopes of one unit may export one name (LRM 35.4), and what the unit
     // states of that name is the same either way, so it is stated once. Each
     // scope still publishes an entry of its own, because which subroutine the

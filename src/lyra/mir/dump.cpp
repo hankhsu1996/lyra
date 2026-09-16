@@ -101,6 +101,17 @@ class MirDumper {
       }
       Dedent();
     }
+    // The foreign names this unit declares on a scope: a prototype no callable
+    // of the unit carries, and the symbol the unit writes for it, which belongs
+    // to no unit and so sits outside the pool above.
+    if (!unit.foreign_scope_entries.empty()) {
+      Line("ForeignScopeEntries:");
+      Indent();
+      for (std::size_t i = 0; i < unit.foreign_scope_entries.size(); ++i) {
+        DumpForeignScopeEntry(unit.foreign_scope_entries[i], i);
+      }
+      Dedent();
+    }
     // A description is an expression tree with no statements, so what is
     // dumped under each described type is its expressions and which of them is
     // the description.
@@ -1045,6 +1056,22 @@ class MirDumper {
     Indent();
     DumpCallableBody(decl.invoke);
     Dedent();
+    Dedent();
+  }
+
+  void DumpForeignScopeEntry(const ForeignScopeEntry& e, std::size_t index) {
+    Line(std::format("[{}] : Type[{}]", index, e.signature.value));
+    Indent();
+    DumpForeignLinkage(e.linkage);
+    for (std::size_t i = 0; i < e.definition.params.size(); ++i) {
+      const LocalId param = e.definition.params[i];
+      Line(
+          std::format(
+              "Param[{}]{} : Type[{}]", i,
+              FormatName(NameOf(e.definition.named_locals, param)),
+              e.definition.locals.Get(param).type.value));
+    }
+    DumpCallableBody(e.definition);
     Dedent();
   }
 

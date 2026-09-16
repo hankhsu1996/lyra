@@ -10,6 +10,7 @@
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
 
@@ -124,6 +125,26 @@ using AbiAdapterPublication =
 struct AbiAdapter {
   CallableCode code;
   AbiAdapterPublication published;
+};
+
+// What a unit states about one foreign name whose entries sit on scopes (LRM
+// 35.5.3): the prototype the name publishes, and the definition this unit
+// writes for the program-global symbol.
+//
+// The definition is not one of the unit's own callables and is kept apart from
+// them for the reason that decides everything else about it. The subroutine
+// behind the name exists once per elaborated scope while the name is one symbol
+// (LRM 35.4), so the symbol resolves an instance at call time instead of being
+// one -- and a body doing that names the linkage name and the prototype and
+// nothing the unit owns. Every unit declaring such a scope therefore writes the
+// same text, and what reaches one definition is a merge rule rather than an
+// owner. A name a unit's own namespace owns is the opposite on both counts: its
+// definition calls that unit's subroutine, only that unit can write it, and it
+// is a callable of the unit like any other.
+struct ForeignScopeEntry {
+  ForeignLinkage linkage;
+  TypeId signature;
+  CallableCode definition;
 };
 
 }  // namespace lyra::mir

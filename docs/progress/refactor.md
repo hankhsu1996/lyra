@@ -1482,6 +1482,22 @@ enough to warrant its own focused review.
       it lacked was a case. It has one now, which is what turns a known limit into something that
       reports the day it is fixed.
 
+- [ ] R94 -- A choice the standard leaves open is pinned by a conformance case, which is the one
+      thing that corpus says a case may not do: a case states what the standard requires, so it is
+      valid under any conforming simulator. The order two packages' variable initializers run in is
+      such a choice -- IEEE 1800 states the barrier three times and an order nowhere -- and a case
+      checks the value that only one order produces. It is not the only one of its kind; a pass over
+      the corpus asking "would a conforming simulator be free to answer otherwise" is what finds the
+      rest.
+
+      What makes this hard to simply delete is that the behaviour is deliberate and worth guarding:
+      an initializer reading another package's variable sees that package's value, which is what
+      every established simulator answers. Removing the case loses the only thing standing between
+      that and a silent regression. **Target shape**: somewhere for a case that pins a choice of
+      ours, kept apart from the corpus that answers to the standard, so neither has to carry the
+      other's contract. Until there is one, such a case says in its own text which of the two it
+      is.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

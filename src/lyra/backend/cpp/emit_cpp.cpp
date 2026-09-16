@@ -113,6 +113,7 @@ auto RenderUnitHeaderFile(const mir::CompilationUnit& unit) -> std::string {
   AppendSection(body, classes.declaration);
   AppendSection(body, classes.definitions);
   AppendSection(body, callables.definitions);
+  AppendSection(body, RenderForeignScopeSymbols(unit));
   body += "\n";
 
   std::string out;

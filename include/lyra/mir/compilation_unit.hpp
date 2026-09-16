@@ -217,9 +217,9 @@ struct CompilationUnit {
   // the declaration the user's C defines, an export symbol the definition the
   // user's C calls. Where an export's subroutine belongs to a scope, the scope
   // publishes an entry per specialization and the symbol dispatches over those
-  // entries, so the entry is not one of these and the symbol belongs to the
-  // unit that reads the whole design. A class's own callables live on that
-  // class; these are the unit-level namespace's, one scope up.
+  // entries -- a definition naming nothing this unit owns, which is why neither
+  // the entry nor the symbol is one of these. A class's own callables live on
+  // that class; these are the unit-level namespace's, one scope up.
   base::Arena<CallableDecl, CallableId> callables;
   // The names this unit's namespace answers and which body each reaches (LRM
   // 26.3). A subroutine the source declared is here because another unit spells
@@ -239,9 +239,15 @@ struct CompilationUnit {
   // once and in declaration order. A name is program-global and lives in its
   // own name space, and a scope's entry is compiled once per specialization of
   // that scope, so none of those entries is the symbol -- this is what the unit
-  // states of the name itself, which is the prototype a foreign source compiles
-  // against and the symbol it links to. What a unit's own namespace owns is not
+  // states of the name itself: the prototype a foreign source compiles against
+  // and the definition it links to. What a unit's own namespace owns is not
   // among these: its callable is the symbol and already says so.
+  //
+  // Being on this list rather than in the pool above is the whole statement of
+  // which of the two a name is. A definition here names only the name and the
+  // prototype, so every unit declaring such a scope writes the same one and the
+  // party assembling the program keeps one; a definition up there calls that
+  // unit's own subroutine and no other artifact can write it.
   std::vector<ForeignScopeEntry> foreign_scope_entries;
   // Every compiler-generated nominal struct of this unit -- a promoted
   // automatic scope's storage. Its `StructId` is the struct's type identity; a
