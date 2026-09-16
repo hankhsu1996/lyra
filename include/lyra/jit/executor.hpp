@@ -1,7 +1,6 @@
 #pragma once
 
 #include <filesystem>
-#include <optional>
 #include <span>
 #include <string>
 
@@ -19,10 +18,12 @@ namespace lyra::jit {
 // code outlives the design, so the runtime's pointers into generated code stay
 // valid for the whole run.
 //
-// `dpi_library`, when present, is a shared library the design's DPI-C imports
-// (LRM 35) are resolved from: a generated foreign call names a symbol this
-// process does not define, and with no link step the execution session is where
-// it must be found. A design with no imports passes none.
+// `dpi_objects` are the compiled DPI-C link inputs (LRM 35). The session is
+// this design's linker, so they are linked into it rather than loaded beside
+// it: that is what resolves a generated foreign call against a symbol this
+// process does not define, and equally an exported subroutine the foreign side
+// calls back under a name only the session defines. A design with no foreign
+// sources passes none.
 //
 // `simulation_arguments` are the design's own arguments, the ones a caller
 // keeps apart from the compiler's; the run reads its LRM 21.6 plusargs out of
@@ -33,7 +34,7 @@ namespace lyra::jit {
 auto Execute(
     std::span<const compiler::ExecutableUnit> units,
     const compiler::ExecutableUnit& root_unit,
-    const std::optional<std::filesystem::path>& dpi_library,
+    std::span<const std::filesystem::path> dpi_objects,
     std::span<const std::string> simulation_arguments) -> diag::Result<int>;
 
 }  // namespace lyra::jit

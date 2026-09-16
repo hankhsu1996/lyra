@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -19,7 +20,6 @@
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/ExecutionEngine/JITSymbol.h>
 #include <llvm/ExecutionEngine/Orc/Core.h>
-#include <llvm/ExecutionEngine/Orc/ExecutionUtils.h>
 #include <llvm/ExecutionEngine/Orc/IRTransformLayer.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
@@ -28,6 +28,7 @@
 #include <llvm/IR/PassManager.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/Error.h>
+#include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Transforms/Coroutines/CoroCleanup.h>
 #include <llvm/Transforms/Coroutines/CoroEarly.h>
@@ -317,6 +318,11 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_leave_dpi_scope", &lyra_rt_leave_dpi_scope);
   add("lyra_rt_claim_namespace_initialize",
       &lyra_rt_claim_namespace_initialize);
+  add("lyra_rt_current_export_scope", &lyra_rt_current_export_scope);
+  add("lyra_rt_find_export_entry", &lyra_rt_find_export_entry);
+  add("lyra_rt_run_foreign_task_on_fiber", &lyra_rt_run_foreign_task_on_fiber);
+  add("lyra_rt_run_exported_task_to_completion",
+      &lyra_rt_run_exported_task_to_completion);
   add("lyra_rt_spawn_all", &lyra_rt_spawn_all);
   add("lyra_rt_fork_wait_all", &lyra_rt_fork_wait_all);
   add("lyra_rt_fork_wait_first", &lyra_rt_fork_wait_first);
@@ -643,6 +649,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_dpi_logic_buffer_data", &lyra_rt_dpi_logic_buffer_data);
   add("lyra_rt_read_canonical_bit_vec", &lyra_rt_read_canonical_bit_vec);
   add("lyra_rt_read_canonical_logic_vec", &lyra_rt_read_canonical_logic_vec);
+  add("lyra_rt_write_canonical_bit_vec", &lyra_rt_write_canonical_bit_vec);
+  add("lyra_rt_write_canonical_logic_vec", &lyra_rt_write_canonical_logic_vec);
   add("lyra_rt_to_sv_logic", &lyra_rt_to_sv_logic);
   add("lyra_rt_from_sv_logic", &lyra_rt_from_sv_logic);
   add("lyra_rt_make_dpi_open_array", &lyra_rt_make_dpi_open_array);
@@ -1227,21 +1235,24 @@ auto MismatchedEntries(
   return mismatched;
 }
 
-// Opens the design's DPI-C library to the execution session, so a generated
-// foreign call finds its symbol (LRM 35.4). A generator searches the library on
-// each unresolved name, which is what an ahead-of-time image's link step does
-// once; the mangling prefix is the platform's, taken from the JIT's data
-// layout.
-void DefineForeignSymbols(
-    llvm::orc::LLJIT& jit, const std::filesystem::path& library) {
-  auto generator = llvm::orc::DynamicLibrarySearchGenerator::Load(
-      library.c_str(), jit.getDataLayout().getGlobalPrefix());
-  if (!generator) {
-    throw InternalError(
-        "jit executor: loading the DPI-C library '" + library.string() +
-        "': " + llvm::toString(generator.takeError()));
+// Links the design's compiled DPI-C inputs into the execution session, which is
+// this design's linker: the session resolves names across everything it holds,
+// so the foreign side's calls out and the design's exported entry points
+// resolve in one place rather than in two that cannot see each other (LRM
+// 35.4).
+void LinkForeignObjects(
+    llvm::orc::LLJIT& jit, std::span<const std::filesystem::path> objects) {
+  for (const std::filesystem::path& object : objects) {
+    auto buffer = llvm::MemoryBuffer::getFile(object.string());
+    if (!buffer) {
+      throw InternalError(
+          "jit executor: reading the DPI-C object '" + object.string() +
+          "': " + buffer.getError().message());
+    }
+    Check(
+        jit.addObjectFile(std::move(*buffer)),
+        "link a DPI-C object into the session");
   }
-  jit.getMainJITDylib().addGenerator(std::move(*generator));
 }
 
 using SlotRole = backend::llvm_backend::MemberSlotRole;
@@ -1319,24 +1330,19 @@ auto DescribeMembers(
   return descriptors;
 }
 
-// One scope class loaded into the JIT: the storage schema its instances
-// realize, and the runtime definition built from its compiled entries, which
-// owns a stable address every site constructing an instance references. The
-// schema is held here because the definition names it as plain data it does not
-// own.
-// One subroutine a scope answers a hierarchical name with: the identifier such
-// a name spells, and the symbol the body was emitted under.
+// One name a scope answers a call under: the identifier a caller spells, and
+// the symbol the entry it reaches was emitted under.
 struct LoadedSubroutine {
   std::string name;
   std::string symbol;
 };
 
-// The by-name callable surface of one scope: what it declares, and the table
-// the runtime scans. It sits behind its own allocation for the reason the
-// definition beside it does -- the table names the identifiers rather than
+// One name space of a scope's by-name callable surface: what it declares, and
+// the table the runtime scans. It sits behind its own allocation for the reason
+// the definition beside it does -- the table names the identifiers rather than
 // copying them, so both must keep their addresses for as long as anything holds
 // the definition.
-struct PublishedSubroutines {
+struct PublishedCallables {
   std::vector<LoadedSubroutine> declared;
   std::vector<runtime::ScopeCallable> table;
 };
@@ -1362,6 +1368,11 @@ struct LoadedScopeEntries {
   std::string construct;
 };
 
+// One scope class loaded into the JIT: the storage schema its instances
+// realize, and the runtime definition built from its compiled entries, which
+// owns a stable address every site constructing an instance references. The
+// schema is held here because the definition names it as plain data it does not
+// own.
 struct LoadedScopeClass {
   // The symbol the class links under. What its bodies link under are further
   // symbols over the same parts rather than words appended to this one, so
@@ -1369,9 +1380,10 @@ struct LoadedScopeClass {
   std::string name;
   std::string definition_symbol;
   LoadedScopeEntries entries;
-  std::int8_t time_precision_power = 0;
+  TimeResolution time_resolution;
   std::vector<runtime::MemberStorageDescriptor> members;
-  std::unique_ptr<PublishedSubroutines> published;
+  std::unique_ptr<PublishedCallables> subroutines;
+  std::unique_ptr<PublishedCallables> exports;
   std::unique_ptr<DeclaredClasses> classes;
   std::unique_ptr<runtime::ScopeDefinition> definition;
 };
@@ -1397,7 +1409,8 @@ void FillDefinition(llvm::orc::LLJIT& jit, LoadedScopeClass& cls) {
         "' did not resolve: " + llvm::toString(found.takeError()));
   };
   runtime::ScopeDefinition& definition = *cls.definition;
-  definition.program.metadata.time_precision_power = cls.time_precision_power;
+  definition.program.metadata = runtime::ScopeMetadata{
+      cls.time_resolution.unit_power, cls.time_resolution.precision_power};
   definition.program.resolve_state =
       lookup(cls.entries.resolve_state).toPtr<runtime::ScopeEntry>();
   definition.program.initialize_state =
@@ -1407,18 +1420,21 @@ void FillDefinition(llvm::orc::LLJIT& jit, LoadedScopeClass& cls) {
   definition.construct =
       lookup(cls.entries.construct).toPtr<runtime::ScopeEntry>();
 
-  PublishedSubroutines& published = *cls.published;
-  published.table.reserve(published.declared.size());
-  for (const LoadedSubroutine& subroutine : published.declared) {
-    published.table.emplace_back(
-        runtime::AbiStringRef{
-            subroutine.name.data(),
-            static_cast<std::uint32_t>(subroutine.name.size())},
-        lookup(subroutine.symbol).toPtr<runtime::ErasedScopeCallable>());
-  }
-  definition.program.subroutines = runtime::ScopeCallableTable{
-      published.table.data(),
-      static_cast<std::uint32_t>(published.table.size())};
+  const auto resolve_table =
+      [&](PublishedCallables& published) -> runtime::ScopeCallableTable {
+    published.table.reserve(published.declared.size());
+    for (const LoadedSubroutine& entry : published.declared) {
+      published.table.emplace_back(
+          runtime::AbiStringRef{
+              entry.name.data(), static_cast<std::uint32_t>(entry.name.size())},
+          lookup(entry.symbol).toPtr<runtime::ErasedScopeCallable>());
+    }
+    return runtime::ScopeCallableTable{
+        published.table.data(),
+        static_cast<std::uint32_t>(published.table.size())};
+  };
+  definition.program.subroutines = resolve_table(*cls.subroutines);
+  definition.program.exports = resolve_table(*cls.exports);
 }
 
 // One cell a unit shares with the whole program, built here because the
@@ -1484,17 +1500,18 @@ auto LoadScopeClasses(
     if (!members) {
       return std::unexpected(std::move(members.error()));
     }
-    // Every scope of a unit runs at the unit's precision: a scope inside a unit
-    // has no timescale declaration of its own and takes the enclosing one (LRM
-    // 3.14.2.3).
-    auto published = std::make_unique<PublishedSubroutines>();
-    published->declared.reserve(cls.subroutines.size());
-    for (const lir::PublishedSubroutine& subroutine : cls.subroutines) {
-      published->declared.push_back(
-          LoadedSubroutine{
-              .name = subroutine.name,
-              .symbol = unit.functions.Get(subroutine.body).name});
-    }
+    const auto load_table =
+        [&](const std::vector<lir::PublishedCallable>& published) {
+          auto loaded = std::make_unique<PublishedCallables>();
+          loaded->declared.reserve(published.size());
+          for (const lir::PublishedCallable& entry : published) {
+            loaded->declared.push_back(
+                LoadedSubroutine{
+                    .name = entry.name,
+                    .symbol = unit.functions.Get(entry.entry).name});
+          }
+          return loaded;
+        };
     // A class is named here by what it is linked under, which is what the
     // program's own class list is keyed by -- so the join costs no second
     // naming rule.
@@ -1526,9 +1543,10 @@ auto LoadScopeClasses(
                         unit.functions.Get(stands_in_tree->create_processes)
                             .name,
                     .construct = unit.functions.Get(cls.constructor).name},
-            .time_precision_power = metadata.time_precision_power,
+            .time_resolution = metadata.time_resolution,
             .members = *std::move(members),
-            .published = std::move(published),
+            .subroutines = load_table(cls.subroutines),
+            .exports = load_table(cls.exports),
             .classes = std::move(declares),
             .definition = std::make_unique<runtime::ScopeDefinition>()});
     // A member whose type reaches an object of this unit is a child this class
@@ -1905,7 +1923,7 @@ auto LoadClosures(const lir::CompilationUnit& unit)
 auto Execute(
     std::span<const compiler::ExecutableUnit> units,
     const compiler::ExecutableUnit& root_unit,
-    const std::optional<std::filesystem::path>& dpi_library,
+    std::span<const std::filesystem::path> dpi_objects,
     std::span<const std::string> simulation_arguments) -> diag::Result<int> {
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
@@ -1913,9 +1931,7 @@ auto Execute(
   auto jit = Unwrap(llvm::orc::LLJITBuilder().create(), "create jit");
   LowerCoroutines(*jit);
   const std::map<std::string, AbiSignature> published = DefineRuntimeAbi(*jit);
-  if (dpi_library.has_value()) {
-    DefineForeignSymbols(*jit, *dpi_library);
-  }
+  LinkForeignObjects(*jit, dpi_objects);
 
   // Every unit -- the source units and the design-root -- becomes one module in
   // the shared JIT, so a construct reaches the entries and the definition of

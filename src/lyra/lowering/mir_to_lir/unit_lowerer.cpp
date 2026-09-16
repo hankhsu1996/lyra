@@ -128,23 +128,20 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     }
   }
 
-  // This backend lowers an export's body but does not publish the name
-  // anywhere the foreign side can link against, so the symbol is unresolved
-  // wherever the user's C calls it (LRM 35.7). Both places a unit defines such
-  // a symbol are asked here, so a third cannot be added without answering the
-  // same question: one the unit's own namespace owns, and one it writes for a
-  // name declared on a scope.
-  const bool defines_namespace_entry_point =
-      std::ranges::any_of(mir_->callables.Ids(), [this](mir::CallableId id) {
-        const mir::CallableDecl& callable = mir_->callables.Get(id);
-        return callable.code.body.has_value() && callable.foreign.has_value();
-      });
-  if (defines_namespace_entry_point || !mir_->foreign_scope_entries.empty()) {
-    return std::unexpected(
-        diag::Make(
-            diag::DiagCode::kUnsupportedDpi,
-            "mir_to_lir: the foreign entry point a DPI-C export publishes is "
-            "not yet reachable on this backend"));
+  // The symbol a name declared on a scope is reached by (LRM 35.5.3): its
+  // definition names only the name and the prototype, so every unit declaring
+  // such a scope writes the same one and whatever resolves names across
+  // artifacts keeps one of them. What the unit's own namespace owns is the
+  // other of the two, and goes with the bodies below.
+  for (const mir::ForeignScopeEntry& shared : mir_->foreign_scope_entries) {
+    auto fn =
+        FunctionLowerer(*this, shared.definition, shared.linkage.foreign_name)
+            .Run();
+    if (!fn) {
+      return std::unexpected(std::move(fn.error()));
+    }
+    fn->definition = lir::Definition::kShared;
+    out_.functions.Add(*std::move(fn));
   }
 
   // A callable the unit's namespace owns -- a package's own body (LRM 26.3) --
@@ -429,14 +426,38 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
           mir::NameOf(cls.named_callables, cid);
       if (name.has_value() && published.contains(*name)) {
         out.subroutines.push_back(
-            lir::PublishedSubroutine{
-                .name = std::string{*name}, .body = *body});
+            lir::PublishedCallable{.name = std::string{*name}, .entry = *body});
       }
     }
     if (const std::optional<lir::DispatchTakeover> taken =
             TakenOver(callable, body)) {
       out.takeovers.push_back(*taken);
     }
+  }
+
+  // A foreign caller reaches a subroutine under a C identifier and hands it
+  // arguments in their boundary carriers (LRM 35.4, 35.5.6), so what the name
+  // reaches is the body that converts between the two and calls the subroutine
+  // -- a body of its own, with its own signature, rather than the subroutine.
+  for (const mir::AbiAdapterId aid : cls.abi_adapters.Ids()) {
+    const mir::AbiAdapter& adapter = cls.abi_adapters.Get(aid);
+    const auto* linkage = std::get_if<mir::ForeignLinkage>(&adapter.published);
+    if (linkage == nullptr) {
+      continue;
+    }
+    auto fn = FunctionLowerer(
+                  *this, adapter.code,
+                  lir::ScopeEntrySymbol(
+                      mir_->name, lir::SymbolPartOf(cls.name, owner.value),
+                      aid.value))
+                  .Run();
+    if (!fn) {
+      return std::unexpected(std::move(fn.error()));
+    }
+    out.exports.push_back(
+        lir::PublishedCallable{
+            .name = linkage->foreign_name,
+            .entry = out_.functions.Add(*std::move(fn))});
   }
   return out;
 }

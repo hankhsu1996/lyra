@@ -504,13 +504,19 @@ each meets the same lifetime question above.
       walk at the element type and an erased one cannot: its elements are type-erased values, so the
       walk has no leaf type to end at. Formatting an aggregate is the same gap seen from another
       side, which is why `%p` over a container has no entry either.
-- [ ] A scope's declared timescale, which this backend does not carry into what a loaded design
-      knows about its scopes. Every scope therefore reports having none of its own, so the DPI-C
-      time queries answer with the simulation's precision instead of the scope's unit (LRM 3.14.2.3,
-      Annex H.13) -- a wrong answer rather than a refusal, recorded against the case that reads it.
-- [ ] A DPI-C export's foreign entry point, which this backend lowers as a body but publishes
-      nowhere the foreign side can link against, so it is refused (LRM 35.7). Reaching it needs the
-      design's own symbols resolvable from the foreign object, which is what `dpi.md` D12 waits on.
+- [x] **What a loaded design knows about a scope.** The record a scope is built from carries every
+      name space it answers a call in and its whole timescale, so a hierarchical name, a foreign
+      name and a time query each read what that scope states rather than what the last consumer
+      happened to need. It is assembled from the executable body plus the unit's source-level
+      metadata, which is why a fact absent from either was reported as the runtime's default -- a
+      scope with no unit of its own answered the DPI-C time queries with the simulation's precision
+      (LRM 3.14.2.3, Annex H.13).
+- [x] **Foreign code calling in.** An exported subroutine is reachable under the C name the standard
+      fixes (LRM 35.4, 35.7), and a DPI task crosses in either direction. What this needed is that a
+      program have one linker: the design's foreign sources are linked into the execution session
+      rather than loaded beside it, so the session resolves names across everything it holds instead
+      of the outward direction resolving in one place and the inward direction in another that
+      cannot see it.
 - [x] **A region that consumes a control effect** -- what a named block, a named fork, and a task
       need so that `disable` of one resumes execution after it (LRM 9.6.2). A named procedural block
       runs here whether or not anything disables it, a self-`disable` leaves its own region, and an

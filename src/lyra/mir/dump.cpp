@@ -415,8 +415,6 @@ class MirDumper {
                   return "RuntimeLibrary(DpiBitChunk)";
                 case RuntimeLibraryKind::kDpiLogicChunk:
                   return "RuntimeLibrary(DpiLogicChunk)";
-                case RuntimeLibraryKind::kForeignTaskAwaitable:
-                  return "RuntimeLibrary(ForeignTaskAwaitable)";
                 case RuntimeLibraryKind::kPropertyCoordinate:
                   return "RuntimeLibrary(PropertyCoordinate)";
                 case RuntimeLibraryKind::kBehaviorCoordinate:

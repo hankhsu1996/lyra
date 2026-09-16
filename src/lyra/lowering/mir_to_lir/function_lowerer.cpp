@@ -1942,11 +1942,53 @@ auto FunctionLowerer::LowerCall(
     return EnterCoroutine(block, call, type, std::nullopt);
   }
 
+  // A foreign caller cannot be parked, so the entry point it reached drives the
+  // body to its end where it stands instead of waiting for it (LRM 35.8).
+  if (const auto fn = mir::DirectBuiltinFn(call);
+      fn.has_value() &&
+      *fn == support::BuiltinFn::kRunExportedTaskToCompletion) {
+    return LowerDriveToCompletion(block, call, type);
+  }
+
   auto args = LowerCallOperands(block, call);
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
   return EmitCall(block, call, *std::move(args), unit_->TranslateType(type));
+}
+
+auto FunctionLowerer::LowerDriveToCompletion(
+    const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+    -> diag::Result<lir::Operand> {
+  std::optional<lir::Operand> completion_slot;
+  if (type != unit_->Mir().builtins.void_type) {
+    completion_slot = AllocateCompletionFor(unit_->TranslateType(type));
+  }
+  const mir::Expr& body = block.exprs.Get(call.arguments.front());
+  const auto* frame = std::get_if<mir::CallExpr>(&body.data);
+  if (frame == nullptr) {
+    throw InternalError(
+        "mir_to_lir: an execution driven to completion is entered from the "
+        "call that builds its frame -- please report this as a bug");
+  }
+  auto activation = EnterCoroutine(block, *frame, body.type, completion_slot);
+  if (!activation) {
+    return activation;
+  }
+  const lir::Operand driven = *std::move(activation);
+  Emit(
+      unit_->TranslateType(unit_->Mir().builtins.void_type),
+      lir::CallInstr{
+          .target =
+              lir::BuiltinTarget{
+                  .fn = support::BuiltinFn::kRunExportedTaskToCompletion},
+          .args = {driven}});
+  if (completion_slot.has_value()) {
+    return LoadActivationValue(*completion_slot, unit_->TranslateType(type));
+  }
+  // A body that completes with nothing leaves nothing to read, so what stands
+  // here is never used.
+  return driven;
 }
 
 auto FunctionLowerer::EnterCoroutine(

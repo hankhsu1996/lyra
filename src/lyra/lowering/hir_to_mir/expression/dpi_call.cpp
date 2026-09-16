@@ -817,10 +817,13 @@ auto LowerForeignImportTask(
   if (!ret_temp) return std::unexpected(std::move(ret_temp.error()));
 
   mir::Block& body = *await_frame.current_block;
-  const mir::TypeId awaitable = unit.types.Intern(
-      mir::Type{mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kForeignTaskAwaitable}});
   const mir::ExprId fiber_id = body.exprs.Add(fiber_body.BuildVoid());
+  const mir::ExprId runtime_id =
+      body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  // A foreign task may consume simulation time (LRM 35.5.1.1), so its call is
+  // a suspending construct like a delay: the runtime carries it on a stack of
+  // its own and answers whether this execution must park at all, and the
+  // suspension that follows waits for nothing else.
   const mir::ExprId run_id = body.exprs.Add(
       mir::Expr{
           .data =
@@ -828,8 +831,8 @@ auto LowerForeignImportTask(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kRunForeignTaskOnFiber},
-                  .arguments = {fiber_id}},
-          .type = awaitable});
+                  .arguments = {runtime_id, fiber_id}},
+          .type = unit.builtins.void_type});
   body.AppendStmt(
       mir::ExprStmt{
           .expr = body.exprs.Add(

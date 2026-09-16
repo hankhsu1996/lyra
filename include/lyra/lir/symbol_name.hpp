@@ -29,6 +29,7 @@ enum class SymbolCategory : std::uint8_t {
   kStaticProperty,
   kClosure,
   kClosureInvoke,
+  kScopeEntry,
   kStruct,
   kTypeDescription,
 };
@@ -113,6 +114,15 @@ auto NamespaceStorageInitializeSymbol(std::string_view unit_name)
 // declared, which is what another unit reaches it by; the cell a subroutine's
 // static-lifetime local keeps answers to none, and takes its position instead.
 auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)
+    -> std::string;
+
+// One entry a scope is reached through from outside the design, taking the
+// scope it runs against ahead of the call's own arguments. The source declares
+// no such body -- it is the adaptation between a call under a published name
+// and the subroutine behind it -- so it takes its position in the class rather
+// than a name, and the class qualifies that.
+auto ScopeEntrySymbol(
+    std::string_view unit_name, SymbolPart cls, std::uint32_t ordinal)
     -> std::string;
 
 // A gathered-scope aggregate, which the source never declared, so its position

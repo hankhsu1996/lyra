@@ -731,18 +731,22 @@ enum class BuiltinFn : std::uint16_t {
   kDpiOpenArrayHandle,
   kDpiOpenArrayValue,
   // Runs a DPI-C import task's foreign call (LRM 35.5.2) on a fiber whose
-  // native stack can be parked while simulation time advances, and yields the
-  // awaitable that suspends the caller until the call returns. The call itself
-  // is `args[0]`, a closure of the whole boundary; a foreign task may consume
-  // time by calling back an exported task that suspends, and the fiber is what
-  // lets that suspension cross a native stack the runtime does not own. A free
-  // function over that closure.
+  // native stack can be parked while simulation time advances. It is the
+  // registration the import's suspension is preceded by, so it answers whether
+  // the caller must park at all, exactly as a delay does. The call itself is
+  // `args[1]`, a closure of the whole boundary; a foreign task may consume time
+  // by calling back an exported task that suspends, and the fiber is what lets
+  // that suspension cross a native stack the runtime does not own. A free
+  // function over the run and that closure.
   kRunForeignTaskOnFiber,
   // Runs an exported SV task's coroutine body to completion synchronously and
   // yields its completion payload. A foreign C caller of an exported task (LRM
   // 35.8) is not a coroutine and cannot await the task body, so the C entry
   // point enters the body through this runtime driver instead of the `co_await`
-  // an SV enabler uses. A free function over the task's coroutine value.
+  // an SV enabler uses. A free function over the execution the body runs as;
+  // where a target takes the value the body completes with through storage the
+  // caller supplies, it is that storage the value lands in rather than the
+  // call's own answer.
   kRunExportedTaskToCompletion,
   // The scope a subroutine exported to foreign code runs against, and the entry
   // that scope publishes for a given foreign name (LRM 35.5.3). A

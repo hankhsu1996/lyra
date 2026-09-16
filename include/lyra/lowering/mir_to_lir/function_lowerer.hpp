@@ -265,6 +265,13 @@ class FunctionLowerer {
   auto LowerCoroutineAwait(
       const mir::Block& block, const mir::AwaitExpr& await, mir::TypeId type)
       -> diag::Result<lir::Operand>;
+  // Drives an execution to its end where it stands, rather than waiting for it:
+  // the frame asking is a foreign one that cannot be parked, so the runtime
+  // carries it until the body is done (LRM 35.8). The value the body completes
+  // with arrives the way an awaited one does, in storage this frame supplies.
+  auto LowerDriveToCompletion(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
   // Builds a coroutine body's frame and makes an execution of it. `completion`
   // is where that execution writes the value it finishes with, and is absent
   // exactly when it finishes with no value.

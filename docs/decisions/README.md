@@ -529,6 +529,12 @@ the detail lives in the entry itself.
 - [dpi-open-array-boundary](dpi-open-array-boundary.md) -- an open array crosses as a canonical
   boundary object owning its own storage, never as a borrow of the actual; the formal's unsized
   shape rides the ABI carrier rather than the type system.
+- [foreign-code-is-linked-not-loaded](foreign-code-is-linked-not-loaded.md) -- a program has one
+  linker, so a design's foreign code is an artifact that linker takes rather than an environment
+  around it; a scope publishes what it answers per name space, and a foreign call that can suspend
+  is an execution of the process with a value store of its own. Publishing the design's symbols to
+  the system loader, handing the foreign side a pointer per export, and a second resolver for the
+  inward direction are rejected.
 
 ### Compile-time model and specialization
 

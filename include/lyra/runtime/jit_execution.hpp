@@ -168,6 +168,28 @@ void lyra_rt_leave_dpi_scope(void* runtime);
 auto lyra_rt_claim_namespace_initialize(void* runtime, const char* name)
     -> std::int64_t;
 
+// What one program-global export symbol resolves against (LRM 35.4, 35.5.3):
+// the scope the foreign call chain currently holds, and the entry that scope
+// publishes under the exported name. The symbol takes only the C arguments its
+// prototype states, so it recovers both from the run rather than from its
+// caller. The entry answers as a code address with its prototype erased, which
+// the call site restores to the one it was compiled against.
+auto lyra_rt_current_export_scope() -> void*;
+auto lyra_rt_find_export_entry(void* scope, const void* subroutine)
+    -> void (*)();
+
+// The two directions of a DPI-C task across the boundary. Going out, the call
+// is carried on a stack of the runtime's own so an exported task it reaches can
+// suspend while simulation time advances (LRM 35.5.1.1); that is the
+// registration an import task's suspend edge is preceded by, so it answers the
+// park flag every registration answers with. Coming in, a foreign caller is not
+// a coroutine and cannot await (LRM 35.8), so the entry it called drives the
+// body to completion on the stack that call is running on, and what the body
+// completes with lands in the storage its caller supplied rather than coming
+// back through the call.
+auto lyra_rt_run_foreign_task_on_fiber(void* runtime, void* closure) -> bool;
+void lyra_rt_run_exported_task_to_completion(void* activation);
+
 // LRM 9.3.2 Table 9-1. Each takes the branches one `fork` spawned, in source
 // order, and hands them to the engine, which does not run any of them until the
 // spawning process blocks or terminates. `spawn_all` is `join_none`, whose
@@ -1716,6 +1738,11 @@ auto lyra_rt_dpi_logic_buffer_data(void* buffer) -> void*;
 auto lyra_rt_read_canonical_bit_vec(const void* src, const void* type) -> void*;
 auto lyra_rt_read_canonical_logic_vec(const void* src, const void* type)
     -> void*;
+// The other direction, where the buffer is the foreign side's and an SV value
+// is written out into it: the argument an exported subroutine hands back
+// through a pointer its caller owns (LRM 35.5.1.2).
+void lyra_rt_write_canonical_bit_vec(void* dst, const void* sv);
+void lyra_rt_write_canonical_logic_vec(void* dst, const void* sv);
 
 // A 1-bit 4-state value's `svLogic` scalar encoding (Annex H.10.1.1), which
 // crosses as the machine byte the C side declares rather than as a handle.

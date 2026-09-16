@@ -6,9 +6,12 @@
 #include <utility>
 
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 
 namespace lyra::runtime {
+
+class RuntimeEffects;
 
 // The execution vehicle that carries an activation's thread across a suspension
 // when the scheduler cannot re-enter the activation's coroutine directly: its
@@ -38,6 +41,19 @@ class ForeignExecution {
   // Whether the foreign call has returned. False while it is suspended mid-call
   // with more to run; true once its entry has run to completion.
   [[nodiscard]] virtual auto IsDone() const -> bool = 0;
+
+  // What generated code reached from this call materializes and then reads back
+  // after a suspension -- the storage an exported subroutine's entry completes
+  // into (LRM 35.8). The stretches of the call are separated by parks, so a
+  // per-stretch arena is too short-lived for it, and the frames holding it are
+  // this stack's, so nothing outside the call is long-lived enough to own it
+  // either.
+  [[nodiscard]] auto Values() -> ActivationValueStore& {
+    return values_;
+  }
+
+ private:
+  ActivationValueStore values_;
 };
 
 // Creates a foreign execution that runs `entry` -- the foreign call -- on its
@@ -85,6 +101,23 @@ class ForeignExecutionGuard {
   RuntimeProcess* previous_process_;
 };
 
+// Runs the execution `frame` names to its end on the stack the current foreign
+// call is using. That stack cannot be parked the way a coroutine is, so between
+// two stretches of the body the vehicle yields to the scheduler and the body
+// continues when the scheduler drives it again (LRM 35.5.1.1); a body that
+// consumes no simulation time is done on the first resume.
+void DriveOnForeignStack(CoroutineHandle frame);
+
+// Carries a DPI import task's foreign call (LRM 35.5.2) on `fiber`, entered on
+// the process the run is currently executing, with `continuation` the frame to
+// resume once the call returns. Answers whether the call returned without
+// suspending, so the caller continues inline. Which process enters a foreign
+// call is stated here and nowhere else, because a body compiled as a coroutine
+// and one compiled to an external entry both reach the boundary through this.
+auto EnterForeignTask(
+    RuntimeEffects& effects, CoroutineHandle continuation,
+    std::unique_ptr<ForeignExecution> fiber) -> bool;
+
 // The awaitable a DPI import task (LRM 35.5.2) awaits at its foreign-call step:
 // it runs `foreign_call` on a fiber so an exported task the call reaches can
 // suspend across the boundary. Awaiting it suspends the import frame only if
@@ -92,8 +125,8 @@ class ForeignExecutionGuard {
 // completes within the await.
 class ForeignTaskAwaitable {
  public:
-  explicit ForeignTaskAwaitable(std::function<void()> foreign_call)
-      : fiber_(MakeForeignExecution(std::move(foreign_call))) {
+  ForeignTaskAwaitable(RuntimeEffects& effects, std::function<void()> call)
+      : effects_(&effects), fiber_(MakeForeignExecution(std::move(call))) {
   }
 
   [[nodiscard]] static auto await_ready() noexcept -> bool {
@@ -102,20 +135,21 @@ class ForeignTaskAwaitable {
 
   template <class P>
   auto await_suspend(std::coroutine_handle<P> handle) -> bool {
-    CoroutineHandle token = &handle.promise();
-    return !token->process->EnterForeignExecution(token, *fiber_);
+    return !EnterForeignTask(*effects_, &handle.promise(), std::move(fiber_));
   }
 
   static void await_resume() noexcept {
   }
 
  private:
+  RuntimeEffects* effects_;
   std::unique_ptr<ForeignExecution> fiber_;
 };
 
-inline auto RunForeignTaskOnFiber(std::function<void()> foreign_call)
+inline auto RunForeignTaskOnFiber(
+    RuntimeEffects& effects, std::function<void()> foreign_call)
     -> ForeignTaskAwaitable {
-  return ForeignTaskAwaitable{std::move(foreign_call)};
+  return ForeignTaskAwaitable{effects, std::move(foreign_call)};
 }
 
 }  // namespace lyra::runtime

@@ -945,7 +945,9 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kRunForeignTaskOnFiber:
       return {
           .name = "run_foreign_task_on_fiber",
-          .declaration = FreeFunction{"lyra::runtime::RunForeignTaskOnFiber"}};
+          .declaration = FreeFunction{"lyra::runtime::RunForeignTaskOnFiber"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
     case BuiltinFn::kRunExportedTaskToCompletion:
       return {
           .name = "run_exported_task_to_completion",

@@ -26,8 +26,8 @@ struct DpiLinkInput {
 // so an unreadable, unsupported, or ambiguously named input is reported against
 // the command line rather than surfacing much later as a compiler error or a
 // silently overwritten intermediate. Every consumer -- the ahead-of-time link,
-// the JIT's foreign library, the emitted build recipe -- reads the
-// classification from here rather than re-deriving it.
+// the in-process one, the emitted build recipe -- reads the classification from
+// here rather than re-deriving it.
 auto ValidateDpiLinkInputs(std::span<const std::string> sources)
     -> diag::Result<std::vector<DpiLinkInput>>;
 
@@ -43,15 +43,18 @@ auto WriteDpiSurface(
     const RuntimeLocation& runtime, std::span<const dpi::AbiFragment> fragments,
     const std::filesystem::path& dir) -> diag::Result<void>;
 
-// Compiles the DPI-C link inputs into one shared library and returns its path.
-// An ahead-of-time image links these sources into the program, so it needs no
-// such library; an in-process JIT has no link step, so its foreign symbols must
-// arrive in something the execution session can load. `header_dir` holds the
-// generated ABI header the sources may include.
-auto BuildDpiSharedLibrary(
+// Compiles each DPI-C link input to a relocatable object and returns their
+// paths, in input order. An ahead-of-time image hands these sources to the
+// program's own link; an in-process design is linked by its execution session
+// instead, and an object is what a linker takes -- which is what makes both
+// directions of the boundary resolve in one place: the design's call out to a
+// symbol the object defines, and the foreign side's call back to one only the
+// session does (LRM 35.4). `header_dir` holds the generated ABI header the
+// sources may include.
+auto CompileDpiObjects(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
     const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
-    -> diag::Result<std::filesystem::path>;
+    -> diag::Result<std::vector<std::filesystem::path>>;
 
 }  // namespace lyra::driver

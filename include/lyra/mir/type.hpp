@@ -473,13 +473,6 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // reference to that image, and the only one of the two a prototype names.
   kDpiOpenArray,
   kDpiOpenArrayHandle,
-  // What a DPI-C import task's foreign call is awaited through (LRM 35.5.2):
-  // `lyra::runtime::ForeignTaskAwaitable`, which runs the call on a fiber whose
-  // native stack can be parked while simulation time advances, so an exported
-  // task the call reaches can suspend across the boundary. It is the result of
-  // the runtime's fiber entry and the operand of the await that consumes it,
-  // and nothing else names it.
-  kForeignTaskAwaitable,
   // LRM 9.6.2 `disable`, in the three parts it takes: the per-instance
   // `lyra::runtime::CancellationTarget` a scope is named through, carrying the
   // generation an execution captures on entry and `disable` advances; and

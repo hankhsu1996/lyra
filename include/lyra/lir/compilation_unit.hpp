@@ -85,18 +85,21 @@ struct DispatchTakeover {
   FunctionId body;
 };
 
-// One subroutine a scope answers a hierarchical name with (LRM 23.8.1): the
-// identifier such a name spells, and the body it reaches. Every subroutine a
-// scope declares is answered for, a unit compiled alone having no way to know
-// which of them a name will reach.
+// One name a scope answers a call under, and the entry that call reaches. A
+// scope answers in more than one name space -- a hierarchical name spells the
+// SystemVerilog identifier a subroutine was declared under (LRM 23.8.1), a
+// foreign caller spells the program-global C identifier an export publishes
+// (LRM 35.4) -- and one declaration may answer in both under different
+// spellings, so the name space is which list holds the entry rather than
+// anything the entry carries.
 //
-// This is the scope's own namespace, so a body no name reaches is absent from
-// it rather than listed with nothing to say. The table is what is asked -- what
-// does this name reach here -- and a body's presence in it is a relation the
-// namespace holds, never a property the body carries.
-struct PublishedSubroutine {
+// A body no name reaches is absent rather than listed with nothing to say. The
+// table is what is asked -- what does this name reach here -- and an entry's
+// presence in it is a relation the name space holds, never a property of the
+// body.
+struct PublishedCallable {
   std::string name;
-  FunctionId body;
+  FunctionId entry;
 };
 
 // One behavior a class introduces (LRM 8.20): the identifier a referrer spells,
@@ -120,9 +123,9 @@ struct DeclaredClass {
 
 // One compiled class: its name, the base it extends, the members it declares,
 // its constructor, the behaviors it introduces, the ones it takes over, and the
-// subroutines it answers a name with. A class lists a function rather than
-// holding it because the function is the same kind of thing wherever it is
-// listed.
+// entries it answers a name with in each name space a caller spells one in. A
+// class lists a function rather than holding it because the function is the
+// same kind of thing wherever it is listed.
 //
 // A class states what it adds to its lineage and nothing about the lineage
 // itself -- the same way it states its own members and not its base's. What a
@@ -149,7 +152,8 @@ struct Class {
   FunctionId constructor{};
   std::vector<Introduction> introduces;
   std::vector<DispatchTakeover> takeovers;
-  std::vector<PublishedSubroutine> subroutines;
+  std::vector<PublishedCallable> subroutines;
+  std::vector<PublishedCallable> exports;
   std::vector<DeclaredClass> declares;
 };
 

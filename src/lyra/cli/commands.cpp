@@ -296,13 +296,12 @@ auto RunCppBackend(const CommandContext& ctx) -> int {
   return *exit_code;
 }
 
-// A JIT image has no link step, so the design's DPI-C sources are compiled
-// into a library the execution session resolves the imports' foreign symbols
-// from. The temp directory holds that library and the ABI header the sources
+// The design's DPI-C sources, compiled to the objects its execution session
+// links. The temp directory holds those objects and the ABI header the sources
 // compile against. Reached only for a design that has foreign sources.
-auto BuildJitDpiLibrary(
+auto BuildJitDpiObjects(
     const CommandContext& ctx, std::span<const dpi::AbiFragment> fragments)
-    -> std::optional<std::filesystem::path> {
+    -> std::optional<std::vector<std::filesystem::path>> {
   auto runtime = ResolveRuntime(ctx);
   if (!runtime) {
     return std::nullopt;
@@ -322,8 +321,7 @@ auto BuildJitDpiLibrary(
   if (!host) {
     return std::nullopt;
   }
-  auto built =
-      driver::BuildDpiSharedLibrary(ctx.dpi_inputs, host->cxx, *dir, *dir);
+  auto built = driver::CompileDpiObjects(ctx.dpi_inputs, host->cxx, *dir, *dir);
   if (!built) {
     ctx.sink->Report(std::move(built.error()));
     return std::nullopt;
@@ -332,10 +330,10 @@ auto BuildJitDpiLibrary(
 }
 
 auto RunJitBackend(const CommandContext& ctx) -> int {
-  // An in-process image has no link step, so every unit's body is loaded into
-  // one execution session before the design runs. That is the one path here
-  // that holds the design: what it holds is the executable bodies, and the MIR
-  // each was lowered from is released as it goes.
+  // Every unit's body is loaded into one execution session before the design
+  // runs, and that session is where the names they hold in common resolve. This
+  // is the one path here that holds the design: what it holds is the executable
+  // bodies, and the MIR each was lowered from is released as it goes.
   //
   // It reads each unit at both depths rather than only the executable one: the
   // session loads the body, and what the unit states of the foreign name space
@@ -365,19 +363,21 @@ auto RunJitBackend(const CommandContext& ctx) -> int {
     ctx.sink->Report(std::move(root.error()));
     return 1;
   }
-  // A design that declares no foreign source needs no library.
-  std::optional<std::filesystem::path> dpi_library;
+  // A design that declares no foreign source compiles nothing here and links
+  // nothing there.
+  std::vector<std::filesystem::path> dpi_objects;
   if (!ctx.dpi_inputs.empty()) {
-    dpi_library = BuildJitDpiLibrary(ctx, fragments);
-    if (!dpi_library) {
+    auto built = BuildJitDpiObjects(ctx, fragments);
+    if (!built) {
       return 1;
     }
+    dpi_objects = *std::move(built);
   }
   // The design-root unit's construct elaborates the whole design, building the
   // top-level units as its owned children, so the JIT runs the design once from
   // that one entry rather than per top.
   auto exit_code =
-      jit::Execute(units, *root, dpi_library, ctx.args->child_args);
+      jit::Execute(units, *root, dpi_objects, ctx.args->child_args);
   if (!exit_code) {
     ctx.sink->Report(std::move(exit_code.error()));
     return 1;

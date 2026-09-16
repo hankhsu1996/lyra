@@ -76,35 +76,47 @@ auto WriteDpiSurface(
   return CopyFileWritable(runtime.svdpi_header, dir / kSvdpiHeader);
 }
 
-auto BuildDpiSharedLibrary(
+auto CompileDpiObjects(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
     const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
-    -> diag::Result<std::filesystem::path> {
-  const std::filesystem::path library = work_dir / "libdpi.so";
-  std::vector<std::string> args = {
-      "-shared", "-fPIC", "-I", header_dir.string()};
+    -> diag::Result<std::vector<std::filesystem::path>> {
+  std::vector<std::filesystem::path> objects;
+  objects.reserve(inputs.size());
   for (const DpiLinkInput& input : inputs) {
-    args.emplace_back("-x");
-    args.emplace_back(input.compile_as_c ? "c" : "c++");
-    args.push_back(input.source.string());
-  }
-  args.emplace_back("-o");
-  args.push_back(library.string());
+    // One compilation per input, because the language each is compiled as is
+    // its own and a driver invocation carries one output path. The object's
+    // name extends the input's whole file name, which is the thing two inputs
+    // are already required to differ in; taking the stem instead would let one
+    // source and another of a different language overwrite each other.
+    const std::filesystem::path object =
+        work_dir / (input.source.filename().string() + ".o");
+    const std::vector<std::string> args = {
+        "-c",
+        "-fPIC",
+        "-I",
+        header_dir.string(),
+        "-x",
+        input.compile_as_c ? "c" : "c++",
+        input.source.string(),
+        "-o",
+        object.string()};
 
-  auto compiled = support::RunProcessCaptured(cxx, args);
-  if (!compiled) {
-    return diag::Fail(
-        diag::DiagCode::kHostIoError, std::move(compiled.error()));
+    auto compiled = support::RunProcessCaptured(cxx, args);
+    if (!compiled) {
+      return diag::Fail(
+          diag::DiagCode::kHostIoError, std::move(compiled.error()));
+    }
+    if (compiled->exit_code != 0) {
+      return diag::Fail(
+          diag::DiagCode::kHostBuildFailed,
+          std::format(
+              "compiling the DPI-C link input '{}' failed:\n{}",
+              input.source.string(), compiled->stderr_text));
+    }
+    objects.push_back(std::move(object));
   }
-  if (compiled->exit_code != 0) {
-    return diag::Fail(
-        diag::DiagCode::kHostBuildFailed,
-        std::format(
-            "compiling the DPI-C link inputs failed:\n{}",
-            compiled->stderr_text));
-  }
-  return library;
+  return objects;
 }
 
 }  // namespace lyra::driver

@@ -44,12 +44,13 @@ simulation time (D5, D6, D6b, D6d), the `svdpi` context surface (D7), and the ge
 with link-input orchestration (D9). What remains is the disable protocol across the boundary (D6c)
 and the element types Annex H.7.3 puts in C-compatible representation.
 
-On the execution backend scalar import (D10) is in, and by-pointer marshaling with it: a foreign
-call lowers to an external-linkage symbol, the by-value carriers marshal, and a canonical buffer
-carries a packed value across in either direction, and a `context` import's scope is made current
-around its foreign call. What is left of the import surface (D11) is an open array whose actual is
-an unpacked array, which is not blocked by anything DPI owns (`execution-backend.md`). Export and
-tasks there (D12) follow once the C++-backend items fix their shape.
+On the execution backend the boundary runs in both directions too. Import (D10, D11) is in apart
+from an open array whose actual is an unpacked array, which is not blocked by anything DPI owns
+(`execution-backend.md`); export and DPI tasks (D12) are in, so a foreign object calls an exported
+subroutine under its own C name, reaches the instance the call chain established, and a task in
+either direction suspends across the boundary while simulation time advances. What remains there is
+the same two items the C++ backend has left: the disable protocol (D6c) and the element types Annex
+H.7.3 puts in C-compatible representation.
 
 ## Sub-Steps
 
@@ -232,7 +233,7 @@ The execution backend (MIR lowered to LIR to LLVM, run as JIT or AOT) elaborates
 and runs procedural code, so a foreign call has a body to sit inside. The DPI-specific gap is the
 two points the MIR-to-LIR lowering names: the import-call target and the ABI carrier type. These
 items bring the same backend-agnostic MIR the C++ backend consumes up on the execution backend, one
-surface at a time; export and tasks follow once the C++-backend items fix their shape.
+surface at a time.
 
 - [x] D10 -- Scalar import on the execution backend: 2-state integral and `string`, `input`-only
       functions. The import-call target lowers to an external-linkage symbol the execution session
@@ -250,8 +251,18 @@ surface at a time; export and tasks follow once the C++-backend items fix their 
       by anything DPI owns -- imaging walks the actual down to its leaves, which the erased value
       layer has no walk for (`execution-backend.md`). What is left of this item is that walk. A
       `real` import rides on the real value domain, not on this item.
-- [ ] D12 -- Export and DPI tasks on the execution backend, once the C++-backend export and task
-      items (D4-D6c) define the shape.
+- [x] D12 -- Export and DPI tasks on the execution backend: the D4 and D5-D6b surface. An exported
+      subroutine's entry point is a function of the design's own link-level unit, emitted under the
+      linkage name the standard fixes (LRM 35.4), and each scope publishes what it answers a foreign
+      name with beside what it answers a hierarchical one with, so one symbol reaches whichever
+      instance the call chain established. A design's foreign sources are linked into its execution
+      session rather than loaded beside it, which is what makes both directions of the boundary
+      resolve in one place: the session resolves names across everything it holds, and two resolvers
+      that cannot see each other served only the outward direction. A DPI task crosses in either
+      direction -- an import task's foreign call is carried on a stack of the runtime's own and its
+      suspension is the ordinary one, and an exported task reached from foreign code is driven to
+      completion on that stack, suspending and continuing across the boundary while simulation time
+      advances.
 
 ## Design record
 
