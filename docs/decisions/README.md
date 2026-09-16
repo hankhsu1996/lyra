@@ -107,6 +107,12 @@ the detail lives in the entry itself.
   which supersedes both of those answers here.
 - [declarations-before-bodies](declarations-before-bodies.md) -- every structural declaration's
   identity and shape is CU-global and queryable before any executable lowering begins.
+- [a-name-arrives-with-the-identity](a-name-arrives-with-the-identity.md) -- what a declaration is
+  called is fixed when the source names it, so a pool minting identities ahead of values answers it
+  the whole time and holds it in one place; and a scope's names are complete before any body it owns
+  is walked, its variables' initializers and its classes' bodies included. Ordering the signature
+  after the declarations, recomputing the name from the front end, checking whether the declaration
+  has landed, and reading part of an unsettled value are rejected.
 - [reporting-every-gap-in-one-run](reporting-every-gap-in-one-run.md) -- a refusal is collected and
   the stage goes on, so one run accounts for every unit and every member rather than for the first
   that stopped; a stage that reported anything is the last one that runs, and what it produced is

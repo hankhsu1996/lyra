@@ -83,15 +83,18 @@ struct BaseCall {
 
 // A SystemVerilog class declaration (LRM 8). The class's properties and its
 // instance methods; references to a class name resolve to this declaration's
-// id. A class is a scope of the name tree (LRM 23.9), and the scope that
+// id. The name is not part of a declaration: a class variable may be declared
+// before the class itself is (LRM 8.27), so what a class is called has to be
+// readable while its declaration does not yet exist, and it travels with the
+// identity. A class is a scope of the name tree (LRM 23.9), and the scope that
 // declares it says so -- a class declared inside a structural scope is a type
 // of that scope's instance (LRM 6.22), so its bodies name that instance's
 // declarations and count their hops from it. Each method (LRM 8.6) is a
 // subroutine reached through the object, reading the receiver and the class's
-// properties through it. A
-// method's identity exists before its lowered form does: one method's body may
-// name another the source declared later (LRM 13.7), and a method declared
-// `extern` has its body outside the class body entirely (LRM 8.24).
+// properties through it. A method's identity exists before its lowered form
+// does: one method's body may name another the source declared later
+// (LRM 13.7), and a method declared `extern` has its body outside the class
+// body entirely (LRM 8.24).
 //
 // `is_interface_class` marks an `interface class` declaration (LRM 8.26): a
 // class whose body carries only pure virtual method contracts -- no
@@ -165,7 +168,6 @@ struct BaseCall {
 // processes', so a body reaches its scope tree the same way wherever it was
 // declared.
 struct ClassDecl {
-  std::string name;
   bool is_interface_class = false;
   std::optional<ClassRef> base;
   std::vector<ClassRef> implements;

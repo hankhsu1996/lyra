@@ -237,7 +237,7 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   }
 
   ClassShape shape{
-      .name = hir_class.name,
+      .name = unit_lowerer.Hir().classes.NameOf(hir_class_id_),
       .base = base_ref,
       .implements = std::move(implements),
       .self_pointer_type = self_pointer_type,

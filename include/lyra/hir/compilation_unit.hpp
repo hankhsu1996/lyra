@@ -6,9 +6,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
-#include "lyra/base/registry.hpp"
-#include "lyra/hir/class_decl.hpp"
-#include "lyra/hir/class_id.hpp"
+#include "lyra/hir/class_registry.hpp"
 #include "lyra/hir/external_class.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/foreign_import.hpp"
@@ -51,9 +49,7 @@ struct CompilationUnit {
   TypePool types;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;
-  // A class can be referenced -- as a handle type or a `new` target -- before
-  // its body is built, so its identity must exist before its definition.
-  base::Registry<ClassDecl, ClassId> classes;
+  ClassRegistry classes;
   // One entry per unit this one reaches an object of, recorded where that
   // unit's signature was consumed.
   base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;

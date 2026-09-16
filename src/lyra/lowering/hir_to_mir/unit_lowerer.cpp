@@ -609,6 +609,27 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
         SignatureBoundVars(src)));
   }
 
+  // The callable each package subroutine lowered to, so an export below names
+  // its own by identity. Every identity and every name is published before any
+  // body this namespace owns is lowered -- a variable's initializer, a body of
+  // a class it declares, and its own subroutines alike -- because any of them
+  // may call a subroutine the source declared after it, or itself, and what
+  // such a call names is the position, which has to exist and to answer to the
+  // identifier the source spelled before the body that spells it is walked
+  // (LRM 13.7, 26.2).
+  base::Translation<hir::StructuralSubroutineId, mir::CallableId>
+      subroutine_callables{scope.structural_subroutines.size()};
+  for (const hir::StructuralSubroutineId id :
+       scope.structural_subroutines.Ids()) {
+    const mir::CallableId body = unit_.callables.Declare();
+    // A package subroutine is what another unit spells (LRM 26.3), so the
+    // unit's namespace records the name against the body it reaches.
+    unit_.named_callables.push_back(
+        mir::NamedCallable{
+            .name = scope.structural_subroutines.Get(id).name, .body = body});
+    subroutine_callables.Append(body);
+  }
+
   // The two bodies the design root calls at time zero. They exist before
   // anything that fills them, because everything the namespace owns comes up in
   // them -- its own variables and the type-associated cells of the classes it
@@ -657,24 +678,6 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     }
   }
 
-  // The callable each package subroutine lowered to, so an export below names
-  // its own by identity. Every identity and every name is published before any
-  // body is lowered: a body may call a sibling the source declared after it, or
-  // itself, and what such a call names is the position -- which has to exist,
-  // and to answer to the identifier the source spelled, before the body that
-  // spells it is walked.
-  base::Translation<hir::StructuralSubroutineId, mir::CallableId>
-      subroutine_callables{scope.structural_subroutines.size()};
-  for (const hir::StructuralSubroutineId id :
-       scope.structural_subroutines.Ids()) {
-    const mir::CallableId body = unit_.callables.Declare();
-    // A package subroutine is what another unit spells (LRM 26.3), so the
-    // unit's namespace records the name against the body it reaches.
-    unit_.named_callables.push_back(
-        mir::NamedCallable{
-            .name = scope.structural_subroutines.Get(id).name, .body = body});
-    subroutine_callables.Append(body);
-  }
   for (const hir::StructuralSubroutineId id :
        scope.structural_subroutines.Ids()) {
     const hir::SubroutineDecl& src = scope.structural_subroutines.Get(id);
