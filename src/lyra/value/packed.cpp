@@ -9,22 +9,10 @@
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::value {
+namespace {
 
-auto MaskUnusedTopBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
-    -> void {
-  if (bit_width == 0U) {
-    throw InternalError("MaskUnusedTopBits: zero bit_width");
-  }
-  const std::size_t top_index = WordCountForBits(bit_width) - 1U;
-  const std::uint64_t used =
-      bit_width - (static_cast<std::uint64_t>(top_index) * 64U);
-  if (used == 64U) {
-    return;
-  }
-  const std::uint64_t mask = (std::uint64_t{1} << used) - 1U;
-  words[top_index] &= mask;
-}
-
+// A view names a run of bits inside a word span, so what it may name is
+// bounded by that span.
 auto ValidateViewRange(
     std::size_t word_count, std::uint64_t bit_offset, std::uint64_t bit_width,
     std::string_view where) -> void {
@@ -41,6 +29,17 @@ auto ValidateViewRange(
   }
 }
 
+}  // namespace
+
+auto MaskUnusedTopBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
+    -> void {
+  if (bit_width == 0U) {
+    throw InternalError("MaskUnusedTopBits: zero bit_width");
+  }
+  const std::size_t top_index = WordCountForBits(bit_width) - 1U;
+  words[top_index] &= ValidBitsMask(top_index, bit_width);
+}
+
 PackedWords::PackedWords(std::uint64_t bit_width)
     : bit_width_(bit_width),
       words_(WordCountForBits(bit_width), std::uint64_t{0}) {
@@ -48,10 +47,6 @@ PackedWords::PackedWords(std::uint64_t bit_width)
 
 auto PackedWords::BitWidth() const -> std::uint64_t {
   return bit_width_;
-}
-
-auto PackedWords::WordCount() const -> std::size_t {
-  return words_.size();
 }
 
 auto PackedWords::Words() -> std::span<std::uint64_t> {
@@ -80,16 +75,6 @@ auto ConstBitView::Width() const -> std::uint64_t {
   return bit_width_;
 }
 
-auto ConstBitView::GetBit(std::uint64_t offset) const -> TwoStateBit {
-  if (offset >= bit_width_) {
-    throw InternalError("ConstBitView::GetBit: offset out of range");
-  }
-  const std::uint64_t abs = bit_offset_ + offset;
-  const std::uint64_t word = words_[abs / 64U];
-  return ((word >> (abs % 64U)) & 1U) != 0U ? TwoStateBit::kOne
-                                            : TwoStateBit::kZero;
-}
-
 BitView::BitView(
     std::span<std::uint64_t> words, std::uint64_t bit_offset,
     std::uint64_t bit_width)
@@ -99,29 +84,6 @@ BitView::BitView(
 
 auto BitView::Width() const -> std::uint64_t {
   return bit_width_;
-}
-
-auto BitView::GetBit(std::uint64_t offset) const -> TwoStateBit {
-  return AsConst().GetBit(offset);
-}
-
-auto BitView::SetBit(std::uint64_t offset, TwoStateBit value) -> void {
-  if (offset >= bit_width_) {
-    throw InternalError("BitView::SetBit: offset out of range");
-  }
-  const std::uint64_t abs = bit_offset_ + offset;
-  const std::uint64_t mask = std::uint64_t{1} << (abs % 64U);
-  if (value == TwoStateBit::kOne) {
-    words_[abs / 64U] |= mask;
-  } else {
-    words_[abs / 64U] &= ~mask;
-  }
-}
-
-auto BitView::SetZero() -> void {
-  for (std::uint64_t i = 0; i < bit_width_; ++i) {
-    SetBit(i, TwoStateBit::kZero);
-  }
 }
 
 auto BitView::AsConst() const -> ConstBitView {
@@ -149,19 +111,6 @@ auto ConstLogicView::Width() const -> std::uint64_t {
   return bit_width_;
 }
 
-auto ConstLogicView::GetBit(std::uint64_t offset) const -> FourStateBit {
-  if (offset >= bit_width_) {
-    throw InternalError("ConstLogicView::GetBit: offset out of range");
-  }
-  const std::uint64_t abs = bit_offset_ + offset;
-  const bool vbit = ((value_words_[abs / 64U] >> (abs % 64U)) & 1U) != 0U;
-  const bool ubit = ((unknown_words_[abs / 64U] >> (abs % 64U)) & 1U) != 0U;
-  if (!ubit) {
-    return vbit ? FourStateBit::kOne : FourStateBit::kZero;
-  }
-  return vbit ? FourStateBit::kUnknown : FourStateBit::kHighImpedance;
-}
-
 LogicView::LogicView(
     std::span<std::uint64_t> value_words,
     std::span<std::uint64_t> unknown_words, std::uint64_t bit_offset,
@@ -178,38 +127,6 @@ LogicView::LogicView(
 
 auto LogicView::Width() const -> std::uint64_t {
   return bit_width_;
-}
-
-auto LogicView::GetBit(std::uint64_t offset) const -> FourStateBit {
-  return AsConst().GetBit(offset);
-}
-
-auto LogicView::SetBit(std::uint64_t offset, FourStateBit value) -> void {
-  if (offset >= bit_width_) {
-    throw InternalError("LogicView::SetBit: offset out of range");
-  }
-  const std::uint64_t abs = bit_offset_ + offset;
-  const std::uint64_t mask = std::uint64_t{1} << (abs % 64U);
-  const bool vbit =
-      (value == FourStateBit::kOne) || (value == FourStateBit::kUnknown);
-  const bool ubit = (value == FourStateBit::kHighImpedance) ||
-                    (value == FourStateBit::kUnknown);
-  if (vbit) {
-    value_words_[abs / 64U] |= mask;
-  } else {
-    value_words_[abs / 64U] &= ~mask;
-  }
-  if (ubit) {
-    unknown_words_[abs / 64U] |= mask;
-  } else {
-    unknown_words_[abs / 64U] &= ~mask;
-  }
-}
-
-auto LogicView::SetZero() -> void {
-  for (std::uint64_t i = 0; i < bit_width_; ++i) {
-    SetBit(i, FourStateBit::kZero);
-  }
 }
 
 auto LogicView::AsConst() const -> ConstLogicView {
@@ -235,17 +152,6 @@ auto BitValue::View() const -> ConstBitView {
   return ConstBitView{value_.Words(), 0U, value_.BitWidth()};
 }
 
-auto BitValue::View(std::uint64_t offset, std::uint64_t width) -> BitView {
-  ValidateViewRange(value_.WordCount(), offset, width, "BitValue::View");
-  return BitView{value_.Words(), offset, width};
-}
-
-auto BitValue::View(std::uint64_t offset, std::uint64_t width) const
-    -> ConstBitView {
-  ValidateViewRange(value_.WordCount(), offset, width, "BitValue::View");
-  return ConstBitView{value_.Words(), offset, width};
-}
-
 LogicValue::LogicValue(std::uint64_t bit_width)
     : value_(bit_width), unknown_(bit_width) {
   value_.SetOne();
@@ -263,17 +169,6 @@ auto LogicValue::View() -> LogicView {
 auto LogicValue::View() const -> ConstLogicView {
   return ConstLogicView{
       value_.Words(), unknown_.Words(), 0U, value_.BitWidth()};
-}
-
-auto LogicValue::View(std::uint64_t offset, std::uint64_t width) -> LogicView {
-  ValidateViewRange(value_.WordCount(), offset, width, "LogicValue::View");
-  return LogicView{value_.Words(), unknown_.Words(), offset, width};
-}
-
-auto LogicValue::View(std::uint64_t offset, std::uint64_t width) const
-    -> ConstLogicView {
-  ValidateViewRange(value_.WordCount(), offset, width, "LogicValue::View");
-  return ConstLogicView{value_.Words(), unknown_.Words(), offset, width};
 }
 
 }  // namespace lyra::value

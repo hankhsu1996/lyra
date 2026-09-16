@@ -35,11 +35,10 @@ auto MakeStorage(std::uint64_t bit_width, bool is_four_state)
   return BitValue{bit_width};
 }
 
+// The mask of a value that fits in one word, which is that value's own word
+// zero.
 auto MaskForWidth(std::uint64_t bit_width) -> std::uint64_t {
-  if (bit_width >= 64U) {
-    return ~std::uint64_t{0};
-  }
-  return (std::uint64_t{1} << bit_width) - 1U;
+  return ValidBitsMask(0, bit_width);
 }
 
 auto SignExtendToInt64(std::uint64_t bits, std::uint64_t bit_width)
@@ -140,7 +139,7 @@ auto PackedArray::MakeFromWordPlanesShaped(
     throw InternalError(
         "PackedArray::MakeFromWordPlanesShaped: bit_width must be >= 1");
   }
-  const std::size_t expected = (bit_width + 63U) / 64U;
+  const std::size_t expected = WordCountForBits(bit_width);
   if (value_words.size() != expected) {
     throw InternalError(
         "PackedArray::MakeFromWordPlanesShaped: value word count mismatch");
@@ -193,7 +192,7 @@ auto PackedArray::MakeFromWordPlanes(
 
 auto PackedArray::FromInt(std::int64_t value, const PackedType& type)
     -> PackedArray {
-  const std::size_t n = (type.bit_width + 63U) / 64U;
+  const std::size_t n = WordCountForBits(type.bit_width);
   PackedWordVector words(n);
   if (type.bit_width <= 64U) {
     words[0] = static_cast<std::uint64_t>(value);
@@ -241,7 +240,7 @@ auto PackedArray::FromWords(
 auto PackedArray::FromBytes(
     std::span<const char> bytes, std::uint64_t bit_width, bool is_signed,
     bool is_four_state) -> PackedArray {
-  const auto word_count = static_cast<std::size_t>((bit_width + 63U) / 64U);
+  const auto word_count = WordCountForBits(bit_width);
   std::vector<std::uint64_t> val_words(word_count, 0U);
   const auto total_input_bits = static_cast<std::uint64_t>(bytes.size()) * 8U;
   const auto bits_to_use = std::min<std::uint64_t>(total_input_bits, bit_width);
@@ -336,7 +335,7 @@ auto PackedArray::FromDigits(
   }
   if (!any_digit) return std::nullopt;
 
-  const auto word_count = static_cast<std::size_t>((bit_width + 63U) / 64U);
+  const auto word_count = WordCountForBits(bit_width);
   std::vector<std::uint64_t> val_words(word_count, 0U);
   std::vector<std::uint64_t> unk_words(word_count, 0U);
   const auto bits_to_use =
@@ -403,7 +402,7 @@ auto PackedArray::FilledLike(
   const bool unknown_bit = low_bit(fill.UnknownWords());
 
   const std::uint64_t width = prototype.type_.bit_width;
-  const auto words = static_cast<std::size_t>((width + 63) / 64);
+  const auto words = WordCountForBits(width);
   const std::uint64_t all_ones = ~std::uint64_t{0};
 
   if (!prototype.type_.is_four_state) {
@@ -604,10 +603,8 @@ auto PackedArray::Clog2() const -> PackedArray {
   for (std::size_t i = 0; i < value_words.size(); ++i) {
     const std::uint64_t unk =
         i < unknown_words.size() ? unknown_words[i] : std::uint64_t{0};
-    std::uint64_t word = value_words[i] & ~unk;
-    if (i + 1U == value_words.size()) {
-      word &= MaskForWidth(type_.bit_width - (64U * i));
-    }
+    const std::uint64_t word =
+        value_words[i] & ~unk & ValidBitsMask(i, type_.bit_width);
     if (word == 0U) {
       continue;
     }
@@ -672,9 +669,7 @@ auto PackedArray::CountBits(const PackedArray& control_bits) const
     // The top word's bits above the declared width are storage, not value, so
     // they are excluded before counting -- otherwise they would all read as
     // zeros and inflate a `$countbits(v, '0)`.
-    const std::uint64_t valid = i + 1U == value_words.size()
-                                    ? MaskForWidth(type_.bit_width - (64U * i))
-                                    : ~std::uint64_t{0};
+    const std::uint64_t valid = ValidBitsMask(i, type_.bit_width);
     const std::uint64_t value = value_words[i] & valid;
     const std::uint64_t unknown =
         (i < unknown_words.size() ? unknown_words[i] : std::uint64_t{0}) &
@@ -697,10 +692,10 @@ auto PackedArray::CountBits(const PackedArray& control_bits) const
 
 namespace {
 
-// Word-level shift-and-OR copy: writes `src_bit_width` bits from `src` into
-// `dst` starting at bit position `dst_lsb`. Caller guarantees `dst` is wide
-// enough. Avoids the per-bit loop pattern in AssignSlice; complexity is
-// O(src_words) regardless of width.
+// The caller guarantees `dst` is wide enough. What the source holds above its
+// own width is masked rather than assumed zero, because nothing states that a
+// packed value's padding bits are clear, and this ORs into a destination that
+// would keep whatever arrived.
 auto BlitBits(
     std::span<std::uint64_t> dst, std::uint64_t dst_lsb,
     std::span<const std::uint64_t> src, std::uint64_t src_bit_width) -> void {
@@ -708,12 +703,8 @@ auto BlitBits(
   const auto word_off = static_cast<std::size_t>(dst_lsb / 64U);
   const auto bit_off = static_cast<std::uint64_t>(dst_lsb % 64U);
   const auto src_words = WordCountForBits(src_bit_width);
-  const auto top_bits = src_bit_width % 64U;
-  const std::uint64_t top_mask =
-      top_bits == 0U ? ~std::uint64_t{0} : (std::uint64_t{1} << top_bits) - 1U;
   for (std::size_t i = 0; i < src_words; ++i) {
-    std::uint64_t w = src[i];
-    if (i + 1U == src_words) w &= top_mask;
+    const std::uint64_t w = src[i] & ValidBitsMask(i, src_bit_width);
     dst[word_off + i] |= w << bit_off;
     if (bit_off != 0U && (word_off + i + 1U) < dst.size()) {
       dst[word_off + i + 1U] |= w >> (64U - bit_off);
@@ -1035,15 +1026,6 @@ auto SignedCompare(
   return 0;
 }
 
-auto BitAt(std::span<const std::uint64_t> words, std::uint64_t pos)
-    -> std::uint64_t {
-  const auto idx = static_cast<std::size_t>(pos / 64U);
-  if (idx >= words.size()) {
-    return 0U;
-  }
-  return (words[idx] >> (pos % 64U)) & std::uint64_t{1};
-}
-
 auto ShiftLeftWordsInto(
     std::span<const std::uint64_t> src, std::uint64_t amount,
     std::span<std::uint64_t> dst, std::uint64_t bit_width) -> void {
@@ -1126,7 +1108,7 @@ auto LongDivideUnsigned(
   std::ranges::fill(rem, std::uint64_t{0});
   for (std::uint64_t pos = bit_width; pos-- > 0;) {
     ShiftLeftOneInPlace(rem, bit_width);
-    rem[0] |= BitAt(numerator, pos);
+    rem[0] |= BitAt(numerator, pos) ? std::uint64_t{1} : std::uint64_t{0};
     if (UnsignedCompare(rem, divisor) >= 0) {
       SubWordsInto(rem, divisor, rem, bit_width);
       SetBitAt(quot, pos);
@@ -1236,9 +1218,9 @@ auto PackedArray::operator/(const PackedArray& other) const -> PackedArray {
     return PackedArray{type_.bit_width, type_.is_signed, type_.is_four_state};
   }
   const bool neg_a =
-      type_.is_signed && BitAt(ValueWords(), type_.bit_width - 1U) != 0U;
+      type_.is_signed && BitAt(ValueWords(), type_.bit_width - 1U);
   const bool neg_b =
-      type_.is_signed && BitAt(other.ValueWords(), type_.bit_width - 1U) != 0U;
+      type_.is_signed && BitAt(other.ValueWords(), type_.bit_width - 1U);
   auto a_abs = MakeWordBuffer(type_.bit_width);
   auto b_abs = MakeWordBuffer(type_.bit_width);
   if (neg_a) {
@@ -1275,9 +1257,9 @@ auto PackedArray::operator%(const PackedArray& other) const -> PackedArray {
     return PackedArray{type_.bit_width, type_.is_signed, type_.is_four_state};
   }
   const bool neg_a =
-      type_.is_signed && BitAt(ValueWords(), type_.bit_width - 1U) != 0U;
+      type_.is_signed && BitAt(ValueWords(), type_.bit_width - 1U);
   const bool neg_b =
-      type_.is_signed && BitAt(other.ValueWords(), type_.bit_width - 1U) != 0U;
+      type_.is_signed && BitAt(other.ValueWords(), type_.bit_width - 1U);
   auto a_abs = MakeWordBuffer(type_.bit_width);
   auto b_abs = MakeWordBuffer(type_.bit_width);
   if (neg_a) {
@@ -1426,16 +1408,12 @@ auto PackedArray::WildcardEquals(const PackedArray& other) const
   const auto b_val = other.ValueWords();
   const auto a_unk = UnknownWords();
   const auto b_unk = other.UnknownWords();
-  const auto top_mask = MaskForWidth(type_.bit_width - ((words - 1U) * 64U));
   bool definite_mismatch = false;
   bool lhs_unknown_at_compare = false;
   for (std::size_t w = 0; w < words; ++w) {
     const std::uint64_t bw_unk = w < b_unk.size() ? b_unk[w] : 0U;
     const std::uint64_t aw_unk = w < a_unk.size() ? a_unk[w] : 0U;
-    std::uint64_t cmp_mask = ~bw_unk;
-    if (w + 1U == words) {
-      cmp_mask &= top_mask;
-    }
+    const std::uint64_t cmp_mask = ~bw_unk & ValidBitsMask(w, type_.bit_width);
     const std::uint64_t diff = a_val[w] ^ b_val[w];
     if ((diff & ~aw_unk & cmp_mask) != 0U) {
       definite_mismatch = true;
@@ -1460,7 +1438,6 @@ auto PackedArray::CasezEquals(const PackedArray& other) const -> PackedArray {
   const auto b_val = other.ValueWords();
   const auto a_unk = UnknownWords();
   const auto b_unk = other.UnknownWords();
-  const auto top_mask = MaskForWidth(type_.bit_width - ((words - 1U) * 64U));
   for (std::size_t w = 0; w < words; ++w) {
     const std::uint64_t aw_val = a_val[w];
     const std::uint64_t bw_val = b_val[w];
@@ -1471,10 +1448,8 @@ auto PackedArray::CasezEquals(const PackedArray& other) const -> PackedArray {
     // on either side are NOT wildcards and must still match exactly.
     const std::uint64_t a_z = aw_unk & ~aw_val;
     const std::uint64_t b_z = bw_unk & ~bw_val;
-    std::uint64_t cmp_mask = ~(a_z | b_z);
-    if (w + 1U == words) {
-      cmp_mask &= top_mask;
-    }
+    const std::uint64_t cmp_mask =
+        ~(a_z | b_z) & ValidBitsMask(w, type_.bit_width);
     if (((aw_val ^ bw_val) & cmp_mask) != 0U ||
         ((aw_unk ^ bw_unk) & cmp_mask) != 0U) {
       return DeterministicBit(false);
@@ -1490,7 +1465,6 @@ auto PackedArray::CasexEquals(const PackedArray& other) const -> PackedArray {
   const auto b_val = other.ValueWords();
   const auto a_unk = UnknownWords();
   const auto b_unk = other.UnknownWords();
-  const auto top_mask = MaskForWidth(type_.bit_width - ((words - 1U) * 64U));
   for (std::size_t w = 0; w < words; ++w) {
     const std::uint64_t aw_val = a_val[w];
     const std::uint64_t bw_val = b_val[w];
@@ -1498,10 +1472,8 @@ auto PackedArray::CasexEquals(const PackedArray& other) const -> PackedArray {
     const std::uint64_t bw_unk = w < b_unk.size() ? b_unk[w] : 0U;
     // casex masks out any-unknown bits on either side (X or Z); the value
     // plane carries the comparison on the remaining bits.
-    std::uint64_t cmp_mask = ~(aw_unk | bw_unk);
-    if (w + 1U == words) {
-      cmp_mask &= top_mask;
-    }
+    const std::uint64_t cmp_mask =
+        ~(aw_unk | bw_unk) & ValidBitsMask(w, type_.bit_width);
     if (((aw_val ^ bw_val) & cmp_mask) != 0U) {
       return DeterministicBit(false);
     }
@@ -1517,7 +1489,6 @@ auto PackedArray::MergeConditional(const PackedArray& other) const
   const auto b_val = other.ValueWords();
   const auto a_unk = UnknownWords();
   const auto b_unk = other.UnknownWords();
-  const auto top_mask = MaskForWidth(type_.bit_width - ((words - 1U) * 64U));
   std::vector<std::uint64_t> res_val(words, 0U);
   std::vector<std::uint64_t> res_unk(words, 0U);
   for (std::size_t w = 0; w < words; ++w) {
@@ -1526,14 +1497,9 @@ auto PackedArray::MergeConditional(const PackedArray& other) const
     // X is (value=1, unknown=1), which is what every bit the two arms do not
     // both know and agree on becomes.
     const std::uint64_t agreed = ~(a_val[w] ^ b_val[w]) & ~(au | bu);
-    std::uint64_t v = (a_val[w] & agreed) | ~agreed;
-    std::uint64_t u = ~agreed;
-    if (w + 1U == words) {
-      v &= top_mask;
-      u &= top_mask;
-    }
-    res_val[w] = v;
-    res_unk[w] = u;
+    const std::uint64_t valid = ValidBitsMask(w, type_.bit_width);
+    res_val[w] = ((a_val[w] & agreed) | ~agreed) & valid;
+    res_unk[w] = ~agreed & valid;
   }
   return FromWords(
       res_val, res_unk, PackedType{type_.dims, type_.is_signed, true});
@@ -1547,7 +1513,6 @@ auto PackedArray::ResolveNet(const PackedArray& other, NetResolution fold) const
   const auto b_val = other.ValueWords();
   const auto a_unk = UnknownWords();
   const auto b_unk = other.UnknownWords();
-  const auto top_mask = MaskForWidth(type_.bit_width - ((words - 1U) * 64U));
   std::vector<std::uint64_t> res_val(words, 0U);
   std::vector<std::uint64_t> res_unk(words, 0U);
   for (std::size_t w = 0; w < words; ++w) {
@@ -1597,12 +1562,9 @@ auto PackedArray::ResolveNet(const PackedArray& other, NetResolution fold) const
         break;
       }
     }
-    if (w + 1U == words) {
-      v &= top_mask;
-      u &= top_mask;
-    }
-    res_val[w] = v;
-    res_unk[w] = u;
+    const std::uint64_t valid = ValidBitsMask(w, type_.bit_width);
+    res_val[w] = v & valid;
+    res_unk[w] = u & valid;
   }
   return FromWords(res_val, res_unk, type_);
 }
@@ -2251,10 +2213,10 @@ auto PackedArray::ArithmeticShiftRight(const PackedArray& amount) const
   // Each plane shifts with its own MSB as the fill, so an X at the top
   // extends down into the new top bits instead of degenerating to the
   // value-plane sign.
-  const std::uint64_t value_sign = BitAt(ValueWords(), type_.bit_width - 1U);
+  const bool value_sign = BitAt(ValueWords(), type_.bit_width - 1U);
   auto value_buf = MakeWordBuffer(type_.bit_width);
   LogicalShiftRightWordsInto(ValueWords(), amt, value_buf, type_.bit_width);
-  if (value_sign != 0U) {
+  if (value_sign) {
     FillTopBits(value_buf, type_.bit_width, std::min(amt, type_.bit_width));
   }
   if (!type_.is_four_state) {
@@ -2262,10 +2224,10 @@ auto PackedArray::ArithmeticShiftRight(const PackedArray& amount) const
         type_.bit_width, true, false,
         std::span<const std::uint64_t>{value_buf.data(), value_buf.size()}, {});
   }
-  const std::uint64_t unk_sign = BitAt(UnknownWords(), type_.bit_width - 1U);
+  const bool unk_sign = BitAt(UnknownWords(), type_.bit_width - 1U);
   auto unk_buf = MakeWordBuffer(type_.bit_width);
   LogicalShiftRightWordsInto(UnknownWords(), amt, unk_buf, type_.bit_width);
-  if (unk_sign != 0U) {
+  if (unk_sign) {
     FillTopBits(unk_buf, type_.bit_width, std::min(amt, type_.bit_width));
   }
   return MakeFromWordPlanes(

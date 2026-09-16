@@ -27,20 +27,6 @@ auto RequireReductionShape(
   }
 }
 
-auto ValidBitsMaskForWord(std::uint64_t bit_width, std::size_t word_index)
-    -> std::uint64_t {
-  const std::size_t last = WordCountForBits(bit_width) - 1U;
-  if (word_index < last) {
-    return ~std::uint64_t{0};
-  }
-  const std::uint64_t used =
-      bit_width - (static_cast<std::uint64_t>(last) * 64U);
-  if (used == 64U) {
-    return ~std::uint64_t{0};
-  }
-  return (std::uint64_t{1} << used) - 1U;
-}
-
 auto WriteScalar(BitView dst, TwoStateBit value) -> void {
   constexpr std::string_view kWhere = "WriteScalar(Bit)";
   if (dst.Width() != 1U) {
@@ -109,7 +95,7 @@ auto ReductionAndBitValue(ConstBitView src) -> TwoStateBit {
   const auto words = detail::PackedAccess::ValueWords(src);
   detail::RequireWordCount(kWhere, words, src.Width());
   for (std::size_t i = 0; i < words.size(); ++i) {
-    const std::uint64_t mask = ValidBitsMaskForWord(src.Width(), i);
+    const std::uint64_t mask = ValidBitsMask(i, src.Width());
     if ((words[i] & mask) != mask) {
       return TwoStateBit::kZero;
     }
@@ -123,7 +109,7 @@ auto ReductionOrBitValue(ConstBitView src) -> TwoStateBit {
   const auto words = detail::PackedAccess::ValueWords(src);
   detail::RequireWordCount(kWhere, words, src.Width());
   for (std::size_t i = 0; i < words.size(); ++i) {
-    const std::uint64_t mask = ValidBitsMaskForWord(src.Width(), i);
+    const std::uint64_t mask = ValidBitsMask(i, src.Width());
     if ((words[i] & mask) != 0U) {
       return TwoStateBit::kOne;
     }
@@ -138,7 +124,7 @@ auto ReductionXorBitValue(ConstBitView src) -> TwoStateBit {
   detail::RequireWordCount(kWhere, words, src.Width());
   int parity = 0;
   for (std::size_t i = 0; i < words.size(); ++i) {
-    const std::uint64_t mask = ValidBitsMaskForWord(src.Width(), i);
+    const std::uint64_t mask = ValidBitsMask(i, src.Width());
     parity ^= std::popcount(words[i] & mask) & 1;
   }
   return parity != 0 ? TwoStateBit::kOne : TwoStateBit::kZero;
@@ -153,7 +139,7 @@ auto ReductionAndLogicValue(ConstLogicView src) -> FourStateBit {
   detail::RequireWordCount(kWhere, uw, src.Width());
   bool saw_unknown = false;
   for (std::size_t i = 0; i < vw.size(); ++i) {
-    const std::uint64_t mask = ValidBitsMaskForWord(src.Width(), i);
+    const std::uint64_t mask = ValidBitsMask(i, src.Width());
     const std::uint64_t known_zero = (~uw[i]) & (~vw[i]) & mask;
     if (known_zero != 0U) {
       return FourStateBit::kZero;
@@ -174,7 +160,7 @@ auto ReductionOrLogicValue(ConstLogicView src) -> FourStateBit {
   detail::RequireWordCount(kWhere, uw, src.Width());
   bool saw_unknown = false;
   for (std::size_t i = 0; i < vw.size(); ++i) {
-    const std::uint64_t mask = ValidBitsMaskForWord(src.Width(), i);
+    const std::uint64_t mask = ValidBitsMask(i, src.Width());
     const std::uint64_t known_one = (~uw[i]) & vw[i] & mask;
     if (known_one != 0U) {
       return FourStateBit::kOne;
@@ -195,7 +181,7 @@ auto ReductionXorLogicValue(ConstLogicView src) -> FourStateBit {
   detail::RequireWordCount(kWhere, uw, src.Width());
   int parity = 0;
   for (std::size_t i = 0; i < vw.size(); ++i) {
-    const std::uint64_t mask = ValidBitsMaskForWord(src.Width(), i);
+    const std::uint64_t mask = ValidBitsMask(i, src.Width());
     if ((uw[i] & mask) != 0U) {
       return FourStateBit::kUnknown;
     }

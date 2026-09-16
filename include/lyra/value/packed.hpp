@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <string_view>
 
 #include "lyra/base/inlined_vector.hpp"
 
@@ -33,19 +32,38 @@ enum class FourStateBit : std::uint8_t {
   return static_cast<std::size_t>(whole + (remainder == 0U ? 0U : 1U));
 }
 
+// The bits of word `word_index` that lie below `bit_width`: every bit of a word
+// the width reaches past, no bit of a word beyond it, and a partial mask in the
+// one word the width ends inside.
+[[nodiscard]] constexpr auto ValidBitsMask(
+    std::size_t word_index, std::uint64_t bit_width) -> std::uint64_t {
+  const std::uint64_t low = static_cast<std::uint64_t>(word_index) * 64U;
+  const std::uint64_t within = bit_width > low ? bit_width - low : 0U;
+  if (within >= 64U) {
+    return ~std::uint64_t{0};
+  }
+  return (std::uint64_t{1} << within) - 1U;
+}
+
+// A position past the end reads as clear, which is what a plane the value does
+// not carry answers for every one of its bits.
+[[nodiscard]] constexpr auto BitAt(
+    std::span<const std::uint64_t> words, std::uint64_t position) -> bool {
+  const auto index = static_cast<std::size_t>(position / 64U);
+  if (index >= words.size()) {
+    return false;
+  }
+  return ((words[index] >> (position % 64U)) & 1U) != 0U;
+}
+
 auto MaskUnusedTopBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
     -> void;
-
-auto ValidateViewRange(
-    std::size_t word_count, std::uint64_t bit_offset, std::uint64_t bit_width,
-    std::string_view where) -> void;
 
 class PackedWords {
  public:
   explicit PackedWords(std::uint64_t bit_width);
 
   [[nodiscard]] auto BitWidth() const -> std::uint64_t;
-  [[nodiscard]] auto WordCount() const -> std::size_t;
 
   [[nodiscard]] auto Words() -> std::span<std::uint64_t>;
   [[nodiscard]] auto Words() const -> std::span<const std::uint64_t>;
@@ -73,7 +91,6 @@ class ConstBitView {
       std::uint64_t bit_width);
 
   [[nodiscard]] auto Width() const -> std::uint64_t;
-  [[nodiscard]] auto GetBit(std::uint64_t offset) const -> TwoStateBit;
 
  private:
   friend struct detail::PackedAccess;
@@ -90,9 +107,6 @@ class BitView {
       std::uint64_t bit_width);
 
   [[nodiscard]] auto Width() const -> std::uint64_t;
-  [[nodiscard]] auto GetBit(std::uint64_t offset) const -> TwoStateBit;
-  auto SetBit(std::uint64_t offset, TwoStateBit value) -> void;
-  auto SetZero() -> void;
 
   [[nodiscard]] auto AsConst() const -> ConstBitView;
 
@@ -112,7 +126,6 @@ class ConstLogicView {
       std::uint64_t bit_width);
 
   [[nodiscard]] auto Width() const -> std::uint64_t;
-  [[nodiscard]] auto GetBit(std::uint64_t offset) const -> FourStateBit;
 
  private:
   friend struct detail::PackedAccess;
@@ -131,9 +144,6 @@ class LogicView {
       std::uint64_t bit_width);
 
   [[nodiscard]] auto Width() const -> std::uint64_t;
-  [[nodiscard]] auto GetBit(std::uint64_t offset) const -> FourStateBit;
-  auto SetBit(std::uint64_t offset, FourStateBit value) -> void;
-  auto SetZero() -> void;
 
   [[nodiscard]] auto AsConst() const -> ConstLogicView;
 
@@ -154,9 +164,6 @@ class BitValue {
 
   [[nodiscard]] auto View() -> BitView;
   [[nodiscard]] auto View() const -> ConstBitView;
-  [[nodiscard]] auto View(std::uint64_t offset, std::uint64_t width) -> BitView;
-  [[nodiscard]] auto View(std::uint64_t offset, std::uint64_t width) const
-      -> ConstBitView;
 
  private:
   PackedWords value_;
@@ -170,10 +177,6 @@ class LogicValue {
 
   [[nodiscard]] auto View() -> LogicView;
   [[nodiscard]] auto View() const -> ConstLogicView;
-  [[nodiscard]] auto View(std::uint64_t offset, std::uint64_t width)
-      -> LogicView;
-  [[nodiscard]] auto View(std::uint64_t offset, std::uint64_t width) const
-      -> ConstLogicView;
 
  private:
   PackedWords value_;

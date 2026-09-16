@@ -1435,20 +1435,33 @@ enough to warrant its own focused review.
       Had they been believed rather than checked, the honest-looking fix -- skip the units that root
       no objects -- would have dropped every package's initializers from what a session loads.
 
-- [ ] R91 -- Converting a packed value between widths, or between the two-state and the four-state
-      domain, is spelled one bit at a time. The conversion clears the whole destination by assigning
-      each bit in turn, copies the overlapping bits one at a time, then sign-extends the rest the
-      same way, so a 64-bit conversion costs on the order of two hundred shift-and-mask pairs where
-      both sides start at bit zero and the words could move whole. The view layer's bulk clear is
-      per-bit for the same reason and the conversions are its only caller.
+- [x] R91 -- Converting a packed value between widths, or between the two-state and the four-state
+      domain, is word-wise. A destination word is the source's bits where the source reaches and the
+      padding bit everywhere above, settled by one mask, so each destination word is written exactly
+      once and the whole value costs what its words cost rather than what its bits cost.
 
-      Target: word-wise wherever source and destination are word-aligned -- whole words copied, the
-      top word masked once, the sign extension a fill of the words above the source's width -- with
-      a per-bit path left only for an unaligned remainder. The bulk clear becomes word writes.
+      It used to be spelled one bit at a time: clear the destination bit by bit, copy the
+      overlapping bits one at a time, then sign-extend the rest the same way. The separate clear was
+      needed only because the copy wrote a subset of the destination; writing every word removes it,
+      and with it the whole per-bit accessor surface of the view layer, whose only caller these
+      conversions were.
 
-      Not blocked, and deliberately not taken yet: what justifies it is how much of a run's time
-      sits in width conversion, and that number does not exist. Measure on the benchmark corpus
-      first, then cut, so the change is reported against a before and an after.
+      **Measured before and after, same case and same amount of work.** On the mixed
+      arithmetic-and-control case, conversion was **over four tenths** of the run's instructions and
+      is now **under one tenth**; on the clocked-pipeline case, about a sixth and now a fiftieth. One
+      conversion of a value in the tens of bits went from thousands of instructions to a couple of
+      hundred, and the first case as a whole runs in about two thirds of the instructions it did. The
+      per-bit write was the single largest self-cost entry in both programs before the change; what
+      stands at the top now is constructing and range-checking views, which
+      [performance.md](performance.md) already predicted.
+
+      Two things this deliberately did not take. A conversion still builds its destination as an
+      all-unknown value and then overwrites every word of it, so the default-value fill is a wasted
+      pass; removing it needs a way to build a value without initializing it, which is separable
+      because the conversion writes every word either way. And a source or destination that does not
+      start at a word boundary still has no word-wise path -- conversions never produce one, so
+      nothing needed it, and the part-select paths that would use it do their own word arithmetic
+      already.
 
 - [ ] R92 -- Composing a runtime call's engine handle is spelled at roughly twenty lowering sites
       rather than once. Each interns the handle expression itself and then builds the argument list
@@ -1535,6 +1548,46 @@ enough to warrant its own focused review.
       already, so what this needs is the rule said in terms a check can decide.
 
       Not blocked.
+
+- [ ] R98 -- The benchmark harness treats a rejected probe as a failure rather than as a bound, so
+      one case reports no rate at all and the whole run exits non-zero. The harness raises a case's
+      amount of work until a measurement reaches its target duration, extrapolating the next amount
+      from the slope of the previous two. The case whose work is a declared bit width has almost no
+      slope -- being flat in width is exactly what that case exists to show -- so the extrapolation
+      asks for far more than the curve needs, and nothing clamps it to what the language permits.
+      The probe lands above the maximum packed width, the front end rejects the design, and the case
+      gives up instead of stepping back toward the last amount that built.
+
+      Measured 2026-09-16: it asked for 16,992,729 bits against a maximum of 16,777,215, while a
+      build at two million bits takes about five and a half seconds against a twenty-second target
+      -- so an amount that would have converged very likely exists below the ceiling and the harness
+      simply never probes one.
+
+      **Target shape**: a probe the tool rejects is information about the upper bound, not the end
+      of the search -- step back toward the last amount that built and continue from there. A work
+      axis with a limit the language fixes says so, so no probe is spent past it. A case that
+      genuinely cannot reach the target reports the rate it did reach, which is what the harness
+      already does for a case too slow to get there at one unit.
+
+      Found while measuring R91, which lowered this case's per-bit build cost and so raised what the
+      extrapolation asks for. That is why it surfaced then; it is not what put the ceiling within
+      reach.
+
+- [ ] R99 -- Nobody owns the rule that a packed value's bits above its declared width are clear, so
+      every step along a value's path re-establishes it. Masking the top word is a few percent of a
+      profiled run on its own, and the passes that do it are not independent: a conversion masks its
+      destination, the constructor it is handed to masks again, and an operator masks its result
+      buffer before handing it to that same constructor. A deliberately broken conversion that skips
+      its own mask changes no observable answer in the corpus, because a later pass covers for it --
+      which is what an unowned invariant looks like from the outside.
+
+      **Target shape**: name the point at which the rule holds and say so once -- most likely the
+      construction of a value, which every path already goes through -- so that a step in the middle
+      may assume it and stop restating it. Until that is written down, the masks are all load-bearing
+      by ignorance and none of them can be removed safely.
+
+      Found while measuring R91: with no document stating the rule, a defensive mask cannot be told
+      from a necessary one, and the test that would separate them does not exist either.
 
 ## Out of Scope
 

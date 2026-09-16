@@ -62,12 +62,6 @@ auto UnknownBit(const PackedArray& pa, std::uint64_t bit_index) -> bool {
   return (UnknownWordAt(pa, wi) & mask) != 0U;
 }
 
-auto TopWordMask(std::uint64_t bit_width) -> std::uint64_t {
-  const std::uint64_t used = bit_width % 64U;
-  if (used == 0U) return ~std::uint64_t{0};
-  return (std::uint64_t{1} << used) - 1U;
-}
-
 // Strip leading '0' digits, keeping at least one digit. 'x'/'z'/'X'/'Z' are
 // never stripped.
 auto StripLeadingZeros(std::string body) -> std::string {
@@ -82,8 +76,7 @@ auto HasX(const PackedArray& pa) -> bool {
   if (StateKindOf(pa) == IntegralStateKind::kTwoState) return false;
   const std::size_t wc = WordCountFor(pa);
   for (std::size_t i = 0; i < wc; ++i) {
-    const std::uint64_t mask =
-        (i + 1U == wc) ? TopWordMask(pa.BitWidth()) : ~std::uint64_t{0};
+    const std::uint64_t mask = ValidBitsMask(i, pa.BitWidth());
     if ((ValueWordAt(pa, i) & UnknownWordAt(pa, i) & mask) != 0U) {
       return true;
     }
@@ -96,8 +89,7 @@ auto HasZ(const PackedArray& pa) -> bool {
   if (StateKindOf(pa) == IntegralStateKind::kTwoState) return false;
   const std::size_t wc = WordCountFor(pa);
   for (std::size_t i = 0; i < wc; ++i) {
-    const std::uint64_t mask =
-        (i + 1U == wc) ? TopWordMask(pa.BitWidth()) : ~std::uint64_t{0};
+    const std::uint64_t mask = ValidBitsMask(i, pa.BitWidth());
     if ((~ValueWordAt(pa, i) & UnknownWordAt(pa, i) & mask) != 0U) {
       return true;
     }
@@ -110,8 +102,7 @@ auto IsAllX(const PackedArray& pa) -> bool {
   if (pa.BitWidth() == 0U) return false;
   const std::size_t wc = WordCountFor(pa);
   for (std::size_t i = 0; i < wc; ++i) {
-    const std::uint64_t mask =
-        (i + 1U == wc) ? TopWordMask(pa.BitWidth()) : ~std::uint64_t{0};
+    const std::uint64_t mask = ValidBitsMask(i, pa.BitWidth());
     if ((ValueWordAt(pa, i) & mask) != mask) return false;
     if ((UnknownWordAt(pa, i) & mask) != mask) return false;
   }
@@ -123,8 +114,7 @@ auto IsAllZ(const PackedArray& pa) -> bool {
   if (pa.BitWidth() == 0U) return false;
   const std::size_t wc = WordCountFor(pa);
   for (std::size_t i = 0; i < wc; ++i) {
-    const std::uint64_t mask =
-        (i + 1U == wc) ? TopWordMask(pa.BitWidth()) : ~std::uint64_t{0};
+    const std::uint64_t mask = ValidBitsMask(i, pa.BitWidth());
     if ((ValueWordAt(pa, i) & mask) != 0U) return false;
     if ((UnknownWordAt(pa, i) & mask) != mask) return false;
   }
@@ -266,9 +256,7 @@ auto FormatDecimalNumeric(const PackedArray& pa) -> std::string {
   // bignum loop below for the common 32 / 64-bit cases.
   if (bit_width <= 64U) {
     const std::uint64_t value_word = ValueWordAt(pa, 0);
-    const std::uint64_t mask = (bit_width >= 64U)
-                                   ? ~std::uint64_t{0}
-                                   : (std::uint64_t{1} << bit_width) - 1U;
+    const std::uint64_t mask = ValidBitsMask(0, bit_width);
     const std::uint64_t raw = value_word & mask;
     if (is_signed) {
       std::int64_t s = 0;
