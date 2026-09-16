@@ -29,7 +29,12 @@ struct Options {
 // cache filename is fully content-addressed (clang identity + include-root
 // path + every header's content + the optimization the header is compiled
 // at), so a cache hit means content match by construction and no staleness
-// check is needed at lookup time. `optimization` must be the one the
+// check is needed at lookup time.
+//
+// That decides which file is offered, never whether it is accepted: clang
+// re-checks the headers a precompiled one was built from by modification time,
+// so whatever writes those headers has to leave an unchanged one alone or the
+// header it just handed over is rejected. `optimization` must be the one the
 // including translation unit is compiled at: clang rejects a header compiled
 // under different options. Returns nullopt when PCH is disabled, the compiler
 // is not clang, or no writable cache directory is available -- the caller then

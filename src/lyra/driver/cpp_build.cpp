@@ -79,10 +79,15 @@ auto SubstituteTokens(
 // header tree so a header edit produces a different cache file rather
 // than reusing a PCH built against stale-on-disk content). Any failing
 // check falls back to plain compilation; correctness is unaffected.
+//
+// The compile loop waits for a batch rather than replacing each finished job,
+// because `wait -n` is not POSIX and this recipe may not assume a shell richer
+// than /bin/sh. At one job the batch is one and the loop is sequential, which
+// is why there is no second path for that case.
 constexpr std::string_view kBuildScriptTemplate = R"sh(#!/bin/sh
 # Build this self-contained Lyra C++ project.
 #
-#   usage: build.sh [--cxx <compiler>] [--no-pch]
+#   usage: build.sh [--cxx <compiler>] [--no-pch] [-j <jobs>]
 #
 # The compiler that produced this project is baked in below and is the default.
 # Nothing here reads the environment: what this script does is determined by the
@@ -94,20 +99,37 @@ constexpr std::string_view kBuildScriptTemplate = R"sh(#!/bin/sh
 # the runtime headers -- point --cxx at a wrapper script adding whatever it
 # needs (--gcc-install-dir=, -stdlib=libc++, --sysroot=).
 #
+# Each unit is compiled on its own and the objects are linked. -j says how many
+# of those compiles may run at once; -j 0 asks for one per processor. One at a
+# time is the default, because a script that was told nothing cannot know what
+# else is running on the machine.
+#
 # A precompiled header is built on first run and reused on later rebuilds to
 # amortize parsing of the runtime headers (clang only); --no-pch skips it.
 set -e
 CXX="@CXX@"
 NO_PCH=0
+JOBS=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --cxx)
       if [ $# -lt 2 ]; then echo "build.sh: --cxx needs a value" >&2; exit 2; fi
       CXX="$2"; shift 2 ;;
     --no-pch) NO_PCH=1; shift ;;
-    *) echo "usage: build.sh [--cxx <compiler>] [--no-pch]" >&2; exit 2 ;;
+    -j)
+      if [ $# -lt 2 ]; then echo "build.sh: -j needs a value" >&2; exit 2; fi
+      JOBS="$2"; shift 2 ;;
+    *)
+      echo "usage: build.sh [--cxx <compiler>] [--no-pch] [-j <jobs>]" >&2
+      exit 2 ;;
   esac
 done
+case "$JOBS" in
+  ''|*[!0-9]*) echo "build.sh: -j needs a count" >&2; exit 2 ;;
+esac
+if [ "$JOBS" = "0" ]; then
+  JOBS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+fi
 USE_PCH=0
 if [ "$NO_PCH" = "0" ]; then
   case "$CXX" in
@@ -127,18 +149,38 @@ if [ "$USE_PCH" = "1" ]; then
   fi
   PCH_FLAG="-include-pch $PCH"
 fi
-@DPICOMPILE@"$CXX" @STD@ @OPT@ -I @INCLUDE@ $PCH_FLAG @SOURCES@@DPIOBJS@ @LIBDIR@/@LIB@ -o @PROG@
+mkdir -p @OBJDIR@
+OBJS=""
+PIDS=""
+LIVE=0
+STATUS=0
+reap() {
+  for p in $PIDS; do
+    wait "$p" || STATUS=1
+  done
+  PIDS=""
+  LIVE=0
+}
+for src in @SOURCES@; do
+  OBJS="$OBJS @OBJDIR@/$src.o"
+  "$CXX" @STD@ @OPT@ -I @INCLUDE@ $PCH_FLAG -c "$src" -o "@OBJDIR@/$src.o" &
+  PIDS="$PIDS $!"
+  LIVE=$((LIVE + 1))
+  if [ "$LIVE" -ge "$JOBS" ]; then reap; fi
+done
+reap
+if [ "$STATUS" -ne 0 ]; then exit 1; fi
+@DPICOMPILE@"$CXX"$OBJS@DPIOBJS@ @LIBDIR@/@LIB@ -o @PROG@
 )sh";
 
-// The design's translation units on one command line, in the order they were
-// emitted. Each is compiled on its own and the results linked, so no unit's
-// text is read while another is compiled.
-auto RenderSourceList(std::span<const std::string> translation_units)
-    -> std::string {
+// Words as one shell list, space separated. A list with nothing in it renders
+// as nothing, which is what lets the recipe hold no branch for a design that
+// contributes none.
+auto JoinWords(std::span<const std::string> words) -> std::string {
   std::string out;
-  for (const std::string& source : translation_units) {
+  for (const std::string& word : words) {
     if (!out.empty()) out += " ";
-    out += source;
+    out += word;
   }
   return out;
 }
@@ -149,12 +191,31 @@ auto DpiSourceRelPath(const DpiLinkInput& input) -> std::string {
   return std::format("{}/{}", kDpiSourceDir, input.source.filename().string());
 }
 
+// Which language a foreign source is compiled as, and the standard where its
+// language has one to name (LRM 35). A C source is compiled as C so its symbols
+// keep C linkage, which is what the emitted declaration expects and what a C++
+// compilation would mangle away.
+auto ForeignLanguageFlags(const DpiLinkInput& input)
+    -> std::vector<std::string> {
+  if (input.compile_as_c) {
+    return {"-x", "c"};
+  }
+  return {std::string(kCxxStandardFlag), "-x", "c++"};
+}
+
+// Where a foreign source's object lands, relative to the project.
+auto DpiObjectRelPath(const DpiLinkInput& input) -> std::string {
+  return std::format(
+      "{}/{}/{}.o", kObjectDir, kDpiSourceDir,
+      input.source.filename().string());
+}
+
 // The build recipe's DPI-C contribution (LRM 35), rendered from the already
 // classified link inputs so the script carries no language detection of its
-// own: each C source gets its own compile step that keeps its symbols' C
-// linkage, and everything else joins the C++ link line directly. Both halves
-// are empty for a design with no foreign sources, which is why the recipe needs
-// no branch for that case.
+// own. Both halves are empty for a design with no foreign sources, which is why
+// the recipe needs no branch for that case. A foreign source compiles against
+// the one include path the project publishes its boundary on, which from the
+// recipe's own directory is `.`.
 struct DpiRecipe {
   std::string compile_steps;
   std::string link_inputs;
@@ -165,15 +226,11 @@ auto RenderDpiRecipe(
     -> DpiRecipe {
   DpiRecipe recipe;
   for (const DpiLinkInput& input : inputs) {
-    const std::string relative = DpiSourceRelPath(input);
-    if (!input.compile_as_c) {
-      recipe.link_inputs += std::format(" {}", relative);
-      continue;
-    }
-    const std::string object = relative + ".o";
+    const std::string object = DpiObjectRelPath(input);
     recipe.compile_steps += std::format(
-        "\"$CXX\" {} -x c -c {} -I . -o {}\n", optimization_flag, relative,
-        object);
+        "mkdir -p {}/{}\n\"$CXX\" {} {} -c {} -I . -o {}\n", kObjectDir,
+        kDpiSourceDir, JoinWords(ForeignLanguageFlags(input)),
+        optimization_flag, DpiSourceRelPath(input), object);
     recipe.link_inputs += std::format(" {}", object);
   }
   return recipe;
@@ -185,18 +242,19 @@ auto RenderBuildScript(
     -> std::string {
   const std::string_view optimization_flag = OptimizationFlag(optimization);
   const DpiRecipe dpi = RenderDpiRecipe(dpi_inputs, optimization_flag);
-  const std::string sources = RenderSourceList(translation_units);
+  const std::string sources = JoinWords(translation_units);
   // Named locals, because the bindings below hold `string_view`s and are read
   // after this statement: a temporary would already have died.
   const std::string cxx_exe = cxx.string();
   // The recipe keys its own PCH cache by header content, which does not
   // separate two builds clang will refuse to share.
   const std::string_view optimization_tag = optimization_flag.substr(1);
-  const std::array<std::pair<std::string_view, std::string_view>, 13> bindings =
+  const std::array<std::pair<std::string_view, std::string_view>, 14> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
           {"@PRELUDE@", support::kRuntimePreludeHeader},
           {"@CACHE@", kRuntimeCacheDir},
+          {"@OBJDIR@", kObjectDir},
           {"@STD@", kCxxStandardFlag},
           {"@OPT@", optimization_flag},
           {"@OPTTAG@", optimization_tag},
@@ -250,52 +308,110 @@ auto CopyDpiSources(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& dir)
     -> diag::Result<void> {
   for (const DpiLinkInput& input : inputs) {
-    if (auto r = CopyFileWritable(input.source, dir / DpiSourceRelPath(input));
-        !r) {
+    if (auto r = CopyFile(input.source, dir / DpiSourceRelPath(input)); !r) {
       return r;
     }
   }
   return {};
 }
 
-// Prepares one DPI-C link input for the final link (LRM 35). A C source is
-// compiled to an object in its own step so its symbols keep C linkage -- the
-// emitted declaration expects that, and the C++ driver would otherwise mangle a
-// C source compiled in the C++ invocation. A C++ source joins the C++ link
-// directly. `header_dir` holds the generated ABI header the source may include.
-// Returns the path to add to the link line.
-auto PrepareDpiLinkInput(
-    const HostBuild& host, const DpiLinkInput& input,
-    const std::filesystem::path& header_dir,
-    const std::filesystem::path& work_dir) -> diag::Result<std::string> {
+// One compile the build has to run, what the link takes from it, and what to
+// name if it fails. A unit's compile and a foreign source's are both this, so
+// one bounded run covers every compile a build does.
+struct CompileStep {
+  support::ProcessRequest request;
+  std::string subject;
+  std::string object;
+};
+
+// What compiling one translation unit costs the host compiler, as a request
+// rather than a run, so the caller decides how many happen at once.
+auto UnitCompileStep(
+    const std::filesystem::path& dir, const std::string& source,
+    const std::filesystem::path& include_root, const HostBuild& host,
+    const std::optional<std::filesystem::path>& prelude) -> CompileStep {
+  const std::string object = (dir / kObjectDir / (source + ".o")).string();
+  std::vector<std::string> args = {
+      std::string(kCxxStandardFlag),
+      std::string(OptimizationFlag(host.optimization)), "-I",
+      include_root.string()};
+  if (prelude.has_value()) {
+    args.emplace_back("-include-pch");
+    args.push_back(prelude->string());
+  }
+  args.emplace_back("-c");
+  args.push_back((dir / source).string());
+  args.emplace_back("-o");
+  args.push_back(object);
+  return CompileStep{
+      .request = {.exe = host.cxx, .args = std::move(args)},
+      .subject = source,
+      .object = object};
+}
+
+// What compiling one DPI-C link input costs (LRM 35). The project's own
+// directory is the one include path it publishes its foreign boundary on, which
+// is the whole of what such a source compiles against.
+auto DpiCompileStep(
+    const std::filesystem::path& dir, const DpiLinkInput& input,
+    const HostBuild& host) -> CompileStep {
   const std::string source = input.source.string();
-  if (!input.compile_as_c) {
-    return source;
+  const std::string object = (dir / DpiObjectRelPath(input)).string();
+  std::vector<std::string> args = ForeignLanguageFlags(input);
+  args.emplace_back(OptimizationFlag(host.optimization));
+  args.emplace_back("-c");
+  args.push_back(source);
+  args.emplace_back("-I");
+  args.push_back(dir.string());
+  args.emplace_back("-o");
+  args.push_back(object);
+  return CompileStep{
+      .request = {.exe = host.cxx, .args = std::move(args)},
+      .subject = source,
+      .object = object};
+}
+
+// Runs every compile, as many at once as this host was told to take, and
+// reports every one that failed rather than the first. A build whose emitted
+// text does not compile is a defect in Lyra, and seeing all of them at once is
+// what saves the run it would otherwise take to find the next.
+auto RunCompileSteps(std::span<const CompileStep> steps, const HostBuild& host)
+    -> diag::Result<void> {
+  std::vector<support::ProcessRequest> requests;
+  requests.reserve(steps.size());
+  for (const CompileStep& step : steps) {
+    std::error_code ec;
+    const std::filesystem::path home =
+        std::filesystem::path(step.object).parent_path();
+    std::filesystem::create_directories(home, ec);
+    if (ec) {
+      return diag::Fail(
+          diag::DiagCode::kHostIoError,
+          std::format(
+              "failed to create '{}': {}", home.string(), ec.message()));
+    }
+    requests.push_back(step.request);
   }
-  const std::filesystem::path obj =
-      work_dir / (input.source.filename().string() + ".o");
-  const std::vector<std::string> compile_args = {
-      std::string(OptimizationFlag(host.optimization)),
-      "-x",
-      "c",
-      "-c",
-      source,
-      "-I",
-      header_dir.string(),
-      "-o",
-      obj.string()};
-  auto compiled = support::RunProcessCaptured(host.cxx, compile_args);
-  if (!compiled) {
-    return IoError(std::move(compiled.error()));
+  auto results = support::RunProcessesCaptured(requests, host.compile_width);
+  if (!results) {
+    return IoError(std::move(results.error()));
   }
-  if (compiled->exit_code != 0) {
-    return diag::Fail(
-        diag::DiagCode::kHostBuildFailed,
-        std::format(
-            "compiling DPI-C source '{}' failed:\n{}", source,
-            compiled->stderr_text));
+  std::string failures;
+  for (std::size_t i = 0; i < steps.size(); ++i) {
+    if ((*results)[i].exit_code == 0) {
+      continue;
+    }
+    if (!failures.empty()) {
+      failures += "\n";
+    }
+    failures += std::format(
+        "compiling '{}' failed:\n{}", steps[i].subject,
+        (*results)[i].stderr_text);
   }
-  return obj.string();
+  if (!failures.empty()) {
+    return diag::Fail(diag::DiagCode::kHostBuildFailed, std::move(failures));
+  }
+  return {};
 }
 
 auto CompileProgram(
@@ -304,33 +420,27 @@ auto CompileProgram(
     const std::filesystem::path& include_root, const std::filesystem::path& lib,
     const std::filesystem::path& program, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void> {
-  std::vector<std::string> link_inputs;
-  link_inputs.reserve(dpi_inputs.size());
-  // The generated ABI header sits beside the emitted sources, so the directory
-  // holding them is the include path a foreign source resolves it through.
+  // The prelude is compiled before anything reads it, so several compiles
+  // cannot each find it missing and race to build the same file.
+  const std::optional<std::filesystem::path> prelude =
+      pch::EnsureCached(host.cxx, include_root, host.pch, host.optimization);
+
+  std::vector<CompileStep> steps;
+  for (const std::string& source : translation_units) {
+    steps.push_back(UnitCompileStep(dir, source, include_root, host, prelude));
+  }
   for (const DpiLinkInput& input : dpi_inputs) {
-    auto prepared =
-        PrepareDpiLinkInput(host, input, dir, program.parent_path());
-    if (!prepared) {
-      return std::unexpected(std::move(prepared.error()));
-    }
-    link_inputs.push_back(*std::move(prepared));
+    steps.push_back(DpiCompileStep(dir, input, host));
   }
 
-  std::vector<std::string> args = {
-      std::string(kCxxStandardFlag),
-      std::string(OptimizationFlag(host.optimization)), "-I",
-      include_root.string()};
-  if (auto cached = pch::EnsureCached(
-          host.cxx, include_root, host.pch, host.optimization)) {
-    args.emplace_back("-include-pch");
-    args.push_back(cached->string());
+  if (auto r = RunCompileSteps(steps, host); !r) {
+    return r;
   }
-  for (const std::string& source : translation_units) {
-    args.push_back((dir / source).string());
-  }
-  for (const std::string& in : link_inputs) {
-    args.push_back(in);
+
+  std::vector<std::string> args;
+  args.reserve(steps.size() + 3);
+  for (const CompileStep& step : steps) {
+    args.push_back(step.object);
   }
   args.push_back(lib.string());
   args.emplace_back("-o");
@@ -342,9 +452,7 @@ auto CompileProgram(
   if (result_or->exit_code != 0) {
     return diag::Fail(
         diag::DiagCode::kHostBuildFailed,
-        std::format(
-            "C++ compiler exited with {}:\n{}", result_or->exit_code,
-            result_or->stderr_text));
+        std::format("linking the program failed:\n{}", result_or->stderr_text));
   }
   return {};
 }

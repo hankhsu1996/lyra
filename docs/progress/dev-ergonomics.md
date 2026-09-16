@@ -63,19 +63,40 @@ layer directly.
       which is abandoned at its first refusal. `decisions/reporting-every-gap-in-one-run.md` settles
       the shape.
 
-- [ ] D11 -- A design's translation units are compiled one after another, so the per-unit artifact
-      boundary buys lower memory and not less time. Measured on the Ibex Simple System testbench, 49
-      translation units, unoptimized: built as one translation unit it takes 1:21 at a 3.2 GB peak;
-      built as 49 in sequence, 1:42 at 660 MB; built as 49 four at a time, 0:55 at the same 660 MB.
-      So the boundary already pays on memory -- a single translation unit at that peak is the shape
-      this machine has killed outright -- and compiling concurrently is what turns the remaining
-      quarter into a gain of half again.
+- [x] D11 -- A design's translation units can be compiled several at a time, and how many is stated
+      by whoever asked for the build rather than chosen by the build. Both things that build a
+      design take it: the command line for the build the compiler drives, and its own argument for
+      the recipe an emitted project ships. Asked for nothing, a build compiles one unit at a time,
+      because a build told nothing cannot know what else holds the machine -- a conformance run
+      drives sixteen of them at once, and a width each picked for itself would multiply rather than
+      add. Zero asks for one compile per processor, which is how a caller says the machine is its
+      own.
 
-      What it needs settled first is who owns the bound. A conformance run drives sixteen of these
-      builds at once, so a fan-out each build chooses for itself multiplies rather than adds, and
-      the machine it exhausts is the one running the editor. The answer is a bound the outer
-      scheduler states rather than one the build picks, which is why this is not a loop with a job
-      count in it.
+      Measured on the Ibex Simple System testbench, 49 translation units, unoptimized, emit
+      included: one at a time takes 3:08 of wall for 2:59 of CPU; four at a time takes 0:55 for
+      3:00. Same work either way, and 3.4x less waiting for it. The precompiled header is doing its
+      job across that split rather than being lost by it -- disabling it costs 43 s of CPU.
+      `decisions/a-build-is-told-how-wide-to-run.md` settles the shape.
+
+      **A figure recorded here before does not reproduce and is being replaced rather than
+      updated.** The sequential build was written down as 1:42, which cannot be right for a
+      workload of 2:59 of CPU on one core at a time. Nothing in this change would slow a sequential
+      build, so the discrepancy is in the earlier figure or in what the design emitted when it was
+      taken; a type's readings are emitted per declared type since then, which R96 in `refactor.md`
+      counts at 337 uncalled bodies for this very design. That is a candidate rather than a
+      finding -- attributing it needs a build of the older compiler, which nothing here has done.
+
+- [ ] D12 -- A build recompiles only what a change reached. Every build compiles every unit, however
+      many at a time, because nothing records which artifact a change invalidated. A unit's
+      declarations and its bodies are already separate files and each unit already compiles to its
+      own object, so what is missing is the record rather than the shape: what a referrer compiled
+      against, and whether it still holds.
+
+      Behind it sits a second question that decides how much the record is worth. What a referrer
+      compiles against today is the declaring unit's whole class rather than the part it published,
+      so a change to something a unit never published still moves what every referrer reads -- and
+      an invalidation record laid over that would be correct and buy little. The signature
+      workstream owns that half; this one owns the record.
 
 ## Out of Scope
 

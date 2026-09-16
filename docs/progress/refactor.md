@@ -1481,11 +1481,11 @@ enough to warrant its own focused review.
       first met a body naming a unit it had not seen.
 
       A unit now emits its declarations and its bodies as two artifacts, and the program is formed
-      by compiling each translation unit and linking the results. The declarations name no other
-      unit's file at all: every external name a unit's declarations carry is reached through a
-      pointer, so declaring the class without its contents is the whole of what they need. That
-      makes a cycle among declarations unreachable rather than merely absent from the case that
-      found the defect.
+      by compiling each translation unit and linking the results. The declarations reach another
+      unit through a pointer, so they name the class without its file -- with one exception, a class
+      they extend, which the target language needs whole. That is the only edge one unit's
+      declarations have to another's, and a cycle in those edges has no target-language form and is
+      refused.
 
 - [ ] R94 -- A choice the standard leaves open is pinned by a conformance case, which is the one
       thing that corpus says a case may not do: a case states what the standard requires, so it is
@@ -1534,6 +1534,13 @@ enough to warrant its own focused review.
 
       Deliberately not folded into the change that created the set: what a layer states and what an
       optimizer removes are separate, so the readings are correct whether or not this exists.
+
+      **What it costs is worth sizing before anyone estimates the work.** That same core's
+      unoptimized build measures 2:59 of host-compiler CPU, and a figure of 1:42 recorded for it
+      earlier in the same window does not reproduce -- which is consistent with the emitted text
+      having grown, though nothing here has attributed it. Whoever takes this should measure the
+      build with and without the uncalled bodies rather than counting them, since the count is an
+      upper bound on what removing them delivers and says nothing about what they cost to compile.
 
 - [ ] R97 -- A question about a closed set can also be answered by a chain of one-alternative tests
       falling off its end, and no check sees that one: the set gains an alternative, the chain
@@ -1604,6 +1611,22 @@ enough to warrant its own focused review.
       body pass attaches bodies to it -- the same two-artifact shape the layer below already has.
 
       Not blocked.
+
+- [ ] R101 -- What compiling a design's foreign source is gets answered twice, once per backend's
+      build, and the two answers differ in ways nothing reconciles. Both walk the same classified
+      link inputs and both compile each in the language it was written in; one asks for
+      position-independent code and the other does not, and only one names the C++ standard for a
+      source written in C++. Neither is obviously wrong for its own backend, which is what makes the
+      divergence invisible: each reads as deliberate where it stands, and no case exercises a C++
+      foreign source on either path.
+
+      Target: one statement of what compiling a foreign source is, which both builds read. What is
+      genuinely per-backend -- position-independent code is, because one backend links an object
+      into a running process and the other into an executable -- belongs beside the difference that
+      demands it rather than duplicated into the whole recipe.
+
+      Not blocked. Found while splitting the C++ build into per-unit compiles, which is what made
+      the first copy state a standard it had previously inherited from a shared command line.
 
 ## Out of Scope
 

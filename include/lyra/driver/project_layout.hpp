@@ -25,6 +25,13 @@ inline constexpr std::string_view kRuntimeIncludeDir = "runtime/include";
 inline constexpr std::string_view kRuntimeLibDir = "runtime/lib";
 inline constexpr std::string_view kRuntimeLibFile = "libcpp_runtime.a";
 inline constexpr std::string_view kRuntimeCacheDir = "runtime/cache";
+// Where a compiled object lands. Every source is compiled on its own so that a
+// build may work on several at once, which needs somewhere for a finished one
+// to wait until the link reads them all. A foreign source's object sits under
+// this directory too, in a subdirectory of its own, because the design's own
+// names and the user's are two name spaces and nothing forbids a collision
+// between them.
+inline constexpr std::string_view kObjectDir = "obj";
 inline constexpr std::string_view kProgramName = "program";
 inline constexpr std::string_view kCxxStandardFlag = "-std=c++23";
 // The DPI-C boundary surface a user's foreign sources compile against (LRM 35):

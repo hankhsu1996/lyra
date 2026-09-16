@@ -110,8 +110,10 @@ rule permitting the drop drops it from every artifact and the program fails to l
 - The declarations complete without any other unit's file except where a base crosses, so what a
   referrer compiles against is bounded by what the unit it references promised rather than by what
   that unit consumed.
-- Every build still recompiles every unit: nothing records which artifact a change invalidated. The
-  boundary makes incremental and parallel compilation available; it does not perform either.
+- Every build still compiles every unit: nothing records which artifact a change invalidated. The
+  boundary makes incremental compilation available and does not perform it; compiling several units
+  at once is spent, and [a-build-is-told-how-wide-to-run](a-build-is-told-how-wide-to-run.md)
+  settles who says how many.
 - A cell the unit owns is declared in the declarations and defined once in the bodies, so the
   program holds one cell per declaration and no referrer's artifact carries it.
 - A constant the declarations themselves name -- a type description a class's own constant reads in

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -47,6 +48,10 @@ struct ParsedArgs {
   // The host C++ compiler the C++ backend builds emitted code with: a program
   // name or path, never flags.
   std::string cxx;
+  // How many of the design's translation units the host compiler may work on
+  // at once. Already resolved to a positive count here, so nothing downstream
+  // reads a zero as a request for the processor count.
+  std::size_t compile_width = 1;
   std::string out_dir;
   // The simulation's own arguments, which is where LRM 21.6 plusargs land: a
   // built program takes them as its argv and a run in this process reads them
@@ -72,6 +77,7 @@ struct CliOptions {
   std::optional<std::string> config;
   std::optional<std::string> pch_cache_dir;
   std::optional<std::string> cxx;
+  std::optional<int32_t> jobs;
   std::optional<std::string> out_dir;
   std::optional<std::string> backend;
   std::vector<std::string> dpi_link;
