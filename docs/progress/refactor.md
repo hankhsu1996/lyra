@@ -1512,6 +1512,24 @@ enough to warrant its own focused review.
       per namespace body before the bodies are lowered, exactly as a class's are, makes the call a
       `FunctionTarget` and leaves the symbol to the definition alone.
 
+- [ ] R96 -- Nothing drops a body no reachable body calls, and there is now a set of bodies for
+      which that question is both cheap and decidable. A unit's callables include the readings every
+      declared type owns, which exist because the type does rather than because anything reads a
+      value of it, so a design that prints nothing still carries one per aggregate, container and
+      enumeration it declares. Measured on a 47-unit RISC-V core: 337 such bodies, and the sites ask
+      for none of them, because that design writes no assignment-pattern conversion and no
+      enumeration method anywhere.
+
+      What makes this decidable where a general dead-code pass is not: a unit callable that no
+      identifier answers to is exactly one no other unit can name, so reachability from the unit's
+      named and foreign-linked entry points settles it with a call-graph walk and no analysis. What
+      makes it worth doing at MIR rather than in either backend is that both consume the same
+      callables, and the emitted C++ translation unit -- already the slowest thing in an iteration
+      -- is where the unused ones would otherwise land.
+
+      Deliberately not folded into the change that created the set: what a layer states and what an
+      optimizer removes are separate, so the readings are correct whether or not this exists.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

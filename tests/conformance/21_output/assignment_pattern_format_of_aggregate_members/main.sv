@@ -35,12 +35,26 @@ module Top;
     bit [7:0] Bits;
   } packed_choice_t;
 
+  // A member declared `void` is all information in its tag (LRM 7.3.2), so the
+  // name it is selected by is the whole of what there is to print.
+  typedef union tagged {
+    void Absent;
+    int  Present;
+  } maybe_t;
+
+  typedef union tagged packed {
+    void Invalid;
+    int  Valid;
+  } vint_t;
+
   entry_t entry;
   halves_t halves;
   view_t view;
   packed_view_t packed_view;
   choice_t choice;
   packed_choice_t packed_choice;
+  maybe_t maybe;
+  vint_t vint;
   entry_t log [2];
   entry_t by_index [int];
   entry_t pending [$];
@@ -52,6 +66,8 @@ module Top;
   string packed_view_text = "unset";
   string choice_text = "unset";
   string packed_choice_text = "unset";
+  string maybe_text = "unset";
+  string vint_text = "unset";
   string log_text = "unset";
   string by_index_text = "unset";
   string pending_text = "unset";
@@ -64,6 +80,8 @@ module Top;
     packed_view.whole = 8'hC3;
     choice = tagged Text "named";
     packed_choice = tagged Bits 8'd7;
+    maybe = tagged Absent;
+    vint = tagged Invalid;
     log[0] = '{1, "one"};
     log[1] = '{2, "two"};
     by_index[10] = '{3, "three"};
@@ -75,6 +93,8 @@ module Top;
     packed_view_text = $sformatf("%p", packed_view);
     choice_text = $sformatf("%p", choice);
     packed_choice_text = $sformatf("%p", packed_choice);
+    maybe_text = $sformatf("%p", maybe);
+    vint_text = $sformatf("%p", vint);
     log_text = $sformatf("%p", log);
     by_index_text = $sformatf("%p", by_index);
     pending_text = $sformatf("%p", pending);
@@ -94,6 +114,11 @@ module Top;
       $fatal(1, "a tagged union printed as '%s'", choice_text);
     if (packed_choice_text != "'{Bits:7}")
       $fatal(1, "a packed tagged union printed as '%s'", packed_choice_text);
+    if (maybe_text != "'{Absent}")
+      $fatal(1, "a void tagged union member printed as '%s'", maybe_text);
+    if (vint_text != "'{Invalid}")
+      $fatal(1, "a packed void tagged union member printed as '%s'",
+             vint_text);
     if (log_text != "'{'{count:1, label:\"one\"}, '{count:2, label:\"two\"}}")
       $fatal(1, "structures held by a fixed array printed as '%s'", log_text);
     if (by_index_text != "'{10:'{count:3, label:\"three\"}}")

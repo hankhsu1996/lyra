@@ -89,6 +89,9 @@ the detail lives in the entry itself.
   computation a type owns takes no object, so the unit's namespace owns it and its identity is the
   position it sits at; a name is a relation over that position, held only where the source wrote
   one.
+- [a-types-readings-exist-because-the-type-does](a-types-readings-exist-because-the-type-does.md) --
+  which readings a type owns follows from the type alone, so they are settled with the unit's
+  declarations rather than at whichever site asks first; and a type that is not a value has none.
 
 ### Lowering and IR shape
 

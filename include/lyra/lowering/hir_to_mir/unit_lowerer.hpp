@@ -48,9 +48,7 @@ struct ClassTranslation {
 //
 // It is half of a key and so is not a dispatch set: nothing reads it to decide
 // anything, and what tells two of them apart is equality. One reading does not
-// stand for another, so a type with several has one function per reading, and a
-// reading added later arrives with the body that builds it at the site that
-// asks -- there is no consumer positioned to answer for it wrongly.
+// stand for another, so a type with several has one function per reading.
 enum class TypeOwnedReading : std::uint8_t {
   // LRM 21.2.1.6: the assignment-pattern text, which a structure, a union and a
   // container have and nothing else does.
@@ -312,21 +310,19 @@ class UnitLowerer {
     return declarations_.Get(id);
   }
 
-  // The type-associated function answering one reading of one type, synthesized
-  // by `build` the first time this unit asks for it and shared by every site
-  // afterwards -- so two values of one type cannot read differently, and no
-  // site re-derives what belongs to the type.
-  template <typename Build>
-  auto TypeOwnedFunction(TypeOwnedReadingKey key, Build&& build)
-      -> diag::Result<mir::UnitCallableTarget> {
-    if (const auto it = type_owned_readings_.find(key);
-        it != type_owned_readings_.end()) {
-      return mir::UnitCallableTarget{.slot = it->second};
+  // The function answering one reading of one type. Every reading a type owns
+  // is settled with this unit's declarations, so a site that has established
+  // the type owns one finds it here; a site that has not established it is
+  // asking a question it has no answer for.
+  [[nodiscard]] auto TypeOwnedReadingOf(TypeOwnedReadingKey key) const
+      -> mir::UnitCallableTarget {
+    const auto it = type_owned_readings_.find(key);
+    if (it == type_owned_readings_.end()) {
+      throw InternalError(
+          "UnitLowerer::TypeOwnedReadingOf: the unit owns no such reading of "
+          "this type");
     }
-    auto slot_or = std::forward<Build>(build)();
-    if (!slot_or) return std::unexpected(std::move(slot_or.error()));
-    type_owned_readings_.emplace(key, *slot_or);
-    return mir::UnitCallableTarget{.slot = *slot_or};
+    return mir::UnitCallableTarget{.slot = it->second};
   }
 
  private:
@@ -354,6 +350,12 @@ class UnitLowerer {
   // only in whether the root scope becomes a top class or a set of namespace
   // callables.
   auto PublishUnitDeclarations() -> diag::Result<void>;
+
+  // Settles every reading the types this unit names own. Which readings those
+  // are follows from each type on its own, so this is one answer per type
+  // rather than a fact gathered over the unit, and it stands whether or not
+  // anything in the unit goes on to read a value of that type.
+  void PublishTypeOwnedReadings();
 
   [[nodiscard]] auto TranslateType(const hir::Type& type) -> mir::Type;
 

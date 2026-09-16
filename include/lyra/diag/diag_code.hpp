@@ -33,6 +33,7 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedClassFeature,
   kUnsupportedDpi,
   kUnsupportedConversionForm,
+  kUnsupportedAssignmentPatternText,
 
   kErrorTopLevelPortMustBeConnected,
   kErrorCaseEqualityOnRealOperand,
