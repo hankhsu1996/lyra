@@ -27,6 +27,11 @@ namespace {
 // pointer to one, a canonical vector chunk, or an open-array handle, so
 // anything else reaching here is a boundary the lowering should have rejected.
 auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
+  const auto crosses_no_boundary = []() -> std::string {
+    throw InternalError(
+        "RenderTypeAsC: this type does not cross the DPI-C boundary -- please "
+        "report this as a bug");
+  };
   return types.Get(id).Visit(
       Overloaded{
           [](const mir::VoidType&) -> std::string { return "void"; },
@@ -79,10 +84,59 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
                 "RenderTypeAsC: this runtime library type does not cross the "
                 "DPI-C boundary");
           },
-          [](const auto&) -> std::string {
-            throw InternalError(
-                "RenderTypeAsC: this type does not cross the DPI-C boundary");
-          }});
+          // Every other type is one no foreign signature names, so the
+          // boundary lowering should have refused the declaration before a
+          // header was asked to spell it.
+          [&](const mir::PackedArrayType&) { return crosses_no_boundary(); },
+          [&](const mir::EnumType&) { return crosses_no_boundary(); },
+          [&](const mir::PackedStructType&) { return crosses_no_boundary(); },
+          [&](const mir::PackedUnionType&) { return crosses_no_boundary(); },
+          [&](const mir::UnpackedArrayType&) { return crosses_no_boundary(); },
+          [&](const mir::DynamicArrayType&) { return crosses_no_boundary(); },
+          [&](const mir::QueueType&) { return crosses_no_boundary(); },
+          [&](const mir::AssociativeArrayType&) {
+            return crosses_no_boundary();
+          },
+          [&](const mir::WildcardIndexType&) { return crosses_no_boundary(); },
+          [&](const mir::StringType&) { return crosses_no_boundary(); },
+          [&](const mir::MachineBoolType&) { return crosses_no_boundary(); },
+          [&](const mir::MachineArrayType&) { return crosses_no_boundary(); },
+          [&](const mir::MachineFunctionType&) {
+            return crosses_no_boundary();
+          },
+          [&](const mir::EventType&) { return crosses_no_boundary(); },
+          [&](const mir::RealType&) { return crosses_no_boundary(); },
+          [&](const mir::ShortRealType&) { return crosses_no_boundary(); },
+          [&](const mir::RealTimeType&) { return crosses_no_boundary(); },
+          [&](const mir::ChandleType&) { return crosses_no_boundary(); },
+          [&](const mir::EmptyType&) { return crosses_no_boundary(); },
+          [&](const mir::ObjectType&) { return crosses_no_boundary(); },
+          [&](const mir::ExternalUnitObjectType&) {
+            return crosses_no_boundary();
+          },
+          [&](const mir::CrossUnitClassType&) { return crosses_no_boundary(); },
+          [&](const mir::OpaqueObjectType&) { return crosses_no_boundary(); },
+          [&](const mir::RuntimeClassType&) { return crosses_no_boundary(); },
+          [&](const mir::RuntimeEffectsType&) { return crosses_no_boundary(); },
+          [&](const mir::FilesType&) { return crosses_no_boundary(); },
+          [&](const mir::DiagnosticType&) { return crosses_no_boundary(); },
+          [&](const mir::CoroutineType&) { return crosses_no_boundary(); },
+          [&](const mir::RefType&) { return crosses_no_boundary(); },
+          [&](const mir::ManagedRefType&) { return crosses_no_boundary(); },
+          [&](const mir::VectorType&) { return crosses_no_boundary(); },
+          [&](const mir::TupleType&) { return crosses_no_boundary(); },
+          [&](const mir::UnpackedStructType&) { return crosses_no_boundary(); },
+          [&](const mir::UnionType&) { return crosses_no_boundary(); },
+          [&](const mir::TaggedUnionType&) { return crosses_no_boundary(); },
+          [&](const mir::ObservableType&) { return crosses_no_boundary(); },
+          [&](const mir::ResolvedType&) { return crosses_no_boundary(); },
+          [&](const mir::DriverType&) { return crosses_no_boundary(); },
+          [&](const mir::SampledHistoryType&) { return crosses_no_boundary(); },
+          [&](const mir::EvaluationAttemptsType&) {
+            return crosses_no_boundary();
+          },
+          [&](const mir::StructType&) { return crosses_no_boundary(); },
+          [&](const mir::ClosureType&) { return crosses_no_boundary(); }});
 }
 
 // The full C declarator of one foreign name, the text a user's compiler checks

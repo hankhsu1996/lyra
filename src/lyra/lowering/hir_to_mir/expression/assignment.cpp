@@ -45,6 +45,12 @@ namespace {
 auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
     -> bool {
   const auto& expr = block.exprs.Get(expr_id);
+  const auto not_a_target = []() -> bool {
+    throw InternalError(
+        "TargetOutlivesDeferredUpdate: the assignment target is not a place; "
+        "the target lowering should have produced one -- please report this "
+        "as a bug");
+  };
   return std::visit(
       Overloaded{
           // A field is storage of its own, reached through a pointer, so it
@@ -98,12 +104,29 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
               return TargetOutlivesDeferredUpdate(block, op);
             });
           },
-          [](const auto&) -> bool {
-            throw InternalError(
-                "TargetOutlivesDeferredUpdate: the assignment target is not a "
-                "place; the target lowering should have produced one -- please "
-                "report this as a bug");
-          },
+          // A form that names no storage: a value composed, read, converted,
+          // chosen, awaited, or written somewhere else. The target lowering
+          // answers a left-hand side with a place, so meeting one of these
+          // means it produced something that is not an assignment target.
+          [&](const mir::StringLiteral&) { return not_a_target(); },
+          [&](const mir::NullLiteral&) { return not_a_target(); },
+          [&](const mir::MachineBoolLiteral&) { return not_a_target(); },
+          [&](const mir::MachineIntLiteral&) { return not_a_target(); },
+          [&](const mir::MachineFloatLiteral&) { return not_a_target(); },
+          [&](const mir::UnaryExpr&) { return not_a_target(); },
+          [&](const mir::BinaryExpr&) { return not_a_target(); },
+          [&](const mir::CastExpr&) { return not_a_target(); },
+          [&](const mir::ConditionalExpr&) { return not_a_target(); },
+          [&](const mir::BlockExpr&) { return not_a_target(); },
+          [&](const mir::AssignExpr&) { return not_a_target(); },
+          [&](const mir::IncDecExpr&) { return not_a_target(); },
+          [&](const mir::AddressOfExpr&) { return not_a_target(); },
+          [&](const mir::MachineArrayDataExpr&) { return not_a_target(); },
+          [&](const mir::MoveExpr&) { return not_a_target(); },
+          [&](const mir::ClosureExpr&) { return not_a_target(); },
+          [&](const mir::CompositeExpr&) { return not_a_target(); },
+          [&](const mir::AwaitExpr&) { return not_a_target(); },
+          [&](const mir::VectorGetExpr&) { return not_a_target(); },
       },
       expr.data);
 }

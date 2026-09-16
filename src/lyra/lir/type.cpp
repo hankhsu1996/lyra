@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -287,6 +288,77 @@ auto Type::KindName() const -> std::string_view {
           [](const EvaluationAttemptsType&) {
             return "concurrent assertion attempts";
           }});
+}
+
+auto Type::Declaration() const -> std::optional<TypeDeclaration> {
+  using Declared = std::optional<TypeDeclaration>;
+  const auto names_none = []() -> Declared { return std::nullopt; };
+  return Visit(
+      Overloaded{
+          // The five that name one.
+          [](const ObjectType& t) -> Declared { return t; },
+          [](const ExternalUnitObjectType& t) -> Declared { return t; },
+          [](const CrossUnitClassType& t) -> Declared { return t; },
+          [](const ClosureType& t) -> Declared { return t; },
+          [](const StructType& t) -> Declared { return t; },
+
+          // A value, however it is shaped and however its elements are held.
+          // What a declaration gave it is a name for the type, which is not a
+          // declaration anything is reached through.
+          [&](const PackedArrayType&) { return names_none(); },
+          [&](const EnumType&) { return names_none(); },
+          [&](const PackedStructType&) { return names_none(); },
+          [&](const PackedUnionType&) { return names_none(); },
+          [&](const UnpackedArrayType&) { return names_none(); },
+          [&](const DynamicArrayType&) { return names_none(); },
+          [&](const QueueType&) { return names_none(); },
+          [&](const AssociativeArrayType&) { return names_none(); },
+          [&](const WildcardIndexType&) { return names_none(); },
+          [&](const StringType&) { return names_none(); },
+          [&](const RealType&) { return names_none(); },
+          [&](const ShortRealType&) { return names_none(); },
+          [&](const RealTimeType&) { return names_none(); },
+          [&](const ChandleType&) { return names_none(); },
+          [&](const TupleType&) { return names_none(); },
+          [&](const UnpackedStructType&) { return names_none(); },
+          [&](const UnionType&) { return names_none(); },
+          [&](const TaggedUnionType&) { return names_none(); },
+          [&](const EmptyType&) { return names_none(); },
+          [&](const VoidType&) { return names_none(); },
+
+          // The machine vocabulary, which crosses to a target on the target's
+          // own terms and belongs to no declaration of the design.
+          [&](const MachineCStringType&) { return names_none(); },
+          [&](const MachineBoolType&) { return names_none(); },
+          [&](const MachineIntType&) { return names_none(); },
+          [&](const MachineFloatType&) { return names_none(); },
+          [&](const MachineArrayType&) { return names_none(); },
+          [&](const MachineFunctionType&) { return names_none(); },
+
+          // An object this unit carries no declaration of, and a class the
+          // runtime library defines: a symbol is the whole of the second's
+          // identity and the first has none at all, so neither is reached
+          // through a declaration this unit holds.
+          [&](const OpaqueObjectType&) { return names_none(); },
+          [&](const RuntimeClassType&) { return names_none(); },
+
+          // Storage, a service, and an address. Each stands for something
+          // else; what a declaration is behind is whatever it stands for.
+          [&](const ObservableType&) { return names_none(); },
+          [&](const ResolvedType&) { return names_none(); },
+          [&](const DriverType&) { return names_none(); },
+          [&](const SampledHistoryType&) { return names_none(); },
+          [&](const EvaluationAttemptsType&) { return names_none(); },
+          [&](const EventType&) { return names_none(); },
+          [&](const RuntimeEffectsType&) { return names_none(); },
+          [&](const FilesType&) { return names_none(); },
+          [&](const DiagnosticType&) { return names_none(); },
+          [&](const RuntimeLibraryType&) { return names_none(); },
+          [&](const CoroutineType&) { return names_none(); },
+          [&](const RefType&) { return names_none(); },
+          [&](const PointerType&) { return names_none(); },
+          [&](const ManagedRefType&) { return names_none(); },
+          [&](const VectorType&) { return names_none(); }});
 }
 
 auto Type::Pointee() const -> std::optional<TypeId> {

@@ -73,6 +73,14 @@ generic lambdas are not this: one bound to a name and called from a typed arm is
 visitor that is a single generic lambda applies one operation to every alternative and dispatches on
 nothing. The defect is a generic arm standing beside typed ones.
 
+**`auto` is one spelling of that arm and a bare template parameter is the other**, and a rule
+reading only the first is switched off by writing the second. An arm taking `T` itself accepts every
+alternative exactly as `auto` does; one taking a family over it -- `Var<T>` -- names what it answers
+for and is an ordinary typed arm. The distinction is not academic: the last such arm in the tree was
+written the second way, went unread by the check for as long as the check existed, and answered
+"copy this value" for an alternative whose two siblings say they are created in place and never
+copied.
+
 **What a catch-all may do is decided by who can add a member, and by nothing else.** A set this
 compiler declares gains no member without a change here, so every arm is written out. A set the
 front end declares gains one on a dependency bump with no edit here, so the known members are still

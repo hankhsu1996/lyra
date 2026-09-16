@@ -56,6 +56,14 @@ auto DescribeMemory(
   const auto int_literal = [&](std::int64_t value) {
     return BuildIntLiteral(unit_lowerer.Unit(), wrapper, value);
   };
+  const auto not_a_memory = [&]() -> diag::Result<MemAddressing> {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedSubroutineArgument,
+        std::format(
+            "{} target must be an unpacked, dynamic-array, queue, or "
+            "associative memory (LRM 21.4 / 21.5)",
+            task));
+  };
   return unit_lowerer.Hir().types.Get(mem_type).Visit(
       Overloaded{
           [&](const hir::UnpackedArrayType&) -> diag::Result<MemAddressing> {
@@ -115,14 +123,30 @@ auto DescribeMemory(
                 .operands = std::move(operands),
                 .lowest_address = 0};
           },
-          [&](const auto&) -> diag::Result<MemAddressing> {
-            return diag::Fail(
-                diag::DiagCode::kUnsupportedSubroutineArgument,
-                std::format(
-                    "{} target must be an unpacked, dynamic-array, queue, or "
-                    "associative memory (LRM 21.4 / 21.5)",
-                    task));
-          },
+          // LRM 21.4 / 21.5 name a memory as an array of integral elements, so
+          // every other form a declaration can take is one the task cannot be
+          // given, and the message names what it can.
+          [&](const hir::ScalarBitType&) { return not_a_memory(); },
+          [&](const hir::PackedArrayType&) { return not_a_memory(); },
+          [&](const hir::PackedStructType&) { return not_a_memory(); },
+          [&](const hir::PackedUnionType&) { return not_a_memory(); },
+          [&](const hir::EnumType&) { return not_a_memory(); },
+          [&](const hir::UnpackedStructType&) { return not_a_memory(); },
+          [&](const hir::UnpackedUnionType&) { return not_a_memory(); },
+          [&](const hir::WildcardIndexType&) { return not_a_memory(); },
+          [&](const hir::StringType&) { return not_a_memory(); },
+          [&](const hir::EventType&) { return not_a_memory(); },
+          [&](const hir::RealType&) { return not_a_memory(); },
+          [&](const hir::ShortRealType&) { return not_a_memory(); },
+          [&](const hir::RealTimeType&) { return not_a_memory(); },
+          [&](const hir::ChandleType&) { return not_a_memory(); },
+          [&](const hir::ClassHandleType&) { return not_a_memory(); },
+          [&](const hir::OpaqueObjectHandleType&) { return not_a_memory(); },
+          [&](const hir::ImportedClassHandleType&) { return not_a_memory(); },
+          [&](const hir::UnitObjectType&) { return not_a_memory(); },
+          [&](const hir::OpaqueScopeType&) { return not_a_memory(); },
+          [&](const hir::NullType&) { return not_a_memory(); },
+          [&](const hir::VoidType&) { return not_a_memory(); },
       });
 }
 

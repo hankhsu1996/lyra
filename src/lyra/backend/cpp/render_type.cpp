@@ -363,6 +363,12 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
 auto RenderPlaceAccessAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId type_id,
     std::string_view place) -> std::string {
+  const auto opens_no_storage = []() -> std::string {
+    throw InternalError(
+        "RenderPlaceAccessAsCpp: a place of this type stands for no storage, "
+        "so there is nothing for an access to open -- please report this as a "
+        "bug");
+  };
   return unit.types.Get(type_id).Visit(
       Overloaded{
           [&](const mir::PointerType&) -> std::string {
@@ -378,11 +384,58 @@ auto RenderPlaceAccessAsCpp(
             return std::format(
                 "{}.Deref<{}>()", place, RenderTypeAsCpp(unit, m.pointee));
           },
-          [](const auto&) -> std::string {
-            throw InternalError(
-                "RenderPlaceAccessAsCpp: this backend states no access for a "
-                "place of this type");
+          // Every other type is a value rather than something standing for
+          // storage, so a place whose type is one of them was not built by
+          // opening anything.
+          [&](const mir::PackedArrayType&) { return opens_no_storage(); },
+          [&](const mir::EnumType&) { return opens_no_storage(); },
+          [&](const mir::PackedStructType&) { return opens_no_storage(); },
+          [&](const mir::PackedUnionType&) { return opens_no_storage(); },
+          [&](const mir::UnpackedArrayType&) { return opens_no_storage(); },
+          [&](const mir::DynamicArrayType&) { return opens_no_storage(); },
+          [&](const mir::QueueType&) { return opens_no_storage(); },
+          [&](const mir::AssociativeArrayType&) { return opens_no_storage(); },
+          [&](const mir::WildcardIndexType&) { return opens_no_storage(); },
+          [&](const mir::StringType&) { return opens_no_storage(); },
+          [&](const mir::MachineCStringType&) { return opens_no_storage(); },
+          [&](const mir::MachineBoolType&) { return opens_no_storage(); },
+          [&](const mir::MachineIntType&) { return opens_no_storage(); },
+          [&](const mir::MachineFloatType&) { return opens_no_storage(); },
+          [&](const mir::MachineArrayType&) { return opens_no_storage(); },
+          [&](const mir::MachineFunctionType&) { return opens_no_storage(); },
+          [&](const mir::EventType&) { return opens_no_storage(); },
+          [&](const mir::RealType&) { return opens_no_storage(); },
+          [&](const mir::ShortRealType&) { return opens_no_storage(); },
+          [&](const mir::RealTimeType&) { return opens_no_storage(); },
+          [&](const mir::ChandleType&) { return opens_no_storage(); },
+          [&](const mir::VoidType&) { return opens_no_storage(); },
+          [&](const mir::EmptyType&) { return opens_no_storage(); },
+          [&](const mir::ObjectType&) { return opens_no_storage(); },
+          [&](const mir::ExternalUnitObjectType&) {
+            return opens_no_storage();
           },
+          [&](const mir::CrossUnitClassType&) { return opens_no_storage(); },
+          [&](const mir::OpaqueObjectType&) { return opens_no_storage(); },
+          [&](const mir::RuntimeClassType&) { return opens_no_storage(); },
+          [&](const mir::RuntimeEffectsType&) { return opens_no_storage(); },
+          [&](const mir::FilesType&) { return opens_no_storage(); },
+          [&](const mir::DiagnosticType&) { return opens_no_storage(); },
+          [&](const mir::RuntimeLibraryType&) { return opens_no_storage(); },
+          [&](const mir::CoroutineType&) { return opens_no_storage(); },
+          [&](const mir::VectorType&) { return opens_no_storage(); },
+          [&](const mir::TupleType&) { return opens_no_storage(); },
+          [&](const mir::UnpackedStructType&) { return opens_no_storage(); },
+          [&](const mir::UnionType&) { return opens_no_storage(); },
+          [&](const mir::TaggedUnionType&) { return opens_no_storage(); },
+          [&](const mir::ObservableType&) { return opens_no_storage(); },
+          [&](const mir::ResolvedType&) { return opens_no_storage(); },
+          [&](const mir::DriverType&) { return opens_no_storage(); },
+          [&](const mir::SampledHistoryType&) { return opens_no_storage(); },
+          [&](const mir::EvaluationAttemptsType&) {
+            return opens_no_storage();
+          },
+          [&](const mir::StructType&) { return opens_no_storage(); },
+          [&](const mir::ClosureType&) { return opens_no_storage(); },
       });
 }
 

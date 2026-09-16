@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <ranges>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -103,6 +105,16 @@ auto ObjectClassOf(const mir::TypePool& types, mir::TypeId handle)
     -> mir::ClassRef {
   const mir::TypeId object =
       types.Get(handle).Get<mir::ManagedRefType>().pointee;
+  const auto refers_to_no_class = [](std::string_view what) -> mir::ClassRef {
+    throw InternalError(
+        std::format(
+            "mir_to_lir: a managed reference over {} names no class -- please "
+            "report this as a bug",
+            what));
+  };
+  const auto not_an_object = [&]() -> mir::ClassRef {
+    return refers_to_no_class("something that is not an object");
+  };
   return types.Get(object).Visit(
       Overloaded{
           [](const mir::ObjectType& o) -> mir::ClassRef {
@@ -112,11 +124,66 @@ auto ObjectClassOf(const mir::TypePool& types, mir::TypeId handle)
             return mir::CrossUnitClassRef{
                 .unit_name = c.unit_name, .class_name = c.class_name};
           },
-          [](const auto&) -> mir::ClassRef {
-            throw InternalError(
-                "mir_to_lir: a managed reference refers to an object of no "
-                "class");
-          }});
+          // An object this unit carries no class identity for: one reached
+          // past another unit's signature, one the runtime library defines,
+          // and one another unit's design element declares. A handle to any of
+          // them is built by a producer that had no class to name.
+          [&](const mir::OpaqueObjectType&) {
+            return refers_to_no_class("an object with no class to name");
+          },
+          [&](const mir::RuntimeClassType&) {
+            return refers_to_no_class("an object of a runtime class");
+          },
+          [&](const mir::ExternalUnitObjectType&) {
+            return refers_to_no_class("another unit's object");
+          },
+
+          // Not an object at all. A managed reference points at one, so a
+          // pointee of any other type means the handle was built over
+          // something no object model covers.
+          [&](const mir::PackedArrayType&) { return not_an_object(); },
+          [&](const mir::EnumType&) { return not_an_object(); },
+          [&](const mir::PackedStructType&) { return not_an_object(); },
+          [&](const mir::PackedUnionType&) { return not_an_object(); },
+          [&](const mir::UnpackedArrayType&) { return not_an_object(); },
+          [&](const mir::DynamicArrayType&) { return not_an_object(); },
+          [&](const mir::QueueType&) { return not_an_object(); },
+          [&](const mir::AssociativeArrayType&) { return not_an_object(); },
+          [&](const mir::WildcardIndexType&) { return not_an_object(); },
+          [&](const mir::StringType&) { return not_an_object(); },
+          [&](const mir::MachineCStringType&) { return not_an_object(); },
+          [&](const mir::MachineBoolType&) { return not_an_object(); },
+          [&](const mir::MachineIntType&) { return not_an_object(); },
+          [&](const mir::MachineFloatType&) { return not_an_object(); },
+          [&](const mir::MachineArrayType&) { return not_an_object(); },
+          [&](const mir::MachineFunctionType&) { return not_an_object(); },
+          [&](const mir::EventType&) { return not_an_object(); },
+          [&](const mir::RealType&) { return not_an_object(); },
+          [&](const mir::ShortRealType&) { return not_an_object(); },
+          [&](const mir::RealTimeType&) { return not_an_object(); },
+          [&](const mir::ChandleType&) { return not_an_object(); },
+          [&](const mir::VoidType&) { return not_an_object(); },
+          [&](const mir::EmptyType&) { return not_an_object(); },
+          [&](const mir::RuntimeEffectsType&) { return not_an_object(); },
+          [&](const mir::FilesType&) { return not_an_object(); },
+          [&](const mir::DiagnosticType&) { return not_an_object(); },
+          [&](const mir::RuntimeLibraryType&) { return not_an_object(); },
+          [&](const mir::CoroutineType&) { return not_an_object(); },
+          [&](const mir::RefType&) { return not_an_object(); },
+          [&](const mir::PointerType&) { return not_an_object(); },
+          [&](const mir::ManagedRefType&) { return not_an_object(); },
+          [&](const mir::VectorType&) { return not_an_object(); },
+          [&](const mir::TupleType&) { return not_an_object(); },
+          [&](const mir::UnpackedStructType&) { return not_an_object(); },
+          [&](const mir::UnionType&) { return not_an_object(); },
+          [&](const mir::TaggedUnionType&) { return not_an_object(); },
+          [&](const mir::ObservableType&) { return not_an_object(); },
+          [&](const mir::ResolvedType&) { return not_an_object(); },
+          [&](const mir::DriverType&) { return not_an_object(); },
+          [&](const mir::SampledHistoryType&) { return not_an_object(); },
+          [&](const mir::EvaluationAttemptsType&) { return not_an_object(); },
+          [&](const mir::StructType&) { return not_an_object(); },
+          [&](const mir::ClosureType&) { return not_an_object(); }});
 }
 
 // The operators the executable IR realizes directly, which is every operator a
@@ -1698,6 +1765,10 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
         "mir_to_lir: binding part of a value rather than writing it is not yet "
         "lowerable to LIR");
   }
+  const auto names_no_place =
+      [](std::string_view form) -> diag::Result<lir::Place> {
+    return Unsupported(std::format("mir_to_lir: {} names no place", form));
+  };
   return std::visit(
       Overloaded{
           [&](const mir::ReferenceExpr& reference) -> diag::Result<lir::Place> {
@@ -1729,8 +1800,64 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             }
             return WrapperContentsPlace(block, deref.pointer);
           },
-          [](const auto&) -> diag::Result<lir::Place> {
-            return Unsupported("mir_to_lir: expression form names no place");
+          // Every other form answers with a value rather than naming where one
+          // is kept, so binding one would need storage holding that value
+          // first, which is a form the source did not write.
+          [&](const mir::StringLiteral&) {
+            return names_no_place("a literal");
+          },
+          [&](const mir::NullLiteral&) { return names_no_place("a literal"); },
+          [&](const mir::MachineBoolLiteral&) {
+            return names_no_place("a literal");
+          },
+          [&](const mir::MachineIntLiteral&) {
+            return names_no_place("a literal");
+          },
+          [&](const mir::MachineFloatLiteral&) {
+            return names_no_place("a literal");
+          },
+          [&](const mir::UnaryExpr&) {
+            return names_no_place("the result of an operator");
+          },
+          [&](const mir::BinaryExpr&) {
+            return names_no_place("the result of an operator");
+          },
+          [&](const mir::CastExpr&) {
+            return names_no_place("a converted value");
+          },
+          [&](const mir::ConditionalExpr&) {
+            return names_no_place("a value a condition chooses");
+          },
+          [&](const mir::BlockExpr&) {
+            return names_no_place("the value a sequence of steps settles");
+          },
+          [&](const mir::AssignExpr&) {
+            return names_no_place("the value an assignment yields");
+          },
+          [&](const mir::IncDecExpr&) {
+            return names_no_place("the value an increment yields");
+          },
+          [&](const mir::CallExpr&) {
+            return names_no_place("a call's result");
+          },
+          [&](const mir::AddressOfExpr&) {
+            return names_no_place("an address of storage");
+          },
+          [&](const mir::MachineArrayDataExpr&) {
+            return names_no_place("a run of machine data");
+          },
+          [&](const mir::MoveExpr&) {
+            return names_no_place("a value moved out of where it was kept");
+          },
+          [&](const mir::ClosureExpr&) { return names_no_place("a closure"); },
+          [&](const mir::CompositeExpr&) {
+            return names_no_place("a value composed of its parts");
+          },
+          [&](const mir::AwaitExpr&) {
+            return names_no_place("the value an await settles");
+          },
+          [&](const mir::VectorGetExpr&) {
+            return names_no_place("the handle a sequence answers with");
           }},
       expr.data);
 }

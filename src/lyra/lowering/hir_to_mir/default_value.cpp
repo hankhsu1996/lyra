@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -234,6 +236,19 @@ auto BuildDefaultValueExpr(
     return mir::Expr{
         .data = mir::CompositeExpr{.parts = std::move(parts)}, .type = type};
   };
+  // LRM Table 6-7 and Table 7-1 answer for the types a variable, a member, or
+  // an element is declared to hold, and that is the whole of what is ever asked
+  // here. The rest of the vocabulary is what a lowering builds to carry one of
+  // those or to reach it, so a value of it starts out wherever the step that
+  // built it put it, and being asked what one starts out as means a producer
+  // handed over a type no declaration names.
+  const auto holds_no_declared_value = [](std::string_view what) -> mir::Expr {
+    throw InternalError(
+        std::format(
+            "BuildDefaultValueExpr: {} is not what a declaration holds, so "
+            "there is no initial value to state for it",
+            what));
+  };
   return ty.Visit(
       Overloaded{
           [&](const mir::PackedArrayType& pa) -> mir::Expr {
@@ -344,14 +359,6 @@ auto BuildDefaultValueExpr(
                     mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
                 .type = type};
           },
-          // An object with no class to name is never a variable's own type:
-          // what a variable holds is the reference, which answers below. So
-          // nothing asks this one what it starts out as.
-          [&](const mir::OpaqueObjectType&) -> mir::Expr {
-            throw InternalError(
-                "DefaultValueOf: an object with no class to name is held by "
-                "reference and never declared as storage");
-          },
           [&](const mir::PointerType&) -> mir::Expr {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
@@ -377,10 +384,110 @@ auto BuildDefaultValueExpr(
                     mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
                 .type = type};
           },
-          [&](const auto&) -> mir::Expr {
-            throw InternalError(
-                "BuildDefaultValueExpr: type kind has no default-value "
-                "representation");
+
+          // An index names an entry rather than being held in one. LRM 7.8.1
+          // gives a wildcard-indexed array no index data type at all -- an
+          // entry is named by the numerical value of the index alone -- so
+          // nothing is ever declared to hold one.
+          [&](const mir::WildcardIndexType&) -> mir::Expr {
+            return holds_no_declared_value("an associative array's index");
+          },
+
+          // The machine vocabulary a lowering builds to carry a value: a count,
+          // a flag, a host string, a run of operands, the address of a body.
+          // Each is built where it is used, out of what it is built from.
+          [&](const mir::MachineIntType&) -> mir::Expr {
+            return holds_no_declared_value("a machine integer");
+          },
+          [&](const mir::MachineFloatType&) -> mir::Expr {
+            return holds_no_declared_value("a machine floating-point number");
+          },
+          [&](const mir::MachineBoolType&) -> mir::Expr {
+            return holds_no_declared_value("a machine boolean");
+          },
+          [&](const mir::MachineCStringType&) -> mir::Expr {
+            return holds_no_declared_value("a machine string");
+          },
+          [&](const mir::MachineArrayType&) -> mir::Expr {
+            return holds_no_declared_value("a machine array of operands");
+          },
+          [&](const mir::MachineFunctionType&) -> mir::Expr {
+            return holds_no_declared_value("a machine function address");
+          },
+
+          // What a declaration holds for an object whose class this unit does
+          // not declare is a handle to it, and a handle starts out null; the
+          // object type itself is what that handle points at, which a
+          // construction brings into existence.
+          [&](const mir::OpaqueObjectType&) -> mir::Expr {
+            return holds_no_declared_value("an object with no class to name");
+          },
+          [&](const mir::ExternalUnitObjectType&) -> mir::Expr {
+            return holds_no_declared_value("another unit's object");
+          },
+          [&](const mir::CrossUnitClassType&) -> mir::Expr {
+            return holds_no_declared_value("an object of another unit's class");
+          },
+          [&](const mir::RuntimeClassType&) -> mir::Expr {
+            return holds_no_declared_value("an object of a runtime class");
+          },
+
+          // Storage the runtime installs and a service it provides: a cell that
+          // is observed, a net's resolution, a driver's contribution, the
+          // history a sampled value reads, what an assertion has in flight, the
+          // effects a body runs under, the open files, the diagnostic stream,
+          // and the library values a call names. What a declaration holds is
+          // the value inside one of these, which answers above.
+          [&](const mir::ObservableType&) -> mir::Expr {
+            return holds_no_declared_value("an observable cell");
+          },
+          [&](const mir::ResolvedType&) -> mir::Expr {
+            return holds_no_declared_value("a net's resolution");
+          },
+          [&](const mir::DriverType&) -> mir::Expr {
+            return holds_no_declared_value("a driver's contribution");
+          },
+          [&](const mir::SampledHistoryType&) -> mir::Expr {
+            return holds_no_declared_value("a sampled value's history");
+          },
+          [&](const mir::EvaluationAttemptsType&) -> mir::Expr {
+            return holds_no_declared_value("an assertion's attempts");
+          },
+          [&](const mir::RuntimeEffectsType&) -> mir::Expr {
+            return holds_no_declared_value("the effects a body runs under");
+          },
+          [&](const mir::FilesType&) -> mir::Expr {
+            return holds_no_declared_value("the open files");
+          },
+          [&](const mir::DiagnosticType&) -> mir::Expr {
+            return holds_no_declared_value("the diagnostic stream");
+          },
+          [&](const mir::RuntimeLibraryType&) -> mir::Expr {
+            return holds_no_declared_value("a runtime library value");
+          },
+
+          // Code, and the storage a body reaches through rather than holds: a
+          // suspending body's frame, a closure's, the scope a lowering gathers
+          // for one, and a reference bound to a cell that already exists.
+          [&](const mir::CoroutineType&) -> mir::Expr {
+            return holds_no_declared_value("a suspending body");
+          },
+          [&](const mir::ClosureType&) -> mir::Expr {
+            return holds_no_declared_value("a closure");
+          },
+          [&](const mir::StructType&) -> mir::Expr {
+            return holds_no_declared_value("a gathered scope");
+          },
+          [&](const mir::RefType&) -> mir::Expr {
+            return holds_no_declared_value("a reference to a cell");
+          },
+
+          // LRM 7.3.2's `void` member occupies a value slot and is carried as
+          // the type holding no information, which answers above. Everywhere
+          // else `void` is the absence of a result, and an absence is not
+          // declared.
+          [&](const mir::VoidType&) -> mir::Expr {
+            return holds_no_declared_value("the absence of a result");
           },
       });
 }

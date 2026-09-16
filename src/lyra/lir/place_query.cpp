@@ -22,7 +22,12 @@ namespace {
 // the promise this unit read.
 auto ExtendedBy(const CompilationUnit& unit, TypeId type)
     -> std::optional<TypeId> {
-  return unit.types.Get(type).Visit(
+  const std::optional<TypeDeclaration> declaration =
+      unit.types.Get(type).Declaration();
+  if (!declaration) {
+    return std::nullopt;
+  }
+  return std::visit(
       Overloaded{
           [&](const ObjectType& object) -> std::optional<TypeId> {
             const std::optional<Base>& base =
@@ -37,7 +42,19 @@ auto ExtendedBy(const CompilationUnit& unit, TypeId type)
             }
             return BaseType(unit, Base{*record->base});
           },
-          [](const auto&) -> std::optional<TypeId> { return std::nullopt; }});
+          // A lineage is a class's. An instance of another unit's design
+          // element reaches only what that unit published about it, and the
+          // two a lowering introduces extend nothing.
+          [](const ExternalUnitObjectType&) -> std::optional<TypeId> {
+            return std::nullopt;
+          },
+          [](const ClosureType&) -> std::optional<TypeId> {
+            return std::nullopt;
+          },
+          [](const StructType&) -> std::optional<TypeId> {
+            return std::nullopt;
+          }},
+      *declaration);
 }
 
 // The type the member `stated` names, reached on a place that has arrived at
@@ -84,7 +101,12 @@ auto CarriesMembersOf(
 
 auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
     -> std::optional<MemberList> {
-  return unit.types.Get(type).Visit(
+  const std::optional<TypeDeclaration> declaration =
+      unit.types.Get(type).Declaration();
+  if (!declaration) {
+    return std::nullopt;
+  }
+  return std::visit(
       Overloaded{
           [&](const ObjectType& object) -> std::optional<MemberList> {
             const Class& cls = unit.classes.Get(object.class_id);
@@ -122,10 +144,8 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
             const Struct& decl = unit.structs.Get(record.struct_id);
             return MemberList{
                 .members = decl.fields, .owner = "a gathered scope"};
-          },
-          [](const auto&) -> std::optional<MemberList> {
-            return std::nullopt;
-          }});
+          }},
+      *declaration);
 }
 
 auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool {

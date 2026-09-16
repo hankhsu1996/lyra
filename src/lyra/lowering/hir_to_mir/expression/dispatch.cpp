@@ -231,6 +231,11 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
         .owner = frame.current_block->exprs.Add(*std::move(lowered)),
         .descent = {}};
   };
+  const auto not_a_write_target = []() -> diag::Result<WriteTarget> {
+    throw InternalError(
+        "LHS expression lowering: non-addressable HIR expression in LHS "
+        "context");
+  };
   return std::visit(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<WriteTarget> {
@@ -279,13 +284,33 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           },
           // The front end verifies that an assignment's target is an lvalue
           // whose every element can be assigned to, and refuses the program
-          // otherwise, so a kind arriving here that reaches no storage means a
+          // otherwise, so a form arriving here that reaches no storage means a
           // target was lowered to something the source did not name.
-          [](const auto&) -> diag::Result<WriteTarget> {
-            throw InternalError(
-                "LHS expression lowering: non-addressable HIR expression in "
-                "LHS context");
+          [&](const hir::UnaryExpr&) { return not_a_write_target(); },
+          [&](const hir::BinaryExpr&) { return not_a_write_target(); },
+          [&](const hir::ConditionalExpr&) { return not_a_write_target(); },
+          [&](const hir::AssignExpr&) { return not_a_write_target(); },
+          [&](const hir::IncDecExpr&) { return not_a_write_target(); },
+          [&](const hir::CallExpr&) { return not_a_write_target(); },
+          [&](const hir::ConversionExpr&) { return not_a_write_target(); },
+          [&](const hir::ValueRangeExpr&) { return not_a_write_target(); },
+          [&](const hir::InsideExpr&) { return not_a_write_target(); },
+          [&](const hir::ReplicationExpr&) { return not_a_write_target(); },
+          [&](const hir::AssignmentPatternExpr&) {
+            return not_a_write_target();
           },
+          [&](const hir::AssignmentPatternReplicationExpr&) {
+            return not_a_write_target();
+          },
+          [&](const hir::AssignmentPatternKeyedExpr&) {
+            return not_a_write_target();
+          },
+          [&](const hir::AssociativeAssignmentPatternExpr&) {
+            return not_a_write_target();
+          },
+          [&](const hir::DynamicArrayNewExpr&) { return not_a_write_target(); },
+          [&](const hir::ClassNewExpr&) { return not_a_write_target(); },
+          [&](const hir::TaggedUnionExpr&) { return not_a_write_target(); },
       },
       expr.data);
 }
