@@ -29,39 +29,30 @@ EXTENSIONS = frozenset({
 SPECIAL_FILES = frozenset({"BUILD", "BUILD.bazel", "WORKSPACE", "MODULE.bazel"})
 
 
-def get_repo_root() -> Path:
+def run_git(repo_root: Path, args: list[str]) -> list[str]:
+    """Run one git command against `repo_root`, returning its output lines.
+
+    The working directory is given rather than inherited. A run launched from
+    another checkout would otherwise answer about that one, and such an answer
+    is indistinguishable from a correct one: it carries a real file count.
+    """
     result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, check=True
-    )
-    return Path(result.stdout.strip())
-
-
-def normalize_path(filepath: Path, repo_root: Path) -> str:
-    """Normalize to repo-relative POSIX path."""
-    try:
-        resolved = filepath.resolve()
-        return resolved.relative_to(repo_root.resolve()).as_posix()
-    except ValueError:
-        return filepath.as_posix()
-
-
-def get_git_files(args: list[str]) -> list[str]:
-    """Run git diff and return file list."""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "--diff-filter=ACMRT"] + args,
-        capture_output=True, text=True, check=True
-    )
-    return [f for f in result.stdout.strip().split("\n") if f]
-
-
-def get_all_files(repo_root: Path) -> list[str]:
-    """Get all tracked files matching our criteria."""
-    result = subprocess.run(
-        ["git", "ls-files"],
+        ["git"] + args,
         capture_output=True, text=True, check=True, cwd=repo_root
     )
     return [f for f in result.stdout.strip().split("\n") if f]
+
+
+def changed_files(repo_root: Path, base: str) -> list[str]:
+    """Files differing from `base`, including ones git does not track yet.
+
+    `git diff` reports nothing for a file git has never seen, so without the
+    second listing a run over work in progress answers about the tracked half
+    in the same words it uses for a whole clean tree.
+    """
+    return run_git(
+        repo_root, ["diff", "--name-only", "--diff-filter=ACMRT", base]
+    ) + run_git(repo_root, ["ls-files", "--others", "--exclude-standard"])
 
 
 def should_check_file(filepath: str) -> bool:
@@ -116,14 +107,17 @@ def main() -> int:
                         help="Check staged files")
     args = parser.parse_args()
 
-    repo_root = get_repo_root()
+    repo_root = Path(__file__).resolve().parent.parent.parent
 
     if args.staged:
-        files = get_git_files(["--cached"])
+        files = run_git(
+            repo_root,
+            ["diff", "--name-only", "--diff-filter=ACMRT", "--cached"],
+        )
     elif args.diff_base:
-        files = get_git_files([args.diff_base])
+        files = changed_files(repo_root, args.diff_base)
     else:
-        files = get_all_files(repo_root)
+        files = run_git(repo_root, ["ls-files"])
 
     # Filter to relevant files
     files = [f for f in files if should_check_file(f)]
