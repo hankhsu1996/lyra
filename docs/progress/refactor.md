@@ -1461,33 +1461,26 @@ enough to warrant its own focused review.
       changes how a chained runtime call is built everywhere, which is wider than the subject that
       made the duplication visible.
 
-- [ ] R93 -- Two units that reference each other produce a C++ project that does not compile. Each
-      unit becomes one file carrying its declarations and its bodies together, so a unit reaching
-      another includes that unit's whole file; where the reaching goes both ways the two files
-      include each other, the second include is a no-op, and whichever file the compiler enters
-      first meets a body naming a unit it has not seen. Two packages are enough: one whose
-      initializer reads the other's variable and one whose function body reads back. The execution
-      backend runs the same design, so what is wrong is the file shape rather than anything the
-      lowering states, and the language requires nothing here that the design does not already
-      satisfy.
+- [x] R93 -- Two units that reference each other produce a C++ project that does not compile. Each
+      unit became one file carrying its declarations and its bodies together, so a unit reaching
+      another included that unit's whole file; where the reaching went both ways the two files
+      included each other, the second include was a no-op, and whichever file the compiler entered
+      first met a body naming a unit it had not seen.
 
-      **Target shape**: the declarations a referrer compiles against and the bodies that realize
-      them are two artifacts, which is what every unit's emission is supposed to produce anyway --
-      a referrer then includes only the declarations, and the bodies meet each other after every
-      declaration is in scope. That is the same split that would let a unit be compiled separately
-      instead of textually included.
-
-      The package half of this was already written down, under packages, as an emission limit; what
-      it lacked was a case. It has one now, which is what turns a known limit into something that
-      reports the day it is fixed.
+      A unit now emits its declarations and its bodies as two artifacts, and the program is formed
+      by compiling each translation unit and linking the results. The declarations name no other
+      unit's file at all: every external name a unit's declarations carry is reached through a
+      pointer, so declaring the class without its contents is the whole of what they need. That
+      makes a cycle among declarations unreachable rather than merely absent from the case that
+      found the defect.
 
 - [ ] R94 -- A choice the standard leaves open is pinned by a conformance case, which is the one
       thing that corpus says a case may not do: a case states what the standard requires, so it is
       valid under any conforming simulator. The order two packages' variable initializers run in is
-      such a choice -- IEEE 1800 states the barrier three times and an order nowhere -- and a case
-      checks the value that only one order produces. It is not the only one of its kind; a pass over
-      the corpus asking "would a conforming simulator be free to answer otherwise" is what finds the
-      rest.
+      such a choice -- IEEE 1800 states the barrier four times (6.7.3, 6.8, 10.5, 26.2) and an order
+      nowhere -- and a case checks the value that only one order produces. It is not the only one of
+      its kind; a pass over the corpus asking "would a conforming simulator be free to answer
+      otherwise" is what finds the rest.
 
       What makes this hard to simply delete is that the behaviour is deliberate and worth guarding:
       an initializer reading another package's variable sees that package's value, which is what

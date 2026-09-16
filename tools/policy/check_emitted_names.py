@@ -47,13 +47,15 @@ EMITTERS = [
     "src/lyra/backend/cpp/render_type.cpp",
 ]
 
-# The functions that answer what a declaration is spelled in C++. A name inside
-# a call to one of these has been mapped by definition; the rest of this script
-# is about names that are not.
+# The functions that answer what a declaration, or the file one is emitted
+# into, is spelled as in C++. A name inside a call to one of these has been
+# mapped by definition; the rest of this script is about names that are not.
 MAPPERS = [
     "ToCppName",
     "UnitNamespaceOf",
     "CppUnitScope",
+    "UnitSignatureFileOf",
+    "UnitCodeFileOf",
     "CppClassCallableName",
     "CppAbiAdapterName",
     "CppStaticConstantName",
@@ -113,7 +115,7 @@ LOOKUPS: dict[str, str] = {
         "resolves a consumed promise by the unit and class it names, so the "
         "name is a key rather than a spelling"
     ),
-    "add": (
+    "CollectUnitName": (
         "collects which units this one includes; each is mapped again where "
         "the include line that names it is written"
     ),

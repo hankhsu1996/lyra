@@ -8,8 +8,9 @@ produced the expected shape. Compile and run is the machine half of the verifica
 emit is the human half.
 
 This file tracks the gap between "it compiles" and "it reads like code a person would write." The
-work is done when a developer can open an emitted unit and follow it top-down without boilerplate or
-incidental structure getting in the way.
+work is done when a developer can open either of the files an emitted unit becomes -- what it
+declares, or what realizes it -- and follow that file top-down without boilerplate or incidental
+structure getting in the way.
 
 **Compile-time trades.** Emit readability outranks emit compile time. A change that makes the
 emitted form less readable to shave per-case compile time is a wrong trade -- compile-time wins must

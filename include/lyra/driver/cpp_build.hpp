@@ -32,6 +32,15 @@ struct HostBuild {
   Optimization optimization = Optimization::kIterate;
 };
 
+// What the steps after emission need, carried rather than recovered by reading
+// the directory back: the translation units a build compiles, and what each
+// unit stated of the program's foreign name space (LRM 35), which the project's
+// own assembly writes because the party that reads it is the user's C compiler.
+struct EmittedCppSources {
+  std::vector<std::string> translation_units;
+  std::vector<dpi::AbiFragment> dpi_fragments;
+};
+
 // Writes the emitted C++ sources of a project into a directory, one unit at a
 // time. A unit's rendered text is written and released before the next unit is
 // lowered, so what an emit holds is one unit's worth rather than the design's.
@@ -46,32 +55,35 @@ class CppProjectSink {
       : dir_(std::move(dir)), formatting_(formatting) {
   }
 
-  // Writes the unit's translation unit, and keeps what the unit states of the
-  // program's foreign name space (LRM 35) -- which the project's own assembly
-  // writes, because the party that reads it is the user's C compiler rather
-  // than this project.
+  // Writes the unit's declarations and the translation unit realizing them,
+  // and keeps what the unit states of the program's foreign name space.
   auto Take(const mir::CompilationUnit& unit) -> diag::Result<void>;
 
-  // Closes the project: the design root's own translation unit and the program
-  // entry, neither of which may be written until every unit has been taken.
+  // Closes the project: the design root's own files and the program entry,
+  // none of which may be written until every unit has been taken.
   auto Finish(const mir::CompilationUnit& root) -> diag::Result<void>;
 
-  // Hands over what each unit stated of the program's foreign name space, in
-  // the order the units were taken. Assembling them into the one header a
-  // foreign source includes is a step of the build, and this is what it works
-  // from; nothing here reads them again.
-  [[nodiscard]] auto TakeDpiFragments() -> std::vector<dpi::AbiFragment> {
-    return std::move(dpi_fragments_);
+  // Hands over what emission produced, in the order the units were taken.
+  [[nodiscard]] auto TakeSources() -> EmittedCppSources {
+    return EmittedCppSources{
+        .translation_units = std::move(translation_units_),
+        .dpi_fragments = std::move(dpi_fragments_)};
   }
 
  private:
   auto Write(backend::cpp::CppArtifact file) -> diag::Result<void>;
+  // Which files a build compiles is decided here, where each is produced, so no
+  // later step separates them by reading a name.
+  auto WriteTranslationUnit(backend::cpp::CppArtifact file)
+      -> diag::Result<void>;
+  auto WriteUnit(const mir::CompilationUnit& unit) -> diag::Result<void>;
 
   std::filesystem::path dir_;
   SourceFormatting formatting_;
   // Formatting runs one process over every file rather than one per file, so
   // what was written is remembered while the text itself is not.
   std::vector<std::string> written_;
+  std::vector<std::string> translation_units_;
   std::vector<dpi::AbiFragment> dpi_fragments_;
 };
 
@@ -86,8 +98,7 @@ class CppProjectSink {
 // machine where that path means nothing, the recipe takes a replacement as an
 // argument.
 auto AssembleProject(
-    const RuntimeLocation& runtime,
-    std::span<const dpi::AbiFragment> dpi_fragments,
+    const RuntimeLocation& runtime, const EmittedCppSources& sources,
     const std::filesystem::path& dir, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void>;
 
@@ -101,21 +112,20 @@ auto AssembleProject(
 // runtime instead. Sharing `HostBuild` is what keeps them agreeing on the
 // toolchain regardless.
 auto BuildProject(
-    const std::filesystem::path& dir, const HostBuild& host,
+    const std::filesystem::path& dir,
+    std::span<const std::string> translation_units, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs)
     -> diag::Result<std::filesystem::path>;
 
 // Emit, build, and run the design in `work_dir`, returning the program's exit
 // code. `child_args` are forwarded verbatim as argv to the built program (LRM
 // 21.6 plusargs land here). `dpi_inputs` are the foreign sources compiled and
-// linked into the program (LRM 35). This is the ephemeral path behind `run`:
-// it compiles
-// against the installed runtime and never materializes a portable project,
-// which is why copying a runtime tree per invocation is not on its critical
-// path.
+// linked into the program (LRM 35). This is the ephemeral path behind `run`: it
+// compiles against the installed runtime and never materializes a portable
+// project, which is why copying a runtime tree per invocation is not on its
+// critical path.
 auto RunInPlace(
-    const RuntimeLocation& runtime,
-    std::span<const dpi::AbiFragment> dpi_fragments,
+    const RuntimeLocation& runtime, const EmittedCppSources& sources,
     const std::filesystem::path& work_dir, const HostBuild& host,
     std::span<const std::string> child_args,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<int>;

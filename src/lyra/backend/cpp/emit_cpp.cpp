@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <format>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "lyra/backend/cpp/api.hpp"
@@ -13,6 +14,7 @@
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -22,14 +24,44 @@ namespace lyra::backend::cpp {
 
 namespace {
 
+// Each unit the emission will write an include for, held once however many
+// references reach it. The name is a key here and is spelled where the include
+// line that names it is written.
+void CollectUnitName(
+    std::vector<std::string>& names, const std::string& unit_name) {
+  if (std::ranges::find(names, unit_name) == names.end()) {
+    names.push_back(unit_name);
+  }
+}
+
+// The units this one extends a class of. A base must be complete where the
+// derived class is declared (LRM 8.13, and 8.26 for an interface class), so
+// this is the one cross-unit name a declaration cannot reach through a pointer:
+// what the other unit declared has to be in scope beside this unit's own
+// declarations rather than named without its contents.
+auto CollectBaseUnitNames(const mir::CompilationUnit& unit)
+    -> std::vector<std::string> {
+  std::vector<std::string> names;
+  const auto collect_if_cross_unit = [&](const mir::ClassRef& ref) {
+    if (const auto* cross = std::get_if<mir::CrossUnitClassRef>(&ref)) {
+      CollectUnitName(names, cross->unit_name);
+    }
+  };
+  for (const mir::ClassId id : unit.classes.Ids()) {
+    const mir::Class& cls = unit.GetClass(id);
+    if (cls.base.has_value()) {
+      collect_if_cross_unit(*cls.base);
+    }
+    for (const mir::ClassRef& contract : cls.implements) {
+      collect_if_cross_unit(contract);
+    }
+  }
+  return names;
+}
+
 auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
     -> std::vector<std::string> {
   std::vector<std::string> names;
-  const auto add = [&](const std::string& name) {
-    if (std::ranges::find(names, name) == names.end()) {
-      names.push_back(name);
-    }
-  };
   // A unit whose object this one reaches -- an instance it builds, a port it
   // connects, a published member it names -- has a record of that object here;
   // a unit whose namespace symbol is reached by name (a receiver-less callable
@@ -37,36 +69,24 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
   // since such a reference reaches no object; a unit this one reaches into a
   // class of -- a `new`, a field / method / static access, or a base extension
   // -- names its unit in the class-dependency list. All three are external
-  // units whose definitions this unit's artifact needs and so includes.
+  // units whose definitions a body of this one needs and so includes.
   for (const mir::ExternalUnitObject& object : unit.external_unit_objects) {
-    add(object.unit_name);
+    CollectUnitName(names, object.unit_name);
   }
   for (const std::string& name : unit.external_referenced_units) {
-    add(name);
+    CollectUnitName(names, name);
   }
   for (const std::string& name : unit.external_class_units) {
-    add(name);
+    CollectUnitName(names, name);
   }
   return names;
 }
 
-// The include preamble every emitted unit header shares: the runtime umbrella
-// naming everything a rendered body may call into, and one include per external
-// unit whose definitions this one needs, so a name reaching into another unit
-// resolves against that unit's emitted header. Naming the umbrella
-// rather than the individual headers is what keeps the emit's include set and
-// the precompiled header's coverage the same set.
-auto RenderUnitIncludes(const mir::CompilationUnit& unit) -> std::string {
-  std::string out;
-  out += std::format("#include \"{}\"\n", support::kRuntimePreludeHeader);
-  for (const auto& name : CollectExternalUnitNames(unit)) {
-    out += std::format("#include \"{}.hpp\"\n", ToCppName(name));
-  }
-  return out;
-}
-
 // What each of the unit's types is described by, one definition per described
-// type, ahead of any code that names one.
+// type, ahead of any code that names one. These sit beside the declarations
+// they serve: a class's own constant may name one in its initializer, and two
+// constants of one file are initialized in the order the file writes them,
+// which is a guarantee that ends at the file boundary.
 auto RenderPackedTypeDescriptions(const mir::CompilationUnit& unit)
     -> std::string {
   std::string out;
@@ -81,56 +101,75 @@ auto RenderPackedTypeDescriptions(const mir::CompilationUnit& unit)
   return out;
 }
 
-// A package variable is one program-global observable cell (LRM 26.2). C++17
-// `inline` gives it a single definition across every translation unit that
-// includes the header, matching the header-only, link-by-name model the
-// namespace callables use. A unit rooted in a design element declares none: its
-// storage is per-instance.
-auto RenderUnitStaticVariables(const mir::CompilationUnit& unit)
-    -> std::string {
-  std::string out;
-  for (const mir::StaticVariableId id : unit.static_variables.Ids()) {
-    out += std::format(
-        "inline {} {}{{}};\n",
-        RenderTypeAsCpp(unit, unit.static_variables.Get(id).type),
-        CppStaticVariableName(unit.named_static_variables, id));
-  }
-  return out;
-}
-
 // A unit's C++ peer is a namespace holding everything the unit declares. That
 // is the unit boundary made literal: a class the unit owns is reached by the
 // one name it carries, and everything the namespace itself holds is reached
 // through the namespace -- the same forms whether the unit is rooted in a
 // design element or is a rootless package.
-auto RenderUnitHeaderFile(const mir::CompilationUnit& unit) -> std::string {
-  const UnitCallableText callables = RenderUnitCallables(unit);
-  const ClassText classes = RenderUnitClasses(unit);
-  std::string body;
-  AppendSection(body, callables.declarations);
-  AppendSection(body, RenderPackedTypeDescriptions(unit));
-  AppendSection(body, RenderUnitStaticVariables(unit));
-  AppendSection(body, classes.declaration);
-  AppendSection(body, classes.definitions);
-  AppendSection(body, callables.definitions);
-  AppendSection(body, RenderForeignScopeSymbols(unit));
-  body += "\n";
+//
+// The signature names another unit's file only where it extends a class of it.
+// Every other external name its declarations carry is reached through a
+// pointer, so declaring the class without its contents is enough: what a
+// referrer compiling against this unit takes on is that base's unit and nothing
+// else this unit itself referenced.
+auto RenderUnitFiles(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
+  const UnitText callables = RenderUnitCallables(unit);
+  const UnitText variables = RenderUnitStaticVariables(unit);
+  const UnitText classes = RenderUnitClasses(unit);
 
-  std::string out;
-  out += "#pragma once\n";
-  out += RenderUnitIncludes(unit);
-  out += "\n";
-  out += NamespaceBlockOf(UnitNamespaceOf(unit.name), body);
-  return out;
+  std::string declared;
+  AppendSection(declared, callables.signature);
+  AppendSection(declared, RenderPackedTypeDescriptions(unit));
+  AppendSection(declared, variables.signature);
+  AppendSection(declared, classes.signature);
+  declared += "\n";
+
+  std::string signature;
+  signature += "#pragma once\n";
+  signature += std::format("#include \"{}\"\n", support::kRuntimePreludeHeader);
+  for (const std::string& name : CollectBaseUnitNames(unit)) {
+    signature += std::format("#include \"{}\"\n", UnitSignatureFileOf(name));
+  }
+  signature += "\n";
+  AppendSection(signature, RenderExternalObjectDeclarations(unit));
+  signature += NamespaceBlockOf(UnitNamespaceOf(unit.name), declared);
+
+  std::string realized;
+  AppendSection(realized, variables.code);
+  AppendSection(realized, classes.code);
+  AppendSection(realized, callables.code);
+  AppendSection(realized, RenderForeignScopeSymbols(unit));
+  realized += "\n";
+
+  // The runtime umbrella names everything a rendered body may call into, and
+  // naming it rather than the individual headers is what keeps the emit's
+  // include set and the precompiled header's coverage the same set. Each
+  // external unit follows, since a body reaching into one needs what that
+  // unit's signature promised.
+  std::string code;
+  code += std::format("#include \"{}\"\n", support::kRuntimePreludeHeader);
+  code += std::format("#include \"{}\"\n", UnitSignatureFileOf(unit.name));
+  for (const std::string& name : CollectExternalUnitNames(unit)) {
+    code += std::format("#include \"{}\"\n", UnitSignatureFileOf(name));
+  }
+  code += "\n";
+  code += NamespaceBlockOf(UnitNamespaceOf(unit.name), realized);
+
+  return {
+      .signature =
+          {.relpath = UnitSignatureFileOf(unit.name),
+           .content = std::move(signature)},
+      .code = {
+          .relpath = UnitCodeFileOf(unit.name), .content = std::move(code)}};
 }
 
 // The program entry. A design's whole contribution to it is the class its
 // `$root` is an instance of and the label that root carries, so that is all
 // this writes; every invariant host-boundary concern is behind the runtime
 // entry it hands off to, and a new one is added there rather than here. It
-// includes the design root's header and nothing else: a symbol only foreign C
-// calls is defined by the unit that declares it, and the root reaches every
-// such unit -- the namespaces it brings up, and the design elements it builds.
+// names the design root's signature and nothing else: a symbol only foreign C
+// calls is defined by the unit that declares it, and every such unit is one the
+// program already links.
 auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
   const mir::RootedTree* tree = mir::RootedTreeOf(root);
   if (tree == nullptr) {
@@ -140,7 +179,7 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
 
   std::string out;
   out += std::format("#include \"{}\"\n", support::kHostEntryHeader);
-  out += std::format("#include \"{}.hpp\"\n", ToCppName(root.name));
+  out += std::format("#include \"{}\"\n", UnitSignatureFileOf(root.name));
   out += "\n";
   out += "auto main(int argc, char** argv) -> int {\n";
   out += std::format(
@@ -152,10 +191,8 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
 
 }  // namespace
 
-auto EmitCppUnit(const mir::CompilationUnit& unit) -> CppArtifact {
-  return {
-      .relpath = std::format("{}.hpp", ToCppName(unit.name)),
-      .content = RenderUnitHeaderFile(unit)};
+auto EmitCppUnit(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
+  return RenderUnitFiles(unit);
 }
 
 auto EmitCppHostMain(const mir::CompilationUnit& root) -> CppArtifact {

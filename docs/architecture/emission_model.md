@@ -14,13 +14,12 @@ Both backends exist; the LLVM one is where the design is heading. The rules here
 backend. Where a backend takes a transitional shortcut, that is noted as non-conforming code, not as
 a relaxation of the contract.
 
-The largest such shortcut is that a design still compiles as one translation unit. The per-unit
-boundary itself holds -- each unit specialization is emitted as its own file, keyed by its
-specialization -- but those files are headers pulled into one compiled root rather than artifacts
-compiled separately and linked, and each carries its unit's bodies in the same file as its
-signature. The file boundary is therefore real while the compilation boundary is not, so the
-independence invariant 1 requires is stated but not yet paid for: editing one unit still recompiles
-the design.
+The artifact rules below are met. Each unit specialization is emitted as two files -- the
+declarations a referrer compiles against, and the translation unit realizing them -- and the program
+is formed by compiling each and linking the results, so no unit's bodies are read while another is
+compiled. What the boundary buys is not yet taken: nothing records which artifact a change
+invalidated and nothing compiles two of them at once, so every build still recompiles every unit.
+The independence is available rather than spent.
 
 ## Owns
 

@@ -47,8 +47,7 @@ inline void AppendSection(std::string& out, const std::string& section) {
 
 // A value settled before any process runs, defined where every reference
 // reaches it by name. `inline` gives it one definition across every translation
-// unit that includes the header, which is the header-only, link-by-name model
-// the emitted callables already use. `const` rather than `constexpr` because an
+// unit that includes the header. `const` rather than `constexpr` because an
 // initializer may name a runtime library value or an erased code address, and
 // C++ admits neither in a constant expression; the storage is established
 // before any process runs either way.

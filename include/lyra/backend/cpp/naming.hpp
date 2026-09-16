@@ -198,6 +198,21 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
   return std::format("::{}", UnitNamespaceOf(unit_name));
 }
 
+// The two files a unit's emission produces: the declarations a referrer
+// compiles against, and the translation unit realizing them. The same agreement
+// the namespace needs applies here, one level out -- a unit writes the name of
+// its own file and every referrer writes the same name in an include, with no
+// list between them saying where anything was put.
+[[nodiscard]] inline auto UnitSignatureFileOf(std::string_view unit_name)
+    -> std::string {
+  return std::format("{}.hpp", ToCppName(unit_name));
+}
+
+[[nodiscard]] inline auto UnitCodeFileOf(std::string_view unit_name)
+    -> std::string {
+  return std::format("{}.cpp", ToCppName(unit_name));
+}
+
 // The C++ identifier a declaration the compiler synthesized is emitted under.
 // `what` says which kind it is and `ordinal` which one, because such a
 // declaration has no source name to take one from.
@@ -335,17 +350,6 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 [[nodiscard]] inline auto CppForeignSymbolName(std::string_view linkage_name)
     -> std::string {
   return std::string{linkage_name};
-}
-
-// The preprocessor guard that keeps one definition of a symbol several units
-// may each define. This backend assembles the program by including every unit's
-// artifact into one translation unit, so what resolves a name across artifacts
-// here is the preprocessor, and a guard is how it is told to keep the first
-// definition and drop the rest. Every unit composes it from the symbol alone,
-// which is what makes their guards the same one.
-[[nodiscard]] inline auto CppOneDefinitionGuard(std::string_view symbol)
-    -> std::string {
-  return std::format("{}one_definition_{}", kMintedPrefix, symbol);
 }
 
 // The C++ identifier one of the two bodies bringing up a unit's namespace is

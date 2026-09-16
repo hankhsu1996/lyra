@@ -558,6 +558,12 @@ the detail lives in the entry itself.
   be complete; a signature member is named where the referrer compiles, a name past a signature
   resolves at elaboration; the signature is an artifact separate from code, and that split decides
   what a change recompiles.
+- [only-a-base-links-two-signatures](only-a-base-links-two-signatures.md) -- a unit emits its
+  declarations and its bodies as two files compiled separately and linked. The declarations reach
+  another unit through a pointer and so name the class without its file; a base is the one name
+  needing a complete type, so it is the only edge between two units' declarations, and a cycle of
+  those is refused by whoever assembles the program. Ordering one file's contents, a third
+  forward-declaration artifact, and publishing a unit's cells as header definitions are rejected.
 - [reaching-past-a-published-class](reaching-past-a-published-class.md) -- a class promises what it
   declares and the class it extends, never what it inherited, so a referrer resolves an inherited
   property or behavior by walking that chain and the coordinate names where the walk landed; reading

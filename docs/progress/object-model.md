@@ -309,6 +309,18 @@ this list is what remembers.
       another unit's instance storage by a name no signature carries, not the coordinate above, and
       it is refused.
 
+- [ ] A class one namespace declares extending a class another namespace declares aborts as a
+      compiler bug on a legal program (LRM 8.13). A design element's class extending a namespace's
+      works, so the axis is which kind of unit does the extending rather than whether the base
+      crosses a unit boundary at all: what fails is a package or `$unit` naming another's class as
+      its base, where the lowering meets a class no promise it consumed describes.
+
+      The front end also accepts two namespaces each extending a class the other declares. The C++
+      backend has no form for that and must refuse it rather than emit: a base has to be whole where
+      the derived class is declared, so each unit's declarations name the other's file, and no order
+      of entry satisfies both. The refusal belongs to whoever assembles the program, since a unit
+      sees the bases it extends and not who extends back.
+
 - [x] A collection of such handles -- an unpacked array or a queue of them -- reached through such a
       reference. The coordinate side needed nothing new, since what follows a value with no class
       view is decided by the operation and not by the syntax that produced the value. What blocked

@@ -76,6 +76,11 @@ differs per backend is only which party does the keeping -- for a backend that l
 loads modules into a session, its linkage rule for a definition emitted more than once; for one that
 assembles the program by textual inclusion, the preprocessor.
 
+Whichever party it is, the rule it applies has to keep a definition nothing in the emitting language
+references. A foreign entry point is reached only from outside that language, so a rule free to drop
+an unreferenced definition drops it from every artifact at once and the program fails to link. That
+is where the analogy to an inline function stops: the approach is the same, the linkage is not.
+
 A bundled project carries this surface, and a copy of every foreign source it was given, so it
 builds where neither Lyra nor the original foreign sources are reachable. The in-place path produces
 the same surface in its work directory; it copies nothing else, as before.
