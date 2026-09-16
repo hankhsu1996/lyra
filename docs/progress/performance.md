@@ -38,25 +38,33 @@ simulation -- 4.5x on the NBA-heavy case, so an unoptimized reading is not a slo
 same answer. And the Verilator column is **not** a like-for-like comparison: there is no two-state
 mode, so every factor carries whatever X/Z tracking costs.
 
-Read that way, most cost families put Lyra between 270x and 4,700x Verilator's rate, with the
-narrowest a subscription scan that fires nothing at 15x. One sits nowhere near that band: wide
-bitwise work on a 256-bit value is **16,000x**. A factor of a few hundred is an engine that is slow
-everywhere; a factor orders of magnitude past that in one place is a defect rather than slowness.
+Read that way, and re-measured over the whole corpus on 2026-09-16, most cost families put Lyra
+between 80x and 1,900x Verilator's rate, with the narrowest a dense change subscription and the
+widest a packed-slice read. One still sits outside that band: wide bitwise work on a 256-bit value
+is **a few thousand times**, down from 16,000x but still the outlier. A factor of a few hundred is
+an engine that is slow everywhere; a factor orders of magnitude past that in one place is a defect
+rather than slowness.
+
+One figure this paragraph used to carry is not reproduced: the subscription scan that fires nothing
+read 15x and reads 114x today. Nothing landed since can widen a ratio from Lyra's side -- its rate
+only improved -- so the movement is in the reference column or in how much work each tool was
+handed, and it belongs to whoever next opens the benchmark subject rather than to any of the entries
+below.
 
 Writing an unpacked array element by element was the other such outlier, at **three million times**,
-and is now 2,345x -- inside the band, and no longer the thing to look at. It is the one entry here
-whose fix has been measured twice, so it is also the record of what such a factor is worth chasing:
-what it bought was a thousandfold on the operation, and the design that spends two thirds of its run
-there gains the two thirds, not a thousandfold.
+and read 2,345x when that fix landed -- inside the band, and no longer the thing to look at; today
+it reads 937x. It is the one entry here whose fix has been measured twice, so it is also the record
+of what such a factor is worth chasing: what it bought was a thousandfold on the operation, and the
+design that spends two thirds of its run there gains the two thirds, not a thousandfold.
 
 The unpacked-array _read_ case could not report a read rate while that defect stood, and the way it
 failed is worth keeping. It fills the array before reading it, one element at a time, so its setup
 ran the write path once over the whole array -- more than a minute, against a second for each read
 pass that followed. Separating a fixed cost from a marginal one needs the marginal part to clear the
 noise between two readings, and there it did not, so what the case reported was its own setup. It
-now reports 1,069x, which is a read rate, and it did so with no change to the case: nothing in the
+reported 1,069x, which is a read rate, and it did so with no change to the case: nothing in the
 write work touched the read path, which is what makes this the independent check that the write
-stopped moving the array.
+stopped moving the array. It reads 632x today.
 
 A profile of the integration design says where the time goes there, and it is not where the
 pre-reset engine spent it -- propagation does not appear at all. Two thirds of a run was a single
@@ -65,6 +73,13 @@ range-checking views over bit vectors, which every bit access pays whatever its 
 profile predates the write fix below and has not been retaken, so the two thirds is what the fix was
 sized against rather than what a run costs now; the quarter is untouched by it and is what the next
 profile should show at the top.
+
+Nearly. A profile of the mixed arithmetic-and-control case, once the width-conversion entry below
+stopped hiding everything behind it, has building a value from its word planes and range-checking a
+view tied at the top, near a tenth of the run each -- two halves of the same thing, since a value
+built from words is then read through a window that revalidates what the builder just established.
+So the prediction made against one design holds against a corpus case too, and the two of them
+together are the next thing to look at.
 
 - [x] An integral value's dimension stack no longer allocates for the single-dimension case. Every
       declared integral carried its stack in a growable container, so constructing or copying any
@@ -106,6 +121,22 @@ profile should show at the top.
       expression, so what a leaf's bit window does is pass over a wait a write cannot have reached
       rather than decide one. Tracked with the construct it affects, in
       [processes.md](processes.md).
+
+- [x] Converting a packed value between widths or between the two- and four-state domains no longer
+      walks it one bit at a time. It was the single largest cost in both profiled programs, and the
+      reason is that the front end inserts such a conversion wherever an expression's type differs
+      from its context's, so a design pays it on ordinary assignments rather than on anything a
+      reader would call a conversion.
+
+      Measured before and after at the same amount of work. On the mixed arithmetic-and-control
+      case, conversion was over four tenths of the run's instructions and is now under one tenth; on
+      the clocked-pipeline case it was about a sixth and is now a fiftieth. One conversion of a value
+      in the tens of bits cost thousands of instructions and now costs a couple of hundred, and the
+      first case as a whole runs in about two thirds of the instructions it did.
+
+      The separate pass that cleared the destination first is gone rather than made cheaper: it
+      existed only because the per-bit copy wrote a subset of the destination, and a word-wise one
+      writes every word. [refactor.md](refactor.md) R91 holds the shape and what was left out.
 
 - [ ] The sequence type behind a value's words and dimensions holds its inline storage and its spill
       container at the same time, so a value that never spills still carries the spill container and
