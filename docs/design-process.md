@@ -193,6 +193,35 @@ can change; a shape defended by "removing it is not this layer's decision" is no
 The sibling of `north_star.md` invariant 3, which says correctness is independent of optimization.
 This says uniformity is too.
 
+## What a declaration brings exists where the declaration is
+
+The section above says who gets to remove work. This one says when the work comes into existence,
+and the two are asked at the same moments.
+
+**A declaration introduces the operations that come with it, and they exist from there.** Declaring
+a type declares whatever the language grants that type, the way declaring a member declares a
+member; compiling what a declaration brought is not a favour done for whoever calls it. The line
+that decides is not usage but parameterization: **what is parameterized is instantiated on use,
+because until a use names a member of the set there is no particular one to build; what is written
+down and concrete is built where it is written.** Every language that spells this out draws it in
+the same place -- a Rust derive expands at the declaration, is checked there, and reports its errors
+there whether or not the type is ever printed, while only generics wait; an ordinary C++ member
+function is compiled at its definition, while only templates wait.
+
+**Which side a construct sits on is a question about the construct, never about how its source
+language spells it.** SystemVerilog grants an enumeration a set of methods and mentions none of them
+at the declaration, so a source file offers no visible place saying "build these" -- which makes the
+use site look like the only thing that could ever trigger the work. That is a property of the
+surface. Ask instead what the operation is parameterized over; where the answer is nothing, it is
+concrete, and the declaration is where it belongs.
+
+Two things go wrong when a concrete construct is put on the parameterized side, and neither shows up
+as a failing test. Its identity becomes a property of the program text around it, because it takes
+the position the walk happened to reach it at rather than the one its declaration has -- so an
+unrelated edit elsewhere moves it, and anything keyed on that identity moves with it. And the code
+inside it is only ever built where some program writes the construct that reaches it, so a defect in
+a form nobody has written yet cannot be found by building: it waits for a user.
+
 ## Falsifying a proposed shape
 
 Four checks, all cheap:
