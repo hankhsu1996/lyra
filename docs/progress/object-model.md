@@ -139,7 +139,15 @@ each stage establishes, not how.
       created in, records it, and reaches that instance and no other -- so two instances of one
       module carry two unrelated sets of objects. Construction is where the instance is supplied.
       Constructing such a class from another compilation unit is refused, since what crosses a unit
-      boundary is that unit's signature and no instance of a scope inside it is on one.
+      boundary is that unit's signature and no instance of a scope inside it is on one. A class a
+      package or the `$unit` scope declares reaches that scope's declarations the same way, there
+      being one copy rather than one per instance.
+
+- [x] A class names a class its own declaring scope declares (LRM 8.27). A forward typedef lets a
+      class variable be declared before the class itself is, so two classes in one scope each hold a
+      handle to the other; a class holds a handle to itself the same way, directly or through a
+      container of them. Both hold wherever the scope is -- a package, the `$unit` scope, a module,
+      an interface -- and whatever the property's visibility.
 
 - [x] Type-associated storage of a class a structural scope declares is one cell per instance of
       that scope, not one for the program: the static property, the static-lifetime locals of its

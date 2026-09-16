@@ -1589,6 +1589,22 @@ enough to warrant its own focused review.
       Found while measuring R91: with no document stating the rule, a defensive mask cannot be told
       from a necessary one, and the test that would separate them does not exist either.
 
+- [ ] R100 -- The AST-to-HIR declare pass builds a class's whole declared shape and then holds it in
+      the pass's own private state rather than recording it where a peer can read it, so the unit's
+      class registry answers nothing about a class until that class's bodies have lowered. The
+      staged-lowering decision states the opposite -- a declared shape is a query target the moment
+      the declare pass records it -- and names the lowerer-owned in-progress declaration among the
+      shapes it rejects, which is what this is, one layer above where that decision was applied.
+
+      Today nothing asks for a peer's contents that early, because the one early asker needs a name
+      and now gets it from the identity. The cost is that the next thing needing a peer fact during
+      publication has no place to read it and the failure is an abort rather than a compile error.
+
+      Target: the declare pass records what it built where any consumer resolves it by id, and the
+      body pass attaches bodies to it -- the same two-artifact shape the layer below already has.
+
+      Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

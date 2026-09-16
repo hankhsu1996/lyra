@@ -81,7 +81,7 @@ auto TypeImporter::ImportClassRef(const ClassRef& ref) const -> ClassRef {
             }
             return ExternalClassRef{
                 .unit_name = std::string{source_owner_->unit_name},
-                .class_name = source_owner_->classes->Get(local.class_id).name};
+                .class_name = source_owner_->classes->NameOf(local.class_id)};
           },
           [](const ExternalClassRef& external) -> ClassRef {
             return external;

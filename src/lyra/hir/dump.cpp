@@ -1277,10 +1277,12 @@ class HirDumper {
       Indent();
       for (const ClassId id : u.classes.Ids()) {
         if (!u.classes.IsDefined(id)) {
-          Line(std::format("[{}] <declared>", id.value));
+          Line(
+              std::format(
+                  "[{}] <declared> \"{}\"", id.value, u.classes.NameOf(id)));
           continue;
         }
-        DumpClass(id, u.classes.Get(id));
+        DumpClass(id, u.classes.NameOf(id), u.classes.Get(id));
       }
       Dedent();
     }
@@ -1314,7 +1316,7 @@ class HirDumper {
     Dedent();
   }
 
-  void DumpClass(ClassId id, const ClassDecl& c) {
+  void DumpClass(ClassId id, std::string_view name, const ClassDecl& c) {
     // A class body's outward references count hops from the scope that
     // declares the class, so the chain that scope sits on is what resolves
     // them -- the same reading a process of that scope gets from the walk.
@@ -1327,7 +1329,7 @@ class HirDumper {
     const std::vector<const StructuralScope*> outer =
         std::exchange(scope_stack_, chain->second);
     const std::string kind = c.is_interface_class ? "interface class" : "class";
-    Line(std::format("[{}] {} \"{}\"", id.value, kind, c.name));
+    Line(std::format("[{}] {} \"{}\"", id.value, kind, name));
     Indent();
     if (c.base.has_value()) {
       Line(std::format("Extends: {}", FormatClassRef(*c.base)));

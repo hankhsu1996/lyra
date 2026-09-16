@@ -4,23 +4,21 @@
 #include <string_view>
 #include <vector>
 
-#include "lyra/base/registry.hpp"
-#include "lyra/hir/class_decl.hpp"
-#include "lyra/hir/class_id.hpp"
 #include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/class_registry.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
 
 // The unit a source pool still belongs to, for a pool whose class references
-// are that unit's own arena ids. A pool that has left its unit -- a
+// are that unit's own ids. A pool that has left its unit -- a
 // signature's -- names every class by declaring unit and class name instead, so
 // it has no owner, and a local id appearing in one is a compiler-bug invariant
 // rather than a case to translate.
 struct TypePoolOwner {
   std::string_view unit_name;
-  const base::Registry<ClassDecl, ClassId>* classes;
+  const ClassRegistry* classes;
 };
 
 // What one source pool's identities became in a destination pool. Held outside

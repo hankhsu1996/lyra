@@ -13,3 +13,4 @@
 23_hierarchy/hierarchical_name_enters_a_class_behavior: "reaches a property or a behavior through a reference whose class no signature publishes"
 23_hierarchy/hierarchical_name_writes_a_class_property: "reaches a property or a behavior through a reference whose class no signature publishes"
 23_hierarchy/upward_name_reaches_a_class_property: "reaches a property or a behavior through a reference whose class no signature publishes"
+25_interfaces/interface_declares_a_class_and_holds_one: "reaches a property or a behavior through a reference whose class no signature publishes"

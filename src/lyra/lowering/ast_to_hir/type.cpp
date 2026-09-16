@@ -1069,12 +1069,11 @@ auto UnitLowerer::InternLocalClass(
   if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
     return std::get<hir::LocalClassRef>(it->second).class_id;
   }
-  const hir::ClassId id = unit_.classes.Declare();
+  const hir::ClassId id = unit_.classes.Declare(SpecializationName(cls));
   class_cache_.emplace(&cls, hir::ClassRef{hir::LocalClassRef{.class_id = id}});
 
   auto decl_owner = std::make_unique<hir::ClassDecl>();
   hir::ClassDecl& decl = *decl_owner;
-  decl.name = SpecializationName(cls);
   decl.is_interface_class = cls.isInterface;
 
   // A class is the declaration scope that owns the lexical scopes of every
@@ -1116,10 +1115,10 @@ auto UnitLowerer::InternLocalClass(
     // reader as any other.
     promised_base = std::visit(
         Overloaded{
-            [&](const hir::LocalClassRef&) {
+            [&](const hir::LocalClassRef& local) {
               return hir::ExternalClassRef{
                   .unit_name = unit_.name,
-                  .class_name = SpecializationName(base_class)};
+                  .class_name = unit_.classes.NameOf(local.class_id)};
             },
             [](const hir::ExternalClassRef& ext) { return ext; }},
         *base_ref);
@@ -1235,7 +1234,7 @@ auto UnitLowerer::InternLocalClass(
   // different positions. Which classes a unit publishes is a separate question,
   // settled where the signature is derived.
   hir::ClassSignature promise{
-      .class_name = decl.name,
+      .class_name = unit_.classes.NameOf(id),
       .base = promised_base,
       .is_interface_class = decl.is_interface_class,
       .members = {},
