@@ -21,7 +21,6 @@
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
-#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/cpp_build.hpp"
@@ -112,12 +111,13 @@ auto DesignOf(const CommandContext& ctx)
 }
 
 // Writes the design's emitted C++ sources into `dir` and answers with what
-// assembling the program around them still needs. Every command that produces
-// a C++ project does exactly this first, whether the project is the one the
-// user asked for or a temporary one about to be built and run.
+// assembling the program around them still needs, which is what each unit
+// stated of the foreign name space. Every command that produces a C++ project
+// does exactly this first, whether the project is the one the user asked for or
+// a temporary one about to be built and run.
 auto WriteCppSources(
     const CommandContext& ctx, const std::filesystem::path& dir)
-    -> std::optional<std::vector<compiler::UnitProgramRecord>> {
+    -> std::optional<std::vector<dpi::AbiFragment>> {
   auto design = DesignOf(ctx);
   if (!design) {
     return std::nullopt;
@@ -126,17 +126,16 @@ auto WriteCppSources(
   auto lowered = compiler::LowerToSemantic(
       *design, ctx.elaborated->diag_sources, *ctx.sink,
       [&](compiler::SemanticUnit unit) -> diag::Result<void> {
-        return sources.Take(unit.mir, unit.program_record);
+        return sources.Take(unit.mir);
       });
   if (!lowered) {
     return std::nullopt;
   }
-  if (auto written = sources.Finish(lowered->root, lowered->records);
-      !written) {
+  if (auto written = sources.Finish(lowered->root); !written) {
     ctx.sink->Report(std::move(written.error()));
     return std::nullopt;
   }
-  return std::move(lowered->records);
+  return sources.TakeDpiFragments();
 }
 
 auto RunDumpHir(const CommandContext& ctx) -> int {
@@ -226,12 +225,12 @@ auto AssemblePortableProject(
   if (!runtime) {
     return false;
   }
-  auto records = WriteCppSources(ctx, ctx.args->out_dir);
-  if (!records) {
+  auto fragments = WriteCppSources(ctx, ctx.args->out_dir);
+  if (!fragments) {
     return false;
   }
   if (auto assembled = driver::AssembleProject(
-          *runtime, *records, ctx.args->out_dir, host, ctx.dpi_inputs);
+          *runtime, *fragments, ctx.args->out_dir, host, ctx.dpi_inputs);
       !assembled) {
     ctx.sink->Report(std::move(assembled.error()));
     return false;
@@ -283,12 +282,12 @@ auto RunCppBackend(const CommandContext& ctx) -> int {
   if (!host) {
     return 1;
   }
-  auto records = WriteCppSources(ctx, *work_dir);
-  if (!records) {
+  auto fragments = WriteCppSources(ctx, *work_dir);
+  if (!fragments) {
     return 1;
   }
   auto exit_code = driver::RunInPlace(
-      *runtime, *records, *work_dir, *host, ctx.args->child_args,
+      *runtime, *fragments, *work_dir, *host, ctx.args->child_args,
       ctx.dpi_inputs);
   if (!exit_code) {
     ctx.sink->Report(std::move(exit_code.error()));
@@ -302,8 +301,7 @@ auto RunCppBackend(const CommandContext& ctx) -> int {
 // from. The temp directory holds that library and the ABI header the sources
 // compile against. Reached only for a design that has foreign sources.
 auto BuildJitDpiLibrary(
-    const CommandContext& ctx,
-    std::span<const compiler::UnitProgramRecord> records)
+    const CommandContext& ctx, std::span<const dpi::AbiFragment> fragments)
     -> std::optional<std::filesystem::path> {
   auto runtime = ResolveRuntime(ctx);
   if (!runtime) {
@@ -315,7 +313,7 @@ auto BuildJitDpiLibrary(
         diag::Make(diag::DiagCode::kHostIoError, std::move(dir.error())));
     return std::nullopt;
   }
-  if (auto surface = driver::WriteDpiSurface(*runtime, records, *dir);
+  if (auto surface = driver::WriteDpiSurface(*runtime, fragments, *dir);
       !surface) {
     ctx.sink->Report(std::move(surface.error()));
     return std::nullopt;
@@ -338,24 +336,39 @@ auto RunJitBackend(const CommandContext& ctx) -> int {
   // one execution session before the design runs. That is the one path here
   // that holds the design: what it holds is the executable bodies, and the MIR
   // each was lowered from is released as it goes.
+  //
+  // It reads each unit at both depths rather than only the executable one: the
+  // session loads the body, and what the unit states of the foreign name space
+  // is a fact of its semantic model, taken while that model is still here.
   auto design = DesignOf(ctx);
   if (!design) {
     return 1;
   }
   std::vector<compiler::ExecutableUnit> units;
-  auto lowered = compiler::LowerToExecutable(
+  std::vector<dpi::AbiFragment> fragments;
+  auto lowered = compiler::LowerToSemantic(
       *design, ctx.elaborated->diag_sources, *ctx.sink,
-      [&](compiler::ExecutableUnit unit) -> diag::Result<void> {
-        units.push_back(std::move(unit));
+      [&](compiler::SemanticUnit unit) -> diag::Result<void> {
+        dpi::CollectAbiFragment(unit.mir, fragments);
+        auto executable = compiler::LowerUnitToExecutable(unit.mir);
+        if (!executable) {
+          return std::unexpected(std::move(executable.error()));
+        }
+        units.push_back(*std::move(executable));
         return {};
       });
   if (!lowered) {
     return 1;
   }
+  auto root = compiler::LowerUnitToExecutable(lowered->root);
+  if (!root) {
+    ctx.sink->Report(std::move(root.error()));
+    return 1;
+  }
   // A design that declares no foreign source needs no library.
   std::optional<std::filesystem::path> dpi_library;
   if (!ctx.dpi_inputs.empty()) {
-    dpi_library = BuildJitDpiLibrary(ctx, lowered->records);
+    dpi_library = BuildJitDpiLibrary(ctx, fragments);
     if (!dpi_library) {
       return 1;
     }
@@ -364,7 +377,7 @@ auto RunJitBackend(const CommandContext& ctx) -> int {
   // top-level units as its owned children, so the JIT runs the design once from
   // that one entry rather than per top.
   auto exit_code =
-      jit::Execute(units, lowered->root, dpi_library, ctx.args->child_args);
+      jit::Execute(units, *root, dpi_library, ctx.args->child_args);
   if (!exit_code) {
     ctx.sink->Report(std::move(exit_code.error()));
     return 1;

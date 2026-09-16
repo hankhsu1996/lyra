@@ -217,9 +217,9 @@ struct CompilationUnit {
   // the declaration the user's C defines, an export symbol the definition the
   // user's C calls. Where an export's subroutine belongs to a scope, the scope
   // publishes an entry per specialization and the symbol dispatches over those
-  // entries, so the entry is not one of these and the symbol belongs to the
-  // unit that reads the whole design. A class's own callables live on that
-  // class; these are the unit-level namespace's, one scope up.
+  // entries -- a definition naming nothing this unit owns, which is why neither
+  // the entry nor the symbol is one of these. A class's own callables live on
+  // that class; these are the unit-level namespace's, one scope up.
   base::Arena<CallableDecl, CallableId> callables;
   // The names this unit's namespace answers and which body each reaches (LRM
   // 26.3). A subroutine the source declared is here because another unit spells
@@ -235,12 +235,19 @@ struct CompilationUnit {
   // holds. A package variable takes part; the cell a subroutine's
   // static-lifetime local keeps does not.
   std::vector<NamedStaticVariable> named_static_variables;
-  // The foreign names this unit declares on a scope (LRM 35.5.3), in
-  // declaration order. A name is program-global and lives in its own name
-  // space, and a scope's entry is compiled once per specialization of that
-  // scope, so none of them is the symbol -- the unit states them here for the
-  // program to define once. What a unit's own namespace owns is not among
-  // these: its callable is the symbol and already says so.
+  // The foreign names this unit declares on a scope (LRM 35.5.3), each named
+  // once and in declaration order. A name is program-global and lives in its
+  // own name space, and a scope's entry is compiled once per specialization of
+  // that scope, so none of those entries is the symbol -- this is what the unit
+  // states of the name itself: the prototype a foreign source compiles against
+  // and the definition it links to. What a unit's own namespace owns is not
+  // among these: its callable is the symbol and already says so.
+  //
+  // Being on this list rather than in the pool above is the whole statement of
+  // which of the two a name is. A definition here names only the name and the
+  // prototype, so every unit declaring such a scope writes the same one and the
+  // party assembling the program keeps one; a definition up there calls that
+  // unit's own subroutine and no other artifact can write it.
   std::vector<ForeignScopeEntry> foreign_scope_entries;
   // Every compiler-generated nominal struct of this unit -- a promoted
   // automatic scope's storage. Its `StructId` is the struct's type identity; a
@@ -268,16 +275,6 @@ struct CompilationUnit {
   // include and link edge to each referenced unit. Recorded once per distinct
   // unit name.
   std::vector<std::string> external_class_units;
-  // The units whose namespace storage this unit's own initializers read
-  // directly (LRM 26.2 / 8.9 / 10.5) -- the by-name dependency the design root
-  // uses to pick a stable order to bring namespaces up in. It records only
-  // reads written directly in an initializer expression; a read reached through
-  // a called function does not contribute yet. This is a preference, not a
-  // correctness input: every cell is installed with its default before any
-  // initializer runs, so a missed or cyclic dependency only means a read
-  // observes a default, never an uninstalled cell. Empty for a unit that roots
-  // an object tree and for one no initializer of which reaches another.
-  std::vector<std::string> direct_initializer_unit_reads;
 
   CompilationUnit()
       : builtins{

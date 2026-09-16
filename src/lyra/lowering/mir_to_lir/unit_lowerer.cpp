@@ -1,5 +1,6 @@
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -127,25 +128,32 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     }
   }
 
+  // This backend lowers an export's body but does not publish the name
+  // anywhere the foreign side can link against, so the symbol is unresolved
+  // wherever the user's C calls it (LRM 35.7). Both places a unit defines such
+  // a symbol are asked here, so a third cannot be added without answering the
+  // same question: one the unit's own namespace owns, and one it writes for a
+  // name declared on a scope.
+  const bool defines_namespace_entry_point =
+      std::ranges::any_of(mir_->callables.Ids(), [this](mir::CallableId id) {
+        const mir::CallableDecl& callable = mir_->callables.Get(id);
+        return callable.code.body.has_value() && callable.foreign.has_value();
+      });
+  if (defines_namespace_entry_point || !mir_->foreign_scope_entries.empty()) {
+    return std::unexpected(
+        diag::Make(
+            diag::DiagCode::kUnsupportedDpi,
+            "mir_to_lir: the foreign entry point a DPI-C export publishes is "
+            "not yet reachable on this backend"));
+  }
+
   // A callable the unit's namespace owns -- a package's own body (LRM 26.3) --
-  // is a body like any other and becomes a function of the unit. What a C
-  // linkage name says about one decides the other two cases: with no body it is
-  // a DPI-C import, reached as a foreign symbol and defined elsewhere; with one
-  // it is the entry point of an export.
+  // is a body like any other and becomes a function of the unit. One with no
+  // body is a DPI-C import, reached as a foreign symbol and defined elsewhere.
   for (const mir::CallableId id : mir_->callables.Ids()) {
     const mir::CallableDecl& callable = mir_->callables.Get(id);
     if (!callable.code.body.has_value()) {
       continue;
-    }
-    // This backend lowers an export's body but does not publish the name
-    // anywhere the foreign side can link against, so the symbol is unresolved
-    // wherever the user's C calls it (LRM 35.7).
-    if (callable.foreign.has_value()) {
-      return std::unexpected(
-          diag::Make(
-              diag::DiagCode::kUnsupportedDpi,
-              "mir_to_lir: the foreign entry point a DPI-C export publishes is "
-              "not yet reachable on this backend"));
     }
     auto fn =
         FunctionLowerer(*this, callable.code, UnitCallableSymbol(id)).Run();

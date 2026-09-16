@@ -27,10 +27,10 @@
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
-#include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -2163,9 +2163,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // module's ancestor. It runs design-wide in two passes: install every unit's
   // cells (their declared type and default), then run every unit's value
   // initializers, so a value initializer that reads another unit's cell always
-  // reaches installed storage. The plan is resolved by the whole-design
-  // assembly and realized here; this scope carries it only for the design root,
-  // so a source unit's scope and a nested scope both leave it empty.
+  // reaches installed storage. Which order the initializers run in is not
+  // decided here: each entry claims its own bring-up and calls the namespaces
+  // it reads, so calling all of them in any order runs each once and runs a
+  // read namespace ahead of the one reading it. This scope carries the list
+  // only for the design root, so a source unit's scope and a nested scope both
+  // leave it empty.
   const auto call_namespace_unit = [&](const std::string& unit_name,
                                        mir::NamespaceStoragePhase phase) {
     unit_lowerer.Unit().AddExternalReferencedUnit(unit_name);
@@ -2182,10 +2185,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .type = void_type});
     initialize_block.AppendStmt(mir::ExprStmt{.expr = call});
   };
-  for (const std::string& unit : namespace_storage_plan_.units) {
+  for (const std::string& unit : namespaces_.units) {
     call_namespace_unit(unit, mir::NamespaceStoragePhase::kInstall);
   }
-  for (const std::string& unit : namespace_storage_plan_.units) {
+  for (const std::string& unit : namespaces_.units) {
     call_namespace_unit(unit, mir::NamespaceStoragePhase::kInitialize);
   }
 
@@ -2435,9 +2438,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         unit_lowerer, ctor_frame,
         mir::CallableTarget{.owner = class_id_, .slot = method_id},
         method_result_type, export_decl);
-    unit_lowerer.Unit().foreign_scope_entries.push_back(
-        mir::ForeignScopeEntry{
-            .linkage = entry.linkage, .signature = entry.signature});
+    // Two scopes of one unit may export one name (LRM 35.4), and what the unit
+    // states of that name is the same either way, so it is stated once. Each
+    // scope still publishes an entry of its own, because which subroutine the
+    // symbol reaches is the scope's and only the name is the unit's.
+    PublishForeignScopeName(
+        unit_lowerer.Unit(), entry.linkage, entry.signature);
     mir_class.abi_adapters.Add(
         mir::AbiAdapter{
             .code = std::move(entry.code),

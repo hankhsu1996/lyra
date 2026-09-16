@@ -799,6 +799,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kLeaveStaticInit:
     case support::BuiltinFn::kEnterDpiScope:
     case support::BuiltinFn::kLeaveDpiScope:
+    case support::BuiltinFn::kClaimNamespaceInitialize:
     case support::BuiltinFn::kMakeDynamicArrayDefault:
     case support::BuiltinFn::kMakeDynamicArrayNew:
     case support::BuiltinFn::kMakeDynamicArrayNewCopy:

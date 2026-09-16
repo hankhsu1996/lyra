@@ -2,8 +2,6 @@
 
 #include <string>
 
-#include "lyra/mir/type_id.hpp"
-
 namespace lyra::mir {
 
 // The C linkage contract of a callable that crosses the DPI-C boundary, in
@@ -21,20 +19,6 @@ namespace lyra::mir {
 // today; a second linkage adds them here.
 struct ForeignLinkage {
   std::string foreign_name;
-};
-
-// A foreign name whose entry sits on a scope rather than in a unit's namespace
-// (LRM 35.5.3). The subroutine behind it is compiled once per specialization of
-// that scope, so no one of those entries is the published symbol and no single
-// callable's signature is the published prototype; the program defines the
-// symbol once for all of them, over the machine function type stated here.
-//
-// A name a unit's own namespace owns needs no entry of this kind: its callable
-// is the symbol and carries the prototype. So is a name the design only
-// declares, which the foreign side defines.
-struct ForeignScopeEntry {
-  ForeignLinkage linkage;
-  TypeId signature;
 };
 
 }  // namespace lyra::mir

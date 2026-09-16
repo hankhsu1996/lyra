@@ -4,7 +4,6 @@
 #include <utility>
 
 #include "lyra/compiler/unit_metadata.hpp"
-#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lir/verify.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -21,10 +20,7 @@ auto LowerUnitToSemantic(
   if (!mir) {
     return std::unexpected(std::move(mir.error()));
   }
-  mir::CompilationUnit lowered = *std::move(mir);
-  UnitProgramRecord record = ProgramRecordOf(lowered);
-  return SemanticUnit{
-      .mir = std::move(lowered), .program_record = std::move(record)};
+  return SemanticUnit{.mir = *std::move(mir)};
 }
 
 auto LowerUnitToExecutable(const mir::CompilationUnit& unit)

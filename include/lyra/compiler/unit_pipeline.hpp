@@ -1,7 +1,6 @@
 #pragma once
 
 #include "lyra/compiler/unit_metadata.hpp"
-#include "lyra/compiler/unit_program_record.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/compilation_unit.hpp"
@@ -9,11 +8,9 @@
 
 namespace lyra::compiler {
 
-// One compilation unit modelled semantically: its MIR, and the program-level
-// facts assembling the design reads about it.
+// One compilation unit modelled semantically.
 struct SemanticUnit {
   mir::CompilationUnit mir;
-  UnitProgramRecord program_record;
 };
 
 // Models one HIR unit semantically. It reads only this unit and the shared

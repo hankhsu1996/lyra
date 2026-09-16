@@ -48,28 +48,33 @@ the C side calls a symbol nothing else defines. All of it is produced next to th
 for every design, so a foreign source compiles against one include path and links against one
 boundary it never has to restate by hand.
 
-This surface is one artifact set for the whole design rather than one per unit, and that does not
-contradict the per-unit artifact boundary. A DPI-C name is program-global and lives in its own name
-space rather than in any compilation unit's (LRM 35.4, 35.7), and every declaration of one name must
-publish the same prototype (LRM 35.5.4), so the surface is a program-level fact by construction. Two
-scopes may even export the same name (LRM 35.4), so no single unit can own the symbol; splitting the
-surface per unit would invent a boundary the language says is not there, and would leave the
-program-global uniqueness rule with nowhere to be checked.
+**Each unit states its own part of it, and the union is assembled by whatever collects the files.**
+A DPI-C name is program-global and lives in its own name space rather than in any compilation unit's
+(LRM 35.4, 35.7), which says the name space belongs to no unit -- not that stating a name is
+something a unit may not do. Every unit taking part in a name writes that name's prototype, and the
+header a foreign source includes names those fragments and states nothing itself. Repeating an
+identical C prototype is what every C header does, so a name several units declare simply appears in
+several fragments.
 
-What keeps that from becoming the whole-design aggregate `emission_model.md` forbids is what the
-surface may contain. It carries the foreign name space and nothing else: a name, its prototype, and
--- for an export -- a definition of the symbol whose body is one runtime-SDK call naming that same
-name and prototype. It holds no unit's body, names no unit, and states no design semantics, so it
-neither serializes nor constrains the per-unit compilation. How an exported call reaches the
-subroutine behind it is the SDK's, which is the same substrate every other cross-unit operation
-resolves through (`emission_model.md` inv 3); the emitted definition only binds the symbol to its
-signature.
+That every declaration of one name must publish the same prototype (LRM 35.5.4) is therefore
+checked, for a name crossing units, by the user's own C compiler, which is the one party that sees
+them together. There is no mechanism available for it here: LRM 35.4 requires C naming and forbids
+overloading, so the mangling that turns a cross-unit type disagreement into a link error in C++ is
+not on offer. Within one unit the front end already rejects declarations of one name that disagree.
 
-The declaration half is target-language-neutral: it projects the same prototypes any backend links
-against, so a foreign source compiled against it stays correct whichever backend runs the design.
-The definition half is stated in the design root's own IR, which is where the whole design is read
-and the only place a program-global symbol has an owner. Each backend then emits it the way it emits
-anything else that unit owns, so no backend carries emission machinery specific to this boundary.
+**A symbol the design must define is defined by every unit that declares it, and the party
+assembling the program keeps one.** Several scopes may export one name (LRM 35.4) and they may sit
+in different units, so no unit owns the symbol -- but picking an owner is not the only way to reach
+one definition, and it is the way that costs a read of every unit. The other way is the one C++ uses
+for an inline function or a template instantiation: every artifact that needs the definition emits
+it, and whoever resolves names across artifacts keeps one. Each such definition is generated from
+the name and the prototype alone, so they are the same text wherever they arise.
+
+The surface is target-language-neutral: it projects the same prototypes any backend links against,
+so a foreign source compiled against it stays correct whichever backend runs the design. What
+differs per backend is only which party does the keeping -- for a backend that links object files or
+loads modules into a session, its linkage rule for a definition emitted more than once; for one that
+assembles the program by textual inclusion, the preprocessor.
 
 A bundled project carries this surface, and a copy of every foreign source it was given, so it
 builds where neither Lyra nor the original foreign sources are reachable. The in-place path produces

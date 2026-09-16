@@ -1371,7 +1371,7 @@ enough to warrant its own focused review.
 
       Not blocked. It sits in the execution backend's own surface rather than in any lowering.
 
-- [ ] R89 -- A compile holds every whole-design representation at once, so its peak memory is their
+- [x] R89 -- A compile holds every whole-design representation at once, so its peak memory is their
       sum and not the largest of them. Measured on a generated design: the peak tracks the total
       source and does not move when the same content is split into four units or into two hundred
       and fifty-six, which is what a sum looks like and a maximum does not. Two of the three are now
@@ -1402,19 +1402,15 @@ enough to warrant its own focused review.
       it lets the design root be assembled while unit bodies are still being lowered. That one
       belongs to the signature workstream rather than here.
 
-      **Where this ends is that the record is not needed at all**, and it is worth stating because
-      the record is a bridge rather than a destination. A design's link-level unit is a referrer
-      like any other: what it may read is the signatures of the units it references. Three things it
-      reads today are not on any signature, and each has an owner that runs after compilation. A
-      symbol several units would each define is the linker's, by whatever the target offers for a
-      definition emitted more than once. An initialization order is the runtime's, composed at
-      startup from what each unit registered about itself -- which is also what lets the order
-      prefer a dependency without anyone reading across units to find it. The union of the foreign
-      name space is a build artifact for a user's own sources, assembled from per-unit fragments by
-      whatever collects the files. Once those three have moved, the link-level unit is synthesized
-      from the named tops and their signatures alone, every unit goes from HIR to a finished
-      artifact without anything reading across, and this entry's whole subject is a property of the
-      pipeline rather than a thing to maintain.
+      **The record is gone, which is where this ends.** It was a bridge rather than a destination: a
+      design's link-level unit is a referrer like any other, and what it may read is the signatures
+      of the units it references. The three facts that were not on any signature have moved to the
+      parties that run after compilation -- an order the namespaces settle among themselves as they
+      run, a symbol every declaring unit defines and the assembling party keeps one of, and a
+      foreign name space the build unions from per-unit fragments -- and the fourth thing the record
+      carried, whether a backend could realize a unit, turned out not to be a program-level fact at
+      all. The link-level unit is now synthesized from the named tops and their signatures alone,
+      and every unit goes from HIR to a finished artifact with nothing reading across.
 
 - [x] R90 -- How far a lowering runs is no longer a value. A request is made by calling for what it
       reads -- the elaborated source, the design's HIR, every unit modelled semantically, every unit
@@ -1465,6 +1461,42 @@ enough to warrant its own focused review.
       Not blocked. Written down rather than taken because converting the value-producing sites
       changes how a chained runtime call is built everywhere, which is wider than the subject that
       made the duplication visible.
+
+- [ ] R93 -- Two units that reference each other produce a C++ project that does not compile. Each
+      unit becomes one file carrying its declarations and its bodies together, so a unit reaching
+      another includes that unit's whole file; where the reaching goes both ways the two files
+      include each other, the second include is a no-op, and whichever file the compiler enters
+      first meets a body naming a unit it has not seen. Two packages are enough: one whose
+      initializer reads the other's variable and one whose function body reads back. The execution
+      backend runs the same design, so what is wrong is the file shape rather than anything the
+      lowering states, and the language requires nothing here that the design does not already
+      satisfy.
+
+      **Target shape**: the declarations a referrer compiles against and the bodies that realize
+      them are two artifacts, which is what every unit's emission is supposed to produce anyway --
+      a referrer then includes only the declarations, and the bodies meet each other after every
+      declaration is in scope. That is the same split that would let a unit be compiled separately
+      instead of textually included.
+
+      The package half of this was already written down, under packages, as an emission limit; what
+      it lacked was a case. It has one now, which is what turns a known limit into something that
+      reports the day it is fixed.
+
+- [ ] R94 -- A choice the standard leaves open is pinned by a conformance case, which is the one
+      thing that corpus says a case may not do: a case states what the standard requires, so it is
+      valid under any conforming simulator. The order two packages' variable initializers run in is
+      such a choice -- IEEE 1800 states the barrier three times and an order nowhere -- and a case
+      checks the value that only one order produces. It is not the only one of its kind; a pass over
+      the corpus asking "would a conforming simulator be free to answer otherwise" is what finds the
+      rest.
+
+      What makes this hard to simply delete is that the behaviour is deliberate and worth guarding:
+      an initializer reading another package's variable sees that package's value, which is what
+      every established simulator answers. Removing the case loses the only thing standing between
+      that and a silent regression. **Target shape**: somewhere for a case that pins a choice of
+      ours, kept apart from the corpus that answers to the standard, so neither has to carry the
+      other's contract. Until there is one, such a case says in its own text which of the two it
+      is.
 
 ## Out of Scope
 

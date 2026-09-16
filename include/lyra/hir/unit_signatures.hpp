@@ -1,8 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/unit_signature.hpp"
@@ -63,6 +65,22 @@ class UnitSignatures {
   [[nodiscard]] auto InstantiatedClass(const std::string& unit_name) const
       -> const InstanceClassSignature& {
     return InstanceClassOf(Instantiated(unit_name));
+  }
+
+  // The units of the design that root no object, in name order. A namespace is
+  // exactly such a unit (LRM 26.2), and a signature says which it is, so the
+  // one artifact that has to bring every namespace up reads the set off the
+  // promises it already consumes. Sorted because the set is walked to emit
+  // calls, and a design compiles to the same program each time.
+  [[nodiscard]] auto NamespaceUnitNames() const -> std::vector<std::string> {
+    std::vector<std::string> names;
+    for (const auto& [name, signature] : by_name_) {
+      if (!signature.IsDesignElement()) {
+        names.push_back(name);
+      }
+    }
+    std::ranges::sort(names);
+    return names;
   }
 
  private:

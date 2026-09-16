@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -26,9 +27,9 @@
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
-#include "lyra/lowering/hir_to_mir/namespace_storage_initialization.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
@@ -63,15 +64,12 @@ auto BorrowedObjectHandles(const mir::TypePool& types, mir::TypeId value_type)
           .mutability = mir::Mutability::kMutable}});
 }
 
-// The other units whose namespace-owned cells `body` reads -- a variable of the
-// namespace itself, or one of its classes' type-associated cells, the two being
-// one kind of storage differing in how far the name is qualified. A body is a
-// tree of blocks -- a predicate that declares identifiers (LRM 12.6.3) puts the
-// arms it guards in one of its own -- so the answer is the union over the whole
-// tree.
-auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
-    -> std::unordered_set<std::string> {
-  std::unordered_set<std::string> units;
+// A body is a tree of blocks -- a predicate that declares identifiers (LRM
+// 12.6.3) puts the arms it guards in one of its own -- so what the body reads
+// is the union over the whole tree, gathered here as the walk descends.
+void GatherUnitsReadBy(
+    const mir::Block& body, std::string_view own_unit,
+    std::unordered_set<std::string>& units) {
   const auto note = [&](std::string_view unit_name) {
     if (unit_name != own_unit) {
       units.emplace(unit_name);
@@ -93,8 +91,21 @@ auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
     }
   }
   for (const mir::BlockId id : body.child_scopes.Ids()) {
-    units.merge(UnitsReadBy(body.child_scopes.Get(id), own_unit));
+    GatherUnitsReadBy(body.child_scopes.Get(id), own_unit, units);
   }
+}
+
+// The other units whose namespace-owned cells `body` reads -- a variable of the
+// namespace itself, or one of its classes' type-associated cells, the two being
+// one kind of storage differing in how far the name is qualified. Each named
+// once and in name order, because what is done with the answer is emitting a
+// call per unit and a design compiles to the same program each time.
+auto UnitsReadBy(const mir::Block& body, std::string_view own_unit)
+    -> std::vector<std::string> {
+  std::unordered_set<std::string> gathered;
+  GatherUnitsReadBy(body, own_unit, gathered);
+  std::vector<std::string> units(gathered.begin(), gathered.end());
+  std::ranges::sort(units);
   return units;
 }
 
@@ -231,22 +242,95 @@ void WrapInNamespaceStaticInitExtent(
   code.Body() = std::move(extent);
 }
 
-// Publishes the two bodies the design root calls, and records what the value
-// body reads of other units. Every namespace unit publishes both entries. One
-// that owns no cell publishes a body that installs none and a body that
-// initializes none -- zero declarations is a count, not another kind of unit --
-// so the design root calls both without first finding out what this one
-// supplied. The value body's direct reads of another unit's cells are the
-// by-name dependency the design root prefers an order on, read off the
-// initializers before the extent is wrapped around them.
+// A namespace's initializers run exactly once, and whichever call reaches them
+// first is the one that runs them: the design's bring-up reaches every
+// namespace, and a namespace whose own initializers read another's cells
+// reaches that one ahead of its own (LRM 26.2 / 10.5). Taking the claim before
+// descending is what makes running once true and what ends a cycle among them.
+// The order LRM 26.2 leaves open is therefore these calls executed.
+//
+// A read reaches another unit's cell, so that unit is already one this one
+// references; the call it adds here names no declaration the target did not
+// publish.
+void GuardNamespaceInitialization(
+    const UnitLowerer& unit_lowerer, mir::CompilationUnit& unit,
+    mir::CallableCode& code, std::span<const std::string> reads) {
+  mir::Block outer;
+  const mir::ExprId runtime =
+      outer.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  const mir::ExprId name = outer.exprs.Add(
+      mir::Expr{
+          .data = mir::StringLiteral{.value = unit.name},
+          .type = unit.types.Intern(mir::Type{mir::MachineCStringType{}})});
+  const mir::ExprId claimed = outer.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target =
+                              support::BuiltinFn::kClaimNamespaceInitialize},
+                  .arguments = {runtime, name}},
+          .type = unit.builtins.machine_int64});
+  const mir::ExprId took_it = outer.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kInequality,
+                  .lhs = claimed,
+                  .rhs = outer.exprs.Add(
+                      mir::Expr{
+                          .data = mir::MachineIntLiteral{.value = 0},
+                          .type = unit.builtins.machine_int64})},
+          .type = unit.builtins.machine_bool});
+
+  mir::Block bring_up;
+  for (const std::string& read : reads) {
+    unit.AddExternalReferencedUnit(read);
+    bring_up.AppendStmt(
+        mir::ExprStmt{
+            .expr = bring_up.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee =
+                                mir::Direct{
+                                    .target =
+                                        mir::ExternalUnitStorageTarget{
+                                            .unit_name = read,
+                                            .phase =
+                                                mir::NamespaceStoragePhase::
+                                                    kInitialize}},
+                            .arguments = {}},
+                    .type = unit.builtins.void_type})});
+  }
+  const mir::BlockId initializers =
+      bring_up.child_scopes.Add(std::move(code.Body()));
+  bring_up.AppendStmt(mir::BlockStmt{.scope = initializers});
+
+  const mir::BlockId bring_up_id = outer.child_scopes.Add(std::move(bring_up));
+  outer.AppendStmt(
+      mir::IfStmt{
+          .condition = took_it,
+          .then_scope = bring_up_id,
+          .else_scope = std::nullopt});
+  code.Body() = std::move(outer);
+}
+
+// Publishes the two bodies the design root calls. Every namespace unit
+// publishes both entries. One that owns no cell publishes a body that installs
+// none and a body that initializes none -- zero declarations is a count, not
+// another kind of unit -- so the design root calls both without first finding
+// out what this one supplied. What the value body reads of other units is read
+// off the initializers before the extent is wrapped around them, and becomes
+// calls that body makes.
 void PublishNamespaceStorageBringUp(
     const UnitLowerer& unit_lowerer, mir::CompilationUnit& unit,
     mir::CallableCode install_code, mir::CallableCode value_code) {
-  const std::unordered_set<std::string> reads =
+  const std::vector<std::string> reads =
       UnitsReadBy(value_code.Body(), unit.name);
-  unit.direct_initializer_unit_reads.assign(reads.begin(), reads.end());
-  std::ranges::sort(unit.direct_initializer_unit_reads);
   WrapInNamespaceStaticInitExtent(unit_lowerer, value_code);
+  GuardNamespaceInitialization(unit_lowerer, unit, value_code, reads);
 
   unit.content = mir::BroughtUpNamespace{
       .install_storage = unit.callables.Add(
@@ -407,18 +491,15 @@ auto UnitLowerer::RunObjectRoot() -> diag::Result<mir::CompilationUnit> {
   return std::move(unit_);
 }
 
-auto UnitLowerer::RunDesignRoot(
-    NamespaceStorageInitializationPlan namespace_storage_plan)
+auto UnitLowerer::RunDesignRoot(DesignNamespaces namespaces)
     -> diag::Result<mir::CompilationUnit> {
-  if (auto root = PopulateModuleRoot(std::move(namespace_storage_plan));
-      !root) {
+  if (auto root = PopulateModuleRoot(std::move(namespaces)); !root) {
     return std::unexpected(std::move(root.error()));
   }
   return std::move(unit_);
 }
 
-auto UnitLowerer::PopulateModuleRoot(
-    NamespaceStorageInitializationPlan namespace_storage_plan)
+auto UnitLowerer::PopulateModuleRoot(DesignNamespaces namespaces)
     -> diag::Result<void> {
   WalkFrame root_frame;
   if (auto prologue = PublishUnitDeclarations(); !prologue) {
@@ -427,12 +508,11 @@ auto UnitLowerer::PopulateModuleRoot(
 
   // Two-sweep structural lowering: the first sweep mints every class identity
   // and settles its declaration; the second lowers every body and commits the
-  // composed class to the unit. The design root's plan for bringing up what the
-  // namespace units own rides on the root scope's lowering and is empty for a
-  // source module.
+  // composed class to the unit. The namespaces the design root brings up ride
+  // on the root scope's lowering and are empty for a source module.
   StructuralScopeLowerer root(
       *this, nullptr, hir::InstanceClassName(hir_->name), hir_->root_scope,
-      std::move(namespace_storage_plan));
+      std::move(namespaces));
   auto top_r = root.DeclareShape();
   if (!top_r) return std::unexpected(std::move(top_r.error()));
   auto body_r = root.PopulateBodies(root_frame);

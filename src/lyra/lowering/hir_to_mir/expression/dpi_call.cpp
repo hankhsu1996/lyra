@@ -1282,4 +1282,105 @@ auto SynthesizeForeignExportEntry(
       .signature = signature};
 }
 
+void PublishForeignScopeName(
+    mir::CompilationUnit& unit, const mir::ForeignLinkage& linkage,
+    mir::TypeId signature) {
+  // Two scopes of one unit may export one name (LRM 35.4), and both the
+  // prototype and the definition are the same either way, so the second states
+  // nothing new. Across units the repeat is what this symbol's linkage is for;
+  // within one artifact it would simply be a name stated twice.
+  const bool already = std::ranges::any_of(
+      unit.foreign_scope_entries, [&](const mir::ForeignScopeEntry& stated) {
+        return stated.linkage.foreign_name == linkage.foreign_name;
+      });
+  if (already) {
+    return;
+  }
+
+  // Held by value: defining the symbol interns into the same pool this is read
+  // from.
+  const mir::MachineFunctionType prototype =
+      unit.types.Get(signature).Get<mir::MachineFunctionType>();
+
+  mir::CallableCode code = mir::CallableCode::Defined();
+  code.body.emplace();
+  CallableBindings bindings(unit, code);
+  mir::Block& body = code.Body();
+
+  std::vector<mir::TypeId> entry_params{unit.builtins.scope_ptr};
+  for (const mir::TypeId type : prototype.params) {
+    code.params.push_back(bindings.DeclareAnonymous(type));
+    entry_params.push_back(type);
+  }
+  code.result_type = prototype.result;
+
+  const mir::LocalId scope = bindings.DeclareAnonymous(unit.builtins.scope_ptr);
+  body.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = scope,
+          .init = body.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Direct{
+                                  .target =
+                                      support::BuiltinFn::kCurrentExportScope},
+                          .arguments = {}},
+                  .type = unit.builtins.scope_ptr})});
+
+  const mir::ExprId scope_ref =
+      body.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr));
+  const mir::ExprId name = body.exprs.Add(
+      mir::Expr{
+          .data = mir::StringLiteral{.value = linkage.foreign_name},
+          .type = unit.types.Intern(mir::Type{mir::MachineCStringType{}})});
+  const mir::ExprId entry = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kFindExportEntry},
+                  .arguments = {scope_ref, name}},
+          .type = mir::ErasedFunction(unit.types)});
+
+  const mir::ExprId restored = body.exprs.Add(
+      mir::Expr{
+          .data = mir::CastExpr{.operand = entry},
+          .type = unit.types.Intern(
+              mir::Type{mir::MachineFunctionType{
+                  .params = std::move(entry_params),
+                  .result = prototype.result}})});
+  std::vector<mir::ExprId> call_args;
+  call_args.reserve(code.params.size() + 1);
+  call_args.push_back(
+      body.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr)));
+  for (const mir::LocalId param : code.params) {
+    call_args.push_back(body.exprs.Add(
+        mir::MakeLocalRefExpr(param, code.locals.Get(param).type)));
+  }
+  const mir::ExprId call = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Indirect{.code = restored},
+                  .arguments = std::move(call_args)},
+          .type = prototype.result});
+  // A void entry is called for its effect and returns nothing; any other hands
+  // its result straight back.
+  if (unit.types.Get(prototype.result).Is<mir::VoidType>()) {
+    body.AppendStmt(mir::ExprStmt{.expr = call});
+    body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  } else {
+    body.AppendStmt(mir::ReturnStmt{.value = call});
+  }
+
+  unit.foreign_scope_entries.push_back(
+      mir::ForeignScopeEntry{
+          .linkage = linkage,
+          .signature = signature,
+          .definition = std::move(code)});
+}
+
 }  // namespace lyra::lowering::hir_to_mir

@@ -35,8 +35,13 @@ struct UnitCallableText {
 auto RenderUnitClasses(const mir::CompilationUnit& unit) -> ClassText;
 
 // Every callable the unit owns directly -- a package function or task, a DPI-C
-// import's prototype, a DPI-C export's entry point -- rendered as free
-// functions of the unit's namespace.
+// import's prototype, the entry point of an export its own namespace defines --
+// rendered as free functions of the unit's namespace.
 auto RenderUnitCallables(const mir::CompilationUnit& unit) -> UnitCallableText;
+
+// The program-global symbol this unit writes for each foreign name it declares
+// on a scope. It belongs to no unit, so every unit declaring such a scope emits
+// the same text and the party assembling the program keeps one.
+auto RenderForeignScopeSymbols(const mir::CompilationUnit& unit) -> std::string;
 
 }  // namespace lyra::backend::cpp
