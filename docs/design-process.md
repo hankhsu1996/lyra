@@ -80,6 +80,15 @@ Two things fall out of having written them, and neither is reachable without.
 sentence needs an "and", the two contracts are not written yet -- and the work will get divided
 between the layers by whichever side is easier to edit rather than by which one owns it.
 
+**That sentence must also be answerable from the declaration in front of it.** A translation reads
+one node and writes what it means; where its stated job needs the whole body read first -- does
+anything ever write this variable, is this name ever taken -- the step is not a translation, and
+what it is really doing is an optimization taken at the layer with the least information to take it
+with. This is the third smell below caught one step earlier: there it is found by meeting a pass
+that runs before the real work, here by reading the sentence that describes the job, which exists
+before any code does. The clause to distrust is the one that makes the job depend on what the
+program does with the thing rather than on what the thing is.
+
 **A fact appearing in both contracts is in the wrong one.** A layer states a fact because it is the
 highest one that can; a lower layer restating it is two authorities for one answer.
 

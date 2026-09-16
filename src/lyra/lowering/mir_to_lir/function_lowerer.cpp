@@ -260,89 +260,61 @@ auto IsActivationValueType(const mir::Type& type) -> bool {
          type.Is<mir::DynamicArrayType>();
 }
 
-// Marks every local the canonical lowering needs an address for: one that is
-// assigned after its initialization, or has its address taken. Such a local is
-// storage, so it must be a place local. A read never makes a local storage: a
-// value read many times is still a value. The whole expression arena is
-// scanned, not just the reachable statements, so a local written only by an
-// unreachable expression is conservatively storage.
-void CollectStorageLocals(
+// Marks every local something builds a reference over. Such a local's storage
+// has to be storage a reference can name, which an ordinary frame slot is not.
+// The whole expression arena is scanned, not just the reachable statements, so
+// a local lent only by an unreachable expression is lent all the same.
+void CollectLentLocals(
     const mir::TypePool& types, const mir::Block& block,
-    std::vector<bool>& placed, std::vector<bool>& lent) {
-  const auto mark = [&](std::optional<mir::LocalId> local) {
-    if (local.has_value()) {
-      placed[local->value] = true;
-    }
-  };
+    std::vector<bool>& lent) {
   const auto mark_lent = [&](std::optional<mir::LocalId> local) {
     if (local.has_value()) {
       lent[local->value] = true;
     }
   };
-  const auto reads_only = [](const auto&) {};
+  const auto lends_nothing = [](const auto&) {};
   for (const mir::ExprId id : block.exprs.Ids()) {
     const mir::Expr& expr = block.exprs.Get(id);
     std::visit(
         Overloaded{
-            [&](const mir::AssignExpr& e) {
-              mark(LocalNamedBy(block, e.target));
-            },
-            [&](const mir::IncDecExpr& e) {
-              mark(LocalNamedBy(block, e.target));
-            },
-            [&](const mir::AddressOfExpr& e) {
-              mark(LocalNamedBy(block, e.operand));
-            },
-            // Building a reference over a local binds that local's storage, so
-            // the local needs an address for the same reason an explicit
-            // address-of gives it one. A method that changes the object it is
-            // applied to writes its answer back through that object, so a local
-            // standing there is written just as an assignment target is.
+            // Building a reference over a local binds that local's storage, and
+            // the reference is what the callee holds for as long as it runs, so
+            // the storage has to be nameable for that whole time.
             [&](const mir::CallExpr& e) {
               if (BindsReference(types, e, expr.type)) {
                 mark_lent(LocalNamedBy(block, e.arguments[0]));
-                return;
-              }
-              const std::optional<support::BuiltinFn> fn =
-                  mir::DirectBuiltinFn(e);
-              if (fn.has_value() &&
-                  support::RuntimeEntryOf(*fn).mutates_receiver) {
-                if (const std::optional<mir::ExprId> receiver =
-                        mir::CalleeReceiver(e.callee)) {
-                  mark(LocalNamedBy(block, *receiver));
-                }
               }
             },
-            [&](const mir::MachineArrayDataExpr& e) {
-              mark(LocalNamedBy(block, e.array));
-            },
-            // Every other kind reads its operands and asks for no address: a
-            // value read any number of times is still a value, and a value
-            // built out of other values needs nowhere for them to live. Each
-            // says so for itself, so a kind added anywhere has to answer here
-            // rather than inherit a silent no.
-            [&](const mir::StringLiteral& e) { reads_only(e); },
-            [&](const mir::NullLiteral& e) { reads_only(e); },
-            [&](const mir::MachineBoolLiteral& e) { reads_only(e); },
-            [&](const mir::MachineIntLiteral& e) { reads_only(e); },
-            [&](const mir::MachineFloatLiteral& e) { reads_only(e); },
-            [&](const mir::ReferenceExpr& e) { reads_only(e); },
-            [&](const mir::UnaryExpr& e) { reads_only(e); },
-            [&](const mir::BinaryExpr& e) { reads_only(e); },
-            [&](const mir::CastExpr& e) { reads_only(e); },
-            [&](const mir::ConditionalExpr& e) { reads_only(e); },
-            [&](const mir::BlockExpr& e) { reads_only(e); },
-            [&](const mir::DerefExpr& e) { reads_only(e); },
-            [&](const mir::MoveExpr& e) { reads_only(e); },
-            [&](const mir::FieldAccessExpr& e) { reads_only(e); },
-            [&](const mir::ClosureExpr& e) { reads_only(e); },
-            [&](const mir::CompositeExpr& e) { reads_only(e); },
-            [&](const mir::AwaitExpr& e) { reads_only(e); },
-            [&](const mir::VectorGetExpr& e) { reads_only(e); }},
+            // Every other kind names storage without lending it, so none of
+            // them decides where a local lives. Each says so for itself, so a
+            // kind added anywhere has to answer here rather than inherit a
+            // silent no.
+            [&](const mir::AssignExpr& e) { lends_nothing(e); },
+            [&](const mir::IncDecExpr& e) { lends_nothing(e); },
+            [&](const mir::AddressOfExpr& e) { lends_nothing(e); },
+            [&](const mir::MachineArrayDataExpr& e) { lends_nothing(e); },
+            [&](const mir::StringLiteral& e) { lends_nothing(e); },
+            [&](const mir::NullLiteral& e) { lends_nothing(e); },
+            [&](const mir::MachineBoolLiteral& e) { lends_nothing(e); },
+            [&](const mir::MachineIntLiteral& e) { lends_nothing(e); },
+            [&](const mir::MachineFloatLiteral& e) { lends_nothing(e); },
+            [&](const mir::ReferenceExpr& e) { lends_nothing(e); },
+            [&](const mir::UnaryExpr& e) { lends_nothing(e); },
+            [&](const mir::BinaryExpr& e) { lends_nothing(e); },
+            [&](const mir::CastExpr& e) { lends_nothing(e); },
+            [&](const mir::ConditionalExpr& e) { lends_nothing(e); },
+            [&](const mir::BlockExpr& e) { lends_nothing(e); },
+            [&](const mir::DerefExpr& e) { lends_nothing(e); },
+            [&](const mir::MoveExpr& e) { lends_nothing(e); },
+            [&](const mir::FieldAccessExpr& e) { lends_nothing(e); },
+            [&](const mir::ClosureExpr& e) { lends_nothing(e); },
+            [&](const mir::CompositeExpr& e) { lends_nothing(e); },
+            [&](const mir::AwaitExpr& e) { lends_nothing(e); },
+            [&](const mir::VectorGetExpr& e) { lends_nothing(e); }},
         expr.data);
   }
   for (const mir::BlockId id : block.child_scopes.Ids()) {
-    CollectStorageLocals(types, block.child_scopes.Get(id), placed, lent);
+    CollectLentLocals(types, block.child_scopes.Get(id), lent);
   }
 }
 
@@ -522,7 +494,6 @@ FunctionLowerer::FunctionLowerer(
       closure_(nullptr),
       description_(nullptr),
       name_(std::move(name)),
-      placed_(code.locals.size(), false),
       activation_value_local_(code.locals.size(), false),
       cell_local_(code.locals.size(), false),
       locals_(code.locals.size(), std::nullopt) {
@@ -536,7 +507,6 @@ FunctionLowerer::FunctionLowerer(
       closure_(nullptr),
       description_(nullptr),
       name_(std::move(name)),
-      placed_(cls.constructor.code.locals.size(), false),
       activation_value_local_(cls.constructor.code.locals.size(), false),
       cell_local_(cls.constructor.code.locals.size(), false),
       locals_(cls.constructor.code.locals.size(), std::nullopt) {
@@ -550,7 +520,6 @@ FunctionLowerer::FunctionLowerer(
       closure_(&closure),
       description_(nullptr),
       name_(std::move(name)),
-      placed_(closure.invoke.locals.size(), false),
       activation_value_local_(closure.invoke.locals.size(), false),
       cell_local_(closure.invoke.locals.size(), false),
       locals_(closure.invoke.locals.size(), std::nullopt) {
@@ -568,14 +537,15 @@ FunctionLowerer::FunctionLowerer(
 }
 
 void FunctionLowerer::BindCaptureReceiver(mir::LocalId receiver) {
+  const lir::TypeId type =
+      unit_->TranslateType(code_->locals.Get(receiver).type);
   const lir::ValueId value = fn_.values.Add(
       lir::Local{
           .name = LocalLabel(*code_, receiver),
-          .type = unit_->TranslateType(code_->locals.Get(receiver).type),
+          .type = type,
           .kind = lir::LocalKind::kParam});
   fn_.params.push_back(value);
-  locals_[receiver.value] =
-      LocalBinding{ValueBinding{.value = lir::Use{.value = value}}};
+  BindLocal(receiver, type, lir::Use{.value = value});
 }
 
 auto FunctionLowerer::LowerDescription(
@@ -612,15 +582,14 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
       unit_->Mir().types.Get(code_->result_type).Is<mir::CoroutineType>();
 
   std::vector<bool> lent(code_->locals.size(), false);
-  CollectStorageLocals(unit_->Mir().types, code_->Body(), placed_, lent);
+  CollectLentLocals(unit_->Mir().types, code_->Body(), lent);
 
   // In a suspending body every value-typed, non-managed local and parameter is
   // an activation value, not a transient: a value's handle cannot safely live
   // across a suspension, so each such local needs a cell of the execution's own
   // store, which the generated frame reaches by a handle. A suspension is a
   // statement boundary, so only named locals -- never sub-expression transients
-  // -- can cross one, which is why marking locals is sufficient. A
-  // non-suspending body keeps selective placement.
+  // -- can cross one, which is why marking locals is sufficient.
   if (is_coroutine) {
     for (const mir::LocalId local : code_->locals.Ids()) {
       if (IsActivationValueType(
@@ -856,10 +825,9 @@ auto FunctionLowerer::NewPlaceLocal(lir::TypeId type) -> lir::ValueId {
       lir::Local{.name = {}, .type = type, .kind = lir::LocalKind::kPlace});
 }
 
-// Introduces a declared local, holding its initial value. Where that value
-// lives follows what the body does with the local: one whose storage is lent
-// gets a cell, one the body assigns later or addresses becomes frame storage,
-// and one that is only ever read stays the initial value itself.
+// Introduces a declared local, holding its initial value: one lent by
+// reference gets a cell, one crossing a suspension gets an activation value,
+// and every other one gets a frame slot.
 void FunctionLowerer::BindLocal(
     mir::LocalId local, lir::TypeId type, lir::Operand init) {
   // An activation value's cell was allocated at frame entry; its declaration's
@@ -877,10 +845,6 @@ void FunctionLowerer::BindLocal(
     const lir::Operand reference = AllocateCell(type);
     locals_[local.value] = LocalBinding{CellBinding{.reference = reference}};
     InitializeCell(reference, std::move(init));
-    return;
-  }
-  if (!placed_[local.value]) {
-    locals_[local.value] = LocalBinding{ValueBinding{.value = std::move(init)}};
     return;
   }
   const lir::ValueId slot = NewPlaceLocal(type);
@@ -1604,8 +1568,6 @@ auto FunctionLowerer::ReferenceValue(
                           LocalPlace(place.slot),
                           fn_.values.Get(place.slot).type);
                     },
-                    [](const ValueBinding& value)
-                        -> diag::Result<lir::Operand> { return value.value; },
                     [&](const ActivationValueBinding& frame)
                         -> diag::Result<lir::Operand> {
                       return LoadActivationValue(
@@ -1670,20 +1632,42 @@ auto FunctionLowerer::ReferencePlace(
           [&](const mir::LocalRef& ref) -> diag::Result<lir::Place> {
             const std::optional<LocalBinding>& binding = locals_[ref.var.value];
             if (!binding.has_value()) {
-              return Unsupported(
-                  "mir_to_lir: local is not addressable storage");
+              return Unsupported("mir_to_lir: reference to an unlowered local");
             }
-            // A local whose storage is a cell names its value through the
-            // reference it holds; one that is a frame slot names the slot.
-            if (const auto* cell = std::get_if<CellBinding>(&*binding)) {
-              return ReferencedValue(cell->reference);
-            }
-            const auto* place = std::get_if<PlaceBinding>(&*binding);
-            if (place == nullptr) {
-              return Unsupported(
-                  "mir_to_lir: local is not addressable storage");
-            }
-            return LocalPlace(place->slot);
+            return std::visit(
+                Overloaded{
+                    [&](const PlaceBinding& place) -> diag::Result<lir::Place> {
+                      return LocalPlace(place.slot);
+                    },
+                    // The binding holds a reference to the cell the local
+                    // lives in, so the local's storage is what that reference
+                    // points at: one step to the cell, one more to its value.
+                    [&](const CellBinding& cell) -> diag::Result<lir::Place> {
+                      return ReferencedValue(cell.reference);
+                    },
+                    // A value crossing a suspension lives in the running
+                    // execution's own store, reached by the calls that read
+                    // and write it rather than by an address, so there is no
+                    // place to hand back.
+                    //
+                    // No path forms one: every site that opens a place over a
+                    // bare local wants an operand that is address-only,
+                    // machine-typed, or a wrapper, and a value crossing a
+                    // suspension is none of those -- while the one site that
+                    // does meet one, a write, reaches it through its handle
+                    // before a place is asked for. It refuses rather than
+                    // reporting a compiler invariant because that argument is
+                    // about which sites exist rather than about what the IR
+                    // permits.
+                    [](const ActivationValueBinding&)
+                        -> diag::Result<lir::Place> {
+                      return Unsupported(
+                          "mir_to_lir: a local whose value crosses a "
+                          "suspension "
+                          "is reached through the execution's own store, so "
+                          "naming its storage is not yet supported");
+                    }},
+                *binding);
           },
           // A variable of a unit's namespace is one cell for the whole program
           // that no instance holds, so it is reached by the symbol it links

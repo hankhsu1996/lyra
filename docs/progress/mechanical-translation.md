@@ -460,19 +460,21 @@ cross-check predicts. This file owns only which instances are known and what is 
       not looks: the hook is a dynamic initializer per class, every scope of a design is a class,
       and a design's translation unit is compiled unoptimized by default.
 
-- [ ] T13b -- Whether a local needs an address is stated where it is known, rather than recovered by
-      a pass that reads the whole body before any of it is lowered. Today the execution lowering
-      walks every expression of a body twice over -- once asking which locals a write or an
-      address-of reaches, once asking which are lent by reference -- and only then begins. That is a
-      decision being made at the layer with the least information about it: what the walk is
-      recovering is value category, which the layer above states nowhere, so each operand's position
-      has to be read back out of the tree it already sits in.
+- [ ] T13b -- Which locals are lent by reference is stated where it is known, rather than recovered
+      by a pass that reads the whole body before any of it is lowered. That is a decision being made
+      at the layer with the least information about it: what the walk recovers is an operand's
+      position in a call it already sits in.
+
+      **The larger half of this is gone rather than moved.** The same walk used to answer whether a
+      local needs an address at all, and that question has no answer to state anywhere, because a
+      declared variable has storage and deciding otherwise is an optimization taken from a reading of
+      the whole body (`../decisions/a-declared-local-is-storage.md`). What is left is narrower and
+      fails differently: a lending the walk misses is refused by name where the lending happens.
 
       This is a different axis from T13a and does not close with it. T13a made the walk total, so a
-      new expression kind now says whether it asks for an address instead of silently answering that
-      it does not; the walk still exists. Retiring it means a semantic layer that states which
-      occurrences are places, which is the same question as whether a value has an address at all --
-      so it closes with that decision rather than here, and nothing about it should be built twice.
+      new expression kind now says whether it lends rather than silently answering that it does not;
+      the walk still exists. Retiring it means a semantic layer that states which occurrences lend,
+      and nothing about it should be built twice.
 
 ## Small and mechanical
 
