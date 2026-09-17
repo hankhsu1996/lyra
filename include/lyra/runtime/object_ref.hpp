@@ -22,6 +22,8 @@ namespace lyra::runtime {
 // adds no virtual destructor: what releases an object is the deleter its
 // allocation fixed, so an object whose class declares no virtual method keeps
 // no table.
+struct ObjectDefinition;
+
 class GcObject : public std::enable_shared_from_this<GcObject> {
  public:
   // Called once, by the allocation, with the address the allocation produced.
@@ -33,8 +35,28 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
     return identity_;
   }
 
+  // What a class of the source language states about its own objects, which a
+  // generated class redeclares with its own record. It is how an object answers
+  // where its own properties live and which body answers a behavior -- the
+  // questions a referrer with no name for the class cannot answer for itself.
+  // A class whose objects the runtime lays out states none here and takes its
+  // record where it is built, because there the record is what the object was
+  // built from rather than something the class alone knows.
+  static constexpr const ObjectDefinition* kClassRecord = nullptr;
+
+  // Called once, as the object comes into existence, with what every object of
+  // its class shares.
+  void AdoptClass(const ObjectDefinition* of) {
+    class_ = of;
+  }
+
+  [[nodiscard]] auto Class() const -> const ObjectDefinition* {
+    return class_;
+  }
+
  private:
   void* identity_ = nullptr;
+  const ObjectDefinition* class_ = nullptr;
 };
 
 // A reference to an object whose typed owner is already in hand. The share
@@ -45,8 +67,21 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
 template <typename T>
 auto RefToObject(std::shared_ptr<T> owned) -> value::ObjectRef {
   T* view = owned.get();
-  return value::ObjectRef(
-      value::ManagedRef(std::shared_ptr<void>(std::move(owned))), view);
+  // What the share points at is the object itself, which for an object of a
+  // source-language class is the one thing every such object is -- so an entry
+  // reaching the object reads the share and needs no name for the class. The
+  // conversion is the target language's own and happens here, where the
+  // concrete type is in hand; deriving it from the share afterwards is what
+  // nothing can do. The handle a process is named by (LRM 9.7) answers for no
+  // class and keeps the object as it stands.
+  if constexpr (std::derived_from<T, GcObject>) {
+    std::shared_ptr<GcObject> object = std::move(owned);
+    return value::ObjectRef(
+        value::ManagedRef(std::shared_ptr<void>(std::move(object))), view);
+  } else {
+    return value::ObjectRef(
+        value::ManagedRef(std::shared_ptr<void>(std::move(owned))), view);
+  }
 }
 
 // Brings an object into existence and fixes its identity as the address the
@@ -58,6 +93,9 @@ auto GcNew(Args&&... args) -> value::ObjectRef {
   std::shared_ptr<T> owned = std::make_shared<T>(std::forward<Args>(args)...);
   if constexpr (std::derived_from<T, GcObject>) {
     owned->AdoptIdentity(owned.get());
+    if constexpr (T::kClassRecord != nullptr) {
+      owned->AdoptClass(T::kClassRecord);
+    }
   }
   return RefToObject(std::move(owned));
 }
@@ -73,18 +111,14 @@ auto ViewAs(const value::ObjectRef& ref) -> value::ObjectRef {
 }
 
 // The reference referring to the object the running subroutine was invoked on
-// (LRM 8.11). The identity is the one the object recorded when it was created;
-// the share comes from the object, aliased onto that identity so the reference
-// owns what every other reference to the object owns while naming what they
-// name. The view is the receiver itself, which is the class whose body is
-// running -- what a derived class's `this` must be.
+// (LRM 8.11). The share comes from the object and names the object itself, so
+// this reference owns what every other reference to the object owns and names
+// what they name. The view is the receiver itself, which is the class whose
+// body is running -- what a derived class's `this` must be.
 template <typename T>
 auto SelfHandle(T* self) -> value::ObjectRef {
   return value::ObjectRef(
-      value::ManagedRef(
-          std::shared_ptr<void>(
-              self->shared_from_this(), self->IdentityAddress())),
-      self);
+      value::ManagedRef(std::shared_ptr<void>(self->shared_from_this())), self);
 }
 
 }  // namespace lyra::runtime

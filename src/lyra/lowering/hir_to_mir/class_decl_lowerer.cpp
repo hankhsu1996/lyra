@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
+#include "lyra/lowering/hir_to_mir/object_record.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -649,6 +650,11 @@ auto ClassDeclLowerer::PopulateBodies(
       !r) {
     return std::unexpected(std::move(r.error()));
   }
+
+  // Every class of the source language states how an object of it is reached,
+  // because a name landing on one whose class a referrer cannot name is
+  // answered by the object and by nothing else (LRM 6.22, 23.9).
+  InstallObjectRecord(unit_lowerer, class_id_, mir_class);
 
   unit_lowerer.Unit().DefineClass(class_id_, std::move(mir_class));
   return {};

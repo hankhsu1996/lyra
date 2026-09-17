@@ -500,6 +500,33 @@ cross-check predicts. This file owns only which instances are known and what is 
       factory, which is routed to a conversion path before that branch is reached -- so the branch
       had never run. It went with the scope it existed to state.
 
+- [x] T29 -- An access whose class no signature names states the operations it performs rather than
+      a position each backend turns into them. Two alternatives carried "a position the design
+      settled" -- one among the callee forms, one among the member references -- and each hid
+      something a reader could not see from it.
+
+      The callee form named one value where the operation needs two: the reference, whose object's
+      class answers which body, and the object, which the body then runs on. A reference refers to
+      an object without being one and nothing recovers either from the other, so whichever of the
+      two it carried was wrong for the other half -- which is how the two backends came to disagree
+      about what such a call's first argument was, each having written the two steps out for itself
+      from a node that stated neither.
+
+      The member reference hid a plainer thing, readable straight off the emitted text: it emitted a
+      call, a conversion and a dereference. A body with no name for the record has no member to
+      refer to, so a member reference is a statement it is in no position to make, and the
+      alternative existed only to carry what the name could not -- the position as a value, and the
+      type it reaches, which a call and a conversion already carry.
+
+      Both are gone, from every layer, with the two runtime operations that served them. What
+      replaces each is what it already was underneath: a runtime call, a conversion reading the
+      answer as the type the access states, and then either entering it or reaching through it. Four
+      kinds of settled access now take one shape and nothing chooses between them.
+
+      What either cost was invisible while one of the two backends refused the construct outright,
+      which is the general shape: a node stating less than the operation is checked by whichever
+      backend realizes it, and a backend that refuses checks nothing.
+
 ## Naming ownership
 
 - [ ] T28 -- Every name a render emits comes from something that owns naming, and re-viewing an
@@ -513,6 +540,15 @@ cross-check predicts. This file owns only which instances are known and what is 
       with no instructions at all, so the move would force it to gain an entry it does not need or
       to refuse one it answers today. Two things could be true and the item is which -- the list of
       naming owners is short one owner, or a re-view should not be a cast.
+
+      **A second instance, which says the same thing from the other side.** A class of the source
+      language states its own record under a name the allocation reads to hand a new object its
+      class. That name is the runtime's, and the emitter takes it from the source backend's own
+      naming header -- a fourth place, beside the three owners. It passes the check that reads the
+      emitters for library names, because the check reads emitters and this sits one file over. What
+      makes it the same item rather than a new one is that no owner fits it either: it is not a
+      type, not an access protocol, and not an operation, but a name two sides agree on by both
+      reading one spelling. Whatever answers the re-view answers this.
 
 ## Cross-references
 

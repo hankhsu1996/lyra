@@ -490,6 +490,50 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // path.
   kPropertyCoordinate,
   kBehaviorCoordinate,
+  // What every object of one source-language class carries, so the object
+  // answers where its own properties live and which body answers a behavior:
+  // `lyra::runtime::ObjectDefinition`, holding what the class extends, what it
+  // declares itself, and the entries by which an object of it is reached. Like
+  // the scope records above it is a second reading of what the class already
+  // states, for a target that cannot reach a member except by writing its name;
+  // a target whose objects the runtime lays out composes none of it.
+  kObjectDefinition,
+  // The entries a class supplies about reaching its own properties: one per
+  // property it declares, gathered in a `lyra::runtime::PropertySlotTable`.
+  // Each entry's own type is a machine function, not one of these.
+  kPropertySlotTable,
+  // One behavior a class takes over from its lineage (LRM 8.20):
+  // `lyra::runtime::DispatchTakeover` names the position and the body this
+  // class answers it with, and a `lyra::runtime::TakeoverTable` gathers them.
+  kDispatchTakeover,
+  kTakeoverTable,
+  // The bodies a class introduces, in the order it introduces them:
+  // `lyra::runtime::MethodDispatchTable`.
+  kMethodDispatchTable,
+  // One name a class answers while a reference to it resolves, paired with
+  // where that name lands: `lyra::runtime::ResolvedProperty` and
+  // `lyra::runtime::ResolvedBehavior`, gathered in the two tables beside them.
+  // A class carries only the names it declares itself, because what its lineage
+  // declares is found by asking what it extends.
+  kResolvedProperty,
+  kResolvedPropertyTable,
+  kResolvedBehavior,
+  kResolvedBehaviorTable,
+  // One name a class answers with a body outright, for a call the object gets
+  // no say in (LRM 8.14): `lyra::runtime::DeclaredBody` pairs the name with the
+  // body, and a `lyra::runtime::DeclaredBodyTable` gathers them. It is the
+  // third of the answers above and not a fourth kind of question -- a class
+  // that publishes nothing answers by name in all three.
+  kDeclaredBody,
+  kDeclaredBodyTable,
+  // The classes one scope answers a name with (LRM 23.9):
+  // `lyra::runtime::ScopeClass` pairs the name the source declared with that
+  // class's record, and a `lyra::runtime::ScopeClassTable` gathers them. A
+  // referrer outside reaches such a class by walking to the scope and asking,
+  // because a class a design element declares is a type of that element's
+  // instance (LRM 6.22) and no signature carries it.
+  kScopeClass,
+  kScopeClassTable,
 };
 
 struct RuntimeLibraryType {

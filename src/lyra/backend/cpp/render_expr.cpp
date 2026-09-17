@@ -194,11 +194,6 @@ auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
             }
             return through_receiver(
                 ToCppName(declaring->fields.Get(t.slot).name));
-          },
-          [](const mir::ResolvedFieldTarget&) -> std::string {
-            throw InternalError(
-                "RenderFieldAccessExpr: a storage position that arrived as a "
-                "value reached a backend that states it does not render one");
           }},
       m.field);
 }
@@ -225,6 +220,11 @@ auto RenderReferenceExpr(
             return std::format(
                 "{}::{}", CppClassName(view.Class(), view.ClassId()),
                 CppStaticConstantName(r.constant));
+          },
+          [&](const mir::ObjectRecordRef& r) -> std::string {
+            return std::format(
+                "{}::{}", RenderClassRefAsCpp(view.Unit(), r.of),
+                CppObjectRecordName());
           },
           [&](const mir::PackedTypeRef& r) -> std::string {
             return CppPackedTypeName(r.integral);

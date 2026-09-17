@@ -148,6 +148,13 @@ auto UnitLowerer::MapOrGetBehaviorCoordinate(
       behavior_coordinates_by_frame_[slot_owner_frame], std::move(decl));
 }
 
+auto UnitLowerer::MapOrGetBehaviorBody(
+    ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
+    -> hir::BehaviorBodyId {
+  return MapOrGetClassName(
+      behavior_bodies_by_frame_[slot_owner_frame], std::move(decl));
+}
+
 auto UnitLowerer::TakePropertyCoordinatesForFrame(ScopeFrameId slot_owner_frame)
     -> base::Arena<hir::ClassNameDecl, hir::PropertyCoordinateId> {
   const auto it = property_coordinates_by_frame_.find(slot_owner_frame);
@@ -167,6 +174,17 @@ auto UnitLowerer::TakeBehaviorCoordinatesForFrame(ScopeFrameId slot_owner_frame)
   }
   auto out = std::move(it->second);
   behavior_coordinates_by_frame_.erase(it);
+  return out;
+}
+
+auto UnitLowerer::TakeBehaviorBodiesForFrame(ScopeFrameId slot_owner_frame)
+    -> base::Arena<hir::ClassNameDecl, hir::BehaviorBodyId> {
+  const auto it = behavior_bodies_by_frame_.find(slot_owner_frame);
+  if (it == behavior_bodies_by_frame_.end()) {
+    return {};
+  }
+  auto out = std::move(it->second);
+  behavior_bodies_by_frame_.erase(it);
   return out;
 }
 

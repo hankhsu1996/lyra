@@ -1680,6 +1680,23 @@ enough to warrant its own focused review.
       necessary was a property that turned out to be two: passing through a generated frame, which
       already worked, and catching in one, which nobody had emitted. Only the second was missing.
 
+- [ ] R106 -- A command accepts every option the command line declares and uses the ones that mean
+      something to it, so an option that means nothing to the command a caller typed is taken and
+      ignored. `dump ast --release --cxx clang++ --no-pch -j8` runs, having acted on none of the
+      four; `compile --backend jit` runs and compiles with the only backend that makes a program.
+      Each reads to the caller as a choice they made, and the run gives them no reason to think
+      otherwise.
+
+      Target: a command states which options it consumes, and one check refuses the rest by name.
+      **What this entry is written against is the half-fix**, which is worse than the whole gap: one
+      option refused while four are ignored teaches a caller that the compiler checks, so the four
+      it does not check become harder to notice rather than easier. It was written and reverted in
+      the branch that found this, for exactly that reason -- a bool per option on the command table
+      is also the wrong shape, since each option added brings another.
+
+      Not blocked. Found while removing a whole-unit refusal from the C++ backend, when `--backend`
+      turned out to be one of several options the commands that do not execute a design still take.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

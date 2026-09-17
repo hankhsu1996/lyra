@@ -533,6 +533,11 @@ struct StructuralScope {
   base::Arena<RoutedRefDecl, RoutedRefId> routed_refs;
   base::Arena<ClassNameDecl, PropertyCoordinateId> property_coordinates;
   base::Arena<ClassNameDecl, BehaviorCoordinateId> behavior_coordinates;
+  // The bodies a name reaches on a class this scope's walk lands on, for a
+  // method that answers no dispatch position -- what such a call runs is fixed
+  // by the class the access names (LRM 8.14), so what is settled is the body
+  // itself rather than a position something else answers.
+  base::Arena<ClassNameDecl, BehaviorBodyId> behavior_bodies;
   // The cells something in this scope reads a sampled value of (LRM 16.5.1),
   // each named the way an event control names what it watches -- so one reached
   // across an instance boundary is carried by its route like any other. A cell

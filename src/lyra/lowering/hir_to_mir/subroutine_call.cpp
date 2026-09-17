@@ -27,6 +27,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -100,16 +101,9 @@ struct NamedCallee {
 // The callee is a slot, and which implementation runs is the receiver's dynamic
 // type to decide (LRM 8.20). The receiver rides the callee rather than the
 // argument list, so nothing leads the arguments the source wrote.
-// Which dispatch position a call names, in the form a plan can state before a
-// body is being emitted into. A position this artifact counted is one already;
-// one the design settles is a slot of the enclosing scope, and reading a slot
-// is an expression, so it waits for the block that will hold it.
-using PlannedSlot =
-    std::variant<mir::VirtualSlot, hir::UnpublishedBehaviorSlot>;
-
 struct DispatchedCallee {
   hir::MethodReceiver receiver;
-  PlannedSlot slot;
+  mir::VirtualSlot slot;
 };
 
 // The callee is an entry a scope answered a name with, sealed with the route
@@ -123,7 +117,29 @@ struct EntryCallee {
   AmbientHandle handle;
 };
 
-using CalleeForm = std::variant<NamedCallee, DispatchedCallee, EntryCallee>;
+// How a call reaches a body of a class no signature names. Both slots are of
+// the enclosing scope and reading one is an expression, so which the call reads
+// waits for the block that will hold it.
+//
+// A behavior the object still decides (LRM 8.20) was settled only as far as the
+// coordinate, and the object's own class answers the rest at the call. One it
+// does not decide (LRM 8.14) was settled whole, and the slot holds the address.
+using SettledBody =
+    std::variant<hir::UnpublishedBehaviorSlot, hir::UnpublishedBehaviorBody>;
+
+// The callee is a body of such a class, reached through what the walk to the
+// declaring scope landed on. Nothing was published about it, so the call
+// restores the erased prototype from the interface the reference carries, and
+// the object leads the arguments -- as an ordinary first parameter, an erased
+// body being entered as a free function.
+struct SettledCallee {
+  hir::MethodReceiver receiver;
+  SettledBody at;
+  hir::ExternalCalleeInterface interface;
+};
+
+using CalleeForm =
+    std::variant<NamedCallee, DispatchedCallee, EntryCallee, SettledCallee>;
 
 // The callee-interface facts a subroutine call needs, read uniformly however
 // the callee is named: from its HIR declaration when this unit holds one, and
@@ -164,63 +180,103 @@ auto CanonicalVirtualSlot(
       role);
 }
 
+// A callee this unit can name: the target a direct call spells, and the slot it
+// fills where it takes part in dispatch (LRM 8.20).
+struct NamedTarget {
+  mir::Direct direct;
+  std::optional<mir::VirtualSlot> slot;
+};
+
+// A callee of a class no signature names, which this unit can spell nothing of:
+// how the address is reached, and the shape the call restores it to.
+struct SettledTarget {
+  SettledBody at;
+  hir::ExternalCalleeInterface interface;
+};
+
 // What a call reads off a class method it reaches: the interface it marshals
-// against, the target a direct call names, and the slot the callee fills where
-// it takes part in dispatch (LRM 8.20). Where these come from differs by
-// whether this unit declares the class; what a call then does with them does
+// against, and what the call reaches the body by. Where these come from differs
+// by whether this unit declares the class; what a call then does with them does
 // not.
 struct MethodCalleeFacts {
   hir::SubroutineKind kind = hir::SubroutineKind::kFunction;
   std::vector<CalleeFormal> formals;
-  mir::Direct direct;
-  std::optional<PlannedSlot> slot;
+  std::variant<NamedTarget, SettledTarget> target;
 };
 
+// Reads those facts off whichever callee the reference names. The visit is
+// exhaustive, so a callee kind added later is read here rather than falling
+// silently to one side.
 auto ReadMethodCallee(
     UnitLowerer& unit_lowerer, const hir::MethodCallee& callee)
     -> MethodCalleeFacts {
-  if (const auto* ext = std::get_if<hir::ExternalMethodCallee>(&callee)) {
-    MethodCalleeFacts facts{
-        .kind = ext->interface.kind,
-        .formals = CalleeFormalsOf(unit_lowerer, ext->interface),
-        .direct =
-            mir::Direct{
-                .target = unit_lowerer.MakeExternalMethodTarget(ext->target)},
-        .slot = std::nullopt};
-    if (ext->slot.has_value()) {
-      facts.slot = std::visit(
-          Overloaded{
-              [&](const hir::ExternalDispatchSlot& published) -> PlannedSlot {
-                return mir::VirtualSlot{
-                    unit_lowerer.MakeExternalVirtualSlot(published)};
-              },
-              [](const hir::UnpublishedBehaviorSlot& settled) -> PlannedSlot {
-                return settled;
-              }},
-          *ext->slot);
-    }
-    return facts;
-  }
-  const auto& local = std::get<hir::LocalClassMethodTarget>(callee);
-  const hir::SubroutineDecl& decl =
-      unit_lowerer.Hir().classes.Get(local.owner).methods.Get(local.method);
-  const mir::ClassId owner = unit_lowerer.TranslateClass(local.owner);
-  const mir::CallableId slot{local.method.value};
-  // A method's dispatch role is queried through the unit's declarations, not
-  // its class registry: while any peer body is lowering the registry is
-  // one-way, so a read there would leak lowering order into the reading site.
-  const auto& signature =
-      unit_lowerer.GetClassShape(owner).callable_signatures.Get(slot);
-  return MethodCalleeFacts{
-      .kind = decl.kind,
-      .formals = CalleeFormalsOf(unit_lowerer, decl),
-      .direct =
-          mir::Direct{
-              .target = mir::CallableTarget{.owner = owner, .slot = slot}},
-      .slot = signature.virtual_dispatch.transform(
-          [&](const mir::VirtualDispatchRole& role) {
-            return CanonicalVirtualSlot(owner, slot, role);
-          })};
+  return std::visit(
+      Overloaded{
+          [&](const hir::LocalClassMethodTarget& local) -> MethodCalleeFacts {
+            const hir::SubroutineDecl& decl = unit_lowerer.Hir()
+                                                  .classes.Get(local.owner)
+                                                  .methods.Get(local.method);
+            const mir::ClassId owner = unit_lowerer.TranslateClass(local.owner);
+            const mir::CallableId slot{local.method.value};
+            // A method's dispatch role is queried through the unit's
+            // declarations, not its class registry: while any peer body is
+            // lowering the registry is one-way, so a read there would leak
+            // lowering order into the reading site.
+            const auto& signature =
+                unit_lowerer.GetClassShape(owner).callable_signatures.Get(slot);
+            return MethodCalleeFacts{
+                .kind = decl.kind,
+                .formals = CalleeFormalsOf(unit_lowerer, decl),
+                .target = NamedTarget{
+                    .direct =
+                        mir::Direct{
+                            .target =
+                                mir::CallableTarget{
+                                    .owner = owner, .slot = slot}},
+                    .slot = signature.virtual_dispatch.transform(
+                        [&](const mir::VirtualDispatchRole& role) {
+                          return CanonicalVirtualSlot(owner, slot, role);
+                        })}};
+          },
+          [&](const hir::ExternalMethodCallee& ext) -> MethodCalleeFacts {
+            MethodCalleeFacts facts{
+                .kind = ext.interface.kind,
+                .formals = CalleeFormalsOf(unit_lowerer, ext.interface),
+                .target = NamedTarget{
+                    .direct =
+                        mir::Direct{
+                            .target = unit_lowerer.MakeExternalMethodTarget(
+                                ext.target)},
+                    .slot = std::nullopt}};
+            if (!ext.slot.has_value()) {
+              return facts;
+            }
+            std::visit(
+                Overloaded{
+                    [&](const hir::ExternalDispatchSlot& published) {
+                      std::get<NamedTarget>(facts.target).slot =
+                          mir::VirtualSlot{
+                              unit_lowerer.MakeExternalVirtualSlot(published)};
+                    },
+                    // A class that published nothing left no name to reach a
+                    // body by, so what this unit read off the callee does not
+                    // apply: the whole call goes through what the design
+                    // settled.
+                    [&](const hir::UnpublishedBehaviorSlot& settled) {
+                      facts.target = SettledTarget{
+                          .at = settled, .interface = ext.interface};
+                    }},
+                *ext.slot);
+            return facts;
+          },
+          [&](const hir::SettledMethodCallee& settled) -> MethodCalleeFacts {
+            return MethodCalleeFacts{
+                .kind = settled.interface.kind,
+                .formals = CalleeFormalsOf(unit_lowerer, settled.interface),
+                .target = SettledTarget{
+                    .at = settled.body, .interface = settled.interface}};
+          }},
+      callee);
 }
 
 // Plans a call to a class method, instance or type-associated (LRM 8.6, 8.10).
@@ -236,19 +292,36 @@ auto PlanClassMethodCall(
   const bool through_super =
       receiver.has_value() &&
       std::holds_alternative<hir::SuperReceiver>(*receiver);
-  const bool dispatches =
-      receiver.has_value() && !through_super && facts.slot.has_value();
 
   SubroutineCallee plan;
   plan.kind = facts.kind;
   plan.result_type = result_type;
   plan.completion = BuildCompletionLayout(facts.formals, result_type);
-  plan.form =
-      dispatches
-          ? CalleeForm{DispatchedCallee{
-                .receiver = *receiver, .slot = *std::move(facts.slot)}}
-          : CalleeForm{NamedCallee{
-                .callee = std::move(facts.direct),
+  plan.form = std::visit(
+      Overloaded{
+          [&](SettledTarget& settled) -> CalleeForm {
+            // Every such call reaches its body through an object: what the
+            // class keeps for itself is the declaring scope instance's, and
+            // reaching that is a separate question the front end refuses ahead
+            // of here.
+            if (!receiver.has_value()) {
+              throw InternalError(
+                  "PlanClassMethodCall: a call on a class no signature names "
+                  "reaches its body through the object it runs on, and this "
+                  "call names none -- please report this as a bug");
+            }
+            return SettledCallee{
+                .receiver = *receiver,
+                .at = settled.at,
+                .interface = std::move(settled.interface)};
+          },
+          [&](NamedTarget& named) -> CalleeForm {
+            if (receiver.has_value() && !through_super && named.slot) {
+              return DispatchedCallee{
+                  .receiver = *receiver, .slot = *std::move(named.slot)};
+            }
+            return NamedCallee{
+                .callee = std::move(named.direct),
                 // An instance method leads with the object the source named. A
                 // receiver-less one of a class a structural scope declares
                 // leads with that scope's instance instead: it reaches what the
@@ -262,7 +335,9 @@ auto PlanClassMethodCall(
                               [](hir::StructuralHops hops) {
                                 return AmbientHandle{DeclaringScopeArgument{
                                     .hops = mir::EnclosingHops{hops.value}}};
-                              })}};
+                              })};
+          }},
+      facts.target);
   return plan;
 }
 
@@ -434,6 +509,79 @@ auto BuildReceiverPointer(
                              .mutability = mir::Mutability::kMutable}})));
 }
 
+// The handle a call on a class no signature names runs on, bound to a local. It
+// is bound rather than emitted in place because such a call reads it twice --
+// for the class it names and for the object every body runs on -- while the
+// source wrote the expression once.
+//
+// There is no class to form a pointer to, having none being what puts the call
+// in this form; a call that names one carries a pointer to the object instead.
+struct BoundHandle {
+  mir::LocalId local;
+  mir::TypeId type;
+};
+
+template <ExprLowerer Lowerer>
+auto BindReceiverHandle(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const hir::MethodReceiver& receiver) -> diag::Result<BoundHandle> {
+  const auto* handle = std::get_if<hir::HandleReceiver>(&receiver);
+  if (handle == nullptr) {
+    throw InternalError(
+        "a call on a class no signature names reaches the object through a "
+        "handle, and this call names the body's own object -- please report "
+        "this as a bug");
+  }
+  auto handle_or =
+      lowerer.LowerExpr(lowerer.HirExprs().Get(handle->expr), frame);
+  if (!handle_or) return std::unexpected(std::move(handle_or.error()));
+  mir::Block& block = *frame.current_block;
+  const mir::TypeId handle_type = handle_or->type;
+  const mir::LocalId bound = frame.bindings->DeclareAnonymous(handle_type);
+  block.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = bound, .init = block.exprs.Add(*std::move(handle_or))});
+  return BoundHandle{.local = bound, .type = handle_type};
+}
+
+// The object a handle names, as nothing in particular. What class it is of is
+// exactly what the call could not name, so the type carries none of it; what a
+// body of that class makes of the address is that body's own to state.
+auto OpaqueObjectPointer(mir::CompilationUnit& unit) -> mir::TypeId {
+  return unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit.builtins.void_type,
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kMutable}});
+}
+
+// The prototype a body reached through an erased address was generated with,
+// restored from what the call itself states: the value leading the arguments,
+// then one parameter per formal that crosses. The address was erased so one
+// table could hold bodies of every shape, and both sides read that shape from
+// one declaration, which is what keeps them from disagreeing about it.
+auto RestoreErasedBody(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId erased,
+    mir::TypeId leading, const hir::ExternalCalleeInterface& interface,
+    mir::TypeId result) -> mir::ExprId {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  std::vector<mir::TypeId> params;
+  params.reserve(interface.params.size() + 1);
+  params.push_back(leading);
+  for (const hir::ExternalCalleeParam& formal : interface.params) {
+    if (const std::optional<mir::TypeId> param =
+            ParamTypeOf(unit_lowerer, formal.type, formal.direction)) {
+      params.push_back(*param);
+    }
+  }
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::CastExpr{.operand = erased},
+          .type = unit.types.Intern(
+              mir::Type{mir::MachineFunctionType{
+                  .params = std::move(params), .result = result}})});
+}
+
 // Evaluates the ambient handle a callee's first parameter binds, in the block
 // the call is being emitted into.
 template <ExprLowerer Lowerer>
@@ -542,21 +690,73 @@ auto EmitSubroutineCall(
             if (!receiver_or) {
               return std::unexpected(std::move(receiver_or.error()));
             }
-            const mir::VirtualSlot slot = std::visit(
-                Overloaded{
-                    [](const mir::VirtualSlot& counted) { return counted; },
-                    [&](const hir::UnpublishedBehaviorSlot& settled) {
-                      return mir::VirtualSlot{mir::ResolvedVirtualSlot{
-                          .coordinate =
-                              block.exprs.Add(BuildStructuralFieldAccessExpr(
-                                  frame, unit, mir::EnclosingHops{0},
-                                  lowerer.BehaviorCoordinateTarget(
-                                      settled.coordinate)))}};
-                    }},
-                dispatched.slot);
             return ResolvedCallee{
-                .callee = mir::Virtual{.receiver = *receiver_or, .slot = slot},
+                .callee =
+                    mir::Virtual{
+                        .receiver = *receiver_or, .slot = dispatched.slot},
                 .leading = std::nullopt};
+          },
+          // Two readings of one handle: the class it names, which answers what
+          // the object still gets a say in, and the object itself, which every
+          // body runs on whatever class it turns out to be of.
+          [&](const SettledCallee& settled) -> diag::Result<ResolvedCallee> {
+            auto handle_or =
+                BindReceiverHandle(lowerer, frame, settled.receiver);
+            if (!handle_or) {
+              return std::unexpected(std::move(handle_or.error()));
+            }
+            const auto read_handle = [&] {
+              return block.exprs.Add(
+                  mir::MakeLocalRefExpr(handle_or->local, handle_or->type));
+            };
+            const mir::ExprId erased = std::visit(
+                Overloaded{
+                    // The coordinate says which behavior, and the object's own
+                    // class says which body answers it (LRM 8.22).
+                    [&](const hir::UnpublishedBehaviorSlot& coordinate)
+                        -> mir::ExprId {
+                      const mir::ExprId at =
+                          block.exprs.Add(BuildStructuralFieldAccessExpr(
+                              frame, unit, mir::EnclosingHops{0},
+                              lowerer.BehaviorCoordinateTarget(
+                                  coordinate.coordinate)));
+                      return block.exprs.Add(
+                          mir::Expr{
+                              .data =
+                                  mir::CallExpr{
+                                      .callee =
+                                          mir::Direct{
+                                              .target = support::BuiltinFn::
+                                                  kBehaviorAt},
+                                      .arguments = {read_handle(), at}},
+                              .type = mir::ErasedFunction(unit.types)});
+                    },
+                    // Nothing was left for the object to answer, so the slot
+                    // holds the address itself (LRM 8.14).
+                    [&](const hir::UnpublishedBehaviorBody& body)
+                        -> mir::ExprId {
+                      return block.exprs.Add(BuildStructuralFieldAccessExpr(
+                          frame, unit, mir::EnclosingHops{0},
+                          lowerer.BehaviorBodyTarget(body.body)));
+                    }},
+                settled.at);
+            const mir::TypeId object_type = OpaqueObjectPointer(unit);
+            const mir::ExprId object = block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee =
+                                mir::Direct{
+                                    .target = support::BuiltinFn::kObjectOf},
+                            .arguments = {read_handle()}},
+                    .type = object_type});
+            return ResolvedCallee{
+                .callee =
+                    mir::Indirect{
+                        .code = RestoreErasedBody(
+                            unit_lowerer, block, erased, object_type,
+                            settled.interface, call_result_type)},
+                .leading = object};
           },
           [&](const EntryCallee& entry) -> diag::Result<ResolvedCallee> {
             auto handle_or = BuildAmbientHandle(lowerer, frame, entry.handle);
@@ -564,31 +764,18 @@ auto EmitSubroutineCall(
               return std::unexpected(std::move(handle_or.error()));
             }
             // The entry is the code address the route sealed; restoring it to
-            // the prototype the call was shaped from is what makes it callable,
-            // and both sides read that shape from one declaration.
+            // the prototype the call was shaped from is what makes it callable.
             const RoutedRefMeta& meta = lowerer.RoutedRefTarget(entry.entry.id);
             const mir::ExprId erased =
                 block.exprs.Add(BuildStructuralFieldAccessExpr(
                     frame, unit, mir::EnclosingHops{0}, meta.target));
-            std::vector<mir::TypeId> entry_params;
-            entry_params.reserve(entry.interface.params.size() + 1);
-            entry_params.push_back(unit.builtins.scope_ptr);
-            for (const hir::ExternalCalleeParam& formal :
-                 entry.interface.params) {
-              if (const std::optional<mir::TypeId> param = ParamTypeOf(
-                      unit_lowerer, formal.type, formal.direction)) {
-                entry_params.push_back(*param);
-              }
-            }
-            const mir::ExprId restored = block.exprs.Add(
-                mir::Expr{
-                    .data = mir::CastExpr{.operand = erased},
-                    .type = unit.types.Intern(
-                        mir::Type{mir::MachineFunctionType{
-                            .params = std::move(entry_params),
-                            .result = call_result_type}})});
             return ResolvedCallee{
-                .callee = mir::Indirect{.code = restored},
+                .callee =
+                    mir::Indirect{
+                        .code = RestoreErasedBody(
+                            unit_lowerer, block, erased,
+                            unit.builtins.scope_ptr, entry.interface,
+                            call_result_type)},
                 .leading = *handle_or};
           }},
       plan.form);

@@ -21,4 +21,11 @@ struct BehaviorCoordinateId {
       -> std::strong_ordering = default;
 };
 
+struct BehaviorBodyId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const BehaviorBodyId&) const
+      -> std::strong_ordering = default;
+};
+
 }  // namespace lyra::hir

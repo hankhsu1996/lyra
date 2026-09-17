@@ -27,6 +27,8 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -210,6 +212,11 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto BehaviorCoordinateTarget(
       hir::BehaviorCoordinateId hir_id) const -> mir::FieldId {
     return behavior_coordinate_targets_.Get(hir_id);
+  }
+
+  [[nodiscard]] auto BehaviorBodyTarget(hir::BehaviorBodyId hir_id) const
+      -> mir::FieldId {
+    return behavior_body_targets_.Get(hir_id);
   }
 
   // The scope `hops` enclosing edges out from this one, in the same
@@ -411,6 +418,7 @@ class StructuralScopeLowerer {
       property_coordinate_targets_;
   base::Translation<hir::BehaviorCoordinateId, mir::FieldId>
       behavior_coordinate_targets_;
+  base::Translation<hir::BehaviorBodyId, mir::FieldId> behavior_body_targets_;
   base::Translation<hir::GenerateId, GenerateBindings> generate_bindings_;
   base::Translation<hir::InstanceMemberId, mir::FieldId>
       instance_member_fields_;
@@ -430,24 +438,52 @@ class StructuralScopeLowerer {
   std::vector<ClassDeclLowerer> class_lowerers_;
 };
 
-// Which field a property access names. A class that published nothing left no
-// position to count, so what such an access states is the coordinate the design
-// settled -- which lives in a slot of the enclosing scope, and reading a slot
-// is an expression. That is why the answer is formed here, against a block,
-// rather than where a stated position is translated.
+// The storage one class property access reaches, over `receiver` (LRM 8.4).
+//
+// Where the class published a position, the access names the member at it. A
+// class that published nothing left no position to count and no member anything
+// here can name, so the access says instead what it would have taken to reach
+// one: the class answers with the address, that address is read as the type the
+// access already knows the property has, and the storage is reached through it.
+// None of the three is a member at a position, which is the one thing a body
+// that cannot name the class is in no position to say.
 template <typename Lowerer>
-auto BuildClassPropertyFieldRef(
-    Lowerer& lowerer, const WalkFrame& frame,
-    const hir::ClassPropertyTarget& target) -> mir::FieldRef {
-  if (const auto* settled =
-          std::get_if<hir::UnpublishedClassPropertyTarget>(&target)) {
-    return mir::ResolvedFieldTarget{
-        .coordinate =
-            frame.current_block->exprs.Add(BuildStructuralFieldAccessExpr(
-                frame, lowerer.Owner().Unit(), mir::EnclosingHops{0},
-                lowerer.PropertyCoordinateTarget(settled->coordinate)))};
+auto BuildClassPropertyAccess(
+    Lowerer& lowerer, const WalkFrame& frame, mir::ExprId receiver,
+    const hir::ClassPropertyTarget& target, mir::TypeId reached) -> mir::Expr {
+  const auto* settled =
+      std::get_if<hir::UnpublishedClassPropertyTarget>(&target);
+  if (settled == nullptr) {
+    return mir::MakeFieldAccessExpr(
+        receiver, lowerer.Owner().TranslateClassPropertyTarget(target),
+        reached);
   }
-  return lowerer.Owner().TranslateClassPropertyTarget(target);
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId coordinate = block.exprs.Add(BuildStructuralFieldAccessExpr(
+      frame, unit, mir::EnclosingHops{0},
+      lowerer.PropertyCoordinateTarget(settled->coordinate)));
+  const mir::ExprId address = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kPropertyAt},
+                  .arguments = {receiver, coordinate}},
+          .type = unit.types.Intern(
+              mir::Type{mir::PointerType{
+                  .pointee = unit.builtins.void_type,
+                  .ownership = mir::PointerOwnership::kBorrowed,
+                  .mutability = mir::Mutability::kMutable}})});
+  const mir::ExprId typed = block.exprs.Add(
+      mir::Expr{
+          .data = mir::CastExpr{.operand = address},
+          .type = unit.types.Intern(
+              mir::Type{mir::PointerType{
+                  .pointee = reached,
+                  .ownership = mir::PointerOwnership::kBorrowed,
+                  .mutability = mir::Mutability::kMutable}})});
+  return mir::MakeDerefExpr(typed, reached);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

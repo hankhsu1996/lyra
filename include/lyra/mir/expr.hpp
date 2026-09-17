@@ -15,6 +15,7 @@
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/external_unit_object_id.hpp"
@@ -320,24 +321,11 @@ struct ExternalVirtualSlot {
   auto operator==(const ExternalVirtualSlot&) const -> bool = default;
 };
 
-// The dispatch position a call names, evaluated rather than stated. The class
-// the call names publishes on no signature, so nothing this unit compiles could
-// count a position out of it; which position the source name means was settled
-// where the design elaborated and arrives here as a value. What class the
-// receiver turns out to be still decides the body, exactly as it does for a
-// stated position (LRM 8.22).
-struct ResolvedVirtualSlot {
-  ExprId coordinate;
-
-  auto operator==(const ResolvedVirtualSlot&) const -> bool = default;
-};
-
-// The slot a virtual call names -- an intra-unit position, a cross-unit by-name
-// identity, or one that arrived as a value. Peer of `DirectTarget`'s local /
-// external variant structure: identity representation follows the
-// compilation-unit boundary, never split across two dispatch node kinds.
-using VirtualSlot =
-    std::variant<LocalVirtualSlot, ExternalVirtualSlot, ResolvedVirtualSlot>;
+// The slot a virtual call names -- an intra-unit position or a cross-unit
+// by-name identity. Peer of `DirectTarget`'s local / external variant
+// structure: identity representation follows the compilation-unit boundary,
+// never split across two dispatch node kinds.
+using VirtualSlot = std::variant<LocalVirtualSlot, ExternalVirtualSlot>;
 
 // A virtually-dispatched call: the receiver is evaluated once and then the
 // implementation of the named slot on that receiver's dynamic type runs
@@ -484,21 +472,9 @@ struct CrossUnitClassFieldTarget {
 // by position: a product declares its components nowhere -- the type is the
 // component list -- so reaching one is an operation on the value rather than a
 // name in an arena, and it is a call.
-// Which storage the access reaches, evaluated rather than stated. The class the
-// access names publishes on no signature, so no arena of this unit holds the
-// name and no position could be counted; where the name lands was settled where
-// the design elaborated and arrives here as a value the access applies to
-// whichever object the receiver holds.
-struct ResolvedFieldTarget {
-  ExprId coordinate;
-
-  auto operator==(const ResolvedFieldTarget&) const -> bool = default;
-};
-
 using FieldRef = std::variant<
     ClassFieldTarget, StructFieldTarget, ClosureFieldTarget,
-    ExternalUnitObjectFieldTarget, CrossUnitClassFieldTarget,
-    ResolvedFieldTarget>;
+    ExternalUnitObjectFieldTarget, CrossUnitClassFieldTarget>;
 
 // Field access through an explicit receiver expression: `receiver.field`. The
 // receiver is a value of whichever declaration the field names, reached by
@@ -583,6 +559,17 @@ struct StaticConstantRef {
   StaticConstantId constant;
 };
 
+// A place naming the record every object of one class carries. The class is
+// named the way every reference to a class is, because naming a class and
+// naming what its objects answer through are one vocabulary -- so a class
+// reaching its base's record and one reaching a record past its own unit are
+// the same node with the same arms. It is the one constant a class owns that
+// another unit spells, which is why it is named off the class rather than off
+// the position it sits at.
+struct ObjectRecordRef {
+  ClassRef of;
+};
+
 // An integral type's runtime descriptor, named by the type it describes. The
 // descriptor is settled at compile time and shared by every value of that type,
 // so the unit states it once and a use names which one; the type is the
@@ -647,8 +634,9 @@ struct ExternalStaticPropertyRef {
 // referent's business: every one of them reaches storage or code that exists
 // whether or not this expression names it.
 using ReferenceTarget = std::variant<
-    LocalRef, FunctionRef, StaticConstantRef, PackedTypeRef, StaticPropertyRef,
-    StaticVariableRef, ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+    LocalRef, FunctionRef, StaticConstantRef, ObjectRecordRef, PackedTypeRef,
+    StaticPropertyRef, StaticVariableRef, ExternalUnitVariableRef,
+    ExternalStaticPropertyRef>;
 
 // Names a declared thing. Reading it loads what the name reaches, assigning to
 // it stores there, and taking its address yields a pointer to it -- one node

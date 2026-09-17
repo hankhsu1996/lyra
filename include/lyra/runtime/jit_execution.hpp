@@ -272,23 +272,32 @@ auto lyra_rt_object_method(
     void* object, const void* introduced_by, std::uint32_t ordinal)
     -> LyraMethodEntry;
 
-// Where a name lands on a class, for a referrer with no name for that class and
-// so no way to count a position out of it. Both run while a reference to such a
-// class resolves and neither is reached from the simulation path; each answers
-// with a coordinate the two entries below then apply, once per access, with no
-// name in hand.
+// What a name reaches on a class, for a referrer with no name for that class
+// and so no way to count a position out of it. All three run while a reference
+// to such a class resolves and none is reached from the simulation path. A
+// property and a behavior answer with a coordinate the object then applies,
+// because what an access reaches still depends on the object; a call the object
+// gets no say in (LRM 8.14) answers with the body itself.
 auto lyra_rt_class_find_property(const void* definition, const void* name)
     -> const void*;
 auto lyra_rt_class_find_behavior(const void* definition, const void* name)
     -> const void*;
-
-// The same two answers as the pair above, with the coordinate arriving whole
-// instead of in parts. What the access states is the only difference: one reads
-// the pair off a declaration it can name, the other reads it out of a value.
-auto lyra_rt_object_member_addr_at(void* object, const void* coordinate)
-    -> void*;
-auto lyra_rt_object_method_at(void* object, const void* coordinate)
+auto lyra_rt_class_find_behavior_body(const void* definition, const void* name)
     -> LyraMethodEntry;
+
+// Applying one of those coordinates to the object a handle names. What the
+// access states is the only difference from the by-parts pair above: one reads
+// the coordinate off a declaration it can name, this one reads it out of a
+// value.
+auto lyra_rt_property_at(const void* handle, const void* coordinate) -> void*;
+auto lyra_rt_behavior_at(const void* handle, const void* coordinate)
+    -> LyraMethodEntry;
+
+// The object a handle names, which is what a body settled against a class this
+// artifact cannot name is entered with. A handle refers to an object and is not
+// one, so recovering it is the runtime's answer rather than an address the
+// asking side already holds.
+auto lyra_rt_object_of(const void* handle) -> void*;
 
 // The handle one capture crosses back to the body as, by declaration index. A
 // captured pointer answers the pointer it holds; a captured value answers the

@@ -433,6 +433,13 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
         out.subroutines.push_back(
             lir::PublishedCallable{.name = std::string{*name}, .entry = *body});
       }
+      // A callable answering no dispatch position leaves the value it is made
+      // on nothing to decide (LRM 8.14), so what a referrer with no name for
+      // the class needs is the body rather than a position to find one at.
+      if (name.has_value() && !callable.virtual_dispatch.has_value()) {
+        out.bodies.push_back(
+            lir::DeclaredBody{.name = std::string{*name}, .body = *body});
+      }
     }
     if (const std::optional<lir::DispatchTakeover> taken =
             TakenOver(callable, body)) {

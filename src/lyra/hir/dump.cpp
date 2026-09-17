@@ -270,6 +270,12 @@ auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
                     ? std::format(
                           " virtual={}", FormatCrossUnitDispatchSlot(*c.slot))
                     : "");
+          },
+          [](const SettledMethodCallee& c) {
+            return std::format(
+                "SettledBody[{}] {}", c.body.body.value,
+                c.interface.kind == SubroutineKind::kTask ? "task"
+                                                          : "function");
           }},
       callee);
 }
@@ -1583,6 +1589,13 @@ class HirDumper {
       Line(
           std::format(
               R"(BehaviorCoordinate[{}] {} class "{}" behavior "{}")", id.value,
+              FormatRouteWalk(c.head, c.steps), c.class_name, c.name));
+    }
+    for (const BehaviorBodyId id : s.behavior_bodies.Ids()) {
+      const auto& c = s.behavior_bodies.Get(id);
+      Line(
+          std::format(
+              R"(BehaviorBody[{}] {} class "{}" behavior "{}")", id.value,
               FormatRouteWalk(c.head, c.steps), c.class_name, c.name));
     }
     for (const PortConnectionId id : s.port_connections.Ids()) {

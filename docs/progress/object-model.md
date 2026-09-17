@@ -306,9 +306,10 @@ this list is what remembers.
       may still declare a property under a name its base already used without the reader reaching
       the wrong one. **Which class an access lands on belongs to the instance and not to the
       artifact**: one compiled body serves instances whose accesses reach classes with different
-      layouts, which is what rules out settling any of it where the body is compiled. A backend that
-      reaches a member by writing its name in the target language declines the form instead of
-      realizing it, since a position settled at elaboration has no such name.
+      layouts, which is what rules out settling any of it where the body is compiled. Both backends
+      realize it, the one that otherwise reaches a member by writing its name in the target language
+      included: what a class answered has no such name, so the access applies the answer rather than
+      spelling anything.
 
 - [ ] Reaching a class's type-associated storage through such a reference (LRM 8.9, 8.10). A static
       property needs no object, so it is not reached through the handle at all (LRM 8.3): the cell

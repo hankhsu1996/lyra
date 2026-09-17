@@ -231,6 +231,32 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"lyra::runtime::ScopeCallableTable"};
               case mir::RuntimeLibraryKind::kScopeDefinition:
                 return std::string{"lyra::runtime::ScopeDefinition"};
+              case mir::RuntimeLibraryKind::kScopeClass:
+                return std::string{"lyra::runtime::ScopeClass"};
+              case mir::RuntimeLibraryKind::kScopeClassTable:
+                return std::string{"lyra::runtime::ScopeClassTable"};
+              case mir::RuntimeLibraryKind::kObjectDefinition:
+                return std::string{"lyra::runtime::ObjectDefinition"};
+              case mir::RuntimeLibraryKind::kPropertySlotTable:
+                return std::string{"lyra::runtime::PropertySlotTable"};
+              case mir::RuntimeLibraryKind::kDispatchTakeover:
+                return std::string{"lyra::runtime::DispatchTakeover"};
+              case mir::RuntimeLibraryKind::kTakeoverTable:
+                return std::string{"lyra::runtime::TakeoverTable"};
+              case mir::RuntimeLibraryKind::kMethodDispatchTable:
+                return std::string{"lyra::runtime::MethodDispatchTable"};
+              case mir::RuntimeLibraryKind::kResolvedProperty:
+                return std::string{"lyra::runtime::ResolvedProperty"};
+              case mir::RuntimeLibraryKind::kResolvedPropertyTable:
+                return std::string{"lyra::runtime::ResolvedPropertyTable"};
+              case mir::RuntimeLibraryKind::kResolvedBehavior:
+                return std::string{"lyra::runtime::ResolvedBehavior"};
+              case mir::RuntimeLibraryKind::kResolvedBehaviorTable:
+                return std::string{"lyra::runtime::ResolvedBehaviorTable"};
+              case mir::RuntimeLibraryKind::kDeclaredBody:
+                return std::string{"lyra::runtime::DeclaredBody"};
+              case mir::RuntimeLibraryKind::kDeclaredBodyTable:
+                return std::string{"lyra::runtime::DeclaredBodyTable"};
               case mir::RuntimeLibraryKind::kScopeMetadata:
                 return std::string{"lyra::runtime::ScopeMetadata"};
               case mir::RuntimeLibraryKind::kAbiStringRef:

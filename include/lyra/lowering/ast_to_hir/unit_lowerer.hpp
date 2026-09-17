@@ -800,10 +800,15 @@ class UnitLowerer {
   auto MapOrGetBehaviorCoordinate(
       ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
       -> hir::BehaviorCoordinateId;
+  auto MapOrGetBehaviorBody(
+      ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
+      -> hir::BehaviorBodyId;
   auto TakePropertyCoordinatesForFrame(ScopeFrameId slot_owner_frame)
       -> base::Arena<hir::ClassNameDecl, hir::PropertyCoordinateId>;
   auto TakeBehaviorCoordinatesForFrame(ScopeFrameId slot_owner_frame)
       -> base::Arena<hir::ClassNameDecl, hir::BehaviorCoordinateId>;
+  auto TakeBehaviorBodiesForFrame(ScopeFrameId slot_owner_frame)
+      -> base::Arena<hir::ClassNameDecl, hir::BehaviorBodyId>;
 
   // The compilation-unit declaration pass (LRM 23.6 / 23.9 / 27): before any
   // executable body lowers, walk the whole unit's scope tree and mint every
@@ -1256,6 +1261,8 @@ class UnitLowerer {
   std::map<
       ScopeFrameId, base::Arena<hir::ClassNameDecl, hir::BehaviorCoordinateId>>
       behavior_coordinates_by_frame_;
+  std::map<ScopeFrameId, base::Arena<hir::ClassNameDecl, hir::BehaviorBodyId>>
+      behavior_bodies_by_frame_;
   std::uint32_t next_scope_frame_ = 0;
   std::uint32_t next_with_clause_ = 0;
   std::unordered_map<const slang::ast::Symbol*, MintedProceduralScope>

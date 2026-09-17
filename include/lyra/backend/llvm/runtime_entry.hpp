@@ -72,8 +72,6 @@ enum class RuntimeOp : std::uint8_t {
   kObjectMethod,
   kClassFindProperty,
   kClassFindBehavior,
-  kObjectMemberAddressAt,
-  kObjectMethodAt,
   kClosureCapture,
   kConst,
   kToBool,

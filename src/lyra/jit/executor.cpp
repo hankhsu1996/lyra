@@ -344,8 +344,10 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_object_member_addr", &lyra_rt_object_member_addr);
   add("lyra_rt_class_find_property", &lyra_rt_class_find_property);
   add("lyra_rt_class_find_behavior", &lyra_rt_class_find_behavior);
-  add("lyra_rt_object_member_addr_at", &lyra_rt_object_member_addr_at);
-  add("lyra_rt_object_method_at", &lyra_rt_object_method_at);
+  add("lyra_rt_class_find_behavior_body", &lyra_rt_class_find_behavior_body);
+  add("lyra_rt_property_at", &lyra_rt_property_at);
+  add("lyra_rt_behavior_at", &lyra_rt_behavior_at);
+  add("lyra_rt_object_of", &lyra_rt_object_of);
   add("lyra_rt_closure_capture", &lyra_rt_closure_capture);
   add("lyra_rt_submit_nba", &lyra_rt_submit_nba);
   add("lyra_rt_submit_nba_after", &lyra_rt_submit_nba_after);
@@ -1648,6 +1650,13 @@ struct LoadedDeclaredName {
   std::uint32_t position = 0;
 };
 
+// One name a class answers with a body outright rather than with a position
+// (LRM 8.14), and the symbol that body is emitted under.
+struct LoadedDeclaredBody {
+  std::string name;
+  std::string symbol;
+};
+
 // The names one class answers while a reference to it resolves, kept apart from
 // the positional schema the realization builds from them: one is the resolution
 // aid, the other is what an access reads. It sits behind its own allocation for
@@ -1657,6 +1666,7 @@ struct LoadedDeclaredName {
 struct DeclaredNames {
   std::vector<LoadedDeclaredName> properties;
   std::vector<LoadedDeclaredName> behaviors;
+  std::vector<LoadedDeclaredBody> bodies;
 };
 
 struct LoadedClass {
@@ -1715,6 +1725,13 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
     for (const lir::NamedMember& named : cls.named_members) {
       declared->properties.push_back(
           LoadedDeclaredName{.name = named.name, .position = named.position});
+    }
+    declared->bodies.reserve(cls.bodies.size());
+    for (const lir::DeclaredBody& declares : cls.bodies) {
+      declared->bodies.push_back(
+          LoadedDeclaredBody{
+              .name = declares.name,
+              .symbol = unit.functions.Get(declares.body).name});
     }
     std::vector<LoadedTakeover> takeovers;
     takeovers.reserve(cls.takeovers.size());
@@ -1866,11 +1883,9 @@ void RealizeClasses(llvm::orc::LLJIT& jit, std::vector<LoadedClass>& classes) {
             "' whose behavior a class takes over is defined by no unit of this "
             "program");
       }
-      takeovers.push_back(
-          runtime::DispatchTakeover{
-              .introduced_by = classes[found->second].definition.get(),
-              .ordinal = taken.ordinal,
-              .body = MethodEntry(jit, taken.body)});
+      takeovers.emplace_back(
+          classes[found->second].definition.get(), taken.ordinal,
+          MethodEntry(jit, taken.body));
     }
     // The realization copies these entries, and each keeps naming the string it
     // was built from rather than a copy of it -- so the table is a transient of
@@ -1893,6 +1908,14 @@ void RealizeClasses(llvm::orc::LLJIT& jit, std::vector<LoadedClass>& classes) {
         describe(entry.declared->properties);
     const std::vector<runtime::DeclaredName> behaviors =
         describe(entry.declared->behaviors);
+    std::vector<runtime::DeclaredBody> bodies;
+    bodies.reserve(entry.declared->bodies.size());
+    for (const LoadedDeclaredBody& at : entry.declared->bodies) {
+      bodies.emplace_back(
+          runtime::AbiStringRef{
+              at.name.data(), static_cast<std::uint32_t>(at.name.size())},
+          MethodEntry(jit, at.symbol));
+    }
     runtime::RealizeClass(
         runtime::ClassContribution{
             .base = base,
@@ -1900,7 +1923,8 @@ void RealizeClasses(llvm::orc::LLJIT& jit, std::vector<LoadedClass>& classes) {
             .introductions = introductions,
             .takeovers = takeovers,
             .property_names = properties,
-            .behavior_names = behaviors},
+            .behavior_names = behaviors,
+            .body_names = bodies},
         entry.realization, *entry.definition);
   };
   for (std::size_t index = 0; index < classes.size(); ++index) {

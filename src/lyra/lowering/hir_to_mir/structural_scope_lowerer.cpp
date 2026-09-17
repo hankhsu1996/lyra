@@ -260,37 +260,54 @@ void EmitInstanceMemberConstruction(
   }
 }
 
+// One slot per name this scope asks a class for, typed by what the answer is.
+// The walk that asks runs in the resolve phase beside every route, so an access
+// reads the answer and asks nothing.
+template <typename Id, typename Answer>
+auto DeclareClassNameSlots(
+    StructuralScopeLowerer& lowerer, ClassShape& shape,
+    const base::Arena<hir::ClassNameDecl, Id>& decls, Answer answer)
+    -> base::Translation<Id, mir::FieldId> {
+  mir::TypePool& types = lowerer.Owner().Unit().types;
+  std::vector<mir::FieldId> slots;
+  slots.reserve(decls.size());
+  for (std::size_t at = 0; at < decls.size(); ++at) {
+    // Interned per slot rather than once for the pass, so a unit that asked no
+    // name carries none of the types an answer is stated in -- which is what
+    // lets a backend read off its own types whether it meets the form at all.
+    slots.push_back(shape.AddField(answer(types)));
+  }
+  return {decls.size(), std::move(slots)};
+}
+
+// A name answered with where it lands rather than with what runs: a borrowed
+// pointer to the record stating the position. That record lives as long as the
+// class does, which is as long as any reference settled against it, so nothing
+// is copied anywhere to outlive the lookup.
+auto CoordinateAnswer(mir::RuntimeLibraryKind kind) {
+  return [kind](mir::TypePool& types) {
+    return types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee =
+                types.Intern(mir::Type{mir::RuntimeLibraryType{.kind = kind}}),
+            .ownership = mir::PointerOwnership::kBorrowed,
+            .mutability = mir::Mutability::kReadOnly}});
+  };
+}
+
+// A name answered with the body itself, for a call the object gets no say in
+// (LRM 8.14). It is a code address with its prototype erased, the same shape a
+// sealed entry across an instance boundary holds, and the call restores the
+// prototype it was generated with.
+auto BodyAnswer() {
+  return [](mir::TypePool& types) { return mir::ErasedFunction(types); };
+}
+
 // Allocates one MIR member per cross-unit reference. Every reference -- upward
 // or downward, `$root`-anchored or named -- takes one slot, typed by what the
 // route it seals ends at, so a body reaching through it meets the target's own
 // access protocol and no other. The route that fills each slot runs in the
 // resolve phase, after the whole object tree exists.
-// One slot per name this scope asks a class for, typed by what the answer is:
-// a pointer to the record stating where the name lands. The walk that asks runs
-// in the resolve phase beside every route, so an access reads the answer and
-// asks nothing.
-template <typename Id>
-auto DeclareClassNameSlots(
-    StructuralScopeLowerer& lowerer, ClassShape& shape,
-    const base::Arena<hir::ClassNameDecl, Id>& decls,
-    mir::RuntimeLibraryKind answer) -> base::Translation<Id, mir::FieldId> {
-  mir::TypePool& types = lowerer.Owner().Unit().types;
-  std::vector<mir::FieldId> slots;
-  slots.reserve(decls.size());
-  for (std::size_t at = 0; at < decls.size(); ++at) {
-    // Interned per slot rather than once for the pass, so a unit that formed no
-    // coordinate carries no coordinate type -- which is what lets a backend
-    // read off its own types whether it meets the form at all.
-    const mir::TypeId slot_type = types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = types.Intern(
-                mir::Type{mir::RuntimeLibraryType{.kind = answer}}),
-            .ownership = mir::PointerOwnership::kBorrowed}});
-    slots.push_back(shape.AddField(slot_type));
-  }
-  return {decls.size(), std::move(slots)};
-}
-
 auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
     -> base::Translation<hir::RoutedRefId, RoutedRefMeta> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
@@ -1477,10 +1494,12 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   routed_ref_targets_ = DeclareRoutedRefSlots(*this, shape);
   property_coordinate_targets_ = DeclareClassNameSlots(
       *this, shape, HirScope().property_coordinates,
-      mir::RuntimeLibraryKind::kPropertyCoordinate);
+      CoordinateAnswer(mir::RuntimeLibraryKind::kPropertyCoordinate));
   behavior_coordinate_targets_ = DeclareClassNameSlots(
       *this, shape, HirScope().behavior_coordinates,
-      mir::RuntimeLibraryKind::kBehaviorCoordinate);
+      CoordinateAnswer(mir::RuntimeLibraryKind::kBehaviorCoordinate));
+  behavior_body_targets_ = DeclareClassNameSlots(
+      *this, shape, HirScope().behavior_bodies, BodyAnswer());
 
   // Recursively declare every owned generate child's class shape; each child
   // lowerer is retained for the body sweep.
@@ -1846,6 +1865,47 @@ auto InstallGeneratedDefinition(
         return entry == nullptr ? std::nullopt : std::optional{entry->name};
       });
 
+  // The classes this scope declares (LRM 23.9), each under the name the source
+  // gave it. A referrer outside has no name for such a class -- it is a type of
+  // this scope's instance (LRM 6.22) -- so it walks to the scope and asks, and
+  // what the scope answers with is the record every object of that class
+  // carries.
+  mir::StaticConstantDecl classes_decl;
+  const auto class_count = static_cast<std::uint32_t>(cls.declares.size());
+  {
+    mir::RuntimeRecordBuilder records(unit, classes_decl.body.exprs);
+    const mir::TypeId record_ptr = unit.types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = records.Type(mir::RuntimeLibraryKind::kObjectDefinition),
+            .ownership = mir::PointerOwnership::kBorrowed,
+            .mutability = mir::Mutability::kReadOnly}});
+    std::vector<mir::ExprId> entries;
+    entries.reserve(cls.declares.size());
+    for (const mir::ClassId declared : cls.declares) {
+      const mir::ExprId record = records.Add(
+          mir::Expr{
+              .data =
+                  mir::ReferenceExpr{
+                      .target =
+                          mir::ObjectRecordRef{
+                              .of =
+                                  mir::IntraUnitClassRef{
+                                      .class_id = declared}}},
+              .type =
+                  records.Type(mir::RuntimeLibraryKind::kObjectDefinition)});
+      entries.push_back(records.Construct(
+          mir::RuntimeLibraryKind::kScopeClass,
+          {records.StringRef(*unit.GetClass(declared).name),
+           records.Add(mir::MakeAddressOfExpr(record, record_ptr))}));
+    }
+    classes_decl.value = records.MachineArray(
+        records.Type(mir::RuntimeLibraryKind::kScopeClass), std::move(entries));
+    classes_decl.type = records.TypeOf(classes_decl.value);
+  }
+  const mir::TypeId classes_type = classes_decl.type;
+  const mir::StaticConstantId classes_id =
+      cls.static_constants.Add(std::move(classes_decl));
+
   mir::StaticConstantDecl def;
   mir::RuntimeRecordBuilder definition(unit, def.body.exprs);
   const auto build_table = [&](const NameTable& table) -> mir::ExprId {
@@ -1876,12 +1936,30 @@ auto InstallGeneratedDefinition(
       mir::RuntimeLibraryKind::kScopeMetadata,
       {definition.MachineInt(cls.time_resolution.unit_power),
        definition.MachineInt(cls.time_resolution.precision_power)});
+  const mir::ExprId classes_ref = definition.Add(
+      mir::Expr{
+          .data =
+              mir::ReferenceExpr{
+                  .target = mir::StaticConstantRef{.constant = classes_id}},
+          .type = classes_type});
+  const mir::ExprId classes_data = definition.Add(
+      mir::Expr{
+          .data = mir::MachineArrayDataExpr{.array = classes_ref},
+          .type = unit.types.Intern(
+              mir::Type{mir::PointerType{
+                  .pointee =
+                      definition.Type(mir::RuntimeLibraryKind::kScopeClass),
+                  .ownership = mir::PointerOwnership::kBorrowed,
+                  .mutability = mir::Mutability::kReadOnly}})});
+  const mir::ExprId class_table = definition.Construct(
+      mir::RuntimeLibraryKind::kScopeClassTable,
+      {classes_data, definition.MachineInt(class_count)});
   const mir::ExprId program = definition.Construct(
       mir::RuntimeLibraryKind::kScopeProgram,
       {metadata, definition.FunctionRef(cls, resolve_abi),
        definition.FunctionRef(cls, init_abi),
-       definition.FunctionRef(cls, create_abi), export_table,
-       subroutine_table});
+       definition.FunctionRef(cls, create_abi), export_table, subroutine_table,
+       class_table});
   const mir::AbiAdapterId construct_abi = empty_adapter();
   def.value = definition.Construct(
       mir::RuntimeLibraryKind::kScopeDefinition,
@@ -2501,6 +2579,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   InstallClassNameSlots(
       *this, resolve_frame, HirScope().behavior_coordinates,
       behavior_coordinate_targets_, support::BuiltinFn::kClassFindBehavior);
+  InstallClassNameSlots(
+      *this, resolve_frame, HirScope().behavior_bodies, behavior_body_targets_,
+      support::BuiltinFn::kClassFindBehaviorBody);
 
   for (const hir::ContinuousAssignId id : hir_scope.continuous_assigns.Ids()) {
     auto method_or = LowerContinuousAssign(

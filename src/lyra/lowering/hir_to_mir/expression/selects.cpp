@@ -583,9 +583,8 @@ auto LowerHirClassPropertyAccessExpr(
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-  return mir::MakeFieldAccessExpr(
-      base_id, BuildClassPropertyFieldRef(lowerer, frame, sel.target),
-      result_type);
+  return BuildClassPropertyAccess(
+      lowerer, frame, base_id, sel.target, result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -703,11 +702,10 @@ auto LowerHirMemberAccessExprLhs(
           .part_type = result_type});
 }
 
-// LRM 8.4: a class property write reaches the object through the handle.
-// The place is the same owner-qualified `FieldAccessExpr` the read produces,
-// so the write and read share one path (a class field is a reference-storage
-// receiver, and the mutate flow is the usual observable-cell path when the
-// property is itself an observable cell).
+// LRM 8.4: a class property write reaches the object through the handle. The
+// place is the same one the read produces, so the write and read share one path
+// (a class field is a reference-storage receiver, and the mutate flow is the
+// usual observable-cell path when the property is itself an observable cell).
 template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
@@ -717,9 +715,8 @@ auto LowerHirClassPropertyAccessExprLhs(
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-  return mir::MakeFieldAccessExpr(
-      base_id, BuildClassPropertyFieldRef(lowerer, frame, sel.target),
-      result_type);
+  return BuildClassPropertyAccess(
+      lowerer, frame, base_id, sel.target, result_type);
 }
 
 // One concrete instantiation per pass class. The handler templates are defined

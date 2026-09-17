@@ -6,9 +6,15 @@
 
 ## Status
 
-Accepted. Answers the open target category `hierarchical-reference-routing.md` D5 leaves for a
-target whose access surface no existing protocol covers, and extends `reference_resolution.md`
+Accepted, except D5. Answers the open target category `hierarchical-reference-routing.md` D5 leaves
+for a target whose access surface no existing protocol covers, and extends `reference_resolution.md`
 invariant 7 with what a route seals when its leaf is an object reference. Reverses nothing.
+
+**D5 below is reversed by
+[a-settled-access-is-ordinary-operations](a-settled-access-is-ordinary-operations.md)**, which keeps
+its concern and replaces its mechanism: a coordinate is a value the operations take and is a target
+form nowhere, because a body with no name for the record has no member to refer to. D1 to D4 and D6
+stand.
 
 ## Why this decision matters
 
@@ -163,6 +169,12 @@ never what an access reads.
 
 ### D5. The coordinate is an operand of the access, not a second kind of access
 
+**Reversed. See
+[a-settled-access-is-ordinary-operations](a-settled-access-is-ordinary-operations.md) D5**, which
+keeps the concern below and replaces the mechanism. Kept here as written, because what it removed
+matters more than what it chose: the last sentence is what let one backend decline the whole
+construct, and that is what kept the two from checking each other.
+
 An access states the target it reaches. A coordinate computed elsewhere is one of the ways a target
 is named, taking its place in the closed set of target forms beside a position this artifact owns
 and a position read off a consumed signature. It is not a second access operation, and no consumer
@@ -219,8 +231,6 @@ incompatible types at one position.
   form gets its own mechanism.
 - A class's runtime record gains a by-name table used only while references resolve, matching what a
   runtime scope already carries.
-- The access target becomes a closed set with a coordinate form in it, so every consumer states what
-  it means and gaining the form breaks the build until each one does.
 - A backend reaches a property or a behavior on an opaque reference by coordinate rather than by
   resolving a name in the target language. A backend that realizes typed access through its own
   language's name resolution keeps doing so for the cases that have a class view, and answers this

@@ -535,9 +535,6 @@ auto CompileProgram(
 
 auto CppProjectSink::Take(const mir::CompilationUnit& unit)
     -> diag::Result<void> {
-  if (auto refusal = backend::cpp::RefusalFor(unit); refusal.has_value()) {
-    return std::unexpected(std::move(*refusal));
-  }
   if (auto r = WriteUnit(unit); !r) {
     return r;
   }

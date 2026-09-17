@@ -220,35 +220,31 @@ auto ResolveCalleeSpelling(
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           [&](const mir::Virtual& v) -> CalleeSpelling {
-            return {
-                .name = std::visit(
-                    Overloaded{
-                        [&](const mir::LocalVirtualSlot& l) -> std::string {
-                          return CppClassCallableName(
-                              view.Unit().GetClass(l.owner_class), l.slot);
-                        },
-                        [&](const mir::ExternalVirtualSlot& e) -> std::string {
-                          const mir::ExternalClass* introducer =
-                              mir::FindExternalClass(
-                                  view.Unit().external_classes, e.unit_name,
-                                  e.class_name);
-                          if (introducer == nullptr ||
-                              e.ordinal.value >= introducer->behaviors.size()) {
-                            throw InternalError(
-                                "RenderCall: a dispatch names a behavior no "
-                                "consumed promise describes");
-                          }
-                          return ToCppName(
-                              introducer->behaviors[e.ordinal.value]);
-                        },
-                        [](const mir::ResolvedVirtualSlot&) -> std::string {
-                          throw InternalError(
-                              "RenderCall: a dispatch position that arrived as "
-                              "a value reached a backend that states it does "
-                              "not render one");
-                        }},
-                    v.slot),
-                .placement = ReceiverPlacement::kIntoCalleeName};
+            return std::visit(
+                Overloaded{
+                    [&](const mir::LocalVirtualSlot& l) -> CalleeSpelling {
+                      return {
+                          .name = CppClassCallableName(
+                              view.Unit().GetClass(l.owner_class), l.slot),
+                          .placement = ReceiverPlacement::kIntoCalleeName};
+                    },
+                    [&](const mir::ExternalVirtualSlot& e) -> CalleeSpelling {
+                      const mir::ExternalClass* introducer =
+                          mir::FindExternalClass(
+                              view.Unit().external_classes, e.unit_name,
+                              e.class_name);
+                      if (introducer == nullptr ||
+                          e.ordinal.value >= introducer->behaviors.size()) {
+                        throw InternalError(
+                            "RenderCall: a dispatch names a behavior no "
+                            "consumed promise describes");
+                      }
+                      return {
+                          .name =
+                              ToCppName(introducer->behaviors[e.ordinal.value]),
+                          .placement = ReceiverPlacement::kIntoCalleeName};
+                    }},
+                v.slot);
           },
           // A type has one way to come into existence, and what names it is the
           // type's own answer -- read through type mapping, the way every other

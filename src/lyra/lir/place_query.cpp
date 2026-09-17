@@ -182,18 +182,7 @@ auto PlaceType(
               current = *target;
             },
             [&](const MemberProjection& projection) {
-              current = std::visit(
-                  Overloaded{
-                      [&](const StatedMemberRef& member) -> TypeId {
-                        return StatedMemberType(unit, current, member);
-                      },
-                      // The declaration is one nothing here names, so there is
-                      // no member list to count against and the step states
-                      // what it reaches.
-                      [](const SuppliedMemberRef& member) -> TypeId {
-                        return member.reached;
-                      }},
-                  projection.member);
+              current = StatedMemberType(unit, current, projection.member);
             }},
         step);
   }

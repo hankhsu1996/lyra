@@ -414,11 +414,7 @@ auto FunctionLowerer::LowerCallTarget(
                       return unit_
                           ->PromisedClass(slot.unit_name, slot.class_name)
                           .is_interface_class;
-                    },
-                    // A class that publishes nothing publishes no commitment
-                    // either, and the coordinate that arrives was formed by
-                    // walking a lineage, so reaching here says it is one.
-                    [](const mir::ResolvedVirtualSlot&) { return false; }},
+                    }},
                 v.slot);
             if (through_an_interface) {
               return Unsupported(
@@ -428,24 +424,15 @@ auto FunctionLowerer::LowerCallTarget(
             auto method = std::visit(
                 Overloaded{
                     [&](const mir::LocalVirtualSlot& slot)
-                        -> diag::Result<lir::DispatchRef> {
+                        -> diag::Result<lir::StatedDispatchRef> {
                       return unit_->MethodRef(slot.owner_class, slot.slot);
                     },
                     [&](const mir::ExternalVirtualSlot& slot)
-                        -> diag::Result<lir::DispatchRef> {
+                        -> diag::Result<lir::StatedDispatchRef> {
                       return lir::StatedDispatchRef{
                           .introduced_by = unit_->ExternalClassValueType(
                               slot.unit_name, slot.class_name),
                           .ordinal = lir::DispatchOrdinal{slot.ordinal.value}};
-                    },
-                    [&](const mir::ResolvedVirtualSlot& slot)
-                        -> diag::Result<lir::DispatchRef> {
-                      auto coordinate = LowerExpr(block, slot.coordinate);
-                      if (!coordinate) {
-                        return std::unexpected(std::move(coordinate.error()));
-                      }
-                      return lir::SuppliedDispatchRef{
-                          .coordinate = *std::move(coordinate)};
                     }},
                 v.slot);
             if (!method) {
@@ -1475,50 +1462,31 @@ auto FunctionLowerer::LowerCondition(const mir::Block& block, mir::ExprId id)
   return value;
 }
 
-auto FunctionLowerer::MemberRefOf(
-    const mir::Block& block, const mir::FieldRef& field, lir::TypeId reached)
-    -> diag::Result<lir::MemberRef> {
+auto FunctionLowerer::MemberRefOf(const mir::FieldRef& field)
+    -> lir::StatedMemberRef {
+  const auto at = [](lir::TypeId declared_by, auto slot) {
+    return lir::StatedMemberRef{
+        .declared_by = declared_by, .slot = lir::MemberSlot{slot.value}};
+  };
   return std::visit(
       Overloaded{
-          [&](const mir::ClassFieldTarget& t) -> diag::Result<lir::MemberRef> {
-            return lir::StatedMemberRef{
-                .declared_by = unit_->ClassValueType(t.owner),
-                .slot = lir::MemberSlot{t.slot.value}};
+          [&](const mir::ClassFieldTarget& t) {
+            return at(unit_->ClassValueType(t.owner), t.slot);
           },
-          [&](const mir::StructFieldTarget& t) -> diag::Result<lir::MemberRef> {
-            return lir::StatedMemberRef{
-                .declared_by = unit_->StructValueType(t.owner),
-                .slot = lir::MemberSlot{t.slot.value}};
+          [&](const mir::StructFieldTarget& t) {
+            return at(unit_->StructValueType(t.owner), t.slot);
           },
-          [&](const mir::ClosureFieldTarget& t)
-              -> diag::Result<lir::MemberRef> {
-            return lir::StatedMemberRef{
-                .declared_by = unit_->ClosureValueType(t.owner),
-                .slot = lir::MemberSlot{t.slot.value}};
+          [&](const mir::ClosureFieldTarget& t) {
+            return at(unit_->ClosureValueType(t.owner), t.slot);
           },
-          [&](const mir::ExternalUnitObjectFieldTarget& t)
-              -> diag::Result<lir::MemberRef> {
-            return lir::StatedMemberRef{
-                .declared_by = unit_->ExternalUnitObjectValueType(t.owner),
-                .slot = lir::MemberSlot{t.slot.value}};
+          [&](const mir::ExternalUnitObjectFieldTarget& t) {
+            return at(unit_->ExternalUnitObjectValueType(t.owner), t.slot);
           },
-          [&](const mir::CrossUnitClassFieldTarget& t)
-              -> diag::Result<lir::MemberRef> {
-            return lir::StatedMemberRef{
-                .declared_by =
-                    unit_->ExternalClassValueType(t.unit_name, t.class_name),
-                .slot = lir::MemberSlot{t.slot.value}};
-          },
-          [&](const mir::ResolvedFieldTarget& t)
-              -> diag::Result<lir::MemberRef> {
-            auto coordinate = LowerExpr(block, t.coordinate);
-            if (!coordinate) {
-              return std::unexpected(std::move(coordinate.error()));
-            }
-            return lir::SuppliedMemberRef{
-                .coordinate = *std::move(coordinate), .reached = reached};
-          },
-      },
+          [&](const mir::CrossUnitClassFieldTarget& t) {
+            return at(
+                unit_->ExternalClassValueType(t.unit_name, t.class_name),
+                t.slot);
+          }},
       field);
 }
 
@@ -1645,6 +1613,9 @@ auto FunctionLowerer::ReferenceValue(
           [&](const mir::StaticConstantRef&) -> diag::Result<lir::Operand> {
             return ReadPlace(block, id, unit_->TranslateType(type));
           },
+          [&](const mir::ObjectRecordRef&) -> diag::Result<lir::Operand> {
+            return ReadPlace(block, id, unit_->TranslateType(type));
+          },
           [&](const mir::StaticPropertyRef&) -> diag::Result<lir::Operand> {
             return ReadPlace(block, id, unit_->TranslateType(type));
           },
@@ -1738,14 +1709,21 @@ auto FunctionLowerer::ReferencePlace(
                     lir::SymbolPart::Name(ref.property_name)),
                 type);
           },
-          // A class's static constant is a compile-time record the backend
-          // consumes directly rather than storage a body reaches, the same way
-          // the unit-definition record types are.
+          // A class's static constant and the record its objects carry are
+          // compile-time records the backend consumes directly rather than
+          // storage a body reaches, the same way the unit-definition record
+          // types are.
           [](const mir::StaticConstantRef&) -> diag::Result<lir::Place> {
             throw InternalError(
                 "mir_to_lir: a class's static constant is a compile-time "
                 "record consumed by the backend directly and names no place -- "
                 "please report this as a bug");
+          },
+          [](const mir::ObjectRecordRef&) -> diag::Result<lir::Place> {
+            throw InternalError(
+                "mir_to_lir: a class's object record is a compile-time record "
+                "consumed by the backend directly and names no place -- please "
+                "report this as a bug");
           },
           // A descriptor and a function are values the unit generates, not
           // storage anything writes through.
@@ -1782,11 +1760,6 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             return ReferencePlace(reference.target, expr.type);
           },
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Place> {
-            auto member = MemberRefOf(
-                block, field.field, unit_->TranslateType(expr.type));
-            if (!member) {
-              return std::unexpected(std::move(member.error()));
-            }
             auto receiver = LowerExpr(block, field.receiver);
             if (!receiver) {
               return std::unexpected(std::move(receiver.error()));
@@ -1795,7 +1768,8 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
                 .base = *std::move(receiver),
                 .chain = {
                     lir::Projection{lir::DerefProjection{}},
-                    lir::Projection{lir::MemberProjection{.member = *member}}}};
+                    lir::Projection{lir::MemberProjection{
+                        .member = MemberRefOf(field.field)}}}};
           },
           [&](const mir::DerefExpr& deref) -> diag::Result<lir::Place> {
             // Opening a wrapper for writing names the storage it stands for,

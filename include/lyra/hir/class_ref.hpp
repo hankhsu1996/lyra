@@ -164,6 +164,19 @@ struct UnpublishedBehaviorSlot {
   auto operator==(const UnpublishedBehaviorSlot&) const -> bool = default;
 };
 
+// The body a call reaches on a class a design element declares, where the
+// method answers no dispatch position (LRM 8.20). What the class the access
+// names declares is what runs, whatever the object turns out to be (LRM 8.14),
+// so nothing about it is left for the object to answer and the body is settled
+// where the design elaborates. This names the scope slot holding what it landed
+// on -- a code address, not a position, because there is no position to count
+// and nothing to count it against.
+struct UnpublishedBehaviorBody {
+  BehaviorBodyId body;
+
+  auto operator==(const UnpublishedBehaviorBody&) const -> bool = default;
+};
+
 // Which behavior a method takes over (LRM 8.20). One this unit's own class
 // introduced is named by that class and the method introducing it; one a class
 // of another unit introduced is named by the coordinate that class published,

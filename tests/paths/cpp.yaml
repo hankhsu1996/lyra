@@ -9,8 +9,3 @@
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"
 16_assertions/procedural_concurrent_assertion_queues_where_it_runs: "a concurrent assertion embedded in a procedure is not yet lowered"
 21_output/assignment_pattern_format_of_a_wildcard_indexed_array: "an operand holding an associative array with a wildcard index type"
-23_hierarchy/downward_name_reaches_each_declaration_kind: "reaches a property or a behavior through a reference whose class no signature publishes"
-23_hierarchy/hierarchical_name_enters_a_class_behavior: "reaches a property or a behavior through a reference whose class no signature publishes"
-23_hierarchy/hierarchical_name_writes_a_class_property: "reaches a property or a behavior through a reference whose class no signature publishes"
-23_hierarchy/upward_name_reaches_a_class_property: "reaches a property or a behavior through a reference whose class no signature publishes"
-25_interfaces/interface_declares_a_class_and_holds_one: "reaches a property or a behavior through a reference whose class no signature publishes"

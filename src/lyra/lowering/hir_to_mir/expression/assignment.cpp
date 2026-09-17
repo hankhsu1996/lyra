@@ -66,6 +66,7 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
                 Overloaded{
                     [](const mir::LocalRef&) { return false; },
                     [](const mir::StaticConstantRef&) { return true; },
+                    [](const mir::ObjectRecordRef&) { return true; },
                     [](const mir::StaticPropertyRef&) { return true; },
                     [](const mir::PackedTypeRef&) { return true; },
                     [](const mir::FunctionRef&) { return true; },

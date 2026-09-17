@@ -866,26 +866,35 @@ auto UnitLowerer::MakeMethodCallee(
   if (!interface) return std::unexpected(std::move(interface.error()));
   const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
   std::optional<hir::CrossUnitDispatchSlot> slot;
-  if (method.isVirtual()) {
-    // Which class introduced the behavior is found by walking what each class
-    // promised about the one it extends, and a class publishing nothing leaves
-    // nothing to walk. So the walk to the scope declaring it crosses instead,
-    // and that scope answers where the name lands while the design elaborates.
-    if (DeclaredByADesignElement(ext)) {
-      auto route = RouteToDeclaringScope(frame, *owner.getParentScope(), span);
-      if (!route) return std::unexpected(std::move(route.error()));
-      slot = hir::UnpublishedBehaviorSlot{
-          .coordinate = MapOrGetBehaviorCoordinate(
-              frame.Current(), hir::ClassNameDecl{
-                                   .head = std::move(route->head),
-                                   .steps = std::move(route->steps),
-                                   .class_name = ext.class_name,
-                                   .name = std::string{method.name}})};
-    } else {
-      auto resolved = MakeExternalDispatchSlot(ext, method.name, span);
-      if (!resolved) return std::unexpected(std::move(resolved.error()));
-      slot = *std::move(resolved);
+  // A class a design element declares publishes on no signature, so this unit
+  // has no name for it and none for anything it declares. Every call on one
+  // therefore reaches its body through what the walk to the declaring scope
+  // lands on, whether or not the method answers a dispatch position -- the
+  // position is what the object gets to answer, and having none to answer
+  // changes who decides rather than whether the name had to be resolved.
+  if (DeclaredByADesignElement(ext)) {
+    auto route = RouteToDeclaringScope(frame, *owner.getParentScope(), span);
+    if (!route) return std::unexpected(std::move(route.error()));
+    hir::ClassNameDecl decl{
+        .head = std::move(route->head),
+        .steps = std::move(route->steps),
+        .class_name = ext.class_name,
+        .name = std::string{method.name}};
+    if (!method.isVirtual()) {
+      return hir::SettledMethodCallee{
+          .body =
+              hir::UnpublishedBehaviorBody{
+                  .body =
+                      MapOrGetBehaviorBody(frame.Current(), std::move(decl))},
+          .interface = *std::move(interface)};
     }
+    slot = hir::UnpublishedBehaviorSlot{
+        .coordinate =
+            MapOrGetBehaviorCoordinate(frame.Current(), std::move(decl))};
+  } else if (method.isVirtual()) {
+    auto resolved = MakeExternalDispatchSlot(ext, method.name, span);
+    if (!resolved) return std::unexpected(std::move(resolved.error()));
+    slot = *std::move(resolved);
   }
   return hir::ExternalMethodCallee{
       .target = std::get<hir::ExternalClassMethodTarget>(std::move(target)),
