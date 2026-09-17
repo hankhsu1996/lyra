@@ -34,6 +34,14 @@ inline constexpr std::string_view kRuntimeCacheDir = "runtime/cache";
 inline constexpr std::string_view kObjectDir = "obj";
 inline constexpr std::string_view kProgramName = "program";
 inline constexpr std::string_view kCxxStandardFlag = "-std=c++23";
+// A precompiled header stays usable only while the headers it was built from
+// are unchanged, and the compiler decides that by timestamp unless asked to
+// read the bytes. Not every one of those headers is ours to leave alone -- a
+// checkout restores one byte for byte under a new timestamp -- so the question
+// has to be asked of the content. The answer is recorded when the header is
+// prepared and consulted when it is loaded, so both command lines carry this.
+inline constexpr std::string_view kPchContentValidationFlag =
+    "-fpch-validate-input-files-content";
 // The DPI-C boundary surface a user's foreign sources compile against (LRM 35):
 // the generated prototypes plus the standard header they are spelled in. Both
 // sit at the project root so one include path reaches them.

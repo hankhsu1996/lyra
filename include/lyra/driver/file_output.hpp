@@ -8,10 +8,10 @@
 namespace lyra::driver {
 
 // Writes `content` to `path`, creating the parent directories. A file already
-// holding exactly that content is left alone rather than rewritten: a
-// generator produces the same bytes on every run, and a cache that validates
-// by timestamp -- clang's precompiled header does -- rejects what it was just
-// handed when an unchanged file gets a new modification time.
+// holding exactly that content is left alone rather than rewritten: a generator
+// produces the same bytes on every run, and a cache that decides currency by
+// timestamp -- clang's precompiled header does -- throws away work that was
+// still good when an unchanged file gets a new modification time.
 auto WriteFile(const std::filesystem::path& path, std::string_view content)
     -> diag::Result<void>;
 

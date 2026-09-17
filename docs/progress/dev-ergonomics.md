@@ -98,6 +98,40 @@ layer directly.
       an invalidation record laid over that would be correct and buy little. The signature
       workstream owns that half; this one owns the record.
 
+      Measured 2026-09-16 on a three-unit design: a build that changes nothing still takes the same
+      two and a quarter seconds as the one before it, and every object is written again. The Ibex
+      testbench figures above put the same statement at three minutes of processor time per build
+      whatever was edited, because nothing is reused between one build and the next except the
+      precompiled header. That is the larger of the two costs on this page by a wide margin.
+
+      **What makes the record cheap here is that the compiler wrote the inputs.** A build cache
+      elsewhere has to discover what an artifact depended on -- preprocessing the source, or
+      believing a declaration -- because the thing being compiled arrived from outside. Here the
+      text handed to the host compiler is text this compiler just produced, and the settings it is
+      compiled under are settings this compiler just chose, so what determines an object is already
+      in hand and needs no discovering. Naming an artifact by what determines it then makes reuse a
+      lookup rather than a decision, with no timestamp anywhere in it.
+
+      **And it makes an edit that changes nothing stop at the boundary.** Two designs that differ in
+      a way the emitted text does not record produce the same text for a unit, so that unit's
+      object is reused rather than rebuilt, and so is everything that would have followed from
+      rebuilding it. That is worth stating because it is the property a record keyed on what was
+      edited cannot have, and it costs nothing extra to get.
+
+- [ ] D13 -- What a build keeps between runs is bounded without anyone having to remember it. The
+      precompiled header is cached under one directory shared by every checkout on the machine,
+      keyed so that each distinct compiler, header tree and optimization gets an entry of its own,
+      and nothing ever removes one. Measured 2026-09-16: forty megabytes an entry, six entries and
+      two hundred and thirty-eight megabytes after a single day's work, and one more the moment any
+      header's content changes. A command exists that empties it, which means the bound today is
+      that somebody notices and asks.
+
+      The shape this wants is the one a build cache usually has: an entry that has not been wanted
+      for long enough goes, on a schedule cheap enough that no build waits for it. Settling it needs
+      a reading of how often an entry is actually wanted again, which nothing here has taken, and it
+      belongs with D12 rather than before it -- both are the same question about what a build keeps
+      and for how long, and answering one without the other fixes half a policy.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

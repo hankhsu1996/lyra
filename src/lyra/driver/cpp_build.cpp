@@ -73,10 +73,10 @@ auto SubstituteTokens(
 
 // build.sh as a raw-string template. `@TOKEN@` placeholders bind to the
 // `project_layout` constants below. Shell `${VAR}` and `$VAR` pass through
-// unchanged. The PCH section gates on three runtime checks: `$CXX` looking
-// like clang (gcc's PCH dialect does not match these flags), `LYRA_NO_PCH`
-// being unset, and `sha1sum` being available (used to fingerprint the
-// header tree so a header edit produces a different cache file rather
+// unchanged. The PCH section gates on three runtime checks: the caller not
+// having asked to skip it, `$CXX` looking like clang (gcc's PCH dialect does
+// not match these flags), and `sha1sum` being available (used to fingerprint
+// the header tree so a header edit produces a different cache file rather
 // than reusing a PCH built against stale-on-disk content). Any failing
 // check falls back to plain compilation; correctness is unaffected.
 //
@@ -145,15 +145,12 @@ if [ "$USE_PCH" = "1" ]; then
   PCH="@CACHE@/prelude-${FP}-@OPTTAG@.pch"
   if [ ! -f "$PCH" ]; then
     mkdir -p "$(dirname "$PCH")"
-    "$CXX" @STD@ @OPT@ -I @INCLUDE@ -xc++-header "$PRELUDE" -o "$PCH"
+    "$CXX" @STD@ @OPT@ @VALIDATE@ -I @INCLUDE@ -xc++-header "$PRELUDE" -o "$PCH"
   fi
-  PCH_FLAG="-include-pch $PCH"
+  PCH_FLAG="-include-pch $PCH @VALIDATE@"
 fi
 mkdir -p @OBJDIR@
-OBJS=""
-PIDS=""
-LIVE=0
-STATUS=0
+LOG=@OBJDIR@/compile.log
 reap() {
   for p in $PIDS; do
     wait "$p" || STATUS=1
@@ -161,15 +158,38 @@ reap() {
   PIDS=""
   LIVE=0
 }
-for src in @SOURCES@; do
-  OBJS="$OBJS @OBJDIR@/$src.o"
-  "$CXX" @STD@ @OPT@ -I @INCLUDE@ $PCH_FLAG -c "$src" -o "@OBJDIR@/$src.o" &
-  PIDS="$PIDS $!"
-  LIVE=$((LIVE + 1))
-  if [ "$LIVE" -ge "$JOBS" ]; then reap; fi
-done
-reap
-if [ "$STATUS" -ne 0 ]; then exit 1; fi
+compile_all() {
+  : > "$LOG"
+  OBJS=""
+  PIDS=""
+  LIVE=0
+  STATUS=0
+  for src in @SOURCES@; do
+    OBJS="$OBJS @OBJDIR@/$src.o"
+    "$CXX" @STD@ @OPT@ -I @INCLUDE@ $1 -c "$src" -o "@OBJDIR@/$src.o" \
+      >>"$LOG" 2>&1 &
+    PIDS="$PIDS $!"
+    LIVE=$((LIVE + 1))
+    if [ "$LIVE" -ge "$JOBS" ]; then reap; fi
+  done
+  reap
+}
+compile_all "$PCH_FLAG"
+if [ "$STATUS" -ne 0 ] && [ "$USE_PCH" = "1" ]; then
+  # The precompiled header is an attempt and never a requirement, so it does not
+  # get to decide whether this build succeeds. Compile again the way that needs
+  # nothing prepared; if that works, the header was refused rather than the
+  # sources, and it goes so the next build prepares it afresh. Everything is
+  # compiled again rather than only what failed, because tracking that costs
+  # more shell than the rare path is worth.
+  compile_all ""
+  if [ "$STATUS" -eq 0 ]; then rm -f "$PCH"; fi
+fi
+# What the compiler said is kept back until the build is known to have failed,
+# so that an attempt which was retried and succeeded says nothing at all. What
+# gets shown is the last attempt, which is the one that needed nothing prepared
+# and so describes the sources rather than the header.
+if [ "$STATUS" -ne 0 ]; then cat "$LOG" >&2; exit 1; fi
 @DPICOMPILE@"$CXX"$OBJS@DPIOBJS@ @LIBDIR@/@LIB@ -o @PROG@
 )sh";
 
@@ -249,7 +269,7 @@ auto RenderBuildScript(
   // The recipe keys its own PCH cache by header content, which does not
   // separate two builds clang will refuse to share.
   const std::string_view optimization_tag = optimization_flag.substr(1);
-  const std::array<std::pair<std::string_view, std::string_view>, 14> bindings =
+  const std::array<std::pair<std::string_view, std::string_view>, 15> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
           {"@PRELUDE@", support::kRuntimePreludeHeader},
@@ -257,6 +277,7 @@ auto RenderBuildScript(
           {"@OBJDIR@", kObjectDir},
           {"@STD@", kCxxStandardFlag},
           {"@OPT@", optimization_flag},
+          {"@VALIDATE@", kPchContentValidationFlag},
           {"@OPTTAG@", optimization_tag},
           {"@CXX@", cxx_exe},
           {"@SOURCES@", sources},
@@ -318,8 +339,15 @@ auto CopyDpiSources(
 // One compile the build has to run, what the link takes from it, and what to
 // name if it fails. A unit's compile and a foreign source's are both this, so
 // one bounded run covers every compile a build does.
+//
+// `plain` needs nothing prepared in advance and therefore always works. `fast`
+// is the same compile handed a precompiled header, which the compiler may
+// refuse for reasons about the header rather than about the source. Not every
+// compile has one -- a foreign source includes none of what such a header holds
+// -- so the two are separate rather than one command line with a flag.
 struct CompileStep {
-  support::ProcessRequest request;
+  support::ProcessRequest plain;
+  std::optional<support::ProcessRequest> fast;
   std::string subject;
   std::string object;
 };
@@ -331,20 +359,29 @@ auto UnitCompileStep(
     const std::filesystem::path& include_root, const HostBuild& host,
     const std::optional<std::filesystem::path>& prelude) -> CompileStep {
   const std::string object = (dir / kObjectDir / (source + ".o")).string();
-  std::vector<std::string> args = {
-      std::string(kCxxStandardFlag),
-      std::string(OptimizationFlag(host.optimization)), "-I",
-      include_root.string()};
-  if (prelude.has_value()) {
-    args.emplace_back("-include-pch");
-    args.push_back(prelude->string());
-  }
-  args.emplace_back("-c");
-  args.push_back((dir / source).string());
-  args.emplace_back("-o");
-  args.push_back(object);
+  const auto command =
+      [&](const std::optional<std::filesystem::path>& prepared) {
+        std::vector<std::string> args = {
+            std::string(kCxxStandardFlag),
+            std::string(OptimizationFlag(host.optimization)), "-I",
+            include_root.string()};
+        if (prepared.has_value()) {
+          args.emplace_back("-include-pch");
+          args.push_back(prepared->string());
+          args.emplace_back(kPchContentValidationFlag);
+        }
+        args.emplace_back("-c");
+        args.push_back((dir / source).string());
+        args.emplace_back("-o");
+        args.push_back(object);
+        return support::ProcessRequest{
+            .exe = host.cxx, .args = std::move(args)};
+      };
   return CompileStep{
-      .request = {.exe = host.cxx, .args = std::move(args)},
+      .plain = command(std::nullopt),
+      .fast = prelude.has_value()
+                  ? std::optional<support::ProcessRequest>{command(prelude)}
+                  : std::nullopt,
       .subject = source,
       .object = object};
 }
@@ -366,7 +403,8 @@ auto DpiCompileStep(
   args.emplace_back("-o");
   args.push_back(object);
   return CompileStep{
-      .request = {.exe = host.cxx, .args = std::move(args)},
+      .plain = {.exe = host.cxx, .args = std::move(args)},
+      .fast = std::nullopt,
       .subject = source,
       .object = object};
 }
@@ -375,8 +413,16 @@ auto DpiCompileStep(
 // reports every one that failed rather than the first. A build whose emitted
 // text does not compile is a defect in Lyra, and seeing all of them at once is
 // what saves the run it would otherwise take to find the next.
-auto RunCompileSteps(std::span<const CompileStep> steps, const HostBuild& host)
-    -> diag::Result<void> {
+//
+// A header compiled in advance may not decide whether a build succeeds, so a
+// compile that failed with one is run again without it before its output counts
+// as a failure. A compile that then succeeds was refused the header rather than
+// the source, and the header is dropped so the next build makes a fresh one.
+// Where no header was offered there is nothing to run again, and the second
+// pass is empty without being asked to be.
+auto RunCompileSteps(
+    std::span<const CompileStep> steps, const HostBuild& host,
+    const std::optional<std::filesystem::path>& prelude) -> diag::Result<void> {
   std::vector<support::ProcessRequest> requests;
   requests.reserve(steps.size());
   for (const CompileStep& step : steps) {
@@ -390,12 +436,40 @@ auto RunCompileSteps(std::span<const CompileStep> steps, const HostBuild& host)
           std::format(
               "failed to create '{}': {}", home.string(), ec.message()));
     }
-    requests.push_back(step.request);
+    requests.push_back(step.fast.value_or(step.plain));
   }
   auto results = support::RunProcessesCaptured(requests, host.compile_width);
   if (!results) {
     return IoError(std::move(results.error()));
   }
+
+  std::vector<std::size_t> retried;
+  for (std::size_t i = 0; i < steps.size(); ++i) {
+    if ((*results)[i].exit_code != 0 && steps[i].fast.has_value()) {
+      retried.push_back(i);
+    }
+  }
+  if (!retried.empty()) {
+    std::vector<support::ProcessRequest> plain;
+    plain.reserve(retried.size());
+    for (std::size_t i : retried) {
+      plain.push_back(steps[i].plain);
+    }
+    auto plain_results =
+        support::RunProcessesCaptured(plain, host.compile_width);
+    if (!plain_results) {
+      return IoError(std::move(plain_results.error()));
+    }
+    bool the_header_was_refused = false;
+    for (std::size_t k = 0; k < retried.size(); ++k) {
+      the_header_was_refused |= (*plain_results)[k].exit_code == 0;
+      (*results)[retried[k]] = std::move((*plain_results)[k]);
+    }
+    if (the_header_was_refused && prelude.has_value()) {
+      pch::Discard(*prelude);
+    }
+  }
+
   std::string failures;
   for (std::size_t i = 0; i < steps.size(); ++i) {
     if ((*results)[i].exit_code == 0) {
@@ -433,7 +507,7 @@ auto CompileProgram(
     steps.push_back(DpiCompileStep(dir, input, host));
   }
 
-  if (auto r = RunCompileSteps(steps, host); !r) {
+  if (auto r = RunCompileSteps(steps, host, prelude); !r) {
     return r;
   }
 

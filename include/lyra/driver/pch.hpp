@@ -31,18 +31,23 @@ struct Options {
 // at), so a cache hit means content match by construction and no staleness
 // check is needed at lookup time.
 //
-// That decides which file is offered, never whether it is accepted: clang
-// re-checks the headers a precompiled one was built from by modification time,
-// so whatever writes those headers has to leave an unchanged one alone or the
-// header it just handed over is rejected. `optimization` must be the one the
-// including translation unit is compiled at: clang rejects a header compiled
-// under different options. Returns nullopt when PCH is disabled, the compiler
-// is not clang, or no writable cache directory is available -- the caller then
-// falls back to plain compilation.
+// What comes back is an offer and never a requirement. Whether the compiler
+// accepts it is the compiler's to answer, and it answers by failing, so a
+// caller passes it only where it can compile again without it -- nothing a
+// build produces, and no reason a build fails, may depend on what this
+// returned. `optimization` must be the one the including translation unit is
+// compiled at: a header prepared under different options is refused. Returns
+// nullopt when this is switched off, the compiler is not clang, or no writable
+// cache directory is available.
 auto EnsureCached(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
     const Options& opts, Optimization optimization)
     -> std::optional<std::filesystem::path>;
+
+// Drop one precompiled header, so that whoever asks next builds it again. For
+// the caller that has just watched the compiler refuse this one, which is the
+// only evidence there is that it had gone stale.
+auto Discard(const std::filesystem::path& pch_path) -> void;
 
 // Remove every PCH file in the active cache directory. Returns the number of
 // files actually removed; a failure to resolve the cache directory surfaces
