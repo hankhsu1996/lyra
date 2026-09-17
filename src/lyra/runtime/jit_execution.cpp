@@ -2210,15 +2210,20 @@ auto lyra_rt_packed_reduction_xnor(const void* value) -> void* {
   return Own(Read<PackedArray>(value).ReductionXnor());
 }
 
-auto lyra_rt_packed_element(const void* value, const void* index) -> void* {
-  return Own(Read<PackedArray>(value).Element(Read<PackedArray>(index)));
+auto lyra_rt_packed_element(
+    const void* value, const void* index, const void* shape) -> void* {
+  return Own(
+      Read<PackedArray>(value).Element(
+          Read<PackedArray>(index), Read<PackedType>(shape)));
 }
 
 auto lyra_rt_packed_with_element(
-    const void* value, const void* index, const void* replacement) -> void* {
+    const void* value, const void* index, const void* shape,
+    const void* replacement) -> void* {
   return Own(
       Read<PackedArray>(value).WithElement(
-          Read<PackedArray>(index), Read<PackedArray>(replacement)));
+          Read<PackedArray>(index), Read<PackedType>(shape),
+          Read<PackedArray>(replacement)));
 }
 
 auto lyra_rt_packed_slice(

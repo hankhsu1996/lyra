@@ -5,8 +5,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <variant>
-#include <vector>
 
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/packed.hpp"
@@ -22,19 +20,18 @@ class String;
 // is known nonzero while `(x, x, x, x)` is unknown.
 enum class Truthiness : std::uint8_t { kKnownZero, kKnownNonzero, kUnknown };
 
-// Unified integral value, mirroring slang's `IntegralType`: one type for every
-// integral, three attributes plus a dim stack. `backend::cpp` emits every
-// SystemVerilog integral (`byte`, `shortint`, `int`, `longint`, `integer`,
-// `time`, `bit [N:0]`, `logic [N:0]`, `reg [N:0]`, and multi-dim packed forms
-// like `bit [N:0][M:0]`) as `PackedArray`.
+// Unified integral value: one type for every SystemVerilog integral -- `byte`,
+// `shortint`, `int`, `longint`, `integer`, `time`, every `bit [N:0]` /
+// `logic [N:0]` / `reg [N:0]`, and the multi-dimensional packed forms.
 //
-// The dimension stack carries the declared structure: 1D for vectors,
-// multi-dim for packed-of-packed. `operator[]` and `Slice` dispatch on it so
-// the API is element-level regardless of operand dimensionality, and the
-// emitted C++ never bakes element-width arithmetic into call sites. Storage
-// layout (flat bit planes today; potentially canonical-byte-aligned or
-// vector-of-elements once optimization work begins) is private to PackedArray
-// and disjoint from the API contract.
+// A value carries what every operation on it needs: how many bits, whether they
+// are read as signed, whether a position may hold x or z, and the bits. How a
+// declaration divides those bits is one fact per declaration rather than one
+// per value, so an operation that names a position inside a value takes it as
+// an argument. That is what lets one run of bits answer as `bit [7:0]` at one
+// site and as `bit [3:0][1:0]` at another, which is what the two declarations
+// mean. Storage layout is private to this class and disjoint from the API
+// contract.
 class PackedArray {
  public:
   // Default constructor: a 0-bit empty value, not a valid SystemVerilog value.
@@ -44,13 +41,14 @@ class PackedArray {
   // read.
   PackedArray();
 
-  // Primary constructor: a default value of the declared type. Generated code
-  // builds the `PackedType` inline (`PackedArray(PackedType{{{3,0},{7,0}},
-  // false, true})`); a selector builds one from runtime-computed dims.
+  // A default value of a declared type, which is what generated code names at
+  // a declaration. Only the width, signedness and state domain are read; how
+  // the type divides those bits is the type's own business and reaches an
+  // access as an operand.
   explicit PackedArray(PackedType type);
 
-  // 1D shorthand for the common `bit [bit_width-1:0]` case. Equivalent to
-  // the dim-list constructor with `{{bit_width-1, 0}}`.
+  // The same, where the caller holds the three facts rather than a declared
+  // type -- an internal result, or a shape computed while running.
   PackedArray(std::uint64_t bit_width, bool is_signed, bool is_four_state);
 
   // Convenience factory for the default int shape (32-bit, signed, 2-state).
@@ -178,14 +176,8 @@ class PackedArray {
   // it reaches here indicates a frontend / lowering bug.
   [[nodiscard]] auto Replicate(std::int64_t count) const -> PackedArray;
 
-  // The declared representation this value has, whole -- what a factory asked
-  // to build another value of the same type is handed.
-  [[nodiscard]] auto Type() const -> const PackedType&;
   [[nodiscard]] auto BitWidth() const -> std::uint64_t;
   [[nodiscard]] auto IsSigned() const -> bool;
-  // Declared dim stack, outermost first. Storage is flat regardless; this is
-  // an API-contract field that operator[] / Slice dispatch on.
-  [[nodiscard]] auto Dims() const -> std::span<const PackedRange>;
   [[nodiscard]] auto IsFourState() const -> bool;
 
   // LRM 20.6.2 `$bits`: a packed value occupies its declared bit width. It is
@@ -198,8 +190,7 @@ class PackedArray {
   // LRM 6.24.3: the bits this value contributes to a stream, as an unsigned
   // vector of its own width. It is the leaf of the recursion an aggregate
   // performs, and the identity for a value that is already one bit plane --
-  // what changes is only that a stream carries no signedness and no dimension
-  // stack.
+  // what changes is only that a stream carries no signedness.
   [[nodiscard]] auto ToBitstream() const -> PackedArray;
 
   // The inverse: `bits`, which the caller has already brought to the width
@@ -217,9 +208,9 @@ class PackedArray {
   [[nodiscard]] auto ReverseBlocks(std::int64_t block_bits) const
       -> PackedArray;
 
-  // Restore the value to this shape's canonical default in place: all-zero
-  // for 2-state, all-X for 4-state (LRM Table 6-7 / Table 7-1). The declared
-  // type (dimensions, signedness, state domain) is preserved.
+  // Restore the value to its shape's canonical default in place: all-zero for
+  // 2-state, all-X for 4-state (LRM Table 6-7 / Table 7-1). The width,
+  // signedness and state domain are preserved; only the bits are reset.
   // Container shield slots call this on OOB access so the slot mirrors what
   // a freshly-defaulted element would read as.
   auto ResetToDefault() -> void;
@@ -299,12 +290,12 @@ class PackedArray {
   // distinguishes the not-yet-installed state from an installed one.
   [[nodiscard]] auto IsUninitialized() const -> bool;
 
-  // True when `other` carries the same declared representation -- dimension
-  // stack, signedness, and state domain. Once established, a cell asserts this
-  // on every store: the right-hand side must already be at the cell's declared
-  // type (the store boundary is what converts it there), and the cell never
-  // reshapes. A mismatch reaching a store means a required upstream conversion
-  // was not emitted -- a compiler bug.
+  // True when `other` is held the same way -- same width, same signedness,
+  // same state domain. Once established, a cell asserts this on every store:
+  // the right-hand side must already be at the cell's declared type (the store
+  // boundary is what converts it there), and the cell never reshapes. A
+  // mismatch reaching a store is a conversion the lowering owed and did not
+  // emit -- a compiler bug.
   [[nodiscard]] auto SameRepresentation(const PackedArray& other) const -> bool;
 
   // Extract the value as a 64-bit signed integer. Sign-extends from
@@ -408,9 +399,7 @@ class PackedArray {
   // returns the new value (standard C++ idiom); postfix snapshots the old
   // value, mutates, returns the snapshot.
   auto operator++() -> PackedArray& {
-    return *this = *this + FromInt(
-                               1, type_.bit_width, type_.is_signed,
-                               type_.is_four_state);
+    return *this = *this + FromInt(1, bit_width_, is_signed_, is_four_state_);
   }
   auto operator++(int) -> PackedArray {
     PackedArray prior = *this;
@@ -418,9 +407,7 @@ class PackedArray {
     return prior;
   }
   auto operator--() -> PackedArray& {
-    return *this = *this - FromInt(
-                               1, type_.bit_width, type_.is_signed,
-                               type_.is_four_state);
+    return *this = *this - FromInt(1, bit_width_, is_signed_, is_four_state_);
   }
   auto operator--(int) -> PackedArray {
     PackedArray prior = *this;
@@ -462,54 +449,38 @@ class PackedArray {
   // combining with it.
   [[nodiscard]] auto Dominating(const PackedArray& weaker) const -> PackedArray;
 
-  // Low-level bit-level primitives. `ExtractBits` reads `bit_width` contiguous
-  // bits starting at `lsb_bit`. `AssignSlice` writes those bits with the LRM
-  // 11.5.1 corner cases (X/Z lsb, fully-OOB lsb, lsb magnitude exceeding the
-  // 64-bit position carrier all collapse to a silent no-op; partial-OOB
-  // affects only in-range bits). Positions are in the canonical flat-bit
-  // address space, dimension-agnostic. The element-level chain methods below
-  // (`operator[]`, `Slice`) compose offsets in this address space and route
-  // here at the chain leaf.
-  // Materializes the sub-region of shape `dims` whose least-significant bit is
-  // at `lsb_bit` into an owned value. Because the value is built with `dims`
-  // from the start, a chained select on the result sees the inner dimensions
-  // rather than a flattened bit run -- no post-construction reshaping. The
-  // width overload is the 1-D shorthand.
-  [[nodiscard]] auto ExtractBits(
-      const PackedArray& lsb_bit, std::span<const PackedRange> dims) const
-      -> PackedArray;
+  // Reading and writing a run of bits named in the flat address space, which
+  // is where every coordinate-facing access below lands once its position is
+  // resolved. `ExtractBits` materializes the run as an owned value, unsigned
+  // as a run taken out of a value is (LRM 11.5.1). `AssignSlice` writes it
+  // with that clause's corner cases: an x/z position, a fully out-of-range
+  // one, and one whose magnitude exceeds the 64-bit position carrier are each
+  // a silent no-op, while a partially out-of-range one affects the in-range
+  // bits alone.
   [[nodiscard]] auto ExtractBits(
       const PackedArray& lsb_bit, std::uint32_t bit_width) const -> PackedArray;
   auto AssignSlice(
       const PackedArray& lsb_bit, std::uint32_t bit_width,
       const PackedArray& value) -> void;
 
-  // Proxy-chain entry points. Positions are in the operand's outer-element
-  // units; the dimension stack decides the element bit width internally. For a
-  // 1D operand (a single dimension), one "element" is one bit, so the chain
-  // realises LRM 11.5.1 bit-select / part-select directly. For a multi-dim
-  // operand, one "element" is the inner subtype, and the API scales
-  // positions internally.
-  //
-  // The write-side reference form routes its final `operator=` through
-  // `AssignSlice`. LRM 11.5.2 constrains the slice width to a constant; see
-  // `concepts.hpp` for the `Indexable` / `Sliceable` protocol shape.
-  [[nodiscard]] auto ElementRef(const PackedArray& idx) -> PackedArrayRef;
-  [[nodiscard]] auto Element(const PackedArray& idx) const -> PackedArray;
+  // Coordinate-facing access. A position is in the units `shape`'s outermost
+  // dimension counts, and `shape` is what decides how wide one of those is:
+  // over a one-dimensional shape a position names a bit and the chain realises
+  // LRM 11.5.1 bit-select and part-select directly, while over a deeper one it
+  // names an inner subtype. The reference forms compose, so a position at one
+  // layer is named against that layer's own shape, and the final assignment
+  // writes the resolved run.
+  [[nodiscard]] auto ElementRef(const PackedArray& idx, const PackedType& shape)
+      -> PackedArrayRef;
+  [[nodiscard]] auto Element(
+      const PackedArray& idx, const PackedType& shape) const -> PackedArray;
   // The functional counterpart of the in-place element write, for a value
   // reached by an opaque handle that cannot be mutated in place: a new value
   // equal to the receiver with the element at `idx` replaced, under the same
   // LRM 11.5.1 out-of-range / X-Z index no-op as the in-place write.
   [[nodiscard]] auto WithElement(
-      const PackedArray& idx, const PackedArray& value) const -> PackedArray;
-  // A part-select's bit window is computed from its bounds, but its result
-  // shape is declared, so `shape` states it: the selected bits are materialized
-  // with `shape`'s dimension stack rather than one derived from the receiver.
-  // The two agree for a select over an array, and differ when the receiver is a
-  // packed aggregate's flat base -- its bits carry no member structure, so the
-  // member's own declared shape can only come from the select's result type
-  // (LRM 7.2.1 / 7.3.1 member access, projected onto the same part-select the
-  // LRM 11.5.1 range form uses).
+      const PackedArray& idx, const PackedType& shape,
+      const PackedArray& value) const -> PackedArray;
   [[nodiscard]] auto SliceRef(
       const PackedArray& a, const PackedArray& b, const PackedArray& form,
       const PackedType& shape) -> PackedArrayRef;
@@ -566,64 +537,74 @@ class PackedArray {
   [[nodiscard]] auto ReductionXnor() const -> PackedArray;
 
  private:
-  // Constructs a default value of a dim stack computed at runtime (a selector's
-  // result dims), without first materializing a `PackedType`. Bit width is the
-  // product of the dims.
+  // The shape and the planes, taken as given. A constructor that names a shape
+  // installs that shape's default value over the bits; this one does not.
   PackedArray(
-      std::span<const PackedRange> dims, bool is_signed, bool is_four_state);
+      std::uint64_t bit_width, bool is_signed, bool is_four_state,
+      PackedWordArray value, PackedWordArray unknown);
 
-  // Single source of truth for "construct a PackedArray with a known value and
-  // shape". FromInt, FromWords, and any internal op that materializes a result
-  // from word planes delegate here. The helper guarantees both planes are
-  // fully written (value from `value_words`, unknown from `unknown_words` or
-  // zero when empty); no caller can leak the all-X residue left by
-  // LogicValue's default ctor. The value is built with `dims` from the start,
-  // so its shape is never patched in afterward. The single-bit-width overload
-  // is the 1-D shorthand.
-  [[nodiscard]] static auto MakeFromWordPlanesShaped(
-      std::span<const PackedRange> dims, bool is_signed, bool is_four_state,
+  // A value of the given shape with every bit clear, for an operation that is
+  // about to write all of them.
+  [[nodiscard]] static auto Blank(
+      std::uint64_t bit_width, bool is_signed, bool is_four_state)
+      -> PackedArray;
+
+  // Writable planes, which is sound only while nothing else can observe this
+  // value -- a result being filled, or a designated run being written through.
+  [[nodiscard]] auto MutableValueWords() -> std::span<std::uint64_t>;
+  [[nodiscard]] auto MutableUnknownWords() -> std::span<std::uint64_t>;
+
+  // Takes the bits of a value whose planes are clear from words the caller
+  // assembled, masking whatever sits above the declared width. An empty
+  // unknown plane leaves this value's own clear one.
+  auto InstallPlanes(
       std::span<const std::uint64_t> value_words,
-      std::span<const std::uint64_t> unknown_words) -> PackedArray;
+      std::span<const std::uint64_t> unknown_words) -> void;
+
+  // A value of a stated shape whose bits are words assembled somewhere else --
+  // a literal, a byte stream, a digit string, a foreign buffer. The words are
+  // checked against the shape before they are taken, which is what separates
+  // this from an operation writing its own result.
   [[nodiscard]] static auto MakeFromWordPlanes(
       std::uint64_t bit_width, bool is_signed, bool is_four_state,
       std::span<const std::uint64_t> value_words,
       std::span<const std::uint64_t> unknown_words) -> PackedArray;
 
-  // Copies `src`'s bits into the already-shaped destination `dst`, sign- or
-  // zero-extending or truncating per `src`'s signedness and adjusting the
-  // unknown plane across the state-domain boundary. The shared core of the
-  // ConvertFrom overloads, which differ only in how they name the destination
-  // shape -- a whole declared type, or a flat bit width.
+  // Copies `src`'s bits into `dst`, sign- or zero-extending or truncating per
+  // `src`'s signedness and adjusting the unknown plane across the state-domain
+  // boundary. Every one of `dst`'s bits is written, so it arrives clear rather
+  // than at its shape's default.
   [[nodiscard]] static auto ConvertBitsInto(
       PackedArray dst, const PackedArray& src) -> PackedArray;
 
-  // The integral value's declared type: dimension stack, signedness, state
-  // domain, and the width derived from the dimensions. The same descriptor a
-  // construction takes and an enum base declares (`PackedType`), so the queries
-  // below all derive from one source.
-  PackedType type_;
-  std::variant<BitValue, LogicValue> storage_;
+  // What every operation on this value needs and nothing else: how many bits
+  // it has, whether they are read as signed, and whether a position may hold x
+  // or z. How a declaration divides those bits is the declaration's own fact
+  // and reaches an operation that names a position as an argument, so it is
+  // not here. A width of zero is the not-yet-installed state.
+  std::uint64_t bit_width_ = 0;
+  bool is_signed_ = false;
+  bool is_four_state_ = false;
+  // Bit i of the value is bit i%64 of word i/64, in as many words as the width
+  // needs. A four-state value carries a second plane the same length whose set
+  // positions are the ones holding x or z; a two-state value carries none,
+  // which is what having no such state means.
+  PackedWordArray value_;
+  PackedWordArray unknown_;
 };
 
-// Writable reference into a sub-range of a PackedArray. Composes through
-// chained `operator[]` / `Slice` and triggers the LRM 11.5.1 partial-write
-// rules via `AssignSlice` on the root when assigned. Reading materializes
-// back to a fresh `PackedArray`.
-//
-// Carries a `dims_` stack mirroring the structural shape of this sub-view:
-// `dims_[0]` is the outer dim at the current chain layer; further chain
-// methods dispatch on it to compute element bit width and emit a
-// dimension-aware sub-Ref. The internal `bit_offset_` is kept in a canonical
-// 64-bit signed 4-state shape so chained `+` / `*` between layers do not
-// collide on shape, and X/Z in any layer's index/lsb propagates to the final
-// write (LRM "X/Z position is a no-op").
+// A writable designation into a run of a `PackedArray`, named by where the run
+// starts and how long it is. Further steps compose onto it, each naming its
+// position against the shape the site that wrote it states, and assigning
+// triggers the LRM 11.5.1 partial-write rules on the root; reading materializes
+// a fresh value. The offset is kept in a canonical 64-bit signed 4-state shape
+// so composing positions between layers cannot collide on shape, and an x or z
+// at any layer propagates to the final write, which that clause makes a no-op.
 class PackedArrayRef {
  public:
-  // Width is derived from `dims` (their product), so a ref's width can never
-  // drift from its shape.
   PackedArrayRef(
       PackedArray& root, const PackedArray& bit_offset,
-      std::vector<PackedRange> dims);
+      std::uint32_t bit_width);
 
   // Move-only: a ref aliases its root by raw pointer, so duplicating the
   // handle and outliving the source would dangle. Moves are fine because the
@@ -717,11 +698,12 @@ class PackedArrayRef {
     return prior;
   }
 
-  // Chain composition. Every chained selector stays in the reference form
-  // (returns another `PackedArrayRef`) so a tail `operator=` routes through
-  // `AssignSlice`. Positions are in the current sub-view's outer-element
-  // units; the proxy scales internally based on `dims_`.
-  [[nodiscard]] auto ElementRef(const PackedArray& idx) const -> PackedArrayRef;
+  // Chain composition. Every chained step stays in the reference form so the
+  // assignment at the tail writes through to the root, and a position is in
+  // the units `shape`'s outermost dimension counts -- the shape of what this
+  // step designates, stated by the site that wrote the step.
+  [[nodiscard]] auto ElementRef(
+      const PackedArray& idx, const PackedType& shape) const -> PackedArrayRef;
   [[nodiscard]] auto SliceRef(
       const PackedArray& a, const PackedArray& b, const PackedArray& form,
       const PackedType& shape) const -> PackedArrayRef;
@@ -730,7 +712,6 @@ class PackedArrayRef {
   PackedArray* root_;
   PackedArray bit_offset_;
   std::uint32_t bit_width_;
-  std::vector<PackedRange> dims_;
 };
 
 // The `width` bits sitting `consumed` bits in from the most significant end of
@@ -748,7 +729,7 @@ static_assert(WildcardComparable<PackedArray>);
 static_assert(Ordered<PackedArray>);
 static_assert(BitstreamSizable<PackedArray>);
 static_assert(BitstreamConvertible<PackedArray>);
-static_assert(Indexable<PackedArray>);
+static_assert(ShapedIndexable<PackedArray>);
 static_assert(ShapedSliceable<PackedArray>);
 static_assert(ShapedSliceableRef<PackedArray>);
 static_assert(Ownable<PackedArray>);

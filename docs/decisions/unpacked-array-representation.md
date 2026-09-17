@@ -54,8 +54,7 @@ single-dim per type, nested via the element type.
 Packed and unpacked arrays differ in what their elements are made of:
 
 - A packed array's elements are bits. Storage is a flat bit plane; multi-dim is offset arithmetic on
-  the same plane. `PackedArray` carries the whole dim stack as `dims: vector<PackedRange>` because
-  the substrate is uniform and flat.
+  the same plane, so one value of a declared width covers every dimensionality that width admits.
 - An unpacked array's elements are full data values of arbitrary type: integral (which becomes a
   `PackedArray` instance), real, string, packed struct, or another unpacked array. The substrate is
   heterogeneous in size. There is no flat byte representation that covers every element kind.

@@ -132,11 +132,24 @@ render-synthesized, never a payload field.
 
 ## Packed carve-out
 
-Packed `dims` stays in the packed value. It is not pure coordinate naming: its product is the flat
-storage width (a representation requirement) and the full stack participates in
-`SameRepresentation`, asserted on every packed store (`[7:0]` and `[3:0][1:0]` share storage yet are
-not same-representation and select differently). A packed value stays self-describing; this decision
-does not touch it. Applying the unpacked split to packed is a category error.
+**Superseded by [packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md).** The
+packed family now takes its coordinate system from the receiver's static type exactly as the
+unpacked one does, and the paragraph below is kept because its two reasons are what that entry
+argues against.
+
+> Packed `dims` stays in the packed value. It is not pure coordinate naming: its product is the flat
+> storage width (a representation requirement) and the full stack participates in
+> `SameRepresentation`, asserted on every packed store (`[7:0]` and `[3:0][1:0]` share storage yet
+> are not same-representation and select differently). A packed value stays self-describing; this
+> decision does not touch it. Applying the unpacked split to packed is a category error.
+
+The first reason is answered by the value carrying the width itself, which is what the stack's
+product was for. The second reads a store check as a representation requirement, where a cross-type
+store always carries a conversion that installs the destination's shape -- so the stack comparison
+could only fail on a lowering defect, and the width, signedness and state domain it also compared
+are what a missing conversion actually shows up as. The "Performance" section below is honest that
+this was a complexity argument rather than a measurement; the measurement now exists and runs the
+other way.
 
 ## Performance
 

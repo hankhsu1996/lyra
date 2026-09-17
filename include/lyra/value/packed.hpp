@@ -59,62 +59,39 @@ enum class FourStateBit : std::uint8_t {
 auto MaskUnusedTopBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
     -> void;
 
-class PackedWords {
- public:
-  explicit PackedWords(std::uint64_t bit_width);
+// Every position below `bit_width` set, and nothing above it.
+auto SetAllValidBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
+    -> void;
 
-  [[nodiscard]] auto BitWidth() const -> std::uint64_t;
-
-  [[nodiscard]] auto Words() -> std::span<std::uint64_t>;
-  [[nodiscard]] auto Words() const -> std::span<const std::uint64_t>;
-
-  auto SetOne() -> void;
-
- private:
-  std::uint64_t bit_width_;
-  PackedWordArray words_;
-};
-
-class ConstBitView;
-class BitView;
-class ConstLogicView;
-class LogicView;
-
-namespace detail {
-struct PackedAccess;
-}  // namespace detail
-
+// The word planes of one packed value, borrowed. A plane holds exactly as many
+// words as its width needs, with bit i of the value at bit i%64 of word i/64,
+// so a reader takes the words and the width together and establishes nothing
+// about either. A four-state value's second plane marks the positions holding x
+// or z; a two-state value has none, and the empty plane reads as clear
+// everywhere.
 class ConstBitView {
  public:
-  ConstBitView(
-      std::span<const std::uint64_t> words, std::uint64_t bit_offset,
-      std::uint64_t bit_width);
+  ConstBitView(std::span<const std::uint64_t> words, std::uint64_t bit_width);
 
+  [[nodiscard]] auto ValueWords() const -> std::span<const std::uint64_t>;
   [[nodiscard]] auto Width() const -> std::uint64_t;
 
  private:
-  friend struct detail::PackedAccess;
-
   std::span<const std::uint64_t> words_;
-  std::uint64_t bit_offset_;
   std::uint64_t bit_width_;
 };
 
 class BitView {
  public:
-  BitView(
-      std::span<std::uint64_t> words, std::uint64_t bit_offset,
-      std::uint64_t bit_width);
+  BitView(std::span<std::uint64_t> words, std::uint64_t bit_width);
 
+  [[nodiscard]] auto ValueWords() const -> std::span<std::uint64_t>;
   [[nodiscard]] auto Width() const -> std::uint64_t;
 
   [[nodiscard]] auto AsConst() const -> ConstBitView;
 
  private:
-  friend struct detail::PackedAccess;
-
   std::span<std::uint64_t> words_;
-  std::uint64_t bit_offset_;
   std::uint64_t bit_width_;
 };
 
@@ -122,17 +99,15 @@ class ConstLogicView {
  public:
   ConstLogicView(
       std::span<const std::uint64_t> value_words,
-      std::span<const std::uint64_t> unknown_words, std::uint64_t bit_offset,
-      std::uint64_t bit_width);
+      std::span<const std::uint64_t> unknown_words, std::uint64_t bit_width);
 
+  [[nodiscard]] auto ValueWords() const -> std::span<const std::uint64_t>;
+  [[nodiscard]] auto UnknownWords() const -> std::span<const std::uint64_t>;
   [[nodiscard]] auto Width() const -> std::uint64_t;
 
  private:
-  friend struct detail::PackedAccess;
-
   std::span<const std::uint64_t> value_words_;
   std::span<const std::uint64_t> unknown_words_;
-  std::uint64_t bit_offset_;
   std::uint64_t bit_width_;
 };
 
@@ -140,47 +115,18 @@ class LogicView {
  public:
   LogicView(
       std::span<std::uint64_t> value_words,
-      std::span<std::uint64_t> unknown_words, std::uint64_t bit_offset,
-      std::uint64_t bit_width);
+      std::span<std::uint64_t> unknown_words, std::uint64_t bit_width);
 
+  [[nodiscard]] auto ValueWords() const -> std::span<std::uint64_t>;
+  [[nodiscard]] auto UnknownWords() const -> std::span<std::uint64_t>;
   [[nodiscard]] auto Width() const -> std::uint64_t;
 
   [[nodiscard]] auto AsConst() const -> ConstLogicView;
 
  private:
-  friend struct detail::PackedAccess;
-
   std::span<std::uint64_t> value_words_;
   std::span<std::uint64_t> unknown_words_;
-  std::uint64_t bit_offset_;
   std::uint64_t bit_width_;
-};
-
-class BitValue {
- public:
-  explicit BitValue(std::uint64_t bit_width);
-
-  [[nodiscard]] auto Width() const -> std::uint64_t;
-
-  [[nodiscard]] auto View() -> BitView;
-  [[nodiscard]] auto View() const -> ConstBitView;
-
- private:
-  PackedWords value_;
-};
-
-class LogicValue {
- public:
-  explicit LogicValue(std::uint64_t bit_width);
-
-  [[nodiscard]] auto Width() const -> std::uint64_t;
-
-  [[nodiscard]] auto View() -> LogicView;
-  [[nodiscard]] auto View() const -> ConstLogicView;
-
- private:
-  PackedWords value_;
-  PackedWords unknown_;
 };
 
 }  // namespace lyra::value

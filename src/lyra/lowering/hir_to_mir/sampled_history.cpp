@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
+#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -99,6 +100,8 @@ auto BuildLeastSignificantBit(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value,
     mir::TypeId bit_type) -> mir::ExprId {
   const mir::ExprId zero = BuildIntLiteral(unit, block, 0);
+  const mir::ExprId shape =
+      mir::BuildPackedTypeRef(unit, block, block.exprs.Get(value).type);
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -107,7 +110,7 @@ auto BuildLeastSignificantBit(
                       mir::Direct{
                           .target = support::BuiltinFn::kElement,
                           .receiver = value},
-                  .arguments = {zero}},
+                  .arguments = {zero, shape}},
           .type = bit_type});
 }
 

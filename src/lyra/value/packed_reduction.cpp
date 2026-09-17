@@ -4,12 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <span>
 #include <string_view>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/packed.hpp"
-#include "lyra/value/packed_internal.hpp"
 
 namespace lyra::value {
 
@@ -28,28 +26,13 @@ auto RequireReductionShape(
 }
 
 auto WriteScalar(BitView dst, TwoStateBit value) -> void {
-  constexpr std::string_view kWhere = "WriteScalar(Bit)";
-  if (dst.Width() != 1U) {
-    throw InternalError(
-        std::format("{}: dst_width must be 1 (got {})", kWhere, dst.Width()));
-  }
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
-  const auto words = detail::PackedAccess::ValueWords(dst);
-  detail::RequireWordCount(kWhere, words, dst.Width());
-  words[0] = (value == TwoStateBit::kOne) ? std::uint64_t{1} : std::uint64_t{0};
+  dst.ValueWords()[0] =
+      (value == TwoStateBit::kOne) ? std::uint64_t{1} : std::uint64_t{0};
 }
 
 auto WriteScalar(LogicView dst, FourStateBit value) -> void {
-  constexpr std::string_view kWhere = "WriteScalar(Logic)";
-  if (dst.Width() != 1U) {
-    throw InternalError(
-        std::format("{}: dst_width must be 1 (got {})", kWhere, dst.Width()));
-  }
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
-  const auto vw = detail::PackedAccess::ValueWords(dst);
-  const auto uw = detail::PackedAccess::UnknownWords(dst);
-  detail::RequireWordCount(kWhere, vw, dst.Width());
-  detail::RequireWordCount(kWhere, uw, dst.Width());
+  const auto vw = dst.ValueWords();
+  const auto uw = dst.UnknownWords();
   switch (value) {
     case FourStateBit::kZero:
       vw[0] = 0;
@@ -68,7 +51,7 @@ auto WriteScalar(LogicView dst, FourStateBit value) -> void {
       uw[0] = 1;
       return;
   }
-  throw InternalError(std::format("{}: unknown FourStateBit value", kWhere));
+  throw InternalError("WriteScalar(Logic): unknown FourStateBit value");
 }
 
 auto NotScalar(TwoStateBit v) -> TwoStateBit {
@@ -90,10 +73,7 @@ auto NotScalar(FourStateBit v) -> FourStateBit {
 }
 
 auto ReductionAndBitValue(ConstBitView src) -> TwoStateBit {
-  constexpr std::string_view kWhere = "ReductionAnd(Bit)";
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
-  const auto words = detail::PackedAccess::ValueWords(src);
-  detail::RequireWordCount(kWhere, words, src.Width());
+  const auto words = src.ValueWords();
   for (std::size_t i = 0; i < words.size(); ++i) {
     const std::uint64_t mask = ValidBitsMask(i, src.Width());
     if ((words[i] & mask) != mask) {
@@ -104,10 +84,7 @@ auto ReductionAndBitValue(ConstBitView src) -> TwoStateBit {
 }
 
 auto ReductionOrBitValue(ConstBitView src) -> TwoStateBit {
-  constexpr std::string_view kWhere = "ReductionOr(Bit)";
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
-  const auto words = detail::PackedAccess::ValueWords(src);
-  detail::RequireWordCount(kWhere, words, src.Width());
+  const auto words = src.ValueWords();
   for (std::size_t i = 0; i < words.size(); ++i) {
     const std::uint64_t mask = ValidBitsMask(i, src.Width());
     if ((words[i] & mask) != 0U) {
@@ -118,10 +95,7 @@ auto ReductionOrBitValue(ConstBitView src) -> TwoStateBit {
 }
 
 auto ReductionXorBitValue(ConstBitView src) -> TwoStateBit {
-  constexpr std::string_view kWhere = "ReductionXor(Bit)";
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
-  const auto words = detail::PackedAccess::ValueWords(src);
-  detail::RequireWordCount(kWhere, words, src.Width());
+  const auto words = src.ValueWords();
   int parity = 0;
   for (std::size_t i = 0; i < words.size(); ++i) {
     const std::uint64_t mask = ValidBitsMask(i, src.Width());
@@ -131,12 +105,8 @@ auto ReductionXorBitValue(ConstBitView src) -> TwoStateBit {
 }
 
 auto ReductionAndLogicValue(ConstLogicView src) -> FourStateBit {
-  constexpr std::string_view kWhere = "ReductionAnd(Logic)";
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
-  const auto vw = detail::PackedAccess::ValueWords(src);
-  const auto uw = detail::PackedAccess::UnknownWords(src);
-  detail::RequireWordCount(kWhere, vw, src.Width());
-  detail::RequireWordCount(kWhere, uw, src.Width());
+  const auto vw = src.ValueWords();
+  const auto uw = src.UnknownWords();
   bool saw_unknown = false;
   for (std::size_t i = 0; i < vw.size(); ++i) {
     const std::uint64_t mask = ValidBitsMask(i, src.Width());
@@ -152,12 +122,8 @@ auto ReductionAndLogicValue(ConstLogicView src) -> FourStateBit {
 }
 
 auto ReductionOrLogicValue(ConstLogicView src) -> FourStateBit {
-  constexpr std::string_view kWhere = "ReductionOr(Logic)";
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
-  const auto vw = detail::PackedAccess::ValueWords(src);
-  const auto uw = detail::PackedAccess::UnknownWords(src);
-  detail::RequireWordCount(kWhere, vw, src.Width());
-  detail::RequireWordCount(kWhere, uw, src.Width());
+  const auto vw = src.ValueWords();
+  const auto uw = src.UnknownWords();
   bool saw_unknown = false;
   for (std::size_t i = 0; i < vw.size(); ++i) {
     const std::uint64_t mask = ValidBitsMask(i, src.Width());
@@ -173,12 +139,8 @@ auto ReductionOrLogicValue(ConstLogicView src) -> FourStateBit {
 }
 
 auto ReductionXorLogicValue(ConstLogicView src) -> FourStateBit {
-  constexpr std::string_view kWhere = "ReductionXor(Logic)";
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
-  const auto vw = detail::PackedAccess::ValueWords(src);
-  const auto uw = detail::PackedAccess::UnknownWords(src);
-  detail::RequireWordCount(kWhere, vw, src.Width());
-  detail::RequireWordCount(kWhere, uw, src.Width());
+  const auto vw = src.ValueWords();
+  const auto uw = src.UnknownWords();
   int parity = 0;
   for (std::size_t i = 0; i < vw.size(); ++i) {
     const std::uint64_t mask = ValidBitsMask(i, src.Width());

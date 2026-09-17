@@ -837,13 +837,15 @@ auto lyra_rt_packed_to_owned(const void* value) -> void*;
 // Positional access (LRM 11.5.1). `element` copies the bit-select / element
 // out; `with_element` returns a copy with that element replaced -- the
 // functional write the execution backend uses because it cannot mutate a packed
-// value in place.
-auto lyra_rt_packed_element(const void* value, const void* index) -> void*;
+// value in place. Both state the receiver's declared shape through `shape`,
+// because which bits a coordinate reaches is decided by how the declaration
+// divides the value's bits.
+auto lyra_rt_packed_element(
+    const void* value, const void* index, const void* shape) -> void*;
 auto lyra_rt_packed_with_element(
-    const void* value, const void* index, const void* replacement) -> void*;
-// A part-select states the shape its result takes through `shape`, a value of
-// the result's declared type: the bounds decide which bits are selected, that
-// type decides how they are structured.
+    const void* value, const void* index, const void* shape,
+    const void* replacement) -> void*;
+// A part-select states the same shape, and its bounds name a coordinate in it.
 auto lyra_rt_packed_slice(
     const void* value, const void* a, const void* b, const void* form,
     const void* shape) -> void*;

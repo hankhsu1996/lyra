@@ -35,6 +35,10 @@ the detail lives in the entry itself.
 
 - [packed-array-representation](packed-array-representation.md) -- HIR represents a packed array
   recursively (one dim per node); MIR stays flat and HIR-to-MIR flattens.
+- [packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md) -- a packed value carries
+  its width, signedness, state domain and bits; how a declaration divides those bits reaches an
+  access that names a position as an operand, which is what every other selectable family already
+  did.
 - [unpacked-array-representation](unpacked-array-representation.md) -- representation of a
   fixed-size unpacked array.
 - [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is a

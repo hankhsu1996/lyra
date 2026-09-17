@@ -129,7 +129,8 @@ auto ValuePlusargs(
   const std::int64_t converted = ConvertIntegralRemainder(*match, *base);
   return Completion{
       value::PackedArray::Int(1),
-      value::PackedArray::FromInt(converted, out.Type())};
+      value::PackedArray::FromInt(
+          converted, out.BitWidth(), out.IsSigned(), out.IsFourState())};
 }
 
 auto ValuePlusargs(
