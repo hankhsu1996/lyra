@@ -5,6 +5,7 @@
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
+#include <cxxabi.h>
 #include <deque>
 #include <exception>
 #include <functional>
@@ -211,12 +212,6 @@ auto RunGeneratedProcess(GeneratedEnvironment environment) -> Coroutine<void> {
       break;
     }
     co_await std::suspend_always{};
-  }
-  // A body that cannot be unwound through reports a control effect no region of
-  // it claimed as an outcome rather than by leaving; raising it here is what
-  // settles this activation cancelled instead of finished (LRM 9.6.2, 9.7).
-  if (CancellationTarget* target = values.CancelledBy(); target != nullptr) {
-    RaiseControlEffect(target);
   }
   co_return;
 }
@@ -1161,6 +1156,25 @@ auto lyra_rt_triggered(const void* event, void* runtime) -> void* {
           *static_cast<RuntimeEffects*>(runtime)));
 }
 
+auto lyra_rt_claim_departure(void* exception) -> void* {
+  // The landing is handed what the unwinder carries, not the effect itself;
+  // claiming is what turns one into the other, and it is the point after which
+  // this departure is this landing's to finish or to decline.
+  const auto* effect = static_cast<const lyra::runtime::ControlEffect*>(
+      abi::__cxa_begin_catch(exception));
+  return effect->target;
+}
+
+void lyra_rt_finish_departure() {
+  abi::__cxa_end_catch();
+}
+
+void lyra_rt_decline_departure() {
+  // Carries the same departure outward rather than raising a second one, so
+  // what a further landing tests is the target the first one named.
+  abi::__cxa_rethrow();
+}
+
 void lyra_rt_enter_target(void* runtime, void* target) {
   EnterCancellationTarget(
       *static_cast<RuntimeEffects*>(runtime),
@@ -1174,7 +1188,8 @@ void lyra_rt_leave_target(void* runtime, void* target) {
 }
 
 void lyra_rt_disable(void* target, void* runtime) {
-  static_cast<CancellationTarget*>(target)->Invalidate(
+  Disable(
+      static_cast<CancellationTarget*>(target),
       *static_cast<RuntimeEffects*>(runtime));
 }
 
@@ -1184,19 +1199,11 @@ auto lyra_rt_effect_names_target(void* effect, void* target) -> void* {
   return Own(PackedArray::Bit(effect == target));
 }
 
-auto lyra_rt_invalidated_target(void* runtime) -> void* {
-  return static_cast<RuntimeEffects*>(runtime)
-      ->CurrentProcess()
-      .OutermostInvalidatedTarget();
-}
-
-auto lyra_rt_has_invalidated_target(void* runtime) -> bool {
-  return lyra_rt_invalidated_target(runtime) != nullptr;
-}
-
-void lyra_rt_settle_cancelled(void* effect) {
-  GeneratedCallScope::Current().ActivationValues().SettleCancelled(
-      static_cast<CancellationTarget*>(effect));
+void lyra_rt_take_departure_if_due(void* runtime) {
+  // A foreign call made before any procedure starts runs with no process at all
+  // (LRM 10.5, 26.2), and a point one returns through is not an execution that
+  // could have been disabled or terminated, so nothing is owed there.
+  TakeDepartureIfDue(*static_cast<RuntimeEffects*>(runtime));
 }
 
 auto lyra_rt_sim_time(void* runtime, const void* unit_power) -> void* {
@@ -1364,6 +1371,23 @@ void lyra_rt_leave_dpi_scope(void* runtime) {
   LeaveDpiScope(*static_cast<RuntimeEffects*>(runtime));
 }
 
+auto lyra_rt_disable_is_active(void* runtime) -> std::int32_t {
+  return DisableIsActive(*static_cast<RuntimeEffects*>(runtime));
+}
+
+void lyra_rt_check_import_task_acknowledged(
+    void* runtime, std::int32_t returned) {
+  CheckImportTaskAcknowledged(*static_cast<RuntimeEffects*>(runtime), returned);
+}
+
+void lyra_rt_check_import_function_acknowledged(void* runtime) {
+  CheckImportFunctionAcknowledged(*static_cast<RuntimeEffects*>(runtime));
+}
+
+void lyra_rt_check_export_reachable(void* runtime) {
+  CheckExportReachable(*static_cast<RuntimeEffects*>(runtime));
+}
+
 auto lyra_rt_claim_namespace_initialize(void* runtime, const char* name)
     -> std::int64_t {
   return ClaimNamespaceInitialization(
@@ -1397,13 +1421,23 @@ void lyra_rt_run_exported_task_to_completion(void* activation) {
       std::move(*static_cast<Coroutine<void>*>(activation)));
   DriveOnForeignStack(called);
   // A run-time error that left the body was stored rather than allowed to
-  // travel, and the entry point is one statement of the foreign caller, so it
-  // continues from here -- taken before the activation is released, which
-  // destroys what holds it.
+  // travel, and the frame above this entry point is foreign code, so it may not
+  // travel from here either: it is reported where it is caught and this
+  // execution is asked to stop instead. Taken before the activation is
+  // released, which destroys what holds it.
   std::exception_ptr raised = process.TakeInnermostRaisedError();
   process.PopActivation();
-  if (raised) {
+  if (!raised) {
+    return;
+  }
+  // Telling the design's error from a defect of the tool takes raising it
+  // again, since one put away as an `exception_ptr` answers what it is no other
+  // way. Only the first of the two ends here; the second is not something a
+  // boundary can make crossable, and travels as it did.
+  try {
     std::rethrow_exception(raised);
+  } catch (const lyra::SimulationError& error) {
+    lyra::runtime::ReportFatalWithoutLeaving(error.what());
   }
 }
 

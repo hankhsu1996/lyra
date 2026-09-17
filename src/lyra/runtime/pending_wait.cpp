@@ -28,7 +28,7 @@ void PendingWait::CheckAbortOnResume() const {
   // A wait whose condition already held never suspended, so its execution never
   // lost control and nothing can have disabled a target under it.
   if (waiting_process_ != nullptr) {
-    RaiseControlEffectIfDisabled(*waiting_process_);
+    TakeDepartureIfDue(*waiting_process_);
   }
 }
 

@@ -120,6 +120,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_dpi_logic_buffer";
     case RuntimeOp::kMakeDpiOpenArray:
       return "make_dpi_open_array";
+    case RuntimeOp::kClaimDeparture:
+      return "claim_departure";
   }
   throw InternalError("llvm codegen: unknown runtime operation");
 }
@@ -555,6 +557,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   // tracing that makes the recovery unnecessary.
   constexpr std::string_view kRecoversAHandleFromItsObject =
       "answers with the handle referring to the object a body runs on";
+  constexpr std::string_view kLeavesByUnwinding =
+      "leaves a body by unwinding it, where this target's bodies leave by "
+      "branching";
   switch (fn) {
     case support::BuiltinFn::kElement:
     case support::BuiltinFn::kSlice:
@@ -743,6 +748,13 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSelfHandle:
       return NotRealized{.shape = kRecoversAHandleFromItsObject};
 
+    // A body that leaves by branching reaches the gate as the pair of questions
+    // the lowering already asks wherever this execution regains control -- and
+    // it asks them here in place of this call rather than through an entry of
+    // its own.
+    case support::BuiltinFn::kTakeDepartureIfDue:
+      return NotRealized{.shape = kLeavesByUnwinding};
+
     // The runtime, then the user string, then the destination whose
     // representation names the entry.
     case support::BuiltinFn::kValuePlusargs:
@@ -854,6 +866,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kLeaveStaticInit:
     case support::BuiltinFn::kEnterDpiScope:
     case support::BuiltinFn::kLeaveDpiScope:
+    case support::BuiltinFn::kDisableIsActive:
+    case support::BuiltinFn::kCheckImportTaskAcknowledged:
+    case support::BuiltinFn::kCheckImportFunctionAcknowledged:
+    case support::BuiltinFn::kCheckExportReachable:
     case support::BuiltinFn::kClaimNamespaceInitialize:
     case support::BuiltinFn::kCurrentExportScope:
     case support::BuiltinFn::kFindExportEntry:

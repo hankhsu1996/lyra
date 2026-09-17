@@ -347,6 +347,10 @@ auto RuntimeEffects::TryRunning() -> RunningState* {
   return AsRuntime(*this).running_;
 }
 
+void RuntimeEffects::ReportDesignFailure(std::string_view message) {
+  AsRuntime(*this).ReportDesignError(message);
+}
+
 auto RuntimeEffects::Now() const -> SimTime {
   return AsRuntime(*this).now_;
 }

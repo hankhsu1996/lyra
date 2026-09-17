@@ -216,6 +216,18 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
           [&](const lir::UnreachableTerm&) -> diag::Result<void> {
             builder_.CreateUnreachable();
             return {};
+          },
+          [&](const lir::DepartingCallInstr& call) -> diag::Result<void> {
+            auto resolved = ResolveCall(
+                lir::CallInstr{.target = call.target, .args = call.args},
+                fn_->values.Get(call.result).type);
+            if (!resolved) {
+              return std::unexpected(std::move(resolved.error()));
+            }
+            values_[call.result] = builder_.CreateInvoke(
+                resolved->callee, blocks_[call.returned.value],
+                blocks_[call.landing.value], resolved->args);
+            return {};
           }},
       terminator.data);
 }

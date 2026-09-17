@@ -806,7 +806,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "disable",
           .declaration = FreeFunction{"lyra::runtime::Disable"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .can_depart = true};
     case BuiltinFn::kEnterTarget:
       return {
           .name = "enter_target",
@@ -834,7 +835,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "process_kill",
           .declaration = FreeFunction{"lyra::runtime::ProcessKill"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .can_depart = true};
     case BuiltinFn::kProcessAwait:
       return {
           .name = "process_await",
@@ -884,6 +886,33 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "leave_dpi_scope",
           .declaration = FreeFunction{"lyra::runtime::LeaveDpiScope"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kDisableIsActive:
+      return {
+          .name = "disable_is_active",
+          .declaration = FreeFunction{"lyra::runtime::DisableIsActive"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kCheckImportTaskAcknowledged:
+      return {
+          .name = "check_import_task_acknowledged",
+          .declaration =
+              FreeFunction{"lyra::runtime::CheckImportTaskAcknowledged"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kCheckImportFunctionAcknowledged:
+      return {
+          .name = "check_import_function_acknowledged",
+          .declaration =
+              FreeFunction{"lyra::runtime::CheckImportFunctionAcknowledged"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kCheckExportReachable:
+      return {
+          .name = "check_export_reachable",
+          .declaration = FreeFunction{"lyra::runtime::CheckExportReachable"},
+          .takes_the_runtime_handle = true};
+    case BuiltinFn::kTakeDepartureIfDue:
+      return {
+          .name = "take_departure_if_due",
+          .declaration = FreeFunction{"lyra::runtime::TakeDepartureIfDue"},
           .takes_the_runtime_handle = true};
     case BuiltinFn::kClaimNamespaceInitialize:
       return {
@@ -952,7 +981,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "run_exported_task_to_completion",
           .declaration =
-              FreeFunction{"lyra::runtime::RunExportedTaskToCompletion"}};
+              FreeFunction{"lyra::runtime::RunExportedTaskToCompletion"},
+          .can_depart = true};
     case BuiltinFn::kCurrentExportScope:
       return {
           .name = "current_export_scope",

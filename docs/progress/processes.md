@@ -24,7 +24,10 @@ under each item, and the conformance gaps at the end.
 - [x] P2 -- `final` (LRM 9.2.3). A final procedure occurs at the end of simulation time, which a run
       reaches by being asked to end and equally by running out of work. A further request to end,
       made from inside one, ends the simulation immediately, so the ones still queued do not run.
-      What a final procedure may contain is what a function may, so none can consume time.
+      What a final procedure may contain is what a function may, so none can consume time. Work
+      still suspended when the run ends stops where it stands: its frame is released without
+      resuming, so what it would have written is not written, and a cleanup that frame was holding
+      open runs with nothing of the design executing and has nothing left to withdraw from.
 - [x] P14 -- `$finish` / `$stop` / `$exit` diagnostic level (LRM 20.2, Table 20-1). The argument
       selects what the tool prints where the task is reached -- nothing, the call's location with
       the simulation time, or those plus what the run has cost -- and defaults to 1. The message is

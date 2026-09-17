@@ -45,6 +45,36 @@ namespace {
 constexpr base::ComponentIndex kUpdatedReceiver{0};
 constexpr base::ComponentIndex kMutatingCallResult{1};
 
+// Whether a callee can leave by a departure rather than by returning. The
+// design's own code can, wherever it stands, because a `disable` anywhere
+// inside it reaches every execution it encloses (LRM 9.6.2). A runtime entry
+// answers for itself, since only the entry knows whether it runs the design's
+// code or raises. Foreign code is the one callee a departure never comes out
+// of: it stops at that frame and crosses as a value instead.
+auto CanDepart(const lir::CallTarget& target) -> bool {
+  return std::visit(
+      Overloaded{
+          [](const lir::FunctionTarget&) { return true; },
+          [](const lir::DispatchTarget&) { return true; },
+          [](const lir::IndirectTarget&) { return true; },
+          [](const lir::ControlEffectTarget& effect) {
+            return effect.op != lir::ControlEffectTarget::Op::kFinishDeparture;
+          },
+          [](const lir::BuiltinTarget& builtin) {
+            return support::RuntimeEntryOf(builtin.fn).can_depart;
+          },
+          // Building a coroutine's frame places its arguments and stops before
+          // its first statement, so none of the body has run when it returns.
+          [](const lir::CoroutineTarget&) { return false; },
+          [](const lir::ConstructTarget&) { return false; },
+          [](const lir::ForeignTarget&) { return false; },
+          [](const lir::ValueCellTarget&) { return false; },
+          [](const lir::OpenVariablesTarget&) { return false; },
+          [](const lir::VariableAddressTarget&) { return false; },
+          [](const lir::CloseVariablesTarget&) { return false; }},
+      target);
+}
+
 auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
@@ -684,10 +714,76 @@ auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
     }
     args.push_back(*std::move(lowered));
   }
-  Emit(
-      unit_->TranslateType(unit_->Mir().builtins.void_type),
-      lir::CallInstr{.target = base->callee, .args = std::move(args)});
+  auto entered = EmitDepartingCall(
+      base->callee, std::move(args),
+      unit_->TranslateType(unit_->Mir().builtins.void_type));
+  if (!entered) {
+    return std::unexpected(std::move(entered.error()));
+  }
   return {};
+}
+
+auto FunctionLowerer::BuildLanding() -> diag::Result<lir::BlockId> {
+  const lir::BlockId landing = NewBlock();
+  const lir::BlockId resumed = current_;
+  SetCurrent(landing);
+
+  const lir::Operand effect =
+      Emit(unit_->ControlEffectType(), lir::ReceiveDepartureInstr{});
+  if (regions_.empty()) {
+    // Nothing here claims one, so what this landing owes is what any other way
+    // out of the body owes: the cleanups it stands in front of, and the end of
+    // the storage the body's declared variables live in.
+    auto cleaned = RunCleanupsDownTo(0);
+    if (!cleaned) {
+      return std::unexpected(std::move(cleaned.error()));
+    }
+    CloseVariables();
+    EmitCallLeavingTheFrame(
+        unit_->TranslateType(unit_->Mir().builtins.void_type),
+        lir::CallInstr{
+            .target =
+                lir::ControlEffectTarget{
+                    .op = lir::ControlEffectTarget::Op::kDeclineDeparture},
+            .args = {}});
+    Terminate(lir::UnreachableTerm{});
+    SetCurrent(resumed);
+    return landing;
+  }
+
+  const RegionTargets region = regions_.back();
+  auto cleaned = RunCleanupsDownTo(region.cleanup_depth);
+  if (!cleaned) {
+    return std::unexpected(std::move(cleaned.error()));
+  }
+  Store(
+      lir::Place{.base = lir::Use{.value = region.caught}, .chain = {}},
+      effect);
+  Terminate(lir::BranchTerm{.target = region.handler});
+  SetCurrent(resumed);
+  return landing;
+}
+
+auto FunctionLowerer::EmitDepartingCall(
+    lir::CallTarget target, std::vector<lir::Operand> args,
+    lir::TypeId result_type) -> diag::Result<lir::Operand> {
+  auto landing = BuildLanding();
+  if (!landing) {
+    return std::unexpected(std::move(landing.error()));
+  }
+  const lir::BlockId returned = NewBlock();
+  const lir::ValueId result = fn_.values.Add(
+      lir::Local{
+          .name = {}, .type = result_type, .kind = lir::LocalKind::kTemp});
+  Terminate(
+      lir::DepartingCallInstr{
+          .result = result,
+          .target = std::move(target),
+          .args = std::move(args),
+          .returned = returned,
+          .landing = *landing});
+  SetCurrent(returned);
+  return lir::Operand{lir::Use{.value = result}};
 }
 
 auto FunctionLowerer::NewBlock() -> lir::BlockId {
@@ -714,6 +810,26 @@ auto FunctionLowerer::Terminated() const -> bool {
 }
 
 auto FunctionLowerer::Emit(lir::TypeId type, lir::InstrData data)
+    -> lir::Operand {
+  if (const auto* call = std::get_if<lir::CallInstr>(&data);
+      call != nullptr && CanDepart(call->target)) {
+    throw InternalError(
+        "FunctionLowerer::Emit: a callee that can leave without returning has "
+        "to be stated as a departing call, so that whatever is owed between "
+        "here and the frame's edge gets its turn; please report this as a bug");
+  }
+  return Append(type, std::move(data));
+}
+
+// A call whose departure, if it makes one, leaves this frame: every region is
+// already behind it and everything owed between here and the edge has been
+// emitted, so there is nothing left here to give a turn to.
+auto FunctionLowerer::EmitCallLeavingTheFrame(
+    lir::TypeId type, lir::CallInstr call) -> lir::Operand {
+  return Append(type, std::move(call));
+}
+
+auto FunctionLowerer::Append(lir::TypeId type, lir::InstrData data)
     -> lir::Operand {
   const lir::ValueId result = fn_.values.Add(
       lir::Local{.name = {}, .type = type, .kind = lir::LocalKind::kTemp});
@@ -915,8 +1031,11 @@ auto FunctionLowerer::LowerStmtInto(
           [&](const mir::TryStmt& s) -> diag::Result<void> {
             return LowerTryInto(block, s);
           },
-          [&](const mir::RaiseStmt& s) -> diag::Result<void> {
-            return LowerRaiseInto(block, s);
+          // A raise says the region holding this departure declines it, never
+          // that a new effect starts here, so what carries on outward is the
+          // one already held and the statement's operand is read by nothing.
+          [&](const mir::RaiseStmt&) -> diag::Result<void> {
+            return LeaveCarrying();
           },
           [&](const mir::FinallyStmt& s) -> diag::Result<void> {
             return LowerFinallyInto(block, s);
@@ -1245,65 +1364,30 @@ auto FunctionLowerer::SuspendResumingAt(lir::BlockId resume)
   return {};
 }
 
-auto FunctionLowerer::LeaveCarrying(lir::Operand effect) -> diag::Result<void> {
-  if (!regions_.empty()) {
-    const RegionTargets region = regions_.back();
-    auto cleaned = RunCleanupsDownTo(region.cleanup_depth);
-    if (!cleaned) {
-      return std::unexpected(std::move(cleaned.error()));
-    }
-    Store(
-        lir::Place{.base = lir::Use{.value = region.caught}, .chain = {}},
-        std::move(effect));
-    Terminate(lir::BranchTerm{.target = region.handler});
-    return {};
+auto FunctionLowerer::LeaveCarrying() -> diag::Result<void> {
+  // Declining puts the departure back on its way, and a region outside this
+  // one is entitled to the same chance at it that this one just had, so the
+  // decline is itself a point it can leave from.
+  auto declined = EmitDepartingCall(
+      lir::ControlEffectTarget{
+          .op = lir::ControlEffectTarget::Op::kDeclineDeparture},
+      {}, unit_->TranslateType(unit_->Mir().builtins.void_type));
+  if (!declined) {
+    return std::unexpected(std::move(declined.error()));
   }
-  auto cleaned = RunCleanupsDownTo(0);
-  if (!cleaned) {
-    return std::unexpected(std::move(cleaned.error()));
-  }
-  Emit(
-      unit_->TranslateType(unit_->Mir().builtins.void_type),
-      lir::CallInstr{
-          .target =
-              lir::ControlEffectTarget{
-                  .op = lir::ControlEffectTarget::Op::kSettleCancelled},
-          .args = {std::move(effect)}});
-  CloseVariables();
-  Terminate(lir::ReturnTerm{.value = std::nullopt});
+  Terminate(lir::UnreachableTerm{});
   return {};
 }
 
-auto FunctionLowerer::CheckDisabledTarget() -> diag::Result<void> {
-  const lir::Operand condition = Emit(
-      unit_->MachineBoolType(),
-      lir::CallInstr{
-          .target =
-              lir::ControlEffectTarget{
-                  .op = lir::ControlEffectTarget::Op::kHasInvalidatedTarget},
-          .args = {CurrentRuntime()}});
-  const lir::BlockId leaving_id = NewBlock();
-  const lir::BlockId continue_id = NewBlock();
-  Terminate(
-      lir::CondBranchTerm{
-          .condition = condition,
-          .if_true = leaving_id,
-          .if_false = continue_id});
-
-  SetCurrent(leaving_id);
-  const lir::Operand effect = Emit(
-      unit_->ControlEffectType(),
-      lir::CallInstr{
-          .target =
-              lir::ControlEffectTarget{
-                  .op = lir::ControlEffectTarget::Op::kInvalidatedTarget},
-          .args = {CurrentRuntime()}});
-  auto left = LeaveCarrying(effect);
-  if (!left) {
-    return std::unexpected(std::move(left.error()));
+auto FunctionLowerer::TakeDepartureIfDue() -> diag::Result<void> {
+  auto taken = EmitDepartingCall(
+      lir::ControlEffectTarget{
+          .op = lir::ControlEffectTarget::Op::kTakeDepartureIfDue},
+      {CurrentRuntime()},
+      unit_->TranslateType(unit_->Mir().builtins.void_type));
+  if (!taken) {
+    return std::unexpected(std::move(taken.error()));
   }
-
-  SetCurrent(continue_id);
   return {};
 }
 
@@ -1356,22 +1440,21 @@ auto FunctionLowerer::LowerTryInto(
     return std::unexpected(std::move(handler.error()));
   }
   // Reaching the handler's end is what claiming the effect amounts to:
-  // execution resumes past the region (LRM 9.6.2).
+  // execution resumes past the region (LRM 9.6.2), and the departure it was
+  // holding is released here because nothing carries it any further.
   if (!Terminated()) {
+    Emit(
+        unit_->TranslateType(unit_->Mir().builtins.void_type),
+        lir::CallInstr{
+            .target =
+                lir::ControlEffectTarget{
+                    .op = lir::ControlEffectTarget::Op::kFinishDeparture},
+            .args = {}});
     Terminate(lir::BranchTerm{.target = merge_id});
   }
 
   SetCurrent(merge_id);
   return {};
-}
-
-auto FunctionLowerer::LowerRaiseInto(
-    const mir::Block& block, const mir::RaiseStmt& stmt) -> diag::Result<void> {
-  auto effect = LowerExpr(block, stmt.effect);
-  if (!effect) {
-    return std::unexpected(std::move(effect.error()));
-  }
-  return LeaveCarrying(*std::move(effect));
 }
 
 auto FunctionLowerer::LowerCondition(const mir::Block& block, mir::ExprId id)
@@ -1908,9 +1991,12 @@ auto FunctionLowerer::LowerObjectConstruction(
     }
     args.push_back(*std::move(lowered));
   }
-  Emit(
-      unit_->TranslateType(unit_->Mir().builtins.void_type),
-      lir::CallInstr{.target = constructor->callee, .args = std::move(args)});
+  auto entered = EmitDepartingCall(
+      constructor->callee, std::move(args),
+      unit_->TranslateType(unit_->Mir().builtins.void_type));
+  if (!entered) {
+    return std::unexpected(std::move(entered.error()));
+  }
   return handle;
 }
 
@@ -2004,12 +2090,22 @@ auto FunctionLowerer::LowerCall(
     return EnterCoroutine(block, call, type, std::nullopt);
   }
 
-  // A foreign caller cannot be parked, so the entry point it reached drives the
-  // body to its end where it stands instead of waiting for it (LRM 35.8).
-  if (const auto fn = mir::DirectBuiltinFn(call);
-      fn.has_value() &&
-      *fn == support::BuiltinFn::kRunExportedTaskToCompletion) {
-    return LowerDriveToCompletion(block, call, type);
+  if (const auto fn = mir::DirectBuiltinFn(call); fn.has_value()) {
+    // A foreign caller cannot be parked, so the entry point it reached drives
+    // the body to its end where it stands instead of waiting for it (LRM 35.8).
+    if (*fn == support::BuiltinFn::kRunExportedTaskToCompletion) {
+      return LowerDriveToCompletion(block, call, type);
+    }
+    if (*fn == support::BuiltinFn::kTakeDepartureIfDue) {
+      auto checked = TakeDepartureIfDue();
+      if (!checked) {
+        return std::unexpected(std::move(checked.error()));
+      }
+      // The gate answers nothing, so what stands here is never read.
+      return lir::Operand{lir::IntConst{
+          .value = lir::IntegralConstant{.value_words = {0}, .state_words = {}},
+          .type = unit_->TranslateType(type)}};
+    }
   }
 
   auto args = LowerCallOperands(block, call);
@@ -2038,13 +2134,21 @@ auto FunctionLowerer::LowerDriveToCompletion(
     return activation;
   }
   const lir::Operand driven = *std::move(activation);
-  Emit(
-      unit_->TranslateType(unit_->Mir().builtins.void_type),
-      lir::CallInstr{
-          .target =
-              lir::BuiltinTarget{
-                  .fn = support::BuiltinFn::kRunExportedTaskToCompletion},
-          .args = {driven}});
+  auto drove = EmitDepartingCall(
+      lir::BuiltinTarget{
+          .fn = support::BuiltinFn::kRunExportedTaskToCompletion},
+      {driven}, unit_->TranslateType(unit_->Mir().builtins.void_type));
+  if (!drove) {
+    return std::unexpected(std::move(drove.error()));
+  }
+  // Driving a body to its end is a point where this execution regains control,
+  // and the body may have ended in a way that leaves nothing to read: a
+  // run-time error of the design reported here rather than travelling, since
+  // the frame above is foreign code.
+  auto checked = TakeDepartureIfDue();
+  if (!checked) {
+    return std::unexpected(std::move(checked.error()));
+  }
   if (completion_slot.has_value()) {
     return LoadActivationValue(*completion_slot, unit_->TranslateType(type));
   }
@@ -2092,21 +2196,12 @@ auto FunctionLowerer::EmitCall(
   if (!target) {
     return std::unexpected(std::move(target.error()));
   }
-  const lir::Operand result = Emit(
+  if (CanDepart(*target)) {
+    return EmitDepartingCall(*std::move(target), std::move(args), result_type);
+  }
+  return Emit(
       result_type,
       lir::CallInstr{.target = *std::move(target), .args = std::move(args)});
-
-  // Disabling a target the disabling execution is itself inside leaves it (LRM
-  // 9.6.2), and the statement is where that execution next has control, so it
-  // is one of the points a region's body asks at.
-  if (const auto fn = DirectBuiltinFn(call);
-      fn.has_value() && *fn == support::BuiltinFn::kDisable) {
-    auto checked = CheckDisabledTarget();
-    if (!checked) {
-      return std::unexpected(std::move(checked.error()));
-    }
-  }
-  return result;
 }
 
 auto FunctionLowerer::LowerRegistration(
@@ -2182,7 +2277,7 @@ auto FunctionLowerer::LowerCoroutineAwait(
 
   // Having the thread back is a point where this execution regains control, so
   // a target it is inside may have been disabled while it was away.
-  auto checked = CheckDisabledTarget();
+  auto checked = TakeDepartureIfDue();
   if (!checked) {
     return std::unexpected(std::move(checked.error()));
   }
@@ -2774,7 +2869,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             }
             // Resuming is a point where this execution regains control, so a
             // target it is inside may have been disabled while it was away.
-            auto checked = CheckDisabledTarget();
+            auto checked = TakeDepartureIfDue();
             if (!checked) {
               return std::unexpected(std::move(checked.error()));
             }

@@ -6,6 +6,7 @@
 #include "lyra/runtime/dpi_scope_registry.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/sim_time.hpp"
@@ -13,21 +14,82 @@
 namespace lyra::runtime {
 
 void EnterDpiScope(RuntimeEffects& effects, Scope* decl_scope) {
-  effects.Running().dpi_scopes.Enter(decl_scope);
+  effects.Running().import_calls.Enter(decl_scope);
 }
 
 void LeaveDpiScope(RuntimeEffects& effects) {
-  effects.Running().dpi_scopes.Leave();
+  // The extent is left on every way out of it, and one of those ways runs with
+  // nothing of the design executing: the frame of an execution still suspended
+  // when the run ends is released where it stands, which runs the cleanups it
+  // was holding open. The chain that entry belonged to is going with it.
+  if (RunningState* running = effects.TryRunning(); running != nullptr) {
+    running->import_calls.Leave();
+  }
 }
 
 auto CurrentDpiScope() -> Scope* {
   RunningState* running = AmbientRunContext::Current().Effects().TryRunning();
-  return running == nullptr ? nullptr : running->dpi_scopes.Current();
+  return running == nullptr ? nullptr : running->import_calls.CurrentScope();
 }
 
 auto ReplaceDpiScope(Scope* scope) -> Scope* {
   RunningState* running = AmbientRunContext::Current().Effects().TryRunning();
-  return running == nullptr ? nullptr : running->dpi_scopes.Replace(scope);
+  return running == nullptr ? nullptr
+                            : running->import_calls.ReplaceScope(scope);
+}
+
+namespace {
+
+// Kept apart from the int the boundary answers with, because what the checks
+// need is the predicate and what crosses the boundary is the standard's own
+// encoding of it.
+auto DepartureIsDue(RuntimeEffects& effects) -> bool {
+  const RuntimeProcess* process = effects.TryCurrentProcess();
+  return process != nullptr && process->DepartureIsDue();
+}
+
+}  // namespace
+
+auto DisableIsActive(RuntimeEffects& effects) -> std::int32_t {
+  return DepartureIsDue(effects) ? 1 : 0;
+}
+
+void AcknowledgeStop(RuntimeEffects& effects) {
+  if (RunningState* running = effects.TryRunning(); running != nullptr) {
+    running->import_calls.AcknowledgeStop();
+  }
+}
+
+void CheckImportTaskAcknowledged(
+    RuntimeEffects& effects, std::int32_t returned) {
+  if (!DepartureIsDue(effects) || returned == 1) {
+    return;
+  }
+  effects.ReportDesignFailure(
+      "an imported task returned while a disable was active on its execution "
+      "thread without returning 1 (LRM 35.9 item b)");
+}
+
+void CheckImportFunctionAcknowledged(RuntimeEffects& effects) {
+  if (!DepartureIsDue(effects)) {
+    return;
+  }
+  RunningState* running = effects.TryRunning();
+  if (running != nullptr && running->import_calls.InnermostAcknowledgedStop()) {
+    return;
+  }
+  effects.ReportDesignFailure(
+      "an imported function returned while a disable was active on its "
+      "execution thread without calling svAckDisabledState (LRM 35.9 item c)");
+}
+
+void CheckExportReachable(RuntimeEffects& effects) {
+  if (!DepartureIsDue(effects)) {
+    return;
+  }
+  effects.ReportDesignFailure(
+      "foreign code called an exported subroutine after a disable became "
+      "active on its execution thread (LRM 35.9 item d)");
 }
 
 }  // namespace lyra::runtime
@@ -97,14 +159,15 @@ auto EffectiveTimePowers(
 
 }  // namespace
 
-// The Annex H context and time surface, linked into the simulation binary and
-// resolved against the user's C by name. `svScope` is `void*`; a handle is a
-// `runtime::Scope*`. The current scope is the top of the running DPI scope
-// chain; the directory answers the name and user-data queries; a time query
-// reports the scope's effective unit or precision, or the simulation-level
-// value for a null scope. Errors follow the svdpi contract -- a null handle,
-// null out slot, or invalid handle yields the documented null / -1 -- and never
-// throw across the C boundary.
+// The Annex H context, time and disable surface, linked into the simulation
+// binary and resolved against the user's C by name. `svScope` is `void*`; a
+// handle is a `runtime::Scope*`. The current scope is the innermost entry of
+// the running import call chain; the directory answers the name and user-data
+// queries; a time query reports the scope's effective unit or precision, or the
+// simulation-level value for a null scope; and the two disable entries are how
+// foreign code reads and answers the protocol of LRM 35.9. Errors follow the
+// svdpi contract -- a null handle, null out slot, or invalid handle yields the
+// documented null / -1 -- and nothing here throws across the C boundary.
 extern "C" {
 
 auto svGetScope() -> void* {
@@ -186,6 +249,14 @@ auto svGetTimePrecision(void* scope, void* time_precision) -> int {
   // NOLINTNEXTLINE(bugprone-signed-char-misuse)
   *static_cast<std::int32_t*>(time_precision) = precision;
   return 0;
+}
+
+auto svIsDisabledState() -> int {
+  return lyra::runtime::DisableIsActive(Effects());
+}
+
+void svAckDisabledState() {
+  lyra::runtime::AcknowledgeStop(Effects());
 }
 
 }  // extern "C"

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 namespace lyra::runtime {
 
 class RuntimeEffects;
@@ -27,5 +29,33 @@ void LeaveDpiScope(RuntimeEffects& effects);
 // import's call does.
 [[nodiscard]] auto CurrentDpiScope() -> Scope*;
 auto ReplaceDpiScope(Scope* scope) -> Scope*;
+
+// LRM 35.8: the int an exported task's entry hands its foreign caller, and what
+// `svIsDisabledState` answers -- 1 while a disable is active on this
+// execution thread, 0 otherwise. Active covers everything that stops an
+// execution: a disable reaching a block it is inside, and its process being
+// terminated. They are one answer because foreign code can do only one thing
+// about either. An execution running none of the design's own code has nothing
+// to stop, and answers 0.
+[[nodiscard]] auto DisableIsActive(RuntimeEffects& effects) -> std::int32_t;
+
+// `svAckDisabledState` (LRM 35.9 item c): the foreign frame now running says it
+// is following the protocol, which is what its boundary holds an imported
+// function to before it returns.
+void AcknowledgeStop(RuntimeEffects& effects);
+
+// LRM 35.9's checks on the foreign side, each reported where its evidence is
+// and none of them leaving by an effect -- a departure may not cross a frame
+// this runtime did not emit, so what these do is report and end the run, and
+// the execution departs at the boundary where control comes back.
+//
+// Item b: an imported task that returns while its execution must stop returns
+// 1. Item c: an imported function in that state calls `svAckDisabledState`
+// before returning. Item d: no exported subroutine is called at all once the
+// state is entered, which is checked where such a call arrives.
+void CheckImportTaskAcknowledged(
+    RuntimeEffects& effects, std::int32_t returned);
+void CheckImportFunctionAcknowledged(RuntimeEffects& effects);
+void CheckExportReachable(RuntimeEffects& effects);
 
 }  // namespace lyra::runtime

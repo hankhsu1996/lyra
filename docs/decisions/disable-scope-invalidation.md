@@ -108,11 +108,9 @@ call, and a `disable` are the same program whether or not any target encloses th
 check and the outward travel are the runtime's, never statements a body states for itself. What a
 body does carry is the region itself: a scope that can be left from anywhere within it, including
 from a callable it invoked, and whose continuation is the statement after it. That is a generic
-control construct, not a cancellation mechanism, and each backend realizes it in its own terms: one
-whose bodies can be unwound through reaches an execution inside a region that way, and one whose
-bodies cannot asks the runtime, at the points where such an execution regains control, whether a
-target it is inside has been disabled. Either way the effect's origin, its outward travel, and which
-region consumes it are fixed here and re-decided by neither.
+control construct, not a cancellation mechanism, and a backend realizes it by leaving the region the
+way the target it emits leaves a scope from within. The effect's origin, its outward travel, and
+which region consumes it are fixed here and re-decided by no backend.
 
 ## Consequences
 
@@ -126,13 +124,9 @@ region consumes it are fixed here and re-decided by neither.
 - An activation that enters the scope after the `disable` captures the new generation and is
   unaffected.
 - The gate is an integer compare, the same in every backend. The region is not: realizing it needs a
-  way to leave a scope from anywhere within it, which a backend either has or must build. Both have
-  it now. A backend that unwinds gets it from the target language and touches nothing inside the
-  region. A backend that cannot be unwound through builds it from the region's own structure: the
-  ways out of a body are enumerable in a control-flow graph, so the extent's membership is bracketed
-  by an entry and a cleanup that runs on each of them, and at the points inside the region where an
-  execution regains control the body asks the runtime for the gate's answer. The check is still the
-  runtime's -- what crosses is what it decided, not a comparison the body makes.
+  way to leave a scope from anywhere within it, which a backend gets from the target it emits and
+  which costs it nothing inside the region. The check is still the runtime's -- what crosses is what
+  it decided, not a comparison the body makes.
 
 - The extent's two ends have to be stated, not implied. Marking membership with a value whose
   lifetime is the body's asks the target language to run code at scope exit, which is a facility
@@ -164,13 +158,13 @@ region consumes it are fixed here and re-decided by neither.
   effect crossed. The check belongs where control is regained, which is the runtime, and the outward
   travel is what a nested call's ordinary result path already does.
 
-  A backend that cannot be unwound through does ask at those points, and the difference from what is
-  rejected here is what makes it not this shape. It asks only inside a region, so a body enclosing
-  no target is untouched; it asks for an answer the runtime computed rather than comparing
-  generations itself; and it threads nothing across a callable or spawn boundary, because an effect
-  no region of a body claims is that activation's completion outcome and the boundary carries it as
-  such. What was rejected was making the gate and the travel the mechanism; what a region realizes
-  is the landing alone.
+  It was readmitted once, for a backend held to be one "whose bodies cannot be unwound through" --
+  and that reading of this record was wrong twice over. The phrase names two properties, not one:
+  travelling through a generated frame, which already worked and needed nothing emitted, and being
+  caught in one, which needed a call with two destinations and a pad that says what it takes. Only
+  the second was ever missing, and building it is what removed the second realization. The reading
+  also treated a sentence about targets in general as a finding about this one, which is how a
+  rejected shape comes back without anyone arguing for it.
 
 - **An explicit resume-reason or a pending-control state on the activation.** A single "disabled"
   signal cannot name which scope or how far to unwind, which recursion and nesting require; the

@@ -259,22 +259,23 @@ struct VariableAddressTarget {};
 
 struct CloseVariablesTarget {};
 
-// An operation on the control effect that leaves a disabled target (LRM
-// 9.6.2). `kHasInvalidatedTarget` and `kInvalidatedTarget` ask whether a target
-// this execution is inside was disabled while it was away, and which one; both
-// are asked where an execution regains control, and each is answered by
-// comparing generations in the runtime rather than by reading a flag anyone
-// set. The effect crosses as that target, since naming one is all an effect
-// does. `kSettleCancelled` reports an effect that left the body with no region
-// of it claiming the effect, which is this activation's outcome rather than a
-// value it returns. A LIR-only target with no MIR twin: a target that can be
-// unwound through reaches all of this by unwinding instead, so what a body
-// carries is the region alone.
+// An operation on the control effect that leaves an execution (LRM 9.6.2, 9.7).
+// The effect crosses as the target it names, since naming one is all an effect
+// does, and a departure naming none is one no region may claim.
+//
+// `kTakeDepartureIfDue` is where a body regains control and leaves if one is
+// owed: it is a departing call rather than a question, so what a body carries
+// at such a point is the same whether or not anything encloses it. The other
+// two are a landing's ways out -- `kFinishDeparture` where the landing's own
+// region claimed it and execution continues past that region, and
+// `kDeclineDeparture` where it did not and the same departure carries on
+// outward. A LIR-only target with no MIR twin: what a body states is the region
+// and the cleanup, never how a departure travels between them.
 struct ControlEffectTarget {
   enum class Op : std::uint8_t {
-    kHasInvalidatedTarget,
-    kInvalidatedTarget,
-    kSettleCancelled
+    kTakeDepartureIfDue,
+    kFinishDeparture,
+    kDeclineDeparture
   };
   Op op;
 };
@@ -538,10 +539,17 @@ struct CastInstr {
   Operand operand;
 };
 
+// Receives the departure that transferred here, answering the target it names
+// (LRM 9.6.2) -- null where no region may claim it. A block beginning with this
+// is a landing, which is the whole of what makes it one: it is reached only as
+// some departing call's landing, and what arrives is not an operand anyone
+// passed.
+struct ReceiveDepartureInstr {};
+
 using InstrData = std::variant<
     CallInstr, ProductInstr, ArrayInstr, UnionInstr, AggregateExtractInstr,
     AggregateUpdateInstr, TagTestInstr, LoadInstr, StoreInstr, AddrOfInstr,
-    BinaryInstr, UnaryInstr, CastInstr>;
+    BinaryInstr, UnaryInstr, CastInstr, ReceiveDepartureInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.
@@ -596,9 +604,26 @@ struct AbandonTerm {};
 // block.
 struct UnreachableTerm {};
 
+// A call whose callee may leave by a departure instead of returning (LRM 9.6.2,
+// 9.7): the result continues at `returned`, and a departure transfers to
+// `landing`, where the effect arrives rather than being passed as an operand.
+//
+// It is a terminator and not an instruction because control leaves the block
+// through it either way, which is what a terminator means here; both of this
+// IR's peers say it the same way. Only a callee that can depart takes this
+// form -- an ordinary runtime call cannot, so it stays an instruction and costs
+// nothing.
+struct DepartingCallInstr {
+  ValueId result;
+  CallTarget target;
+  std::vector<Operand> args;
+  BlockId returned;
+  BlockId landing;
+};
+
 using TerminatorData = std::variant<
     ReturnTerm, BranchTerm, CondBranchTerm, SuspendTerm, AbandonTerm,
-    UnreachableTerm>;
+    UnreachableTerm, DepartingCallInstr>;
 
 struct Terminator {
   TerminatorData data;

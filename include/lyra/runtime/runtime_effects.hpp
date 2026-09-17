@@ -152,6 +152,12 @@ class RuntimeEffects {
   // imported subroutine (LRM 35.5.3) reports a null scope rather than faulting.
   [[nodiscard]] auto TryRunning() -> RunningState*;
 
+  // A fatal report Lyra writes for the design, followed by the end of the run
+  // (LRM 20.10). It is the composition a `$fatal` makes, minus the departure --
+  // for a condition found where nothing may leave by unwinding, which is any
+  // frame reached from foreign code.
+  void ReportDesignFailure(std::string_view message);
+
   [[nodiscard]] auto Now() const -> SimTime;
   [[nodiscard]] auto GlobalPrecisionPower() const -> std::int8_t;
 

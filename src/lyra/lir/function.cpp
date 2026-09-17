@@ -24,12 +24,12 @@ auto ValueCellOpName(ValueCellTarget::Op op) -> std::string_view {
 
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view {
   switch (op) {
-    case ControlEffectTarget::Op::kHasInvalidatedTarget:
-      return "has_invalidated_target";
-    case ControlEffectTarget::Op::kInvalidatedTarget:
-      return "invalidated_target";
-    case ControlEffectTarget::Op::kSettleCancelled:
-      return "settle_cancelled";
+    case ControlEffectTarget::Op::kTakeDepartureIfDue:
+      return "take_departure_if_due";
+    case ControlEffectTarget::Op::kFinishDeparture:
+      return "finish_departure";
+    case ControlEffectTarget::Op::kDeclineDeparture:
+      return "decline_departure";
   }
   throw InternalError("lir: unknown control-effect operation");
 }

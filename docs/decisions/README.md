@@ -560,6 +560,12 @@ the detail lives in the entry itself.
   is an execution of the process with a value store of its own. Publishing the design's symbols to
   the system loader, handing the foreign side a pointer per export, and a second resolver for the
   inward direction are rejected.
+- [a-departure-stops-at-a-foreign-frame](a-departure-stops-at-a-foreign-frame.md) -- nothing that
+  ends an execution crosses a frame this compiler did not emit; the boundary answers the standard's
+  disable-active int instead, the departure is derived again where control comes back, and an
+  execution holding an unreturned foreign call is asked to stop rather than settled. Unwinding
+  through the foreign frames, carrying the departure across, and a second departure state at the
+  boundary are rejected.
 
 ### Compile-time model and specialization
 

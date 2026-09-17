@@ -4,7 +4,10 @@
 #include <string_view>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/dpi_context.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 
 namespace lyra::runtime {
@@ -35,6 +38,15 @@ auto AmbientRunContext::Current() -> AmbientRunContext& {
         "35.5.3)");
   }
   return *CurrentSlot();
+}
+
+void ReportFatalWithoutLeaving(std::string_view message) {
+  RuntimeEffects& effects = AmbientRunContext::Current().Effects();
+  effects.ReportDesignFailure(message);
+  if (RuntimeProcess* process = effects.TryCurrentProcess();
+      process != nullptr) {
+    process->RequestTermination(ProcessTerminationCause::kKilled);
+  }
 }
 
 auto CurrentExportScope() -> Scope* {

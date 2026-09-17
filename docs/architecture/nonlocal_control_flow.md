@@ -78,6 +78,22 @@ delivered into the middle of a statement -- a simulated process cannot be made t
 through a statement of the design. And every departure runs the cleanups it passes, before it
 reaches the next landing.
 
+## The one boundary a departure may not cross
+
+Every frame in that diagram is one this compiler emitted, and a departure travels through them by
+whatever means the target language gives it. A frame belonging to another language is not: it cannot
+be unwound and it cannot be skipped, and it ends only by returning. So a departure stops there, and
+what crosses in its place is a value that language's own convention defines -- for DPI-C, the int an
+exported task hands its caller (LRM 35.8), which says whether a disable is active on this execution
+thread.
+
+Nothing is carried across. Whether a departure is due is answered rather than stored (invariant 5),
+so the execution derives it again at the first frame of its own that it reaches, which is the call
+that entered the foreign code. That call is the one place a body states the question for itself:
+every other point at which an execution regains control is a resumption, which each target already
+gates its own way, and a foreign call that consumed no simulation time suspended nothing there was a
+resumption to hang it on.
+
 ## What each layer states
 
 | Layer       | States                                                                    |

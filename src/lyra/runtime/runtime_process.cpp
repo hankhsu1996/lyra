@@ -22,7 +22,7 @@ RuntimeProcess::RuntimeProcess(
     : kind_(kind),
       owning_scope_(owning_scope),
       coroutine_(std::move(coroutine)),
-      running_(RunningState{.rng = DrawRng{seed}, .dpi_scopes = {}}),
+      running_(RunningState{.rng = DrawRng{seed}, .import_calls = {}}),
       // Before the body runs, the top frame is the active leaf (what the engine
       // schedules to start the process); a wait moves the leaf inward.
       current_leaf_(coroutine_.Token()) {
@@ -117,12 +117,29 @@ void RuntimeProcess::DisableDescendants(std::vector<CoroutineHandle>& woken) {
   children_.clear();
 }
 
+void RuntimeProcess::SettleOrRequestKilled(
+    std::vector<CoroutineHandle>& woken) {
+  if (execution_state_ == ProcessExecutionState::kTerminated) {
+    return;
+  }
+  // An execution with a foreign call still to return cannot be torn down where
+  // it stands: the frames between it and its own belong to another language,
+  // and such a frame ends only by running. So it is asked to stop and handed
+  // control once more instead -- it leaves at the gate its own body passes, its
+  // foreign frames return of their own accord (LRM 35.9), and the terminal
+  // state is published when the body finally settles.
+  if (HasLiveForeignCall()) {
+    RequestTermination(ProcessTerminationCause::kKilled);
+    woken.push_back(current_leaf_);
+    return;
+  }
+  SettleTerminated(ProcessTerminationCause::kKilled, woken);
+}
+
 void RuntimeProcess::TerminateSubtreeKilled(
     std::vector<CoroutineHandle>& woken) {
   DisableDescendants(woken);
-  if (execution_state_ != ProcessExecutionState::kTerminated) {
-    SettleTerminated(ProcessTerminationCause::kKilled, woken);
-  }
+  SettleOrRequestKilled(woken);
 }
 
 void RuntimeProcess::TerminateSubtreeDeferringRunning(
@@ -143,9 +160,7 @@ void RuntimeProcess::TerminateSubtreeDeferringRunning(
     RequestTermination(ProcessTerminationCause::kKilled);
     return;
   }
-  if (execution_state_ != ProcessExecutionState::kTerminated) {
-    SettleTerminated(ProcessTerminationCause::kKilled, woken);
-  }
+  SettleOrRequestKilled(woken);
 }
 
 auto RuntimeProcess::IsSelfOrAncestorOf(const RuntimeProcess& other) const

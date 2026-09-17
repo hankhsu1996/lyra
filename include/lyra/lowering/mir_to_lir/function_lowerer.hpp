@@ -143,8 +143,6 @@ class FunctionLowerer {
       -> diag::Result<void>;
   auto LowerFinallyInto(const mir::Block& block, const mir::FinallyStmt& stmt)
       -> diag::Result<void>;
-  auto LowerRaiseInto(const mir::Block& block, const mir::RaiseStmt& stmt)
-      -> diag::Result<void>;
 
   // Runs every cleanup owed between here and `depth`, innermost first. A way
   // out of a guarded body runs the cleanups it leaves and no others, so the
@@ -156,21 +154,36 @@ class FunctionLowerer {
   // source spells none of it, which is why it is built from what is owed
   // rather than from a statement.
   auto SuspendResumingAt(lir::BlockId resume) -> diag::Result<void>;
-  // Leaves through the innermost region of this frame carrying `effect`, or,
-  // where no region encloses this point, settles the activation cancelled and
-  // returns. Either way the cleanups the departure passes run first.
-  auto LeaveCarrying(lir::Operand effect) -> diag::Result<void>;
-  // Where an execution regains control: asks the runtime whether a target it
-  // is inside was disabled while it was away, and leaves carrying that effect
-  // when one was. The generation comparison is the runtime's; what crosses is
-  // its answer, because a simulated process cannot be made to run code partway
+  // Hands the departure this landing is holding back, to carry on outward: a
+  // region that declined it is not where it was going, and what a further
+  // landing tests is the target the same departure named. Reached only from a
+  // landing, which is the only place one is held.
+  auto LeaveCarrying() -> diag::Result<void>;
+  // Where an execution regains control: asks the runtime whether it has been
+  // told to stop -- a target it is inside was disabled while it was away, or
+  // its own termination is owed -- and leaves carrying the effect that names
+  // whichever it was. The comparison is the runtime's; what crosses is its
+  // answer, because a simulated process cannot be made to run code partway
   // through a statement of the design.
   //
   // Which targets an execution is inside is the execution's own state, not the
   // body's: an activity spawned or enabled inside a target is enclosed by it
   // (LRM 9.6.2) while its body may state no region at all, so the question is
   // asked wherever control returns rather than only where a body nests one.
-  auto CheckDisabledTarget() -> diag::Result<void>;
+  auto TakeDepartureIfDue() -> diag::Result<void>;
+  // Emits a call whose callee may leave by a departure, naming where it lands
+  // as well as where it returns. Every such call names one, including where
+  // nothing here claims or owes anything: a landing is also how a frame says
+  // the departure is passing through it, and a frame that says nothing is one
+  // the platform will not look at.
+  auto EmitDepartingCall(
+      lir::CallTarget target, std::vector<lir::Operand> args,
+      lir::TypeId result_type) -> diag::Result<lir::Operand>;
+  // Builds the landing this point would use: it receives the departure, runs
+  // the cleanups owed between here and whatever claims it, and hands it to the
+  // innermost region's own test -- or, where no region encloses, gives it back
+  // to carry on outward.
+  auto BuildLanding() -> diag::Result<lir::BlockId>;
   auto CurrentRuntime() -> lir::Operand;
 
   // Reads a value out of an expression. An expression naming storage that has
@@ -350,6 +363,9 @@ class FunctionLowerer {
       mir::TypeId type) -> diag::Result<lir::Operand>;
 
   auto Emit(lir::TypeId type, lir::InstrData data) -> lir::Operand;
+  auto EmitCallLeavingTheFrame(lir::TypeId type, lir::CallInstr call)
+      -> lir::Operand;
+  auto Append(lir::TypeId type, lir::InstrData data) -> lir::Operand;
   auto NewPlaceLocal(lir::TypeId type) -> lir::ValueId;
   void BindLocal(mir::LocalId local, lir::TypeId type, lir::Operand init);
   auto Load(lir::Place place, lir::TypeId type) -> lir::Operand;

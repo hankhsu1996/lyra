@@ -159,7 +159,8 @@ constexpr auto AbiKindOfCpp() -> AbiKind {
   } else if constexpr (
       std::is_same_v<T, std::int64_t> || std::is_same_v<T, std::uint64_t>) {
     return AbiKind::kInt64;
-  } else if constexpr (std::is_same_v<T, std::uint32_t>) {
+  } else if constexpr (
+      std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::uint32_t>) {
     return AbiKind::kInt32;
   } else if constexpr (
       std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::uint8_t>) {
@@ -316,6 +317,12 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_leave_static_init", &lyra_rt_leave_static_init);
   add("lyra_rt_enter_dpi_scope", &lyra_rt_enter_dpi_scope);
   add("lyra_rt_leave_dpi_scope", &lyra_rt_leave_dpi_scope);
+  add("lyra_rt_disable_is_active", &lyra_rt_disable_is_active);
+  add("lyra_rt_check_import_task_acknowledged",
+      &lyra_rt_check_import_task_acknowledged);
+  add("lyra_rt_check_import_function_acknowledged",
+      &lyra_rt_check_import_function_acknowledged);
+  add("lyra_rt_check_export_reachable", &lyra_rt_check_export_reachable);
   add("lyra_rt_claim_namespace_initialize",
       &lyra_rt_claim_namespace_initialize);
   add("lyra_rt_current_export_scope", &lyra_rt_current_export_scope);
@@ -365,9 +372,10 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_leave_target", &lyra_rt_leave_target);
   add("lyra_rt_disable", &lyra_rt_disable);
   add("lyra_rt_effect_names_target", &lyra_rt_effect_names_target);
-  add("lyra_rt_invalidated_target", &lyra_rt_invalidated_target);
-  add("lyra_rt_has_invalidated_target", &lyra_rt_has_invalidated_target);
-  add("lyra_rt_settle_cancelled", &lyra_rt_settle_cancelled);
+  add("lyra_rt_claim_departure", &lyra_rt_claim_departure);
+  add("lyra_rt_finish_departure", &lyra_rt_finish_departure);
+  add("lyra_rt_decline_departure", &lyra_rt_decline_departure);
+  add("lyra_rt_take_departure_if_due", &lyra_rt_take_departure_if_due);
   add("lyra_rt_sim_time", &lyra_rt_sim_time);
   add("lyra_rt_stime", &lyra_rt_stime);
   add("lyra_rt_realtime", &lyra_rt_realtime);
@@ -1148,6 +1156,16 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
       &lyra_rt_unpackedarray_merge_conditional);
   add("lyra_rt_unpackedarray_from_packed_array",
       &lyra_rt_unpackedarray_from_packed_array);
+  // The address behind that name is the target language's own type identity,
+  // whose spelling belongs to whoever mangles it: reaching it by that spelling
+  // instead would put a C++ class name in the code generator, which a rename
+  // changes and nothing rereads.
+  symbols[jit.getExecutionSession().intern(
+      backend::llvm_backend::kDepartureTypeSymbol)] =
+      llvm::orc::ExecutorSymbolDef(
+          llvm::orc::ExecutorAddr::fromPtr(
+              &typeid(lyra::runtime::ControlEffect)),
+          llvm::JITSymbolFlags::Exported);
   Check(
       jit.getMainJITDylib().define(
           llvm::orc::absoluteSymbols(std::move(symbols))),

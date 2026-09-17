@@ -295,8 +295,8 @@ each meets the same lifetime question above.
       Two things this settled reach wider than a task. **A caller allocates what it will read**: an
       execution's own storage is gone the moment its body ends, so anything read afterwards has to
       belong to whoever reads it -- the same rule that decides where an execution's cross-suspension
-      values live, one level up. And a body that cannot be unwound through has no landing for a
-      failure, so a failure is not one of the outcomes an execution settles at all
+      values live, one level up. And a body that emits no landing has nowhere to catch a failure, so
+      a failure is not one of the outcomes an execution settles at all
       (`decisions/run-time-failure-is-not-an-outcome.md`).
 
 - [x] **Non-blocking assignment** (LRM 10.4.2). A read taken after the statement in the same time
@@ -544,14 +544,18 @@ each meets the same lifetime question above.
       effect naming an enclosing target passes outward through the regions that decline it. The
       region's extent is bracketed by two ordinary calls under a cleanup that runs on every way out
       of the body, so no backend has to run code at scope exit to hold the membership; where an
-      execution regains control inside a region it asks the runtime whether a target it is inside
-      was disabled while it was away, and the generation comparison behind that answer stays in the
-      runtime. An effect no region claims settles the activation cancelled through the completion
-      outcome rather than by unwinding. Disabling a named `fork` exercises all of it: the branches
-      it spawned are enclosed by the target even though their bodies state no region, so the
-      `disable` wakes one parked on a delay, that branch settles cancelled where it regains control,
-      and the process that entered the block resumes after it in the same time step. `disable` of a
-      task runs here too, now that a task enable does.
+      execution regains control it asks the runtime whether it has been told to stop -- a target it
+      is inside was disabled while it was away, or its own termination is owed because a foreign
+      call it made had still to return -- and the comparison behind that answer stays in the
+      runtime. Leaving is what the target's own scope exit does: a call that could be left that way
+      names where to continue as well as where to return, and a body that claims nothing passes the
+      departure outward, so it reaches a caller's region as readily as an enclosing one of its own.
+      An effect no region claims anywhere settles the activation cancelled. Disabling a named `fork`
+      exercises all of it: the branches it spawned are enclosed by the target even though their
+      bodies state no region, so the `disable` wakes one parked on a delay, that branch settles
+      cancelled where it regains control, and the process that entered the block resumes after it in
+      the same time step. `disable` of a task runs here too, now that a task enable does, and so
+      does one written inside a function and naming a block outside it.
 - [ ] The transient-escape rule is held by construction and naming, not by a checker.
 - [ ] Displaying an aggregate. A print item is named by the operand's value domain, and the erased
       container this backend realizes exposes no per-element walk for a formatter to use. It is the

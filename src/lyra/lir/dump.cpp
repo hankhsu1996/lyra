@@ -178,6 +178,9 @@ class LirDumper {
                   "call {}({})", FormatCallTarget(call.target),
                   FormatOperands(call.args));
             },
+            [](const ReceiveDepartureInstr&) -> std::string {
+              return "receive departure";
+            },
             [&](const ProductInstr& product) -> std::string {
               return std::format(
                   "product({})", FormatOperands(product.components));
@@ -256,8 +259,12 @@ class LirDumper {
                   s.abandoned.value);
             },
             [](const AbandonTerm&) -> std::string { return "abandon"; },
-            [](const UnreachableTerm&) -> std::string {
-              return "unreachable";
+            [](const UnreachableTerm&) -> std::string { return "unreachable"; },
+            [&](const DepartingCallInstr& call) -> std::string {
+              return std::format(
+                  "%{} = call {}({}) -> bb{} departs bb{}", call.result.value,
+                  FormatCallTarget(call.target), FormatOperands(call.args),
+                  call.returned.value, call.landing.value);
             }},
         term.data);
   }
