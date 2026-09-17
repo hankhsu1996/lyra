@@ -608,9 +608,9 @@ enum class BuiltinFn : std::uint16_t {
   kClassFindBehaviorBody,
   // Applying one of those positions to whichever object a handle holds: the
   // object answers with its own class, and the class answers where the storage
-  // is or which body runs. A target that reaches a member by writing its name
-  // has no name for a position settled while the design elaborated, so this is
-  // how it reaches one.
+  // is or which body runs. Which object it is, is not decided until the access
+  // runs, so the position alone reaches nothing and this is the step that
+  // spends it.
   kPropertyAt,
   kBehaviorAt,
   // The object a handle names. A body runs on the object rather than on a

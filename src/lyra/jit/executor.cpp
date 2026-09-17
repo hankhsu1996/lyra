@@ -1657,12 +1657,11 @@ struct LoadedDeclaredBody {
   std::string symbol;
 };
 
-// The names one class answers while a reference to it resolves, kept apart from
-// the positional schema the realization builds from them: one is the resolution
-// aid, the other is what an access reads. It sits behind its own allocation for
-// the reason a scope's callable surface does -- what the definition ends up
-// holding names these identifiers rather than copying them, so they keep their
-// addresses however the list of classes grows.
+// The names one class answers while a reference to it resolves, held apart from
+// whatever each answer is applied to afterwards. It sits behind its own
+// allocation for the reason a scope's callable surface does -- what the
+// definition ends up holding names these identifiers rather than copying them,
+// so they keep their addresses however the list of classes grows.
 struct DeclaredNames {
   std::vector<LoadedDeclaredName> properties;
   std::vector<LoadedDeclaredName> behaviors;

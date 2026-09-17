@@ -164,8 +164,9 @@ The class record therefore carries a by-name table, consulted while a reference 
 on the simulation path. This is the discipline a runtime scope already follows for the names reached
 past its unit's signature; a class gains the same thing for the same reason.
 
-The positional schema stays the authority for access. The by-name table is a resolution aid and is
-never what an access reads.
+The by-name table is a resolution aid and is never what an access reads: what a name answered is
+settled once, and each access applies that. Where the answer is a position, the positional schema it
+names stays the authority for reaching the storage.
 
 ### D5. The coordinate is an operand of the access, not a second kind of access
 

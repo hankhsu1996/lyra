@@ -24,7 +24,6 @@
 #include "lyra/mir/namespace_storage_phase.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/struct_id.hpp"
-#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -358,22 +357,6 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // spelling rather than by each writing the same characters.
 [[nodiscard]] inline auto CppClassRecordHookName() -> std::string_view {
   return "kClassRecord";
-}
-
-// What a target names a runtime operation reached as a free function, read out
-// of the one declaration every layer shares rather than spelled at the site
-// that needs it.
-[[nodiscard]] inline auto CppRuntimeEntryName(support::BuiltinFn fn)
-    -> std::string {
-  const support::RuntimeEntry entry = support::RuntimeEntryOf(fn);
-  const auto* free_function =
-      std::get_if<support::FreeFunction>(&entry.declaration);
-  if (free_function == nullptr) {
-    throw InternalError(
-        "CppRuntimeEntryName: the entry this reaches is declared as something "
-        "other than a free function");
-  }
-  return std::string{free_function->qualified_name};
 }
 
 // The C++ identifier a DPI-C linkage name is emitted under. It is an identifier

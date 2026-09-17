@@ -12,12 +12,17 @@
 
 namespace lyra::runtime {
 
-// One entry of a class's dispatch table: a code address with its prototype
-// erased, so entries of every signature share one table. A dispatch position
-// carries one signature in every class that fills it (LRM 8.20), so the call
-// site restores the exact type the body was generated with and the two cannot
-// disagree -- the same erasure, for the same reason, that a scope's exports
-// use.
+// One body of a class, as a code address with its prototype erased, so bodies
+// of every signature share one table. What the call site restores it to is the
+// signature the name it asked under carries -- one per dispatch position in
+// every class filling it (LRM 8.20), one per declared name otherwise -- so the
+// two sides cannot disagree about it. The same erasure, for the same reason,
+// that a scope's exports use.
+//
+// Whatever answers with one of these hands back the address alone, so every
+// body reached this way takes the object as its first parameter: nothing on the
+// way converts it, and a body of a class extending another is entered with the
+// same address a body of the base would be.
 using ErasedMethodEntry = void (*)();
 
 // The bodies a class fills its dispatch positions with (LRM 8.20), in position
@@ -104,7 +109,8 @@ struct ResolvedBehavior {
 
 // A set of names a class answers, crossing the generated-runtime boundary as
 // plain data. Each is consulted while a reference resolves and never on the
-// simulation path, where the positional schema beside it is the authority.
+// simulation path: what a name answers with is settled once and applied at each
+// access thereafter, whether the answer is a position or a body.
 struct ResolvedPropertyTable {
   const ResolvedProperty* data = nullptr;
   std::uint32_t size = 0;

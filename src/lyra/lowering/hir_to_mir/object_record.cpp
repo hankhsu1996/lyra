@@ -14,6 +14,7 @@
 #include "lyra/mir/runtime_record.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -24,11 +25,7 @@ namespace {
 // type, because the entry is reached through the record of the class it belongs
 // to and that is what says which class it is.
 auto OpaquePointer(mir::CompilationUnit& unit) -> mir::TypeId {
-  return unit.types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = unit.builtins.void_type,
-          .ownership = mir::PointerOwnership::kBorrowed,
-          .mutability = mir::Mutability::kMutable}});
+  return mir::ErasedPointer(unit.types);
 }
 
 auto BorrowedPointerTo(mir::CompilationUnit& unit, mir::TypeId pointee)

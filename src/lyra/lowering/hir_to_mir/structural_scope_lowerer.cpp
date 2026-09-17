@@ -707,10 +707,7 @@ auto MaterializeLeaf(
   }
 
   if (const auto* opaque = std::get_if<hir::OpaqueLeaf>(&leaf)) {
-    const mir::TypeId void_ptr_type = unit.types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = unit.builtins.void_type,
-            .ownership = mir::PointerOwnership::kBorrowed}});
+    const mir::TypeId void_ptr_type = mir::ErasedPointer(unit.types);
     const mir::ExprId raw = block.exprs.Add(
         mir::Expr{
             .data =

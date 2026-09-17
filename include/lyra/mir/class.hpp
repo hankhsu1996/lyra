@@ -159,13 +159,13 @@ struct Class {
   // construction protocol.
   base::Arena<StaticConstantDecl, StaticConstantId> static_constants;
   // The record every object of this class carries, so the object answers where
-  // its own properties live and which body answers a behavior -- the questions
-  // a referrer that cannot name the class has no other way to ask. It sits
-  // apart from the constants above because it is the one a class outside this
-  // unit spells, so it is named off the class rather than off a position only
-  // this unit can count. A class of the design hierarchy has none: its objects
-  // answer through the program a scope carries, and nothing reaches one this
-  // way.
+  // its own properties live and which body a behavior or a declared name
+  // reaches -- the questions a referrer that cannot name the class has no other
+  // way to ask. It sits apart from the constants above because it is the one a
+  // class outside this unit spells, so it is named off the class rather than
+  // off a position only this unit can count. A class of the design hierarchy
+  // has none: its objects answer through the program a scope carries, and
+  // nothing reaches one this way.
   std::optional<StaticConstantDecl> object_record;
   // The class's static properties (LRM 8.9): mutable type-associated storage
   // cells shared by every instance. Peer to `fields` on the instance-versus-

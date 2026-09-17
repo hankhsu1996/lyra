@@ -544,17 +544,6 @@ auto BindReceiverHandle(
   return BoundHandle{.local = bound, .type = handle_type};
 }
 
-// The object a handle names, as nothing in particular. What class it is of is
-// exactly what the call could not name, so the type carries none of it; what a
-// body of that class makes of the address is that body's own to state.
-auto OpaqueObjectPointer(mir::CompilationUnit& unit) -> mir::TypeId {
-  return unit.types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = unit.builtins.void_type,
-          .ownership = mir::PointerOwnership::kBorrowed,
-          .mutability = mir::Mutability::kMutable}});
-}
-
 // The prototype a body reached through an erased address was generated with,
 // restored from what the call itself states: the value leading the arguments,
 // then one parameter per formal that crosses. The address was erased so one
@@ -740,7 +729,10 @@ auto EmitSubroutineCall(
                           lowerer.BehaviorBodyTarget(body.body)));
                     }},
                 settled.at);
-            const mir::TypeId object_type = OpaqueObjectPointer(unit);
+            // What class the object is of is exactly what the call could not
+            // name, so the type carries none of it; what a body of that class
+            // makes of the address is that body's own to state.
+            const mir::TypeId object_type = mir::ErasedPointer(unit.types);
             const mir::ExprId object = block.exprs.Add(
                 mir::Expr{
                     .data =

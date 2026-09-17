@@ -28,6 +28,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -470,11 +471,7 @@ auto BuildClassPropertyAccess(
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kPropertyAt},
                   .arguments = {receiver, coordinate}},
-          .type = unit.types.Intern(
-              mir::Type{mir::PointerType{
-                  .pointee = unit.builtins.void_type,
-                  .ownership = mir::PointerOwnership::kBorrowed,
-                  .mutability = mir::Mutability::kMutable}})});
+          .type = mir::ErasedPointer(unit.types)});
   const mir::ExprId typed = block.exprs.Add(
       mir::Expr{
           .data = mir::CastExpr{.operand = address},

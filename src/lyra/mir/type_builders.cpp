@@ -37,6 +37,13 @@ auto IsErasedFunction(const TypePool& types, TypeId id) -> bool {
   return id == ErasedFunction(types);
 }
 
+auto ErasedPointer(const TypePool& types) -> TypeId {
+  return types.Intern(
+      Type{PointerType{
+          .pointee = types.Intern(Type{VoidType{}}),
+          .ownership = PointerOwnership::kBorrowed}});
+}
+
 auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
   // One arm per MIR type and no catch-all: a type added later fails to compile
   // here until it is classified, rather than silently defaulting to
