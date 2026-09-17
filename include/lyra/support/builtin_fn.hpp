@@ -223,11 +223,14 @@ enum class BuiltinFn : std::uint16_t {
   kAsinh,
   kAcosh,
   kAtanh,
-  // Installs a capability wrapper's declared representation once at
-  // construction. It acts on the wrapper rather than on the storage the wrapper
-  // represents, which is why it is a call at all. No runtime handle: it runs
-  // before any process, so nothing is subscribed yet. Every later store
-  // requires its value to already be at the installed representation.
+  // A declaration's own write on a capability wrapper: the first installs the
+  // declared representation, and a declaration reached again writes at that
+  // representation. It acts on the wrapper rather than on the storage the
+  // wrapper represents, which is why it is a call at all. It carries no runtime
+  // handle, so it raises no update event -- which holds for what reaches it: a
+  // declaration whose storage is built with its owner, and one whose storage
+  // the body it sits in owns. Every later store requires its value to already
+  // be at the installed representation.
   kInitialize,
   // Installing what a net's declaration gives it, once at construction: the
   // representation its data type fixes, and what its declared net type states

@@ -242,6 +242,12 @@ the detail lives in the entry itself.
   that storage lives follows the local's own lifetime. Deciding a variable need not exist is a
   saving taken by whoever sees the whole function, and taken upstream it refused legal programs
   wherever its idea of a write was narrower than a write.
+- [a-declared-variable-is-one-storage](a-declared-variable-is-one-storage.md) -- the other half of
+  that same pass, and the last question the translation answered from reading a whole body. A
+  variable is one storage its declaration decides, owned by the execution that declared it and ended
+  by the compiler on every way out including the one no statement spells. Read it for why the
+  obvious argument for emitting nothing there expires, and for the test that separates an answer
+  that survives the work ahead from one that does not.
 - [inline-member-slots](inline-member-slots.md) -- a storage block whose owner cannot move holds its
   slots inline, one allocation for the block rather than one per member: an object's properties and
   a scope's members qualify, and a closure's captures did not until

@@ -701,6 +701,12 @@ auto CodeGenFunction::ArgsInForm(
             }
             return std::vector<llvm::Value*>{
                 *definition, SpanOver(operands, module_->Types().Ptr())};
+          },
+          [&](const OperandsAfterVariableSchema&)
+              -> diag::Result<std::vector<llvm::Value*>> {
+            std::vector<llvm::Value*> args{module_->VariableSchemaRef(*fn_)};
+            args.insert(args.end(), operands.begin(), operands.end());
+            return args;
           }},
       form);
 }
@@ -807,6 +813,21 @@ auto CodeGenFunction::ResolveCallee(
               return std::unexpected(std::move(domain.error()));
             }
             return Entry(RuntimeSymbol(*domain, t.op), result_type, args);
+          },
+          [&](const lir::OpenVariablesTarget&)
+              -> diag::Result<llvm::FunctionCallee> {
+            return Entry(
+                RuntimeSymbol(RuntimeOp::kVariablesOpen), result_type, args);
+          },
+          [&](const lir::VariableAddressTarget&)
+              -> diag::Result<llvm::FunctionCallee> {
+            return Entry(
+                RuntimeSymbol(RuntimeOp::kVariableAddress), result_type, args);
+          },
+          [&](const lir::CloseVariablesTarget&)
+              -> diag::Result<llvm::FunctionCallee> {
+            return Entry(
+                RuntimeSymbol(RuntimeOp::kVariablesClose), result_type, args);
           },
           [&](const lir::ControlEffectTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1965,6 +1986,15 @@ auto CodeGenFunction::EncodingOf(
           [](const lir::IndirectTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ForeignTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ValueCellTarget&) -> Encoded { return CallEncoding{}; },
+          [](const lir::OpenVariablesTarget&) -> Encoded {
+            return CallEncoding{.operand_form = OperandsAfterVariableSchema{}};
+          },
+          [](const lir::VariableAddressTarget&) -> Encoded {
+            return CallEncoding{};
+          },
+          [](const lir::CloseVariablesTarget&) -> Encoded {
+            return CallEncoding{};
+          },
           [](const lir::ControlEffectTarget&) -> Encoded {
             return CallEncoding{};
           },

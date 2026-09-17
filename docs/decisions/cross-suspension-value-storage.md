@@ -83,6 +83,14 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
    storage and the declaring scope is what decides its lifetime
    ([reference-binds-a-cell](reference-binds-a-cell.md)).
 
+   **Superseded 2026-09-16 by
+   [a-declared-variable-is-one-storage](a-declared-variable-is-one-storage.md).** Two of the things
+   this invariant keeps apart are one: a declared variable is one storage whatever its body does
+   with it, so neither being lent nor the body suspending selects anything. What holds is the half
+   this states first -- the choice, such as it was, came from the declaration rather than from a
+   liveness analysis -- and what fell is that there was a choice at all. The two homes were mutually
+   exclusive, so a variable that was both lent and in a suspending body had none.
+
 3. An activation value cell is not observable. A write to it is never an update event and wakes no
    subscriber; it never routes through the signal cell's notifying store.
 

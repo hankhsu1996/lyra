@@ -75,21 +75,20 @@ class Var : public Observable, public ValueStorageCore<T> {
   auto operator=(Var&&) -> Var& = delete;
   ~Var() = default;
 
-  // Installs the cell's declared representation (and default contents) exactly
-  // once, at construction; `prototype` is a value of the cell's declared type,
-  // only its representation is used. Installing twice, or a store before
-  // installation, is a lowering defect and throws. After installation, every
-  // store requires the right-hand side to already be at this representation --
-  // so the cell's type is fixed by construction, not adopted from whichever
-  // store runs first.
+  // The write a declaration makes. The first one installs the cell's
+  // representation and contents from `prototype`, a value of the declared
+  // type; a later one -- a declaration reached again, which begins a fresh
+  // variable in the one storage -- overwrites at that representation. What is
+  // fixed is the representation, not the number of times a declaration runs,
+  // so a prototype that does not match the installed one is the lowering
+  // defect and is what refuses. A store before any of this is one too, and the
+  // store path is what refuses it.
   void Initialize(T prototype) {
-    if constexpr (std::same_as<T, value::PackedArray>) {
-      if (this->IsInstalled()) {
-        throw InternalError(
-            "Var<PackedArray>::Initialize: cell is already initialized");
-      }
+    if (!this->IsInstalled()) {
+      this->Install(std::move(prototype));
+      return;
     }
-    this->Install(std::move(prototype));
+    this->Overwrite(prototype);
   }
 
   // Commits a whole-variable write and, on a real change (LRM 4.3 update

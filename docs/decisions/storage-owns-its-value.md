@@ -113,7 +113,9 @@ associative array; the dynamic array is still open.
   has been promoted. Every stable form measured costs one uniform extra dependent load, about 1.1
   ns, so there is no expensive case for such a test to avoid -- the test would cost more than the
   indirection it was added to dodge. Where a promotion decision is worth making it is made
-  statically, per declaration, the way a lent local's storage is already decided at MIR-to-LIR.
+  statically, per declaration, the way a variable's storage is decided at MIR-to-LIR -- which since
+  [a-declared-variable-is-one-storage](a-declared-variable-is-one-storage.md) is not a decision at
+  all: a declaration is storage, and what a reference is taken over is not asked.
 
 - **Making every storage object a managed heap object.** The model that makes component identity
   trivial: allocate each one separately and let references retain them. Rejected on the north star

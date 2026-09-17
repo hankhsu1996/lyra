@@ -1628,6 +1628,37 @@ enough to warrant its own focused review.
       Not blocked. Found while splitting the C++ build into per-unit compiles, which is what made
       the first copy state a standard it had previously inherited from a shared command line.
 
+- [ ] R102 -- A variable's storage on the execution backend lives for its body's whole execution,
+      where the language says it lives for the scope that declared it. A variable of an inner block
+      exists, as storage, from the moment the body starts; entering the declaration begins its
+      contents afresh and leaving the block ends nothing. The other backend gives the scope's own
+      extent, because its target language does.
+
+      Nothing observes the difference today: SystemVerilog has no destructor, so a value ending
+      later than its scope is not a behaviour any program can see, and what a spawned process may
+      still reach is carried by a separate mechanism rather than by the declaring scope's storage.
+      What it costs is memory held longer than the language requires, which grows with the number of
+      declarations in a body rather than with anything a program does.
+
+      Target: the extent a variable's storage has is the extent its declaration has, on both
+      backends. This is the same axis as ending it on every way out and was deliberately not taken
+      with it -- ending at a scope exit needs the scope exits to be enumerable in the same way the
+      body's are, which is a separate piece.
+
+      Not blocked. Found while giving every declared variable one storage.
+
+- [ ] R103 -- Two things own values for one execution: the storage a body's variables live in, and
+      the store that carries what an execution completes with. They are the same relation -- a
+      described set of storages owned by something whose lifetime is one execution's -- realized
+      twice, and the second is what is left of a mechanism the first replaced.
+
+      Target: one of them. A completion value is storage its caller allocates and the callee writes
+      into, so the likelier answer is that it stops being a store of its own and becomes what it
+      already is elsewhere, rather than that the two merge.
+
+      Not blocked. Found while giving every declared variable one storage; the store survived
+      because nothing else it carried moved in the same cut.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

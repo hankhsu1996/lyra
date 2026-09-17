@@ -115,6 +115,15 @@ auto CodeGenModule::DefinitionRef(lir::TypeId type)
   return module_->getOrInsertGlobal(*symbol, llvm::Type::getInt8Ty(*context_));
 }
 
+auto CodeGenModule::VariableSchemaRef(const lir::Function& fn)
+    -> llvm::Constant* {
+  // The description is opaque to generated code, which only forwards its
+  // address; an i8 placeholder gives the external symbol a type without
+  // encoding the runtime struct's layout.
+  return module_->getOrInsertGlobal(
+      lir::VariableSchemaSymbol(fn.name), llvm::Type::getInt8Ty(*context_));
+}
+
 auto CodeGenModule::PackedTypeCell(lir::TypeId integral)
     -> llvm::GlobalVariable* {
   return packed_type_cells_.Get(integral);

@@ -107,9 +107,12 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
     }
     // Only a body whose call protocol is the coroutine one can hand control
     // back to the scheduler; a suspension anywhere else has no one to resume
-    // it.
-    if (std::holds_alternative<SuspendTerm>(block.terminator.data) &&
-        !is_coroutine) {
+    // it. An abandonment is reached only from a suspension, so it is bounded
+    // by the same fact.
+    const bool parks =
+        std::holds_alternative<SuspendTerm>(block.terminator.data) ||
+        std::holds_alternative<AbandonTerm>(block.terminator.data);
+    if (parks && !is_coroutine) {
       throw InternalError(
           "lir verify: a suspension appears in a body whose result type is not "
           "a coroutine");

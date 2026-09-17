@@ -405,6 +405,9 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_find_disable_target", &lyra_rt_find_disable_target);
   add("lyra_rt_resolve_visible_child", &lyra_rt_resolve_visible_child);
   add("lyra_rt_find_child", &lyra_rt_find_child);
+  add("lyra_rt_variables_open", &lyra_rt_variables_open);
+  add("lyra_rt_variable_addr", &lyra_rt_variable_addr);
+  add("lyra_rt_variables_close", &lyra_rt_variables_close);
   add("lyra_rt_packed_cell_alloc", &lyra_rt_packed_cell_alloc);
   add("lyra_rt_packed_cell_get", &lyra_rt_packed_cell_get);
   add("lyra_rt_packed_cell_initialize", &lyra_rt_packed_cell_initialize);
@@ -1314,6 +1317,38 @@ auto DescribeMember(
   throw InternalError("jit executor: unknown member storage kind");
 }
 
+// One body's variables, described and kept alive for the run. The description
+// points into the vector beside it, so the two travel together and neither
+// outlives the other.
+struct LoadedVariableSchema {
+  std::string symbol;
+  std::unique_ptr<std::vector<runtime::MemberStorageDescriptor>> descriptors;
+  std::unique_ptr<runtime::MemberStorageSchema> schema;
+};
+
+auto DescribeVariables(
+    const lir::CompilationUnit& unit, const lir::Function& fn)
+    -> diag::Result<LoadedVariableSchema> {
+  auto descriptors =
+      std::make_unique<std::vector<runtime::MemberStorageDescriptor>>();
+  descriptors->reserve(fn.variables.size());
+  for (const lir::TypeId type : fn.variables) {
+    auto described = DescribeMember(unit, type, SlotRole::kVariable);
+    if (!described) {
+      return std::unexpected(std::move(described.error()));
+    }
+    descriptors->push_back(*described);
+  }
+  auto schema = std::make_unique<runtime::MemberStorageSchema>(
+      runtime::MemberStorageSchema{
+          .data = descriptors->data(),
+          .size = static_cast<std::uint32_t>(descriptors->size())});
+  return LoadedVariableSchema{
+      .symbol = lir::VariableSchemaSymbol(fn.name),
+      .descriptors = std::move(descriptors),
+      .schema = std::move(schema)};
+}
+
 auto DescribeMembers(
     const lir::CompilationUnit& unit, std::span<const lir::Member> members,
     SlotRole role)
@@ -2078,6 +2113,26 @@ auto Execute(
   }
   for (const LoadedClass& entry : objects) {
     publish(entry.definition_symbol, entry.definition.get());
+  }
+  // A body's variables are described exactly as a declaration's members are:
+  // the host builds one description from what the body states, and the body
+  // reaches it through a symbol of its own. A body that states none publishes
+  // nothing, and never asks.
+  std::vector<LoadedVariableSchema> variable_schemas;
+  for (const lir::CompilationUnit* unit : loaded_units) {
+    for (const lir::Function& fn : unit->functions) {
+      if (fn.variables.empty()) {
+        continue;
+      }
+      auto described = DescribeVariables(*unit, fn);
+      if (!described) {
+        return std::unexpected(std::move(described.error()));
+      }
+      variable_schemas.push_back(*std::move(described));
+    }
+  }
+  for (const LoadedVariableSchema& entry : variable_schemas) {
+    publish(entry.symbol, entry.schema.get());
   }
   Check(
       jit->getMainJITDylib().define(

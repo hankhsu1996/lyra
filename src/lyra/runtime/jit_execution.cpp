@@ -46,6 +46,7 @@
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/sim_time.hpp"
+#include "lyra/runtime/storage_block.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/dpi_canonical.hpp"
@@ -576,6 +577,7 @@ using lyra::runtime::HierarchySegment;
 using lyra::runtime::LeaveCancellationTarget;
 using lyra::runtime::MakeForeignExecution;
 using lyra::runtime::ManagedObject;
+using lyra::runtime::MemberStorageSchema;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
 using lyra::runtime::ObjectDefinition;
@@ -607,6 +609,7 @@ using lyra::runtime::Scope;
 using lyra::runtime::ScopeDefinition;
 using lyra::runtime::SimTimeInUnit;
 using lyra::runtime::STimeInUnit;
+using lyra::runtime::StorageBlock;
 using lyra::runtime::SubscribeToLeaves;
 using lyra::runtime::TakeBranches;
 using lyra::runtime::TakeClosure;
@@ -1544,6 +1547,23 @@ void lyra_rt_register_disable_target(void* self, void* target) {
 
 auto lyra_rt_find_disable_target(void* self) -> void* {
   return static_cast<Scope*>(self)->FindDisableTarget();
+}
+
+auto lyra_rt_variables_open(const void* schema) -> void* {
+  return std::make_unique<StorageBlock>(
+             *static_cast<const MemberStorageSchema*>(schema))
+      .release();
+}
+
+auto lyra_rt_variable_addr(void* variables, std::uint32_t index) -> void* {
+  return static_cast<StorageBlock*>(variables)->Address(index);
+}
+
+void lyra_rt_variables_close(void* variables) {
+  // Taking the storage back into an owner is what ends it, and with it every
+  // variable in it.
+  const std::unique_ptr<StorageBlock> ending(
+      static_cast<StorageBlock*>(variables));
 }
 
 auto lyra_rt_packed_cell_alloc() -> void* {

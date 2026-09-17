@@ -566,6 +566,15 @@ auto lyra_rt_find_disable_target(void* self) -> void*;
 // one, or the one the current time slot found there before anything in it ran
 // (LRM 4.4.2.1, 16.5.1). Only an armed cell keeps the second, so a cell nothing
 // samples carries neither the storage nor the work of maintaining it.
+// The storage one body's declared variables live in. Opening it builds one
+// piece per variable the body described; a variable is reached by the position
+// that description gave it; closing it ends the whole of it, and with it every
+// variable, which is the only thing that ends them. Every way out of the body
+// closes it, the one no statement spells included.
+auto lyra_rt_variables_open(const void* schema) -> void*;
+auto lyra_rt_variable_addr(void* variables, std::uint32_t index) -> void*;
+void lyra_rt_variables_close(void* variables);
+
 auto lyra_rt_packed_cell_alloc() -> void*;
 auto lyra_rt_packed_cell_get(void* cell) -> void*;
 void lyra_rt_packed_cell_initialize(void* cell, const void* prototype);
