@@ -26,6 +26,13 @@ namespace lyra::backend::llvm_backend {
 // answerable for.
 inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
 
+// The raised type a landing's clause names, which the execution session binds
+// to the target language's own type identity. Not an operation and not an
+// entry: nothing calls it, so it has no prototype and no signature, and it is
+// named here because the clause and the binding are the two halves of one name.
+inline constexpr std::string_view kDepartureTypeSymbol =
+    "lyra_rt_departure_type_info";
+
 // The domain a LIR type is realized in, absent for a type the runtime library
 // has no value realization for. The one place a LIR type is classified, so the
 // entry a call names and the storage a cell owns cannot disagree.
@@ -94,6 +101,7 @@ enum class RuntimeOp : std::uint8_t {
   kMakeDpiBitBuffer,
   kMakeDpiLogicBuffer,
   kMakeDpiOpenArray,
+  kClaimDeparture,
 };
 
 // What a member slot is for, which two declarations answer differently for a

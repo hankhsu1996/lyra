@@ -25,15 +25,32 @@ void EnterCancellationTarget(
 
 void LeaveCancellationTarget(
     RuntimeEffects& effects, CancellationTarget* target) {
-  effects.CurrentProcess().PopEnclosingTarget(target);
+  // A body's extent is left on every way out of it, and one of those ways runs
+  // with nothing of the design executing: the frame of an execution still
+  // suspended when the run ends is released where it stands, which runs the
+  // cleanups it was holding open. There is no execution to withdraw the
+  // membership from then, and none that could still consult it (LRM 9.6.2).
+  if (RuntimeProcess* process = effects.TryCurrentProcess();
+      process != nullptr) {
+    process->PopEnclosingTarget(target);
+  }
 }
 
-void RaiseControlEffectIfDisabled(RuntimeProcess& process) {
-  CancellationTarget* target = process.OutermostInvalidatedTarget();
-  if (target == nullptr) {
-    return;
+void TakeDepartureIfDue(RuntimeEffects& effects) {
+  if (RuntimeProcess* process = effects.TryCurrentProcess();
+      process != nullptr) {
+    TakeDepartureIfDue(*process);
   }
-  throw ControlEffect{.target = target};
+}
+
+void TakeDepartureIfDue(RuntimeProcess& process) {
+  if (CancellationTarget* target = process.OutermostInvalidatedTarget();
+      target != nullptr) {
+    throw ControlEffect{.target = target};
+  }
+  if (process.DepartureIsDue()) {
+    RaiseUnclaimableEffect();
+  }
 }
 
 auto EffectNamesTarget(const ControlEffect& effect, CancellationTarget* target)
@@ -63,7 +80,7 @@ auto ClassifyUnwind() -> Unwound {
 
 void Disable(CancellationTarget* target, RuntimeEffects& effects) {
   target->Invalidate(effects);
-  RaiseControlEffectIfDisabled(effects.CurrentProcess());
+  TakeDepartureIfDue(effects.CurrentProcess());
 }
 
 }  // namespace lyra::runtime

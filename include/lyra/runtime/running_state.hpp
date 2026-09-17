@@ -1,13 +1,13 @@
 #pragma once
 
-#include "lyra/runtime/dpi_scope_chain.hpp"
+#include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/runtime/rng.hpp"
 
 namespace lyra::runtime {
 
 // What is in force while something runs. Two things are: the generator a
-// randomization call draws from (LRM 18.14), and the scopes a DPI-C import call
-// chain has made current (LRM 35.5.3). Neither is ever handed to the code that
+// randomization call draws from (LRM 18.14), and the DPI-C import calls this
+// execution is inside (LRM 35.5.3). Neither is ever handed to the code that
 // reads it -- a subroutine body is compiled once and reached from more than one
 // runner, so both are read from whatever is running rather than passed in.
 //
@@ -18,7 +18,7 @@ namespace lyra::runtime {
 // procedure starts (LRM 10.5, 26.2) and can reach both of these.
 struct RunningState {
   DrawRng rng;
-  DpiScopeChain dpi_scopes;
+  ImportCallChain import_calls;
 };
 
 // A `RunningState` a static initialization owns, carrying what it displaced so

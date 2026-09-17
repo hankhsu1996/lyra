@@ -64,14 +64,18 @@ ENTRIES = "src/lyra/support/builtin_fn.cpp"
 
 # An entry opens a line, so a prototype and a definition are the same shape and
 # are read the same way. An indented match is a continuation line or a nested
-# declaration, and neither publishes a symbol.
-RE_ENTRY = re.compile(r"^(?:auto|void)\s+(lyra_rt_\w+)\s*\(", re.MULTILINE)
+# declaration, and neither publishes a symbol. An attribute may lead the line:
+# an entry that carries one publishes its symbol like any other, and a pattern
+# blind to it would leave that entry unchecked on every rule below.
+RE_ATTRIBUTE = r"(?:\[\[[\w:, ]+\]\]\s*)*"
+RE_ENTRY = re.compile(
+    rf"^{RE_ATTRIBUTE}(?:auto|void)\s+(lyra_rt_\w+)\s*\(", re.MULTILINE)
 RE_BINDING = re.compile(r'add\(\s*"(lyra_rt_\w+)"\s*,\s*&(lyra_rt_\w+)\s*\)')
 # One prototype with its parameter list, which ends at the first `)` because a
 # parameter type here is a machine word or an opaque pointer and never a
 # function type.
 RE_PROTOTYPE = re.compile(
-    r"^(?:auto|void)\s+(lyra_rt_\w+)\s*\(([^)]*)\)(\s*->\s*\w+)?",
+    rf"^{RE_ATTRIBUTE}(?:auto|void)\s+(lyra_rt_\w+)\s*\(([^)]*)\)(\s*->\s*\w+)?",
     re.MULTILINE)
 # One row of the runtime entry declaration: the entry it declares, and the
 # properties it states.
@@ -295,6 +299,10 @@ def run_self_tests() -> bool:
     ok &= expect(
         not entries_of("  auto lyra_rt_helper(void* p) -> void*;"),
         "an indented declaration is not an entry")
+    ok &= expect(
+        [e.name for e in entries_of("[[noreturn]] void lyra_rt_a();")]
+        == ["lyra_rt_a"],
+        "an entry an attribute leads is still an entry")
     ok &= expect(
         bindings_of('add("lyra_rt_dynarray_new", &lyra_rt_dynarray_new);')
         == [Binding("lyra_rt_dynarray_new", "lyra_rt_dynarray_new", 1)],

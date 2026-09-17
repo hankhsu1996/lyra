@@ -474,6 +474,23 @@ auto BuildBoundaryReadback(
       carrier);
 }
 
+// The MIR type a foreign entry point returns. A task carries no SV return
+// value; its C entry returns the disable-acknowledgment int instead (LRM 35.8),
+// and both directions of the boundary read that from here, so a call and the
+// entry it reaches can never disagree about what crosses back.
+auto ForeignBoundaryReturnType(
+    mir::CompilationUnit& unit, support::DpiScalarAbi ret_abi, bool is_task)
+    -> mir::TypeId {
+  if (is_task) {
+    return CarrierTypeId(
+        unit, support::ScalarCarrier{support::DpiScalarAbi::kInt});
+  }
+  if (ret_abi == support::DpiScalarAbi::kVoid) {
+    return unit.builtins.void_type;
+  }
+  return CarrierTypeId(unit, support::ScalarCarrier{ret_abi});
+}
+
 // Whether the foreign symbol hands a value back that the call marshals into the
 // SV result. A function result is restricted to a small value (LRM 35.5.5), so
 // it is always a by-value scalar; a `void` function and a task both yield none,
@@ -497,9 +514,7 @@ auto MakeForeignSymbolCall(
                           mir::ForeignSymbolTarget{
                               .linkage_name = import.foreign_name}},
               .arguments = std::move(carrier_args)},
-      .type = ReturnsValue(import)
-                  ? CarrierTypeId(unit, support::ScalarCarrier{import.ret_abi})
-                  : unit.builtins.void_type};
+      .type = ForeignBoundaryReturnType(unit, import.ret_abi, import.is_task)};
 }
 
 // The function import call the boundary needs no statements for: every actual
@@ -628,10 +643,12 @@ auto PopulateForeignImportBoundary(
       MakeForeignSymbolCall(unit, import, std::move(call_args));
   const mir::TypeId call_type = foreign_call.type;
 
-  // A valued call captures its carrier result in a temp so the copy-backs run
-  // before it is marshaled and returned.
+  // A call that hands anything back captures it in a temp so the copy-backs run
+  // before it is read. A task hands back no SV value and still hands back the
+  // protocol's int (LRM 35.8), which is read only to hold the foreign side to
+  // what the protocol asks of it.
   std::optional<mir::LocalId> ret_temp;
-  if (ReturnsValue(import)) {
+  if (call_type != unit.builtins.void_type) {
     ret_temp = cframe.bindings->DeclareAnonymous(call_type);
     body.AppendStmt(
         mir::LocalDeclStmt{
@@ -654,6 +671,22 @@ auto PopulateForeignImportBoundary(
     const mir::Expr assign =
         BuildStoreExpr(unit, body, *lhs_or, rhs_id, std::nullopt, wb.sv_type);
     body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign)});
+  }
+
+  // LRM 35.9 items b and c, checked where the foreign frame has just returned
+  // and its evidence is still in hand. Only a `context` import can reach an
+  // exported subroutine (LRM 35.5.3), so only one can be in the state these
+  // hold it to, and a plain import's boundary is left as cheap as it was.
+  if (import.is_context) {
+    if (import.is_task) {
+      AppendRuntimeEffectStmt(
+          unit_lowerer, body, support::BuiltinFn::kCheckImportTaskAcknowledged,
+          {body.exprs.Add(mir::MakeLocalRefExpr(*ret_temp, call_type))});
+    } else {
+      AppendRuntimeEffectStmt(
+          unit_lowerer, body,
+          support::BuiltinFn::kCheckImportFunctionAcknowledged, {});
+    }
   }
 
   return ret_temp;
@@ -681,6 +714,14 @@ auto BuildDeclaringScopeExpr(
 // Entering names the declaration's scope; the cleanup gives back whatever was
 // current before, on every way out -- a return, a raised effect, or falling off
 // the end.
+//
+// Only a `context` import can reach an exported subroutine (LRM 35.5.3), so it
+// is the only one whose execution can be told to stop while the foreign side
+// holds it. The extent is therefore also where that is answered for: the
+// foreign frame's own obligation is checked where it returns, and this
+// execution leaves if it has been told to, which is the point it regains
+// control at when the foreign side consumed no simulation time and suspended
+// nothing.
 void CloseDpiScopeExtent(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Block&& boundary,
     std::optional<hir::StructuralHops> declaring_scope) {
@@ -694,6 +735,8 @@ void CloseDpiScopeExtent(
       unit_lowerer, cleanup, support::BuiltinFn::kLeaveDpiScope, {});
 
   block.AppendFinally(std::move(boundary), std::move(cleanup));
+  AppendRuntimeEffectStmt(
+      unit_lowerer, block, support::BuiltinFn::kTakeDepartureIfDue, {});
 }
 
 // Whether crossing the boundary takes statements rather than one expression.
@@ -887,21 +930,6 @@ auto ForeignBoundaryType(
   return carrier_type;
 }
 
-// The MIR type a foreign entry point returns. A task carries no SV return
-// value; its C entry returns the disable-acknowledgment int instead (LRM 35.8).
-auto ForeignBoundaryReturnType(
-    mir::CompilationUnit& unit, support::DpiScalarAbi ret_abi, bool is_task)
-    -> mir::TypeId {
-  if (is_task) {
-    return CarrierTypeId(
-        unit, support::ScalarCarrier{support::DpiScalarAbi::kInt});
-  }
-  if (ret_abi == support::DpiScalarAbi::kVoid) {
-    return unit.builtins.void_type;
-  }
-  return CarrierTypeId(unit, support::ScalarCarrier{ret_abi});
-}
-
 }  // namespace
 
 auto MakeForeignSignature(
@@ -996,6 +1024,68 @@ auto LowerForeignImportCallStmtForm(
   return diag::Result<mir::Stmt>{std::move(stmt)};
 }
 
+// What an exported function's entry answers with when a departure reached the
+// boundary instead of a value: its declared result type's own default,
+// marshaled the way the value would have been. LRM 35.9 obliges the foreign
+// side to return without reading it.
+struct ExportedResult {
+  support::DpiScalarAbi abi;
+  mir::TypeId sv_type;
+};
+
+// Closes an export entry around the boundary `body`: the check LRM 35.9 item d
+// makes the simulator's, then the region that lands whatever no region of the
+// body claimed, then the answer the entry hands its foreign caller.
+//
+// Three answers, told apart by what the entry returns rather than by a flag. A
+// function that returns a value answers with it on the way through and with
+// `returned`'s default where a departure landed; one that returns nothing
+// answers with nothing; and a task, whose entry always returns the protocol's
+// int (LRM 35.8), answers with it whichever way the boundary ended, so its two
+// paths meet at one return.
+void CloseForeignExportEntry(
+    UnitLowerer& module, mir::Block& entry, mir::Block&& body,
+    mir::TypeId result_type, const std::optional<ExportedResult>& returned) {
+  mir::CompilationUnit& unit = module.Unit();
+
+  AppendRuntimeEffectStmt(
+      module, entry, support::BuiltinFn::kCheckExportReachable, {});
+
+  // The entry lands nothing of its own: the frame the foreign caller reached is
+  // the linkage symbol in front of this one, and that is where a departure has
+  // to stop. A region here would be one frame too high -- what stands between
+  // the two is not this compiler's to guarantee stays on the unwind path.
+  entry.AppendStmt(
+      mir::BlockStmt{.scope = entry.child_scopes.Add(std::move(body))});
+
+  if (returned.has_value()) {
+    const mir::ExprId fallback =
+        entry.exprs.Add(BuildDefaultValueExpr(unit, entry, returned->sv_type));
+    entry.AppendStmt(
+        mir::ReturnStmt{
+            .value = MarshalSvToCarrier(
+                unit, entry, fallback, support::ScalarCarrier{returned->abi})});
+    return;
+  }
+  if (result_type == unit.builtins.void_type) {
+    entry.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+    return;
+  }
+  entry.AppendStmt(
+      mir::ReturnStmt{
+          .value = entry.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Direct{
+                                  .target =
+                                      support::BuiltinFn::kDisableIsActive},
+                          .arguments = {entry.exprs.Add(
+                              BuildCurrentRuntimeCallExpr(module))}},
+                  .type = result_type})});
+}
+
 auto SynthesizeForeignExportEntry(
     UnitLowerer& module, const WalkFrame& context_frame,
     mir::DirectTarget target, mir::TypeId result_type,
@@ -1049,7 +1139,15 @@ auto SynthesizeForeignExportEntry(
 
   code.body.emplace();
   CallableBindings bindings(unit, code);
-  mir::Block& body = code.Body();
+  mir::Block& entry = code.Body();
+
+  // Nothing leaves this entry by unwinding. The frame above it belongs to
+  // another language, and such a frame ends only by returning, so the whole
+  // boundary stands inside a region that lands whatever names no region of its
+  // own; what the foreign side is told instead is the answer LRM 35.9 gives it.
+  // The effect is not carried across -- whether a departure is due is answered
+  // where control comes back, so landing it here loses nothing.
+  mir::Block body;
 
   std::optional<mir::LocalId> scope_param;
   if (through_scope) {
@@ -1256,25 +1354,20 @@ auto SynthesizeForeignExportEntry(
                 mir::MakeAssignExpr(place, carrier, void_type))});
   }
 
-  if (is_task) {
-    // An exported task carries no SV return; its foreign entry returns the DPI
-    // disable-acknowledgment int (LRM 35.8), 0 while no disable is active on
-    // the thread (LRM 35.9). The disable protocol is not yet modeled, so it is
-    // 0.
-    body.AppendStmt(
-        mir::ReturnStmt{
-            .value = body.exprs.Add(
-                mir::Expr{
-                    .data = mir::MachineIntLiteral{.value = 0},
-                    .type = code.result_type})});
-  } else if (has_return) {
+  if (!is_task && has_return) {
     const mir::ExprId ret_carrier = MarshalSvToCarrier(
         unit, body, component_value(0),
         support::ScalarCarrier{export_decl.ret_abi});
     body.AppendStmt(mir::ReturnStmt{.value = ret_carrier});
-  } else {
-    body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   }
+
+  CloseForeignExportEntry(
+      module, entry, std::move(body), code.result_type,
+      !is_task && has_return
+          ? std::optional{ExportedResult{
+                .abi = export_decl.ret_abi,
+                .sv_type = module.TranslateType(export_decl.ret_sv_type)}}
+          : std::nullopt);
 
   // The entry's identity is its linkage name: it is a program-global symbol in
   // the DPI name space, not an SV declaration the source can call (LRM 35.4,
@@ -1317,11 +1410,33 @@ void PublishForeignScopeName(
   }
   code.result_type = prototype.result;
 
+  const bool answers = !unit.types.Get(prototype.result).Is<mir::VoidType>();
+
+  // This is the last frame before the foreign caller, so it is where a
+  // departure stops: past it there is no frame this compiler emitted for one to
+  // travel through (LRM 35.9). Both paths meet at one return -- the entry's
+  // answer where the body ran out, the standard's own where a departure ended
+  // it, which LRM 35.8 gives an exported task as the int it returns and which
+  // an exported function has no channel for, so it answers with a default its
+  // caller is required not to read.
+  std::optional<mir::LocalId> answer;
+  if (answers) {
+    answer = bindings.DeclareAnonymous(prototype.result);
+    body.AppendStmt(
+        mir::LocalDeclStmt{
+            .target = *answer,
+            .init = body.exprs.Add(
+                mir::Expr{
+                    .data = mir::MachineIntLiteral{.value = 0},
+                    .type = prototype.result})});
+  }
+
+  mir::Block ran;
   const mir::LocalId scope = bindings.DeclareAnonymous(unit.builtins.scope_ptr);
-  body.AppendStmt(
+  ran.AppendStmt(
       mir::LocalDeclStmt{
           .target = scope,
-          .init = body.exprs.Add(
+          .init = ran.exprs.Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{
@@ -1333,12 +1448,12 @@ void PublishForeignScopeName(
                   .type = unit.builtins.scope_ptr})});
 
   const mir::ExprId scope_ref =
-      body.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr));
-  const mir::ExprId name = body.exprs.Add(
+      ran.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr));
+  const mir::ExprId name = ran.exprs.Add(
       mir::Expr{
           .data = mir::StringLiteral{.value = linkage.foreign_name},
           .type = unit.types.Intern(mir::Type{mir::MachineCStringType{}})});
-  const mir::ExprId entry = body.exprs.Add(
+  const mir::ExprId entry = ran.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -1348,7 +1463,7 @@ void PublishForeignScopeName(
                   .arguments = {scope_ref, name}},
           .type = mir::ErasedFunction(unit.types)});
 
-  const mir::ExprId restored = body.exprs.Add(
+  const mir::ExprId restored = ran.exprs.Add(
       mir::Expr{
           .data = mir::CastExpr{.operand = entry},
           .type = unit.types.Intern(
@@ -1358,25 +1473,65 @@ void PublishForeignScopeName(
   std::vector<mir::ExprId> call_args;
   call_args.reserve(code.params.size() + 1);
   call_args.push_back(
-      body.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr)));
+      ran.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr)));
   for (const mir::LocalId param : code.params) {
-    call_args.push_back(body.exprs.Add(
+    call_args.push_back(ran.exprs.Add(
         mir::MakeLocalRefExpr(param, code.locals.Get(param).type)));
   }
-  const mir::ExprId call = body.exprs.Add(
+  const mir::ExprId call = ran.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Indirect{.code = restored},
                   .arguments = std::move(call_args)},
           .type = prototype.result});
-  // A void entry is called for its effect and returns nothing; any other hands
-  // its result straight back.
-  if (unit.types.Get(prototype.result).Is<mir::VoidType>()) {
-    body.AppendStmt(mir::ExprStmt{.expr = call});
-    body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  if (answers) {
+    const mir::ExprId place =
+        ran.exprs.Add(mir::MakeLocalRefExpr(*answer, prototype.result));
+    ran.AppendStmt(
+        mir::ExprStmt{
+            .expr = ran.exprs.Add(
+                mir::MakeAssignExpr(place, call, unit.builtins.void_type))});
   } else {
-    body.AppendStmt(mir::ReturnStmt{.value = call});
+    ran.AppendStmt(mir::ExprStmt{.expr = call});
+  }
+
+  mir::Block departed;
+  if (answers) {
+    const mir::ExprId place =
+        departed.exprs.Add(mir::MakeLocalRefExpr(*answer, prototype.result));
+    const mir::ExprId active = departed.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target = support::BuiltinFn::kDisableIsActive},
+                    .arguments = {departed.exprs.Add(
+                        mir::MakeCurrentRuntimeCallExpr(
+                            unit.builtins.effects))}},
+            .type = prototype.result});
+    departed.AppendStmt(
+        mir::ExprStmt{
+            .expr = departed.exprs.Add(
+                mir::MakeAssignExpr(place, active, unit.builtins.void_type))});
+  }
+
+  const mir::TypeId effect_type = unit.types.Intern(
+      mir::Type{mir::RuntimeLibraryType{
+          .kind = mir::RuntimeLibraryKind::kControlEffect}});
+  body.AppendStmt(
+      mir::TryStmt{
+          .body = body.child_scopes.Add(std::move(ran)),
+          .caught = bindings.DeclareAnonymous(effect_type),
+          .handler = body.child_scopes.Add(std::move(departed))});
+  if (answers) {
+    body.AppendStmt(
+        mir::ReturnStmt{
+            .value = body.exprs.Add(
+                mir::MakeLocalRefExpr(*answer, prototype.result))});
+  } else {
+    body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   }
 
   unit.foreign_scope_entries.push_back(

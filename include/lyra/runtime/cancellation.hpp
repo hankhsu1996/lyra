@@ -105,8 +105,9 @@ struct ControlEffect {
 [[noreturn]] void RaiseUnclaimableEffect();
 
 // Raises the effect a body reported as its outcome instead of by leaving, so
-// the activation that drove that body settles cancelled (LRM 9.6.2). Call from
-// the driver once the body has run its last statement.
+// the activation that drove that body settles cancelled (LRM 9.6.2, 9.7). Call
+// from the driver once the body has run its last statement. `target` is what
+// the reported effect named, which is null where no region may claim it.
 [[noreturn]] void RaiseControlEffect(CancellationTarget* target);
 
 // What came out of a body that did not return: a control effect, or a run-time
@@ -140,13 +141,19 @@ void EnterCancellationTarget(
 void LeaveCancellationTarget(
     RuntimeEffects& effects, CancellationTarget* target);
 
-// LRM 9.6.2: raises the pending effect, if any, for an execution regaining
-// control. Reached where an execution can next run a user statement -- a leaf
-// wait resuming, and the `disable` statement itself -- so no execution runs a
-// statement of a target that was disabled while it was inside it. The outermost
-// invalidated target wins, because leaving it also leaves everything nested in
-// it.
-void RaiseControlEffectIfDisabled(RuntimeProcess& process);
+// LRM 9.6.2, 9.7: raises the departure owed here, if one is. Reached where an
+// execution can next run a user statement -- a leaf wait resuming, a foreign
+// call returning, and the `disable` statement itself -- so no execution runs a
+// statement it has been told not to. The outermost invalidated target wins,
+// because leaving it also leaves everything nested in it; a termination names
+// no target, because nothing may continue past one.
+void TakeDepartureIfDue(RuntimeProcess& process);
+
+// The same question where the body itself states it, because nothing else runs
+// at that point: a foreign call returns without having suspended anything when
+// the foreign side consumes no simulation time, so this execution regains
+// control with no resumption to ask on its behalf (LRM 35.9).
+void TakeDepartureIfDue(RuntimeEffects& effects);
 
 // Whether a landing may claim the effect it is holding (LRM 9.6.2): true when
 // the effect names the target this landing owns, so execution resumes past that

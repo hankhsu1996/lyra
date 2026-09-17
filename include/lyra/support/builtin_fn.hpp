@@ -667,6 +667,27 @@ enum class BuiltinFn : std::uint16_t {
   // leaving the chain to report an enclosing entry that is not its own.
   kEnterDpiScope,
   kLeaveDpiScope,
+  // The DPI-C disable protocol (LRM 35.9), which is what a boundary states
+  // instead of letting a departure cross a frame this compiler did not emit.
+  // The answer is the int LRM 35.8 gives an exported task's entry: 1 while a
+  // disable is active on this execution thread -- one reached a block it is
+  // inside, or its process was terminated -- and 0 otherwise.
+  //
+  // The three checks are the ones the clause makes the simulator's, each placed
+  // where its evidence is: what an imported task returned, whether an imported
+  // function acknowledged, and whether an exported subroutine was reached at
+  // all once the state was entered. None of them leaves by an effect, because
+  // the frame each stands in was reached from foreign code.
+  kDisableIsActive,
+  kCheckImportTaskAcknowledged,
+  kCheckImportFunctionAcknowledged,
+  kCheckExportReachable,
+  // Where a foreign call hands control back, this execution takes the departure
+  // owed to it, if one is (LRM 9.6.2, 9.7). Every other point an execution
+  // regains control is a resumption, which each backend already asks its own
+  // way; a foreign call that consumed no simulation time suspended nothing, so
+  // this is the one such point a body has to state for itself.
+  kTakeDepartureIfDue,
   // Whether this call is the one bring-up a namespace's initializers get (LRM
   // 26.2). A namespace is reached both by the design's own bring-up and by
   // every namespace whose initializers read its cells, so the entry answers
@@ -941,6 +962,12 @@ struct RuntimeEntry {
   // answers with an ordinary value and nothing about that value says the
   // caller stopped.
   bool parks_the_caller = false;
+  // Whether a call to the entry can end other than by returning, because it
+  // runs the design's own code or because raising is what it is for. A
+  // `disable` anywhere inside such a call reaches every execution it encloses
+  // (LRM 9.6.2), so what is owed between the call site and the frame's edge has
+  // to get its turn before the departure carries on past it.
+  bool can_depart = false;
   // Whether the entry updates the object it acts on, so that object names a
   // place rather than a value -- which is what makes a receiver reaching
   // through a capability wrapper reach its write access. Where the update

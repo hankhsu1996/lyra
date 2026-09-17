@@ -40,17 +40,26 @@ Two frontiers are open, the two backends.
 On the C++ backend the boundary runs in both directions and the surfaces below are closed: import
 (D1-D3, D13) including open arrays (D8), export (D4, D4a-D4d) including instance-bound,
 generate-scope, and receiver-less dispatch, DPI tasks in both directions including one that consumes
-simulation time (D5, D6, D6b, D6d), the `svdpi` context surface (D7), and the generated ABI header
-with link-input orchestration (D9). What remains is the disable protocol across the boundary (D6c)
-and the element types Annex H.7.3 puts in C-compatible representation.
+simulation time (D5, D6, D6b, D6d), the disable protocol and the checks it puts on the foreign side
+(D6c), the `svdpi` context and disable surface (D7), and the generated ABI header with link-input
+orchestration (D9). What remains is the element types Annex H.7.3 puts in C-compatible
+representation.
 
 On the execution backend the boundary runs in both directions too. Import (D10, D11) is in apart
 from an open array whose actual is an unpacked array, which is not blocked by anything DPI owns
 (`execution-backend.md`); export and DPI tasks (D12) are in, so a foreign object calls an exported
 subroutine under its own C name, reaches the instance the call chain established, and a task in
-either direction suspends across the boundary while simulation time advances. What remains there is
-the same two items the C++ backend has left: the disable protocol (D6c) and the element types Annex
-H.7.3 puts in C-compatible representation.
+either direction suspends across the boundary while simulation time advances. The disable protocol
+(D6c) is shared with the C++ backend rather than built twice: what a boundary states is the same
+MIR, and what answers it is the runtime both backends link. What remains there is the same item the
+C++ backend has left, the element types Annex H.7.3 puts in C-compatible representation.
+
+**One direction of the disable protocol has no conformance case and cannot have one.** A case is a
+self-checking program held to an exit status and a sentinel, so a requirement whose whole content is
+that the run _fails_ -- which is what LRM 35.9 asks of a foreign side that breaks the protocol --
+moves neither signal in the direction a passing case needs. The compliant direction is covered for
+both an imported task and an imported function; each of the three violations was verified by hand,
+in both directions, against the corpus's own cases with a deliberately wrong foreign source.
 
 ## Sub-Steps
 
@@ -158,9 +167,31 @@ protocol on top of it.
       call stack is parked across the boundary while simulation time advances and then resumes, so
       an imported task and the exported task it drives both suspend and continue across the
       boundary. Rides on the timing and suspension machinery (`scheduling.md`, `processes.md`).
-- [ ] D6c -- The disable protocol (LRM 35.9): a `disable` reaching a process suspended inside a
-      foreign task returns control across the C boundary the runtime does not own, cooperatively via
-      the disable-acknowledgment return rather than a stack unwind.
+- [x] D6c -- The disable protocol (LRM 35.9). Nothing that ends an execution crosses a frame the
+      compiler did not emit, because such a frame ends only by returning. So an exported
+      subroutine's entry lands whatever would have left it and answers instead: a task returns the
+      disable-active int (LRM 35.8), a function returns its result type's default, and
+      `svIsDisabledState` answers the same question to any foreign frame that asks, with
+      `svAckDisabledState` recording that one is following the protocol. Whether a departure is due
+      is derived again where control comes back rather than carried across, so the execution leaves
+      at its own boundary and the disabled block ends where LRM 9.6.2 says it does. The three
+      obligations the clause puts on the foreign programmer -- an imported task returning 1, an
+      imported function acknowledging, and no further call to an exported subroutine once the state
+      is entered -- are each checked where their evidence is, and a violation is reported as a fatal
+      error of the run rather than departing from a frame that may not be left that way. Terminating
+      an execution that holds an unreturned foreign call (LRM 9.6.3, 9.7) reaches it the same way:
+      it is asked to stop and handed control once more, and its terminal state is published only
+      once its foreign frames have returned.
+  - [ ] Two ways of ending do not reach the foreign side, and both end the run correctly without it.
+        A run-time error of the design raised inside an exported **function**'s body travels out
+        through the foreign frame rather than stopping at the entry, because a region lands the
+        departure kind and not the error kind and a function's body has no frame of the runtime's
+        between it and its entry, where a task's driver is exactly that. And `$fatal` or `$finish`
+        reached from an exported subroutine parks the execution rather than departing, so the
+        boundary is never reached at all and the foreign frames are abandoned with the run. In both
+        the error is reported and the exit status is right; what is lost is the chance to clean up
+        that LRM 35.9 exists to give the foreign side. An exported task's run-time error is not
+        among these: it stops at the boundary and the entry answers 1.
 - [x] D6d -- Side-effect attribution inside an exported subroutine body. `%m` (LRM 21.2.1.5) renders
       the exported subroutine's own instantiated position, and a severity task (LRM 20.10) tags its
       report with the call site, so both already read where the exported body is rather than where
@@ -172,10 +203,11 @@ protocol on top of it.
 
 ### Context and the svdpi surface
 
-- [x] D7 -- `context` imports and the `svdpi` runtime surface (LRM 35.5.3, Annex H): DPI scope
+- [x] D7 -- `context` imports and the `svdpi` runtime surface (LRM 35.5.3, 35.9, Annex H): DPI scope
       handles, set / get scope, resolve a scope to and from its fully qualified name, per-scope user
-      data, and time queries (a scope's effective unit and precision, and the current time scaled to
-      it). A context import observes the instantiated scope of its declaration, established for the
+      data, time queries (a scope's effective unit and precision, and the current time scaled to
+      it), and the two disable-state entries foreign code reads and answers the protocol with. A
+      context import observes the instantiated scope of its declaration, established for the
       duration of its foreign call and given back however that call ends; the current scope belongs
       to whatever is running, so two time-consuming context imports suspended concurrently never
       observe each other's scope, and one reached before any procedure starts -- from a variable

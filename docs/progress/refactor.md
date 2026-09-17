@@ -1659,6 +1659,27 @@ enough to warrant its own focused review.
       Not blocked. Found while giving every declared variable one storage; the store survived
       because nothing else it carried moved in the same cut.
 
+- [ ] R104 -- A requirement whose whole content is that the run **fails** cannot be stated in the
+      corpus. A case is held to an exit status and a sentinel, and both directions of that pair mean
+      "the checks ran and passed", so a program IEEE 1800 requires a tool to reject _at run time_
+      has nowhere to be written down. The report directives cover the case where a run reports and
+      still succeeds; the rejection directive covers the case where a tool refuses the program
+      before running it. Between them sits everything the standard makes a fatal simulation error,
+      and the DPI-C disable protocol is the first place it bit: three checks LRM 35.9 obliges a
+      simulator to implement, each verified by hand in both directions and none of them held by
+      anything afterwards.
+
+      **Target shape**: a directive for a case whose run must end in a stated failure, checked
+      against the diagnostic the way a rejection already is. It shares the rejection's shape -- no
+      sentinel, text the run has to name -- and differs only in when the failure happens, which is
+      what makes it a third state of the same axis rather than a second corpus.
+
+- [x] R105 -- One way of leaving a body instead of two. Both targets now hand a departure to the
+      language they emit and touch nothing in between; the gate that asked at every point an
+      execution regained control, and the branch it left by, are gone. What made the split look
+      necessary was a property that turned out to be two: passing through a generated frame, which
+      already worked, and catching in one, which nobody had emitted. Only the second was missing.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

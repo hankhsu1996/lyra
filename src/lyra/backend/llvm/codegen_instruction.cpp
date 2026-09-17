@@ -96,6 +96,9 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           [&](const lir::CallInstr& call) -> diag::Result<llvm::Value*> {
             return LowerCall(call, result_type);
           },
+          [&](const lir::ReceiveDepartureInstr&) -> diag::Result<llvm::Value*> {
+            return LowerReceiveDeparture();
+          },
           [&](const lir::ProductInstr& product) -> diag::Result<llvm::Value*> {
             return LowerProduct(product, result_type);
           },
@@ -600,9 +603,46 @@ auto CodeGenFunction::LowerCast(
       *operand, target, *signedness == lir::Signedness::kSigned);
 }
 
-auto CodeGenFunction::LowerCall(
+auto CodeGenFunction::LowerReceiveDeparture() -> diag::Result<llvm::Value*> {
+  // The referee is named on the function rather than at the landing, so it is
+  // set the first time one is needed and is absent from a body that has none.
+  if (!value_->hasPersonalityFn()) {
+    value_->setPersonalityFn(
+        llvm::cast<llvm::Constant>(
+            module_->Module()
+                .getOrInsertFunction(
+                    "__gxx_personality_v0",
+                    llvm::FunctionType::get(builder_.getInt32Ty(), true))
+                .getCallee()));
+  }
+  // The pad takes every departure that reaches it: which region may claim one
+  // is a question about the target it names, which the body already tests, so
+  // selecting here on anything finer answers it twice in two vocabularies.
+  //
+  // It says so with a clause, which is what makes this frame one the platform
+  // stops at while it works out where a raise is going -- and a landing has to
+  // be such a frame, because a landing that is only reached afterwards is
+  // reached only when somewhere else already stopped it. The clause names the
+  // raised type, because a run-time failure of the design travels the same way
+  // and belongs to no landing.
+  llvm::Type* const pad_type =
+      llvm::StructType::get(module_->Types().Ptr(), builder_.getInt32Ty());
+  llvm::LandingPadInst* const pad = builder_.CreateLandingPad(pad_type, 1);
+  pad->addClause(
+      llvm::cast<llvm::Constant>(module_->Module().getOrInsertGlobal(
+          kDepartureTypeSymbol, module_->Types().Ptr())));
+  const std::array<llvm::Value*, 1> carried{
+      builder_.CreateExtractValue(pad, 0)};
+  return builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(RuntimeOp::kClaimDeparture), module_->Types().Ptr(),
+          carried),
+      carried);
+}
+
+auto CodeGenFunction::ResolveCall(
     const lir::CallInstr& call, lir::TypeId result_type)
-    -> diag::Result<llvm::Value*> {
+    -> diag::Result<ResolvedCall> {
   std::vector<llvm::Value*> operands;
   operands.reserve(call.args.size());
   for (const lir::Operand& arg : call.args) {
@@ -623,7 +663,37 @@ auto CodeGenFunction::LowerCall(
   if (!callee) {
     return std::unexpected(std::move(callee.error()));
   }
-  return builder_.CreateCall(*callee, *args);
+  return ResolvedCall{.callee = *callee, .args = *std::move(args)};
+}
+
+auto CodeGenFunction::LowerCall(
+    const lir::CallInstr& call, lir::TypeId result_type)
+    -> diag::Result<llvm::Value*> {
+  auto resolved = ResolveCall(call, result_type);
+  if (!resolved) {
+    return std::unexpected(std::move(resolved.error()));
+  }
+  // A decline that no landing of this function receives is where the departure
+  // leaves the body. Leaving a suspendable body that way is the one exit the
+  // coroutine passes cannot infer, so it is marked here: without it the frame
+  // this raise walks out of is described by nothing and the search for a
+  // handler ends at the top of the stack.
+  if (const auto* effect = std::get_if<lir::ControlEffectTarget>(&call.target);
+      effect != nullptr &&
+      effect->op == lir::ControlEffectTarget::Op::kDeclineDeparture) {
+    MarkCoroutineLeftByUnwind();
+  }
+  return builder_.CreateCall(resolved->callee, resolved->args);
+}
+
+void CodeGenFunction::MarkCoroutineLeftByUnwind() {
+  if (coro_handle_ == nullptr) {
+    return;
+  }
+  llvm::Module& mod = module_->Module();
+  builder_.CreateCall(
+      llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::coro_end),
+      {coro_handle_, builder_.getInt1(true)});
 }
 
 // An entry the runtime publishes, typed by what the call hands it: the values

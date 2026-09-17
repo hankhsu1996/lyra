@@ -90,19 +90,17 @@ or incomplete relative to the contract.
       The effect arises where an execution regains control -- a wait resuming, the `disable`
       statement itself -- and a spawned activity disabled before it ever runs is terminated without
       executing a statement. What a body carries is the region alone, and both backends run the
-      construct: the one whose bodies can be unwound through reaches an execution inside a region
-      that way, and the one whose bodies cannot asks, at those same points, whether a target it is
-      inside has been disabled. Which targets an execution is inside is the execution's own state,
-      so a spawned branch is enclosed by the targets its spawner was inside even though its body
-      states no region, and a `disable` of a named `fork` reaches a branch parked on a delay. Where
-      the target lives follows what replicates it: a scope of the design hierarchy is replicated per
-      instance and keeps one target per instance, while a class method's block is one target for the
-      class -- a method is automatic (LRM 8.6) and LRM 9.6.2 disables a block inside an automatic
-      task for every concurrent execution of it, so one object's `disable` ends the block in every
-      other object running it -- and a package subroutine's is one for the program. Disabling a task
-      runs on both backends, the one without exceptions included, since a task enable there is an
-      await on a body that completes as a coroutine and the region is built from the body's own ways
-      out.
+      construct the same way, by leaving the region the way the target they emit leaves a scope from
+      within. Which targets an execution is inside is the execution's own state, so a spawned branch
+      is enclosed by the targets its spawner was inside even though its body states no region, and a
+      `disable` of a named `fork` reaches a branch parked on a delay. Where the target lives follows
+      what replicates it: a scope of the design hierarchy is replicated per instance and keeps one
+      target per instance, while a class method's block is one target for the class -- a method is
+      automatic (LRM 8.6) and LRM 9.6.2 disables a block inside an automatic task for every
+      concurrent execution of it, so one object's `disable` ends the block in every other object
+      running it -- and a package subroutine's is one for the program. Disabling a task runs on both
+      backends, the one without exceptions included, since a task enable there is an await on a body
+      that completes as a coroutine and the region is built from the body's own ways out.
   - [x] A `disable` whose target another module instance, generate scope, or interface declares --
         `disable u.blk`, `disable c.tk`, `disable g[0].blk`, and the same through an interface
         instance or an interface port -- naming it by a hierarchical path (LRM 23.9). What a name

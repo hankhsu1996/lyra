@@ -247,9 +247,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // The run-time error that left the innermost activation's body, if any. A
   // driver written as a coroutine stores whatever leaves the body it drives,
   // because that is what the language does with an escaping exception; this
-  // takes it back out so it can continue on its way to a landing. A control
-  // effect does not come back this way: it names a target this thread is
-  // inside, which the thread answers for itself wherever it regains control.
+  // takes it back out so it can continue on its way to a landing.
   [[nodiscard]] auto TakeInnermostRaisedError() -> std::exception_ptr;
 
   [[nodiscard]] auto CurrentLeaf() const -> CoroutineHandle {
@@ -286,6 +284,23 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
         enclosing_targets_.back().target == target) {
       enclosing_targets_.pop_back();
     }
+  }
+
+  // LRM 9.6.2, 9.7: whether a departure is owed here -- a target this execution
+  // is inside was disabled, or its own termination was requested or settled.
+  // The three are one question because what each owes this execution is the
+  // same: it runs no further statement of the design.
+  [[nodiscard]] auto DepartureIsDue() const -> bool {
+    return termination_requested_ ||
+           execution_state_ == ProcessExecutionState::kTerminated ||
+           OutermostInvalidatedTarget() != nullptr;
+  }
+
+  // Whether a foreign call this execution made has still to return. Such an
+  // execution cannot be torn down where it stands: the frames between it and
+  // its own are another language's, and they end only by running.
+  [[nodiscard]] auto HasLiveForeignCall() const -> bool {
+    return !foreign_calls_.empty();
   }
 
   // The outermost target this execution is inside that has been disabled since
@@ -489,6 +504,11 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // removes.
   void SettleTerminated(
       ProcessTerminationCause cause, std::vector<CoroutineHandle>& woken);
+  // Ends this node, or -- where its execution holds a foreign call that has yet
+  // to return -- asks it to end and hands it control once more so that call can
+  // return. Every bulk termination goes through here, so no path can settle a
+  // node whose frame is under another language's.
+  void SettleOrRequestKilled(std::vector<CoroutineHandle>& woken);
   [[nodiscard]] auto IsReleasable() const -> bool;
   void EraseChild(RuntimeProcess& child);
 

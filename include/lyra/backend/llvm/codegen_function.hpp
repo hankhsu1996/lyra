@@ -43,9 +43,26 @@ class CodeGenFunction {
   auto Run() -> diag::Result<void>;
 
  private:
+  // A call with its callee and its arguments settled, which is everything the
+  // two forms of a call share: one continues in place, the other names where a
+  // departure lands, and nothing about resolving the callee differs.
+  struct ResolvedCall {
+    llvm::FunctionCallee callee;
+    std::vector<llvm::Value*> args;
+  };
+
   auto LowerInstr(const lir::Instr& instr) -> diag::Result<llvm::Value*>;
+  auto ResolveCall(const lir::CallInstr& call, lir::TypeId result_type)
+      -> diag::Result<ResolvedCall>;
   auto LowerCall(const lir::CallInstr& call, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
+  // States that what follows leaves a suspendable body by unwinding, which the
+  // coroutine passes cannot see for themselves. A body that is not one is
+  // already described by its own frame, so this says nothing there.
+  void MarkCoroutineLeftByUnwind();
+  // Opens a landing: the pad the platform transfers to, and the target the
+  // departure names, which is what the body's own test reads.
+  auto LowerReceiveDeparture() -> diag::Result<llvm::Value*>;
   auto ResolveCallee(
       const lir::CallInstr& call, lir::TypeId result_type,
       std::span<llvm::Value* const> args) -> diag::Result<llvm::FunctionCallee>;

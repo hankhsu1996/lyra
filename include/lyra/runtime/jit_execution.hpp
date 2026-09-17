@@ -165,6 +165,16 @@ void lyra_rt_leave_static_init(void* runtime);
 void lyra_rt_enter_dpi_scope(void* runtime, void* decl_scope);
 void lyra_rt_leave_dpi_scope(void* runtime);
 
+// The DPI-C disable protocol (LRM 35.9). The question an exported task's entry
+// answers as its int, and the three checks the clause makes the simulator's.
+// None of them raises: each stands in a frame foreign code reached, so what it
+// does is report and end the run.
+auto lyra_rt_disable_is_active(void* runtime) -> std::int32_t;
+void lyra_rt_check_import_task_acknowledged(
+    void* runtime, std::int32_t returned);
+void lyra_rt_check_import_function_acknowledged(void* runtime);
+void lyra_rt_check_export_reachable(void* runtime);
+
 auto lyra_rt_claim_namespace_initialize(void* runtime, const char* name)
     -> std::int64_t;
 
@@ -391,21 +401,30 @@ auto lyra_rt_triggered(const void* event, void* runtime) -> void*;
 // The two brackets record on the running process which targets its execution is
 // inside, and the generation each held on entry; `lyra_rt_disable` advances the
 // named target's generation and wakes the executions blocked inside it, and
-// leaves who lands where to each of them. The two queries answer which target
-// this execution is inside has been disabled since it entered, and whether one
-// has -- each computed by comparing generations, so nothing is stored and
-// nothing has to be cleared. A body asks them where it regains control, because
-// a simulated process cannot be made to run code partway through a statement.
-// `lyra_rt_settle_cancelled` reports that an effect left the body with no
-// region of it claiming the effect, so the activation settles cancelled (LRM
-// 9.7 KILLED) rather than completing normally.
+// leaves who lands where to each of them. The two queries answer whether this
+// execution has to leave where it stands and which target its departure names
+// -- the first computed from the generations and from a termination this
+// execution has yet to unwind for, the second from the generations alone, so
+// nothing is stored and nothing has to be cleared. A departure naming no target
+// is one no region may claim. A body asks them where it regains control,
+// because a simulated process cannot be made to run code partway through a
+// statement.
+// A departure that arrived at a landing, in the three steps the platform's
+// unwinding protocol takes. Claiming answers the target the effect names, which
+// is what the landing tests; finishing releases it, which a landing does when
+// it continues past its own region; declining hands it back to carry on
+// outward. They are entries of this ABI rather than calls a body makes for
+// itself, so generated code names no unwinding symbol and each target's own
+// protocol stays inside the runtime.
+auto lyra_rt_claim_departure(void* exception) -> void*;
+void lyra_rt_finish_departure();
+[[noreturn]] void lyra_rt_decline_departure();
+
 void lyra_rt_enter_target(void* runtime, void* target);
 void lyra_rt_leave_target(void* runtime, void* target);
 void lyra_rt_disable(void* target, void* runtime);
 auto lyra_rt_effect_names_target(void* effect, void* target) -> void*;
-auto lyra_rt_invalidated_target(void* runtime) -> void*;
-auto lyra_rt_has_invalidated_target(void* runtime) -> bool;
-void lyra_rt_settle_cancelled(void* effect);
+void lyra_rt_take_departure_if_due(void* runtime);
 
 // Reads the current simulation time, scaled to the time unit of the design
 // element the call sits in (LRM 20.3). That unit is the caller's property

@@ -1,8 +1,10 @@
 #include "lyra/lir/verify.hpp"
 
+#include <cstddef>
 #include <format>
 #include <optional>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -95,8 +97,48 @@ void VerifyInstr(
           [](const ArrayInstr&) {}, [](const UnionInstr&) {},
           [](const AggregateExtractInstr&) {},
           [](const AggregateUpdateInstr&) {}, [](const TagTestInstr&) {},
-          [](const BinaryInstr&) {}, [](const UnaryInstr&) {}},
+          [](const BinaryInstr&) {}, [](const UnaryInstr&) {},
+          // Where it may stand is a property of the block rather than of the
+          // instruction, so it is held where the blocks are walked.
+          [](const ReceiveDepartureInstr&) {}},
       instr.data);
+}
+
+// A landing is a block some departing call names and that opens by receiving
+// what arrived. Neither half stands without the other: a body reaches a landing
+// no other way, and a departure has nowhere else to be read -- so a block that
+// opens this way and is named by nothing would never run, and one that is named
+// and does not would run with the departure unread.
+void VerifyLandings(const Function& fn) {
+  std::vector<bool> named(fn.blocks.size(), false);
+  for (const BasicBlock& block : fn.blocks) {
+    if (const auto* call =
+            std::get_if<DepartingCallInstr>(&block.terminator.data)) {
+      named[call->landing.value] = true;
+    }
+  }
+  for (std::size_t index = 0; index < fn.blocks.size(); ++index) {
+    const std::vector<Instr>& instrs = fn.blocks[index].instrs;
+    for (std::size_t at = 0; at < instrs.size(); ++at) {
+      if (!std::holds_alternative<ReceiveDepartureInstr>(instrs[at].data)) {
+        continue;
+      }
+      if (at != 0) {
+        throw InternalError(
+            "lir verify: a departure is received somewhere other than at the "
+            "start of a landing");
+      }
+    }
+    const bool receives =
+        !instrs.empty() &&
+        std::holds_alternative<ReceiveDepartureInstr>(instrs[0].data);
+    if (receives != named[index]) {
+      throw InternalError(
+          receives ? "lir verify: a landing no departing call names"
+                   : "lir verify: a departing call names a block that receives "
+                     "no departure");
+    }
+  }
 }
 
 void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
@@ -118,6 +160,7 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
           "a coroutine");
     }
   }
+  VerifyLandings(fn);
 }
 
 }  // namespace

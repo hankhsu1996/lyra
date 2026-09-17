@@ -273,7 +273,7 @@ auto Runtime::ClaimNamespaceInitialization(std::string_view name) -> bool {
 void Runtime::EnterStaticInit(RandomSeed seed) {
   displacing_.push_back(
       DisplacingState{
-          .state = RunningState{.rng = DrawRng{seed}, .dpi_scopes = {}},
+          .state = RunningState{.rng = DrawRng{seed}, .import_calls = {}},
           .displaced = running_});
   running_ = &displacing_.back().state;
 }
