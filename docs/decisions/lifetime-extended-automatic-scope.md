@@ -85,6 +85,27 @@ The model in detail:
   activation is freed when the last copy drops. This is plain RAII on the shared pointer; no
   explicit acquire / release step exists.
 
+  **"When its frame is destroyed" is the target's answer, not the model's, and the two targets do
+  not give the same one.** Where the frame is the emitted language's own, the declaring copy drops
+  at the declaring scope's exit, so the activation is freed as soon as the last branch is done with
+  it. Where the frame owns nothing and storage belongs to a runtime store instead, the declaring
+  copy drops when the whole execution ends -- the same moment for a process body, later than the
+  scope for a task call or an inner block. Every path still frees it and no path leaks it; what
+  differs is how long after the language says the scope ended. The activation ending later than its
+  scope is unobservable, because a program cannot spell a destructor and so cannot ask -- but it is
+  a real cost, it grows with how often the block is entered rather than with what the body declares,
+  and it is not what this decision says.
+
+  **Nor is it a difference the layer contract admits.** Dropping at the scope's exit is half of what
+  the shared wrapper means -- the same half `Rc` and `shared_ptr` mean by it -- rather than one
+  target's spelling of it, so a target that does not emit that drop has not realized the construct,
+  and the two then differ in what it means rather than in how they represent it. What is missing is
+  a lowering and not a new semantic operation: the wrapper already says it, and an end that one
+  target emits while the other gets it from its own language is a shape the execution layer already
+  carries, which is how a body's declared storage is opened and closed there. What makes it a piece
+  of work rather than an oversight is that it changes how such a local lowers on both targets at
+  once, since whichever one gets the end for free must not then emit it twice.
+
 - **`join_any` needs no special ownership rule.** A completed branch drops its handle copy;
   remaining branches keep theirs; the parent may proceed and drop its own; the activation survives
   exactly while any holder retains a copy.
@@ -129,8 +150,8 @@ consumer.
 
 ## Consequences
 
-- The detached-borrow-of-enclosing-automatic case (LRM 6.21) is supported; the `unsupported`
-  diagnostic Lyra emits for it is removed once the mechanism lands.
+- The detached-borrow-of-enclosing-automatic case (LRM 6.21) is supported on both targets, and
+  neither refuses it any more.
 - A nested fork whose inner branch reaches an outer branch's automatic is no longer a separate
   problem: the handle propagates transitively exactly as `self` does.
 - `kShared` gains its first producer. The general shared-ownership contract this establishes is
@@ -148,6 +169,22 @@ consumer.
   per-construct only when a new form that both aliases an automatic and outlives its scope is
   lowered -- a coroutine-based process handle, a DPI callback, a class-held process -- and is
   introduced with that construct, not ahead of one.
+- **What the handle is, where no scope exit emits anything.** The obligations below are written for
+  a target whose own language ends a local at its scope, which is what makes the handle's copy and
+  release invisible there. A target that hands values across an opaque boundary has no such
+  language: nothing in its generated code owns anything, and the storage a value lives in is owned
+  by whichever runtime store it was allocated into. There the handle is a value that holds what it
+  names -- a hold, which is the word its own realization uses for the half of the handle that owns,
+  the way a borrowed one is named for not owning -- so what crosses is that value and not the
+  address of what it names, and reaching the storage behind one is an operation. Both the copy and
+  the release come from the store the hold sits in: a branch's capture block releases with the
+  execution that took it, and the declaring frame's with the execution that made it. No release is
+  emitted on any path, including the one an ended execution takes, so the obligations below are met
+  by a target that emits none of them. What that target does owe is that the ownership survive to
+  its own boundary: where every pointer crosses as a bare address, a hold and a borrow are
+  indistinguishable by the time the runtime sees them, and the storage schema is where the
+  difference has to be kept.
+
 - Backend proof obligations the mechanism must satisfy: every reference to a promoted local -- read,
   write, reference-construction, and member / index projection -- resolves to member access through
   the activation handle (`handle->local`), not a bare name; in the declaring scope the handle is a

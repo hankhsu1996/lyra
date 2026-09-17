@@ -43,8 +43,16 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
   that provably cross a suspension is admissible because the set that crosses is the coroutine
   passes' to compute, not the lowering's to predict, and a cell for a local that never crosses is a
   cost, never wrong. A non-suspending body keeps its locals as plain values or places, and a
-  pointer, reference, object handle, or machine scalar is stable across a suspension on its own and
-  is never made a cell.
+  pointer, reference, or machine scalar is stable across a suspension on its own and is never made a
+  cell.
+
+  **An object handle is listed with those three and does not belong there**, which is worth stating
+  because the grouping reads as one property and is two. An address stays an address across a
+  suspension; a handle is a hold, and what it holds lives wherever the stretch that answered it put
+  it. It is excluded here not because it is stable but because the traced path below was meant to
+  take it, and while that path does not exist the exclusion leaves a handle's storage owned by a
+  stretch that the suspension releases -- which is invariant 1 below, unmet rather than
+  inapplicable.
 
 - **The cell is a non-observable value cell.** A procedural local is not a signal, so a write is
   never an update event and wakes no subscriber. The cell shares the store discipline of a signal

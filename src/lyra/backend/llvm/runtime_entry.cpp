@@ -54,6 +54,10 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "object_make";
     case RuntimeOp::kObjectDeref:
       return "object_deref";
+    case RuntimeOp::kMakePromotedScope:
+      return "make_promoted_scope";
+    case RuntimeOp::kPromotedScopeDeref:
+      return "promoted_scope_deref";
     case RuntimeOp::kObjectMemberAddress:
       return "object_member_addr";
     case RuntimeOp::kObjectMethod:
@@ -357,16 +361,31 @@ auto MemberStorageKindOf(
             return over_values(net.value, MemberStorageKind::kResolvedNet);
           },
           // A driver is a handle on a contribution the net owns and issues (LRM
-          // 6.5); a reference and a pointer name storage living elsewhere; a
-          // declaration standing for several objects keeps a handle on the
-          // sequence of them, built once where the owner is built; and a code
-          // address names a body that outlives every owner there is. None owns
-          // what it names.
+          // 6.5); a reference names storage living elsewhere; a declaration
+          // standing for several objects keeps a handle on the sequence of
+          // them, built once where the owner is built; and a code address names
+          // a body that outlives every owner there is. None of these owns what
+          // it names.
           [&](const lir::DriverType& t) { return borrowed(t); },
           [&](const lir::RefType& t) { return borrowed(t); },
-          [&](const lir::PointerType& t) { return borrowed(t); },
           [&](const lir::VectorType& t) { return borrowed(t); },
           [&](const lir::MachineFunctionType& t) { return borrowed(t); },
+          // A pointer is the one whose ownership decides the answer. A unique
+          // or borrowed one likewise names storage somebody else ends, while a
+          // shared one is a hold: it keeps what it names in existence and the
+          // storage ends once no holder is left, which is how a scope outlives
+          // the control flow that left it (LRM 6.21).
+          [&](const lir::PointerType& pointer)
+              -> std::optional<MemberStorageKind> {
+            switch (pointer.ownership) {
+              case lir::PointerOwnership::kUnique:
+              case lir::PointerOwnership::kBorrowed:
+                return MemberStorageKind::kBorrowedHandle;
+              case lir::PointerOwnership::kShared:
+                return MemberStorageKind::kPromotedScope;
+            }
+            throw InternalError("llvm codegen: unknown pointer ownership");
+          },
           [&](const lir::RuntimeLibraryType& library)
               -> std::optional<MemberStorageKind> {
             switch (library.kind) {

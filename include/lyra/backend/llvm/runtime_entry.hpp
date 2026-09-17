@@ -68,6 +68,8 @@ enum class RuntimeOp : std::uint8_t {
   kClosureMake,
   kObjectMake,
   kObjectDeref,
+  kMakePromotedScope,
+  kPromotedScopeDeref,
   kObjectMemberAddress,
   kObjectMethod,
   kClassFindProperty,
@@ -134,6 +136,10 @@ enum class MemberStorageKind : std::uint8_t {
   // A box holding a handle the owner does not own, so a read reads the box
   // rather than what it names.
   kBorrowedHandle,
+  // A hold on the storage a block promoted out of its frame (LRM 6.21), which
+  // the owner does keep alive: a read hands back the hold, and the hold ending
+  // with its owner is what ends the storage once no owner is left.
+  kPromotedScope,
   // A named event (LRM 15.5), a scope's cancellation target (LRM 9.6.2), the
   // joint cancel state of the channels a deferred write targets (LRM 21.3.2),
   // and what one concurrent assertion has in flight (LRM 16.14.1). Each is a
