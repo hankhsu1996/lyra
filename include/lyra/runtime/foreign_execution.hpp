@@ -1,17 +1,15 @@
 #pragma once
 
-#include <coroutine>
 #include <functional>
 #include <memory>
 #include <utility>
 
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 
 namespace lyra::runtime {
-
-class RuntimeEffects;
 
 // The execution vehicle that carries an activation's thread across a suspension
 // when the scheduler cannot re-enter the activation's coroutine directly: its
@@ -118,38 +116,17 @@ auto EnterForeignTask(
     RuntimeEffects& effects, CoroutineHandle continuation,
     std::unique_ptr<ForeignExecution> fiber) -> bool;
 
-// The awaitable a DPI import task (LRM 35.5.2) awaits at its foreign-call step:
-// it runs `foreign_call` on a fiber so an exported task the call reaches can
-// suspend across the boundary. Awaiting it suspends the import frame only if
-// the call actually suspends; a call that returns without consuming time
-// completes within the await.
-class ForeignTaskAwaitable {
- public:
-  ForeignTaskAwaitable(RuntimeEffects& effects, std::function<void()> call)
-      : effects_(&effects), fiber_(MakeForeignExecution(std::move(call))) {
-  }
-
-  [[nodiscard]] static auto await_ready() noexcept -> bool {
-    return false;
-  }
-
-  template <class P>
-  auto await_suspend(std::coroutine_handle<P> handle) -> bool {
-    return !EnterForeignTask(*effects_, &handle.promise(), std::move(fiber_));
-  }
-
-  static void await_resume() noexcept {
-  }
-
- private:
-  RuntimeEffects* effects_;
-  std::unique_ptr<ForeignExecution> fiber_;
-};
-
+// A DPI import task's foreign-call step (LRM 35.5.2): runs `foreign_call` on a
+// fiber so an exported task the call reaches can suspend across the boundary,
+// and answers whether the caller must give up control -- which it must only if
+// the call actually suspended, since one that returns without consuming time is
+// over before this returns. What continues the import frame afterwards is the
+// vehicle rather than a wait, because the call is on a stack of its own.
 inline auto RunForeignTaskOnFiber(
-    RuntimeEffects& effects, std::function<void()> foreign_call)
-    -> ForeignTaskAwaitable {
-  return ForeignTaskAwaitable{effects, std::move(foreign_call)};
+    RuntimeEffects& effects, std::function<void()> foreign_call) -> bool {
+  return !EnterForeignTask(
+      effects, effects.CurrentProcess().CurrentLeaf(),
+      MakeForeignExecution(std::move(foreign_call)));
 }
 
 }  // namespace lyra::runtime

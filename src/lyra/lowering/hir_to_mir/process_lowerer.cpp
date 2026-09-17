@@ -194,7 +194,7 @@ auto LowerForeverProcess(
     if (implicit_sensitivity != nullptr) {
       body_block.AppendStmt(BuildValueChangeWaitStmt(
           body_block, body_frame, process.EnclosingScopeLowerer(),
-          *implicit_sensitivity));
+          *implicit_sensitivity, support::BuiltinFn::kWaitAny));
     }
   }
 

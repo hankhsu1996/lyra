@@ -249,8 +249,9 @@ class FunctionLowerer {
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
   // Resolves the callee and emits the call over arguments already lowered.
-  // The result type is stated rather than read off the MIR expression, because
-  // an awaitable's is not what MIR gave it.
+  // The result type is passed rather than read off the MIR expression, because
+  // a caller partway through building a compound shape has the type in hand
+  // and no expression to read it from.
   auto EmitCall(
       const mir::Block& block, const mir::CallExpr& call,
       std::vector<lir::Operand> args, lir::TypeId result_type)
@@ -260,17 +261,6 @@ class FunctionLowerer {
   // resolves by lowering that address, which is why this reaches the block.
   auto LowerCallTarget(const mir::Block& block, const mir::Callee& callee)
       -> diag::Result<lir::CallTarget>;
-  // Lowers the call an await is over, which arranges this execution's
-  // resumption and answers whether it must park at all: a delay and a
-  // value-change wait always must, a join whose condition is already met and a
-  // `wait fork` whose children have all terminated must not (LRM 9.3.2,
-  // 9.6.1). The answer is a machine predicate the suspend edge branches on --
-  // it decides control and never reaches the design's own semantics, so it
-  // carries no width and no unknown state. Only a target whose suspension is
-  // an explicit edge has to ask it out loud, which is why the value is stated
-  // here rather than upstream.
-  auto LowerRegistration(const mir::Block& block, const mir::CallExpr& call)
-      -> diag::Result<lir::Operand>;
   // Awaits an execution the runtime drives: hands it this one's thread, parks
   // where it did not settle in the same instant, and reads back the value it
   // completed with. What ends this wait is a second body reaching its own end

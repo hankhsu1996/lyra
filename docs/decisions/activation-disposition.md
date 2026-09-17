@@ -1,6 +1,17 @@
 # An activation has one authoritative disposition, and a wait is a pending capability distinct from its enrollment
 
-Date: 2026-07-15. Status: accepted.
+Date: 2026-07-15. Status: accepted; its separation of the enrollment from the wait stands, and the
+shape it gives the second half is superseded by
+[waiting-is-an-operation](waiting-is-an-operation.md).
+
+**What that record changed, so this one is not read for it.** Here the wait's own state stays in the
+construct -- "its retained awaiter/registration state" -- and what the activation holds is a
+capability over it. That works only where the construct has somewhere to keep it, which is a
+coroutine frame, which one of the two backends does not have; so the two ended up with separate
+realizations and only one of them was written against the whole clause. The activation now holds the
+wait itself, built where the body stops, and the capability is not a layer over anything. The two
+questions this record collapses into one -- making a wait, and making it again after the process was
+stopped -- are also separate there, because LRM 9.7 answers them separately for a `wait` condition.
 
 ## Why this decision matters
 

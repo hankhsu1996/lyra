@@ -186,8 +186,8 @@ which region consumes it are fixed here and re-decided by no backend.
 
 Three interface contracts carry the model into the implementation and are where the care lives:
 
-1. Waking a blocked execution through the same verb a normal wake uses, so its pending wait settles
-   exactly once whichever source releases it.
+1. Waking a blocked execution through the same verb a normal wake uses, so what it was waiting for
+   settles exactly once whichever source releases it.
 2. Re-home as a claim-once transfer that stays single under races between a normal wake, a
    `disable`, a `kill`, and multiple simultaneously invalidated enclosing scopes.
 3. The reconciliation's insertion points -- every point where an execution regains control: each
@@ -208,8 +208,8 @@ not by which side of the writer's own declaration chain the target sits on.
   branch.
 - activation-registration.md -- one record owned by the activation, the target merely links it; a
   cancellation source is another such target.
-- activation-disposition.md -- the authoritative disposition and the uniform, construct-neutral
-  re-establish capability the gate reuses.
+- activation-disposition.md -- the authoritative disposition and the uniform, construct-neutral way
+  of arranging a wait again that the gate reuses.
 - architecture/scheduling.md -- the engine branches only on queue and region; the gate lives in
   generated code, not the engine.
 - architecture/identity_and_ownership.md -- the id-plus-registry and duplicate-ownership shapes the

@@ -559,8 +559,17 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
             return RenderPartsAsBraceInit(view, expr.type, c.parts);
           },
           [&](const mir::AwaitExpr& a) -> std::string {
+            // What is awaited says which of the two this is, and the spelling
+            // follows: an execution is awaitable in this target already, while
+            // a call that arranged a wait answers whether it parked, and the
+            // target needs that answer as something it can await.
+            const mir::Expr& awaited = view.Expr(a.awaitable);
+            if (view.Unit().types.Get(awaited.type).Is<mir::CoroutineType>()) {
+              return std::format("co_await {}", RenderExpr(view, awaited));
+            }
             return std::format(
-                "co_await {}", RenderExpr(view, view.Expr(a.awaitable)));
+                "co_await {}{{{}}}", SuspensionCppType(),
+                RenderExpr(view, awaited));
           },
           [&](const mir::VectorGetExpr& g) -> std::string {
             return std::format(

@@ -2204,16 +2204,6 @@ auto FunctionLowerer::EmitCall(
       lir::CallInstr{.target = *std::move(target), .args = std::move(args)});
 }
 
-auto FunctionLowerer::LowerRegistration(
-    const mir::Block& block, const mir::CallExpr& call)
-    -> diag::Result<lir::Operand> {
-  auto args = LowerCallOperands(block, call);
-  if (!args) {
-    return std::unexpected(std::move(args.error()));
-  }
-  return EmitCall(block, call, *std::move(args), unit_->MachineBoolType());
-}
-
 auto FunctionLowerer::LowerCoroutineAwait(
     const mir::Block& block, const mir::AwaitExpr& await, mir::TypeId type)
     -> diag::Result<lir::Operand> {
@@ -2826,15 +2816,18 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return LowerExpr(block, m.operand);
           },
           [&](const mir::AwaitExpr& await) -> diag::Result<lir::Operand> {
-            // An awaitable arranges this execution's resumption through an
-            // ordinary runtime call and answers whether it must park; where it
-            // must, a control edge hands control back to the scheduler, which
-            // resumes at the next block. A delay, an event control, and a join
-            // differ only in that call.
+            // What is being awaited says which of the two this is, and the two
+            // are different operations rather than two readings of one.
             //
-            // An awaitable whose type is a coroutine is the other protocol: it
-            // registers nothing, because its completion is the awaited body's
-            // to signal, so what it waits for is that body reaching its end.
+            // A registered wait has already arranged this execution's
+            // resumption and answered whether it must park; where it must, a
+            // control edge hands control back to the scheduler, which resumes
+            // at the next block. A delay, an event control and a join differ
+            // only in the call that precedes it.
+            //
+            // An execution registers nothing, because its completion is the
+            // awaited body's to signal, so what this waits for is that body
+            // reaching its end.
             const mir::Expr& awaitable = block.exprs.Get(await.awaitable);
             if (unit_->Mir()
                     .types.Get(awaitable.type)
@@ -2846,14 +2839,15 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                   "mir_to_lir: a value-carrying await is not yet lowerable to "
                   "LIR");
             }
-            const auto* registration =
-                std::get_if<mir::CallExpr>(&awaitable.data);
-            if (registration == nullptr) {
+            if (!std::holds_alternative<mir::CallExpr>(awaitable.data)) {
               return Unsupported(
                   "mir_to_lir: an awaitable that is not a registration call is "
                   "not yet lowerable to LIR");
             }
-            auto park = LowerRegistration(block, *registration);
+            // The call is lowered like any other -- what it answers is the
+            // machine boolean MIR gave it, and the suspend edge is what this
+            // adds around it.
+            auto park = LowerExpr(block, await.awaitable);
             if (!park) {
               return std::unexpected(std::move(park.error()));
             }

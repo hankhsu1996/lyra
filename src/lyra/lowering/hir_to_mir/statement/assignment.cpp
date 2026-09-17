@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -521,11 +522,10 @@ auto LowerExprStmt(
     }
   }
 
-  // A call statement. A suspending callee ($finish, a task) is awaited here,
-  // and what the await produces is what the awaitable carries: a callee that
-  // completes as a coroutine hands over its completion payload, one that parks
-  // the process through a runtime entry hands over nothing. Either way the
-  // statement is the discard.
+  // A call statement. Some callees need a shape of their own here, because
+  // what they do cannot be written as a bare value; the rest are the call
+  // itself, awaited where the callee suspends, and the statement is the
+  // discard either way.
   if (const auto* call = std::get_if<hir::CallExpr>(&inner.data)) {
     const mir::TypeId inner_type = process.Owner().TranslateType(inner.type);
     if (const auto* sys_ref =
@@ -551,16 +551,10 @@ auto LowerExprStmt(
     const mir::ExprId call_id = block.exprs.Add(*std::move(call_or));
     const mir::TypeId call_type = block.exprs.Get(call_id).type;
     if (CallStatementSuspends(process, *call, call_type)) {
-      const mir::TypePool& types = process.Owner().Unit().types;
-      const mir::Type& called = types.Get(call_type);
-      const mir::ExprId await_id = block.exprs.Add(
-          mir::Expr{
-              .data = mir::AwaitExpr{.awaitable = call_id},
-              .type = called.Is<mir::CoroutineType>()
-                          ? called.Get<mir::CoroutineType>().payload
-                          : process.Owner().Unit().builtins.void_type});
-      return mir::Stmt{
-          .label = std::move(label), .data = mir::ExprStmt{.expr = await_id}};
+      mir::Stmt waited =
+          BuildSuspendingCallStmt(process.Owner(), block, call_id);
+      waited.label = std::move(label);
+      return waited;
     }
     return mir::Stmt{
         .label = std::move(label), .data = mir::ExprStmt{.expr = call_id}};

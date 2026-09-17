@@ -381,8 +381,8 @@ void Runtime::RunProcess(CoroutineHandle handle) {
   if (!std::holds_alternative<Running>(state_)) {
     return;
   }
-  // No wait dispatch: each awaitable has already arranged its own wakeup path
-  // during await_suspend.
+  // No wait dispatch: an execution that stopped to wait arranged its own way
+  // back before it gave up control.
   RuntimeProcess& process = handle->Process();
   std::vector<CoroutineHandle> woken;
   if (!ResumeProcess(handle, woken)) {

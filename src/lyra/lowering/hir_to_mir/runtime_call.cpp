@@ -48,6 +48,25 @@ void AppendRuntimeEffectStmt(
                   .type = unit_lowerer.Unit().builtins.void_type})});
 }
 
+auto BuildSuspendingCallStmt(
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId call)
+    -> mir::Stmt {
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  // Awaiting yields what the awaited thing completes with, which its own type
+  // answers: an execution hands over the value it produced, and a call that
+  // arranged a wait hands over nothing.
+  const mir::Type& awaited = unit.types.Get(block.exprs.Get(call).type);
+  const mir::TypeId result = awaited.Is<mir::CoroutineType>()
+                                 ? awaited.Get<mir::CoroutineType>().payload
+                                 : unit.builtins.void_type;
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data = mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::Expr{
+                  .data = mir::AwaitExpr{.awaitable = call}, .type = result})}};
+}
+
 auto BuildStringValueExpr(
     const mir::CompilationUnit& unit, mir::Block& block, std::string text)
     -> mir::ExprId {

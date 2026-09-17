@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <coroutine>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -9,16 +8,16 @@
 #include <vector>
 
 #include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
+#include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
 // Shared join state for one fork. Each spawned branch (through its promise's
-// completion callback) and the parent's JoinAwaitable hold a shared_ptr to it,
-// so it frees itself once the last branch frame and the awaitable are gone.
+// completion callback) and the waiting parent hold a shared_ptr to it, so it
+// frees itself once the last branch frame and the parent's wait are gone.
 // Branch completion is reported here, never to the engine: the engine only ever
 // sees another coroutine to schedule. `completions_needed` is supplied by the
 // caller -- the branch count for `join` (resume after the last), one for
@@ -62,42 +61,24 @@ class ForkGroup {
   RegistrationList parked_parent_;
 };
 
-// What the parent `co_await`s after the branches are spawned. The wait reports
-// ready iff every needed completion already arrived (which a zero-branch fork
-// or a `join_any` with an immediate finisher can produce); otherwise the parent
-// parks on the group.
-class JoinAwaitable : public PendingWait {
+// Waiting for a fork's branches to reach its join condition. The condition is
+// monotonic (LRM 9.3.2) -- completions accumulate whether or not anyone is
+// waiting -- so waiting again after the process was stopped is the same
+// question asked afresh, and a zero-branch fork or a `join_any` whose first
+// branch finished immediately answers it without waiting at all.
+class JoinWait : public Wait {
  public:
-  explicit JoinAwaitable(std::shared_ptr<ForkGroup> group)
+  explicit JoinWait(std::shared_ptr<ForkGroup> group)
       : group_(std::move(group)) {
   }
 
-  [[nodiscard]] auto await_ready() const noexcept -> bool {
-    return !group_->NeedsPark();
-  }
-
-  template <class P>
-  void await_suspend(std::coroutine_handle<P> parent) {
-    CoroutineHandle token = &parent.promise();
-    group_->ParkParent(token);
-    BlockOn(token);
-  }
-
-  void await_resume() const {
-    CheckAbortOnResume();
-  }
-
-  // A join condition is monotonic (LRM 9.3.2): branch completions accumulate
-  // during suspension. On resume, if the threshold is now met the parent is
-  // runnable; otherwise re-park on the group. No runtime access is needed.
   // NOLINTNEXTLINE(readability-named-parameter)
-  auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
-      -> PendingWaitOutcome override {
+  auto Begin(RuntimeEffects&, CoroutineHandle leaf) -> WaitOutcome override {
     if (!group_->NeedsPark()) {
-      return PendingWaitOutcome::kRunnable;
+      return WaitOutcome::kSatisfied;
     }
-    group_->ParkParent(activation);
-    return PendingWaitOutcome::kReblocked;
+    group_->ParkParent(leaf);
+    return WaitOutcome::kBlocked;
   }
 
   // Rejoining branches is neither an event control nor a wait statement, so
@@ -136,24 +117,13 @@ constexpr auto CompletionsForFirst(std::size_t branches) -> std::int64_t {
   return branches == 0 ? 0 : 1;
 }
 
-// Spawns the branches under one join condition and parks the executing process
-// on it, answering whether that process must suspend at all. A caller holding a
-// frame the condition can live in awaits instead; this is for one whose body is
-// generated code, where the suspension is a control edge and the answer has to
-// cross as a value.
+// Spawns the branches under one join condition and waits for it, answering
+// whether the executing process must give up control at all.
 inline auto SpawnAndPark(
     RuntimeEffects& runtime, std::vector<Coroutine<void>> branches,
     std::int64_t completions_needed) -> bool {
-  const std::shared_ptr<ForkGroup> group =
-      SpawnUnderGroup(runtime, branches, completions_needed);
-  if (!group->NeedsPark()) {
-    return false;
-  }
-  // Rejoining branches is neither an event control nor a wait statement, so a
-  // join is not a deferred report flush point (LRM 16.4.2).
-  runtime.CurrentProcess().RegisterWakeup(
-      false, [&group](CoroutineHandle parent) { group->ParkParent(parent); });
-  return true;
+  return runtime.CurrentProcess().ParkOn<JoinWait>(
+      runtime, SpawnUnderGroup(runtime, branches, completions_needed));
 }
 
 }  // namespace detail
@@ -167,18 +137,18 @@ inline auto SpawnAndPark(
 // on (for `SpawnAll`).
 template <std::size_t N>
 auto ForkWaitAll(
-    RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches)
-    -> JoinAwaitable {
-  return JoinAwaitable{
-      detail::SpawnUnderGroup(runtime, branches, detail::CompletionsForAll(N))};
+    RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches) -> bool {
+  return runtime.CurrentProcess().ParkOn<JoinWait>(
+      runtime,
+      detail::SpawnUnderGroup(runtime, branches, detail::CompletionsForAll(N)));
 }
 
 template <std::size_t N>
 auto ForkWaitFirst(
-    RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches)
-    -> JoinAwaitable {
-  return JoinAwaitable{detail::SpawnUnderGroup(
-      runtime, branches, detail::CompletionsForFirst(N))};
+    RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches) -> bool {
+  return runtime.CurrentProcess().ParkOn<JoinWait>(
+      runtime, detail::SpawnUnderGroup(
+                   runtime, branches, detail::CompletionsForFirst(N)));
 }
 
 template <std::size_t N>
@@ -189,17 +159,16 @@ void SpawnAll(
   }
 }
 
-// The two joins again, for a caller whose body is generated code: each answers
-// whether the process must suspend, since the suspension there is a control
-// edge the answer decides rather than an awaitable that decides for itself.
-// `join_none` needs no such form, having nothing to wait for.
-inline auto ForkWaitAllMustPark(
+// The two joins again for a caller whose branch count is not a constant of the
+// call: same operation, same answer, and the only difference is how the
+// branches arrive.
+inline auto ForkWaitAll(
     RuntimeEffects& runtime, std::vector<Coroutine<void>> branches) -> bool {
   const std::int64_t needed = detail::CompletionsForAll(branches.size());
   return detail::SpawnAndPark(runtime, std::move(branches), needed);
 }
 
-inline auto ForkWaitFirstMustPark(
+inline auto ForkWaitFirst(
     RuntimeEffects& runtime, std::vector<Coroutine<void>> branches) -> bool {
   const std::int64_t needed = detail::CompletionsForFirst(branches.size());
   return detail::SpawnAndPark(runtime, std::move(branches), needed);
@@ -210,40 +179,19 @@ inline auto ForkWaitFirstMustPark(
 // process; the frame parked on it is the one that ran `wait fork` (the task
 // frame when `wait fork` sits in a task), so it is armed through the suspending
 // handle rather than the process's own body.
-class WaitForkAwaitable : public PendingWait {
+class WaitForkWait : public Wait {
  public:
-  explicit WaitForkAwaitable(RuntimeEffects& runtime) : runtime_(&runtime) {
-  }
-
-  [[nodiscard]] auto await_ready() const -> bool {
-    return runtime_->CurrentProcess().HasNoLiveChild();
-  }
-
-  template <class P>
-  void await_suspend(std::coroutine_handle<P> waiter) {
-    CoroutineHandle token = &waiter.promise();
-    runtime_->CurrentProcess().ArmWaitFork(token);
-    BlockOn(token);
-  }
-
-  void await_resume() const {
-    CheckAbortOnResume();
-  }
-
-  // `wait fork` waits on the executing process's own immediate children (LRM
-  // 9.6.1), a monotonic condition. On resume, if every immediate child has
-  // terminated the process is runnable; otherwise re-park on its own condition.
-  // The target is the process owning the waiting frame, not the resumer's
-  // current process, so it is read from the activation.
   // NOLINTNEXTLINE(readability-named-parameter)
-  auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
-      -> PendingWaitOutcome override {
-    RuntimeProcess& process = activation->Process();
+  auto Begin(RuntimeEffects&, CoroutineHandle leaf) -> WaitOutcome override {
+    // The condition belongs to the process owning the waiting frame rather than
+    // to whoever is running when this is asked, so it is read from the frame --
+    // which matters on the restart, where another process is the one running.
+    RuntimeProcess& process = leaf->Process();
     if (process.HasNoLiveChild()) {
-      return PendingWaitOutcome::kRunnable;
+      return WaitOutcome::kSatisfied;
     }
-    process.ArmWaitFork(activation);
-    return PendingWaitOutcome::kReblocked;
+    process.ArmWaitFork(leaf);
+    return WaitOutcome::kBlocked;
   }
 
   // `wait fork` is a wait statement (LRM 9.6.1), one of the two forms
@@ -251,18 +199,15 @@ class WaitForkAwaitable : public PendingWait {
   [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
     return true;
   }
-
- private:
-  RuntimeEffects* runtime_;
 };
 
-inline auto WaitFork(RuntimeEffects& runtime) -> WaitForkAwaitable {
-  return WaitForkAwaitable{runtime};
+inline auto WaitFork(RuntimeEffects& runtime) -> bool {
+  return runtime.CurrentProcess().ParkOn<WaitForkWait>(runtime);
 }
 
 // LRM 9.6.3 `disable fork`: terminate every descendant of the executing
 // process. The caller does not block -- the next statement runs at the same
-// simulation time -- so this is a plain call rather than an awaitable. Like
+// simulation time -- so it answers nothing about giving up control. Like
 // `wait fork`, it reads the executing process (LRM 9.5), so a `disable fork`
 // inside a task reaches the descendants the enclosing process owns.
 inline void DisableFork(RuntimeEffects& runtime) {

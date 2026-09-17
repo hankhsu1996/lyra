@@ -40,14 +40,15 @@ The engine does three things: it holds queues of runnable coroutine handles, it 
 parks each one on whichever queue the code it just ran asked for. It never inspects what a coroutine
 represents, why it suspended, or what it waits for. A coroutine frame is opaque to it.
 
-Construct semantics live entirely in awaitables. A `co_await` suspends the coroutine and, in
-`await_suspend`, reaches back to a small fixed set of construct-neutral scheduling verbs. What those
-verbs take is a **placement** -- which time slot, and which region of it -- because that is what an
-LRM 4.4 event is: a time, a region, and the thing to do there. An awaitable places its activation; a
-satisfied wait wakes one into the Active region of the current slot; a spawning construct may adopt
-a coroutine and place it; and a construct may ask that the simulation stop. The verbs name _where
-and when_ a handle becomes runnable again, never _why_. Distinct constructs -- a delay, an event
-wait, a task enable -- bottom out in the same verbs, and the engine cannot tell them apart.
+Construct semantics live entirely in what an execution waits for. Each suspending construct hands
+the execution one of those where it stops, and it reaches back to a small fixed set of
+construct-neutral scheduling verbs. What those verbs take is a **placement** -- which time slot, and
+which region of it -- because that is what an LRM 4.4 event is: a time, a region, and the thing to
+do there. A wait places its activation; a satisfied one wakes it into the Active region of the
+current slot; a spawning construct may adopt a coroutine and place it; and a construct may ask that
+the simulation stop. The verbs name _where and when_ a handle becomes runnable again, never _why_.
+Distinct constructs -- a delay, an event wait, a task enable -- bottom out in the same verbs, and
+the engine cannot tell them apart.
 
 Taking the placement as an argument rather than encoding it in the verb's name is what keeps the set
 complete. A verb per combination covers points of that space and leaves the rest unreachable, and a
@@ -58,8 +59,8 @@ being silent.
 
 This is the division a host event loop draws: the loop runs its queues and knows nothing of the
 timers, I/O, or callbacks that fill them; the meaning lives in the APIs that enqueue, not in the
-loop. The payoff is additivity. A suspending construct is added by writing a new awaitable that
-schedules through the existing verbs; a process-spawning construct may also add one
+loop. The payoff is additivity. A suspending construct is added by writing what its execution waits
+for, which schedules through the existing verbs; a process-spawning construct may also add one
 construct-neutral verb (adopt a coroutine and schedule it). Either way the engine gains no
 per-construct branch.
 

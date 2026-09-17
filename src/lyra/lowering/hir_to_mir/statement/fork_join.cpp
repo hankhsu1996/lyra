@@ -143,16 +143,15 @@ auto LowerForkStmt(
               mir::CallExpr{
                   .callee = mir::Direct{.target = dispatch.callee},
                   .arguments = {runtime_id, branches_id}},
-          .type = builtins.void_type});
+          .type = dispatch.parent_waits ? builtins.machine_bool
+                                        : builtins.void_type});
 
-  const mir::ExprId stmt_expr_id =
-      dispatch.parent_waits
-          ? fork_block.exprs.Add(
-                mir::Expr{
-                    .data = mir::AwaitExpr{.awaitable = call_id},
-                    .type = builtins.void_type})
-          : call_id;
-  fork_block.AppendStmt(mir::ExprStmt{.expr = stmt_expr_id});
+  if (dispatch.parent_waits) {
+    fork_block.AppendStmt(
+        BuildSuspendingCallStmt(process.Owner(), fork_block, call_id));
+  } else {
+    fork_block.AppendStmt(mir::ExprStmt{.expr = call_id});
+  }
 
   // The region that consumes the effect sits where the fork sits, not inside
   // it: an execution the `disable` reached has already left the fork by the
@@ -169,11 +168,10 @@ auto LowerForkStmt(
       .label = std::move(label), .data = mir::BlockStmt{.scope = scope_id}};
 }
 
-// LRM 9.6.1 `wait fork`: suspend the executing process until its immediate
-// children have terminated. It lowers to a single awaited runtime call taking
-// only the runtime handle; the child set is resolved at runtime from the
-// executing process, so MIR carries no operand. The awaited call's result type
-// is `void`, the same await shape as `join`.
+// LRM 9.6.1 `wait fork`: wait for the executing process's immediate children to
+// terminate. It lowers to a single runtime call taking only the runtime handle;
+// the child set is resolved at runtime from the executing process, so MIR
+// carries no operand. The same shape as `join`, and for the same reason.
 auto LowerWaitForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label)
     -> diag::Result<mir::Stmt> {
@@ -188,13 +186,10 @@ auto LowerWaitForkStmt(
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kWaitFork},
                   .arguments = {runtime_id}},
-          .type = builtins.void_type});
-  const mir::ExprId await_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::AwaitExpr{.awaitable = call_id},
-          .type = builtins.void_type});
-  return mir::Stmt{
-      .label = std::move(label), .data = mir::ExprStmt{.expr = await_id}};
+          .type = builtins.machine_bool});
+  mir::Stmt waited = BuildSuspendingCallStmt(process.Owner(), block, call_id);
+  waited.label = std::move(label);
+  return waited;
 }
 
 // LRM 9.6.3 `disable fork` terminates every descendant of the executing

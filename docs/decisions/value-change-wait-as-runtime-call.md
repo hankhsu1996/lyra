@@ -50,25 +50,24 @@ written with, like the standard file descriptors or the DPI ABI classes.
 
 ### The whole trigger set goes in one call
 
-The registration takes the set, not one call per leaf, because the registration must name the frame
-to resume and only the suspension protocol knows it. A C++ coroutine is handed its own frame when it
-suspends; a wait inside an enabled task must resume the task's frame, not the enabling process's,
-and nothing outside the awaiting frame can tell which. A registration that ran as a statement before
-the suspension would have to ask the runtime which process is running, and the answer -- the
-process's engine-visible frame -- is the wrong frame for a nested wait.
+The registration takes the set, not one call per leaf, because what waits is one execution and the
+leaves are what it waits on: a call per leaf would leave a wait half-made between them, with no
+moment at which the execution is waiting for the whole event control.
 
-### The engine handle is an argument, and the two backends read it differently
+### The engine handle is an argument, and both backends read it the same way
 
-The call carries the engine handle as its first argument, the way every runtime effect does. The C++
-realization does not consult it: the language hands the awaitable its frame. The execution backend's
-realization needs it, because the frame it suspends is not a frame the engine ever sees -- the
-engine resumes the runtime-owned coroutine that drives it
-([jit-process-suspension](jit-process-suspension.md) D5) -- so the process to wake is the running
-one, which only the runtime can name.
+The call carries the engine handle as its first argument, the way every runtime effect does, and it
+is what the call reads to find the frame to resume.
 
-This is the same asymmetry the delay already has, and it is a property of the two execution models,
-not a defect in the call: one backend gets the frame from the language, the other asks the runtime
-for it.
+**This section used to record an asymmetry, and the asymmetry is gone.** It said the C++ realization
+did not consult the handle, because the language handed the frame to the awaitable that suspended --
+and that a registration running as a statement before the suspension could not work, since asking
+the runtime which process is running answers with the process's own frame and a wait inside an
+enabled task must resume the task's frame. The second half was true of a runtime that did not track
+which frame carries the thread. It does now, on both backends, because a called task takes the
+thread over and gives it back ([waiting-is-an-operation](waiting-is-an-operation.md) D6) -- so the
+running frame is a fact the runtime holds, the registration is an ordinary call that reads it, and
+neither backend is handed a frame.
 
 ## Consequences
 
@@ -79,10 +78,11 @@ for it.
   call, construct, and array-literal paths as every other runtime effect. The generated text is more
   verbose (an edge is a packed literal, not a named enumerator), which is the standing trade of the
   uniform value model and a debug concern, not a semantic one.
-- The trigger set lives only for the duration of the registration call. Each leaf's projection is
-  copied into the cell's subscriber record, and what an event control watches through is held there
-  too, so nothing points back into the set once the call returns -- which is why a wait needs no
-  value of its own to survive its suspension.
+- The trigger set the caller composes lives only for the duration of the registration call. Each
+  leaf's projection is copied into the cell's subscriber record, and what an event control watches
+  through is held there too, so nothing points back into the caller's set once the call returns.
+  What does outlive the call is the execution's own copy of the leaves, which is how starting a
+  stopped process waits for the same thing again (LRM 9.7).
 - An empty trigger set is legal and means "never wake up" (`always_comb c = 7;`): the body runs
   once, then the process suspends forever. It is the zero case of the same loop, not a special form.
 
@@ -94,12 +94,17 @@ for it.
   free to decide differently. A wait is a call against the runtime library's API, and the existing
   call vocabulary carries it with nothing added.
 
-- **One registration call per leaf, then a bare suspension.** It reads as the more primitive shape
-  and it matches how the execution backend's registration works. But a per-leaf call runs before the
-  suspension, so it cannot be handed the awaiting frame and must ask the runtime which process is
-  running -- and that answer is wrong for a wait inside an enabled task, whose task frame is the one
-  the engine must resume. Passing the whole set to one call keeps the registration inside the
-  suspension protocol, where the frame is known.
+- **One registration call per leaf, then a bare suspension.** It reads as the more primitive shape.
+  What rejects it is that an execution waits for one event control and its leaves are what that
+  control watches: between two per-leaf calls the execution is enrolled on some of them and waiting
+  for none, which is a state the language has no name for and which a process stopped there would
+  restart into.
+
+  This was originally rejected for a different reason -- that a call running before the suspension
+  cannot be handed the awaiting frame, and asking the runtime which process is running answers with
+  the wrong frame for a wait inside an enabled task. That reason no longer holds: the runtime tracks
+  which frame carries the thread ([waiting-is-an-operation](waiting-is-an-operation.md) D6), so a
+  call before the suspension can name the right frame. The rejection stands on the first reason.
 
 - **A subscription verb on the engine.** Symmetric with the wake verb, and it would give the C++
   realization a use for the engine handle it otherwise ignores. Rejected because the subscription
@@ -107,12 +112,11 @@ for it.
   frame. A verb that needs nothing from the engine is not an engine verb, and adding one to give an
   argument something to do is the argument wagging the design.
 
-- **Dropping the engine handle from the call so the C++ realization has no unused argument.** The
-  execution backend cannot then name the process to wake, and having its backend fabricate the
-  handle at the call site is the injection
-  [runtime-effects-as-generic-calls](runtime-effects-as-generic-calls.md) rejects. The handle is a
-  real input to the wait; that one realization can answer the question without it is a property of
-  C++ coroutines, not evidence the input is spurious.
+- **Dropping the engine handle from the call.** Neither realization can then name the process to
+  wake, and having a backend fabricate the handle at the call site is the injection
+  [runtime-effects-as-generic-calls](runtime-effects-as-generic-calls.md) rejects. This was
+  originally argued against a narrower charge -- that the handle was an unused argument on the C++
+  side -- which no longer applies to either side.
 
 ## Cross-references
 

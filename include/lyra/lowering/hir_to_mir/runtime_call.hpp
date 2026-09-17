@@ -8,6 +8,7 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::mir {
@@ -46,6 +47,14 @@ namespace lyra::lowering::hir_to_mir {
 void AppendRuntimeEffectStmt(
     const UnitLowerer& unit_lowerer, mir::Block& block,
     support::BuiltinFn entry, std::vector<mir::ExprId> operands);
+
+// Builds the statement a call that may park its caller amounts to: awaiting
+// that call, which is what a source language writes and what each backend
+// realizes in its own terms. `call` is already interned into `block` and
+// answers whether the caller must give up control.
+[[nodiscard]] auto BuildSuspendingCallStmt(
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId call)
+    -> mir::Stmt;
 
 // Materializes compile-time text as a `value::String` operand and interns it:
 // a string literal is a raw C string in the target, so a construction of the

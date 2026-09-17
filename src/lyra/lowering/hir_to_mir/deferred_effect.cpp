@@ -177,13 +177,9 @@ auto AppendArrivalAtDueRegion(
                       mir::Direct{
                           .target = support::BuiltinFn::kResumeInNbaRegion},
                   .arguments = {runtime_id}},
-          .type = unit.builtins.void_type});
+          .type = unit.builtins.machine_bool});
   body.AppendStmt(
-      mir::ExprStmt{
-          .expr = body.exprs.Add(
-              mir::Expr{
-                  .data = mir::AwaitExpr{.awaitable = region_call_id},
-                  .type = unit.builtins.void_type})});
+      BuildSuspendingCallStmt(process.Owner(), body, region_call_id));
   return {};
 }
 

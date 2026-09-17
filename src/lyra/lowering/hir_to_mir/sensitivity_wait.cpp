@@ -142,8 +142,8 @@ auto DeclareObservation(
 
 auto BuildWaitStmt(
     mir::Block& target_block, const WalkFrame& frame,
-    const StructuralScopeLowerer& lowerer, std::span<const ObservedLeaf> leaves)
-    -> mir::Stmt {
+    const StructuralScopeLowerer& lowerer, std::span<const ObservedLeaf> leaves,
+    support::BuiltinFn entry) -> mir::Stmt {
   auto& unit = lowerer.Owner().Unit();
   std::vector<mir::ExprId> triggers;
   triggers.reserve(leaves.size());
@@ -164,31 +164,27 @@ auto BuildWaitStmt(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Direct{.target = support::BuiltinFn::kWaitAny},
+                  .callee = mir::Direct{.target = entry},
                   .arguments = {runtime_id, triggers_id}},
-          .type = unit.builtins.void_type});
-  const mir::ExprId await_id = target_block.exprs.Add(
-      mir::Expr{
-          .data = mir::AwaitExpr{.awaitable = call_id},
-          .type = unit.builtins.void_type});
+          .type = unit.builtins.machine_bool});
 
-  return mir::Stmt{
-      .label = std::nullopt, .data = mir::ExprStmt{.expr = await_id}};
+  return BuildSuspendingCallStmt(lowerer.Owner(), target_block, call_id);
 }
 
 auto BuildValueChangeWaitStmt(
     mir::Block& target_block, const WalkFrame& frame,
     const StructuralScopeLowerer& lowerer,
-    const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt {
+    const std::vector<hir::SensitivityEntry>& sensitivity_list,
+    support::BuiltinFn entry) -> mir::Stmt {
   const mir::LocalId observation = DeclareObservation(
       lowerer.Owner().Unit(), frame, target_block,
       support::BuiltinFn::kObservationOnReaching, {});
   std::vector<ObservedLeaf> leaves;
   leaves.reserve(sensitivity_list.size());
-  for (const hir::SensitivityEntry& entry : sensitivity_list) {
-    leaves.push_back(ObservedLeaf{.entry = entry, .observation = observation});
+  for (const hir::SensitivityEntry& read : sensitivity_list) {
+    leaves.push_back(ObservedLeaf{.entry = read, .observation = observation});
   }
-  return BuildWaitStmt(target_block, frame, lowerer, leaves);
+  return BuildWaitStmt(target_block, frame, lowerer, leaves, entry);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

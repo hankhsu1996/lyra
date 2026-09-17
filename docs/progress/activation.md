@@ -63,15 +63,18 @@ or incomplete relative to the contract.
       synchronous release used for an off-stack subtree.
 
 - [x] **Pause and resume settle on the disposition model.** `process::suspend()` / `resume()` (LRM
-      9.7) pause and restart a process. An activation carries an authoritative disposition and a
-      blocked one holds a retainable pending wait, distinct from its registration (enrollment): a
-      suspend detaches the enrollment and saves the disposition, and a resume re-establishes the
-      pending wait -- re-enrolling, or becoming runnable if the condition already holds. Each
-      suspending construct supplies that re-establish uniformly, so its own LRM resume rule reads in
-      one place: an edge or named event re-subscribes (a trigger during suspension is missed), a
-      delay compares its absolute deadline (a transpired delay resumes runnable), a monotonic
-      condition (join, wait fork, await) re-checks. `status()` reports SUSPENDED. See the activation
-      contract and the activation-disposition decision.
+      9.7) pause and restart a process. A blocked activation holds what it is waiting for, distinct
+      from where that wait is enrolled right now: a suspend revokes the enrolment and keeps what is
+      being waited for, and a resume waits for the same thing afresh -- enrolling again, or running
+      in the current time step where it has already happened. Each suspending construct supplies
+      that uniformly, so its own resume rule reads in one place: an event control or named event
+      subscribes again (an occurrence during the stop is missed), a delay compares the absolute
+      moment it is waiting for (one that has passed continues at once), a `wait` condition is read
+      by the body's own loop (a condition that became true during the stop continues at once), and a
+      monotonic condition (join, wait fork, await) is re-checked. Holding nothing is how an
+      activation that was already runnable says it has nothing left to wait for. `status()` reports
+      SUSPENDED. The four positions run on both backends. See the activation contract and the
+      waiting-is-an-operation decision.
 
 - [x] **Disable of a named block or task.** `disable` (LRM 9.6.2) selects its target by static block
       or task identity and reaches every execution currently inside it, without regard to the

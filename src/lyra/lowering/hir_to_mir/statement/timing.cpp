@@ -143,7 +143,8 @@ auto BuildImplicitEventWaitStmt(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
     const hir::ImplicitEventControl& ie) -> mir::Stmt {
   return BuildValueChangeWaitStmt(
-      block, frame, process.EnclosingScopeLowerer(), ie.sensitivity_list);
+      block, frame, process.EnclosingScopeLowerer(), ie.sensitivity_list,
+      support::BuiltinFn::kWaitAny);
 }
 
 // LRM 9.4.1 `#N`. The wait lowers to a coroutine-suspending free-function
@@ -198,13 +199,8 @@ auto BuildDelayWaitStmt(
                   .arguments =
                       {runtime_id, duration_id, unit_power_id,
                        precision_power_id}},
-          .type = unit.builtins.void_type});
-  const mir::ExprId await_expr_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::AwaitExpr{.awaitable = call_id},
-          .type = unit.builtins.void_type});
-  return mir::Stmt{
-      .label = std::nullopt, .data = mir::ExprStmt{.expr = await_expr_id}};
+          .type = unit.builtins.machine_bool});
+  return BuildSuspendingCallStmt(process.Owner(), block, call_id);
 }
 
 // LRM 15.5.1: triggering reaches RuntimeEffects to wake subscribers. The engine
@@ -244,7 +240,8 @@ auto BuildEventWaitStmt(
           ObservedLeaf{.entry = leaf, .observation = *observation});
     }
   }
-  return BuildWaitStmt(block, frame, scope, leaves);
+  return BuildWaitStmt(
+      block, frame, scope, leaves, support::BuiltinFn::kWaitAny);
 }
 
 template auto BuildEventWaitStmt(
@@ -264,7 +261,9 @@ auto BuildNamedEventWaitStmt(
   if (!observation) return std::unexpected(std::move(observation.error()));
   const std::array<ObservedLeaf, 1> leaves{
       ObservedLeaf{.entry = nec.event, .observation = *observation}};
-  return BuildWaitStmt(block, frame, process.EnclosingScopeLowerer(), leaves);
+  return BuildWaitStmt(
+      block, frame, process.EnclosingScopeLowerer(), leaves,
+      support::BuiltinFn::kWaitAny);
 }
 
 auto BuildAnyEventWaitStmt(
@@ -386,8 +385,13 @@ auto LowerWaitStmt(
 
   mir::Block inner_block;
   const WalkFrame inner_frame = wrapper_frame.WithBlock(&inner_block);
+  // The loop is what reads the condition, so what this waits for is the loop
+  // getting to read it again -- which is also the rule LRM 9.7 gives a `wait`
+  // that is started after being stopped, and why it is not the wait an event
+  // control makes over the same reads.
   inner_block.AppendStmt(BuildValueChangeWaitStmt(
-      inner_block, inner_frame, process.EnclosingScopeLowerer(), reads));
+      inner_block, inner_frame, process.EnclosingScopeLowerer(), reads,
+      support::BuiltinFn::kWaitUntil));
 
   const mir::BlockId inner_scope_id =
       wrapper.child_scopes.Add(std::move(inner_block));
