@@ -345,20 +345,34 @@ auto CodeGenFunction::ReachedType(
                               : lir::PlaceType(module_->Unit(), *fn_, prefix);
 }
 
-// The address of what `reference` refers to, given the type it is. A pointer is
-// the address already; a class handle is not, since which object it refers to
-// is a fact the handle holds rather than is, so the runtime answers it -- and
-// that is where a handle referring to no object is caught (LRM 8.3).
+// The address of what `reference` refers to, given the type it is. Most
+// references are the address already and opening one is nothing. Two are not:
+// a class handle and a hold on a promoted scope each carry what they name as a
+// fact they hold rather than are, so the runtime answers which storage is meant
+// -- and for the handle that is also where one referring to no object is caught
+// (LRM 8.3).
 auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
     -> llvm::Value* {
-  if (!module_->Unit().types.Get(type).Is<lir::ManagedRefType>()) {
+  const lir::Type& referring = module_->Unit().types.Get(type);
+  std::optional<RuntimeOp> op;
+  if (referring.Is<lir::ManagedRefType>()) {
+    op = RuntimeOp::kObjectDeref;
+  } else if (const auto* pointer = referring.As<lir::PointerType>()) {
+    switch (pointer->ownership) {
+      case lir::PointerOwnership::kUnique:
+      case lir::PointerOwnership::kBorrowed:
+        break;
+      case lir::PointerOwnership::kShared:
+        op = RuntimeOp::kPromotedScopeDeref;
+        break;
+    }
+  }
+  if (!op) {
     return reference;
   }
   const std::array<llvm::Value*, 1> args{reference};
   return builder_.CreateCall(
-      Entry(
-          RuntimeSymbol(RuntimeOp::kObjectDeref), module_->Types().Ptr(), args),
-      args);
+      Entry(RuntimeSymbol(*op), module_->Types().Ptr(), args), args);
 }
 
 auto CodeGenFunction::IsHandleSequence(lir::TypeId type) const -> bool {
@@ -1740,20 +1754,29 @@ auto CodeGenFunction::ConstructionOf(
             throw InternalError("llvm codegen: unknown runtime library kind");
           },
           // A wrapper that owns storage brings that storage into existence with
-          // itself. The runtime owns the object tree, so it is the runtime that
-          // builds a node of it. A shared owner instead keeps its storage alive
-          // for as long as anything holds one, which takes a slot the collector
-          // can see, and generated storage is not yet visible to it.
+          // itself, and which entry does that is what the ownership says. The
+          // runtime owns the object tree, so it is the runtime that builds a
+          // node of it. A shared owner instead answers with a hold, because
+          // what it brings into existence outlives the scope that asked for it
+          // and ends with the last holder rather than at any one exit (LRM
+          // 6.21). A borrowed pointer is bound to storage that already exists,
+          // so nothing constructs one.
           [&](const lir::PointerType& p) -> diag::Result<Construction> {
-            if (p.ownership != lir::PointerOwnership::kUnique) {
-              return Unsupported(
-                  "llvm codegen: storage kept alive by a shared owner needs a "
-                  "slot the collector can see, which generated storage is not "
-                  "yet");
+            switch (p.ownership) {
+              case lir::PointerOwnership::kUnique:
+                return Construction{
+                    .symbol = RuntimeSymbol(RuntimeOp::kMakeScope),
+                    .operand_form =
+                        OperandsAfterDefinition{.defined = p.pointee}};
+              case lir::PointerOwnership::kShared:
+                return Construction{
+                    .symbol = RuntimeSymbol(RuntimeOp::kMakePromotedScope),
+                    .operand_form =
+                        OperandsAfterDefinition{.defined = p.pointee}};
+              case lir::PointerOwnership::kBorrowed:
+                return no_construct();
             }
-            return Construction{
-                .symbol = RuntimeSymbol(RuntimeOp::kMakeScope),
-                .operand_form = OperandsAfterDefinition{.defined = p.pointee}};
+            throw InternalError("llvm codegen: unknown pointer ownership");
           },
           // An object the program owns rather than the object tree, brought
           // into existence together with the handle that refers to it (LRM

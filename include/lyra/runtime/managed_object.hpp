@@ -449,11 +449,14 @@ void RealizeClass(
   return BehaviorAt(ref.Handle(), at);
 }
 
-// An object the program built with `new` (LRM 8.3), whose lifetime the
-// simulator owns rather than any scope. It owns one storage object per
-// property, so a property place resolves to that storage's address exactly as a
-// scope member's does. What class it is of it adopts like any other object, so
-// that is a question about the object rather than about this realization.
+// A block of storage over a definition: one storage object per member, so a
+// member place resolves to that storage's address exactly as a scope member's
+// does. What class it is of it adopts like any other object, so that is a
+// question about the object rather than about this realization. Two things are
+// one of these and they differ only in who ends one -- an object the program
+// built with `new`, whose lifetime the simulator owns rather than any scope
+// (LRM 8.3), and the storage a block promoted out of its frame, which ends with
+// the last hold on it (LRM 6.21).
 class ManagedObject : public GcObject {
  public:
   explicit ManagedObject(const ObjectDefinition* definition);

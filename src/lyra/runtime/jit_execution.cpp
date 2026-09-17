@@ -39,6 +39,7 @@
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/process_control.hpp"
+#include "lyra/runtime/promoted_scope.hpp"
 #include "lyra/runtime/random.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -585,6 +586,7 @@ using lyra::runtime::ProcessSelf;
 using lyra::runtime::ProcessStatus;
 using lyra::runtime::ProcessSuspend;
 using lyra::runtime::ProgramLifetime;
+using lyra::runtime::PromotedScopeRef;
 using lyra::runtime::PropertyAt;
 using lyra::runtime::PropertyCoordinate;
 using lyra::runtime::Read;
@@ -980,6 +982,15 @@ auto lyra_rt_object_make(const void* definition) -> void* {
   ObjectRef object =
       GcNew<ManagedObject>(static_cast<const ObjectDefinition*>(definition));
   return Own(object.Handle());
+}
+
+auto lyra_rt_make_promoted_scope(const void* definition) -> void* {
+  return GeneratedCallScope::Current().NewForFrame<PromotedScopeRef>(
+      static_cast<const ObjectDefinition*>(definition));
+}
+
+auto lyra_rt_promoted_scope_deref(void* handle) -> void* {
+  return Read<PromotedScopeRef>(handle).Storage();
 }
 
 void lyra_rt_submit_nba(void* runtime, void* closure) {

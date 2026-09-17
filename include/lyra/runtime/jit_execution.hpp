@@ -253,6 +253,19 @@ auto lyra_rt_object_make(const void* definition) -> void*;
 // handle referring to no object fails the run here rather than further in.
 auto lyra_rt_object_deref(void* handle) -> void*;
 
+// A hold on the storage a block promoted out of its own frame (LRM 6.21),
+// where `definition` names the storage its members need the way a class's does
+// for an object's properties. The hold crosses as a handle like every other
+// value here, and it belongs to the frame that names it rather than to the
+// stretch that asked for it, because the frame goes on naming it after that
+// stretch has returned.
+auto lyra_rt_make_promoted_scope(const void* definition) -> void*;
+
+// The storage a hold on a promoted scope names. A hold is a value rather than
+// the address of what it names, exactly as a class handle is, so reaching the
+// storage behind one is an operation.
+auto lyra_rt_promoted_scope_deref(void* handle) -> void*;
+
 // The address of a property's storage on an object, named by the class that
 // declares the property and the slot that class gave it. A class carries what
 // its bases declare before what it declares itself, so a property keeps one

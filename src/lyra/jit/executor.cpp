@@ -340,6 +340,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_closure_make", &lyra_rt_closure_make);
   add("lyra_rt_object_make", &lyra_rt_object_make);
   add("lyra_rt_object_deref", &lyra_rt_object_deref);
+  add("lyra_rt_make_promoted_scope", &lyra_rt_make_promoted_scope);
+  add("lyra_rt_promoted_scope_deref", &lyra_rt_promoted_scope_deref);
   add("lyra_rt_object_method", &lyra_rt_object_method);
   add("lyra_rt_object_member_addr", &lyra_rt_object_member_addr);
   add("lyra_rt_class_find_property", &lyra_rt_class_find_property);
@@ -1326,6 +1328,8 @@ auto DescribeMember(
       return runtime::InlineValueStorage{.domain = domain_of(type)};
     case backend::llvm_backend::MemberStorageKind::kBorrowedHandle:
       return runtime::BorrowedHandleStorage{};
+    case backend::llvm_backend::MemberStorageKind::kPromotedScope:
+      return runtime::PromotedScopeStorage{};
     case backend::llvm_backend::MemberStorageKind::kNamedEvent:
       return runtime::NamedEventStorage{};
     case backend::llvm_backend::MemberStorageKind::kCancellationTarget:

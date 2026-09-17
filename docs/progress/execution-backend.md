@@ -368,6 +368,21 @@ each meets the same lifetime question above.
       of that storage: entering the branch takes the captures rather than borrowing them, since the
       execution outlives the stretch that built them and nothing else owns them.
 
+- [x] **Storage a block keeps for the branches it spawned.** LRM 6.21 gives a scope enclosing a
+      fork-join block the lifetime of every process that block spawned, so a branch detached by
+      `join_none` or `join_any` goes on naming the enclosing scope's automatics after control has
+      left the block -- reading what the parent wrote after the `fork`, and writing what the parent
+      reads later. Such a scope's declarations are one block of member storage, described exactly as
+      an object's properties are, and what a branch captures is a hold on it rather than an address.
+      A hold ends with whatever owns it, so the storage ends once the last branch and the declaring
+      frame have both let go, and nothing releases one by hand on any way out.
+
+      Counting holds is exact here rather than an approximation of reachability, and that is a
+      property of the language rather than of the mechanism: a program cannot store a reference to
+      an automatic, and LRM 9.3.2 bars a detached branch from naming a `ref` formal at all, so the
+      only names into the storage are the frame that declared it and the branches spawned under it.
+      Both of those edges run one way in time, so no cycle can form for anything to have to collect.
+
 - [x] **A runtime service answers through its completion, never through storage the caller lends.**
       Every service that reports through an argument the call names -- `$fgets`, `$ferror`,
       `$fread`, `$value$plusargs`, `$readmem` -- completes with a product of the values it settled,

@@ -89,6 +89,17 @@ class GeneratedCallScope {
   // throws rather than returning null.
   auto ActivationValues() -> ActivationValueStore&;
 
+  // Storage for a value the frame goes on naming after the stretch that made
+  // it has returned. A body that can suspend keeps its frame across stretches,
+  // so such a value belongs to the execution; a body with no store cannot
+  // suspend at all, so its stretch is its whole frame and the arena beside it
+  // is the same lifetime.
+  template <typename T, typename... Args>
+  auto NewForFrame(Args&&... args) -> T* {
+    return values_ != nullptr ? values_->New<T>(std::forward<Args>(args)...)
+                              : arena_.New<T>(std::forward<Args>(args)...);
+  }
+
   static auto Current() -> GeneratedCallScope&;
 
  private:

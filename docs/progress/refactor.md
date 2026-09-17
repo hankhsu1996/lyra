@@ -1640,6 +1640,23 @@ enough to warrant its own focused review.
       What it costs is memory held longer than the language requires, which grows with the number of
       declarations in a body rather than with anything a program does.
 
+      That last clause is too kind, and the hold on a promoted scope is the counter-example. It is
+      taken where the block is entered rather than where the body starts, so a body that enters such
+      a block in a loop takes one hold per iteration and lets go of none until the whole execution
+      ends -- growth in what the program does, not in what it declares. Measured at 685 bytes per
+      entry over 200000 iterations, beside a baseline that already retains an order of magnitude
+      more per iteration for other reasons.
+
+      And that one is worse than a cost, because dropping the hold where its scope ends is half of
+      what the shared wrapper the semantic layer names already means, not a target's spelling of it.
+      A target that does not emit that drop has not realized the construct, so the two stop agreeing
+      on what it means rather than only on how they represent it -- which the layer contract does not
+      admit. What is missing is a lowering rather than a new operation to state, and an end one
+      target emits while the other takes it from its own language already has a shape here, in how a
+      body's declared storage is opened and closed. It is a piece of work because it moves how such
+      a local lowers on both targets at once: whichever gets the end for free must stop emitting it
+      twice.
+
       Target: the extent a variable's storage has is the extent its declaration has, on both
       backends. This is the same axis as ending it on every way out and was deliberately not taken
       with it -- ending at a scope exit needs the scope exits to be enumerable in the same way the
@@ -1696,6 +1713,58 @@ enough to warrant its own focused review.
 
       Not blocked. Found while removing a whole-unit refusal from the C++ backend, when `--backend`
       turned out to be one of several options the commands that do not execute a design still take.
+
+- [ ] R107 -- An automatic-lifetime class handle read after its process parks does not survive on
+      the execution backend, on a legal program the other backend answers correctly. Four lines
+      reproduce it: a local handle of automatic lifetime, `new`, a delay, then a member read. In a
+      process body the run dies of a memory fault; inside a task the same program instead reports a
+      member reached through a null handle, so the two faces of it are a crash and a wrong answer,
+      and neither names what went wrong. A static-lifetime handle is unaffected, which is the tell:
+      storage a declaration gives per instance holds the handle, and a per-activation one does not.
+
+      The cause is who owns the handle between the two stretches. A handle answered across the
+      boundary belongs to the stretch that asked for it, and a park releases that stretch, so the
+      frame keeps naming a hold nobody has. What makes it invisible on the other backend is that
+      the same handle is an ordinary local of its emitted frame there, which the target language
+      keeps across a suspension for free.
+
+      Target: a hold's storage lasts as long as the frame that names it. What decides the shape is
+      that a hold is not stable as it stands -- three records say a handle is, and that sentence is
+      what has to be revised before anything is built. The one obvious repair was already weighed
+      and turned down for its own reasons (`object-model.md` rejects spilling managed locals through
+      the promoter that carries a promoted scope, as entangling two concerns); this is a defect
+      rather than a preference, so it needs an answer whether or not that one is available.
+
+      Not blocked. Found by running the neighbour of a detached branch that borrows an enclosing
+      automatic, which is the same question asked about a scope instead of a handle.
+
+- [ ] R108 -- A `fork` reached from a static variable's initializer aborts as a compiler bug on both
+      targets, on a program the front end accepts at exit 0. LRM 13.4.4 lets a function hold a
+      `fork ... join_none`, and nothing stops a static initializer calling such a function; both
+      targets then report that there is no process to parent the branch to. Whether an initializer
+      evaluated before time zero is inside a process at all is the question underneath, and the
+      standard's answer is what decides whether this is a missing process or a program that should
+      have been refused -- either way it is a stop with an invariant's message on accepted source,
+      which the error policy does not allow.
+
+      Target: settle what an initializer runs inside, then either give it one or refuse the program
+      where it is accepted. Not blocked. Found while probing where a promoted scope's storage
+      belongs when the body holding it cannot suspend.
+
+- [ ] R109 -- The runtime type holding a block of storage over a definition is named for one of the
+      two lifetimes that use it. It is what a class object's properties live in and what a block
+      promoted out of its frame lives in, and those are the two regimes this project is most careful
+      to keep apart: one ends by reachability, the other with the last hold on it. Nothing is wrong
+      with one type serving both -- the operation reaching a member of one is identical, and giving
+      each its own would be two entries differing only in a cast -- but the name states a regime
+      rather than what the type is, so reading it tells a reader the wrong thing about half of what
+      it holds.
+
+      Target: a name for the storage rather than for one of its owners. What makes this its own
+      change rather than a rename in passing is that the name reaches the C++ backend's emitted
+      text, so it is held by the emitted-name policy and costs a full host-compile run to move.
+
+      Not blocked. Found by widening the type's second user without being able to widen its name.
 
 ## Out of Scope
 

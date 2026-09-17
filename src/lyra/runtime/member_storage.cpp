@@ -125,6 +125,9 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
           [this](const BorrowedHandleStorage&) {
             object_.emplace<BorrowedHandle>();
           },
+          [this](const PromotedScopeStorage&) {
+            object_.emplace<PromotedScopeRef>();
+          },
           [this](const CancellationTargetStorage&) {
             object_.emplace<CancellationTarget>();
           },
@@ -315,6 +318,10 @@ auto MemberStorage::HeldValue() -> void* {
   return std::visit(
       Overloaded{
           [](BorrowedHandle& box) -> void* { return box.target; },
+          // A hold is not the storage it names: what crosses is the hold
+          // itself, so that whoever takes a copy of it takes a hold too, and
+          // reaching the storage behind it is a step of its own.
+          [](PromotedScopeRef& held) -> void* { return &held; },
           [](value::Chandle& chandle) -> void* { return chandle.Ptr(); },
           // Storage a write can reach again hands nothing back in place: a
           // reader given the storage itself would see a later write change what
@@ -389,6 +396,10 @@ void MemberStorage::AdoptFrom(void* handle) {
           // A pointer-shaped value is the handle, so there is nothing behind it
           // to read out.
           [&](BorrowedHandle& box) { box.target = handle; },
+          // Copying the hold is what keeps the promoted scope alive for as
+          // long as this owner lasts, which is the whole of LRM 6.21's
+          // lifetime rule: no other step acquires anything and none releases.
+          [&](PromotedScopeRef& held) { adopt(held); },
           [&](value::Chandle& chandle) { chandle = value::Chandle{handle}; },
           [](CancellationTarget&) {
             throw InternalError(
