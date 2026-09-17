@@ -35,8 +35,14 @@ correct failure, a confidently wrong one is not.
 - **The gate runs once, in `/pr`, on what the rebase produced.** `/commit` builds, formats and
   lints; the tests belong on the tree that will land, and that tree is the rebase's output. Where
   the rebase turns out to be a no-op it is the same single run, arriving one step later.
-- **Staging is the user's signal, not yours.** A staged file means it has been reviewed. Never
-  stage, unstage, or `git restore --staged` on the user's behalf -- if files are already staged when
-  this runs, commit those and add nothing.
+- **The trigger stages what the change is.** Asking for a commit and a PR is asking for the work to
+  land, so `git add` is part of the job here and not a signal to wait for -- the review the staging
+  ordinarily stands for is the one the trigger itself gave. Stage the change whole, by path and
+  never `-A`, and leave alone anything you cannot account for as yours: another clone edits shared
+  files, and the user edits their own tree while this runs. **Never unstage**, here or anywhere.
+
+  The earlier form said to commit what was already staged and add nothing, which reads as caution
+  and is not: it stopped a finished branch one keystroke short of its PR, after the user had asked
+  for both, because a cleanup pass had left its own edits unstaged by design.
 - **One commit or several?** Ask only if the staged set spans clearly unrelated work. A fix plus the
   test that proves it is one commit, not two.
