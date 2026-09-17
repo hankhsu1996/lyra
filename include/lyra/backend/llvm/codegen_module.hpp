@@ -9,6 +9,7 @@
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type_id.hpp"
 
@@ -60,6 +61,11 @@ class CodeGenModule {
   // named the same way, since the record the host builds has one shape either
   // way.
   auto DefinitionRef(lir::TypeId type) -> diag::Result<llvm::Constant*>;
+
+  // The same for one body's own variables: the address of the description the
+  // host builds from what that body states, as an external symbol. A body that
+  // states no variables never asks for one.
+  auto VariableSchemaRef(const lir::Function& fn) -> llvm::Constant*;
 
   // The module-level home of one type's descriptor. The description is settled
   // by the type, so the run builds it once and every later use loads what the

@@ -240,6 +240,25 @@ struct ValueCellTarget {
   TypeId value;
 };
 
+// The storage a body's declared variables live in: opened whole from what the
+// body states its variables are, each of them reached by the position that
+// statement gave it, and ended on every way out -- which is what ends every
+// variable in it, since none of them is storage the body owns on its own.
+//
+// A declaration is what gives a variable storage, so none of these reads
+// anything about what the body does with one. What each piece of storage is
+// follows from the type the body stated beside the position, the same way a
+// declaration's storage follows its type everywhere else.
+//
+// LIR-only targets with no MIR twin. Where a variable's storage sits is a
+// realization below the semantic layer, so a target whose own language gives a
+// declaration storage states no variables and emits none of this.
+struct OpenVariablesTarget {};
+
+struct VariableAddressTarget {};
+
+struct CloseVariablesTarget {};
+
 // An operation on the control effect that leaves a disabled target (LRM
 // 9.6.2). `kHasInvalidatedTarget` and `kInvalidatedTarget` ask whether a target
 // this execution is inside was disabled while it was away, and which one; both
@@ -310,7 +329,8 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 // or an operation of the coroutine protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
-    ConstructTarget, ForeignTarget, ValueCellTarget, ControlEffectTarget,
+    ConstructTarget, ForeignTarget, ValueCellTarget, OpenVariablesTarget,
+    VariableAddressTarget, CloseVariablesTarget, ControlEffectTarget,
     CoroutineTarget>;
 
 struct CallInstr {
@@ -549,14 +569,26 @@ struct CondBranchTerm {
   BlockId if_false;
 };
 
-// Hands control back to the scheduler and resumes at `resume` when the
-// activation is next run. It schedules nothing and names no wakeup source: the
-// source is registered by the runtime calls that precede this terminator, so a
-// delay, an event control, and a level wait differ only in those calls, never
-// in the suspend.
+// Hands control back to the scheduler and names both ways control can leave.
+// It schedules nothing and names no wakeup source: the source is registered by
+// the runtime calls that precede this terminator, so a delay, an event
+// control, and a level wait differ only in those calls, never in the suspend.
+//
+// `resume` continues the body where it left off. `abandoned` is where control
+// goes when whoever drives the execution ends it instead of running it again;
+// that is a way out of every scope the body has open, so it runs what those
+// scopes owe. No statement of the body runs there, because being ended is not
+// something the body observes.
 struct SuspendTerm {
   BlockId resume;
+  BlockId abandoned;
 };
+
+// Ends a body that was left where it stood rather than run to its end. Control
+// reaches it only from a suspension's abandonment edge, once what the open
+// scopes owed has run. An execution ended this way settles no outcome, so it
+// carries no value and is not a completion.
+struct AbandonTerm {};
 
 // Ends a block control never reaches -- the join of a conditional whose arms
 // all returned, or the tail of a value-returning body that always returns
@@ -565,7 +597,8 @@ struct SuspendTerm {
 struct UnreachableTerm {};
 
 using TerminatorData = std::variant<
-    ReturnTerm, BranchTerm, CondBranchTerm, SuspendTerm, UnreachableTerm>;
+    ReturnTerm, BranchTerm, CondBranchTerm, SuspendTerm, AbandonTerm,
+    UnreachableTerm>;
 
 struct Terminator {
   TerminatorData data;
@@ -603,6 +636,7 @@ struct Function {
   std::string name;
   base::Arena<Local, ValueId> values;
   std::vector<ValueId> params;
+  std::vector<TypeId> variables;
   TypeId result_type;
   std::vector<BasicBlock> blocks;
   Definition definition = Definition::kOwned;

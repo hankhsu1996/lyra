@@ -107,8 +107,11 @@ class CodeGenFunction {
   void OpenCoroutine();
 
   // Emits a suspension: save, `llvm.coro.suspend`, and the switch that resumes
-  // at `resume`, returns to the caller, or enters cleanup.
-  void EmitCoroutineSuspend(llvm::BasicBlock* resume, bool is_final);
+  // at `resume`, returns to the caller, or -- where the execution is ended
+  // rather than run again -- enters `abandoned`, which runs what the scopes
+  // open here owe before the frame goes.
+  void EmitCoroutineSuspend(
+      llvm::BasicBlock* resume, llvm::BasicBlock* abandoned, bool is_final);
 
   // The address a place names. The base contributes the storage the chain
   // starts from, either a place local's own frame slot or the referent of a
@@ -143,8 +146,13 @@ class CodeGenFunction {
   struct OperandsAsSpanAfterDefinition {
     lir::TypeId defined;
   };
+  // What a body's variables are is stated by the body, so an entry that builds
+  // that storage leads with the description this body carries rather than with
+  // anything the call site spells.
+  struct OperandsAfterVariableSchema {};
   using OperandForm = std::variant<
-      OperandsAsStated, OperandsAfterDefinition, OperandsAsSpanAfterDefinition>;
+      OperandsAsStated, OperandsAfterDefinition, OperandsAsSpanAfterDefinition,
+      OperandsAfterVariableSchema>;
 
   // The entry that brings a value of one type into existence, which of its
   // operands carries the shape that value is seeded from, and what form it

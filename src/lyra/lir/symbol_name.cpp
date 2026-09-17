@@ -44,6 +44,8 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'v';
     case SymbolCategory::kStaticProperty:
       return 'p';
+    case SymbolCategory::kVariableSchema:
+      return 'w';
     case SymbolCategory::kClosure:
       return 'k';
     case SymbolCategory::kClosureInvoke:
@@ -114,6 +116,11 @@ auto ClosureDefinitionSymbol(std::string_view unit_name, SymbolPart closure)
   return SymbolName(
       SymbolCategory::kClosureDefinition,
       {SymbolPart::Name(unit_name), std::move(closure)});
+}
+
+auto VariableSchemaSymbol(std::string_view body_symbol) -> std::string {
+  return SymbolName(
+      SymbolCategory::kVariableSchema, {SymbolPart::Name(body_symbol)});
 }
 
 auto ConstructorSymbol(std::string_view unit_name, SymbolPart cls)

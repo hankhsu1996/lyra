@@ -54,30 +54,29 @@ the stretch that made it.
       stays in the caller's scope). Settled in
       `../decisions/activation-frame-and-transient-scope.md`.
 
-- [ ] **One ownership model for a procedural value, instead of three.** A local's storage has three
-      possible homes here -- a slot of the generated frame, a cell of the execution's own store, or
-      a cell built where the declaration runs -- and which one it gets follows from whether the body
-      can suspend and whether anything lends the local, neither of which is a property of the
-      variable. The declaration says the whole of what the lifetime is, so it is the only thing that
-      should decide.
+- [x] **One ownership model for a procedural value, instead of three.** A declared variable is one
+      storage, owned by the execution that declared it, opened with the body and ended on every way
+      out of it -- including the one no statement spells, where the driver ends a parked execution
+      rather than resuming it. Nothing about the body it sits in, and nothing about what that body
+      does with it, takes part.
 
-      A fourth home is gone: a local the body never wrote used to have no storage at all, its initial
-      value standing in at every read. That was not a home but an optimization -- deciding a variable
-      need not exist, from a scan of the whole body, in a step that translates one node at a time --
-      and it refused legal programs wherever the scan's idea of a write was narrower than a write
-      (`../decisions/a-declared-local-is-storage.md`).
+      Three homes preceded it -- a slot of the generated frame, a cell of the execution's own store,
+      and a cell built where the declaration runs -- and which one a variable got followed from
+      whether its body could suspend and whether anything lent it. Neither is a property of the
+      variable, and the first two were mutually exclusive, so a variable needing both was refused:
+      lending a variable was refused in every process body, which is every `initial` and every
+      `always` there is.
 
-      Two things are established and one is not. **Established:** the third home arrived because a
-      lending requirement was allowed to decide how every storage is represented, which is backwards
-      and is recorded in `../decisions/reference-binds-a-cell.md`. Also established, and written down
-      long before this: a procedural local names a representation nothing ever writes into, so
-      holding one implies no ownership and a region has to stand in
-      (`../decisions/jit-value-realization.md` invariant 6). What measurement added is the asymmetry
-      beside it -- a signal's storage, and a lent local's, hold their value by value rather than by
-      handle, so the ownerless case is this one and nothing else. **Not established:** whether a
-      place should own a value's representation or hold a handle to an independently lived one. The
-      two answers want different things from a reference and from where a representation lives, so
-      the remaining work waits on that rather than on any mechanism.
+      A fourth home went one cut earlier: a local the body never wrote used to have no storage at
+      all, its initial value standing in at every read. That was not a home but an optimization --
+      deciding a variable need not exist, from a scan of the whole body, in a step that translates
+      one node at a time -- and it refused legal programs wherever the scan's idea of a write was
+      narrower than a write (`../decisions/a-declared-local-is-storage.md`).
+
+      **Both cuts ended the same way, and that is the part worth keeping.** Each time the proposed
+      fix was to carry the fact the scan recovered, so the translation could read it instead of
+      computing it; each time the fact turned out not to be needed at all
+      (`../decisions/a-declared-variable-is-one-storage.md`).
 
 The rest are further values that outlive the stretch that made them, none on the execution backend
 yet. Each is another instance of the same lifetime question, so the first to land decides whether it
@@ -210,18 +209,17 @@ ownership, or native in-frame layout) for every value.
 - [ ] **A reference argument aliasing storage that is not a cell.** A reference binds the cell its
       referent lives in, so a signal is lent by taking the address of the cell it already is, and a
       write through the reference raises the update event a write to that signal owes its
-      subscribers. A local is lent the same way whether or not its body can suspend: being lent is
-      what decides that it needs a cell, and the scope that declares it is what decides how long
-      that cell lives, so the cell is a slot of the body's own frame -- begun where the declaration
-      runs, ended on every way out, including the one taken when the driver ends a parked execution
-      rather than resuming it. A formal that lends what it was lent hands on the alias it holds, so
-      a chain of `ref` ports denotes the one variable at its end. What is left refuses because the
-      referent's value lives somewhere no address reaches: a class property is a member owning its
-      value rather than a cell holding it, and a component of an aggregate is realized here as part
-      of one value rather than as storage of its own -- for which the accepted answer is an
-      owner-relative projection reference rather than an interior address, and realizing one here is
-      what remains. An `output` / `inout` argument is not subject to this -- it copies out through
-      the actual's own write path.
+      subscribers. A declared variable is lent the same way, and nothing about the body it sits in
+      or what that body does with it takes part: every variable is one storage of the kind a
+      reference binds, opened with the body and ended on every way out of it, including the one
+      taken when the driver ends a parked execution rather than resuming it. A formal that lends
+      what it was lent hands on the alias it holds, so a chain of `ref` ports denotes the one
+      variable at its end. What is left refuses because the referent's value lives somewhere no
+      address reaches: a class property is a member owning its value rather than a cell holding it,
+      and a component of an aggregate is realized here as part of one value rather than as storage
+      of its own -- for which the accepted answer is an owner-relative projection reference rather
+      than an interior address, and realizing one here is what remains. An `output` / `inout`
+      argument is not subject to this -- it copies out through the actual's own write path.
 - [ ] **A component of an aggregate is storage of its own.** The language gives a member of an
       unpacked structure and an element of an unpacked array an identity a second name may denote,
       independent of the position it sits at and of the value its parent currently holds

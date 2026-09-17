@@ -151,6 +151,9 @@ class LirDumper {
             "fn \"{}\"({}) -> {}", fn.name, params,
             FormatType(fn.result_type)));
     Indent();
+    for (std::size_t v = 0; v < fn.variables.size(); ++v) {
+      Line(std::format("var {}: {}", v, FormatType(fn.variables[v])));
+    }
     for (std::size_t b = 0; b < fn.blocks.size(); ++b) {
       Line(std::format("bb{}:", b));
       Indent();
@@ -248,8 +251,11 @@ class LirDumper {
                   br.if_true.value, br.if_false.value);
             },
             [](const SuspendTerm& s) -> std::string {
-              return std::format("suspend -> bb{}", s.resume.value);
+              return std::format(
+                  "suspend -> bb{} abandoned bb{}", s.resume.value,
+                  s.abandoned.value);
             },
+            [](const AbandonTerm&) -> std::string { return "abandon"; },
             [](const UnreachableTerm&) -> std::string {
               return "unreachable";
             }},
@@ -323,6 +329,15 @@ class LirDumper {
             },
             [](const ValueCellTarget& f) -> std::string {
               return std::string{ValueCellOpName(f.op)};
+            },
+            [](const OpenVariablesTarget&) -> std::string {
+              return "variables_open";
+            },
+            [](const VariableAddressTarget&) -> std::string {
+              return "variable_addr";
+            },
+            [](const CloseVariablesTarget&) -> std::string {
+              return "variables_close";
             },
             [](const ControlEffectTarget& c) -> std::string {
               return std::string{ControlEffectOpName(c.op)};

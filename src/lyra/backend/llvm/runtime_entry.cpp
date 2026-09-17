@@ -36,6 +36,12 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
   switch (op) {
     case RuntimeOp::kCellAlloc:
       return "cell_alloc";
+    case RuntimeOp::kVariablesOpen:
+      return "variables_open";
+    case RuntimeOp::kVariableAddress:
+      return "variable_addr";
+    case RuntimeOp::kVariablesClose:
+      return "variables_close";
     case RuntimeOp::kMemberAddress:
       return "member_addr";
     case RuntimeOp::kSequenceMake:

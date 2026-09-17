@@ -72,8 +72,9 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
     // The ramp places the arguments in the frame and stops before the body's
     // first statement. An execution's stretches all belong to whoever drives
     // it -- including the first -- so none of them may run where the frame
-    // happened to be built.
-    EmitCoroutineSuspend(blocks_.front(), false);
+    // happened to be built. No scope of the body has opened yet, so an
+    // execution ended here owes nothing.
+    EmitCoroutineSuspend(blocks_.front(), coro_cleanup_, false);
   }
 
   for (std::uint32_t i = 0; i < fn_->blocks.size(); ++i) {
@@ -136,13 +137,14 @@ void CodeGenFunction::OpenCoroutine() {
   builder_.CreateRet(coro_handle_);
 
   // A body that runs to completion suspends one final time, so its owner still
-  // reads the handle as done before destroying it.
+  // reads the handle as done before destroying it. Every scope it opened has
+  // already ended, so there is nothing left to run on the way out.
   builder_.SetInsertPoint(coro_final_);
-  EmitCoroutineSuspend(nullptr, true);
+  EmitCoroutineSuspend(nullptr, coro_cleanup_, true);
 }
 
 void CodeGenFunction::EmitCoroutineSuspend(
-    llvm::BasicBlock* resume, bool is_final) {
+    llvm::BasicBlock* resume, llvm::BasicBlock* abandoned, bool is_final) {
   llvm::Module& mod = module_->Module();
   llvm::Value* save =
       is_final ? llvm::cast<llvm::Value>(
@@ -155,12 +157,12 @@ void CodeGenFunction::EmitCoroutineSuspend(
       llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::coro_suspend),
       {save, builder_.getInt1(is_final)});
   // The suspension's three arms: the caller regains control (the default), the
-  // body resumes where it left off, or the frame is destroyed.
+  // body resumes where it left off, or the execution is ended where it stands.
   llvm::SwitchInst* arms = builder_.CreateSwitch(arm, coro_end_, 2);
   if (resume != nullptr) {
     arms->addCase(builder_.getInt8(0), resume);
   }
-  arms->addCase(builder_.getInt8(1), coro_cleanup_);
+  arms->addCase(builder_.getInt8(1), abandoned);
 }
 
 auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
@@ -201,9 +203,14 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
           },
           [&](const lir::SuspendTerm& s) -> diag::Result<void> {
             // The wakeup source was registered by the calls preceding this
-            // terminator; the suspension only hands control back and names
-            // where the body resumes.
-            EmitCoroutineSuspend(blocks_[s.resume.value], false);
+            // terminator; the suspension only hands control back and names the
+            // two blocks control can reach from here.
+            EmitCoroutineSuspend(
+                blocks_[s.resume.value], blocks_[s.abandoned.value], false);
+            return {};
+          },
+          [&](const lir::AbandonTerm&) -> diag::Result<void> {
+            builder_.CreateBr(coro_cleanup_);
             return {};
           },
           [&](const lir::UnreachableTerm&) -> diag::Result<void> {

@@ -15,6 +15,12 @@ namespace lyra::lir {
 // alternative whose fields are all the caller's own is spelled at each of them
 // and shares nothing.
 
+// The type of the storage a value of `value_type` lives in. Reading and
+// writing it are its own operations rather than a load and a store of the
+// value, which is what lets a write raise the destination's update event, and
+// it is what a reference names.
+auto CellOf(const TypePool& types, TypeId value_type) -> TypeId;
+
 // The type a reference to a value of `value_type` has. A reference names the
 // cell its referent lives in rather than the referent's own value, so the
 // pointee is one wrapping further in than the caller states -- the fact this

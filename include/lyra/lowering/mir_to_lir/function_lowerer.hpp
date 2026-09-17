@@ -88,25 +88,23 @@ class FunctionLowerer {
     std::size_t cleanup_depth{};
   };
 
-  // Where a source local's storage lives. Every local has some, because the
-  // source declared a variable; what varies is only where, and a frame slot is
-  // the ordinary home. A value-typed local in a suspending body is an
-  // activation value: its value crosses suspensions, so it lives in a cell of
-  // the running execution's own store, reached through a handle the cell
-  // operations read and write. A local whose storage is lent by reference lives
-  // in a cell too, since that is the one storage a reference can name, and the
-  // binding holds the reference the lowering built over it.
+  // Where a source local's storage is. A local whose type the runtime holds
+  // values of gets storage of its own among the body's variables, and the
+  // binding names it by the reference the body opened over it -- which is the
+  // one storage a reference can bind and the one that outlives the stretch
+  // that wrote it. A local whose type is stable as it stands -- a pointer, a
+  // code reference, a machine scalar -- is a slot of the body's own frame.
+  //
+  // Nothing about what the body does with the local is consulted. The two
+  // follow from the declared type alone, so a local's storage is settled where
+  // the declaration is read.
   struct PlaceBinding {
     lir::ValueId slot;
-  };
-  struct ActivationValueBinding {
-    lir::Operand handle;
   };
   struct CellBinding {
     lir::Operand reference;
   };
-  using LocalBinding =
-      std::variant<PlaceBinding, ActivationValueBinding, CellBinding>;
+  using LocalBinding = std::variant<PlaceBinding, CellBinding>;
 
   // What entering one class's constructor takes: the type the object it runs on
   // is opened as, and the callee. Both are answered from the class's identity
@@ -152,6 +150,12 @@ class FunctionLowerer {
   // out of a guarded body runs the cleanups it leaves and no others, so the
   // depth a loop or a region recorded is what bounds it.
   auto RunCleanupsDownTo(std::size_t depth) -> diag::Result<void>;
+  // Hands control back to the scheduler, leaving the body at `resume`. Being
+  // ended rather than run again is a way out of every scope open here, so the
+  // second way out runs all of their cleanups and then ends the body; the
+  // source spells none of it, which is why it is built from what is owed
+  // rather than from a statement.
+  auto SuspendResumingAt(lir::BlockId resume) -> diag::Result<void>;
   // Leaves through the innermost region of this frame carrying `effect`, or,
   // where no region encloses this point, settles the activation cancelled and
   // returns. Either way the cleanups the departure passes run first.
@@ -313,14 +317,14 @@ class FunctionLowerer {
       mir::TypeId type) -> diag::Result<lir::Operand>;
   // Reading what a target holds, changing it, and putting the result back,
   // reaching the target exactly once. Which kind of storage the target names --
-  // a part of a value aggregate, an activation value the execution's own store
-  // keeps across a suspension, a place -- is answered here and nowhere else, so
-  // no site that changes what a target holds reaches one twice, once to read
-  // and once to write. `change` is handed a way to read the old value and the
-  // type it has, and answers with what to put back; one that never reads emits
-  // no read at all, which is how a plain write reaches this. What this yields
-  // is the write, whose type is void; a caller in expression position states
-  // the value its own expression has, out of what it kept while `change` ran.
+  // a part of a value aggregate, or storage the chain reaches -- is answered
+  // here and nowhere else, so no site that changes what a target holds reaches
+  // one twice, once to read and once to write. `change` is handed a way to read
+  // the old value and the type it has, and answers with what to put back; one
+  // that never reads emits no read at all, which is how a plain write reaches
+  // this. What this yields is the write, whose type is void; a caller in
+  // expression position states the value its own expression has, out of what it
+  // kept while `change` ran.
   using ValueReader = std::function<lir::Operand()>;
   using ValueChange = std::function<diag::Result<lir::Operand>(
       const ValueReader&, lir::TypeId)>;
@@ -371,11 +375,16 @@ class FunctionLowerer {
   // time the caller read it.
   auto AllocateCompletionFor(lir::TypeId payload) -> lir::Operand;
 
-  // The storage a local lent by reference lives in. `AllocateCell` builds the
-  // cell and returns the reference to it; `InitializeCell` installs the cell's
-  // representation and initial contents, the one write it takes before it will
-  // accept a store.
-  auto AllocateCell(lir::TypeId value_type) -> lir::Operand;
+  // Brings the storage this body's variables live in into existence and binds
+  // each of them to a reference over its own piece of it. Runs once, before
+  // anything the body does, because a declaration reached many times is one
+  // variable in one storage and only its contents begin afresh.
+  void OpenVariables();
+  // Ends that storage, and with it every variable in it. Owed on every way out
+  // of the body, including the one no statement of it spells.
+  void CloseVariables();
+  // Installs a cell's representation and initial contents, the one write it
+  // takes before it will accept a store.
   auto InitializeCell(lir::Operand reference, lir::Operand value)
       -> lir::Operand;
   // The two places a reference names: opening it reaches the cell it binds, and
@@ -385,12 +394,6 @@ class FunctionLowerer {
       -> lir::Place;
   [[nodiscard]] static auto ReferencedValue(lir::Operand reference)
       -> lir::Place;
-  // The cell handle an assignable expression writes through, when it names an
-  // activation value local directly; nothing otherwise (a place is written the
-  // ordinary way).
-  auto ActivationValueHandleForTarget(const mir::Block& block, mir::ExprId id)
-      -> std::optional<lir::Operand>;
-
   auto NewBlock() -> lir::BlockId;
   void SetCurrent(lir::BlockId id);
   void Terminate(lir::TerminatorData data);
@@ -412,7 +415,10 @@ class FunctionLowerer {
   // leaves it -- and for a block control never reaches, only the end of the
   // body settles it -- so what it accumulates is not yet a basic block and does
   // not claim to be one.
+  // A block under construction: what it holds so far, how control leaves it
+  // once that is decided, and the identity every branch to it names.
   struct OpenBlock {
+    lir::BlockId id;
     std::vector<lir::Instr> instrs;
     std::optional<lir::Terminator> terminator;
   };
@@ -422,12 +428,13 @@ class FunctionLowerer {
   std::vector<LoopTargets> loops_;
   std::vector<PendingCleanup> cleanups_;
   std::vector<RegionTargets> regions_;
-  // Which locals need a home other than a frame slot: a value-typed local in a
-  // suspending body, and a local whose storage a reference binds. The last
-  // holds what each local has resolved to so far.
-  std::vector<bool> activation_value_local_;
-  std::vector<bool> cell_local_;
+  // Which of the body's variables each local is, where its declared type gives
+  // it one, and what each local has resolved to so far.
+  std::vector<std::optional<std::uint32_t>> variable_slot_;
   std::vector<std::optional<LocalBinding>> locals_;
+  // The storage this body's variables live in, opened at entry and ended on
+  // every way out. Absent where the body declares nothing that needs one.
+  std::optional<lir::Operand> variables_;
   // Where this body writes the value it finishes with: storage its caller
   // allocated and handed over as the call's last argument, and the type of the
   // value that storage holds. Absent exactly when this body finishes with no

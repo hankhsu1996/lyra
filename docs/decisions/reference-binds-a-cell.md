@@ -45,6 +45,13 @@ it is that for every referent.
    Fusing the two questions is what made a lent local of a suspending body unreachable: it was given
    the storage whose lifetime it needed, and with it a kind no reference can name.
 
+   **This is where the reopening below landed, and 2026-09-16 is where it ended.** Unfusing the two
+   questions was the right move and stopped one step short: being lent still decided a kind, so two
+   kinds still existed and a variable needing both still had none. What
+   [a-declared-variable-is-one-storage](a-declared-variable-is-one-storage.md) settles is that being
+   lent decides nothing either -- a declaration is one storage, and a reference binds the storage
+   the variable already is.
+
 3. **That cell is the signal cell, not the non-observable procedural one.** The two share a storage
    core but not their spelling at the boundary: a cell's address crosses as one `void*`, every cell
    entry reads it as the same type, and the trigger entry already requires that address to serve as

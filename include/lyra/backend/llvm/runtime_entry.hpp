@@ -52,6 +52,9 @@ auto SelectsByStatedIndex(
 // set both targets read instead, and reaches a symbol through that name.
 enum class RuntimeOp : std::uint8_t {
   kCellAlloc,
+  kVariablesOpen,
+  kVariableAddress,
+  kVariablesClose,
   kMemberAddress,
   kSequenceMake,
   kSequenceElement,
