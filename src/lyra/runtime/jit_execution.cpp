@@ -824,8 +824,7 @@ auto lyra_rt_make_packed_type(LyraSpan dims, bool is_signed, bool is_four_state)
   std::ranges::transform(entries, ranges.begin(), [](const void* entry) {
     return *static_cast<const PackedRange*>(entry);
   });
-  return ProgramLifetime(
-      PackedType{std::move(ranges), is_signed, is_four_state});
+  return ProgramLifetime(PackedType{ranges, is_signed, is_four_state});
 }
 
 void lyra_rt_writeln(void* files, void* descriptor, void* text) {

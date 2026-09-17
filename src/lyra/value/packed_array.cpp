@@ -193,7 +193,7 @@ auto PackedArray::MakeFromWordPlanes(
 auto PackedArray::FromInt(std::int64_t value, const PackedType& type)
     -> PackedArray {
   const std::size_t n = WordCountForBits(type.bit_width);
-  PackedWordVector words(n);
+  PackedWordArray words(n);
   if (type.bit_width <= 64U) {
     words[0] = static_cast<std::uint64_t>(value);
   } else {
@@ -912,8 +912,8 @@ auto AllX(std::uint64_t bit_width, bool is_signed) -> PackedArray {
   return PackedArray{bit_width, is_signed, true};
 }
 
-auto MakeWordBuffer(std::uint64_t bit_width) -> PackedWordVector {
-  return PackedWordVector(WordCountForBits(bit_width), std::uint64_t{0});
+auto MakeWordBuffer(std::uint64_t bit_width) -> PackedWordArray {
+  return PackedWordArray(WordCountForBits(bit_width), std::uint64_t{0});
 }
 
 auto AddWordsInto(
@@ -1612,7 +1612,7 @@ auto PackedArray::ExtractBits(
   const auto bw_signed = static_cast<std::int64_t>(type_.bit_width);
   auto val_buf = MakeWordBuffer(bit_width);
   auto unk_buf =
-      type_.is_four_state ? MakeWordBuffer(bit_width) : PackedWordVector{};
+      type_.is_four_state ? MakeWordBuffer(bit_width) : PackedWordArray{};
   for (std::uint32_t i = 0; i < bit_width; ++i) {
     const std::int64_t pos = start + static_cast<std::int64_t>(i);
     const std::uint64_t out_mask = std::uint64_t{1} << (i % 64U);

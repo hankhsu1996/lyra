@@ -16,10 +16,10 @@ wake. Both reconstructions are wrong, in different ways, and they are the same d
 
 **The cost.** A partial write copies the owner's whole value, mutates the copy, compares the copy
 against the stored value, and stores it back. Writing one element of a 32768-element unpacked array
-costs 1.55 ms against 1.16 us to read one element back; the value is 168 bytes, so 5.5 MB moved in
-1.55 ms is 3.5 GB/s, the measuring machine's memory bandwidth. The write is a copy of the whole
-array running at the speed a copy runs, so the cost of a write tracks the size of the array it lands
-in rather than the size of what it writes.
+costs 1.55 ms against 1.16 us to read one element back; an integral value was 168 bytes when this
+was measured, so 5.5 MB moved in 1.55 ms is 3.5 GB/s, the measuring machine's memory bandwidth. The
+write is a copy of the whole array running at the speed a copy runs, so the cost of a write tracks
+the size of the array it lands in rather than the size of what it writes.
 
 **The correctness.** A subscription names a bit window in the observable's flat bit address space,
 which is the shape a packed value has and no aggregate has. An aggregate subscription therefore

@@ -278,7 +278,7 @@ auto FormatDecimalNumeric(const PackedArray& pa) -> std::string {
   // Wide path: copy into a working buffer, sign-extend if needed, then
   // chunk-divide by 10^19 to build decimal digits group-by-group.
   const auto value_words = pa.ValueWords();
-  PackedWordVector words(value_words.begin(), value_words.end());
+  std::vector<std::uint64_t> words(value_words.begin(), value_words.end());
   MaskUnusedTopBits(
       std::span<std::uint64_t>{words.data(), words.size()}, bit_width);
 

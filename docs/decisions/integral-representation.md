@@ -146,9 +146,17 @@ but it does not leak into MIR or into a hypothetical IR-level API.
 - `lyra::value::BitValue` / `LogicValue` are absorbed into `PackedArray`'s internal storage. Their
   existing view-based helpers (`BitwiseAnd`, `ReductionOr`, etc.) become implementation details
   called from `PackedArray` member functions, not directly emitted.
-- Narrow runtime variables (e.g., `int x;`) carry a `PackedArray`-sized object (~24-32 bytes)
-  instead of a 4-byte `int32_t`. This is accepted as a clean-design trade and reconsidered only if
-  profiling identifies it as a real cost.
+- Narrow runtime variables (e.g., `int x;`) carry a `PackedArray`-sized object instead of a 4-byte
+  `int32_t`. This is accepted as a clean-design trade and reconsidered only if profiling identifies
+  it as a real cost.
+
+  That condition has fired twice, and both times the answer was to make the object cheaper rather
+  than to split the type, so decision 1 stands. This record first predicted 24-32 bytes and the
+  object reached 168: a dimension stack that allocated was inlined, which cost 24 of those bytes and
+  bought a tenth to a quarter of a run, and the sequence type behind the stack and the words was
+  then holding room for a short value and a heap container for a long one at the same time, which is
+  now one or the other and takes the object to 120.
+
 - The LLVM backend reads the same MIR on the same dispatch axis; its bucketing to `iN` is its own
   lowering.
 

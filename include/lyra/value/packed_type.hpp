@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <span>
 
-#include "lyra/base/inlined_vector.hpp"
+#include "lyra/base/fixed_array.hpp"
 
 namespace lyra::value {
 
@@ -48,7 +48,7 @@ struct PackedType {
   // Almost every declared integral is one-dimensional, and this descriptor is
   // carried by every value and rebuilt at every operation, so the stack is held
   // inline for the single-dimension case rather than on the heap.
-  using Dims = base::InlinedVector<PackedRange, 1>;
+  using Dims = base::FixedArray<PackedRange, 1>;
 
   PackedType(
       std::span<const PackedRange> dims, bool is_signed, bool is_four_state)

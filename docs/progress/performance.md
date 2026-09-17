@@ -138,10 +138,22 @@ together are the next thing to look at.
       existed only because the per-bit copy wrote a subset of the destination, and a word-wise one
       writes every word. [refactor.md](refactor.md) R91 holds the shape and what was left out.
 
-- [ ] The sequence type behind a value's words and dimensions holds its inline storage and its spill
-      container at the same time, so a value that never spills still carries the spill container and
-      copies it on every copy. Both of its uses want capacity one, which makes the general form a
-      cost with no consumer.
+- [x] The sequence type behind a value's words and dimensions no longer holds its inline storage and
+      its spill container at the same time. A value that never spills used to carry the spill
+      container anyway and copy it on every copy; both of the type's uses want capacity one, so the
+      general form was a cost with no consumer. An integral value is now 120 bytes rather than 168.
+
+      What the size bought was not what made it faster, and the two came close to cancelling. The
+      first cut reached the short case through a plain pointer and a run-time length, which costs
+      the compiler exactly what an inline buffer is for -- it no longer knows how much room there is
+      or that the length cannot exceed it -- and that measured **9% slower** on scalar arithmetic
+      while the value was already 48 bytes smaller. Settling which side a write is on before naming
+      the room, rather than after, is what turned it around.
+
+      Measured by interleaving both builds inside each round, five rounds, against the benchmark
+      corpus: **6.8% on scalar arithmetic with no arrays and no scheduling, 5.5% on the mixed
+      arithmetic-and-control case, and 6.4% on wide bitwise work over 256-bit values**. The last of
+      those is the case that spills, so narrowing the value costs the wide path nothing.
 
 ## Construction / compile-time performance
 
