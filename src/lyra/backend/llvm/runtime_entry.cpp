@@ -825,6 +825,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObservationOfValueQualified:
     case support::BuiltinFn::kObservationQualified:
     case support::BuiltinFn::kWaitAny:
+    case support::BuiltinFn::kWaitUntil:
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:
     case support::BuiltinFn::kRealTime:

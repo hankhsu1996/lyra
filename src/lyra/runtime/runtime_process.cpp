@@ -26,8 +26,9 @@ RuntimeProcess::RuntimeProcess(
       // Before the body runs, the top frame is the active leaf (what the engine
       // schedules to start the process); a wait moves the leaf inward.
       current_leaf_(coroutine_.Token()) {
-  // Wire the promise's back-pointer so coroutine-side code (awaitables)
-  // can recover the RuntimeProcess identity from within await_suspend.
+  // Wire the promise's back-pointer so a frame can recover the RuntimeProcess
+  // identity from itself, which is what a wait reads to find the process the
+  // frame it parks belongs to.
   coroutine_.BindProcess(*this);
 }
 
@@ -51,15 +52,31 @@ auto RuntimeProcess::PushActivation(Coroutine<void> nested) -> CoroutineHandle {
   // A called task runs in its caller's thread (LRM 9.5), so it reaches the same
   // identity, lineage and disable membership as the body that called it.
   leaf->process = this;
-  current_leaf_ = leaf;
+  EnterLeaf(leaf);
   return leaf;
 }
 
 void RuntimeProcess::PopActivation() {
+  LeaveLeaf();
   nested_activations_.pop_back();
-  current_leaf_ = nested_activations_.empty()
-                      ? TopHandle()
-                      : nested_activations_.back().Token();
+}
+
+void RuntimeProcess::EnterLeaf(CoroutineHandle leaf) {
+  outer_leaves_.push_back(current_leaf_);
+  current_leaf_ = leaf;
+}
+
+void RuntimeProcess::LeaveLeaf() {
+  current_leaf_ = outer_leaves_.back();
+  outer_leaves_.pop_back();
+}
+
+void EnterActivation(PromiseBase& leaf) {
+  leaf.Process().EnterLeaf(&leaf);
+}
+
+void LeaveActivation(PromiseBase& leaf) {
+  leaf.Process().LeaveLeaf();
 }
 
 auto RuntimeProcess::TakeInnermostRaisedError() -> std::exception_ptr {
@@ -80,8 +97,8 @@ void RuntimeProcess::Suspend() {
     return;
   }
   // Detach the leaf from whatever holds it -- a wait target (desensitize) or a
-  // run queue (dequeue). Its pending wait, if any, is a separate member and
-  // stays: it is the saved blocked disposition resume re-establishes.
+  // run queue (dequeue). What it is waiting for is held separately and stays,
+  // because starting the process again waits for that same thing.
   if (current_leaf_ != nullptr) {
     current_leaf_->RevokeRegistrations();
   }
@@ -280,7 +297,7 @@ void RuntimeProcess::SettleTerminated(
   current_leaf_ = nullptr;
   // Settling and draining the `await` waiters are one step: a process reaching
   // terminal always hands its waiters to `woken` in the same primitive, so no
-  // terminal path can leave an awaiter parked forever (LRM 9.7).
+  // terminal path can leave one of them parked forever (LRM 9.7).
   while (Registration* waiter = terminated_waiters_.PopFront()) {
     woken.push_back(waiter->activation);
   }

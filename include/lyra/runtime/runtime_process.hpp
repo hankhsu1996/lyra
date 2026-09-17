@@ -4,15 +4,16 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/running_state.hpp"
+#include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
@@ -159,7 +160,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // innermost one when a task enabled by this process is suspended). Symmetric
   // transfer carries control back up the enable chain. Returns true if the
   // whole process ran to completion (judged on the top-level coroutine), false
-  // if it suspended again on some awaitable. Captured `handle` may be destroyed
+  // if it stopped to wait again. Captured `handle` may be destroyed
   // by the time this returns, so completion and exceptions are read off the
   // top-level coroutine, not `handle`.
   //
@@ -174,9 +175,10 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
       RuntimeEffects& effects, CoroutineHandle handle,
       std::vector<CoroutineHandle>& woken) -> bool;
 
-  // The top-level coroutine frame. Awaitables register the innermost handle for
-  // wakeup; this is what the engine schedules to start the process and what
-  // completion is judged against. Null once the body has terminated.
+  // The top-level coroutine frame. A wait is arranged for whichever frame is
+  // carrying the thread, which is the innermost one; this is what the engine
+  // schedules to start the process and what completion is judged against. Null
+  // once the body has terminated.
   [[nodiscard]] auto TopHandle() const -> CoroutineHandle;
 
   // Takes `child` into this process's lineage. A fork's parallel statement is a
@@ -199,41 +201,30 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // process that is already terminated is never parked here.
   void ArmTerminatedWaiter(CoroutineHandle waiter);
 
-  // Records that `leaf` is now blocked on `wait`: `leaf` becomes this process's
-  // active leaf and takes the pending wait, set as one step so they never fall
-  // out of step. The active leaf is the one frame carrying the process's thread
-  // -- the top frame before the body runs, the innermost parked frame once a
-  // wait blocks it; process control (LRM 9.7) names the process and acts on
-  // this leaf.
-  void BlockLeaf(CoroutineHandle leaf, PendingWait* wait) {
-    current_leaf_ = leaf;
-    leaf->pending_wait = wait;
-    // The wait's flush-point status is a constant of its kind (LRM 16.4.2), so
-    // it is read off the awaiter once here and recorded on the frame, the one
-    // place a resume reads it -- the same field the execution backend, which
-    // has no awaiter, sets where it registers its wakeup.
-    leaf->wait_is_report_flush_point = wait->IsReportFlushPoint();
-    LeafIsBlocked(leaf);
-  }
-
-  // Hands the frame that parks to whatever will wake it, and enrols it in the
-  // disable targets it is inside. A body whose suspension is a control edge
-  // nests no frame of its own, so the frame that parks is this process's top
-  // one. Every wakeup such a body registers goes through here, so no new way of
-  // registering one can forget the enrolment; a body that can be unwound
-  // through enrols where it blocks its innermost frame instead, for the same
-  // reason. A construct that registers no wakeup at all -- `$finish`, which
-  // parks and is never dispatched again -- reaches neither.
-  template <class Park>
-  void RegisterWakeup(bool wait_is_report_flush_point, Park park) {
+  // Stops the frame carrying this process's thread to wait for a `W` built from
+  // `args`, and answers whether the caller must give up control -- false where
+  // what it waits for had already happened, in which case nothing was arranged
+  // and the caller carries on.
+  //
+  // This is the one way a body stops to wait, for both the bodies that can be
+  // unwound through and the bodies that cannot, which is what makes the wait
+  // something the execution holds. A construct that reached the scheduler
+  // without one would be one that process control could not restart (LRM 9.7),
+  // and there is no way to spell that here.
+  template <class W, class... Args>
+  auto ParkOn(RuntimeEffects& services, Args&&... args) -> bool {
     const CoroutineHandle leaf = current_leaf_;
-    // The execution backend suspends through the runtime with no awaiter to
-    // carry the wait's flush-point status (LRM 16.4.2), so it is recorded on
-    // the frame here, where the wait kind is known, for the resume to read (LRM
-    // 12.4.2.1).
-    leaf->wait_is_report_flush_point = wait_is_report_flush_point;
+    W& wait = leaf->AdoptWait<W>(std::forward<Args>(args)...);
+    if (wait.Begin(services, leaf) == WaitOutcome::kSatisfied) {
+      leaf->wait.reset();
+      return false;
+    }
+    // The flush-point status is a constant of the wait's kind (LRM 16.4.2), so
+    // it is read once here and recorded on the frame, which is the one place a
+    // resume asks -- by then the wait itself may already be gone.
+    leaf->wait_is_report_flush_point = wait.IsReportFlushPoint();
     LeafIsBlocked(leaf);
-    park(leaf);
+    return true;
   }
 
   // Hands this thread to `nested` and takes it back. A called task runs in its
@@ -243,6 +234,12 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // owned here because nothing below them outlives a suspension.
   auto PushActivation(Coroutine<void> nested) -> CoroutineHandle;
   void PopActivation();
+
+  // The same relation for a nested activation this process does not own,
+  // because the frame that enabled it holds it. Which frame carries the thread
+  // is the same fact either way, so it is recorded the same way.
+  void EnterLeaf(CoroutineHandle leaf);
+  void LeaveLeaf();
 
   // The run-time error that left the innermost activation's body, if any. A
   // driver written as a coroutine stores whatever leaves the body it drives,
@@ -327,16 +324,15 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   }
 
   // LRM 9.7 `suspend`: revoke the active leaf's scheduler participation -- a
-  // detach, no scheduler verb -- and record the suspended state. The leaf's
-  // pending wait is kept if it was blocked (resume re-establishes it) and
-  // absent if it was runnable (resume re-queues); either way its registrations
-  // are revoked. A process already suspended or terminated is unaffected.
+  // detach, no scheduler verb -- and record the suspended state. What the leaf
+  // is waiting for stays with it, because starting the process again waits for
+  // that same thing; only the enrolment goes. A process already suspended or
+  // terminated is unaffected.
   void Suspend();
 
   // LRM 9.7 `resume`: leave the suspended state onto the waiting axis so the
-  // bridge that holds the engine can re-establish the leaf's pending wait or
-  // re-queue it. This settles the state axis only; scheduling stays with the
-  // bridge.
+  // bridge that holds the engine can arrange the leaf's wait again. This
+  // settles the state axis only; scheduling stays with the bridge.
   void MarkResumed();
 
   // The epoch a deferred report queued by this process right now belongs to
@@ -521,8 +517,14 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // and follows the innermost parked frame as waits block it.
   CoroutineHandle current_leaf_ = nullptr;
   // The activations this thread is inside beyond its own body, innermost last,
-  // each called by the one before it. Empty while it runs its own body.
+  // each called by the one before it. Empty while it runs its own body. Only
+  // the activations this process owns are here; one a calling frame holds is
+  // recorded in `outer_leaves_` alone.
   std::vector<Coroutine<void>> nested_activations_;
+  // What `current_leaf_` was before each activation this thread entered, so
+  // leaving one restores the frame that called it. Innermost last, the same
+  // order as the activations themselves.
+  std::vector<CoroutineHandle> outer_leaves_;
   // One foreign call this thread has entered and not yet returned from: the
   // vehicle carrying it, and the SV frame to resume once it returns -- the
   // frame that made the call. An exported task the call reaches suspends and

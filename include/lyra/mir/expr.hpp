@@ -531,16 +531,19 @@ struct CompositeExpr {
   std::vector<ExprId> parts;
 };
 
-// The suspension protocol applied to an awaitable: entering it yields control
-// until the awaitable completes, then resumes with its completion value
-// (LRM 9.4 timing controls, 13.5 task enable). `Expr::type` is that value's
-// type -- the awaited coroutine's payload, which is a task's output pack or
-// `Void` for a pure suspension (a delay, an event control, a `$finish`, a task
-// with no outputs). Await is an expression, not a statement, because it is a
-// value-producing operation that resumes (a suspending call), not a terminator
-// like `return`: a value-yielding task completion and a void suspension are the
-// same node, distinguished only by the payload type. The C++ backend realizes
-// it as `co_await`.
+// The suspension protocol applied to what is awaited: control leaves here and
+// comes back when what is awaited says so (LRM 9.4 timing controls, 13.5 task
+// enable). What is awaited is one of two things, and its own type says which:
+// an execution, which ends this wait by completing and hands over the value it
+// completed with; or a call that has already arranged this execution's
+// resumption and answers whether control must be given up at all.
+//
+// `Expr::type` is what the await yields -- the awaited execution's payload,
+// which is a task's output pack or `Void` for one with no outputs, and `Void`
+// for the second form, which yields nothing. Await is an expression, not a
+// statement, because it is a value-producing operation that resumes (a
+// suspending call), not a terminator like `return`: a value-yielding task
+// completion and a void suspension are the same node.
 //
 // Invariant: an await appears only at statement top level -- as the expression
 // of an `ExprStmt`, or as the right-hand side of the local-decl / assignment

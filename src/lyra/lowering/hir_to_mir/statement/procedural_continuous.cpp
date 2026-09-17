@@ -98,7 +98,8 @@ auto LowerProceduralContinuousAssignStmt(
     mir::Block wait_block;
     wait_block.AppendStmt(BuildValueChangeWaitStmt(
         wait_block, closure.Frame().WithBlock(&wait_block),
-        process.EnclosingScopeLowerer(), pca.sensitivity_list));
+        process.EnclosingScopeLowerer(), pca.sensitivity_list,
+        support::BuiltinFn::kWaitAny));
     const mir::BlockId wait_scope =
         body.child_scopes.Add(std::move(wait_block));
     // Evaluating and driving is the loop's own condition, so the source is

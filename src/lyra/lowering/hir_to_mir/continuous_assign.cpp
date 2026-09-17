@@ -170,7 +170,8 @@ auto LowerContinuousAssign(
   }
 
   body_block.AppendStmt(BuildValueChangeWaitStmt(
-      body_block, body_frame, lowerer, src.sensitivity_list));
+      body_block, body_frame, lowerer, src.sensitivity_list,
+      support::BuiltinFn::kWaitAny));
 
   const mir::BlockId body_scope_id =
       code.Body().child_scopes.Add(std::move(body_block));

@@ -601,6 +601,17 @@ the detail lives in the entry itself.
   currency and leaving an unchanged file alone as speed rather than correctness. Disabling the
   compiler's own validation, making the key cover what it checks, proving the header acceptable
   before every build, and recognising the compiler's complaint are rejected.
+- [waiting-is-an-operation](waiting-is-an-operation.md) -- the declaration both backends read names
+  an operation and never one target's own protocol object, so a call that may park its caller does
+  the whole operation and answers whether the caller must give up control; a body then stops to wait
+  in one way, which takes what is being waited for, and an execution holds that for as long as it
+  waits, which is what lets process control desensitize and resensitize it without running a
+  statement. Making a wait and making it again are separate questions because the standard answers
+  them separately, so a `wait (cond)` registers through a call of its own. MIR still states a
+  suspension the way a source language writes it, and each backend realizes that in its own terms.
+  Per-construct shells over shared bodies, decomposing the await in MIR, a suspension carrying its
+  own wakeup, not desensitizing at all, re-entering the body, and a taxonomy the scheduler branches
+  on are rejected.
 - [reaching-past-a-published-class](reaching-past-a-published-class.md) -- a class promises what it
   declares and the class it extends, never what it inherited, so a referrer resolves an inherited
   property or behavior by walking that chain and the coordinate names where the walk landed; reading

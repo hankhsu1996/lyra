@@ -453,9 +453,17 @@ auto LowerBuiltinMethodCall(
         BuildDefaultValueExpr(unit_lowerer.Unit(), block, proto_type)));
   }
 
+  // An entry that parks its caller answers whether the caller must give up
+  // control, so that is what the call is, whatever the source-level call it
+  // came from yields. The source type would say `void` for a task like LRM
+  // 9.7's `await`, and a consumer branching on the answer would be branching
+  // on nothing.
+  const mir::TypeId answered = entry.parks_the_caller
+                                   ? unit_lowerer.Unit().builtins.machine_bool
+                                   : result_type;
   return mir::Expr{
       .data = mir::CallExpr{.callee = mir_callee, .arguments = std::move(args)},
-      .type = result_type};
+      .type = answered};
 }
 
 }  // namespace

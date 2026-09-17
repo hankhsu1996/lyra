@@ -11,15 +11,21 @@
 
 namespace lyra::backend::cpp {
 
-// Two things MIR states as structure rather than as a value, and that this
-// target has to realize with a library type. No MIR type names either of them,
-// so neither is reached through the type mapping below -- but each is a library
+// Three things MIR states as structure rather than as a value, and that this
+// target has to realize with a library type. No MIR type names any of them, so
+// none is reached through the type mapping below -- but each is a library
 // type's spelling, and this is where a library type is spelled.
 
 // A body paired with a cleanup that runs on every way out of it: an object
 // declared ahead of the body whose destruction runs the cleanup. C++ states an
 // extent's exit through a destructor and offers no construct of its own.
 [[nodiscard]] auto BodyCleanupExtentCppType() -> std::string_view;
+
+// Giving up control where a call says it parked this execution. C++ gives up
+// control by awaiting something, so the answer the call gave has to become
+// something awaitable; a target whose suspension is an edge in its own graph
+// needs nothing here, because the edge is the same nothing.
+[[nodiscard]] auto SuspensionCppType() -> std::string_view;
 
 // What an SV class extending nothing (LRM 8.13) is emitted over, so an object
 // can answer with a handle to itself (LRM 8.11): realizing that handle as a

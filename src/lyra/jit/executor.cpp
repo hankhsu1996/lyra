@@ -366,6 +366,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
       &lyra_rt_observation_of_value_qualified);
   add("lyra_rt_observation_qualified", &lyra_rt_observation_qualified);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
+  add("lyra_rt_wait_until", &lyra_rt_wait_until);
   add("lyra_rt_triggered", &lyra_rt_triggered);
   add("lyra_rt_trigger", &lyra_rt_trigger);
   add("lyra_rt_enter_target", &lyra_rt_enter_target);

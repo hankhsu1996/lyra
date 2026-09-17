@@ -875,13 +875,8 @@ auto LowerForeignImportTask(
                       mir::Direct{
                           .target = support::BuiltinFn::kRunForeignTaskOnFiber},
                   .arguments = {runtime_id, fiber_id}},
-          .type = unit.builtins.void_type});
-  body.AppendStmt(
-      mir::ExprStmt{
-          .expr = body.exprs.Add(
-              mir::Expr{
-                  .data = mir::AwaitExpr{.awaitable = run_id},
-                  .type = unit.builtins.void_type})});
+          .type = unit.builtins.machine_bool});
+  body.AppendStmt(BuildSuspendingCallStmt(unit_lowerer, body, run_id));
   if (import.is_context) {
     CloseDpiScopeExtent(
         unit_lowerer, outer.Frame(), std::move(extent_body), declaring_scope);

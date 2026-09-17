@@ -6,10 +6,10 @@
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
+#include "lyra/runtime/wait.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 
@@ -113,54 +113,34 @@ inline auto DelayDeadline(
           ticks, precision_power, runtime.GlobalPrecisionPower()));
 }
 
-// Parks `token` until its delay elapses, and answers the time that will be.
-// LRM 4.4.2.3: a delay of no steps is an explicit `#0`, which suspends into the
+// Waiting for a moment in simulation time. What is kept is the moment, not the
+// amount of time left to it, which is what LRM 9.7 asks for when a process
+// stopped part-way through a delay is started again: it goes on waiting for
+// that same moment, and where the moment has passed it continues at once.
+//
+// LRM 4.4.2.3: a delay of no steps is an explicit `#0`, which waits in the
 // inactive region of the current time slot so that active work already pending
-// finishes first and the process resumes at this same time. The engine does not
-// know about delays as a category -- it only sees an activation arriving in a
-// region at the right time.
-inline auto ParkForDelay(
-    RuntimeEffects& runtime, CoroutineHandle token, SimDuration ticks,
-    std::int8_t precision_power) -> SimTime {
-  const SimTime deadline = DelayDeadline(runtime, ticks, precision_power);
-  runtime.Schedule(
-      deadline, ticks == 0 ? Region::kInactive : Region::kActive, token);
-  return deadline;
-}
-
-// Suspends the calling process for `ticks` steps of its scope's precision
-// (`precision_power`).
-class DelayAwaitable : public PendingWait {
+// finishes first. The engine does not know about delays as a category -- it
+// only sees an activation arriving in a region at the right time.
+class DelayWait : public Wait {
  public:
-  DelayAwaitable(
-      RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
-      : runtime_(&runtime), ticks_(ticks), precision_power_(precision_power) {
+  DelayWait(SimTime deadline, Region region)
+      : deadline_(deadline), region_(region) {
   }
 
-  [[nodiscard]] static auto await_ready() noexcept -> bool {
-    return false;
+  auto Begin(RuntimeEffects& services, CoroutineHandle leaf)
+      -> WaitOutcome override {
+    services.Schedule(deadline_, region_, leaf);
+    return WaitOutcome::kBlocked;
   }
 
-  template <class P>
-  void await_suspend(std::coroutine_handle<P> handle) {
-    CoroutineHandle token = &handle.promise();
-    deadline_ = ParkForDelay(*runtime_, token, ticks_, precision_power_);
-    BlockOn(token);
-  }
-
-  void await_resume() const {
-    CheckAbortOnResume();
-  }
-
-  // A delay's deadline is absolute (LRM 9.7): on resume, if it has transpired
-  // the process is runnable, otherwise it re-parks for the remaining time.
-  auto Reestablish(RuntimeEffects& runtime, CoroutineHandle activation)
-      -> PendingWaitOutcome override {
-    if (runtime.Now() >= deadline_) {
-      return PendingWaitOutcome::kRunnable;
+  auto Again(RuntimeEffects& services, CoroutineHandle leaf)
+      -> WaitOutcome override {
+    if (services.Now() >= deadline_) {
+      return WaitOutcome::kSatisfied;
     }
-    runtime.Schedule(deadline_, Region::kActive, activation);
-    return PendingWaitOutcome::kReblocked;
+    services.Schedule(deadline_, Region::kActive, leaf);
+    return WaitOutcome::kBlocked;
   }
 
   // A delay waits for time, not for a condition, so resuming from it is not a
@@ -170,30 +150,39 @@ class DelayAwaitable : public PendingWait {
   }
 
  private:
-  RuntimeEffects* runtime_;
-  SimDuration ticks_;
-  std::int8_t precision_power_;
-  SimTime deadline_ = 0;
+  SimTime deadline_;
+  Region region_;
 };
+
+// Waits `ticks` steps of `precision_power`, answering whether the caller must
+// give up control. The two delay entries meet here: they differ only in how the
+// amount the design wrote becomes that count.
+inline auto DelayForTicks(
+    RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
+    -> bool {
+  return runtime.CurrentProcess().ParkOn<DelayWait>(
+      runtime, DelayDeadline(runtime, ticks, precision_power),
+      ticks == 0 ? Region::kInactive : Region::kActive);
+}
 
 inline auto Delay(
     RuntimeEffects& runtime, const value::PackedArray& duration,
     const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> DelayAwaitable {
+    const value::PackedArray& precision_power) -> bool {
   const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
   const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
-  return DelayAwaitable{
-      runtime, DelayTicks(duration, unit, precision), precision};
+  return DelayForTicks(
+      runtime, DelayTicks(duration, unit, precision), precision);
 }
 
 inline auto DelayReal(
     RuntimeEffects& runtime, const value::Real& duration,
     const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> DelayAwaitable {
+    const value::PackedArray& precision_power) -> bool {
   const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
   const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
-  return DelayAwaitable{
-      runtime, DelayTicksReal(duration, unit, precision), precision};
+  return DelayForTicks(
+      runtime, DelayTicksReal(duration, unit, precision), precision);
 }
 
 }  // namespace lyra::runtime

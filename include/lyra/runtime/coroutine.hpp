@@ -12,20 +12,20 @@
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/registration.hpp"
+#include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
 class RuntimeProcess;
-class PendingWait;
 
 // Non-templated scheduling state shared by every coroutine frame -- a process
 // body, a task body, a fork branch -- regardless of the value the frame
-// completes with. The engine and the awaitables hold a `PromiseBase*` as the
-// universal wakeup token and read scheduling state through it, never naming the
-// frame's result type. `self` is this frame's own handle, type-erased, so the
-// engine resumes and queries completion without knowing the result type
-// (recovering a promise from a frame address is not a portable ABI, so the
-// handle is stored at construction, not derived).
+// completes with. The engine and everything an execution waits on hold a
+// `PromiseBase*` as the universal wakeup token and read scheduling state
+// through it, never naming the frame's result type. `self` is this frame's own
+// handle, type-erased, so the engine resumes and queries completion without
+// knowing the result type (recovering a promise from a frame address is not a
+// portable ABI, so the handle is stored at construction, not derived).
 struct PromiseBase {
   RuntimeProcess* process = nullptr;
   std::coroutine_handle<> continuation;
@@ -38,23 +38,17 @@ struct PromiseBase {
   // resume it. A deque because the targets' lists point at these addresses, and
   // appending must not move the ones already linked.
   std::deque<Registration> registrations;
-  // The wait this activation is blocked on, if any: a capability, held by the
-  // awaiter that suspended this frame, to re-establish the wait on resume (LRM
-  // 9.7). Distinct from `registrations`, which is the current enrollment; a
-  // suspend revokes the enrollment but keeps this. The awaiter is
-  // frame-resident, so this points within the same frame and dies with it.
-  //
-  // Only a body that is a C++ coroutine suspends on such an awaiter. A body
-  // whose backend parks it through a wakeup registration builds none, so this
-  // is null there even while the activation is blocked, and a resume finds no
-  // wait to re-establish -- which is why a fact about the wait that a resume
-  // needs is recorded on the frame rather than read back off this.
-  PendingWait* pending_wait = nullptr;
+  // What this activation is waiting for, while it is blocked and only then. It
+  // is distinct from `registrations`, which is where the wait is enrolled right
+  // now: stopping the process from outside revokes the enrolment and keeps
+  // this, and starting it again waits for the same thing afresh through it (LRM
+  // 9.7). Whichever construct stopped the body built it and handed it here, so
+  // it is the activation's own and outlives the call that made it -- which is
+  // what lets a call that is not a frame arrange a wait at all.
+  std::unique_ptr<Wait> wait;
   // Whether the wait this frame is blocked on is a deferred report flush point
-  // (LRM 16.4.2 / 12.4.2.1). Set where the wait is registered -- the C++
-  // backend copies it off the awaiter, the execution backend passes it in,
-  // since it has no awaiter -- so a resume reads the one field whichever way
-  // the wait was realized.
+  // (LRM 16.4.2 / 12.4.2.1), read off the wait once where it is built so a
+  // resume asks one field rather than a wait that may already be gone.
   bool wait_is_report_flush_point = false;
   // This execution's value storage: the home of every value whose life exceeds
   // one stretch of generated code, such as a local read after a resumption.
@@ -72,6 +66,17 @@ struct PromiseBase {
   PromiseBase(PromiseBase&&) = delete;
   auto operator=(PromiseBase&&) -> PromiseBase& = delete;
   ~PromiseBase() = default;
+
+  // Builds what this activation is about to wait for, and hands it to the
+  // activation. A frame waits for one thing at a time, so building a second
+  // ends the first.
+  template <class W, class... Args>
+  auto AdoptWait(Args&&... args) -> W& {
+    auto adopted = std::make_unique<W>(std::forward<Args>(args)...);
+    W& held = *adopted;
+    wait = std::move(adopted);
+    return held;
+  }
 
   // Parks this activation on `target` and hands back the membership, so a
   // caller whose target carries a fire condition can record it.
@@ -136,6 +141,14 @@ struct PromiseBase {
     return *process;
   }
 };
+
+// A nested activation -- a called task -- takes over its process's thread and
+// gives it back when it completes (LRM 9.5). The pair is what makes "which
+// frame is running" a fact the runtime holds, so a wait registered from
+// anywhere parks the frame that actually asked for it and nothing has to be
+// handed one.
+void EnterActivation(PromiseBase& leaf);
+void LeaveActivation(PromiseBase& leaf);
 
 // The activation was left by a control effect no region claimed, which its
 // landing reports as a forced termination (LRM 9.6.2, 9.7).
@@ -292,13 +305,16 @@ class Coroutine {
     return !handle_ || handle_.done();
   }
   template <class P>
-  auto await_suspend(std::coroutine_handle<P> caller) noexcept
+  auto await_suspend(std::coroutine_handle<P> caller)
       -> std::coroutine_handle<promise_type> {
-    handle_.promise().continuation = caller;
-    handle_.promise().process = caller.promise().process;
+    promise_type& nested = handle_.promise();
+    nested.continuation = caller;
+    nested.process = caller.promise().process;
+    EnterActivation(nested);
     return handle_;
   }
   auto await_resume() -> T {
+    LeaveActivation(handle_.promise());
     return handle_.promise().Take();
   }
 

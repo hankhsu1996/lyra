@@ -501,13 +501,19 @@ enum class BuiltinFn : std::uint16_t {
   kObservationOfValue,
   kObservationOfValueQualified,
   kObservationQualified,
-  // LRM 9.4.2 / 9.4.2.2 / 9.4.3 value-change wait. The runtime free function
-  // every wait on a signal suspends on -- an `@(...)`, an `@*`, an
-  // `always_comb` / `always_latch` body, a `wait (cond)`, a continuous
-  // assignment. The call takes the runtime handle and the trigger set, one
-  // entry per watched leaf; the process resumes when a change to one of them
-  // is an event for the wait.
+  // LRM 9.4.2 / 9.4.2.2 value-change wait. The runtime free function a wait on
+  // a signal suspends on -- an `@(...)`, an `@*`, an `always_comb` /
+  // `always_latch` body, a continuous assignment. The call takes the runtime
+  // handle and the trigger set, one entry per watched leaf, and answers whether
+  // the caller must give up control; the execution continues when a change to
+  // one of them is an event for the wait.
   kWaitAny,
+  // LRM 9.4.3 level-sensitive wait, watching the same leaves for the same
+  // reason. It is its own entry because the two part company where a process
+  // stopped from outside is started again (LRM 9.7): an event control waits for
+  // the next occurrence, while a condition is read by the body, so this one
+  // lets the body's own loop test it.
+  kWaitUntil,
   // LRM 20.3 simulation-time read functions. Each takes the runtime handle
   // and the calling scope's unit power; the runtime scales the design-global
   // tick down to that unit. `$time` rounds and yields a 64-bit `time`,

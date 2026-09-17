@@ -102,7 +102,7 @@ auto LowerDiagnosticSystemSubroutineCall(
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kFinish},
               .arguments = {finish_runtime_id, finish_origin_id, level_id}},
-      .type = unit.builtins.void_type};
+      .type = unit.builtins.machine_bool};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -379,12 +379,17 @@ auto lyra_rt_observation_of_value_qualified(
     void* expression, const void* edge, void* condition) -> void*;
 auto lyra_rt_observation_qualified(void* condition) -> void*;
 
-// Registers the running process to wake when what happens at one of `triggers`
-// is an event for the wait, the registration such a wait's suspend edge is
-// preceded by (LRM 9.4.2 / 9.4.2.2 / 9.4.3 / 15.5.2). An empty span means
-// "never wake up". The wakeup source is the running process itself, read from
-// the runtime; no token crosses the boundary. Such a wait always parks.
+// Waits for what happens at one of `triggers` to be an event for the wait (LRM
+// 9.4.2 / 9.4.2.2 / 15.5.2). An empty span means "never wake up". Which
+// execution is waiting is the runtime's own to know, so no token crosses the
+// boundary. Answers whether the caller must give up control.
 auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool;
+
+// Waits for a condition the caller's own loop re-tests, watching the same
+// leaves (LRM 9.4.3). It is a separate entry from the one above because the two
+// part company where a stopped process is started again: this one lets the body
+// read the condition, and that one waits for the next occurrence (LRM 9.7).
+auto lyra_rt_wait_until(void* runtime, LyraSpan triggers) -> bool;
 
 // A named event (LRM 15.5). Triggering records the instant and ends the wait of
 // every process the trigger is an event for; waiting for one is an ordinary

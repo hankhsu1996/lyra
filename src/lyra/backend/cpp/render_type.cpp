@@ -22,6 +22,10 @@ auto BodyCleanupExtentCppType() -> std::string_view {
   return "lyra::runtime::ScopeExit";
 }
 
+auto SuspensionCppType() -> std::string_view {
+  return "lyra::runtime::Suspension";
+}
+
 auto ManagedObjectRootCppType() -> std::string_view {
   return "lyra::runtime::GcObject";
 }

@@ -662,6 +662,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = FreeFunction{"lyra::runtime::WaitAny"},
           .takes_the_runtime_handle = true,
           .parks_the_caller = true};
+    case BuiltinFn::kWaitUntil:
+      return {
+          .name = "wait_until",
+          .declaration = FreeFunction{"lyra::runtime::WaitUntil"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
     case BuiltinFn::kSimTime:
       return {
           .name = "sim_time",

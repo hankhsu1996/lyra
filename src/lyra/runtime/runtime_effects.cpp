@@ -14,10 +14,10 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/observable.hpp"
-#include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
+#include "lyra/runtime/wait.hpp"
 #include "lyra/value/format.hpp"
 
 namespace lyra::runtime {

@@ -49,10 +49,11 @@ the awaiter consumes, not of the scheduler.
   authoritative state; the registration set and completion slot are resources constrained by it, not
   independent facts. `Suspended` carries the disposition the activation held before it was
   suspended.
-- The **pending wait**: for a `Blocked` (or `Suspended`-from-blocked) activation, the retainable
-  ability to re-establish its wait and to report whether the wait is already satisfied -- distinct
-  from the registration, which only records the current enrollment. It is a uniform capability every
-  suspending construct supplies, never a taxonomy the scheduler branches on.
+- **What the activation is waiting for**: for a `Blocked` (or `Suspended`-from-blocked) one, the
+  thing it holds that can arrange that wait and report whether what it waits for has already
+  happened -- distinct from the registration, which only records the current enrollment. Every
+  suspending construct hands the activation one, and the activation holds it for as long as it
+  waits, so it is never a taxonomy the scheduler branches on.
 - The **active leaf**: the relation from a process to the one activation currently carrying its
   thread. A process is a single thread (a task or function call runs in the caller's thread, LRM
   9.5), so when it is not executing exactly one leaf activation -- the innermost frame -- is
@@ -107,10 +108,11 @@ the awaiter consumes, not of the scheduler.
    ends. The activation's set and the target's list are two indexes over that record, never two
    descriptions of it. A registration records the activation's _current enrollment_ in a target, not
    the wait it is serving: revoking a registration detaches the enrollment and forgets nothing the
-   activation still needs, because the ability to re-establish the wait lives in the pending wait
-   (invariant 7), not the registration. _Consequence: an activation can be cancelled and torn down
-   with no dangling token left in any queue, waiter, or subscription -- and revoking is a detach, so
-   neither end ever searches the other, and neither can hold a belief the other has abandoned._
+   activation still needs, because what the activation waits for is held by the activation
+   (invariant 7) rather than by the registration. _Consequence: an activation can be cancelled and
+   torn down with no dangling token left in any queue, waiter, or subscription -- and revoking is a
+   detach, so neither end ever searches the other, and neither can hold a belief the other has
+   abandoned._
 
 5. **A typed await consumes the typed terminal outcome.** Awaiting an activation yields its outcome:
    `Succeeded(T)` produces `T`, and a departure carries on past the awaiting frame, which is not the
@@ -130,18 +132,18 @@ the awaiter consumes, not of the scheduler.
 7. **An activation's disposition is authoritative, and suspension saves the disposition it
    replaces.** A non-terminal activation is `Executing`, `Runnable` (entitled to run; the region it
    sits in is the engine's placement, not part of the disposition), or `Blocked` (waiting on a
-   condition, enrolled by a registration and holding a pending wait). `Suspended` is not another
+   condition, enrolled by a registration and holding what it waits for). `Suspended` is not another
    kind of wait: it is process control (LRM 9.7) revoking an activation's scheduler participation
    while saving the disposition it held -- `Suspended(Runnable)` or `Suspended(Blocked)` -- so
    resume restores exactly that. A saved `Runnable` resume re-takes an execution entitlement; a
-   saved `Blocked` resume asks its pending wait to re-establish, which either re-enrolls or reports
-   the wait already satisfied. The pending wait is one uniform capability every suspending construct
-   supplies -- re-establish, report-satisfied, discard -- so no scheduler or activation path
-   branches on which construct the wait came from; the construct-specific knowledge stays in the
-   construct's own registration, exactly as a wakeup registration is one per-construct runtime call
-   and the suspend itself is construct-neutral. _Consequence: the disposition is one state machine
-   with one authoritative owner; the registration set, the pending wait, and run-queue membership
-   are resources that must agree with it, never independent truths that drift._
+   saved `Blocked` resume asks what it waits for to arrange that wait again, which either re-enrolls
+   or reports that it has already happened. Making a wait and making it again are asked of the same
+   thing and answered the same way whatever the construct, so no scheduler or activation path
+   branches on which construct a wait came from; the construct-specific knowledge stays inside what
+   the construct handed over, exactly as registering a wakeup is one per-construct runtime call and
+   the suspend itself is construct-neutral. _Consequence: the disposition is one state machine with
+   one authoritative owner; the registration set, what the activation waits for, and run-queue
+   membership are resources that must agree with it, never independent truths that drift._
 
 8. **Publishing an activation's terminal outcome commits that it runs no more user code.** A
    consumer that reads the outcome, or a waiter woken by the activation's completion, may reclaim
@@ -220,16 +222,15 @@ the awaiter consumes, not of the scheduler.
 
 - **A central taxonomy of wait kinds the scheduler or activation core branches on** -- a
   `variant`/enum of delay / event / join / await blocks switched over on suspend, resume, or wake.
-  The pending wait is a uniform capability; a suspending construct already registers its own wakeup
-  through its own call, so re-establishing it is that same construct's business, dispatched
-  uniformly. A kind switch on the execution path reintroduces the source-language timing concept the
-  engine is forbidden to know (invariant 7, `scheduling.md`).
+  What an activation waits for answers one surface whatever the construct; a suspending construct
+  already registers its own wakeup through its own call, so arranging it again is that same
+  construct's business, dispatched uniformly. A kind switch on the execution path reintroduces the
+  source-language timing concept the engine is forbidden to know (invariant 7, `scheduling.md`).
 
 - **A second authoritative copy of the wait's state** -- a blocked-operation object that duplicates
   the deadline / observable / target the suspending construct already holds, kept in sync with it.
-  The wait's state has one home (the construct's own retained state); the pending wait is the
-  capability to re-establish from that home, not a mirror of it. Two copies is the registration
-  double-encoding forbidden by invariant 4, one level up.
+  The wait's state has one home, which is the thing the activation holds; nothing mirrors it. Two
+  copies is the registration double-encoding forbidden by invariant 4, one level up.
 
 - **Scheduling placement folded into the disposition** -- a `Runnable(region)` that pins which
   region or queue a runnable activation must be restored to. `Runnable` is the semantic entitlement
@@ -297,11 +298,10 @@ state. That the first two coincide for a branch is not a collapse of the relatio
 The C++ backend realizes an activation as a coroutine frame. Its activation token is the coroutine
 promise's non-templated base (the scheduler holds a pointer to it); its completion slot is the typed
 result the promise carries; a task enable is `co_await` of the activation, with symmetric transfer
-realizing the continuation and `await_resume` consuming the terminal outcome. A suspending construct
-realizes a pending wait by the state it retains to re-establish itself -- a delay its absolute
-deadline, an event control its observables and edges -- reached uniformly through the pending-wait
-capability. The promise base, the `coroutine_handle`, and symmetric transfer are this realization's
-mechanics; the activation, completion slot, registration set, disposition, and pending wait are the
-model they realize. A future LIR / LLVM backend realizes the same model with coroutine intrinsics
-and explicit control edges instead, the pending wait re-established by re-issuing the construct's
-own wakeup-registration call rather than re-entering the suspended body.
+realizing the continuation and `await_resume` consuming the terminal outcome. What a suspending
+construct hands over is the state it needs to arrange its wait again -- a delay its absolute
+deadline, an event control its observables and edges -- and the activation holds that for as long as
+it waits. The promise base, the `coroutine_handle`, and symmetric transfer are this realization's
+mechanics; the activation, completion slot, registration set, disposition, and what it waits for are
+the model they realize. The LIR / LLVM backend realizes the same model with coroutine intrinsics and
+explicit control edges instead, reaching the same object rather than re-entering the suspended body.

@@ -5,10 +5,13 @@ Date: 2026-07-13 Status: accepted
 ## Context
 
 A SystemVerilog process suspends: `#5`, `@(posedge clk)`, `wait (cond)`, `@e` each park the process
-and resume it when the scheduler decides. The C++ backend realizes a process as a C++20 coroutine
-and each suspension as a `co_await` over a runtime awaitable, whose `await_suspend` registers the
-wakeup source and yields; the engine holds the coroutine's promise base as the activation token
-(`scheduling.md`, `activation.md`).
+and resume it when the scheduler decides. The C++ backend realizes a process as a C++20 coroutine,
+and at the time this was written it realized each suspension as a `co_await` over a runtime
+awaitable whose `await_suspend` registered the wakeup source and yielded; the engine holds the
+coroutine's promise base as the activation token (`scheduling.md`, `activation.md`). That awaitable
+is gone -- registering is an ordinary call on both backends now, and the target awaits only a
+library type that gives up control ([waiting-is-an-operation](waiting-is-an-operation.md)) -- which
+changes nothing this record decides, because what it decides is the other backend's side.
 
 The execution backend lowers a process to LIR and then to LLVM IR run in-process. The questions this
 answers are: what carries a body's coroutine-ness through the pipeline, where a suspension appears,

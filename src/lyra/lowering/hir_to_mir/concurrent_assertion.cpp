@@ -544,7 +544,8 @@ auto LowerDisableWatcher(
   const WalkFrame body_frame =
       ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
   body_block.AppendStmt(BuildValueChangeWaitStmt(
-      body_block, body_frame, lowerer, disable.sensitivity));
+      body_block, body_frame, lowerer, disable.sensitivity,
+      support::BuiltinFn::kWaitAny));
 
   auto condition = action.LowerExpr(
       action.HirBody().exprs.Get(disable.condition), body_frame);

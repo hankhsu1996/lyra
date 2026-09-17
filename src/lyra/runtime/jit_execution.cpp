@@ -19,7 +19,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/base/time.hpp"
 #include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/closure.hpp"
@@ -36,6 +35,7 @@
 #include "lyra/runtime/host_command.hpp"
 #include "lyra/runtime/managed_object.hpp"
 #include "lyra/runtime/named_event.hpp"
+#include "lyra/runtime/nba_region.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/process_control.hpp"
@@ -515,24 +515,18 @@ auto OwnBoth(const value::Tuple<First, Second>& completion) -> void* {
           value::RuntimeValue{completion.template Get<1>()}});
 }
 
-// A time-scale power crosses as an opaque packed value, like every other scalar
-// an entry takes.
-auto PowerOf(const void* packed) -> std::int8_t {
-  return static_cast<std::int8_t>(Read<value::PackedArray>(packed).ToInt64());
-}
-
-// Registers the running process to wake after `ticks` steps of
-// `precision_power`. The two delay entries meet here: they differ only in how
-// the amount the design wrote becomes that count.
-auto ParkForDelayTicks(
-    RuntimeEffects& svc, SimDuration ticks, std::int8_t precision_power)
-    -> bool {
-  // A delay is neither an event control nor a wait statement, so it is not a
-  // deferred report flush point (LRM 16.4.2).
-  svc.CurrentProcess().RegisterWakeup(false, [&](CoroutineHandle token) {
-    ParkForDelay(svc, token, ticks, precision_power);
-  });
-  return true;
+// An event control's leaves cross as a span of pointers to values this call
+// does not own, so what the wait is built from is gathered here. What the wait
+// itself is, is decided by the one function both backends call.
+auto TriggersOf(LyraSpan triggers) -> std::vector<Trigger> {
+  const std::span<Trigger* const> handles(
+      static_cast<Trigger* const*>(triggers.data), triggers.count);
+  std::vector<Trigger> collected;
+  collected.reserve(triggers.count);
+  for (const Trigger* handle : handles) {
+    collected.push_back(*handle);
+  }
+  return collected;
 }
 
 }  // namespace
@@ -550,8 +544,8 @@ using lyra::runtime::CoroutineHandle;
 using lyra::runtime::current_runtime;
 using lyra::runtime::CurrentExportScope;
 using lyra::runtime::CurrentForeignProcess;
-using lyra::runtime::DelayTicks;
-using lyra::runtime::DelayTicksReal;
+using lyra::runtime::Delay;
+using lyra::runtime::DelayReal;
 using lyra::runtime::DiagnosticDispatcher;
 using lyra::runtime::DriveOnForeignStack;
 using lyra::runtime::DriverOf;
@@ -562,8 +556,8 @@ using lyra::runtime::FileTable;
 using lyra::runtime::FindBehavior;
 using lyra::runtime::FindExportEntry;
 using lyra::runtime::FindProperty;
-using lyra::runtime::ForkWaitAllMustPark;
-using lyra::runtime::ForkWaitFirstMustPark;
+using lyra::runtime::ForkWaitAll;
+using lyra::runtime::ForkWaitFirst;
 using lyra::runtime::GcNew;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::GeneratedScope;
@@ -580,10 +574,7 @@ using lyra::runtime::Observable;
 using lyra::runtime::Observation;
 using lyra::runtime::Own;
 using lyra::runtime::PackedValuesOf;
-using lyra::runtime::ParkForDelayTicks;
-using lyra::runtime::PowerOf;
 using lyra::runtime::ProcessAwait;
-using lyra::runtime::ProcessAwaitAwaitable;
 using lyra::runtime::ProcessKill;
 using lyra::runtime::ProcessOf;
 using lyra::runtime::ProcessResume;
@@ -595,6 +586,7 @@ using lyra::runtime::PropertyCoordinate;
 using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
 using lyra::runtime::Region;
+using lyra::runtime::ResumeInNbaRegion;
 using lyra::runtime::RunHostCommand;
 using lyra::runtime::RunNullHostCommand;
 using lyra::runtime::RuntimeEffects;
@@ -611,7 +603,11 @@ using lyra::runtime::TakeClosure;
 using lyra::runtime::TakeEvaluator;
 using lyra::runtime::TestPlusargs;
 using lyra::runtime::Trigger;
+using lyra::runtime::TriggersOf;
 using lyra::runtime::Var;
+using lyra::runtime::WaitAny;
+using lyra::runtime::WaitFork;
+using lyra::runtime::WaitUntil;
 using lyra::value::Chandle;
 using lyra::value::DpiBitBuffer;
 using lyra::value::DpiLogicBuffer;
@@ -926,26 +922,16 @@ void lyra_rt_spawn_all(void* runtime, LyraSpan branches) {
 
 auto lyra_rt_fork_wait_all(void* runtime, LyraSpan branches) -> bool {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  return ForkWaitAllMustPark(svc, TakeBranches(branches));
+  return ForkWaitAll(svc, TakeBranches(branches));
 }
 
 auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches) -> bool {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  return ForkWaitFirstMustPark(svc, TakeBranches(branches));
+  return ForkWaitFirst(svc, TakeBranches(branches));
 }
 
 auto lyra_rt_wait_fork(void* runtime) -> bool {
-  auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  lyra::runtime::RuntimeProcess& process = svc.CurrentProcess();
-  if (process.HasNoLiveChild()) {
-    return false;
-  }
-  // `wait fork` is a wait statement, so its resume is a deferred report flush
-  // point (LRM 16.4.2, 9.6.1).
-  process.RegisterWakeup(true, [&process](CoroutineHandle waiter) {
-    process.ArmWaitFork(waiter);
-  });
-  return true;
+  return WaitFork(*static_cast<RuntimeEffects*>(runtime));
 }
 
 void lyra_rt_disable_fork(void* runtime) {
@@ -965,21 +951,7 @@ void lyra_rt_process_kill(const void* self, void* runtime) {
 }
 
 auto lyra_rt_process_await(const void* self, void* runtime) -> bool {
-  auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  const ObjectRef target = ProcessOf(self);
-  // LRM 9.7's precondition and readiness rule come from the operation rather
-  // than being restated: forming the wait is what rejects awaiting the caller,
-  // and a target that has already terminated leaves nothing to wait for.
-  const ProcessAwaitAwaitable wait = ProcessAwait(target, svc);
-  if (wait.await_ready()) {
-    return false;
-  }
-  // Termination is not a report flush point (LRM 16.4.2): awaiting a process
-  // is a method call rather than an event control or a wait statement.
-  svc.CurrentProcess().RegisterWakeup(false, [&target](CoroutineHandle waiter) {
-    lyra::runtime::ProcessNodeOf(target).ArmTerminatedWaiter(waiter);
-  });
-  return true;
+  return ProcessAwait(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime));
 }
 
 void lyra_rt_process_suspend(const void* self, void* runtime) {
@@ -1058,21 +1030,17 @@ void lyra_rt_submit_deferred_final(void* runtime, void* closure) {
 auto lyra_rt_delay(
     void* runtime, const void* duration, const void* unit_power,
     const void* precision_power) -> bool {
-  const std::int8_t precision = PowerOf(precision_power);
-  return ParkForDelayTicks(
-      *static_cast<RuntimeEffects*>(runtime),
-      DelayTicks(Read<PackedArray>(duration), PowerOf(unit_power), precision),
-      precision);
+  return Delay(
+      *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(duration),
+      Read<PackedArray>(unit_power), Read<PackedArray>(precision_power));
 }
 
 auto lyra_rt_delay_real(
     void* runtime, const void* duration, const void* unit_power,
     const void* precision_power) -> bool {
-  const std::int8_t precision = PowerOf(precision_power);
-  return ParkForDelayTicks(
-      *static_cast<RuntimeEffects*>(runtime),
-      DelayTicksReal(Read<Real>(duration), PowerOf(unit_power), precision),
-      precision);
+  return DelayReal(
+      *static_cast<RuntimeEffects*>(runtime), Read<Real>(duration),
+      Read<PackedArray>(unit_power), Read<PackedArray>(precision_power));
 }
 
 // What crosses is the cell's own address -- a variable, a net, a named event --
@@ -1108,41 +1076,17 @@ auto lyra_rt_observation_qualified(void* condition) -> void* {
   return Own(Observation::Qualified(TakeEvaluator(condition)));
 }
 
-// The generated frame the process suspends is not a frame the engine ever sees
-// -- it resumes the runtime-owned coroutine that drives it -- so the process to
-// wake is the running one, read from the runtime.
 auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool {
-  auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  const std::span<Trigger* const> handles(
-      static_cast<Trigger* const*>(triggers.data), triggers.count);
-  std::vector<Trigger> collected;
-  collected.reserve(triggers.count);
-  for (const Trigger* handle : handles) {
-    collected.push_back(*handle);
-  }
-  // An event control, an always_comb / always_latch sensitivity list, or a
-  // `wait` condition -- each a deferred report flush point when it resumes the
-  // process (LRM 16.4.2, 12.4.2.1).
-  svc.CurrentProcess().RegisterWakeup(
-      true, [&collected](CoroutineHandle token) {
-        SubscribeToLeaves(token, collected);
-      });
-  return true;
+  return WaitAny(*static_cast<RuntimeEffects*>(runtime), TriggersOf(triggers));
 }
 
-// The region an event-controlled update is due in, reached by the execution
-// carrying it (LRM 4.4.2.4). Which execution suspends is the running one, which
-// the runtime already knows, so nothing about it crosses the boundary; the
-// answer is the park flag every registration returns, and this one always
-// parks.
+auto lyra_rt_wait_until(void* runtime, LyraSpan triggers) -> bool {
+  return WaitUntil(
+      *static_cast<RuntimeEffects*>(runtime), TriggersOf(triggers));
+}
+
 auto lyra_rt_resume_in_nba_region(void* runtime) -> bool {
-  auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  // An internal region hop for an event-controlled update, not a user wait, so
-  // not a flush point (LRM 4.4.2.4).
-  svc.CurrentProcess().RegisterWakeup(false, [&svc](CoroutineHandle token) {
-    svc.Schedule(svc.Now(), Region::kNba, token);
-  });
-  return true;
+  return ResumeInNbaRegion(*static_cast<RuntimeEffects*>(runtime));
 }
 
 void lyra_rt_trigger(void* event, void* runtime) {

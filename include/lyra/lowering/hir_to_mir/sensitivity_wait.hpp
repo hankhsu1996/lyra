@@ -43,10 +43,10 @@ struct ObservedLeaf {
     -> mir::LocalId;
 
 // Every SV construct that waits for something to happen converges on one
-// awaited runtime call taking one trigger per leaf -- `always_comb` /
-// `always_latch` (LRM 9.2.2.2.1), `@*` (LRM 9.4.2.2), `@(...)` (LRM 9.4.2),
-// `@e` (LRM 15.5.2), `wait (cond)` (LRM 9.4.3), and a continuous assignment --
-// differing only in what decides that reaching a leaf is an event for them.
+// runtime call taking one trigger per leaf -- `always_comb` / `always_latch`
+// (LRM 9.2.2.2.1), `@*` (LRM 9.4.2.2), `@(...)` (LRM 9.4.2), `@e` (LRM
+// 15.5.2), `wait (cond)` (LRM 9.4.3), and a continuous assignment -- differing
+// only in what decides that reaching a leaf is an event for them.
 //
 // Lowering picks the observable-pointer expression per leaf so a backend
 // forwards one stored expression rather than re-deriving the shape from the
@@ -55,11 +55,14 @@ struct ObservedLeaf {
 // another sealed pointer) is the bare `FieldAccess`.
 
 // The wait itself: reaching a leaf is a candidacy, and the leaf's observation
-// says whether it is an event.
+// says whether it is an event. `entry` is which of the two waits over those
+// leaves this is -- one for the next occurrence, or one for a condition the
+// body re-tests -- since the two ask the same leaves and part company only
+// where a stopped process is started again (LRM 9.7).
 auto BuildWaitStmt(
     mir::Block& target_block, const WalkFrame& frame,
-    const StructuralScopeLowerer& lowerer, std::span<const ObservedLeaf> leaves)
-    -> mir::Stmt;
+    const StructuralScopeLowerer& lowerer, std::span<const ObservedLeaf> leaves,
+    support::BuiltinFn entry) -> mir::Stmt;
 
 // The wait of a construct the standard makes sensitive to the variables it
 // reads, where a change to any of them is the event (LRM 9.2.2.2.1). Being
@@ -68,6 +71,7 @@ auto BuildWaitStmt(
 auto BuildValueChangeWaitStmt(
     mir::Block& target_block, const WalkFrame& frame,
     const StructuralScopeLowerer& lowerer,
-    const std::vector<hir::SensitivityEntry>& sensitivity_list) -> mir::Stmt;
+    const std::vector<hir::SensitivityEntry>& sensitivity_list,
+    support::BuiltinFn entry) -> mir::Stmt;
 
 }  // namespace lyra::lowering::hir_to_mir

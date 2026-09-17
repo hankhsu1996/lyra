@@ -1,6 +1,5 @@
 #pragma once
 
-#include <coroutine>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -9,10 +8,10 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/object_ref.hpp"
-#include "lyra/runtime/pending_wait.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
+#include "lyra/runtime/wait.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
@@ -113,49 +112,30 @@ inline void ProcessKill(const value::ObjectRef& self, RuntimeEffects& runtime) {
   }
 }
 
-// LRM 9.7 `process::await()`: suspend the caller until `self` terminates,
-// normally or forcibly. Parks on the target's termination and resumes when it
-// settles; a target that has already terminated does not suspend at all.
+// Waiting for another process to terminate, normally or forcibly (LRM 9.7
+// `process::await`). Termination is monotonic -- the target terminates once --
+// so waiting again after the caller was stopped is the same question asked
+// afresh, and a target that has already terminated leaves nothing to wait for.
 //
 // Correctness rests on the single-engine serialization Lyra's scheduler
-// provides: `await_ready` observing the target non-terminal and `await_suspend`
-// arming the waiter run in the same coroutine resume with no engine re-entry
-// between them, so the target cannot terminate in that gap. A parallel or
-// re-entrant engine would need an atomic arm-or-observe protocol here.
-class ProcessAwaitAwaitable : public PendingWait {
+// provides: observing the target non-terminal and arming the waiter run in the
+// same stretch of execution with no engine re-entry between them, so the target
+// cannot terminate in that gap. A parallel or re-entrant engine would need an
+// atomic arm-or-observe protocol here.
+class ProcessTerminationWait : public Wait {
  public:
-  explicit ProcessAwaitAwaitable(value::ObjectRef target)
+  explicit ProcessTerminationWait(value::ObjectRef target)
       : target_(std::move(target)) {
   }
 
-  [[nodiscard]] auto await_ready() const -> bool {
-    return ProcessNodeOf(target_).ExecutionState() ==
-           ProcessExecutionState::kTerminated;
-  }
-
-  template <class P>
-  void await_suspend(std::coroutine_handle<P> waiter) {
-    CoroutineHandle token = &waiter.promise();
-    ProcessNodeOf(target_).ArmTerminatedWaiter(token);
-    BlockOn(token);
-  }
-
-  void await_resume() const {
-    CheckAbortOnResume();
-  }
-
-  // Termination is monotonic (LRM 9.7): the target terminates once. On resume,
-  // if it has terminated the awaiter is runnable; otherwise re-park on its
-  // termination. No runtime access is needed.
   // NOLINTNEXTLINE(readability-named-parameter)
-  auto Reestablish(RuntimeEffects&, CoroutineHandle activation)
-      -> PendingWaitOutcome override {
+  auto Begin(RuntimeEffects&, CoroutineHandle leaf) -> WaitOutcome override {
     if (ProcessNodeOf(target_).ExecutionState() ==
         ProcessExecutionState::kTerminated) {
-      return PendingWaitOutcome::kRunnable;
+      return WaitOutcome::kSatisfied;
     }
-    ProcessNodeOf(target_).ArmTerminatedWaiter(activation);
-    return PendingWaitOutcome::kReblocked;
+    ProcessNodeOf(target_).ArmTerminatedWaiter(leaf);
+    return WaitOutcome::kBlocked;
   }
 
   // Awaiting another process (LRM 9.7) is a method call, not an event control
@@ -173,14 +153,14 @@ class ProcessAwaitAwaitable : public PendingWait {
 
 // It is an error to await the calling process (a process cannot wait for its
 // own termination). The check is here at the call, symmetric with `suspend`, so
-// the awaitable itself is pure readiness.
+// the wait itself is pure readiness.
 inline auto ProcessAwait(const value::ObjectRef& self, RuntimeEffects& runtime)
-    -> ProcessAwaitAwaitable {
+    -> bool {
   if (self.View<RuntimeProcess>() == &runtime.CurrentProcess()) {
     throw SimulationError(
         "process::await on the calling process is not allowed (LRM 9.7)");
   }
-  return ProcessAwaitAwaitable{self};
+  return runtime.CurrentProcess().ParkOn<ProcessTerminationWait>(runtime, self);
 }
 
 // LRM 9.7 `process::suspend()`: pause a process. It is an error to suspend the
@@ -198,10 +178,10 @@ inline void ProcessSuspend(
 }
 
 // LRM 9.7 `process::resume()`: restart a suspended process. A process that is
-// not suspended is unaffected. A process suspended while blocked re-establishes
-// its wait through the leaf's pending wait -- re-enrolling, or becoming
-// runnable if the condition is already satisfied; a process suspended while
-// runnable is re-queued to run in the current time step.
+// not suspended is unaffected. Otherwise it waits again for the same thing it
+// was waiting for, and runs in the current time step where that has already
+// happened -- which is the whole of the clause, because a process that was
+// runnable when it was stopped is one whose wait was already satisfied.
 inline void ProcessResume(
     const value::ObjectRef& self, RuntimeEffects& runtime) {
   RuntimeProcess& target = ProcessNodeOf(self);
@@ -210,15 +190,13 @@ inline void ProcessResume(
   }
   const CoroutineHandle leaf = target.CurrentLeaf();
   target.MarkResumed();
-  // A leaf suspended while runnable has no pending wait and is simply
-  // re-queued; one suspended while blocked re-establishes its wait, which
-  // either re-enrolls (nothing to schedule) or reports the condition already
-  // satisfied.
-  PendingWait* pending = leaf->pending_wait;
-  const bool runnable =
-      pending == nullptr ||
-      pending->Reestablish(runtime, leaf) == PendingWaitOutcome::kRunnable;
-  if (runnable) {
+  // An activation holds what it is waiting for exactly while it is blocked, so
+  // holding nothing is how a process stopped while already runnable -- woken,
+  // but not yet run -- says that it has nothing left to wait for.
+  const bool satisfied =
+      leaf->wait == nullptr ||
+      leaf->wait->Again(runtime, leaf) == WaitOutcome::kSatisfied;
+  if (satisfied) {
     runtime.Wake(leaf);
   }
 }
