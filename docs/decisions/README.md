@@ -581,6 +581,14 @@ the detail lives in the entry itself.
   than reuse, and every compile is attempted so every failure is reported. Defaulting to one per
   processor, a field in the design declaration, emitting a graph for a build tool, and giving a
   foreign source a schedule of its own are rejected.
+- [a-precompiled-header-is-an-attempt](a-precompiled-header-is-an-attempt.md) -- making a build
+  faster may not change whether it succeeds or what it produces, so a header compiled in advance is
+  offered to a compile and never required by one: a compile that failed with one is run again
+  without one before its output counts, and a header that turns out to have been refused is dropped
+  rather than reported. That fallback is the whole guarantee, which leaves content-addressed
+  currency and leaving an unchanged file alone as speed rather than correctness. Disabling the
+  compiler's own validation, making the key cover what it checks, proving the header acceptable
+  before every build, and recognising the compiler's complaint are rejected.
 - [reaching-past-a-published-class](reaching-past-a-published-class.md) -- a class promises what it
   declares and the class it extends, never what it inherited, so a referrer resolves an inherited
   property or behavior by walking that chain and the coordinate names where the walk landed; reading

@@ -1,17 +1,24 @@
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include <fmt/core.h>
 
+#include "lyra/driver/pch.hpp"
+#include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 #include "lyra/support/subprocess.hpp"
@@ -119,10 +126,11 @@ auto IsUnder(const std::filesystem::path& p, const std::filesystem::path& dir)
   return !rel.empty() && *rel.begin() != "..";
 }
 
-// Whether a header is one the compiler validates for itself. clang stores each
-// input header's mtime in the PCH and re-checks it on load, so a stdlib or libc
-// upgrade surfaces as a loud load-time error rather than a silent stale cache.
-// That is the safety net for inputs no content fingerprint of ours can see.
+// Whether a header is one the compiler validates for itself. The compiler
+// re-reads every input header's content when it loads the precompiled one, so a
+// stdlib or libc upgrade surfaces as a loud load-time error rather than a
+// silent stale cache. That is the safety net for inputs no fingerprint of ours
+// can see.
 auto IsSystemPath(
     const std::filesystem::path& p,
     std::span<const std::filesystem::path> system_dirs) -> bool {
@@ -132,6 +140,38 @@ auto IsSystemPath(
   return std::ranges::any_of(system_dirs, [&](const std::filesystem::path& d) {
     return IsUnder(probe, d);
   });
+}
+
+// The compiler Lyra defaults to, when this host has a clang-based one. The
+// precompiled-header format and the flags around it are clang's, so nothing
+// here can be asked of another compiler.
+auto FindClang() -> std::optional<std::filesystem::path> {
+  auto cxx_or = lyra::support::FindOnPath("clang++");
+  if (!cxx_or) return std::nullopt;
+  if (cxx_or->filename().string().find("clang") == std::string::npos) {
+    return std::nullopt;
+  }
+  return *cxx_or;
+}
+
+auto ReadWhole(const std::filesystem::path& p) -> std::string {
+  std::ifstream in(p, std::ios::binary);
+  return std::string{
+      std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+auto WriteWhole(const std::filesystem::path& p, std::string_view content)
+    -> void {
+  std::filesystem::create_directories(p.parent_path());
+  std::ofstream out(p, std::ios::binary | std::ios::trunc);
+  out << content;
+}
+
+// Move a file's timestamp far enough back that no clock granularity can hide
+// the difference, leaving its bytes untouched.
+auto AgeByADay(const std::filesystem::path& p) -> void {
+  std::filesystem::last_write_time(
+      p, std::filesystem::last_write_time(p) - std::chrono::hours(24));
 }
 
 }  // namespace
@@ -153,11 +193,9 @@ TEST(PchCoverage, EveryInputIsCovered) {
 
   // The same compiler Lyra defaults to, so the audit measures what a plain
   // `lyra run` on this host would produce.
-  auto cxx_or = lyra::support::FindOnPath("clang++");
-  ASSERT_TRUE(cxx_or) << cxx_or.error();
-  if (cxx_or->filename().string().find("clang") == std::string::npos) {
-    GTEST_SKIP() << "audit requires a clang-based compiler (resolved: "
-                 << cxx_or->string() << ")";
+  auto cxx_or = FindClang();
+  if (!cxx_or) {
+    GTEST_SKIP() << "audit requires a clang-based compiler on PATH";
   }
 
   const auto prelude =
@@ -203,4 +241,103 @@ TEST(PchCoverage, EveryInputIsCovered) {
       "fingerprint covers them) or extend tests/pch_audit_test.cpp's "
       "IsSystemPath to recognize their root.";
   FAIL() << msg;
+}
+
+// What makes a cached precompiled header current is the bytes of the headers it
+// was built from, and nothing else. Its name is those bytes, so a rewrite that
+// changes none of them is a hit, and the compiler has to agree whatever the
+// timestamps say -- a checkout restoring a header leaves exactly that trace,
+// and is why the question cannot be settled by leaving files alone. The last
+// phase holds the byte count equal while changing the bytes, which only a
+// reading of the content can catch, so the two together separate a check that
+// moved to content from one that was switched off.
+TEST(PchStaleness, CurrencyIsDecidedByContent) {
+  std::string err;
+  std::unique_ptr<Runfiles> runfiles{Runfiles::CreateForTest(&err)};
+  ASSERT_TRUE(runfiles) << err;
+
+  const std::filesystem::path lyra_exe = runfiles->Rlocation("_main/lyra");
+  ASSERT_FALSE(lyra_exe.empty());
+
+  auto cxx = FindClang();
+  if (!cxx) {
+    GTEST_SKIP() << "precompiled headers require a clang-based compiler";
+  }
+
+  auto loc_or = lyra::driver::ResolveRuntimeLocation(lyra_exe.string());
+  ASSERT_TRUE(loc_or) << loc_or.error().primary.message;
+
+  // A project of this test's own, so the headers it ages are copies and the
+  // cache it fills is not the one the developer is using.
+  const auto project = std::filesystem::temp_directory_path() / "pch-currency";
+  std::error_code ec;
+  std::filesystem::remove_all(project, ec);
+  auto exported = lyra::driver::ExportRuntimeTree(*loc_or, project);
+  ASSERT_TRUE(exported) << exported.error().primary.message;
+
+  const auto include_root = project / lyra::driver::kRuntimeIncludeDir;
+  const auto prelude = include_root / lyra::support::kRuntimePreludeHeader;
+
+  // One header reachable from the prelude that is this test's to rewrite, which
+  // the runtime's own are not: the phases below need to put it back byte for
+  // byte, and then to replace its content with content of the same length.
+  const auto probe = include_root / "lyra/pch_currency_probe.hpp";
+  WriteWhole(probe, "#pragma once\n// alpha\n");
+  WriteWhole(
+      prelude,
+      ReadWhole(prelude) + "#include \"lyra/pch_currency_probe.hpp\"\n");
+
+  const lyra::driver::pch::Options options{
+      .disabled = false, .cache_dir_override = project / "cache"};
+  const auto optimization = lyra::driver::Optimization::kIterate;
+  auto built = lyra::driver::pch::EnsureCached(
+      *cxx, include_root, options, optimization);
+  ASSERT_TRUE(built.has_value()) << "no precompiled header was produced";
+
+  const auto unit = project / "unit.cpp";
+  WriteWhole(
+      unit, std::format(
+                "#include \"{}\"\nint main() {{ return 0; }}\n",
+                lyra::support::kRuntimePreludeHeader));
+
+  const auto compile_against = [&](const std::filesystem::path& pch) {
+    const std::vector<std::string> args = {
+        std::string(lyra::driver::kCxxStandardFlag),
+        std::string(lyra::driver::OptimizationFlag(optimization)),
+        "-I",
+        include_root.string(),
+        "-include-pch",
+        pch.string(),
+        std::string(lyra::driver::kPchContentValidationFlag),
+        "-c",
+        unit.string(),
+        "-o",
+        (project / "unit.o").string()};
+    return lyra::support::RunProcessCaptured(*cxx, args);
+  };
+
+  auto baseline = compile_against(*built);
+  ASSERT_TRUE(baseline) << baseline.error();
+  ASSERT_EQ(baseline->exit_code, 0) << baseline->stderr_text;
+
+  WriteWhole(probe, ReadWhole(probe));
+  AgeByADay(probe);
+  auto after_rewrite = lyra::driver::pch::EnsureCached(
+      *cxx, include_root, options, optimization);
+  ASSERT_TRUE(after_rewrite.has_value());
+  EXPECT_EQ(*after_rewrite, *built)
+      << "the same bytes were given a different cache entry";
+
+  auto reused = compile_against(*after_rewrite);
+  ASSERT_TRUE(reused) << reused.error();
+  EXPECT_EQ(reused->exit_code, 0)
+      << "a header rewritten byte for byte was read as a change:\n"
+      << reused->stderr_text;
+
+  WriteWhole(probe, "#pragma once\n// omega\n");
+  AgeByADay(probe);
+  auto stale = compile_against(*built);
+  ASSERT_TRUE(stale) << stale.error();
+  EXPECT_NE(stale->exit_code, 0) << "a changed header was accepted by a "
+                                    "precompiled header built before it";
 }

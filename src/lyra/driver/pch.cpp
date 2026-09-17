@@ -181,12 +181,13 @@ auto RandomTmpSuffix() -> std::string {
 // last-writer-wins on a fully-formed PCH; tmp paths are unique per call so
 // writers do not corrupt each other.
 //
-// Validation strategy: clang stores each input header's mtime in the PCH and
-// validates them on load by default, so a system-stdlib or libc upgrade
-// surfaces as a loud load-time error rather than a stale PCH. We rely on
-// that default for files outside `include_root`; everything inside
-// `include_root` is captured proactively by the cache filename's content
-// fingerprint, so the two layers together produce a coherent cache.
+// Validation strategy: the compiler re-checks every input header when it loads
+// the precompiled one, which is the safety net for the files outside
+// `include_root` that no fingerprint of ours can see -- a system stdlib or libc
+// upgrade surfaces as a loud error rather than as a stale header. That check
+// reads content, so it agrees with the cache filename instead of overruling it:
+// everything under `include_root` is already named by its bytes, and a rewrite
+// that leaves the bytes alone cannot make the two disagree.
 auto BuildAt(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
     const std::filesystem::path& pch_path, Optimization optimization)
@@ -197,6 +198,7 @@ auto BuildAt(
   const std::vector<std::string> args = {
       std::string(kCxxStandardFlag),
       std::string(OptimizationFlag(optimization)),
+      std::string(kPchContentValidationFlag),
       "-I",
       include_root.string(),
       "-xc++-header",
@@ -248,6 +250,11 @@ auto EnsureCached(
     return std::nullopt;
   }
   return pch_path;
+}
+
+auto Discard(const std::filesystem::path& pch_path) -> void {
+  std::error_code ec;
+  std::filesystem::remove(pch_path, ec);
 }
 
 auto Clear(const Options& opts) -> diag::Result<std::size_t> {

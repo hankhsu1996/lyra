@@ -1,5 +1,6 @@
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <expected>
 #include <filesystem>
@@ -176,6 +177,61 @@ TEST(LyraCompile, RebuildsAfterSwitchingOptimization) {
     EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
         << mode << " stdout: " << run.stdout_text;
   }
+}
+
+// Nothing compiled in advance decides whether a build succeeds. One build
+// compiles a header and caches it; the next is handed it back after every
+// header's timestamp has moved under it, which is what a checkout leaves and
+// what the compiler refuses to accept -- and that build still owes a program.
+// The timestamps are moved here by hand because Lyra no longer moves them
+// itself and a checkout is not something a test can stage.
+TEST(LyraCompile, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteTrivialSource(src);
+  const auto out_dir = *tmp_or / "out";
+
+  // A cache of this test's own, so what the second build is handed is what the
+  // first one left rather than whatever the developer's cache happens to hold.
+  const std::vector<std::string> args = {
+      "compile",
+      "--top",
+      "Test",
+      "-o",
+      out_dir.string(),
+      "--pch-cache-dir",
+      (*tmp_or / "pch").string(),
+      src.string()};
+  const auto first = RunChildProcess(lyra, args, 120s);
+  ASSERT_EQ(first.termination, TerminationKind::kExitedNormally)
+      << first.stdout_text << first.stderr_text;
+  ASSERT_EQ(first.exit_code, 0) << first.stderr_text;
+
+  const auto headers = out_dir / "runtime" / "include";
+  ASSERT_TRUE(std::filesystem::exists(headers)) << headers.string();
+  std::size_t moved = 0;
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(headers)) {
+    if (!entry.is_regular_file()) continue;
+    std::filesystem::last_write_time(
+        entry.path(), std::filesystem::last_write_time(entry.path()) + 24h);
+    ++moved;
+  }
+  ASSERT_GT(moved, 0U) << "no header to move under " << headers.string();
+
+  const auto second = RunChildProcess(lyra, args, 120s);
+  EXPECT_EQ(second.exit_code, 0)
+      << "a build was failed by the header it had prepared for itself:\n"
+      << second.stderr_text;
+
+  const auto run = RunChildProcess(out_dir / "program", {}, 30s);
+  EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
+      << "stdout: " << run.stdout_text;
 }
 
 // How many units are compiled at once is the caller's to say, at both things
