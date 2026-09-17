@@ -124,12 +124,13 @@ auto WrapSliceToDeclaredType(
   return BuildValueConversion(unit, block, owned_id, final_type);
 }
 
-// Append the receiver's declared range `[left:right]` as trailing select
-// operands when the receiver is an unpacked array: the range is a fact of the
-// receiver's static type, materialized here as a MIR operand rather than
-// carried in the value. A packed receiver's coordinates are its own dims, which
-// it carries, and a dynamic array is zero-based, so neither states a range.
-auto AppendReceiverRange(
+// Append whatever coordinate system the receiver's family takes from its
+// static type rather than from the value. An unpacked array states its declared
+// range `[left:right]`; a packed one states its whole declared shape, because
+// one packed select consumes a dimension out of a stack and which bits that
+// reaches is a fact of the declaration rather than of any value of it. A
+// dynamic array is zero-based and states nothing.
+auto AppendReceiverCoordinates(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId base_type,
     std::vector<mir::ExprId>& args) -> void {
   // The declared range is a fact of the receiver's value type. On the write
@@ -152,23 +153,12 @@ auto AppendReceiverRange(
   if (const auto* ua = base_ty.As<mir::UnpackedArrayType>()) {
     args.push_back(BuildIntLiteral(unit_lowerer.Unit(), block, ua->dim.left));
     args.push_back(BuildIntLiteral(unit_lowerer.Unit(), block, ua->dim.right));
+    return;
   }
-}
-
-// Append the shape a packed part-select's result takes as a trailing operand,
-// sourced from the select's static result type. The bounds decide which bits
-// are selected; the result type decides how they are structured. A receiver can
-// only supply that structure when it is itself the array being selected from --
-// a packed aggregate's base is a flat bit run, and its members' shapes live in
-// the member types alone (LRM 7.2.1 / 7.3.1). Every other container's slice
-// yields its own element structure, so none contributes an operand.
-auto AppendResultShape(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId result_type,
-    std::vector<mir::ExprId>& args) -> void {
-  const auto& result_ty = unit_lowerer.Unit().types.Get(result_type);
-  if (!result_ty.IsIntegralPacked()) return;
-  args.push_back(
-      mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type));
+  if (base_ty.IsIntegralPacked()) {
+    args.push_back(
+        mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, base_type));
+  }
 }
 
 // A selector's shape crosses to the selected value as the raw integer that
@@ -188,7 +178,7 @@ auto ElementStepOperands(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId base_type,
     mir::ExprId idx_id) -> std::vector<mir::ExprId> {
   std::vector<mir::ExprId> operands = {idx_id};
-  AppendReceiverRange(unit_lowerer, block, base_type, operands);
+  AppendReceiverCoordinates(unit_lowerer, block, base_type, operands);
   return operands;
 }
 
@@ -196,13 +186,12 @@ auto ElementStepOperands(
 // selector `(a, b, form)`: a constant range passes its two source endpoints; an
 // indexed part-select passes its base and (constant) width, with the direction
 // in `form`. No count, offset, endpoint ordering, or rebase is computed here;
-// the selected value resolves the ordinal window against its own declared
-// range.
+// the selected value resolves the ordinal window against the coordinate system
+// the operands after these carry.
 template <typename LowerOne>
 auto UnfoldRangeSelectOperands(
     UnitLowerer& unit_lowerer, mir::Block& block,
-    const hir::RangeBounds& bounds, mir::TypeId base_type,
-    mir::TypeId result_type, LowerOne lower_one)
+    const hir::RangeBounds& bounds, mir::TypeId base_type, LowerOne lower_one)
     -> diag::Result<std::vector<mir::ExprId>> {
   struct RawSelector {
     mir::ExprId a;
@@ -242,8 +231,7 @@ auto UnfoldRangeSelectOperands(
   const auto form_id =
       BuildSliceFormLiteral(unit_lowerer.Unit(), block, raw_or->form);
   std::vector<mir::ExprId> operands = {raw_or->a, raw_or->b, form_id};
-  AppendResultShape(unit_lowerer, block, result_type, operands);
-  AppendReceiverRange(unit_lowerer, block, base_type, operands);
+  AppendReceiverCoordinates(unit_lowerer, block, base_type, operands);
   return operands;
 }
 
@@ -254,8 +242,7 @@ auto BuildRangeSliceCallExpr(
     const hir::RangeBounds& bounds, mir::ExprId base_id,
     mir::TypeId result_type, LowerOne lower_one) -> diag::Result<mir::Expr> {
   auto operands_or = UnfoldRangeSelectOperands(
-      unit_lowerer, block, bounds, block.exprs.Get(base_id).type, result_type,
-      lower_one);
+      unit_lowerer, block, bounds, block.exprs.Get(base_id).type, lower_one);
   if (!operands_or) return std::unexpected(std::move(operands_or.error()));
   return mir::Expr{
       .data =
@@ -274,7 +261,7 @@ auto BuildRangeSliceCallExpr(
 // whether the source was `s.field` or `s[hi:lo]`.
 auto UnfoldFieldSliceOperands(
     UnitLowerer& unit_lowerer, mir::Block& block, std::uint32_t bit_offset,
-    std::uint32_t bit_width, mir::TypeId result_type)
+    std::uint32_t bit_width, mir::TypeId base_type)
     -> std::vector<mir::ExprId> {
   const auto offset_id = BuildIntLiteral(
       unit_lowerer.Unit(), block, static_cast<std::int64_t>(bit_offset));
@@ -285,7 +272,7 @@ auto UnfoldFieldSliceOperands(
   const auto form_id = BuildSliceFormLiteral(
       unit_lowerer.Unit(), block, value::SliceForm::kIndexedUp);
   std::vector<mir::ExprId> operands = {offset_id, width_id, form_id};
-  AppendResultShape(unit_lowerer, block, result_type, operands);
+  AppendReceiverCoordinates(unit_lowerer, block, base_type, operands);
   return operands;
 }
 
@@ -294,7 +281,8 @@ auto BuildFieldSliceCallExpr(
     std::uint32_t bit_offset, std::uint32_t bit_width, mir::TypeId result_type)
     -> mir::Expr {
   std::vector<mir::ExprId> operands = UnfoldFieldSliceOperands(
-      unit_lowerer, block, bit_offset, bit_width, result_type);
+      unit_lowerer, block, bit_offset, bit_width,
+      block.exprs.Get(base_id).type);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -435,7 +423,8 @@ auto BuildElementAccessCallExpr(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr {
   std::vector<mir::ExprId> args = {idx_id};
-  AppendReceiverRange(unit_lowerer, block, block.exprs.Get(base_id).type, args);
+  AppendReceiverCoordinates(
+      unit_lowerer, block, block.exprs.Get(base_id).type, args);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -636,7 +625,7 @@ auto LowerHirRangeSelectExprLhs(
   const mir::TypeId container =
       TargetValueType(unit_lowerer.Unit(), block, *base_or);
   auto operands_or = UnfoldRangeSelectOperands(
-      unit_lowerer, block, sel.bounds, container, result_type, lower_one);
+      unit_lowerer, block, sel.bounds, container, lower_one);
   if (!operands_or) return std::unexpected(std::move(operands_or.error()));
   return DescendInto(
       *std::move(base_or), DescentStep{
@@ -689,17 +678,18 @@ auto LowerHirMemberAccessExprLhs(
         "(LRM 11.9)"));
     block.AppendStmt(mir::ExprStmt{.expr = guard});
   }
+  const mir::TypeId container =
+      TargetValueType(unit_lowerer.Unit(), block, *base_or);
+  auto operands = UnfoldFieldSliceOperands(
+      unit_lowerer, block, static_cast<std::uint32_t>(member.bit_offset),
+      static_cast<std::uint32_t>(member.bit_width), container);
   return DescendInto(
-      *std::move(base_or),
-      DescentStep{
-          .value_entry = support::BuiltinFn::kSlice,
-          .part_entry = support::BuiltinFn::kSliceRef,
-          .position = std::nullopt,
-          .operands = UnfoldFieldSliceOperands(
-              unit_lowerer, block,
-              static_cast<std::uint32_t>(member.bit_offset),
-              static_cast<std::uint32_t>(member.bit_width), result_type),
-          .part_type = result_type});
+      *std::move(base_or), DescentStep{
+                               .value_entry = support::BuiltinFn::kSlice,
+                               .part_entry = support::BuiltinFn::kSliceRef,
+                               .position = std::nullopt,
+                               .operands = std::move(operands),
+                               .part_type = result_type});
 }
 
 // LRM 8.4: a class property write reaches the object through the handle. The

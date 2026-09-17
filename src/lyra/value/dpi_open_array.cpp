@@ -121,12 +121,19 @@ void DpiOpenArray::WriteLeaf(const PackedArray& value, std::size_t position) {
 
 auto DpiOpenArray::ReadLeaf(
     const PackedArray& prototype, std::size_t position) const -> PackedArray {
+  // Annex H.7.3 gives a packed element one canonical representation, a flat
+  // vector of the element's own width, so what comes back is that run of bits
+  // read at the element's width, signedness and state domain.
+  const PackedType shape{
+      std::array{PackedRange{
+          .left = static_cast<std::int64_t>(prototype.BitWidth()) - 1,
+          .right = 0}},
+      prototype.IsSigned(), prototype.IsFourState()};
   const std::span<const svBitVecVal> bits = GroupsAt<svBitVecVal>(position);
   if (!bits.empty()) {
-    return ReadCanonicalBitVec(bits.data(), prototype.Type());
+    return ReadCanonicalBitVec(bits.data(), shape);
   }
-  return ReadCanonicalLogicVec(
-      GroupsAt<svLogicVecVal>(position).data(), prototype.Type());
+  return ReadCanonicalLogicVec(GroupsAt<svLogicVecVal>(position).data(), shape);
 }
 
 }  // namespace lyra::value

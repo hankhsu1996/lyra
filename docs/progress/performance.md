@@ -75,11 +75,11 @@ sized against rather than what a run costs now; the quarter is untouched by it a
 profile should show at the top.
 
 Nearly. A profile of the mixed arithmetic-and-control case, once the width-conversion entry below
-stopped hiding everything behind it, has building a value from its word planes and range-checking a
+stopped hiding everything behind it, had building a value from its word planes and range-checking a
 view tied at the top, near a tenth of the run each -- two halves of the same thing, since a value
-built from words is then read through a window that revalidates what the builder just established.
-So the prediction made against one design holds against a corpus case too, and the two of them
-together are the next thing to look at.
+built from words was then read through a window that revalidated what the builder had just
+established. That is the last entry below, and it is closed; the design's profile has not been
+retaken since, so what stands at the top of it now is unmeasured.
 
 - [x] An integral value's dimension stack no longer allocates for the single-dimension case. Every
       declared integral carried its stack in a growable container, so constructing or copying any
@@ -154,6 +154,30 @@ together are the next thing to look at.
       corpus: **6.8% on scalar arithmetic with no arrays and no scheduling, 5.5% on the mixed
       arithmetic-and-control case, and 6.4% on wide bitwise work over 256-bit values**. The last of
       those is the case that spills, so narrowing the value costs the wide path nothing.
+
+- [x] An integral value no longer carries how its declaration divides its bits, and no longer
+      re-establishes while running what the compiler settled before it ran. A value now states how
+      many bits it has, whether they are read as signed and whether a position may hold x or z; an
+      operation that names a position inside one takes the declared division as an argument from the
+      site that wrote the position, which is what every other selectable family already did. The
+      value went from 120 bytes to 64 -- the width had been stored two or three times over and the
+      state domain twice, once as a flag and once as a discriminant kept in step by a runtime check.
+
+      Two checks went with it, and the reason they could go is the same one: a view over a value's
+      words was bounds-checked against those same words on every construction, where the relation
+      holds by construction, and it also carried a bit offset that every construction set to zero
+      and forty-four sites checked was zero. Operand-shape checks between two values stay, because a
+      mismatch there is a missing conversion rather than something construction excludes. An
+      operation now writes its result's bits into the result instead of into a buffer that is then
+      validated and copied, which also removes a second pass masking bits the first pass had
+      already masked.
+
+      Measured by interleaving both builds inside each round, five rounds per case: **1.71x on
+      scalar arithmetic, 1.95x on wide bitwise work over 256-bit values, 2.01x on a tight
+      call-and-loop case, and 2.09x on the representative compute block**. Each column's own spread
+      runs from 1.2% to 15.4% depending on how quiet the machine was, and every gap clears its own
+      round's spread several times over. The model is
+      [../decisions/packed-shape-belongs-to-the-type.md](../decisions/packed-shape-belongs-to-the-type.md).
 
 ## Construction / compile-time performance
 

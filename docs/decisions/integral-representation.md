@@ -162,9 +162,10 @@ but it does not leak into MIR or into a hypothetical IR-level API.
 
 ## Cross-references
 
-- [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) -- its packed carve-out
-  settles what a packed value's declared representation is: the dimension stack rather than a bare
-  bit width, because the stack's product is the storage width and the whole stack decides whether
-  two values share a representation.
+- [packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md) -- what a packed value
+  carries is exactly decision 2's dispatch axis, width and signedness and state domain, and how a
+  declaration divides those bits reaches an access as an operand.
+- [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) -- the same move one family
+  over, and where its reasoning came from.
 - [packed-array-representation](packed-array-representation.md) -- the recursive HIR packed type
   that HIR-to-MIR flattens onto the MIR shape this decision keeps.

@@ -37,13 +37,13 @@ to a storage position is the selected value's job, done once, inside the value.
    operation -- the value alone determines which storage position the source index `i` names.
    Neither the lowering nor a per-selection argument supplies the coordinate system.
 
-   **Amended for the unpacked/container family** by
-   [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md): an unpacked/container
-   payload is ordinal-only and carries no range; the coordinate system is a fact of the receiver
-   expression's static type, materialized at the select as an explicit MIR operand. This packed
-   clause (dimension stack on the value) is unchanged -- packed dims is a storage-representation and
-   `SameRepresentation` identity fact, not pure coordinate naming. Decisions 2, 3, 4 below hold for
-   both families.
+   **Superseded for every family.** The unpacked and container families went first, in
+   [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md); the packed family followed
+   in [packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md). No selectable value
+   carries a coordinate system now: it is a fact of the receiver expression's static type,
+   materialized at the select as an explicit MIR operand. Decisions 2, 3 and 4 below hold unchanged
+   for every family, and they are the part of this entry that survives -- where the coordinate
+   system arrives from changed, and what is done with it did not.
 
 2. **Coordinate resolution runs in the value's wide, X/Z-aware domain, never as narrow selector
    arithmetic.** Rebasing a declared coordinate to a storage position (`i - left`, `left - i`, and
@@ -71,14 +71,13 @@ to a storage position is the selected value's job, done once, inside the value.
 ## Consequences
 
 - A slice read is a materialized owned value whose storage copies position-wise into any
-  destination, per decision 4. (For the unpacked/container family, that value is ordinal-only
-  payload and carries no declared sub-range -- the result range is non-observable; see
-  [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md). A packed slice value still
-  carries its dimension stack.)
-- Packed, unpacked, and the zero-based families sit under one model. A packed value carries its
-  dimension stack and resolves in its bit domain. A dynamic array and a queue are declared
-  zero-based, so their coordinate system is the identity and resolution is a no-op; a queue's slice
-  bounds are still resolved and clamped inside the value (LRM 7.10.1), not synthesized at lowering.
+  destination, per decision 4. It carries no declared sub-range in any family: the result range is
+  non-observable, and a packed slice is as wide as the bits it took and unsigned (LRM 11.8.1).
+- Packed, unpacked, and the zero-based families sit under one model. A packed value resolves a
+  coordinate in its bit domain against the shape the select states. A dynamic array and a queue are
+  declared zero-based, so their coordinate system is the identity and resolution is a no-op; a
+  queue's slice bounds are still resolved and clamped inside the value (LRM 7.10.1), not synthesized
+  at lowering.
 - A selector lowering that synthesizes no coordinate arithmetic emits no operator whose operands the
   frontend did not already unify. The general operand reconciliation a lowering otherwise carries
   for such synthesized operators has no input and is removed; the invariant that native binary
@@ -94,13 +93,12 @@ to a storage position is the selected value's job, done once, inside the value.
 - **Pass the declared range alongside the value as a per-selection argument.** The value's
   `Element(i)` stays under-defined without an external range, so the coordinate system is scattered
   across every call site rather than owned by the value. This is the "shape passed in alongside the
-  value" shape rejected for the same reason a packed element carries its own shape (see
-  [runtime-shape-and-default-value](runtime-shape-and-default-value.md)). **Superseded for the
-  unpacked/container family** by
-  [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md): there the range is a
-  type-derived MIR operand owned by the receiver's static _type_, not a runtime quantity scattered
-  by callers -- so it is not the rejected shape. It remains rejected for packed, whose dims stay on
-  the value.
+  value" shape, rejected on the reading that a value owning its coordinate system is what keeps a
+  caller from computing one. **Superseded for every family**, by
+  [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) and then
+  [packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md): the coordinate system is
+  a type-derived MIR operand owned by the receiver's static _type_, not a runtime quantity scattered
+  by callers -- so it is not the rejected shape. What stays rejected is a caller computing one.
 - **A public storage-position access on the value.** Once a zero-based position is a callable
   protocol, a caller computes one under the wrong coordinate system and the leak returns. The
   position stays private below the single resolution point.
@@ -112,8 +110,8 @@ to a storage position is the selected value's job, done once, inside the value.
 - `architecture/mir.md` -- a select is a semantic access primitive; MIR does not own coordinate
   resolution.
 - [integral-representation](integral-representation.md),
-  [runtime-shape-and-default-value](runtime-shape-and-default-value.md) -- a value carries its own
-  declared shape rather than receiving it alongside.
+  [runtime-shape-and-default-value](runtime-shape-and-default-value.md) -- what a value does carry
+  about itself, which is its width, its signedness and its state domain.
 - [value-store-discipline](value-store-discipline.md) -- the store boundary that gives an assignment
   the destination's declared range.
 - [unpacked-array-representation](unpacked-array-representation.md) -- the unpacked value that

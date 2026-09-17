@@ -52,6 +52,16 @@ cc_test(
 )
 
 cc_test(
+    name = "value_packed_array_test",
+    srcs = ["value/packed_array_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:value",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "diag_render_tests",
     srcs = ["diag/render_test.cpp"],
     copts = LYRA_COPTS,

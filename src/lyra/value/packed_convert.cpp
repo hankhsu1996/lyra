@@ -4,10 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <string_view>
 
 #include "lyra/value/packed.hpp"
-#include "lyra/value/packed_internal.hpp"
 
 namespace lyra::value {
 namespace {
@@ -50,13 +48,8 @@ auto PadsFromTheSignBit(
 
 auto ConvertToBit(ConstBitView src, BitView dst, Signedness src_signedness)
     -> void {
-  constexpr std::string_view kWhere = "ConvertToBit(Bit)";
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
-  const auto src_words = detail::PackedAccess::ValueWords(src);
-  const auto dst_words = detail::PackedAccess::ValueWords(dst);
-  detail::RequireWordCount(kWhere, src_words, src.Width());
-  detail::RequireWordCount(kWhere, dst_words, dst.Width());
+  const auto src_words = src.ValueWords();
+  const auto dst_words = dst.ValueWords();
 
   const bool pad_ones =
       PadsFromTheSignBit(src.Width(), dst.Width(), src_signedness) &&
@@ -68,15 +61,9 @@ auto ConvertToBit(ConstBitView src, BitView dst, Signedness src_signedness)
 
 auto ConvertToBit(ConstLogicView src, BitView dst, Signedness src_signedness)
     -> void {
-  constexpr std::string_view kWhere = "ConvertToBit(Logic)";
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
-  const auto src_value = detail::PackedAccess::ValueWords(src);
-  const auto src_unknown = detail::PackedAccess::UnknownWords(src);
-  const auto dst_words = detail::PackedAccess::ValueWords(dst);
-  detail::RequireWordCount(kWhere, src_value, src.Width());
-  detail::RequireWordCount(kWhere, src_unknown, src.Width());
-  detail::RequireWordCount(kWhere, dst_words, dst.Width());
+  const auto src_value = src.ValueWords();
+  const auto src_unknown = src.UnknownWords();
+  const auto dst_words = dst.ValueWords();
 
   const std::uint64_t sign = src.Width() - 1U;
   // A sign bit that is unknown or high-impedance is not a one, so it pads with
@@ -99,15 +86,9 @@ auto ConvertToBit(ConstLogicView src, BitView dst, Signedness src_signedness)
 
 auto ConvertToLogic(ConstBitView src, LogicView dst, Signedness src_signedness)
     -> void {
-  constexpr std::string_view kWhere = "ConvertToLogic(Bit)";
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
-  const auto src_words = detail::PackedAccess::ValueWords(src);
-  const auto dst_value = detail::PackedAccess::ValueWords(dst);
-  const auto dst_unknown = detail::PackedAccess::UnknownWords(dst);
-  detail::RequireWordCount(kWhere, src_words, src.Width());
-  detail::RequireWordCount(kWhere, dst_value, dst.Width());
-  detail::RequireWordCount(kWhere, dst_unknown, dst.Width());
+  const auto src_words = src.ValueWords();
+  const auto dst_value = dst.ValueWords();
+  const auto dst_unknown = dst.UnknownWords();
 
   const bool pad_ones =
       PadsFromTheSignBit(src.Width(), dst.Width(), src_signedness) &&
@@ -120,17 +101,10 @@ auto ConvertToLogic(ConstBitView src, LogicView dst, Signedness src_signedness)
 
 auto ConvertToLogic(
     ConstLogicView src, LogicView dst, Signedness src_signedness) -> void {
-  constexpr std::string_view kWhere = "ConvertToLogic(Logic)";
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(src));
-  detail::RequireAligned(kWhere, detail::PackedAccess::BitOffset(dst));
-  const auto src_value = detail::PackedAccess::ValueWords(src);
-  const auto src_unknown = detail::PackedAccess::UnknownWords(src);
-  const auto dst_value = detail::PackedAccess::ValueWords(dst);
-  const auto dst_unknown = detail::PackedAccess::UnknownWords(dst);
-  detail::RequireWordCount(kWhere, src_value, src.Width());
-  detail::RequireWordCount(kWhere, src_unknown, src.Width());
-  detail::RequireWordCount(kWhere, dst_value, dst.Width());
-  detail::RequireWordCount(kWhere, dst_unknown, dst.Width());
+  const auto src_value = src.ValueWords();
+  const auto src_unknown = src.UnknownWords();
+  const auto dst_value = dst.ValueWords();
+  const auto dst_unknown = dst.UnknownWords();
 
   const std::uint64_t sign = src.Width() - 1U;
   // Both planes pad with the sign bit's own two halves, which is what makes a
