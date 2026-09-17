@@ -462,9 +462,11 @@ each meets the same lifetime question above.
       for no promise at all -- a handle refers to an object without reading anything its class holds
       -- so a hierarchical name that lands on such a variable resolves in either direction of the
       hierarchy, including on a class a design element declares, which no signature carries and none
-      could. What still refuses: reaching a property or a behavior through such a handle, which is a
-      name resolved at elaboration rather than compiled against a promise (LRM 23.6); and the
-      type-associated storage of a class a unit declares, which no symbol names yet.
+      could. Reaching a property or a behavior through such a handle works as well: the name
+      resolves at elaboration against the class the instance fixes, and what that answers -- a
+      storage position, a dispatch position, or a body outright -- is what each access then uses
+      (LRM 23.6, 8.14, 8.20). What still refuses is the type-associated storage of a class a unit
+      declares, which no symbol names yet.
 - [ ] `this` as a value in its own right (LRM 8.11), so an object can be returned, passed, and
       compared from inside its own method. A body holds a borrowed pointer to the object it runs on,
       which serves every member access; answering with a handle instead is what a shared-owner

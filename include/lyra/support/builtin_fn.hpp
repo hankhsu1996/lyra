@@ -594,14 +594,29 @@ enum class BuiltinFn : std::uint16_t {
   // which definition a name reaches is the scope's to answer and no referrer's
   // to assume. Reached in the resolve phase like the four above.
   kFindClass,
-  // Where a name lands on a class, asked of the class rather than of a scope:
-  // the storage a property occupies among what its declaring class declares, or
+  // What a name reaches on a class, asked of the class rather than of a scope:
+  // the storage a property occupies among what its declaring class declares,
   // the dispatch position a behavior holds among what its introducing class
-  // introduces (LRM 8.14, 8.20). Both are asked once while a reference
-  // resolves, and what they answer is applied at each access with no name in
-  // hand.
+  // introduces, or the body a call the object gets no say in enters (LRM 8.14,
+  // 8.20). All three are asked once while a reference resolves, and what they
+  // answer is used at each access with no name in hand. The first two answer
+  // with a position because what the access reaches still depends on the
+  // object; the third answers with the body, there being nothing left to
+  // decide.
   kClassFindProperty,
   kClassFindBehavior,
+  kClassFindBehaviorBody,
+  // Applying one of those positions to whichever object a handle holds: the
+  // object answers with its own class, and the class answers where the storage
+  // is or which body runs. Which object it is, is not decided until the access
+  // runs, so the position alone reaches nothing and this is the step that
+  // spends it.
+  kPropertyAt,
+  kBehaviorAt,
+  // The object a handle names. A body runs on the object rather than on a
+  // reference to it, and a handle refers to one without being one, so a call
+  // entering a body of a class it cannot name asks for the object here.
+  kObjectOf,
   // Fork-join branch dispatch. Each entry spawns every branch as its own
   // coroutine and yields the parent's wait shape per LRM 9.3.2: `kForkWaitAll`
   // for `join` (resume after the last branch), `kForkWaitFirst` for

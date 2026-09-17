@@ -175,19 +175,6 @@ struct StatedDispatchRef {
   auto operator==(const StatedDispatchRef&) const -> bool = default;
 };
 
-// The same pair, carried by an operand instead of written here, for a call
-// whose class belongs to an instance rather than to this artifact. Which class
-// introduced the behavior and which of its introductions this is are settled
-// where the design elaborates; what the receiver turns out to be still decides
-// the body.
-struct SuppliedDispatchRef {
-  Operand coordinate;
-
-  auto operator==(const SuppliedDispatchRef&) const -> bool = default;
-};
-
-using DispatchRef = std::variant<StatedDispatchRef, SuppliedDispatchRef>;
-
 // The body the value the call is made on answers one behavior with (LRM 8.20).
 // The value is the call's first argument, as it is for a function named
 // outright, and which body runs is decided by what that value is rather than by
@@ -196,7 +183,7 @@ using DispatchRef = std::variant<StatedDispatchRef, SuppliedDispatchRef>;
 // the call states the signature and every body reachable through it answers to
 // that one.
 struct DispatchTarget {
-  DispatchRef method;
+  StatedDispatchRef method;
 };
 
 // A call through a code address the program computed -- the dual of naming a
@@ -456,26 +443,11 @@ struct StatedMemberRef {
   auto operator==(const StatedMemberRef&) const -> bool = default;
 };
 
-// The same pair, carried by an operand instead of written here. Which
-// declaration it names belongs to an instance rather than to this artifact, so
-// one body serves instances whose accesses land on declarations with different
-// layouts and nothing compiled here could have counted a slot. What the step
-// reaches is stated outright, because a chain that cannot name the declaration
-// cannot read the member's type off one either.
-struct SuppliedMemberRef {
-  Operand coordinate;
-  TypeId reached;
-
-  auto operator==(const SuppliedMemberRef&) const -> bool = default;
-};
-
-using MemberRef = std::variant<StatedMemberRef, SuppliedMemberRef>;
-
 // Selects a member of whatever the projection has reached so far -- an
 // instance's own storage, or the captures a closure value holds. What the chain
 // arrived at has to carry the member's declaration.
 struct MemberProjection {
-  MemberRef member;
+  StatedMemberRef member;
 };
 
 // One step of a place's projection chain: each names storage reached from the

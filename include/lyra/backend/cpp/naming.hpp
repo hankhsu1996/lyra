@@ -343,6 +343,22 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
   return MintedCppName("constant", id.value);
 }
 
+// The C++ identifier a class's object record is emitted under. It is the one
+// constant of a class that another unit spells, and a position counted in this
+// unit's arena is not something that unit can count -- so it is named off the
+// class, which both sides already agree on.
+[[nodiscard]] inline auto CppObjectRecordName() -> std::string {
+  return std::format("{}object_record", kMintedPrefix);
+}
+
+// The identifier a class states its object record under for the allocation to
+// read. It is the runtime's own name for what a class of the source language
+// says about its objects, so the two sides agree on it by both reading one
+// spelling rather than by each writing the same characters.
+[[nodiscard]] inline auto CppClassRecordHookName() -> std::string_view {
+  return "kClassRecord";
+}
+
 // The C++ identifier a DPI-C linkage name is emitted under. It is an identifier
 // of C rather than of SystemVerilog (LRM 35.4), already spelled the way the
 // foreign side must see it, so it crosses as itself -- and it must, since the

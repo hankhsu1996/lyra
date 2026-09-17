@@ -91,10 +91,7 @@ auto CarrierTypeId(
     case support::DpiScalarAbi::kString:
       return unit.types.Intern(mir::Type{mir::MachineCStringType{}});
     case support::DpiScalarAbi::kChandle:
-      return unit.types.Intern(
-          mir::Type{mir::PointerType{
-              .pointee = unit.builtins.void_type,
-              .ownership = mir::PointerOwnership::kBorrowed}});
+      return mir::ErasedPointer(unit.types);
     case support::DpiScalarAbi::kVoid:
       return unit.builtins.void_type;
   }

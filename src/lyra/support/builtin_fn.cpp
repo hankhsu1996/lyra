@@ -776,6 +776,22 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "class_find_property",
           .declaration = FreeFunction{"lyra::runtime::FindProperty"}};
+    case BuiltinFn::kPropertyAt:
+      return {
+          .name = "property_at",
+          .declaration = FreeFunction{"lyra::runtime::PropertyAt"}};
+    case BuiltinFn::kBehaviorAt:
+      return {
+          .name = "behavior_at",
+          .declaration = FreeFunction{"lyra::runtime::BehaviorAt"}};
+    case BuiltinFn::kObjectOf:
+      return {
+          .name = "object_of",
+          .declaration = FreeFunction{"lyra::runtime::ObjectOf"}};
+    case BuiltinFn::kClassFindBehaviorBody:
+      return {
+          .name = "class_find_behavior_body",
+          .declaration = FreeFunction{"lyra::runtime::FindBehaviorBody"}};
     case BuiltinFn::kClassFindBehavior:
       return {
           .name = "class_find_behavior",

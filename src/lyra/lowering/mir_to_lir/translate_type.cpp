@@ -376,6 +376,19 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
     case mir::RuntimeLibraryKind::kAbiStringRef:
     case mir::RuntimeLibraryKind::kScopeCallable:
     case mir::RuntimeLibraryKind::kScopeCallableTable:
+    case mir::RuntimeLibraryKind::kScopeClass:
+    case mir::RuntimeLibraryKind::kScopeClassTable:
+    case mir::RuntimeLibraryKind::kObjectDefinition:
+    case mir::RuntimeLibraryKind::kPropertySlotTable:
+    case mir::RuntimeLibraryKind::kDispatchTakeover:
+    case mir::RuntimeLibraryKind::kTakeoverTable:
+    case mir::RuntimeLibraryKind::kMethodDispatchTable:
+    case mir::RuntimeLibraryKind::kResolvedProperty:
+    case mir::RuntimeLibraryKind::kResolvedPropertyTable:
+    case mir::RuntimeLibraryKind::kResolvedBehavior:
+    case mir::RuntimeLibraryKind::kResolvedBehaviorTable:
+    case mir::RuntimeLibraryKind::kDeclaredBody:
+    case mir::RuntimeLibraryKind::kDeclaredBodyTable:
       throw InternalError(
           "TranslateRuntimeLibrary: a unit-definition record type is a "
           "compile-time constant consumed by the backend directly and does not "

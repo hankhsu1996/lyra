@@ -112,6 +112,17 @@ struct Introduction {
   std::optional<FunctionId> body;
 };
 
+// One body a class answers a name with, where the class the access names is
+// what decides which body runs whatever the value turns out to be (LRM 8.14).
+// The name is here for the same reason it is on an introduction: a referrer
+// that cannot name the class asks by name. A behavior answering a dispatch
+// position is not here, because for one of those the value decides and what
+// such a referrer needs is the position rather than the body.
+struct DeclaredBody {
+  std::string name;
+  FunctionId body;
+};
+
 // One class a scope answers a name with (LRM 23.9). A class declared inside a
 // design element is nameable only inside the scope declaring it, so a referrer
 // outside reaches it by walking to that scope and asking -- the same way it
@@ -122,10 +133,11 @@ struct DeclaredClass {
 };
 
 // One compiled class: its name, the base it extends, the members it declares,
-// its constructor, the behaviors it introduces, the ones it takes over, and the
-// entries it answers a name with in each name space a caller spells one in. A
-// class lists a function rather than holding it because the function is the
-// same kind of thing wherever it is listed.
+// its constructor, the behaviors it introduces, the bodies it answers a name
+// with outright, the behaviors it takes over, and the entries it answers a name
+// with in each name space a caller spells one in. A class lists a function
+// rather than holding it because the function is the same kind of thing
+// wherever it is listed.
 //
 // A class states what it adds to its lineage and nothing about the lineage
 // itself -- the same way it states its own members and not its base's. What a
@@ -151,6 +163,7 @@ struct Class {
   std::vector<NamedMember> named_members;
   FunctionId constructor{};
   std::vector<Introduction> introduces;
+  std::vector<DeclaredBody> bodies;
   std::vector<DispatchTakeover> takeovers;
   std::vector<PublishedCallable> subroutines;
   std::vector<PublishedCallable> exports;

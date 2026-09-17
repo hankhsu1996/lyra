@@ -465,6 +465,16 @@ the detail lives in the entry itself.
   object the reference holds; resolving a virtual behavior's name names its dispatch position and
   never its body. A witness record, a lookup at each access, a specialization per endpoint class,
   and relying on the two sides' representations agreeing are rejected.
+- [a-settled-access-is-ordinary-operations](a-settled-access-is-ordinary-operations.md) -- a class
+  answers a name it declares no dispatch position for with the body itself, and every access whose
+  class no signature publishes is written out of the operations it is -- a runtime call, a
+  conversion, then a dereference or an entry -- with no alternative in any layer, because a body
+  with no name for the record has no member to refer to and a callee form has one receiver where the
+  operation needs two values. Reverses
+  [structural-access-on-an-opaque-object](structural-access-on-an-opaque-object.md) D5, keeping its
+  concern. Giving every method a dispatch position, letting each backend recover the object its own
+  way, putting the handle in every entry's first parameter, and resolving the name at each access
+  are rejected.
 - [unit-scope-naming](unit-scope-naming.md) -- the anonymous `$unit` scope (LRM 3.12.1) is a
   namespace unit named by its compilation-unit input identity, recomputed table-free by producer and
   consumer; a design-wide unit id, a fixed name, a collection ordinal, and a content digest are all

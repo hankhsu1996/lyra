@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -36,6 +37,7 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .callables = {},
       .abi_adapters = {},
       .static_constants = {},
+      .object_record = std::nullopt,
       .static_properties = static_properties,
       .named_static_properties = named_static_properties,
       .named_callables = {},

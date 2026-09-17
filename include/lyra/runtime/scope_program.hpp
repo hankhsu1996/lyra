@@ -177,23 +177,23 @@ struct ScopeProgram {
   ScopeClassTable classes;
 
   // The constructor is what a backend that builds this record in its own
-  // generated text calls, so it takes what such a backend can supply. The
-  // classes are not among them: answering a class name serves a referrer that
-  // reaches a member by a position settled while the design elaborates, which a
-  // backend spelling members by name does not do -- so a program built through
-  // this constructor answers no class name, and one whose classes are filled in
-  // afterwards answers every one its unit declares.
+  // generated text calls, so it takes what such a backend can supply -- the
+  // classes among them, because a scope answers a class name for a referrer
+  // that reaches a member by a position settled while the design elaborates,
+  // and every target has an answer for that.
   constexpr ScopeProgram() = default;
   constexpr ScopeProgram(
       ScopeMetadata metadata, ScopeEntry resolve_state,
       ScopeEntry initialize_state, ScopeEntry create_processes,
-      ScopeCallableTable exports, ScopeCallableTable subroutines)
+      ScopeCallableTable exports, ScopeCallableTable subroutines,
+      ScopeClassTable classes)
       : metadata(metadata),
         resolve_state(resolve_state),
         initialize_state(initialize_state),
         create_processes(create_processes),
         exports(exports),
-        subroutines(subroutines) {
+        subroutines(subroutines),
+        classes(classes) {
   }
 };
 

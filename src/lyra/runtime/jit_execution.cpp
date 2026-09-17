@@ -534,6 +534,7 @@ auto TriggersOf(LyraSpan triggers) -> std::vector<Trigger> {
 }  // namespace lyra::runtime
 
 using lyra::runtime::ActivationValueCell;
+using lyra::runtime::BehaviorAt;
 using lyra::runtime::BehaviorCoordinate;
 using lyra::runtime::CancellationTarget;
 using lyra::runtime::ChannelCancellation;
@@ -559,6 +560,7 @@ using lyra::runtime::FindProperty;
 using lyra::runtime::ForkWaitAll;
 using lyra::runtime::ForkWaitFirst;
 using lyra::runtime::GcNew;
+using lyra::runtime::GcObject;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::GeneratedScope;
 using lyra::runtime::Held;
@@ -570,6 +572,7 @@ using lyra::runtime::MemberStorageSchema;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
 using lyra::runtime::ObjectDefinition;
+using lyra::runtime::ObjectOf;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
 using lyra::runtime::Own;
@@ -582,6 +585,7 @@ using lyra::runtime::ProcessSelf;
 using lyra::runtime::ProcessStatus;
 using lyra::runtime::ProcessSuspend;
 using lyra::runtime::ProgramLifetime;
+using lyra::runtime::PropertyAt;
 using lyra::runtime::PropertyCoordinate;
 using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
@@ -1458,17 +1462,24 @@ auto lyra_rt_object_deref(void* handle) -> void* {
   return object.Share().get();
 }
 
+// A name counted out of a declaration this artifact could read and one settled
+// while the design elaborated ask the object the same question and differ only
+// in where the pair came from, so both arrive at the same answer. What varies
+// between them is the shape the pair travels in, which is why there are two
+// entries and one operation.
 auto lyra_rt_object_member_addr(
     void* object, const void* declared_by, std::uint32_t slot) -> void* {
-  return static_cast<ManagedObject*>(object)->MemberAddress(
-      static_cast<const ObjectDefinition*>(declared_by), slot);
+  const PropertyCoordinate at{
+      static_cast<const ObjectDefinition*>(declared_by), slot};
+  return PropertyAt(static_cast<const GcObject*>(object), &at);
 }
 
 auto lyra_rt_object_method(
     void* object, const void* introduced_by, std::uint32_t ordinal)
     -> LyraMethodEntry {
-  return static_cast<const ManagedObject*>(object)->Method(
-      static_cast<const ObjectDefinition*>(introduced_by), ordinal);
+  const BehaviorCoordinate at{
+      static_cast<const ObjectDefinition*>(introduced_by), ordinal};
+  return BehaviorAt(static_cast<const GcObject*>(object), &at);
 }
 
 auto lyra_rt_class_find_property(const void* definition, const void* name)
@@ -1485,18 +1496,28 @@ auto lyra_rt_class_find_behavior(const void* definition, const void* name)
       static_cast<const char*>(name));
 }
 
-auto lyra_rt_object_member_addr_at(void* object, const void* coordinate)
-    -> void* {
-  const auto& at = *static_cast<const PropertyCoordinate*>(coordinate);
-  return static_cast<ManagedObject*>(object)->MemberAddress(
-      at.declared_by, at.slot);
+auto lyra_rt_class_find_behavior_body(const void* definition, const void* name)
+    -> LyraMethodEntry {
+  return FindBehaviorBody(
+      static_cast<const ObjectDefinition*>(definition),
+      static_cast<const char*>(name));
 }
 
-auto lyra_rt_object_method_at(void* object, const void* coordinate)
+auto lyra_rt_object_of(const void* handle) -> void* {
+  return ObjectOf(Read<ManagedRef>(handle));
+}
+
+auto lyra_rt_property_at(const void* handle, const void* coordinate) -> void* {
+  return PropertyAt(
+      Read<ManagedRef>(handle),
+      static_cast<const PropertyCoordinate*>(coordinate));
+}
+
+auto lyra_rt_behavior_at(const void* handle, const void* coordinate)
     -> LyraMethodEntry {
-  const auto& at = *static_cast<const BehaviorCoordinate*>(coordinate);
-  return static_cast<const ManagedObject*>(object)->Method(
-      at.introduced_by, at.ordinal);
+  return BehaviorAt(
+      Read<ManagedRef>(handle),
+      static_cast<const BehaviorCoordinate*>(coordinate));
 }
 
 void lyra_rt_register_signal(void* self, const void* name, void* cell) {

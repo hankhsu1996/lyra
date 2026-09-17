@@ -107,11 +107,22 @@ struct ExternalMethodCallee {
   ExternalCalleeInterface interface;
 };
 
+// A method reached through the body the design settled, which is how a call on
+// a class a design element declares reaches one that answers no dispatch
+// position. It names no class and no method: having neither to name is what put
+// the call in this form, so what it carries is where the body was landed on and
+// the shape the call was made in.
+struct SettledMethodCallee {
+  UnpublishedBehaviorBody body;
+  ExternalCalleeInterface interface;
+};
+
 // The method a call reaches. Intra-unit it is a slot in a class's own method
 // arena, and everything the call needs follows from the declaration that slot
 // resolves to; cross-unit there is no such declaration to reach, so the callee
 // carries what the call would have read off one.
-using MethodCallee = std::variant<LocalClassMethodTarget, ExternalMethodCallee>;
+using MethodCallee = std::variant<
+    LocalClassMethodTarget, ExternalMethodCallee, SettledMethodCallee>;
 
 // Calls an instance method (LRM 8.6). `receiver` states which object the call
 // runs against, whichever source form named it.

@@ -46,6 +46,14 @@ auto ErasedFunction(const TypePool& types) -> TypeId;
 // making one cannot describe it differently.
 auto IsErasedFunction(const TypePool& types, TypeId id) -> bool;
 
+// An address with its referent erased: it says where something is and nothing
+// about what is there. The peer of the entry above and spelled once for the
+// same reason -- it is what both sides of a boundary that carries addresses
+// without types write, so what one side erases and the other reads back cannot
+// drift apart. Reading it as something takes a conversion, which is the step
+// that says what was assumed.
+auto ErasedPointer(const TypePool& types) -> TypeId;
+
 // The observable-cell type for a variable of `value_type`: a SystemVerilog
 // value-storage data object (LRM 6.5) is an observable cell, so its writes fire
 // subscribers and its value is reached through the cell; any other type -- a

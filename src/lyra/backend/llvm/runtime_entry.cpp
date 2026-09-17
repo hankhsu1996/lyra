@@ -62,10 +62,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "class_find_property";
     case RuntimeOp::kClassFindBehavior:
       return "class_find_behavior";
-    case RuntimeOp::kObjectMemberAddressAt:
-      return "object_member_addr_at";
-    case RuntimeOp::kObjectMethodAt:
-      return "object_method_at";
     case RuntimeOp::kClosureCapture:
       return "closure_capture";
     case RuntimeOp::kConst:
@@ -854,6 +850,13 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFindClass:
     case support::BuiltinFn::kClassFindProperty:
     case support::BuiltinFn::kClassFindBehavior:
+    case support::BuiltinFn::kClassFindBehaviorBody:
+    // Applying a settled position, and recovering the object a handle names.
+    // Each is one library function serving every class, so the operation's own
+    // name is the whole of what a symbol needs.
+    case support::BuiltinFn::kPropertyAt:
+    case support::BuiltinFn::kBehaviorAt:
+    case support::BuiltinFn::kObjectOf:
     case support::BuiltinFn::kForkWaitAll:
     case support::BuiltinFn::kForkWaitFirst:
     case support::BuiltinFn::kSpawnAll:

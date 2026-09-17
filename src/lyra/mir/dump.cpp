@@ -234,9 +234,6 @@ class MirDumper {
               return std::format(
                   "External({}::{}#{})", e.unit_name, e.class_name,
                   e.ordinal.value);
-            },
-            [](const ResolvedVirtualSlot& r) -> std::string {
-              return std::format("Resolved(Expr[{}])", r.coordinate.value);
             }},
         s);
   }
@@ -403,6 +400,32 @@ class MirDumper {
                   return "RuntimeLibrary(ScopeCallable)";
                 case RuntimeLibraryKind::kScopeCallableTable:
                   return "RuntimeLibrary(ScopeCallableTable)";
+                case RuntimeLibraryKind::kScopeClass:
+                  return "RuntimeLibrary(ScopeClass)";
+                case RuntimeLibraryKind::kScopeClassTable:
+                  return "RuntimeLibrary(ScopeClassTable)";
+                case RuntimeLibraryKind::kObjectDefinition:
+                  return "RuntimeLibrary(ObjectDefinition)";
+                case RuntimeLibraryKind::kPropertySlotTable:
+                  return "RuntimeLibrary(PropertySlotTable)";
+                case RuntimeLibraryKind::kDispatchTakeover:
+                  return "RuntimeLibrary(DispatchTakeover)";
+                case RuntimeLibraryKind::kTakeoverTable:
+                  return "RuntimeLibrary(TakeoverTable)";
+                case RuntimeLibraryKind::kMethodDispatchTable:
+                  return "RuntimeLibrary(MethodDispatchTable)";
+                case RuntimeLibraryKind::kResolvedProperty:
+                  return "RuntimeLibrary(ResolvedProperty)";
+                case RuntimeLibraryKind::kResolvedPropertyTable:
+                  return "RuntimeLibrary(ResolvedPropertyTable)";
+                case RuntimeLibraryKind::kResolvedBehavior:
+                  return "RuntimeLibrary(ResolvedBehavior)";
+                case RuntimeLibraryKind::kResolvedBehaviorTable:
+                  return "RuntimeLibrary(ResolvedBehaviorTable)";
+                case RuntimeLibraryKind::kDeclaredBody:
+                  return "RuntimeLibrary(DeclaredBody)";
+                case RuntimeLibraryKind::kDeclaredBodyTable:
+                  return "RuntimeLibrary(DeclaredBodyTable)";
                 case RuntimeLibraryKind::kDpiBitBuffer:
                   return "RuntimeLibrary(DpiBitBuffer)";
                 case RuntimeLibraryKind::kDpiLogicBuffer:
@@ -678,6 +701,9 @@ class MirDumper {
                   "StaticConstantRef constant=StaticConstant[{}]",
                   r.constant.value);
             },
+            [this](const ObjectRecordRef& r) -> std::string {
+              return std::format("ObjectRecordRef of={}", FormatClassRef(r.of));
+            },
             [](const PackedTypeRef& r) -> std::string {
               return std::format("PackedTypeRef Type[{}]", r.integral.value);
             },
@@ -832,10 +858,6 @@ class MirDumper {
                             return std::format(
                                 "External[{}::{}#{}]", t.unit_name,
                                 t.class_name, t.slot.value);
-                          },
-                          [](const ResolvedFieldTarget& t) -> std::string {
-                            return std::format(
-                                "Resolved[Expr[{}]]", t.coordinate.value);
                           }},
                       m.field));
             },

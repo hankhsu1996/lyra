@@ -299,21 +299,28 @@ auto RenderStruct(
   return out;
 }
 
-// A class-level static constant, declared as a static member whose initializer
-// is the translated value expression. A runtime scope's generated-behavior
-// record is one such constant; the constructor forwards its address to the
-// base. It stays in the class body because its initializer names the class's
-// own members, which are in scope there. A constant that points into another
-// only ever takes its address, which does not depend on that one's initializer
-// having run.
-auto RenderStaticConstant(
+// A class-level static constant: a name, a type, and the value it is settled
+// with. A runtime scope's generated-behavior record is one such constant; the
+// constructor forwards its address to the base.
+//
+// Every one of them is declared in the class body and valued after it. A value
+// written after the class names anything the class holds, and one written in
+// the body cannot name a member declared below it -- so the second shape serves
+// every constant and the first serves none the second does not. What differs
+// between constants is what they are called, which is the caller's to say.
+auto RenderClassConstantDecl(
+    const mir::CompilationUnit& unit, std::string_view name,
+    const mir::StaticConstantDecl& c) -> std::string {
+  return Indent(1) + ClassConstantDeclOf(RenderTypeAsCpp(unit, c.type), name);
+}
+
+auto RenderClassConstantDef(
     const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s,
-    mir::StaticConstantId id, const mir::StaticConstantDecl& c) -> std::string {
+    std::string_view name, const mir::StaticConstantDecl& c) -> std::string {
   const ScopeView view = ScopeView::ForClassConstant(unit, cls_id, s, c.body);
-  return Indent(1) + ClassConstantOf(
-                         RenderTypeAsCpp(unit, c.type),
-                         CppStaticConstantName(id),
-                         RenderExpr(view, view.Expr(c.value)));
+  return ClassConstantDefOf(
+      CppClassName(s, cls_id), RenderTypeAsCpp(unit, c.type), name,
+      RenderExpr(view, view.Expr(c.value)));
 }
 
 auto RenderClass(
@@ -420,14 +427,37 @@ auto RenderClass(
   }
   AppendSection(out, adapter_decls);
 
-  // The class's static constants (a tree node's generated-behavior record among
-  // them), each emitted as a static member. Its initializer names the class's
-  // own adapters, declared just above, so it stays in the class body.
+  // The constants this class declares, each declared here and valued after the
+  // class. What one is called is all that separates them: the record every
+  // object carries takes a name off the class, because it is the one constant a
+  // class outside this unit spells, and the rest take one off the position they
+  // sit at, which nothing outside can count.
+  //
+  // Beside the record goes the name the allocation reads to hand an object its
+  // record, which is what a class of the source language states about its own
+  // objects.
   for (const mir::StaticConstantId constant_id : s.static_constants.Ids()) {
+    const mir::StaticConstantDecl& c = s.static_constants.Get(constant_id);
     AppendSection(
         out,
-        RenderStaticConstant(
-            unit, id, s, constant_id, s.static_constants.Get(constant_id)));
+        RenderClassConstantDecl(unit, CppStaticConstantName(constant_id), c));
+    AppendSection(
+        text.code, RenderClassConstantDef(
+                       unit, id, s, CppStaticConstantName(constant_id), c));
+  }
+  if (s.object_record.has_value()) {
+    const std::string record_type =
+        RenderTypeAsCpp(unit, s.object_record->type);
+    AppendSection(
+        out,
+        RenderClassConstantDecl(unit, CppObjectRecordName(), *s.object_record) +
+            Indent(1) +
+            std::format(
+                "static constexpr const {}* {} = &{};\n", record_type,
+                CppClassRecordHookName(), CppObjectRecordName()));
+    AppendSection(
+        text.code, RenderClassConstantDef(
+                       unit, id, s, CppObjectRecordName(), *s.object_record));
   }
 
   out += "};\n";

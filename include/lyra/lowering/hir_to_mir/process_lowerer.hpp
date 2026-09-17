@@ -250,6 +250,10 @@ class ProcessLowerer {
       hir::BehaviorCoordinateId hir_id) const -> mir::FieldId {
     return EnclosingScopeLowerer().BehaviorCoordinateTarget(hir_id);
   }
+  [[nodiscard]] auto BehaviorBodyTarget(hir::BehaviorBodyId hir_id) const
+      -> mir::FieldId {
+    return EnclosingScopeLowerer().BehaviorBodyTarget(hir_id);
+  }
 
   [[nodiscard]] auto Resolution() const -> TimeResolution {
     return time_resolution_;

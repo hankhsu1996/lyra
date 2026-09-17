@@ -281,19 +281,6 @@ class LirDumper {
         "{}#{}", FormatType(method.introduced_by), method.ordinal.value);
   }
 
-  [[nodiscard]] auto FormatDispatchRef(const DispatchRef& method) const
-      -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const StatedDispatchRef& d) -> std::string {
-              return FormatStatedDispatchRef(d);
-            },
-            [&](const SuppliedDispatchRef& r) -> std::string {
-              return std::format("resolved:{}", FormatOperand(r.coordinate));
-            }},
-        method);
-  }
-
   [[nodiscard]] static auto FormatBase(const Base& base) -> std::string {
     return std::visit(
         Overloaded{
@@ -324,8 +311,9 @@ class LirDumper {
             [&](const FunctionTarget& f) -> std::string {
               return unit_->functions.Get(f.function).name;
             },
-            [&](const DispatchTarget& d) -> std::string {
-              return std::format("dispatch {}", FormatDispatchRef(d.method));
+            [](const DispatchTarget& d) -> std::string {
+              return std::format(
+                  "dispatch {}", FormatStatedDispatchRef(d.method));
             },
             [&](const IndirectTarget& i) -> std::string {
               return std::format("through {}", FormatOperand(i.callee));
@@ -374,19 +362,9 @@ class LirDumper {
           Overloaded{
               [&](const DerefProjection&) { out += ".deref"; },
               [&](const MemberProjection& m) {
-                out += std::visit(
-                    Overloaded{
-                        [&](const StatedMemberRef& member) -> std::string {
-                          return std::format(
-                              ".member({}:{})", FormatType(member.declared_by),
-                              member.slot.value);
-                        },
-                        [&](const SuppliedMemberRef& member) -> std::string {
-                          return std::format(
-                              ".member(resolved:{})",
-                              FormatOperand(member.coordinate));
-                        }},
-                    m.member);
+                out += std::format(
+                    ".member({}:{})", FormatType(m.member.declared_by),
+                    m.member.slot.value);
               }},
           step);
     }

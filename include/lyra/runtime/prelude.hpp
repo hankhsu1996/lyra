@@ -34,6 +34,7 @@
 #include "lyra/runtime/fork.hpp"                 // IWYU pragma: keep
 #include "lyra/runtime/hierarchy_segment.hpp"    // IWYU pragma: keep
 #include "lyra/runtime/host_command.hpp"         // IWYU pragma: keep
+#include "lyra/runtime/managed_object.hpp"       // IWYU pragma: keep
 #include "lyra/runtime/named_event.hpp"          // IWYU pragma: keep
 #include "lyra/runtime/nba_region.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/net.hpp"                  // IWYU pragma: keep
