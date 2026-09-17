@@ -42,6 +42,16 @@ cc_library(
 )
 
 cc_test(
+    name = "base_fixed_array_test",
+    srcs = ["base/fixed_array_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "diag_render_tests",
     srcs = ["diag/render_test.cpp"],
     copts = LYRA_COPTS,

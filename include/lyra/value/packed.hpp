@@ -4,14 +4,14 @@
 #include <cstdint>
 #include <span>
 
-#include "lyra/base/inlined_vector.hpp"
+#include "lyra/base/fixed_array.hpp"
 
 namespace lyra::value {
 
 inline constexpr std::size_t kPackedWordsInlineCapacity = 1;
 
-using PackedWordVector =
-    lyra::base::InlinedVector<std::uint64_t, kPackedWordsInlineCapacity>;
+using PackedWordArray =
+    lyra::base::FixedArray<std::uint64_t, kPackedWordsInlineCapacity>;
 
 enum class Signedness : std::uint8_t { kSigned, kUnsigned };
 enum class TwoStateBit : std::uint8_t { kZero, kOne };
@@ -25,7 +25,7 @@ enum class FourStateBit : std::uint8_t {
 [[nodiscard]] constexpr auto WordCountForBits(std::uint64_t bit_width)
     -> std::size_t {
   // 0 bits is the `PackedArray()` sentinel "uninitialized" shape; an empty
-  // storage vector matches it. Non-zero widths round up to whole words.
+  // storage matches it. Non-zero widths round up to whole words.
   // Overflow-safe form: never compute `bit_width + 63`.
   const std::uint64_t whole = bit_width / 64U;
   const std::uint64_t remainder = bit_width % 64U;
@@ -72,7 +72,7 @@ class PackedWords {
 
  private:
   std::uint64_t bit_width_;
-  PackedWordVector words_;
+  PackedWordArray words_;
 };
 
 class ConstBitView;
