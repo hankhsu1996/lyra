@@ -67,10 +67,9 @@ void EmplaceResolvedNet(Object& object, support::ValueDomain domain) {
 }
 
 // Realizes the history of one sampled expression over the domain its value is
-// realized in. What a tick settles is an ordinary value, so every domain a cell
-// can answer for reaches here -- and the three that no cell holds cannot, since
-// an expression whose leaves cannot be armed has no sampled value to keep (LRM
-// 16.5.1).
+// realized in. LRM 16.5.1 gives every variable a sampled value, so what
+// separates the domains here is which of them a history is built over rather
+// than which of them a tick could settle.
 template <typename Object>
 void EmplaceSampledHistory(Object& object, support::ValueDomain domain) {
   switch (domain) {
@@ -111,8 +110,8 @@ void EmplaceSampledHistory(Object& object, support::ValueDomain domain) {
     case support::ValueDomain::kManagedRef:
     case support::ValueDomain::kEmpty:
       throw InternalError(
-          "MemberStorage: this value domain has no observable cell, so an "
-          "expression of it has no sampled value to keep");
+          "MemberStorage: no history is kept over this value domain, so what a "
+          "clocking event settled for such an expression cannot be read back");
   }
   throw InternalError("MemberStorage: unknown value domain");
 }
@@ -176,17 +175,20 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
               case support::ValueDomain::kAssocArray:
                 object_.emplace<Var<value::RuntimeAssociativeArray>>();
                 return;
-              // A chandle is a value its owner holds, never a cell other
-              // processes wait on (LRM 6.14): nothing subscribes to it.
+              // A variable naming an object is waited on for the name changing:
+              // LRM 9.4.2 makes a write to an object handle an event whenever
+              // what it names is not what it named before, which is a different
+              // wait from one on a property of the object.
+              case support::ValueDomain::kManagedRef:
+                object_.emplace<Var<value::ManagedRef>>();
+                return;
+              // The same clause says it of a chandle, and no cell is kept over
+              // one: a chandle's value is the pointer it carries (LRM 6.14), so
+              // a null one is a null pointer, which the boundary a watched
+              // expression answers across reads as no answer at all.
               case support::ValueDomain::kChandle:
                 throw InternalError(
-                    "MemberStorage: a chandle is not observable storage");
-              // A class handle is likewise the value its owner holds (LRM 8.3);
-              // what a process waits on is a property of the object it names,
-              // never the handle.
-              case support::ValueDomain::kManagedRef:
-                throw InternalError(
-                    "MemberStorage: a class handle is not observable storage");
+                    "MemberStorage: no observable cell is kept over a chandle");
               // An empty (void) value is only ever a tagged union's payload
               // (LRM 7.3.2), held inside its union, never storage of its own
               // that a process could wait on.

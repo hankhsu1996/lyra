@@ -2883,6 +2883,22 @@ auto lyra_rt_managedref_value_cell_load(const void* cell) -> void* {
   return Own(static_cast<const ActivationValueCell<ManagedRef>*>(cell)->Get());
 }
 
+// A variable of class type, which a process may wait on: LRM 9.4.2 makes a
+// write to one an event whenever the object it names is not the object it
+// named. A store keeps the handle's share of ownership and a load hands one
+// back, so the object outlives every stretch that touches the variable.
+auto lyra_rt_managedref_cell_get(void* cell) -> void* {
+  return Own(static_cast<Var<ManagedRef>*>(cell)->Get());
+}
+
+void lyra_rt_managedref_cell_initialize(void* cell, const void* prototype) {
+  static_cast<Var<ManagedRef>*>(cell)->Initialize(Read<ManagedRef>(prototype));
+}
+
+void lyra_rt_managedref_cell_set(void* cell, const void* value) {
+  static_cast<Var<ManagedRef>*>(cell)->Set(Read<ManagedRef>(value));
+}
+
 // Boxes a value-domain handle into a type-erased `RuntimeValue`. A value
 // crosses this way exactly where it states a representation the entry receiving
 // it has no other way to know: a product's components, each of its own domain,

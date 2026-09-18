@@ -1714,29 +1714,22 @@ enough to warrant its own focused review.
       Not blocked. Found while removing a whole-unit refusal from the C++ backend, when `--backend`
       turned out to be one of several options the commands that do not execute a design still take.
 
-- [ ] R107 -- An automatic-lifetime class handle read after its process parks does not survive on
-      the execution backend, on a legal program the other backend answers correctly. Four lines
-      reproduce it: a local handle of automatic lifetime, `new`, a delay, then a member read. In a
-      process body the run dies of a memory fault; inside a task the same program instead reports a
-      member reached through a null handle, so the two faces of it are a crash and a wrong answer,
-      and neither names what went wrong. A static-lifetime handle is unaffected, which is the tell:
-      storage a declaration gives per instance holds the handle, and a per-activation one does not.
+- [x] R107 -- A class handle read after its process parks survives on the execution backend. A
+      variable of class type is now storage its execution owns, like a variable of every other type
+      whose value the body does not hold the whole of, so nothing a wait does unreferences the
+      object.
 
-      The cause is who owns the handle between the two stretches. A handle answered across the
-      boundary belongs to the stretch that asked for it, and a park releases that stretch, so the
-      frame keeps naming a hold nobody has. What makes it invisible on the other backend is that
-      the same handle is an ordinary local of its emitted frame there, which the target language
-      keeps across a suspension for free.
+      **The axis this entry first recorded was wrong, and the correction is the part worth keeping.**
+      It read the two faces -- a memory fault and a member reached through a null handle -- as
+      belonging to two kinds of body, a process and a task. They belong to which storage the handle
+      sits in: a class property, a module's own variable, a block promoted out of its frame and an
+      element of an aggregate variable were all correct, while a variable of automatic lifetime, a
+      subroutine's formal, and a local of a class method were not. The last is every local of every
+      method, since a class method's lifetime is automatic whatever encloses it (LRM 8.6), so the
+      broken side was the ordinary case rather than a corner of it.
 
-      Target: a hold's storage lasts as long as the frame that names it. What decides the shape is
-      that a hold is not stable as it stands -- three records say a handle is, and that sentence is
-      what has to be revised before anything is built. The one obvious repair was already weighed
-      and turned down for its own reasons (`object-model.md` rejects spilling managed locals through
-      the promoter that carries a promoted scope, as entangling two concerns); this is a defect
-      rather than a preference, so it needs an answer whether or not that one is available.
-
-      Not blocked. Found by running the neighbour of a detached branch that borrows an enclosing
-      automatic, which is the same question asked about a scope instead of a handle.
+      The repair this entry expected to be unavailable was not the one needed.
+      `decisions/a-body-holds-a-value-or-its-execution-stores-it.md` has what decided it.
 
 - [ ] R108 -- A `fork` reached from a static variable's initializer aborts as a compiler bug on both
       targets, on a program the front end accepts at exit 0. LRM 13.4.4 lets a function hold a
@@ -1765,6 +1758,40 @@ enough to warrant its own focused review.
       text, so it is held by the emitted-name policy and costs a full host-compile run to move.
 
       Not blocked. Found by widening the type's second user without being able to widen its name.
+
+- [ ] R110 -- A closed set of alternatives read by a chain of type tests is the one spelling of that
+      shape nothing checks. The project settles that such a set is consumed so that gaining a member
+      breaks the build, and two policy rules hold it: one over an enumeration read by comparison,
+      one over a visit carrying an arm that names no alternative. Neither reaches a predicate built
+      as `type.Is<A>() || type.Is<B>() || ...`, which opts out of the mechanism exactly as the other
+      two do -- a type added later takes whichever side named it nothing, silently.
+
+      It is not hypothetical: one such predicate decided which of a body's variables get storage, and
+      answered wrongly twice. The first time it omitted every container, and a process declaring one
+      and using it after a delay was dropped with no output and no diagnostic. The second time it
+      omitted the class handle, and a legal program died of a memory fault. Both were found by
+      reading the sentence above the list against the list rather than by anything failing.
+
+      Target: the enforcement reaches this spelling too, or the shape is made unwritable. What has to
+      be settled first is how to tell it apart from a legitimate one -- a predicate asking whether a
+      type is one of three related alternatives is ordinary and must stay writable, while one
+      claiming to partition the whole set is the defect, and the two look alike from the outside.
+
+      Not blocked. Found by fixing the second wrong answer and asking what would have caught it.
+
+- [ ] R111 -- Sampling an expression whose value is a class handle aborts as a compiler bug on
+      source the front end accepts. `$sampled` of a handle inside a clocking context reaches code
+      generation and stops with an internal error naming a wrapper it found nothing to act on, which
+      the error policy does not allow on an accepted program: what a tool does not yet carry out is
+      refused by name, and only a violated invariant of its own is a bug report.
+
+      LRM 16.5.1 gives every variable a sampled value and states no restriction by type, so what is
+      missing is a history over the domain rather than a reason there could not be one. The runtime's
+      own refusal used to give that reason as "no observable cell", which is no longer true of a
+      handle and has been corrected to say what actually holds.
+
+      Target: a history over the handle domain, or a refusal by name where there is none. Not
+      blocked. Found by probing whether a refusal this change falsified was reachable.
 
 ## Out of Scope
 

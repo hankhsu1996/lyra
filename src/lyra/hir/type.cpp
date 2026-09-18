@@ -212,12 +212,22 @@ auto Type::IsValueChangeObservable() const -> bool {
           [](const RealType&) { return true; },
           [](const ShortRealType&) { return true; },
           [](const RealTimeType&) { return true; },
+          // A handle's value is which object it names, and LRM 9.4.2 makes a
+          // write to such a variable an event whenever what it names is not
+          // what it named before. It separates that from a wait on a property
+          // of the object, which is a wait on that property's own storage.
+          [](const ClassHandleType&) { return true; },
+          [](const OpaqueObjectHandleType&) { return true; },
+          [](const ImportedClassHandleType&) { return true; },
+          // The same clause says it of a chandle, and this answers no: a
+          // chandle's value is the pointer it carries (LRM 6.14), so a null one
+          // is a null pointer and nothing tells it apart from an expression
+          // that settled no value at all. Waiting on one waits for that pointer
+          // to change, which needs the domain to carry its value the way every
+          // other one does.
+          [](const ChandleType&) { return false; },
           [](const WildcardIndexType&) { return false; },
           [](const EventType&) { return false; },
-          [](const ChandleType&) { return false; },
-          [](const ClassHandleType&) { return false; },
-          [](const OpaqueObjectHandleType&) { return false; },
-          [](const ImportedClassHandleType&) { return false; },
           [](const UnitObjectType&) { return false; },
           [](const OpaqueScopeType&) { return false; },
           [](const NullType&) { return false; },

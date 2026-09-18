@@ -46,13 +46,15 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
   pointer, reference, or machine scalar is stable across a suspension on its own and is never made a
   cell.
 
-  **An object handle is listed with those three and does not belong there**, which is worth stating
+  **An object handle was listed with those three and does not belong there**, which is worth stating
   because the grouping reads as one property and is two. An address stays an address across a
-  suspension; a handle is a hold, and what it holds lives wherever the stretch that answered it put
-  it. It is excluded here not because it is stable but because the traced path below was meant to
-  take it, and while that path does not exist the exclusion leaves a handle's storage owned by a
-  stretch that the suspension releases -- which is invariant 1 below, unmet rather than
-  inapplicable.
+  suspension; a handle carries a claim on an object's life beside the address, and that claim lives
+  wherever the stretch that answered the handle put it. It was excluded here not because it is
+  stable but because the traced path below was meant to take it, and while that path did not exist
+  the exclusion left a handle's storage owned by a stretch the suspension releases -- invariant 1
+  below, unmet rather than inapplicable. A handle is now a variable like any other whose value the
+  body does not hold the whole of
+  ([a-body-holds-a-value-or-its-execution-stores-it](a-body-holds-a-value-or-its-execution-stores-it.md)).
 
 - **The cell is a non-observable value cell.** A procedural local is not a signal, so a write is
   never an update event and wakes no subscriber. The cell shares the store discipline of a signal
@@ -78,6 +80,16 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
 - **The mechanism is gated on non-managed value types.** A managed value that must be traced does
   not live in this cell; that is the separate traceable-frame path (`lifetime.md`), routed by type.
   The cell mechanism reads the type and takes only the non-managed runtime value domains.
+
+  **Superseded 2026-09-17 by
+  [a-body-holds-a-value-or-its-execution-stores-it](a-body-holds-a-value-or-its-execution-stores-it.md).**
+  This was written where no managed value reached this target, on the reading that when one did it
+  would arrive together with the path it was being routed to. It arrived on its own, that path does
+  not exist, and the gate was answering a legal program with a memory fault rather than with a
+  refusal. What tracing adds is reclamation, which is not what storage outliving a stretch is for: a
+  reference needs it for the same reason a loop counter does, so there is one mechanism and the gate
+  was a second name for it. What decides a variable's home is whether the body holds the whole of
+  its value.
 
 ## Invariants
 
@@ -160,8 +172,10 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
 - The adapter coroutine owns an activation frame and RAII-owns the generated coroutine, closing the
   generated-frame leak on cancellation and shutdown as a side effect of giving the cells a single
   destruction path.
-- Managed cross-suspension values remain future work: they route to a traceable frame by type, and
-  this decision leaves that path open by gating the cell on non-managed types.
+- Managed cross-suspension values were left as future work here, on the reading that they route to a
+  traceable frame by type. They do not: a reference lives in the same storage every other value
+  does, and what a collector would add is reclamation rather than a second home
+  ([a-body-holds-a-value-or-its-execution-stores-it](a-body-holds-a-value-or-its-execution-stores-it.md)).
 
 ## Cross-references
 

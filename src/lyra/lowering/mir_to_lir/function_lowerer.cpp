@@ -269,26 +269,6 @@ auto TranslateUnaryOp(mir::UnaryOp op) -> lir::UnaryOp {
   throw InternalError("TranslateUnaryOp: unknown MIR UnaryOp");
 }
 
-// A type the runtime holds values of, rather than one the generated side holds
-// as it stands. A variable of such a type needs storage of its own, because
-// what the generated side has is a handle into storage the boundary releases
-// and a variable outlives that. A pointer, a reference, an object handle, or a
-// machine scalar is not one of these -- the generated side holds the whole of
-// it -- so it is a value of the body.
-//
-// The list is every domain the runtime builds a cell for, and it has to stay
-// that: a type the runtime holds and this misses gets a handle the boundary
-// then releases underneath it, which is not a refusal but a wrong answer.
-auto NeedsVariableStorage(const mir::Type& type) -> bool {
-  return type.IsIntegralPacked() || type.Is<mir::StringType>() ||
-         type.Is<mir::RealType>() || type.Is<mir::ShortRealType>() ||
-         type.Is<mir::RealTimeType>() || type.IsProduct() ||
-         type.Is<mir::UnionType>() || type.Is<mir::TaggedUnionType>() ||
-         type.Is<mir::DynamicArrayType>() ||
-         type.Is<mir::UnpackedArrayType>() || type.Is<mir::QueueType>() ||
-         type.Is<mir::AssociativeArrayType>();
-}
-
 // What a dump of this function shows beside one of its values. A local the
 // source declared shows the identifier the design wrote; one the lowering added
 // shows nothing, and the value's own number is what a reader has. It is a
@@ -539,11 +519,14 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // The body's variables, in declaration order. A declaration is what gives a
   // variable storage, so nothing about what the body does with one is read
   // here -- not whether anything writes it, not whether anything binds a
-  // second name to it. A type the runtime holds values of gets storage of its
-  // own; one that is stable as it stands stays a value of the body.
+  // second name to it. What the type answers is whether the generated side
+  // holds the whole of the value: where it does not, what it holds is a handle
+  // into storage the boundary releases and the variable outlives that, so the
+  // variable gets storage of its own; where it does, it stays a value of the
+  // body.
   for (const mir::LocalId local : code_->locals.Ids()) {
     const mir::TypeId declared = code_->locals.Get(local).type;
-    if (!NeedsVariableStorage(unit_->Mir().types.Get(declared))) {
+    if (!unit_->Mir().types.Get(declared).IsRuntimeStoredValue()) {
       continue;
     }
     variable_slot_[local.value] =

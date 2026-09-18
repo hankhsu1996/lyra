@@ -92,6 +92,17 @@ event". Coarser tracking is conforming; a per-property subscriber is one option 
 - **A borrowed automatic local stops being an observable cell.** It keeps stable storage, because a
   reference needs that; it loses the subscriber record and the change-detection work on every write.
 
+  **This did not hold, and what replaced it argues the other way.**
+  [a-declared-variable-is-one-storage](a-declared-variable-is-one-storage.md) gave every one of a
+  body's variables one storage decided by its declaration alone, and read LRM 9.4.2 as granting
+  every variable the property of being waitable -- the event expression takes an expression with no
+  restriction on what declared it -- so giving only some of them that property would be a saving
+  taken from reading the whole body, which is the shape that entry removes. Every body variable is
+  therefore an observable cell today, borrowed or not. What this entry establishes is untouched: the
+  form is still decided by the declaration and never by what an expression elsewhere does, and a
+  class property is still not observable. What is open is whether the subscriber record every
+  procedural variable now carries is worth what it costs, which is a measurement nobody has taken.
+
 - **A reference must be able to name both forms.** That is a requirement on the reference's
   representation, and it is settled in
   [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md).
