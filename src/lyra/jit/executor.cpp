@@ -770,6 +770,10 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
       &lyra_rt_managedref_value_cell_store);
   add("lyra_rt_managedref_value_cell_load",
       &lyra_rt_managedref_value_cell_load);
+  add("lyra_rt_managedref_cell_get", &lyra_rt_managedref_cell_get);
+  add("lyra_rt_managedref_cell_initialize",
+      &lyra_rt_managedref_cell_initialize);
+  add("lyra_rt_managedref_cell_set", &lyra_rt_managedref_cell_set);
   add("lyra_rt_managedref_eq", &lyra_rt_managedref_eq);
   add("lyra_rt_managedref_ne", &lyra_rt_managedref_ne);
   add("lyra_rt_managedref_case_equal", &lyra_rt_managedref_case_equal);

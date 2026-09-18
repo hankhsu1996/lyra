@@ -284,6 +284,95 @@ auto Type::WrappedValueType() const -> TypeId {
   throw InternalError("mir: type is not a capability wrapper");
 }
 
+auto Type::IsRuntimeStoredValue() const -> bool {
+  // One arm per MIR type and no catch-all, so a type added later fails to
+  // compile here until it says which side it is on -- rather than silently
+  // answering that the holder has the whole of it, which is a wrong answer and
+  // not a refusal: the holder goes on holding a handle after the storage behind
+  // it is gone.
+  return Visit(
+      Overloaded{
+          // The simulation values, every one of which the runtime builds and
+          // keeps: one vector of bits however it is named, a run of values
+          // however it is sized and indexed, the ones held all at once or one
+          // at a time, and the single quantities whose representation the
+          // library still decides.
+          [](const PackedArrayType&) { return true; },
+          [](const EnumType&) { return true; },
+          [](const PackedStructType&) { return true; },
+          [](const PackedUnionType&) { return true; },
+          [](const UnpackedArrayType&) { return true; },
+          [](const DynamicArrayType&) { return true; },
+          [](const QueueType&) { return true; },
+          [](const AssociativeArrayType&) { return true; },
+          [](const TupleType&) { return true; },
+          [](const UnpackedStructType&) { return true; },
+          [](const UnionType&) { return true; },
+          [](const TaggedUnionType&) { return true; },
+          [](const StringType&) { return true; },
+          [](const RealType&) { return true; },
+          [](const ShortRealType&) { return true; },
+          [](const RealTimeType&) { return true; },
+
+          // A class handle is one of these and a chandle is not, which LRM 8.4
+          // Table 8-1 states directly: an unreferenced object is collected
+          // where the handle is an object handle, and is not where it is a
+          // chandle or a C pointer. A handle's value is therefore which object
+          // it names together with a claim on that object's life, which no
+          // address carries on its own; a chandle's value is the address, so
+          // whoever holds the address holds the whole of it (LRM 6.14).
+          [](const ManagedRefType&) { return true; },
+          [](const ChandleType&) { return false; },
+
+          // A machine quantity, which whoever holds it holds entire.
+          [](const MachineCStringType&) { return false; },
+          [](const MachineBoolType&) { return false; },
+          [](const MachineIntType&) { return false; },
+          [](const MachineFloatType&) { return false; },
+          [](const MachineArrayType&) { return false; },
+          [](const MachineFunctionType&) { return false; },
+
+          // An address whose value is the address: what it names lives for its
+          // own reasons and ends for them, so nothing about holding the address
+          // keeps it or loses it.
+          [](const RefType&) { return false; },
+          [](const PointerType&) { return false; },
+          [](const VectorType&) { return false; },
+          [](const DriverType&) { return false; },
+          [](const CoroutineType&) { return false; },
+
+          // A nominal type names a declaration, and what is built from one is
+          // reached by its address for the same reason.
+          [](const ObjectType&) { return false; },
+          [](const ExternalUnitObjectType&) { return false; },
+          [](const CrossUnitClassType&) { return false; },
+          [](const OpaqueObjectType&) { return false; },
+          [](const RuntimeClassType&) { return false; },
+          [](const StructType&) { return false; },
+          [](const ClosureType&) { return false; },
+
+          // Storage, and the facilities the runtime holds for the whole run.
+          // Each is consumed where it lives rather than read out as a value, so
+          // no holder ever has a copy of one to lose.
+          [](const ObservableType&) { return false; },
+          [](const ResolvedType&) { return false; },
+          [](const SampledHistoryType&) { return false; },
+          [](const EvaluationAttemptsType&) { return false; },
+          [](const EventType&) { return false; },
+          [](const RuntimeEffectsType&) { return false; },
+          [](const FilesType&) { return false; },
+          [](const DiagnosticType&) { return false; },
+          [](const RuntimeLibraryType&) { return false; },
+
+          // A wildcard index (LRM 7.8.1) is a rule about which indices an array
+          // admits rather than a type any value has, and `void` and a tagged
+          // union's empty payload (LRM 7.3.2) are values no declaration holds
+          // on its own.
+          [](const WildcardIndexType&) { return false; },
+          [](const EmptyType&) { return false; },
+          [](const VoidType&) { return false; }});
+}
+
 auto Type::ContainerElementType() const -> std::optional<TypeId> {
   using Element = std::optional<TypeId>;
   return Visit(

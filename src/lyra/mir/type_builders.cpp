@@ -76,9 +76,21 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const UnionType&) { return wrap(); },
           [&](const TaggedUnionType&) { return wrap(); },
           [&](const EmptyType&) { return wrap(); },
+          // A variable naming an object is value storage too: LRM 9.4.2 makes a
+          // write to an object handle an event when what it names is not what
+          // it named before, and the clause's own example puts that beside a
+          // wait on a property of the object to say they are two waits.
+          [&](const ManagedRefType&) { return wrap(); },
+          // A chandle is value storage too, and is not wrapped for a reason of
+          // its own: its value is the pointer it carries (LRM 6.14), so a null
+          // one is a null pointer and nothing tells it apart from a watched
+          // expression that settled no value at all. Such a wait waits for that
+          // pointer to change, which needs the domain to carry its value the
+          // way every other one does.
+          [&](const ChandleType&) { return bare(); },
           // Not value storage, so its own declaration shape is its storage and
-          // it is not wrapped: a handle or container (pointer, managed /
-          // borrowed reference, vector, chandle), an object (a class instance
+          // it is not wrapped: a handle onto storage of another lifetime
+          // (pointer, borrowed reference, vector), an object (a class instance
           // or an instantiated child), a named event (LRM 15 -- it carries its
           // own subscribe mechanism), a runtime facade (effects, files,
           // diagnostics, a runtime-library type), a coroutine result, a machine
@@ -94,7 +106,6 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const MachineArrayType&) { return bare(); },
           [&](const MachineFunctionType&) { return bare(); },
           [&](const EventType&) { return bare(); },
-          [&](const ChandleType&) { return bare(); },
           [&](const VoidType&) { return bare(); },
           [&](const ObjectType&) { return bare(); },
           [&](const ExternalUnitObjectType&) { return bare(); },
@@ -108,7 +119,6 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const CoroutineType&) { return bare(); },
           [&](const RefType&) { return bare(); },
           [&](const PointerType&) { return bare(); },
-          [&](const ManagedRefType&) { return bare(); },
           [&](const VectorType&) { return bare(); },
           [&](const ObservableType&) { return bare(); },
           [&](const ResolvedType&) { return bare(); },

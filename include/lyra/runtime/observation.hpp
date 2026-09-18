@@ -10,6 +10,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/support/event_edge.hpp"
+#include "lyra/value/object_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_value.hpp"
 
@@ -73,6 +74,22 @@ inline auto EdgeMatches(support::EventEdge edge, EdgeTransition transition)
   throw InternalError("runtime::EdgeMatches: unknown EventEdge");
 }
 
+// What an expression settled, as the carrier a comparison is made in. One
+// domain reaches here in two realizations: where a target reaches a member
+// through a typed pointer it holds that pointer beside the object's identity,
+// and the pointer is how that target reaches a member rather than part of the
+// value (LRM 8.3), so what is compared is the identity and the pointer is left
+// behind. Every other domain has one realization and settles as itself.
+[[nodiscard]] inline auto Settled(const value::ObjectRef& reference)
+    -> value::RuntimeValue {
+  return value::RuntimeValue{reference.Handle()};
+}
+
+template <typename Value>
+[[nodiscard]] auto Settled(Value value) -> value::RuntimeValue {
+  return value::RuntimeValue{std::move(value)};
+}
+
 // The expression an event control is watching, and what it was worth when the
 // wait began (LRM 9.4.2).
 //
@@ -89,7 +106,7 @@ class ValueWatch {
   template <std::invocable Evaluate>
   ValueWatch(Evaluate evaluate, support::EventEdge edge)
       : evaluate_([evaluate = std::move(evaluate)]() -> value::RuntimeValue {
-          return value::RuntimeValue{evaluate()};
+          return Settled(evaluate());
         }),
         edge_(edge) {
     Arm();

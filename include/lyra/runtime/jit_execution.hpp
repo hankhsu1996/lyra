@@ -1056,6 +1056,9 @@ auto lyra_rt_managedref_to_bool(const void* operand) -> bool;
 auto lyra_rt_managedref_value_cell_alloc() -> void*;
 void lyra_rt_managedref_value_cell_store(void* cell, const void* value);
 auto lyra_rt_managedref_value_cell_load(const void* cell) -> void*;
+auto lyra_rt_managedref_cell_get(void* cell) -> void*;
+void lyra_rt_managedref_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_managedref_cell_set(void* cell, const void* value);
 
 // Boxes a value-domain handle into a type-erased `RuntimeValue`, the form in
 // which an aggregate holds its parts. A value crosses this way exactly where it

@@ -72,14 +72,16 @@ auto LowerSignalEventTrigger(
   // An edge is a transition of the expression's least significant bit, so it
   // needs an integral operand -- which binding already requires, so an edge
   // carries no restriction of its own. What remains is the control without one,
-  // which reacts to the whole value and so needs a value (LRM 9.4.2).
+  // which reacts to the whole value (LRM 9.4.2) and so needs one whose change
+  // is answered. What is left out is an operand that is no value at all and one
+  // whose value nothing yet compares.
   const auto& expr_type = proc.Owner().Unit().types.Get(expr_or->type);
   if (sig.edge == slang::ast::EdgeKind::None &&
       !expr_type.IsValueChangeObservable()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "value-change event control on a non-value operand is not yet "
-        "supported");
+        "a change of this operand is not yet watched, so an event control on "
+        "it is not yet supported");
   }
 
   const auto edge_kind = LowerEventEdge(sig.edge);

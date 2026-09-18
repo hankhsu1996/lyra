@@ -202,9 +202,20 @@ ownership, or native in-frame layout) for every value.
       variable written and read through its own storage. LRM 9.7 process control is what exercises
       it, since a handle to a process reaches the domain without building anything on the managed
       heap.
-- [ ] **A managed value across a suspension, and its reclamation.** A traceable frame and precise
-      reclamation, neither of which is implemented: what a handle keeps alive it keeps by shared
-      ownership, so an unreachable cycle is not reclaimed on either backend. Contract:
+- [x] **A managed value across a suspension.** A variable of class type is storage its execution
+      owns, like a variable of every other type whose value the body does not hold the whole of, so
+      an object goes on being referred to while the process that named it is waiting and its
+      properties read back what was written before the wait. This covers a variable of automatic
+      lifetime, a subroutine's formal, and a local of a class method -- which is every local of
+      every method, since a class method's lifetime is automatic whatever encloses it (LRM 8.6).
+      What decided it is the standard's own split between a handle that keeps an object alive and a
+      chandle that does not (LRM 8.4, Table 8-1): the claim on an object's life is part of a
+      handle's value and no address carries it, so the body cannot hold the whole of one.
+
+- [ ] **Reclaiming a managed value.** Precise tracing, which neither backend implements: what a
+      handle keeps alive it keeps by shared ownership, so an unreachable cycle is not reclaimed on
+      either. The storage a reference lives in is described, which is what root enumeration would
+      walk, so what is left is the collector rather than a second home for the reference. Contract:
       `../architecture/lifetime.md`.
 - [ ] **A reference argument aliasing storage that is not a cell.** A reference binds the cell its
       referent lives in, so a signal is lent by taking the address of the cell it already is, and a

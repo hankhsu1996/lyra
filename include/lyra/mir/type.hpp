@@ -848,6 +848,18 @@ class Type {
   // a net's resolved cell, a net driver's handle.
   [[nodiscard]] auto IsCapabilityWrapper() const -> bool;
 
+  // True for a type whose value lives in storage the runtime owns, so whatever
+  // holds such a value holds a handle onto that storage rather than the value
+  // itself. What follows is that the handle is not the whole of the value:
+  // whoever ends the storage ends the value, and a holder that outlives it is
+  // left naming nothing. A type answering false is one the holder has entire --
+  // a machine quantity, or an address whose value is the address.
+  //
+  // Narrower than being a domain the runtime realizes values of, which a
+  // chandle also is: its value is the pointer it carries, and the pointer is in
+  // the holder's own hands.
+  [[nodiscard]] auto IsRuntimeStoredValue() const -> bool;
+
   // The value a capability wrapper wraps; throws where there is none.
   [[nodiscard]] auto WrappedValueType() const -> TypeId;
 

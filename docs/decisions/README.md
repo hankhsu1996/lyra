@@ -252,6 +252,14 @@ the detail lives in the entry itself.
   by the compiler on every way out including the one no statement spells. Read it for why the
   obvious argument for emitting nothing there expires, and for the test that separates an answer
   that survives the work ahead from one that does not.
+- [a-body-holds-a-value-or-its-execution-stores-it](a-body-holds-a-value-or-its-execution-stores-it.md)
+  -- the third cut of that same question, and the one the standard settles outright. A variable is a
+  value of its body where the body holds the whole of that value and storage its execution owns
+  where it does not, which puts a class handle on the storage side and a chandle on the other for
+  the reason Table 8-1 gives. Which types those are is one classification answering for every type,
+  since a list of the ones somebody remembered had already answered wrongly twice. Read it also for
+  what a variable naming an object is waited on for, and for why holding a reference in the target's
+  own frame is the wrong place rather than the unbuilt one.
 - [inline-member-slots](inline-member-slots.md) -- a storage block whose owner cannot move holds its
   slots inline, one allocation for the block rather than one per member: an object's properties and
   a scope's members qualify, and a closure's captures did not until

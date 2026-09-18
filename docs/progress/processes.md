@@ -145,9 +145,18 @@ under each item, and the conformance gaps at the end.
       the watched expression changes and never when the qualifier itself does, so a change in the
       qualifier alone reaches nothing, and a change it holds back still moves what the wait compares
       against next. It qualifies a named event as well, and binds tighter than the `or` of an event
-      list.
-  - [ ] A value-change event control on a non-value operand (LRM 9.4.2): only value operands are
-        accepted.
+      list. A variable naming an object is waited on for which object it names: LRM 9.4.2 makes a
+      write to a simple object handle an event whenever what it names is not what it named before,
+      and a write naming the object already named is no event. The clause's own example places a
+      wait on a property of the object beside a wait on the handle to say they are two different
+      waits, and a write to the property resumes neither the other.
+  - [ ] A value-change event control on a chandle (LRM 9.4.2 names one in the same sentence as an
+        object handle): a chandle's value is the pointer it carries, so a null one is a null pointer
+        and the boundary a synthesized body answers across reads that as no answer at all. What it
+        waits on is a change to the pointer, so this waits on the domain crossing the way every
+        other value domain does.
+  - [ ] A value-change event control on any other operand whose change is not watched (LRM 9.4.2):
+        an operand that is no value at all, and one whose value nothing yet compares.
   - [ ] A nested timing control inside an event-list entry: only signal events compose in a list
         today.
 - [x] T6 -- The non-blocking event trigger `->> e` (LRM 15.5.1), with and without a control. The
