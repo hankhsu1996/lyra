@@ -113,6 +113,8 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "property coordinate";
     case RuntimeLibraryKind::kBehaviorCoordinate:
       return "behavior coordinate";
+    case RuntimeLibraryKind::kObjectDefinition:
+      return "object definition";
   }
   throw InternalError("lir::RuntimeLibraryKindName: unknown kind");
 }

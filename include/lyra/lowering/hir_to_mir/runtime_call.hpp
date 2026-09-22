@@ -85,6 +85,28 @@ void AppendRuntimeEffectStmt(
 [[nodiscard]] auto BuildDiagnosticCallExpr(
     const mir::CompilationUnit& unit, mir::ExprId runtime_id) -> mir::Expr;
 
+// The call handing one report to the diagnostic broker at `severity` (LRM
+// 20.10): the origin the dispatcher attributes and rate-limits by, and the text
+// already formatted. Composing that text is where reports differ -- a severity
+// task formats the design's own values, while a report the tool writes on its
+// own behalf has fixed words -- and issuing one is where they do not. Returned
+// detached, because the severity that ends the run has a statement of its own
+// to follow it.
+[[nodiscard]] auto BuildReportCallExpr(
+    const mir::CompilationUnit& unit, support::BuiltinFn severity,
+    mir::ExprId diagnostic_id, mir::ExprId origin_id, mir::ExprId text_id)
+    -> mir::Expr;
+
+// Appends the statement issuing one severity-fixed report whose text the tool
+// composed rather than the design: the origin tag the runtime prints it under,
+// and the words. Every report Lyra writes on its own behalf is this one
+// statement -- an assertion that failed with no action block of its own, an
+// assignment a destination's type did not admit -- because what separates them
+// is the severity and the words and nothing else.
+void AppendToolReportStmt(
+    const UnitLowerer& unit_lowerer, mir::Block& block,
+    support::BuiltinFn severity, std::string text, diag::SourceSpan span);
+
 // Builds the format-text expression `value::Format(items,
 // runtime.TimeFormat())`: a value-layer free call over the print-item array
 // that yields an SV `string`, taking the engine's `$timeformat` state as an

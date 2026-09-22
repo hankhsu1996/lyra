@@ -1,9 +1,11 @@
 #pragma once
 
-// Lowering of the LRM 6.19.5 enumerated type methods. An enum value is its base
-// integral and the enumeration's declared members are a compile-time fact, so
-// every one of them is answered here: `first` / `last` / `num` fold to
-// constants, `name` / `next` / `prev` to synthesized per-enumeration callables.
+// Lowering of the LRM 6.19.5 enumerated type methods, and of the one other
+// question the member table answers. An enum value is its base integral and the
+// enumeration's declared members are a compile-time fact, so every one of them
+// is answered here: `first` / `last` / `num` fold to constants, while `name`,
+// `next` / `prev`, and whether a value is a member at all become synthesized
+// per-enumeration callables.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
@@ -43,6 +45,14 @@ auto BuildEnumNameCallExpr(
     UnitLowerer& unit_lowerer, mir::ExprId value_id, hir::TypeId enum_type)
     -> mir::Expr;
 
+// Whether a value is a member of the enumeration (LRM 6.24.2), which is what a
+// dynamic cast into a variable of that type answers with. The enumeration fixes
+// its members where it is declared, so the type is what answers, and the value
+// asked about is the one such an assignment would store.
+auto BuildEnumMembershipCallExpr(
+    UnitLowerer& unit_lowerer, mir::ExprId value_id, hir::TypeId enum_type)
+    -> mir::Expr;
+
 // The bodies of the two functions an enumeration owns, over the member table
 // its declaration carries: `name` answers the declared name of a value (LRM
 // 6.19.5.5), and one traversal of the member order serves both `next` and
@@ -53,5 +63,10 @@ auto BuildEnumerationNameCode(UnitLowerer& unit_lowerer, hir::TypeId enum_type)
     -> mir::CallableCode;
 auto BuildEnumerationStepCode(UnitLowerer& unit_lowerer, hir::TypeId enum_type)
     -> mir::CallableCode;
+
+// The body of the third, which walks the same member table to answer whether a
+// value is among them (LRM 6.24.2).
+auto BuildEnumerationMembershipCode(
+    UnitLowerer& unit_lowerer, hir::TypeId enum_type) -> mir::CallableCode;
 
 }  // namespace lyra::lowering::hir_to_mir

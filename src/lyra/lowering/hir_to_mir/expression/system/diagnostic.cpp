@@ -72,14 +72,8 @@ auto LowerDiagnosticSystemSubroutineCall(
       unit, block,
       FormatRuntimeOriginString(span, process.Owner().SourceManager()));
 
-  mir::Expr emit_call{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = info.builtin_fn, .receiver = diagnostic_id},
-              .arguments = {origin_id, text_id}},
-      .type = unit.builtins.void_type};
+  mir::Expr emit_call = BuildReportCallExpr(
+      unit, info.builtin_fn, diagnostic_id, origin_id, text_id);
 
   if (!is_fatal) return emit_call;
 

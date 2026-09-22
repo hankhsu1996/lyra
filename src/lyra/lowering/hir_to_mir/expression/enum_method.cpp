@@ -169,6 +169,37 @@ auto SynthesizeEnumNameCallable(
   return code;
 }
 
+// LRM 6.24.2: a static function `(value) -> bit` whose body is a case-equality
+// chain over the member table, answering 1 for a value the enumeration declares
+// and 0 for every other (X/Z included). LRM 6.19.5.6 requires the empty string
+// where a value is not a member, so this is the walk the name reading already
+// has to make, over the same set, answered as the question it is.
+auto SynthesizeEnumMembershipCallable(
+    mir::CompilationUnit& unit, mir::TypeId enum_ty,
+    const mir::PackedArrayType& base,
+    const std::vector<mir::EnumMember>& members) -> mir::CallableCode {
+  const mir::TypeId bit_ty = unit.builtins.bit1;
+
+  mir::CallableCode code = mir::CallableCode::Defined();
+  const mir::LocalId value_id = code.AddLocal(enum_ty);
+  code.params = {value_id};
+  code.result_type = bit_ty;
+
+  mir::Block& body = code.Body();
+  mir::ExprId acc = BuildBit1Literal(unit, body, false);
+  for (std::size_t i = members.size(); i-- > 0;) {
+    const mir::ExprId val_ref =
+        body.exprs.Add(mir::MakeLocalRefExpr(value_id, enum_ty));
+    const mir::ExprId member_lit =
+        MemberLiteral(unit, body, enum_ty, base, members[i].value);
+    const mir::ExprId cond = CaseEq(body, val_ref, member_lit, bit_ty);
+    acc =
+        Cond(unit, body, cond, BuildBit1Literal(unit, body, true), acc, bit_ty);
+  }
+  body.AppendStmt(mir::ReturnStmt{.value = acc});
+  return code;
+}
+
 // LRM 6.19.5.3/4 `next` / `prev`: a static function `(value, step) -> enum`
 // that steps `step` members from `value` (negative `step` is `prev`), wrapping
 // over the member order; a non-member (or X/Z) value returns the enum default
@@ -366,6 +397,23 @@ auto BuildEnumNameCallExpr(
       .type = unit_lowerer.Unit().builtins.string};
 }
 
+auto BuildEnumMembershipCallExpr(
+    UnitLowerer& unit_lowerer, mir::ExprId value_id, hir::TypeId enum_type)
+    -> mir::Expr {
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target = unit_lowerer.TypeOwnedReadingOf(
+                          TypeOwnedReadingKey{
+                              .reading =
+                                  TypeOwnedReading::kEnumerationMembership,
+                              .type = enum_type})},
+              .arguments = {value_id}},
+      .type = unit_lowerer.Unit().builtins.bit1};
+}
+
 auto BuildEnumerationNameCode(UnitLowerer& unit_lowerer, hir::TypeId enum_type)
     -> mir::CallableCode {
   const EnumerationShape shape = ShapeOf(unit_lowerer, enum_type);
@@ -377,6 +425,13 @@ auto BuildEnumerationStepCode(UnitLowerer& unit_lowerer, hir::TypeId enum_type)
     -> mir::CallableCode {
   const EnumerationShape shape = ShapeOf(unit_lowerer, enum_type);
   return SynthesizeEnumStepCallable(
+      unit_lowerer.Unit(), shape.type, shape.base, shape.members);
+}
+
+auto BuildEnumerationMembershipCode(
+    UnitLowerer& unit_lowerer, hir::TypeId enum_type) -> mir::CallableCode {
+  const EnumerationShape shape = ShapeOf(unit_lowerer, enum_type);
+  return SynthesizeEnumMembershipCallable(
       unit_lowerer.Unit(), shape.type, shape.base, shape.members);
 }
 

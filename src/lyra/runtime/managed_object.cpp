@@ -297,4 +297,21 @@ auto BehaviorAt(const GcObject* object, const BehaviorCoordinate* at)
       object, at->introduced_by, at->ordinal);
 }
 
+auto ObjectIsOfClass(
+    const value::ManagedRef& handle, const ObjectDefinition* wanted)
+    -> std::int64_t {
+  const auto* object = static_cast<const GcObject*>(handle.Share().get());
+  // A class states what it extends and nothing about the rest of its lineage,
+  // so the walk is the whole answer. A handle referring to no object starts it
+  // at nothing and it ends having found nothing, which is the same answer.
+  for (const ObjectDefinition* at = object == nullptr ? nullptr
+                                                      : object->Class();
+       at != nullptr; at = at->base) {
+    if (at == Checked(wanted)) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
 }  // namespace lyra::runtime

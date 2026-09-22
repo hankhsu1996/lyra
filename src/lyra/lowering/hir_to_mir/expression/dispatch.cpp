@@ -11,6 +11,7 @@
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
+#include "lyra/lowering/hir_to_mir/expression/dynamic_cast.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/inside.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
@@ -194,6 +195,10 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return LowerHirTaggedUnionExpr(
                 lowerer, frame, t, expr.type, result_type);
           },
+          [&](const hir::DynamicCastExpr& c) -> diag::Result<mir::Expr> {
+            return LowerHirDynamicCastExpr(
+                lowerer, frame, c, result_type, expr.span);
+          },
       },
       expr.data);
   if (!raw_or) return raw_or;
@@ -311,6 +316,7 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::DynamicArrayNewExpr&) { return not_a_write_target(); },
           [&](const hir::ClassNewExpr&) { return not_a_write_target(); },
           [&](const hir::TaggedUnionExpr&) { return not_a_write_target(); },
+          [&](const hir::DynamicCastExpr&) { return not_a_write_target(); },
       },
       expr.data);
 }

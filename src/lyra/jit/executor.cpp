@@ -350,6 +350,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_property_at", &lyra_rt_property_at);
   add("lyra_rt_behavior_at", &lyra_rt_behavior_at);
   add("lyra_rt_object_of", &lyra_rt_object_of);
+  add("lyra_rt_object_is_of_class", &lyra_rt_object_is_of_class);
   add("lyra_rt_closure_capture", &lyra_rt_closure_capture);
   add("lyra_rt_submit_nba", &lyra_rt_submit_nba);
   add("lyra_rt_submit_nba_after", &lyra_rt_submit_nba_after);

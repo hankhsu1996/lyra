@@ -804,6 +804,44 @@ class HirDumper {
     throw InternalError("HirDumper::FormatConversionKind: unknown kind");
   }
 
+  static auto FormatRunTimeCheck(RunTimeCheck check) -> std::string_view {
+    switch (check) {
+      case RunTimeCheck::kNone:
+        return "none";
+      case RunTimeCheck::kValueIsAMemberOfTheEnumeration:
+        return "value-is-a-member";
+      case RunTimeCheck::kObjectIsOfTheDestinationClass:
+        return "object-is-of-the-destination-class";
+    }
+    throw InternalError("HirDumper::FormatRunTimeCheck: unknown check");
+  }
+
+  static auto FormatAssignmentValidity(const AssignmentValidity& validity)
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const NoAssignmentAllowed&) -> std::string {
+              return "no-assignment-allowed";
+            },
+            [](const AssignmentAllowed& allowed) -> std::string {
+              return std::format(
+                  "allowed check={}", FormatRunTimeCheck(allowed.check));
+            }},
+        validity);
+  }
+
+  static auto FormatInvalidAssignmentHandling(InvalidAssignmentHandling h)
+      -> std::string_view {
+    switch (h) {
+      case InvalidAssignmentHandling::kAnswered:
+        return "answered";
+      case InvalidAssignmentHandling::kReported:
+        return "reported";
+    }
+    throw InternalError(
+        "HirDumper::FormatInvalidAssignmentHandling: unknown handling");
+  }
+
   static auto FormatEnumMethod(EnumMethod m) -> std::string_view {
     switch (m) {
       case EnumMethod::kFirst:
@@ -1245,6 +1283,14 @@ class HirDumper {
               }
               return std::format(
                   "TaggedUnionExpr member={} void", t.member_index.value);
+            },
+            [](const DynamicCastExpr& c) -> std::string {
+              return std::format(
+                  "DynamicCastExpr destination=Expr[{}] source=Expr[{}] "
+                  "validity={} on_invalid={}",
+                  c.destination.value, c.source.value,
+                  FormatAssignmentValidity(c.validity),
+                  FormatInvalidAssignmentHandling(c.on_invalid));
             },
         },
         e.data);

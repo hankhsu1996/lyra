@@ -25,8 +25,9 @@ the feature file its domain belongs to.
   (LRM 21.2.3) -- in `display.md`.
 - Sampled value functions -- `$sampled`, `$past`, `$rose`, `$fell`, `$stable`, `$changed` (LRM
   16.9.3) -- and the assertion control tasks (LRM 20.12), in `assertions.md` (AS4, AS6).
-- `$cast` (LRM 6.24.2), the checked run-time conversion, is class-object-model work rather than a
-  utility function, so it belongs with that family and not here.
+- `$cast` (LRM 6.24.2), the dynamic cast, in `datatypes.md`, beside the other casting clause. Its
+  class-handle half reads like object-model work and its enumeration half does not, and the
+  construct is one thing, so it is tracked whole where the clause sits.
 
 ## Out of scope
 

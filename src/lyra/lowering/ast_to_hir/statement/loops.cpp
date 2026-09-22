@@ -8,6 +8,10 @@
 #include <slang/ast/Statement.h>
 #include <slang/ast/statements/LoopStatements.h>
 
+#include "lyra/hir/expr.hpp"
+#include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
+#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+
 namespace lyra::lowering::ast_to_hir {
 
 auto LowerForLoopStmt(
@@ -36,7 +40,13 @@ auto LowerForLoopStmt(
   std::vector<hir::ExprId> step_ids;
   step_ids.reserve(fs.steps.size());
   for (const auto* step_expr : fs.steps) {
-    auto step_or = proc.LowerExpr(*step_expr, frame);
+    // A step discards whatever it evaluates to, and the grammar admits a
+    // subroutine call here and no cast around one (LRM A.6.8), so a call
+    // written as a step is called as a task with no way for the source to say
+    // otherwise.
+    auto step_or = LowerExprWithDiscardedAnswer(
+        proc, frame, *step_expr, hir::InvalidAssignmentHandling::kReported,
+        span);
     if (!step_or) return std::unexpected(std::move(step_or.error()));
     step_ids.push_back(frame.Exprs().Add(*std::move(step_or)));
   }

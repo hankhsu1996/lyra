@@ -120,6 +120,11 @@ class FunctionLowerer {
   auto ConstructorOf(const mir::ClassRef& cls)
       -> std::optional<EnteredConstructor>;
 
+  // The type an object of the class `cls` names is opened as, which is how
+  // every consumer below names a class: a member's declarer, a dispatch
+  // position's introducer, and the record a class's objects carry.
+  auto ObjectTypeOf(const mir::ClassRef& cls) -> diag::Result<lir::TypeId>;
+
   // Enters the base's constructor on this same object, ahead of the body (LRM
   // 8.7). The base's members sit ahead of this class's in one shared
   // numbering, so the base initializes its own through the receiver it is

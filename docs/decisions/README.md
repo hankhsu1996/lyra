@@ -487,6 +487,14 @@ the detail lives in the entry itself.
   concern. Giving every method a dispatch position, letting each backend recover the object its own
   way, putting the handle in every entry's first parameter, and resolving the name at each access
   are rejected.
+- [a-dynamic-cast-asks-the-type-or-the-object](a-dynamic-cast-asks-the-type-or-the-object.md) --
+  whether an assignment the two declared types would not otherwise allow is valid for a particular
+  value is answered by whoever fixes the values the destination accepts: the type where its
+  declaration fixes them, and the object where the classes extending one are open across compilation
+  units. The construct is a run of steps ending in the answer, the reporting spelling is those steps
+  plus a report, and no semantic layer gains an alternative for it. One checked-cast node dispatched
+  on the type pair, a per-class table of the subclasses a destination accepts, binding the
+  destination as an output argument, and refusing a statically impossible pair are rejected.
 - [unit-scope-naming](unit-scope-naming.md) -- the anonymous `$unit` scope (LRM 3.12.1) is a
   namespace unit named by its compilation-unit input identity, recomputed table-free by producer and
   consumer; a design-wide unit id, a fixed name, a collection ordinal, and a content digest are all
