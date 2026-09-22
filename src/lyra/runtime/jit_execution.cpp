@@ -1889,6 +1889,28 @@ auto lyra_rt_assocarray_sampled_history_at(
           Read<PackedArray>(ticks_back)));
 }
 
+// Each entry keeps a share of the object its handle names, so an object the
+// program no longer names anywhere is still there for a past tick to answer
+// with -- which LRM 8.4 requires, since it reclaims an object only once nothing
+// references it and a kept sampled value is a reference.
+void lyra_rt_managedref_sampled_history_install(
+    void* history, const void* default_value, const void* depth) {
+  static_cast<SampledHistory<ManagedRef>*>(history)->Install(
+      Read<ManagedRef>(default_value), Read<PackedArray>(depth));
+}
+
+void lyra_rt_managedref_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<ManagedRef>*>(history)->Push(
+      Read<ManagedRef>(value));
+}
+
+auto lyra_rt_managedref_sampled_history_at(
+    const void* history, const void* ticks_back) -> void* {
+  return Own(
+      static_cast<const SampledHistory<ManagedRef>*>(history)->At(
+          Read<PackedArray>(ticks_back)));
+}
+
 void lyra_rt_evaluation_attempts_install(
     void* attempts, void* effects, std::uint64_t words, bool pending_holds,
     void* pass_action, void* fail_action) {
@@ -2897,6 +2919,18 @@ void lyra_rt_managedref_cell_initialize(void* cell, const void* prototype) {
 
 void lyra_rt_managedref_cell_set(void* cell, const void* value) {
   static_cast<Var<ManagedRef>*>(cell)->Set(Read<ManagedRef>(value));
+}
+
+// Arming keeps a share of whatever the variable names at the moment it is
+// armed, and every later slot the variable moves away from replaces it, so the
+// object a sampled read answers with is alive for as long as that read can
+// happen (LRM 8.4, 16.5.1).
+void lyra_rt_managedref_cell_arm_sampling(void* cell) {
+  static_cast<Var<ManagedRef>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_managedref_cell_sampled_load(void* cell) -> void* {
+  return Own(static_cast<Var<ManagedRef>*>(cell)->SampledGet());
 }
 
 // Boxes a value-domain handle into a type-erased `RuntimeValue`. A value

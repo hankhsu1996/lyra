@@ -46,6 +46,17 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::ExprId;
 
+// Returns `operand_id` at the type a comparison against `compared_with`
+// happens at, which is that type whenever it is a handle and the operand's own
+// otherwise. LRM 8.4 admits `null` as one operand of a handle comparison, and a
+// comparison states no destination, so the front end leaves such an operand at
+// a type of its own; what it is compared at is the handle's. Operands of any
+// other family reach their common type by rules this is not (LRM 11.8.1,
+// 12.5).
+[[nodiscard]] auto OperandAtHandleType(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
+    mir::TypeId compared_with) -> mir::ExprId;
+
 // Reads a simulation value out as the widest machine integer -- the scalar a
 // runtime signature takes where it wants a count, an index, or a bit pattern
 // rather than an SV-typed value. The result type is that machine integer and

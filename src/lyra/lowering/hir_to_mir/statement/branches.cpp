@@ -13,6 +13,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/case_cascade.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
@@ -251,7 +252,9 @@ auto LowerCaseStmt(
     }
     auto label_or = process.LowerExpr(hir_proc.exprs.Get(label), label_frame);
     if (!label_or) return std::unexpected(std::move(label_or.error()));
-    const mir::ExprId label_id = label_block.exprs.Add(*std::move(label_or));
+    const mir::ExprId written = label_block.exprs.Add(*std::move(label_or));
+    const mir::ExprId label_id =
+        OperandAtHandleType(unit, label_block, written, snapshot.sel_type);
     return label_block.exprs.Add(
         mir::Expr{
             .data =

@@ -1779,19 +1779,70 @@ enough to warrant its own focused review.
 
       Not blocked. Found by fixing the second wrong answer and asking what would have caught it.
 
-- [ ] R111 -- Sampling an expression whose value is a class handle aborts as a compiler bug on
-      source the front end accepts. `$sampled` of a handle inside a clocking context reaches code
-      generation and stops with an internal error naming a wrapper it found nothing to act on, which
-      the error policy does not allow on an accepted program: what a tool does not yet carry out is
-      refused by name, and only a violated invariant of its own is a bug report.
+- [x] R111 -- Sampling an expression whose value names an object answers on both targets. A tick
+      settles which object the variable named, a history keeps that as a reference so a past tick
+      answers with an object still there to be reached through, and the four functions the value
+      admits -- the sampled value, a past one, and the two that compare across ticks -- answer over
+      it as they do over any other kind of value.
 
-      LRM 16.5.1 gives every variable a sampled value and states no restriction by type, so what is
-      missing is a history over the domain rather than a reason there could not be one. The runtime's
-      own refusal used to give that reason as "no observable cell", which is no longer true of a
-      handle and has been corrected to say what actually holds.
+      **What this entry recorded as an abort was a named refusal, and the correction is worth
+      keeping.** On the execution backend the stop names the runtime entries that were never
+      published for the domain; the internal error it also described sits in the runtime's own
+      history path, which only that backend reaches, and the C++ target answered correctly the whole
+      time because its host compiler instantiates a history for whatever type reaches it. The
+      asymmetry was the finding: a storage family is universal over the kinds of value on a target
+      that compiles per type, and only as wide as what was published on one that calls a library
+      built beforehand.
 
-      Target: a history over the handle domain, or a refusal by name where there is none. Not
-      blocked. Found by probing whether a refusal this change falsified was reachable.
+- [ ] R112 -- One sampled expression against one clocking event keeps a history per place it is
+      written rather than one. The design says a history belongs to the pair and is as deep as the
+      deepest read of it asks for; what is built is one per call, so four reads of the same variable
+      under the same clock produce four histories, four synthesized processes waiting on that clock,
+      and four commits per tick. Where the value names an object each of those is also a separate
+      reference holding it, so what an object's life is extended by is multiplied by how often the
+      source happened to ask.
+
+      Target: the pair decides, and the depth is the largest any of its readers named. What has to
+      be settled first is when two written expressions are the same one, which is a question about
+      comparing expressions rather than about sampling. Not blocked. Found by reading the emitted
+      C++ for a case that reads one variable four ways.
+
+- [ ] R113 -- A variable of automatic lifetime named by an event control or by a sampled value
+      function is resolved as though it named a signal of the enclosing scope, and refused as a
+      hierarchical name that reaches none. The message describes neither the construct nor what is
+      missing, on both targets and for every kind of value, and the two constructs meet it through
+      one resolver.
+
+      The standard asks for little here: LRM 9.4.2 puts no restriction on what an event control
+      watches, and LRM 16.5.1 makes an automatic variable's sampled value its current value and a
+      past value of one the current value too -- so what is owed on the sampling side is a plain
+      read rather than any storage. Target: such a name resolves to the storage it is, and whatever
+      remains unsupported is refused by naming the construct. Not blocked. Found by probing the
+      reason a progress entry gave for this being refused, which the standard contradicts.
+
+- [ ] R114 -- A kind of value a storage family was never published for is reported to the user as a
+      missing runtime library symbol. The check is real and fires at the right moment, but its
+      audience is this compiler and its own library, and what it prints is a list of internal entry
+      names -- so someone who wrote an assertion over a class handle is told that
+      `lyra_rt_managedref_cell_sampled_load` does not exist. The error policy asks that an operation
+      a legal program requests and this tool does not carry out be refused by naming the construct.
+
+      Target: the refusal names the construct and the kind of value, and the symbol list stays where
+      it helps, which is a build of this compiler rather than a run of someone's design. What has to
+      be settled first is where that refusal belongs, since the check runs where only symbols are
+      left. Not blocked. Found by meeting it on a legal program.
+
+- [ ] R115 -- The `null` literal is typed as the opaque handle, and a comment says every handle
+      absorbs it. That holds where a target compiles per type and an implicit conversion covers the
+      difference; it is false where the kind of value decides how a value crosses to generated code,
+      because the opaque handle is the one kind that crosses as the pointer itself and every other
+      crosses as the address of what it holds. Two comparisons therefore have to bring such an
+      operand to the handle's type before stating themselves, and a third that forgets gets a null
+      address read as a value.
+
+      Target: a literal that names no object carries no kind of value of its own, so whatever
+      consumes one states the type it is read at and the shape stops being forgettable. Not blocked.
+      Found by a legal four-line program dying in a comparison entry.
 
 ## Out of Scope
 

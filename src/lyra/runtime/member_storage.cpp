@@ -106,8 +106,10 @@ void EmplaceSampledHistory(Object& object, support::ValueDomain domain) {
     case support::ValueDomain::kAssocArray:
       object.template emplace<SampledHistory<value::RuntimeAssociativeArray>>();
       return;
-    case support::ValueDomain::kChandle:
     case support::ValueDomain::kManagedRef:
+      object.template emplace<SampledHistory<value::ManagedRef>>();
+      return;
+    case support::ValueDomain::kChandle:
     case support::ValueDomain::kEmpty:
       throw InternalError(
           "MemberStorage: no history is kept over this value domain, so what a "

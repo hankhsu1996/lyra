@@ -25,10 +25,10 @@ class Chandle {
  public:
   Chandle() = default;
 
-  // `null` is the only literal a chandle admits, and it arrives as the host
-  // `nullptr` that a null literal renders to. The conversion is implicit so a
-  // comparison against `null` and a store of `null` each bind without a cast.
-  // The parameter is a type tag carrying no value, so it stays unnamed.
+  // `null` is the only literal a chandle admits, and the host spells it
+  // `nullptr`. The conversion is implicit so a comparison against `null` and a
+  // store of `null` each bind without a cast. The parameter is a type tag
+  // carrying no value, so it stays unnamed.
   // NOLINTNEXTLINE(google-explicit-constructor,readability-named-parameter)
   Chandle(std::nullptr_t) {
   }

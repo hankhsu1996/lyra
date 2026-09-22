@@ -721,6 +721,11 @@ void lyra_rt_assocarray_sampled_history_install(
 void lyra_rt_assocarray_sampled_history_push(void* history, const void* value);
 auto lyra_rt_assocarray_sampled_history_at(
     const void* history, const void* ticks_back) -> void*;
+void lyra_rt_managedref_sampled_history_install(
+    void* history, const void* default_value, const void* depth);
+void lyra_rt_managedref_sampled_history_push(void* history, const void* value);
+auto lyra_rt_managedref_sampled_history_at(
+    const void* history, const void* ticks_back) -> void*;
 
 // What one concurrent assertion has in flight (LRM 16.14.1), reached only
 // through the storage's own address. These carry machine words rather than
@@ -1059,6 +1064,8 @@ auto lyra_rt_managedref_value_cell_load(const void* cell) -> void*;
 auto lyra_rt_managedref_cell_get(void* cell) -> void*;
 void lyra_rt_managedref_cell_initialize(void* cell, const void* prototype);
 void lyra_rt_managedref_cell_set(void* cell, const void* value);
+void lyra_rt_managedref_cell_arm_sampling(void* cell);
+auto lyra_rt_managedref_cell_sampled_load(void* cell) -> void*;
 
 // Boxes a value-domain handle into a type-erased `RuntimeValue`, the form in
 // which an aggregate holds its parts. A value crosses this way exactly where it
