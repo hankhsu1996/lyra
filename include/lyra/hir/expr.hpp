@@ -311,11 +311,15 @@ enum class RunTimeCheck : std::uint8_t {
 // The two declared types allow no assignment between them at all (LRM 6.22.4,
 // 6.22.5), so the destination is written on no run and the standard defines no
 // conversion to write it with.
-struct NoAssignmentAllowed {};
+struct NoAssignmentAllowed {
+  auto operator==(const NoAssignmentAllowed&) const -> bool = default;
+};
 
 // They allow one, and `check` is what the value is still asked.
 struct AssignmentAllowed {
   RunTimeCheck check;
+
+  auto operator==(const AssignmentAllowed&) const -> bool = default;
 };
 
 // What the front end settled about the pair of declared types before any value
@@ -348,6 +352,8 @@ struct DynamicCastExpr {
   ExprId source;
   AssignmentValidity validity;
   InvalidAssignmentHandling on_invalid;
+
+  auto operator==(const DynamicCastExpr&) const -> bool = default;
 };
 
 // LRM 11.9 tagged union expression `tagged Member primary`. `member_index` is

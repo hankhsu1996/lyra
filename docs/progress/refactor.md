@@ -1843,6 +1843,7 @@ enough to warrant its own focused review.
       Target: a literal that names no object carries no kind of value of its own, so whatever
       consumes one states the type it is read at and the shape stops being forgettable. Not blocked.
       Found by a legal four-line program dying in a comparison entry.
+
 - [ ] R116 -- A scope's construction is entered through one prototype every class shares, and the
       execution backend works out which of a unit's functions that applies to by reading the class
       table the other way round. Three sites ask -- where the function is declared, and twice where
