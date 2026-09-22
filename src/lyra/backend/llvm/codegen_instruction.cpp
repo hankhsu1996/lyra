@@ -1793,6 +1793,13 @@ auto CodeGenFunction::ConstructionOf(
           // and ends with the last holder rather than at any one exit (LRM
           // 6.21). A borrowed pointer is bound to storage that already exists,
           // so nothing constructs one.
+          //
+          // The two that do construct take their operands differently, and the
+          // difference is what each one is making. Building a node takes what a
+          // node is built from -- where it hangs, what it is reached by, and
+          // the values its own class is parameterized by. A hold takes the
+          // definition alone, because the storage it holds was built elsewhere
+          // and it adds an owner rather than an object.
           [&](const lir::PointerType& p) -> diag::Result<Construction> {
             switch (p.ownership) {
               case lir::PointerOwnership::kUnique:
