@@ -21,12 +21,15 @@
 #include "lyra/mir/external_unit_object.hpp"
 #include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
+#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/namespace_storage_phase.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_descriptor_pool.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/value_build.hpp"
 
 namespace lyra::mir {
 
@@ -169,6 +172,9 @@ struct BuiltinMirTypes {
   // One dimension of that descriptor, named so the stack a descriptor is built
   // from is spelled through the type dispatch like every other type.
   TypeId packed_range;
+  // What an unpacked array's description is: the declared range a select on one
+  // resolves a coordinate against.
+  TypeId unpacked_range;
   TypeId channel_cancellation;
   TypeId print_item;
   TypeId print_literal_item;
@@ -190,6 +196,15 @@ struct CompilationUnit {
   // independent of any member.
   std::string name;
   TypePool types;
+  // The values this unit settles before the program runs, each held once and
+  // named by every occurrence: the constant integral values the source wrote,
+  // and what an operation on a value asks of its declaration. Both fill as
+  // bodies are lowered, and `builds` says how each one is brought into
+  // existence -- settled once, when the unit is finished, so every consumer
+  // reads one finished set.
+  IntegralConstantPool integral_constants;
+  TypeDescriptorPool type_descriptors;
+  UnitValueBuilds builds;
   BuiltinMirTypes builtins;
   // Every class declaration of this unit, owned here exactly once and reached
   // by its identity, with a declare-then-define lifecycle so a class can be
@@ -346,6 +361,9 @@ struct CompilationUnit {
             .packed_range = types.Intern(
                 Type{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kPackedRange}}),
+            .unpacked_range = types.Intern(
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kUnpackedRange}}),
             .channel_cancellation = types.Intern(
                 Type{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kChannelCancellation}}),

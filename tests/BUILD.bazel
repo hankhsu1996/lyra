@@ -62,6 +62,16 @@ cc_test(
 )
 
 cc_test(
+    name = "mir_integral_constant_test",
+    srcs = ["mir/integral_constant_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:mir",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "diag_render_tests",
     srcs = ["diag/render_test.cpp"],
     copts = LYRA_COPTS,

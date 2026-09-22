@@ -66,8 +66,8 @@ auto lyra_rt_file_gets(void* files, const void* fd) -> void*;
 auto lyra_rt_file_error(void* files, const void* fd) -> void*;
 auto lyra_rt_file_read(void* files, const void* dest, const void* fd) -> void*;
 auto lyra_rt_file_read_memory(
-    void* files, const void* dest, const void* fd, const void* left,
-    const void* right, const void* start, const void* count) -> void*;
+    void* files, const void* dest, const void* fd, const void* declared,
+    const void* start, const void* count) -> void*;
 auto lyra_rt_file_seek(
     void* files, const void* fd, const void* offset, const void* operation)
     -> void*;
@@ -451,6 +451,15 @@ auto lyra_rt_triggered(const void* event, void* runtime) -> void*;
 // outward. They are entries of this ABI rather than calls a body makes for
 // itself, so generated code names no unwinding symbol and each target's own
 // protocol stays inside the runtime.
+// Takes over a value the run holds by address from here on. Every value
+// crossing this boundary belongs to the arena of the stretch that built it and
+// goes when that stretch returns; a constant is built once and read for the
+// rest of the run, so generated code hands the built value here before keeping
+// its address. It is an entry of this target's own ABI rather than an operation
+// any layer above states: the lifetime it answers exists because values cross
+// here as handles, and a target whose values are its own has no such question.
+auto lyra_rt_retain_constant(const void* value) -> const void*;
+
 auto lyra_rt_claim_departure(void* exception) -> void*;
 void lyra_rt_finish_departure();
 [[noreturn]] void lyra_rt_decline_departure();
@@ -1252,17 +1261,16 @@ auto lyra_rt_unpackedarray_from_array_dynarray(
 auto lyra_rt_unpackedarray_from_array_queue(
     const void* source, void* prototype, std::int64_t declared) -> void*;
 auto lyra_rt_unpackedarray_element(
-    const void* array, const void* index, const void* left, const void* right)
-    -> void*;
+    const void* array, const void* index, const void* declared) -> void*;
 auto lyra_rt_unpackedarray_with_element(
-    const void* array, const void* index, const void* left, const void* right,
-    void* value) -> void*;
+    const void* array, const void* index, const void* declared, void* value)
+    -> void*;
 auto lyra_rt_unpackedarray_slice(
     const void* array, const void* a, const void* b, const void* form,
-    const void* left, const void* right) -> void*;
+    const void* declared) -> void*;
 auto lyra_rt_unpackedarray_with_slice(
     const void* array, const void* a, const void* b, const void* form,
-    const void* left, const void* right, const void* replacement) -> void*;
+    const void* declared, const void* replacement) -> void*;
 auto lyra_rt_unpackedarray_size(const void* array) -> void*;
 auto lyra_rt_unpackedarray_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_unpackedarray_ne(const void* lhs, const void* rhs) -> void*;
@@ -1712,6 +1720,8 @@ void lyra_rt_assocarray_write_mem_within(
 // integral destination takes it right-justified and an unpacked array of bytes
 // left-justified, which is why only the array form carries an element count.
 auto lyra_rt_make_packed_range(std::int64_t left, std::int64_t right) -> const
+    void*;
+auto lyra_rt_make_unpacked_range(std::int64_t left, std::int64_t right) -> const
     void*;
 auto lyra_rt_make_packed_type(LyraSpan dims, bool is_signed, bool is_four_state)
     -> const void*;

@@ -102,6 +102,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_trigger";
     case RuntimeOp::kMakePackedRange:
       return "make_packed_range";
+    case RuntimeOp::kMakeUnpackedRange:
+      return "make_unpacked_range";
     case RuntimeOp::kMakePackedType:
       return "make_packed_type";
     case RuntimeOp::kMakePrintLiteralItem:
@@ -120,6 +122,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_dpi_logic_buffer";
     case RuntimeOp::kMakeDpiOpenArray:
       return "make_dpi_open_array";
+    case RuntimeOp::kRetainConstant:
+      return "retain_constant";
     case RuntimeOp::kClaimDeparture:
       return "claim_departure";
   }
@@ -393,12 +397,13 @@ auto MemberStorageKindOf(
                 return MemberStorageKind::kCancellationTarget;
               case lir::RuntimeLibraryKind::kChannelCancellation:
                 return MemberStorageKind::kChannelCancellation;
-              // An integral type's descriptor, held once per type for the whole
+              // A type's description, held once per description for the whole
               // run, so a member that names one points at storage outliving
-              // every closure that reads it rather than owning a copy. What a
-              // range inside that descriptor is reached through is the
-              // descriptor, so a member names the whole and never a part.
+              // every closure that reads it rather than owning a copy. A
+              // description is reached whole, never a dimension of one, so
+              // nothing here names a part of it.
               case lir::RuntimeLibraryKind::kPackedType:
+              case lir::RuntimeLibraryKind::kUnpackedRange:
               // A coordinate is settled once for the whole run and read by
               // every access afterwards, so a member naming one points at
               // storage that outlives it rather than owning a copy.
@@ -409,10 +414,11 @@ auto MemberStorageKindOf(
               // storage outliving it for the same reason.
               case lir::RuntimeLibraryKind::kObjectDefinition:
                 return MemberStorageKind::kBorrowedHandle;
-              // The rest are transients of one call -- what a print or a format
-              // is assembled from, what a boundary object images an argument
-              // in, what a wait registers and what another entry answers with.
-              // An owner holds none of them past the call that made one.
+              // The rest are transients of one call -- one dimension a
+              // description is assembled from, what a print or a format is
+              // assembled from, what a boundary object images an argument in,
+              // what a wait registers and what another entry answers with. An
+              // owner holds none of them past the call that made one.
               case lir::RuntimeLibraryKind::kPackedRange:
               case lir::RuntimeLibraryKind::kPrintItem:
               case lir::RuntimeLibraryKind::kPrintLiteralItem:

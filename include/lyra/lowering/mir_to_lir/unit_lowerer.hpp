@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <map>
 #include <optional>
 #include <string>
@@ -7,17 +8,21 @@
 #include <unordered_map>
 #include <vector>
 
+#include "lyra/base/hash.hpp"
+#include "lyra/base/interner.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
+#include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/namespace_storage_phase.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -56,6 +61,22 @@ class UnitLowerer {
   // counterpart. A type with no LIR mirror yet records an unsupported-type
   // error read at `Run`; it never silently mistranslates.
   auto TranslateType(mir::TypeId id) -> lir::TypeId;
+
+  // Translates a MIR description to its LIR-owned identity. Every description
+  // the unit holds is lowered, in pool order, so the two pools run in step and
+  // the position carries across.
+  [[nodiscard]] static auto TranslateDescriptor(mir::TypeDescriptorId id)
+      -> lir::TypeDescriptorId {
+    return lir::TypeDescriptorId{.value = id.value};
+  }
+
+  // Translates a MIR constant to its LIR-owned identity. Every constant the
+  // unit holds is lowered, in pool order, so the two pools run in step and the
+  // position carries across.
+  [[nodiscard]] static auto TranslateConstant(mir::IntegralConstantId id)
+      -> lir::IntegralConstantId {
+    return lir::IntegralConstantId{.value = id.value};
+  }
 
   [[nodiscard]] auto Types() const -> const lir::TypePool& {
     return out_.types;

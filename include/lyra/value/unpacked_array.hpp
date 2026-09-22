@@ -20,6 +20,7 @@
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/slice_selector.hpp"
+#include "lyra/value/unpacked_range.hpp"
 
 namespace lyra::value {
 
@@ -29,42 +30,6 @@ template <typename T>
 class ArraySliceRef;
 class String;
 
-// The declared range of one unpacked dimension, the array's coordinate system.
-// Element order runs left-to-right (LRM 7.6), so the leftmost element (index
-// `left`) is storage ordinal 0. `ToOrdinal` maps a source-declared index onto
-// the storage ordinal; `FromOrdinal` is its inverse. Unlike a packed bit range,
-// the ordinal counts from the left, not the least-significant end.
-struct UnpackedRange {
-  std::int64_t left;
-  std::int64_t right;
-
-  [[nodiscard]] auto IsAscending() const -> bool {
-    return left <= right;
-  }
-  [[nodiscard]] auto ToOrdinal(std::int64_t sv) const -> std::int64_t {
-    return IsAscending() ? sv - left : left - sv;
-  }
-  [[nodiscard]] auto FromOrdinal(std::int64_t ordinal) const -> std::int64_t {
-    return IsAscending() ? ordinal + left : left - ordinal;
-  }
-  // A declared range spans `|left - right| + 1` elements and is never empty.
-  // `[0:-1]` is the one exception -- the synthetic empty range standing in for
-  // a dimension that does not exist, which no real declared range spells.
-  [[nodiscard]] auto Count() const -> std::size_t {
-    if (left == 0 && right == -1) {
-      return 0;
-    }
-    return static_cast<std::size_t>(
-               IsAscending() ? right - left : left - right) +
-           1U;
-  }
-  // The lowest declared index, which is C index 0 in the DPI layout of an
-  // unpacked dimension (LRM Annex H.7.3).
-  [[nodiscard]] auto Low() const -> std::int64_t {
-    return IsAscending() ? left : right;
-  }
-};
-
 // LRM 7.4.5: resolve a source-declared index to a storage ordinal against the
 // declared range `[left:right]` of a container holding `size` elements. An
 // X / Z index, or one the range does not name, is an invalid access --
@@ -72,12 +37,11 @@ struct UnpackedRange {
 // the type-erased unpacked array resolve a coordinate through this, so the two
 // cannot drift apart on what an index means.
 [[nodiscard]] inline auto ResolveUnpackedOrdinal(
-    const PackedArray& sv_index, const PackedArray& left,
-    const PackedArray& right, std::size_t size) -> std::optional<std::size_t> {
+    const PackedArray& sv_index, const UnpackedRange& range, std::size_t size)
+    -> std::optional<std::size_t> {
   if (sv_index.HasUnknown()) {
     return std::nullopt;
   }
-  const UnpackedRange range{.left = left.ToInt64(), .right = right.ToInt64()};
   const std::int64_t ordinal = range.ToOrdinal(sv_index.ToInt64());
   if (ordinal < 0 || static_cast<std::uint64_t>(ordinal) >= size) {
     return std::nullopt;
@@ -95,14 +59,14 @@ struct SliceWindow {
 // LRM 7.4.5 / 7.4.6: resolve a raw range selector to that window. `(a, b)` are
 // source coordinates -- a constant range's two declared endpoints, or an
 // indexed part-select's base and (constant) width -- and `form` says which. The
-// receiver's declared range `[left:right]` comes from its static type as a
-// select operand. The low ordinal and the count fall out of the two source
-// endpoints rebased against that range; only the base coordinate `a` can carry
-// a runtime X / Z. Shared by the monomorphized and the type-erased unpacked
-// array, so neither can drift on what a range selector names.
+// receiver's declared range comes from its static type as a select operand. The
+// low ordinal and the count fall out of the two source endpoints rebased
+// against that range; only the base coordinate `a` can carry a runtime X / Z.
+// Shared by the monomorphized and the type-erased unpacked array, so neither
+// can drift on what a range selector names.
 [[nodiscard]] inline auto ResolveSliceWindow(
     const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedArray& left, const PackedArray& right) -> SliceWindow {
+    const UnpackedRange& range) -> SliceWindow {
   const std::int64_t base_coord = a.ToInt64();
   const std::int64_t extent = b.ToInt64();
   std::int64_t other = extent;
@@ -116,7 +80,6 @@ struct SliceWindow {
     case SliceForm::kConstant:
       break;
   }
-  const UnpackedRange range{.left = left.ToInt64(), .right = right.ToInt64()};
   const std::int64_t o1 = range.ToOrdinal(base_coord);
   const std::int64_t o2 = range.ToOrdinal(other);
   const std::int64_t lo = o1 < o2 ? o1 : o2;
@@ -343,12 +306,10 @@ class UnpackedArray {
   }
 
   // LRM 7.4.5: an invalid-index write lands on the shield's discard target. The
-  // declared range `[left:right]` comes from the receiver's static type as a
-  // select operand.
+  // declared range comes from the receiver's static type as a select operand.
   [[nodiscard]] auto ElementRef(
-      const PackedArray& sv_index, const PackedArray& left,
-      const PackedArray& right) -> T& {
-    const auto ordinal = ResolveOrdinal(sv_index, left, right);
+      const PackedArray& sv_index, const UnpackedRange& range) -> T& {
+    const auto ordinal = ResolveOrdinal(sv_index, range);
     if (!ordinal) {
       return shield_.DiscardTarget();
     }
@@ -358,9 +319,9 @@ class UnpackedArray {
   // LRM 7.4.5: an invalid-index read returns the element default (LRM Table
   // 7-1).
   [[nodiscard]] auto Element(
-      const PackedArray& sv_index, const PackedArray& left,
-      const PackedArray& right) const -> const T& {
-    const auto ordinal = ResolveOrdinal(sv_index, left, right);
+      const PackedArray& sv_index, const UnpackedRange& range) const
+      -> const T& {
+    const auto ordinal = ResolveOrdinal(sv_index, range);
     if (!ordinal) {
       return shield_.Default();
     }
@@ -374,9 +335,8 @@ class UnpackedArray {
   // ordinal-only payload.
   [[nodiscard]] auto Slice(
       const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedArray& left, const PackedArray& right) const
-      -> UnpackedArray {
-    const SliceWindow win = ResolveSliceWindow(a, b, form, left, right);
+      const UnpackedRange& range) const -> UnpackedArray {
+    const SliceWindow win = ResolveSliceWindow(a, b, form, range);
     return UnpackedArray(
         shield_.Default(),
         detail::ArraySliceGather(
@@ -385,8 +345,8 @@ class UnpackedArray {
 
   [[nodiscard]] auto SliceRef(
       const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedArray& left, const PackedArray& right) -> ArraySliceRef<T> {
-    const SliceWindow win = ResolveSliceWindow(a, b, form, left, right);
+      const UnpackedRange& range) -> ArraySliceRef<T> {
+    const SliceWindow win = ResolveSliceWindow(a, b, form, range);
     return ArraySliceRef<T>{
         data_, shield_.Default(), win.base, win.count, win.base_known};
   }
@@ -670,9 +630,9 @@ class UnpackedArray {
   }
 
   [[nodiscard]] auto ResolveOrdinal(
-      const PackedArray& sv_index, const PackedArray& left,
-      const PackedArray& right) const -> std::optional<std::size_t> {
-    return ResolveUnpackedOrdinal(sv_index, left, right, data_.size());
+      const PackedArray& sv_index, const UnpackedRange& range) const
+      -> std::optional<std::size_t> {
+    return ResolveUnpackedOrdinal(sv_index, range, data_.size());
   }
 
   detail::OobShield<T> shield_;

@@ -181,6 +181,56 @@ retaken since, so what stands at the top of it now is unmeasured.
       round's spread several times over. The model is
       [../decisions/packed-shape-belongs-to-the-type.md](../decisions/packed-shape-belongs-to-the-type.md).
 
+- [x] A value the source fixed is no longer built wherever the program reaches it. The middle layer
+      had literal forms for machine scalars and none for a value of the language it expresses, so an
+      integral constant lowered to a call asking a library to make one -- which is the one form an
+      optimizer cannot fold, in a layer whose primitives are chosen for an optimizer to fold. A unit
+      now holds the constants it was written with, interned on the bits and the type together, and
+      an occurrence names the entry; each backend gives that entry the storage its target has for
+      something the whole run shares.
+
+      Measured by interleaving both emitted programs inside each round, five rounds, one runtime
+      archive and one compiler throughout, on the representative compute block: **1.21x with the
+      design compiled unoptimized, which is the default the edit loop uses, and 1.23x compiled
+      optimized**. The reading that decides it is the third: with the value layer's definitions made
+      visible to the optimizer, the same comparison is **1.29x** -- so this is not a cost an
+      optimizer was going to recover, and the entry it is recorded under says why. The model is
+      [../decisions/a-constant-is-stated-not-computed.md](../decisions/a-constant-is-stated-not-computed.md).
+
+      The execution backend reads **1.15x** on the clocked-pipeline case, over four rounds after a
+      cold first one. It is a different case and the two figures do not compare: the case the other
+      column measures cannot run on that backend at a length worth timing, for the reason the
+      refactor queue now records, so what each column says is that its own backend moved and by how
+      much.
+
+      The same case now sustains **1,634 table passes per second, 67x off Verilator** (2026-09-22).
+      That is an absolute rate rather than a comparison, recorded because the ratios above compare
+      against a shape the tree no longer contains: re-deriving one needs a second toolchain built
+      from before the change, while a rate can be read again any day. What a later reading of it
+      answers is whether the gain held, which the ratios on their own cannot say.
+
+- [ ] An emitted program is optimized without the runtime library it spends its time in. The
+      design's translation units and the runtime are compiled separately and linked as native
+      objects, so every value operation a design performs is a call the optimizer cannot see into --
+      which is what the middle layer's own contract already says about a runtime helper call, adding
+      that link-time optimization mitigates it but does not eliminate it.
+
+      Measured 2026-09-17 on the representative compute block, interleaved, five rounds, the same
+      runtime and the same compiler throughout: compiling the design optimized and letting the
+      optimizer see the value layer's definitions runs the case in **half the time** of the same
+      design optimized without them. At this scale it also costs no build time -- 11.6 s against
+      13.7 s, because each unit then emits only an intermediate form and the optimization happens
+      once at the link.
+
+      **What is not measured is the only thing that decides it**: what that single link step costs
+      on a design of a thousand units, where it is one serial whole-program pass rather than three
+      files. That is the end-to-end trade `north_star.md` puts first, and it is the number to get
+      before this is switched on rather than offered.
+
+      **Target shape**: the runtime ships in a form the optimizer can read, and a design build says
+      whether to use it. It is the run-time half of the same axis `--release` already names, so it
+      belongs to that flag's question rather than to a new one.
+
 ## Construction / compile-time performance
 
 The cost of producing compiled artifacts and of building the object graph at time zero. The primary

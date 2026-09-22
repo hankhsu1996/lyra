@@ -6,6 +6,7 @@
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/runtime_value.hpp"
+#include "lyra/value/unpacked_range.hpp"
 
 // An unpacked memory of any nesting depth, read and rebuilt through the
 // coordinates its declaration names. A memory task addresses words in ascending
@@ -20,18 +21,18 @@ namespace lyra::value {
 [[nodiscard]] auto MemoryWordOf(const RuntimeValue& element)
     -> const PackedArray&;
 
-// The words of `memory` in address order. `dims` is
-// `[left0, right0, left1, right1, ...]`, the addressed dimension first and the
-// rest describing the leaves each address expands to.
+// The words of `memory` in address order. `dims` is one declared range per
+// dimension, the addressed dimension first and the rest describing the leaves
+// each address expands to.
 [[nodiscard]] auto MemoryWords(
-    const RuntimeUnpackedArray& memory, std::span<const PackedArray> dims)
+    const RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims)
     -> std::vector<PackedArray>;
 
 // `memory` holding `words` in that same order. The two are inverse, so a word
 // a caller leaves as it read it comes back where it was -- which is what keeps
 // an address the file does not reach holding what it held (LRM 21.4).
 [[nodiscard]] auto MemoryWithWords(
-    const RuntimeUnpackedArray& memory, std::span<const PackedArray> dims,
+    const RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
     std::span<const PackedArray> words) -> RuntimeUnpackedArray;
 
 }  // namespace lyra::value

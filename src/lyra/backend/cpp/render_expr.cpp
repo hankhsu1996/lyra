@@ -226,8 +226,11 @@ auto RenderReferenceExpr(
                 "{}::{}", RenderClassRefAsCpp(view.Unit(), r.of),
                 CppObjectRecordName());
           },
-          [&](const mir::PackedTypeRef& r) -> std::string {
-            return CppPackedTypeName(r.integral);
+          [&](const mir::TypeDescriptorRef& r) -> std::string {
+            return CppTypeDescriptorName(r.descriptor);
+          },
+          [&](const mir::IntegralConstantRef& r) -> std::string {
+            return CppIntegralConstantName(r.constant);
           },
           [&](const mir::StaticPropertyRef& r) -> std::string {
             const mir::Class& owner_cls = view.Unit().GetClass(r.owner);

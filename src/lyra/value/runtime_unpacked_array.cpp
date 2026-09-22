@@ -85,10 +85,10 @@ auto RuntimeUnpackedArray::ElementDefault() const -> const RuntimeValue& {
 }
 
 auto RuntimeUnpackedArray::Element(
-    const PackedArray& sv_index, const PackedArray& left,
-    const PackedArray& right) const -> const RuntimeValue& {
+    const PackedArray& sv_index, const UnpackedRange& range) const
+    -> const RuntimeValue& {
   const std::optional<std::size_t> ordinal =
-      ResolveUnpackedOrdinal(sv_index, left, right, data_.size());
+      ResolveUnpackedOrdinal(sv_index, range, data_.size());
   if (!ordinal) {
     return *element_default_;
   }
@@ -105,12 +105,11 @@ auto RuntimeUnpackedArray::ElementAt(std::size_t position) const
 }
 
 auto RuntimeUnpackedArray::WithElement(
-    const PackedArray& sv_index, const PackedArray& left,
-    const PackedArray& right, RuntimeValue value) const
-    -> RuntimeUnpackedArray {
+    const PackedArray& sv_index, const UnpackedRange& range,
+    RuntimeValue value) const -> RuntimeUnpackedArray {
   RuntimeUnpackedArray result(*this);
   const std::optional<std::size_t> ordinal =
-      ResolveUnpackedOrdinal(sv_index, left, right, data_.size());
+      ResolveUnpackedOrdinal(sv_index, range, data_.size());
   if (ordinal) {
     result.data_[*ordinal] = std::move(value);
   }
@@ -190,9 +189,8 @@ auto RuntimeUnpackedArray::ToByteString() const -> String {
 
 auto RuntimeUnpackedArray::Slice(
     const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedArray& left, const PackedArray& right) const
-    -> RuntimeUnpackedArray {
-  const SliceWindow window = ResolveSliceWindow(a, b, form, left, right);
+    const UnpackedRange& range) const -> RuntimeUnpackedArray {
+  const SliceWindow window = ResolveSliceWindow(a, b, form, range);
   return FromValues(
       *element_default_, detail::ArraySliceGather(
                              data_, *element_default_, window.base,
@@ -201,9 +199,9 @@ auto RuntimeUnpackedArray::Slice(
 
 auto RuntimeUnpackedArray::WithSlice(
     const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedArray& left, const PackedArray& right,
-    const RuntimeUnpackedArray& replacement) const -> RuntimeUnpackedArray {
-  const SliceWindow window = ResolveSliceWindow(a, b, form, left, right);
+    const UnpackedRange& range, const RuntimeUnpackedArray& replacement) const
+    -> RuntimeUnpackedArray {
+  const SliceWindow window = ResolveSliceWindow(a, b, form, range);
   RuntimeUnpackedArray result(*this);
   detail::ArraySliceScatter(
       result.data_, window.base, window.count, replacement.data_,

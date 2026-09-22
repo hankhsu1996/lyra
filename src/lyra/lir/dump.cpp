@@ -414,8 +414,11 @@ class LirDumper {
             [](const BoolConst& c) -> std::string {
               return std::format("bool:{}", c.value ? "true" : "false");
             },
-            [](const PackedTypeRef& c) -> std::string {
-              return std::format("packedtype:t{}", c.integral.value);
+            [](const TypeDescriptorRef& c) -> std::string {
+              return std::format("typedesc:{}", c.descriptor.value);
+            },
+            [](const IntegralConstantRef& c) -> std::string {
+              return std::format("const:{}", c.constant.value);
             },
             [&](const FuncRef& f) -> std::string {
               return std::format(

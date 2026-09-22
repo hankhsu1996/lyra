@@ -25,7 +25,6 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -36,9 +35,10 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/packed_type_descriptor.hpp"
+#include "lyra/mir/runtime_record.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/dpi_abi.hpp"
 
@@ -208,7 +208,7 @@ auto MarshalCarrierToSv(
               .data = mir::CastExpr{.operand = call_id},
               .type = unit_lowerer.Unit().builtins.machine_int64});
       const mir::ExprId packed_type =
-          mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type);
+          mir::BuildTypeDescriptorRef(unit_lowerer.Unit(), block, result_type);
       return mir::Expr{
           .data =
               mir::CallExpr{
@@ -225,7 +225,7 @@ auto MarshalCarrierToSv(
           .type = result_type};
     case support::DpiScalarAbi::kLogicScalar: {
       const mir::ExprId packed_type =
-          mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type);
+          mir::BuildTypeDescriptorRef(unit_lowerer.Unit(), block, result_type);
       return mir::Expr{
           .data =
               mir::CallExpr{
@@ -306,15 +306,18 @@ auto BuildBufferDataCall(
 // reports to the foreign side (LRM Annex H.7.6): the range the declaration
 // fixes, or the actual's own where the declaration left the dimension unsized.
 // The actual's ranges come from its static type, the only place an unsized
-// extent is fixed (LRM 35.6.1.1). The pairs flatten outermost-first into one
-// array literal, the shape a runtime entry takes a bounds list in.
+// extent is fixed (LRM 35.6.1.1). Each range rides whole, outermost first, so
+// the boundary is handed the coordinate system rather than the numbers it is
+// spelled with. It is stated at the call rather than taken from the actual's
+// type, because a declaration that sizes a dimension overrides what the actual
+// declares.
 auto BuildOpenArrayBounds(
     mir::CompilationUnit& unit, mir::Block& block,
     const support::OpenArrayCarrier& open, mir::TypeId actual_type)
     -> mir::ExprId {
-  const mir::TypeId int_type = unit.builtins.int_type;
+  mir::RuntimeRecordBuilder record(unit, block.exprs);
   std::vector<mir::ExprId> bounds;
-  bounds.reserve(open.unpacked.size() * 2);
+  bounds.reserve(open.unpacked.size());
   mir::TypeId cursor = actual_type;
   for (const std::optional<support::DpiRange>& declared : open.unpacked) {
     const auto* layer = unit.types.Get(cursor).As<mir::UnpackedArrayType>();
@@ -323,18 +326,18 @@ auto BuildOpenArrayBounds(
           "BuildOpenArrayBounds: the actual of an open-array formal has fewer "
           "unpacked dimensions than the declaration");
     }
+    // Both read before a record is built: building one interns the type it is
+    // a value of, and a reference into the type pool does not survive its
+    // growth.
     const support::DpiRange range = declared.value_or(
         support::DpiRange{.left = layer->dim.left, .right = layer->dim.right});
-    bounds.push_back(BuildIntLiteral(unit, block, range.left));
-    bounds.push_back(BuildIntLiteral(unit, block, range.right));
     cursor = layer->element_type;
+    bounds.push_back(record.Construct(
+        mir::RuntimeLibraryKind::kUnpackedRange,
+        {record.MachineInt(range.left), record.MachineInt(range.right)}));
   }
-  const mir::TypeId bounds_type =
-      mir::MachineArrayOf(unit.types, int_type, bounds.size());
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = std::move(bounds)},
-          .type = bounds_type});
+  return record.MachineArray(
+      record.Type(mir::RuntimeLibraryKind::kUnpackedRange), std::move(bounds));
 }
 
 // The initializer of one argument's boundary object, seeded from the actual's
@@ -458,7 +461,7 @@ auto BuildBoundaryReadback(
             return read(
                 mir::Direct{.target = VectorReadBuiltin(vector)},
                 {BuildBufferDataCall(unit, block, object, carrier_type, vector),
-                 mir::BuildPackedTypeRef(unit, block, sv_type)});
+                 mir::BuildTypeDescriptorRef(unit, block, sv_type)});
           },
           [&](const support::OpenArrayCarrier&) {
             return read(
@@ -1207,7 +1210,7 @@ auto SynthesizeForeignExportEntry(
     mir::ExprId sv_init{};
     if (const auto* vec = std::get_if<support::VectorCarrier>(&p.carrier)) {
       const mir::ExprId packed_type =
-          mir::BuildPackedTypeRef(module.Unit(), body, sv_type);
+          mir::BuildTypeDescriptorRef(module.Unit(), body, sv_type);
       sv_init = body.exprs.Add(
           mir::Expr{
               .data =

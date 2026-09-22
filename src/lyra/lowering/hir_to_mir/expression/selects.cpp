@@ -26,10 +26,10 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_descriptor.hpp"
 #include "lyra/value/slice_selector.hpp"
 
 // HIR-to-MIR lowering for the three select families (`a[i]`, `a[hi:lo]`,
@@ -125,39 +125,19 @@ auto WrapSliceToDeclaredType(
 }
 
 // Append whatever coordinate system the receiver's family takes from its
-// static type rather than from the value. An unpacked array states its declared
-// range `[left:right]`; a packed one states its whole declared shape, because
-// one packed select consumes a dimension out of a stack and which bits that
-// reaches is a fact of the declaration rather than of any value of it. A
+// static type rather than from the value, as the one description that type has:
+// an unpacked array's declared range, or a packed type's whole declared shape,
+// because one packed select consumes a dimension out of a stack and which bits
+// that reaches is a fact of the declaration rather than of any value of it. A
 // dynamic array is zero-based and states nothing.
 auto AppendReceiverCoordinates(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId base_type,
     std::vector<mir::ExprId>& args) -> void {
-  // The declared range is a fact of the receiver's value type. On the write
-  // path the base is a place -- reached through a capability wrapper, or
-  // through a pointer -- so unwrap those indirections to reach the underlying
-  // value type. Which wrappers exist is not restated here; asking the type
-  // system is what keeps a newly admitted wrapper from silently losing the
-  // range.
-  for (;;) {
-    const auto& ty = unit_lowerer.Unit().types.Get(base_type);
-    if (ty.IsCapabilityWrapper()) {
-      base_type = ty.WrappedValueType();
-    } else if (const auto* ptr = ty.As<mir::PointerType>()) {
-      base_type = ptr->pointee;
-    } else {
-      break;
-    }
-  }
-  const auto& base_ty = unit_lowerer.Unit().types.Get(base_type);
-  if (const auto* ua = base_ty.As<mir::UnpackedArrayType>()) {
-    args.push_back(BuildIntLiteral(unit_lowerer.Unit(), block, ua->dim.left));
-    args.push_back(BuildIntLiteral(unit_lowerer.Unit(), block, ua->dim.right));
-    return;
-  }
-  if (base_ty.IsIntegralPacked()) {
+  const mir::TypeId value_type =
+      mir::ValueTypeOf(unit_lowerer.Unit(), base_type);
+  if (mir::HasTypeDescriptor(unit_lowerer.Unit(), value_type)) {
     args.push_back(
-        mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, base_type));
+        mir::BuildTypeDescriptorRef(unit_lowerer.Unit(), block, value_type));
   }
 }
 

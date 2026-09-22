@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <format>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -16,8 +17,10 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/packed_type_descriptor.hpp"
-#include "lyra/mir/type_id.hpp"
+#include "lyra/mir/integral_constant_id.hpp"
+#include "lyra/mir/type_descriptor.hpp"
+#include "lyra/mir/type_descriptor_id.hpp"
+#include "lyra/mir/value_build.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 
 namespace lyra::backend::cpp {
@@ -82,21 +85,45 @@ auto CollectExternalUnitNames(const mir::CompilationUnit& unit)
   return names;
 }
 
-// What each of the unit's types is described by, one definition per described
-// type, ahead of any code that names one. These sit beside the declarations
-// they serve: a class's own constant may name one in its initializer, and two
-// constants of one file are initialized in the order the file writes them,
-// which is a guarantee that ends at the file boundary.
-auto RenderPackedTypeDescriptions(const mir::CompilationUnit& unit)
-    -> std::string {
+// One value the unit settles before the program runs, written as a constant of
+// the namespace: the type it has, the name it is reached by, and the expression
+// that builds it. The build is an expression tree with no statements, so what
+// renders it is the ordinary expression render over a scope holding nothing but
+// that tree.
+auto NamespaceValueOf(
+    const mir::CompilationUnit& unit, mir::TypeId type, std::string_view name,
+    const mir::ValueBuild& build) -> std::string {
+  const ScopeView view = ScopeView::ForUnitConstant(unit, build.body);
+  return NamespaceConstantOf(
+      RenderTypeAsCpp(unit, type), name,
+      RenderExpr(view, view.Expr(build.value)));
+}
+
+// The descriptions the unit holds, one definition each, ahead of any code that
+// names one. These sit beside the declarations they serve: a class's own
+// constant may name one in its initializer, and two constants of one file are
+// initialized in the order the file writes them, which is a guarantee that ends
+// at the file boundary.
+auto RenderTypeDescriptions(const mir::CompilationUnit& unit) -> std::string {
   std::string out;
-  for (const mir::TypeId id : mir::DescribedPackedTypes(unit)) {
-    const mir::PackedTypeDescription described =
-        mir::DescribePackedType(unit, id);
-    const ScopeView view = ScopeView::ForUnitConstant(unit, described.body);
-    out += NamespaceConstantOf(
-        RenderTypeAsCpp(unit, unit.builtins.packed_type), CppPackedTypeName(id),
-        RenderExpr(view, view.Expr(described.value)));
+  for (const mir::TypeDescriptorId id : unit.type_descriptors.Ids()) {
+    out += NamespaceValueOf(
+        unit, mir::TypeDescriptorTypeOf(unit, id), CppTypeDescriptorName(id),
+        unit.builds.descriptors.Get(id));
+  }
+  return out;
+}
+
+// The values the unit was written with, one definition per distinct value,
+// after the descriptions because every one of them names the description of its
+// own type. A use is the name written here, so each is built once for the whole
+// artifact.
+auto RenderIntegralConstants(const mir::CompilationUnit& unit) -> std::string {
+  std::string out;
+  for (const mir::IntegralConstantId id : unit.integral_constants.Ids()) {
+    out += NamespaceValueOf(
+        unit, unit.integral_constants.Get(id).type, CppIntegralConstantName(id),
+        unit.builds.constants.Get(id));
   }
   return out;
 }
@@ -119,7 +146,8 @@ auto RenderUnitFiles(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
 
   std::string declared;
   AppendSection(declared, callables.signature);
-  AppendSection(declared, RenderPackedTypeDescriptions(unit));
+  AppendSection(declared, RenderTypeDescriptions(unit));
+  AppendSection(declared, RenderIntegralConstants(unit));
   AppendSection(declared, variables.signature);
   AppendSection(declared, classes.signature);
   declared += "\n";

@@ -199,6 +199,8 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
                 return std::string{"lyra::value::PackedType"};
               case mir::RuntimeLibraryKind::kPackedRange:
                 return std::string{"lyra::value::PackedRange"};
+              case mir::RuntimeLibraryKind::kUnpackedRange:
+                return std::string{"lyra::value::UnpackedRange"};
               case mir::RuntimeLibraryKind::kPrintItem:
                 return std::string{"lyra::value::PrintItem"};
               case mir::RuntimeLibraryKind::kPrintLiteralItem:

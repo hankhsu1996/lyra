@@ -8,9 +8,9 @@
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -89,7 +89,7 @@ auto BuildPackedArrayFromInt(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId int_value,
     mir::TypeId dst_type) -> mir::Expr {
   const mir::ExprId packed_type =
-      mir::BuildPackedTypeRef(unit, block, dst_type);
+      mir::BuildTypeDescriptorRef(unit, block, dst_type);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -105,7 +105,7 @@ auto BuildPackedArrayConvertFrom(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId src_id,
     mir::TypeId dst_type) -> mir::Expr {
   const mir::ExprId packed_type =
-      mir::BuildPackedTypeRef(unit, block, dst_type);
+      mir::BuildTypeDescriptorRef(unit, block, dst_type);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -230,7 +230,7 @@ auto BuildValueConversion(
   // declared shape, which the shape operand names.
   if (src_ty.Is<mir::StringType>() && dst_ty.IsIntegralPacked()) {
     const mir::ExprId packed_type =
-        mir::BuildPackedTypeRef(unit, block, dst_type);
+        mir::BuildTypeDescriptorRef(unit, block, dst_type);
     return mir::Expr{
         .data =
             mir::CallExpr{
@@ -249,7 +249,7 @@ auto BuildValueConversion(
       dst_arr != nullptr && src_ty.Is<mir::StringType>() &&
       unit.types.Get(dst_arr->element_type).IsIntegralPacked()) {
     const mir::ExprId element_type =
-        mir::BuildPackedTypeRef(unit, block, dst_arr->element_type);
+        mir::BuildTypeDescriptorRef(unit, block, dst_arr->element_type);
     const mir::ExprId count = BuildIntLiteral(
         unit, block, static_cast<std::int64_t>(dst_arr->dim.ElementCount()));
     return mir::Expr{
@@ -270,7 +270,7 @@ auto BuildValueConversion(
       dst_arr != nullptr && src_ty.IsIntegralPacked() &&
       unit.types.Get(dst_arr->element_type).IsIntegralPacked()) {
     const mir::ExprId element_type =
-        mir::BuildPackedTypeRef(unit, block, dst_arr->element_type);
+        mir::BuildTypeDescriptorRef(unit, block, dst_arr->element_type);
     const mir::ExprId count = BuildIntLiteral(
         unit, block, static_cast<std::int64_t>(dst_arr->dim.ElementCount()));
     return mir::Expr{

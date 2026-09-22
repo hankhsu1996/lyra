@@ -378,6 +378,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_leave_target", &lyra_rt_leave_target);
   add("lyra_rt_disable", &lyra_rt_disable);
   add("lyra_rt_effect_names_target", &lyra_rt_effect_names_target);
+  add("lyra_rt_retain_constant", &lyra_rt_retain_constant);
   add("lyra_rt_claim_departure", &lyra_rt_claim_departure);
   add("lyra_rt_finish_departure", &lyra_rt_finish_departure);
   add("lyra_rt_decline_departure", &lyra_rt_decline_departure);
@@ -577,6 +578,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_packed_is_unknown", &lyra_rt_packed_is_unknown);
   add("lyra_rt_packed_count_bits", &lyra_rt_packed_count_bits);
   add("lyra_rt_make_packed_range", &lyra_rt_make_packed_range);
+  add("lyra_rt_make_unpacked_range", &lyra_rt_make_unpacked_range);
   add("lyra_rt_make_packed_type", &lyra_rt_make_packed_type);
   add("lyra_rt_packed_from_words", &lyra_rt_packed_from_words);
   add("lyra_rt_packed_from_string", &lyra_rt_packed_from_string);

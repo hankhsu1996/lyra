@@ -8,6 +8,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "lyra/base/hash.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 
@@ -65,17 +66,10 @@ auto BitsOf(MachineFloatWidth width) -> std::uint32_t {
 
 namespace {
 
-void HashCombine(std::size_t& seed, std::size_t value) {
-  seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
-}
-
-template <typename T>
-void HashField(std::size_t& seed, const T& value) {
-  HashCombine(seed, std::hash<T>{}(value));
-}
+using base::HashField;
 
 void HashId(std::size_t& seed, TypeId id) {
-  HashCombine(seed, std::hash<std::uint32_t>{}(id.value));
+  HashField(seed, id.value);
 }
 
 void HashIds(std::size_t& seed, const std::vector<TypeId>& ids) {

@@ -332,6 +332,8 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kPackedType);
     case mir::RuntimeLibraryKind::kPackedRange:
       return mirror(lir::RuntimeLibraryKind::kPackedRange);
+    case mir::RuntimeLibraryKind::kUnpackedRange:
+      return mirror(lir::RuntimeLibraryKind::kUnpackedRange);
     case mir::RuntimeLibraryKind::kPrintLiteralItem:
       return mirror(lir::RuntimeLibraryKind::kPrintLiteralItem);
     case mir::RuntimeLibraryKind::kPrintValueItem:

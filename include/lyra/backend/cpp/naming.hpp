@@ -20,10 +20,12 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/namespace_storage_phase.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/struct_id.hpp"
+#include "lyra/mir/type_descriptor_id.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -321,12 +323,21 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
   return MintedCppName("capture", slot.value);
 }
 
-// The C++ identifier the run-time description of a packed type is emitted
-// under. It describes a type rather than standing for a declaration, so no
-// source identifier reaches it and the type's own position is what names it.
-[[nodiscard]] inline auto CppPackedTypeName(mir::TypeId integral)
+// The C++ identifier the run-time description of a type is emitted under. It
+// describes a type rather than standing for a declaration, so no source
+// identifier reaches it and its position in the unit's own pool is the whole of
+// its identity.
+[[nodiscard]] inline auto CppTypeDescriptorName(
+    mir::TypeDescriptorId descriptor) -> std::string {
+  return MintedCppName("type", descriptor.value);
+}
+
+// The C++ identifier a constant of the unit is emitted under. The source wrote
+// the value, never a name for it, so its position in the unit's own pool is the
+// whole of its identity -- the same answer the description of a type takes.
+[[nodiscard]] inline auto CppIntegralConstantName(mir::IntegralConstantId c)
     -> std::string {
-  return MintedCppName("packed_type", integral.value);
+  return MintedCppName("const", c.value);
 }
 
 // The C++ identifiers a class's runtime-callback adapters and its compile-time

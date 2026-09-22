@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "lyra/base/hash.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -15,16 +16,12 @@ namespace lyra::lir {
 
 namespace {
 
-void MixBits(std::size_t& seed, std::size_t value) {
-  seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
-}
-
 void Combine(std::size_t& seed, std::uint64_t value) {
-  MixBits(seed, std::hash<std::uint64_t>{}(value));
+  base::HashField(seed, value);
 }
 
 void Combine(std::size_t& seed, const std::string& value) {
-  MixBits(seed, std::hash<std::string>{}(value));
+  base::HashField(seed, value);
 }
 
 void Combine(std::size_t& seed, TypeId id) {
@@ -73,6 +70,8 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "packed type descriptor";
     case RuntimeLibraryKind::kPackedRange:
       return "packed range";
+    case RuntimeLibraryKind::kUnpackedRange:
+      return "unpacked range";
     case RuntimeLibraryKind::kPrintItem:
       return "print item";
     case RuntimeLibraryKind::kPrintLiteralItem:

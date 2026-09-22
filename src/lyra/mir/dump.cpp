@@ -22,12 +22,14 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/packed_type_descriptor.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/value/format.hpp"
@@ -44,6 +46,25 @@ auto CallableLabel(std::span<const NamedCallable> named, CallableId body)
   const std::optional<std::string_view> name = NameOf(named, body);
   return name.has_value() ? std::string{*name}
                           : std::format("<synthesized {}>", body.value);
+}
+
+// One plane of a constant's bits, most significant word first, so the text
+// reads the way the value is written in source.
+auto FormatWords(std::span<const std::uint64_t> words) -> std::string {
+  std::string text;
+  for (std::size_t i = words.size(); i > 0; --i) {
+    text += std::format("{}{:016x}", text.empty() ? "" : "_", words[i - 1U]);
+  }
+  return text.empty() ? "0" : text;
+}
+
+auto FormatIntegralConstant(const IntegralConstantDecl& decl) -> std::string {
+  std::string text = std::format(
+      "Type[{}] 'h{}", decl.type.value, FormatWords(decl.value.value_words));
+  if (!decl.value.state_words.empty()) {
+    text += std::format(" x/z'h{}", FormatWords(decl.value.state_words));
+  }
+  return text;
 }
 
 auto FormatExprList(std::span<const ExprId> ids) -> std::string {
@@ -71,6 +92,17 @@ class MirDumper {
     Indent();
     for (const TypeId id : unit.types.Ids()) {
       Line(std::format("[{}] {}", id.value, FormatType(unit.types.Get(id))));
+    }
+    Dedent();
+    // The values the unit was written with. A reference to one names its
+    // position, so the bits are printed here once rather than at every use.
+    Line("Constants:");
+    Indent();
+    for (const IntegralConstantId id : unit.integral_constants.Ids()) {
+      Line(
+          std::format(
+              "[{}] {}", id.value,
+              FormatIntegralConstant(unit.integral_constants.Get(id))));
     }
     Dedent();
     Line("Class:");
@@ -113,13 +145,13 @@ class MirDumper {
       Dedent();
     }
     // A description is an expression tree with no statements, so what is
-    // dumped under each described type is its expressions and which of them is
-    // the description.
-    Line("PackedTypeDescriptions:");
+    // dumped under each entry is its expressions and which of them is the
+    // description.
+    Line("TypeDescriptions:");
     Indent();
-    for (const TypeId id : DescribedPackedTypes(unit)) {
-      const PackedTypeDescription described = DescribePackedType(unit, id);
-      Line(std::format("Type[{}] = Expr[{}]", id.value, described.value.value));
+    for (const TypeDescriptorId id : unit.type_descriptors.Ids()) {
+      const ValueBuild& described = unit.builds.descriptors.Get(id);
+      Line(std::format("[{}] = Expr[{}]", id.value, described.value.value));
       Indent();
       DumpBlock(described.body);
       Dedent();
@@ -364,6 +396,8 @@ class MirDumper {
                   return "RuntimeLibrary(PackedType)";
                 case RuntimeLibraryKind::kPackedRange:
                   return "RuntimeLibrary(PackedRange)";
+                case RuntimeLibraryKind::kUnpackedRange:
+                  return "RuntimeLibrary(UnpackedRange)";
                 case RuntimeLibraryKind::kPrintItem:
                   return "RuntimeLibrary(PrintItem)";
                 case RuntimeLibraryKind::kPrintLiteralItem:
@@ -704,8 +738,13 @@ class MirDumper {
             [this](const ObjectRecordRef& r) -> std::string {
               return std::format("ObjectRecordRef of={}", FormatClassRef(r.of));
             },
-            [](const PackedTypeRef& r) -> std::string {
-              return std::format("PackedTypeRef Type[{}]", r.integral.value);
+            [](const TypeDescriptorRef& r) -> std::string {
+              return std::format(
+                  "TypeDescriptorRef Descriptor[{}]", r.descriptor.value);
+            },
+            [](const IntegralConstantRef& r) -> std::string {
+              return std::format(
+                  "IntegralConstantRef Const[{}]", r.constant.value);
             },
             [](const StaticPropertyRef& r) -> std::string {
               return std::format(

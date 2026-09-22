@@ -554,12 +554,11 @@ auto FileTable::Read(value::PackedArray dest, const value::PackedArray& fd_pa)
           buf, width, dest.IsSigned(), dest.IsFourState())};
 }
 
-namespace {}  // namespace
-
 auto ReadMemoryWords(
     FileTable& files, const value::PackedArray& fd_pa,
-    const value::PackedArray& element_prototype, std::int64_t declared_left,
-    std::int64_t declared_right, std::int64_t start_sv, std::int64_t count,
+    const value::PackedArray& element_prototype,
+    const value::UnpackedRange& declared, std::int64_t start_sv,
+    std::int64_t count,
     const std::function<void(std::int64_t, value::PackedArray)>& write_word)
     -> std::int32_t {
   const std::int32_t fd = AsInt32(fd_pa);
@@ -573,16 +572,14 @@ auto ReadMemoryWords(
     return 0;
   }
 
-  const auto lowest_sv = std::min(declared_left, declared_right);
-  const auto highest_sv = std::max(declared_left, declared_right);
   // LRM 21.3.4.4: out-of-range start has no defined behaviour. Stamp EBADF
   // and return 0 so the user sees the failure rather than a silent no-op.
-  if (start_sv < lowest_sv || start_sv > highest_sv) {
+  if (start_sv < declared.Low() || start_sv > declared.High()) {
     files.SetError(fd, EINVAL, "$fread: start index out of array range");
     return 0;
   }
   const auto available_elements =
-      static_cast<std::size_t>(highest_sv - start_sv + 1);
+      static_cast<std::size_t>(declared.High() - start_sv + 1);
   const auto target_count =
       std::min(static_cast<std::size_t>(count), available_elements);
 
@@ -625,22 +622,15 @@ auto ReadMemoryWords(
 
 auto FileTable::ReadMemory(
     value::UnpackedArray<value::PackedArray> dest, const value::PackedArray& fd,
-    const value::PackedArray& declared_left,
-    const value::PackedArray& declared_right,
-    const value::PackedArray& sv_start, const value::PackedArray& count)
-    -> MemoryRead {
+    const value::UnpackedRange& declared, const value::PackedArray& sv_start,
+    const value::PackedArray& count) -> MemoryRead {
   if (dest.RawSize() == 0U) return MemoryRead{MakeInt(0), std::move(dest)};
-  const std::int64_t left = declared_left.ToInt64();
-  const std::int64_t right = declared_right.ToInt64();
   const std::int32_t read = ReadMemoryWords(
-      *this, fd, dest.RawAt(0), left, right, sv_start.ToInt64(),
-      count.ToInt64(),
-      [&dest, left, right](std::int64_t sv_index, value::PackedArray word) {
+      *this, fd, dest.RawAt(0), declared, sv_start.ToInt64(), count.ToInt64(),
+      [&dest, &declared](std::int64_t sv_index, value::PackedArray word) {
         dest.ElementRef(
             value::PackedArray::Int(static_cast<std::int32_t>(sv_index)),
-            value::PackedArray::Int(static_cast<std::int32_t>(left)),
-            value::PackedArray::Int(static_cast<std::int32_t>(right))) =
-            std::move(word);
+            declared) = std::move(word);
       });
   return MemoryRead{MakeInt(read), std::move(dest)};
 }

@@ -16,7 +16,9 @@
 #include "lyra/base/pool_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
+#include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/operator.hpp"
+#include "lyra/lir/type_descriptor_id.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -97,11 +99,24 @@ struct BoolConst {
   TypeId type;
 };
 
-// An integral type's runtime descriptor, named by the type it describes. Its
-// contents are an instruction sequence and an operand is a leaf, so what the
-// operand carries is which type is described, not how the description is built.
-struct PackedTypeRef {
-  TypeId integral;
+// A runtime description, named by the entry holding it. Its contents are an
+// instruction sequence and an operand is a leaf, so what the operand carries is
+// which description this is, not how the description is built. The identity is
+// the description's own and not a type's: this layer tells two declarations
+// apart by what they need of the machine rather than by what they declare, so a
+// type here says nothing about which description a use meant.
+struct TypeDescriptorRef {
+  TypeDescriptorId descriptor;
+  TypeId type;
+};
+
+// A constant value of the unit, named by the entry holding it. Its contents are
+// an instruction sequence and an operand is a leaf, so what the operand carries
+// is which constant it is, not how the constant is built -- the same split a
+// type's run-time description is named under, over a value rather than over
+// what describes it.
+struct IntegralConstantRef {
+  IntegralConstantId constant;
   TypeId type;
 };
 
@@ -141,8 +156,8 @@ struct ObjectRecordRef {
 // than a value of its own because it has no dataflow origin to name -- it is
 // materialized at the use site.
 using Operand = std::variant<
-    Use, IntConst, StrConst, RealConst, NullConst, BoolConst, PackedTypeRef,
-    FuncRef, StaticRef, ObjectRecordRef>;
+    Use, IntConst, StrConst, RealConst, NullConst, BoolConst, TypeDescriptorRef,
+    IntegralConstantRef, FuncRef, StaticRef, ObjectRecordRef>;
 
 // A runtime-library entry. `position` names the part the entry acts on where
 // the call itself fixes it, carried on the callee rather than among the
