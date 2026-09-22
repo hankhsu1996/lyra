@@ -37,8 +37,7 @@ class CodeGenModule;
 // so a body carries no state that outlives it.
 class CodeGenFunction {
  public:
-  CodeGenFunction(
-      CodeGenModule& module, const lir::Function& fn, llvm::Function* value);
+  CodeGenFunction(CodeGenModule& module, lir::FunctionId id);
 
   auto Run() -> diag::Result<void>;
 
@@ -51,6 +50,16 @@ class CodeGenFunction {
     std::vector<llvm::Value*> args;
   };
 
+  // The LLVM argument each of the body's parameters reads. They correspond one
+  // for one, except where the body is how a scope is built: that answers to one
+  // prototype for every class, so only what the construction shares with every
+  // other arrives positionally.
+  auto BindParameters() -> void;
+  // The rest of such a body's parameters: what its own class is parameterized
+  // by, which arrives in the span that prototype ends in. Reading them apart
+  // takes instructions, so it happens where the body's own storage is opened
+  // rather than where the arguments are named.
+  auto BindConstructionArguments() -> void;
   auto LowerInstr(const lir::Instr& instr) -> diag::Result<llvm::Value*>;
   auto ResolveCall(const lir::CallInstr& call, lir::TypeId result_type)
       -> diag::Result<ResolvedCall>;
@@ -163,13 +172,26 @@ class CodeGenFunction {
   struct OperandsAsSpanAfterDefinition {
     lir::TypeId defined;
   };
+  // A scope is built against what every scope is built against -- the parent it
+  // hangs under and the identity it is reached by -- and then with the values
+  // this class in particular is parameterized by. Those trail as one span,
+  // because the entry is one function over classes that take different numbers
+  // of them and the class's own construction is what reads them back.
+  struct ScopeOperandsAfterDefinition {
+    lir::TypeId defined;
+  };
+  // How many of those the construction states: what the construction shares
+  // with every other, less the scope itself, which the entry is what brings
+  // into existence.
+  static constexpr std::size_t kScopeStructuralOperands =
+      kScopeConstructSharedParams - 1;
   // What a body's variables are is stated by the body, so an entry that builds
   // that storage leads with the description this body carries rather than with
   // anything the call site spells.
   struct OperandsAfterVariableSchema {};
   using OperandForm = std::variant<
       OperandsAsStated, OperandsAfterDefinition, OperandsAsSpanAfterDefinition,
-      OperandsAfterVariableSchema>;
+      ScopeOperandsAfterDefinition, OperandsAfterVariableSchema>;
 
   // The entry that brings a value of one type into existence, which of its
   // operands carries the shape that value is seeded from, and what form it
@@ -330,6 +352,7 @@ class CodeGenFunction {
   auto OpenedReferent(llvm::Value* reference, lir::TypeId type) -> llvm::Value*;
 
   CodeGenModule* module_;
+  lir::FunctionId id_;
   const lir::Function* fn_;
   llvm::Function* value_;
   llvm::IRBuilder<> builder_;

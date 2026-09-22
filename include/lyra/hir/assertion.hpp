@@ -35,6 +35,8 @@ struct PropertyExprId {
 struct TickRange {
   std::uint32_t min = 1;
   std::uint32_t max = 1;
+
+  auto operator==(const TickRange&) const -> bool = default;
 };
 
 // A Boolean expression, which matches over the single tick where it holds (LRM
@@ -42,6 +44,8 @@ struct TickRange {
 // (LRM 16.5.1).
 struct SequenceBoolean {
   ExprId condition;
+
+  auto operator==(const SequenceBoolean&) const -> bool = default;
 };
 
 // `s1 ##[m:n] s2`: `s2` begins somewhere between m and n ticks after `s1` ends,
@@ -52,6 +56,8 @@ struct SequenceDelay {
   SequenceExprId head;
   SequenceExprId tail;
   TickRange delay;
+
+  auto operator==(const SequenceDelay&) const -> bool = default;
 };
 
 // `s[*m:n]`: the operand matches at successive ticks, end point to start point,
@@ -59,6 +65,8 @@ struct SequenceDelay {
 struct SequenceRepetition {
   SequenceExprId body;
   TickRange count;
+
+  auto operator==(const SequenceRepetition&) const -> bool = default;
 };
 
 using SequenceExprData =
@@ -67,6 +75,8 @@ using SequenceExprData =
 struct SequenceExpr {
   SequenceExprData data;
   diag::SourceSpan span;
+
+  auto operator==(const SequenceExpr&) const -> bool = default;
 };
 
 // Whether a sequence standing as a property needs a match to hold, or only the
@@ -81,6 +91,8 @@ enum class SequenceStrength : std::uint8_t {
 struct PropertySequence {
   SequenceExprId sequence;
   SequenceStrength strength;
+
+  auto operator==(const PropertySequence&) const -> bool = default;
 };
 
 // Where the consequent's evaluation starts, relative to the end point of the
@@ -99,6 +111,8 @@ struct PropertyImplication {
   SequenceExprId antecedent;
   PropertyExprId consequent;
   ImplicationStart start;
+
+  auto operator==(const PropertyImplication&) const -> bool = default;
 };
 
 using PropertyExprData = std::variant<PropertySequence, PropertyImplication>;
@@ -106,6 +120,8 @@ using PropertyExprData = std::variant<PropertySequence, PropertyImplication>;
 struct PropertyExpr {
   PropertyExprData data;
   diag::SourceSpan span;
+
+  auto operator==(const PropertyExpr&) const -> bool = default;
 };
 
 // The condition whose truth preempts an evaluation attempt (LRM 16.12), and
@@ -118,6 +134,8 @@ struct PropertyExpr {
 struct DisableCondition {
   ExprId condition;
   std::vector<SensitivityEntry> sensitivity;
+
+  auto operator==(const DisableCondition&) const -> bool = default;
 };
 
 // A property together with what it is evaluated against (LRM 16.12): the
@@ -129,6 +147,8 @@ struct PropertySpec {
   EventControl clock;
   std::optional<DisableCondition> disable;
   PropertyExprId body;
+
+  auto operator==(const PropertySpec&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

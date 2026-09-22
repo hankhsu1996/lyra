@@ -5,6 +5,7 @@
 // the aggregate's bit plane -- MIR carries no struct-specific node.
 
 #include <cstdint>
+#include <vector>
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -23,6 +24,15 @@ namespace lyra::lowering::hir_to_mir {
 // destructures a value the source named only as a whole. Both entries produce
 // the read side only; a write reaches a member through the member-access
 // lowering below.
+
+// What an element step of a descent is given: the coordinate, and whatever the
+// container's own kind needs beside it to resolve one. Every site that reaches
+// an element states the step the same way, whether the source wrote a select or
+// an assignment pattern named the element by key, so what a container needs is
+// answered from its type in one place.
+[[nodiscard]] auto ElementStepOperands(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId base_type,
+    mir::ExprId idx_id) -> std::vector<mir::ExprId>;
 
 // `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). The container kind of what
 // the call dispatches on picks the runtime overload, and the raw source index

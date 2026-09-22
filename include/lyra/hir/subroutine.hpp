@@ -18,6 +18,8 @@ namespace lyra::hir {
 struct SubroutineParam {
   ProceduralVarId var = {};
   ParamDirection direction = ParamDirection::kInput;
+
+  auto operator==(const SubroutineParam&) const -> bool = default;
 };
 
 // LRM 13.4.1 implicit result variable: a non-void function implicitly declares
@@ -62,6 +64,8 @@ struct SubroutineDecl {
   bool is_prototype = false;
   bool is_static = false;
   std::optional<OverriddenBehavior> overrides;
+
+  auto operator==(const SubroutineDecl&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

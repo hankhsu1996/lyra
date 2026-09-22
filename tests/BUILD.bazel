@@ -73,6 +73,19 @@ cc_test(
 )
 
 cc_test(
+    name = "artifact_count_test",
+    srcs = ["artifact_count_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:compiler",
+        "//:diag",
+        "//:hir",
+        "@googletest//:gtest_main",
+        "@slang",
+    ],
+)
+
+cc_test(
     name = "runtime_object_ref_test",
     srcs = ["runtime/object_ref_test.cpp"],
     copts = LYRA_COPTS,

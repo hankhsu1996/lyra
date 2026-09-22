@@ -227,11 +227,15 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
     HIR-to-MIR the template recurses through `LowerExpr` / `LowerLhsExpr` and reaches
     sub-expressions through a uniform `HirExprs()` accessor; at AST-to-HIR it recurses through
     `LowerExpr` and interns through the walk position's single expression arena, so the pass class's
-    own surface is just `LowerExpr` and `Module()`. Each is constrained on an `ExprLowerer` concept,
-    with explicit instantiations for the two pass classes in the subsystem `.cpp`. Name resolution
-    (`references.cpp` on each boundary) stays a per-pass-class pair, and kinds that exist in only
-    one context (increment / decrement, replication, the dynamic-array constructor, queue `$`) stay
-    procedural-only handlers.
+    own surface is just `LowerExpr` and the accessor reaching the enclosing unit. Each is
+    constrained on an `ExprLowerer` concept, with explicit instantiations for the two pass classes
+    in the subsystem `.cpp`. Name resolution (`references.cpp` on each boundary) stays a
+    per-pass-class pair, because a name is the one thing that means something different in the two
+    contexts. An expression that writes is not: what a write puts where is decided by the write, so
+    an assignment and an increment are shared like everything else, and a loop generate's step is
+    the structural one (LRM 27.4). The single kind still handled in one context alone is a queue's
+    `$` bound, and that is this walk's reach rather than anything the language confines to a
+    procedure.
 
 ## The Walk Position
 

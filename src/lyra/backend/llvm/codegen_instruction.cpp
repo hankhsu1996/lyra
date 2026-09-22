@@ -769,6 +769,22 @@ auto CodeGenFunction::ArgsInForm(
             return std::vector<llvm::Value*>{
                 *definition, SpanOver(operands, module_->Types().Ptr())};
           },
+          [&](const ScopeOperandsAfterDefinition& f)
+              -> diag::Result<std::vector<llvm::Value*>> {
+            auto definition = module_->DefinitionRef(f.defined);
+            if (!definition) {
+              return std::unexpected(std::move(definition.error()));
+            }
+            const std::span<llvm::Value* const> stated{operands};
+            std::vector<llvm::Value*> args{*definition};
+            args.insert(
+                args.end(), stated.begin(),
+                stated.begin() + kScopeStructuralOperands);
+            args.push_back(SpanOver(
+                stated.subspan(kScopeStructuralOperands),
+                module_->Types().Ptr()));
+            return args;
+          },
           [&](const OperandsAfterVariableSchema&)
               -> diag::Result<std::vector<llvm::Value*>> {
             std::vector<llvm::Value*> args{module_->VariableSchemaRef(*fn_)};
@@ -1777,13 +1793,20 @@ auto CodeGenFunction::ConstructionOf(
           // and ends with the last holder rather than at any one exit (LRM
           // 6.21). A borrowed pointer is bound to storage that already exists,
           // so nothing constructs one.
+          //
+          // The two that do construct take their operands differently, and the
+          // difference is what each one is making. Building a node takes what a
+          // node is built from -- where it hangs, what it is reached by, and
+          // the values its own class is parameterized by. A hold takes the
+          // definition alone, because the storage it holds was built elsewhere
+          // and it adds an owner rather than an object.
           [&](const lir::PointerType& p) -> diag::Result<Construction> {
             switch (p.ownership) {
               case lir::PointerOwnership::kUnique:
                 return Construction{
                     .symbol = RuntimeSymbol(RuntimeOp::kMakeScope),
                     .operand_form =
-                        OperandsAfterDefinition{.defined = p.pointee}};
+                        ScopeOperandsAfterDefinition{.defined = p.pointee}};
               case lir::PointerOwnership::kShared:
                 return Construction{
                     .symbol = RuntimeSymbol(RuntimeOp::kMakePromotedScope),

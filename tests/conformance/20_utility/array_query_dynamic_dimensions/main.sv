@@ -4,6 +4,9 @@
 // dimension takes its index space from its index type -- $left 0 and $right
 // that type's highest value -- while $low and $high are the smallest and
 // largest indices currently allocated, and read as x when none is (LRM 20.7).
+// A dimension below the top whose size varies per outer element has no single
+// extent to report (LRM 20.7.1), so a dimension the query cannot answer reads
+// as x the same way one out of range does.
 module Top;
   int elements[];
   int items[$];
@@ -39,11 +42,18 @@ module Top;
   logic [7:0] unallocated_low;
   logic [7:0] unallocated_high;
 
+  int nested[3][][5];
+
   int dimension;
   integer rows_outer;
   integer rows_middle;
   integer rows_element;
   integer rows_out_of_range;
+
+  integer nested_outer;
+  integer nested_varying;
+  integer nested_inner;
+  integer nested_element;
 
   initial begin
     elements = new[4];
@@ -96,6 +106,15 @@ module Top;
     rows_element = $size(rows, dimension);
     dimension = 4;
     rows_out_of_range = $size(rows, dimension);
+
+    dimension = 1;
+    nested_outer = $size(nested, dimension);
+    dimension = 2;
+    nested_varying = $size(nested, dimension);
+    dimension = 3;
+    nested_inner = $size(nested, dimension);
+    dimension = 4;
+    nested_element = $size(nested, dimension);
   end
 
   final begin
@@ -155,6 +174,16 @@ module Top;
     if (rows_out_of_range !== 32'bx)
       $fatal(1, "a query for a dimension the type lacks was %b, expected x",
              rows_out_of_range);
+
+    if (nested_outer !== 3)
+      $fatal(1, "nested_outer was %0d, expected 3", nested_outer);
+    if (nested_varying !== 32'bx)
+      $fatal(1, "a dimension varying per outer element was %b, expected x",
+             nested_varying);
+    if (nested_inner !== 5)
+      $fatal(1, "nested_inner was %0d, expected 5", nested_inner);
+    if (nested_element !== 32)
+      $fatal(1, "nested_element was %0d, expected 32", nested_element);
     $display("All checks passed");
   end
 endmodule

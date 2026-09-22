@@ -29,6 +29,17 @@ CodeGenModule::CodeGenModule(const lir::CompilationUnit& unit)
       unit_(&unit),
       types_(*context_, unit),
       functions_(unit.functions.size()) {
+  for (const lir::ClassId id : unit.classes.Ids()) {
+    const lir::Class& cls = unit.classes.Get(id);
+    if (lir::ObjectTreeBaseOf(cls) != nullptr) {
+      scope_constructions_.insert(cls.constructor);
+    }
+  }
+}
+
+auto CodeGenModule::IsScopeConstruction(lir::FunctionId function) const
+    -> bool {
+  return scope_constructions_.contains(function);
 }
 
 auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
@@ -46,9 +57,7 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
             : nullptr);
   }
   for (const lir::FunctionId id : unit_->functions.Ids()) {
-    auto generated =
-        CodeGenFunction(*this, unit_->functions.Get(id), functions_.Get(id))
-            .Run();
+    auto generated = CodeGenFunction(*this, id).Run();
     if (!generated) {
       return std::unexpected(std::move(generated.error()));
     }
@@ -87,6 +96,14 @@ auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
   params.reserve(fn.params.size());
   for (const lir::ValueId param : fn.params) {
     params.push_back(types_.Map(fn.values.Get(param).type));
+  }
+  // A scope's construction answers to the one prototype every class's shares,
+  // because what reaches it holds the class's definition and not its name: the
+  // parameters the construction has in common with every other, and then the
+  // values this class alone is parameterized by, collected into one span.
+  if (IsScopeConstruction(id)) {
+    params.resize(kScopeConstructSharedParams);
+    params.push_back(types_.Span());
   }
   auto* fn_ty =
       llvm::FunctionType::get(types_.Map(fn.result_type), params, false);

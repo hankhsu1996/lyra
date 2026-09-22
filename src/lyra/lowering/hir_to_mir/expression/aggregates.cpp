@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/packed_concat.hpp"
@@ -290,85 +291,53 @@ auto LowerHirAssignmentPatternExpr(
       unit, block, BuildPackedConcat(unit, block, element_ids), result_type);
 }
 
-// Resolves each `index: value` entry to the offset its index names, leaving
-// the offsets no index named empty.
+// The whole target before any key names an element of it: every element holding
+// the pattern's own `default`, or -- where it wrote none, which LRM 10.9.1
+// allows only when every element is named -- the target type's own default
+// value, which no key can leave showing.
 //
-// An `index:value` names the element `a[index]` (LRM 10.9.1), while an offset
-// counts from the dimension's left end -- the most significant element of a
-// packed array (LRM 7.4.1), storage ordinal zero of an unpacked one (LRM 7.6).
-// The two orders agree only for an ascending dimension, so asking the dimension
-// is what keeps the correspondence from being stated a second time and
-// silently diverging.
-template <ExprLowerer Lowerer, typename Range>
-auto LowerKeyedEntriesByOffset(
-    Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternKeyedExpr& k,
-    const Range& dim) -> diag::Result<std::vector<std::optional<mir::Expr>>> {
-  std::vector<std::optional<mir::Expr>> by_offset(dim.ElementCount());
-  for (const auto& entry : k.entries) {
-    auto value = lowerer.LowerExpr(lowerer.HirExprs().Get(entry.value), frame);
-    if (!value) return std::unexpected(std::move(value.error()));
-    by_offset[dim.LinearOffset(entry.index)] = *std::move(value);
-  }
-  return by_offset;
-}
-
-// LRM 10.9.1 `'{index: value, ..., default: value}` over a packed array. The
-// elements share one bit plane, so what builds the value is the plane's own
-// vocabulary: a run of elements taking the default is one replication however
-// long it is, and the named ones sit between those runs.
+// A packed array's elements share a bit plane, so the default replicated to the
+// plane's width is the value; an unpacked array's are separate storage, so the
+// repeat entry its family carries builds it. Neither counts out elements, which
+// is what keeps a 32768-element target from costing its own length to describe.
 template <ExprLowerer Lowerer>
-auto LowerPackedKeyedPattern(
+auto BuildKeyedPatternBase(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternKeyedExpr& k,
-    const hir::PackedRange& dim, mir::TypeId result_type)
+    hir::TypeId hir_result_type, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  // By value: the pool's view does not survive interning, and the run builder
-  // below interns once for every run it emits.
-  const mir::PackedArrayType result_pa =
-      unit.types.Get(result_type).PackedShape();
-  const std::uint64_t element_width = result_pa.BitWidth() / dim.ElementCount();
-
-  auto by_offset = LowerKeyedEntriesByOffset(lowerer, frame, k, dim);
-  if (!by_offset) return std::unexpected(std::move(by_offset.error()));
-
-  std::optional<mir::ExprId> fill_id;
-  if (k.default_value.has_value()) {
-    auto fill =
-        lowerer.LowerExpr(lowerer.HirExprs().Get(*k.default_value), frame);
-    if (!fill) return std::unexpected(std::move(fill.error()));
-    fill_id = block.exprs.Add(*std::move(fill));
+  if (!k.default_value.has_value()) {
+    return BuildDefaultValueFromHir(lowerer.Owner(), block, hir_result_type);
   }
+  auto fill_or =
+      lowerer.LowerExpr(lowerer.HirExprs().Get(*k.default_value), frame);
+  if (!fill_or) return std::unexpected(std::move(fill_or.error()));
+  const mir::ExprId fill = block.exprs.Add(*std::move(fill_or));
 
-  std::vector<mir::ExprId> parts;
-  std::uint64_t run = 0;
-  const auto flush_run = [&] {
-    if (run == 0) return;
-    if (!fill_id.has_value()) {
-      throw InternalError(
-          "LowerPackedKeyedPattern: no index named this element and the "
-          "pattern carries no default, which LRM 10.9.1 forbids");
-    }
-    const mir::ExprId run_id =
-        BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(run));
-    parts.push_back(block.exprs.Add(BuildReplicateCall(
-        *fill_id, run_id,
-        mir::PackedVectorOf(
-            unit.types, run * element_width, result_pa.state_kind))));
-    run = 0;
-  };
-  for (auto& element : *by_offset) {
-    if (!element.has_value()) {
-      ++run;
-      continue;
-    }
-    flush_run();
-    parts.push_back(block.exprs.Add(*std::move(element)));
+  const auto& hir_ty = lowerer.Owner().Hir().types.Get(hir_result_type);
+  if (const auto* packed = hir_ty.template As<hir::PackedArrayType>()) {
+    // By value: the pool's view does not survive the interning below.
+    const mir::PackedArrayType result_pa =
+        unit.types.Get(result_type).PackedShape();
+    return BuildValueConversion(
+        unit, block,
+        block.exprs.Add(BuildReplicateCall(
+            fill,
+            BuildMachineIntLiteral(
+                unit, block,
+                static_cast<std::int64_t>(packed->dim.ElementCount())),
+            mir::PackedVectorOf(
+                unit.types, result_pa.BitWidth(), result_pa.state_kind))),
+        result_type);
   }
-  flush_run();
-
-  return BuildValueConversion(
-      unit, block, BuildPackedConcat(unit, block, parts), result_type);
+  const auto& array_ty =
+      unit.types.Get(result_type).Get<mir::UnpackedArrayType>();
+  return BuildArrayRepeatCall(
+      unit, block, result_type,
+      BuildElementDefault(lowerer.Owner(), block, hir_result_type), {fill},
+      BuildMachineIntLiteral(
+          unit, block, static_cast<std::int64_t>(array_ty.dim.ElementCount())));
 }
 
 // LRM 10.9.1 `'{index: value, ..., default: value}`: the elements no index
@@ -379,13 +348,12 @@ auto LowerPackedKeyedPattern(
 // 32768-element array reaches the target language as a four-megabyte
 // expression that no compiler accepts.
 //
-// The target's representation decides how that is built. A packed array is a
-// single value with a replication form of its own, so it stays one expression
-// whatever the keys are. An unpacked array's elements are separate storage, so
-// a default fills the array and the named elements are written over it, which
-// takes several steps and therefore a block yielding the array it built --
-// unless there is no default, in which case every element carries an index and
-// the complete list constructs the array directly.
+// So the target is built filled and the elements the pattern names are written
+// over it, whatever its representation and whatever its keys. A key is an
+// expression evaluated here, so which element it names is reached by descending
+// onto it rather than by a position counted out while lowering: what settles a
+// key may be a value the construction supplies, and every key in one pattern is
+// reached the same way whether or not this one's did.
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternKeyedExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternKeyedExpr& k,
@@ -393,80 +361,57 @@ auto LowerHirAssignmentPatternKeyedExpr(
     -> diag::Result<mir::Expr> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto& hir_ty = lowerer.Owner().Hir().types.Get(hir_result_type);
-  if (const auto* packed = hir_ty.template As<hir::PackedArrayType>()) {
-    return LowerPackedKeyedPattern(lowerer, frame, k, packed->dim, result_type);
-  }
-
-  const auto& array_ty =
-      unit.types.Get(result_type).Get<mir::UnpackedArrayType>();
-
-  if (!k.default_value.has_value()) {
-    auto& block = *frame.current_block;
-    auto by_offset = LowerKeyedEntriesByOffset(lowerer, frame, k, array_ty.dim);
-    if (!by_offset) return std::unexpected(std::move(by_offset.error()));
-    std::vector<mir::ExprId> elements;
-    elements.reserve(by_offset->size());
-    for (auto& element : *by_offset) {
-      if (!element.has_value()) {
-        throw InternalError(
-            "LowerHirAssignmentPatternKeyedExpr: no index named this element "
-            "and the pattern carries no default, which LRM 10.9.1 forbids");
-      }
-      elements.push_back(block.exprs.Add(*std::move(element)));
+  const mir::TypeId element_type = [&] {
+    if (const auto* packed = hir_ty.template As<hir::PackedArrayType>()) {
+      const mir::PackedArrayType result_pa =
+          unit.types.Get(result_type).PackedShape();
+      return mir::PackedVectorOf(
+          unit.types, result_pa.BitWidth() / packed->dim.ElementCount(),
+          result_pa.state_kind);
     }
-    return BuildArrayConstructionCall(
-        unit, block, result_type,
-        BuildElementDefault(lowerer.Owner(), block, hir_result_type),
-        std::move(elements));
-  }
+    return unit.types.Get(result_type)
+        .Get<mir::UnpackedArrayType>()
+        .element_type;
+  }();
 
-  const mir::TypeId element_type = array_ty.element_type;
-  const auto build_filled = [&](WalkFrame at) -> diag::Result<mir::Expr> {
-    auto& target = *at.current_block;
-    auto value =
-        lowerer.LowerExpr(lowerer.HirExprs().Get(*k.default_value), at);
-    if (!value) return std::unexpected(std::move(value.error()));
-    const mir::ExprId value_id = target.exprs.Add(*std::move(value));
-    const mir::ExprId element_default =
-        BuildElementDefault(lowerer.Owner(), target, hir_result_type);
-    const mir::ExprId size_id = BuildMachineIntLiteral(
-        unit, target, static_cast<std::int64_t>(array_ty.dim.ElementCount()));
-    return BuildArrayRepeatCall(
-        unit, target, result_type, element_default, {value_id}, size_id);
+  const auto build_base = [&](WalkFrame at) -> diag::Result<mir::Expr> {
+    return BuildKeyedPatternBase(lowerer, at, k, hir_result_type, result_type);
   };
 
   if (k.entries.empty()) {
-    return build_filled(frame);
+    return build_base(frame);
   }
 
   BlockBuilder steps(frame);
   mir::Block& body = steps.Body();
   const WalkFrame& step_frame = steps.Frame();
 
-  auto filled = build_filled(step_frame);
-  if (!filled) return std::unexpected(std::move(filled.error()));
-  const mir::LocalId array = steps.Bindings().DeclareAnonymous(result_type);
+  auto base = build_base(step_frame);
+  if (!base) return std::unexpected(std::move(base.error()));
+  const mir::LocalId built = steps.Bindings().DeclareAnonymous(result_type);
   body.AppendStmt(
       mir::LocalDeclStmt{
-          .target = array, .init = body.exprs.Add(*std::move(filled))});
+          .target = built, .init = body.exprs.Add(*std::move(base))});
 
   for (const auto& entry : k.entries) {
+    auto index =
+        lowerer.LowerExpr(lowerer.HirExprs().Get(entry.index), step_frame);
+    if (!index) return std::unexpected(std::move(index.error()));
     auto value =
         lowerer.LowerExpr(lowerer.HirExprs().Get(entry.value), step_frame);
     if (!value) return std::unexpected(std::move(value.error()));
-    const mir::ExprId index_id = BuildIntLiteral(unit, body, entry.index);
+    const mir::ExprId index_id = body.exprs.Add(*std::move(index));
     const mir::ExprId value_id = body.exprs.Add(*std::move(value));
     const mir::ExprId owner =
-        body.exprs.Add(mir::MakeLocalRefExpr(array, result_type));
+        body.exprs.Add(mir::MakeLocalRefExpr(built, result_type));
     const WriteTarget target = DescendInto(
         WriteTarget{.owner = owner, .descent = {}},
         DescentStep{
             .value_entry = support::BuiltinFn::kElement,
             .part_entry = support::BuiltinFn::kElementRef,
             .position = std::nullopt,
-            .operands =
-                {index_id, BuildIntLiteral(unit, body, array_ty.dim.left),
-                 BuildIntLiteral(unit, body, array_ty.dim.right)},
+            .operands = ElementStepOperands(
+                lowerer.Owner(), body, result_type, index_id),
             .part_type = element_type});
     body.AppendStmt(
         mir::ExprStmt{
@@ -474,9 +419,7 @@ auto LowerHirAssignmentPatternKeyedExpr(
                 unit, body, target, value_id, std::nullopt, element_type))});
   }
 
-  const mir::ExprId result =
-      body.exprs.Add(mir::MakeLocalRefExpr(array, result_type));
-  return steps.Build(result);
+  return steps.Build(body.exprs.Add(mir::MakeLocalRefExpr(built, result_type)));
 }
 
 template <ExprLowerer Lowerer>

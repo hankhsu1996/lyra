@@ -20,9 +20,10 @@ namespace lyra::runtime {
 //
 // It is installed already full of the expression's default sampled value, which
 // is exactly what the standard requires before the kth prior tick exists -- so
-// a read has no empty case and nothing here counts ticks. Depth is fixed where
-// the declaration is, because the count `$past` names is an elaboration-time
-// constant, so nothing grows.
+// a read has no empty case and nothing here counts ticks. How many entries that
+// is, is settled at the install and never after, so nothing grows; whether the
+// number came from a constant the source wrote or from an expression evaluated
+// where the design was built is not something this can tell or needs to.
 template <value::LyraValue T>
 class SampledHistory {
  public:

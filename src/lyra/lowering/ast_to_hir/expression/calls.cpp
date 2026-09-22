@@ -2,7 +2,6 @@
 
 #include <concepts>
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
@@ -30,6 +29,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/sampled_history.hpp"
@@ -138,6 +138,22 @@ auto RecordSampledCells(
   return {};
 }
 
+// The argument the source wrote at `position`, or nothing where it wrote none.
+// A sampled value function's optional arguments are positional, so one elided
+// in the middle arrives as an empty argument rather than shortening the list,
+// and one elided at the end shortens it -- both mean the source wrote nothing
+// there.
+auto WrittenArgument(
+    const slang::ast::CallExpression& call, std::size_t position)
+    -> const slang::ast::Expression* {
+  const auto arguments = call.arguments();
+  if (arguments.size() <= position ||
+      arguments[position]->kind == slang::ast::ExpressionKind::EmptyArgument) {
+    return nullptr;
+  }
+  return arguments[position];
+}
+
 // The clocking event a sampled value function counts ticks of. The source may
 // write one at the call; where it does not, the front end has already applied
 // the two of LRM 16.9.3's ordered rules that reach a call outside an assertion
@@ -151,12 +167,10 @@ auto ResolveClockingEvent(
     Lowerer& lowerer, const slang::ast::CallExpression& call,
     std::size_t clock_arg, std::string_view name, diag::SourceSpan span)
     -> diag::Result<const slang::ast::TimingControl*> {
-  const auto& args = call.arguments();
-  if (args.size() > clock_arg &&
-      args[clock_arg]->kind == slang::ast::ExpressionKind::ClockingEvent) {
-    return &args[clock_arg]
-                ->as<slang::ast::ClockingEventExpression>()
-                .timingControl;
+  const slang::ast::Expression* written = WrittenArgument(call, clock_arg);
+  if (written != nullptr &&
+      written->kind == slang::ast::ExpressionKind::ClockingEvent) {
+    return &written->as<slang::ast::ClockingEventExpression>().timingControl;
   }
   if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
     const auto* clock =
@@ -172,44 +186,20 @@ auto ResolveClockingEvent(
           "so there is no event whose ticks it could count");
 }
 
-// How far back a call reaches: the most recent prior tick for a value change
-// function, and for `$past` the count it names, which the standard requires to
-// be an elaboration-time constant and defaults to 1 (LRM 16.9.3). An elided
-// count arrives as an absent argument rather than a shorter list, because the
-// arguments behind it are positional.
-auto PastTicksBack(
-    const slang::ast::CallExpression& call, diag::SourceSpan span)
-    -> diag::Result<std::uint32_t> {
-  const auto& args = call.arguments();
-  if (args.size() < 2 ||
-      args[1]->kind == slang::ast::ExpressionKind::EmptyArgument) {
-    return 1;
+// How far back a read reaches: the expression the source wrote, or the 1 the
+// standard defaults it to (LRM 16.9.3). Two readers need this same distance --
+// the read itself, and the history whose entries have to go back that far --
+// and they are built into different arenas, so each asks for its own and puts
+// it where it belongs.
+template <typename Lowerer>
+auto LowerTicksBack(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression* ticks_back,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  if (ticks_back == nullptr) {
+    return hir::MakeIntLiteral(
+        1, lowerer.Owner().Unit().builtins.int_type, span);
   }
-  const slang::ConstantValue* ticks = args[1]->getConstant();
-  const std::optional<std::int64_t> count =
-      ticks != nullptr && *ticks ? ticks->integer().as<std::int64_t>()
-                                 : std::nullopt;
-  if (!count.has_value()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "'$past' needs a tick count it can read before the program runs (LRM "
-        "16.9.3)");
-  }
-  return static_cast<std::uint32_t>(*count);
-}
-
-// `$past`'s third argument, where the source wrote one: the expression gating
-// the clocking event (LRM 16.9.3). Absent where the position was elided.
-auto PastGateExpression(const slang::ast::CallExpression& call)
-    -> const slang::ast::Expression* {
-  if (call.arguments().size() < 3) {
-    return nullptr;
-  }
-  const slang::ast::Expression* gate = call.arguments()[2];
-  if (gate->kind == slang::ast::ExpressionKind::EmptyArgument) {
-    return nullptr;
-  }
-  return gate;
+  return lowerer.LowerExpr(*ticks_back, frame);
 }
 
 // What a sampled value function needs from the scope it is read in. Its
@@ -226,9 +216,9 @@ template <typename Lowerer>
 auto RecordSampledHistory(
     Lowerer& lowerer, const WalkFrame& frame,
     const slang::ast::CallExpression& call, std::size_t clock_arg,
-    std::uint32_t ticks_back, const slang::ast::Expression* gate,
-    std::string_view name, diag::SourceSpan span)
-    -> diag::Result<hir::SampledHistoryId> {
+    const slang::ast::Expression* ticks_back,
+    const slang::ast::Expression* gate, std::string_view name,
+    diag::SourceSpan span) -> diag::Result<hir::SampledHistoryId> {
   // Arming is the same requirement `$sampled` has, and the same check reports
   // an expression reading storage this scope cannot name.
   if (auto armed = RecordSampledCells(lowerer, frame, call, span); !armed) {
@@ -285,11 +275,13 @@ auto RecordSampledHistory(
             });
       }
     }
+    auto depth_or = LowerTicksBack(lowerer, scope_frame, ticks_back, span);
+    if (!depth_or) return std::unexpected(std::move(depth_or.error()));
     return frame.current_structural_scope->sampled_histories.Add(
         hir::SampledHistoryDecl{
             .subject = scope_frame.Exprs().Add(*std::move(subject_or)),
             .clock = *value_change,
-            .depth = ticks_back,
+            .depth = scope_frame.Exprs().Add(*std::move(depth_or)),
         });
   }
 }
@@ -321,13 +313,17 @@ auto LowerSampledHistoryExpr(
 
   if (std::holds_alternative<support::PastValueSystemSubroutineInfo>(
           desc->semantic)) {
-    auto ticks_or = PastTicksBack(call, span);
-    if (!ticks_or) return std::unexpected(std::move(ticks_or.error()));
-    // `$past` takes its event fourth, behind the tick count and the gate.
+    // `$past` states its operand first, then how far back, then the gate, then
+    // the event (LRM 16.9.3).
+    const slang::ast::Expression* ticks_back = WrittenArgument(call, 1);
     auto history_or = RecordSampledHistory(
-        lowerer, frame, call, 3, *ticks_or, PastGateExpression(call), name,
+        lowerer, frame, call, 3, ticks_back, WrittenArgument(call, 2), name,
         span);
     if (!history_or) return std::unexpected(std::move(history_or.error()));
+    auto read_depth_or = LowerTicksBack(lowerer, frame, ticks_back, span);
+    if (!read_depth_or) {
+      return std::unexpected(std::move(read_depth_or.error()));
+    }
     // The result follows the operand's type, and the operand that survives is
     // the history's subject -- the same expression, lowered where the process
     // that settles it will read it.
@@ -338,10 +334,8 @@ auto LowerSampledHistoryExpr(
                 .type,
         .data =
             hir::CallExpr{
-                .callee =
-                    hir::PastValueRef{
-                        .history = *history_or, .ticks_back = *ticks_or},
-                .arguments = {}},
+                .callee = hir::PastValueRef{.history = *history_or},
+                .arguments = {frame.Exprs().Add(*std::move(read_depth_or))}},
         .span = span,
     }};
   }
@@ -353,8 +347,8 @@ auto LowerSampledHistoryExpr(
   }
   // A value change function takes its event second and gates nothing: only
   // `$past` carries a gating expression (LRM 16.9.3).
-  auto history_or =
-      RecordSampledHistory(lowerer, frame, call, 1, 1, nullptr, name, span);
+  auto history_or = RecordSampledHistory(
+      lowerer, frame, call, 1, nullptr, nullptr, name, span);
   if (!history_or) return std::unexpected(std::move(history_or.error()));
   auto operand_or = lowerer.LowerExpr(*call.arguments()[0], frame);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));

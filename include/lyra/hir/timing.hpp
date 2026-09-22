@@ -14,6 +14,8 @@ namespace lyra::hir {
 
 struct DelayControl {
   ExprId duration;
+
+  auto operator==(const DelayControl&) const -> bool = default;
 };
 
 // One leaf entry of a wait's read set. Identity-only: which cell, and the
@@ -22,6 +24,8 @@ struct DelayControl {
 struct SensitivityEntry {
   ValueTarget ref;
   std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
+
+  auto operator==(const SensitivityEntry&) const -> bool = default;
 };
 
 // One entry of an explicit `@(...)` event control (LRM 9.4.2). `signal` is the
@@ -39,10 +43,14 @@ struct EventTrigger {
   support::EventEdge edge;
   std::vector<SensitivityEntry> sensitivity_list;
   std::optional<ExprId> condition;
+
+  auto operator==(const EventTrigger&) const -> bool = default;
 };
 
 struct EventControl {
   std::vector<EventTrigger> triggers;
+
+  auto operator==(const EventControl&) const -> bool = default;
 };
 
 // LRM 9.4.2.2 `@*` / `@(*)`. Sensitivity for the controlled body is
@@ -50,6 +58,8 @@ struct EventControl {
 // must-def) and looked up at AST -> HIR via the precomputed read-set facts.
 struct ImplicitEventControl {
   std::vector<SensitivityEntry> sensitivity_list;
+
+  auto operator==(const ImplicitEventControl&) const -> bool = default;
 };
 
 // LRM 15.5.2 `@e;`. What the wait watches is the event rather than the value of
@@ -59,6 +69,8 @@ struct ImplicitEventControl {
 struct NamedEventControl {
   SensitivityEntry event;
   std::optional<ExprId> condition;
+
+  auto operator==(const NamedEventControl&) const -> bool = default;
 };
 
 using TimingControl = std::variant<
@@ -75,6 +87,8 @@ using AnyEventControl = std::variant<EventControl, NamedEventControl>;
 struct RepeatedEventControl {
   ExprId count;
   AnyEventControl event;
+
+  auto operator==(const RepeatedEventControl&) const -> bool = default;
 };
 
 // LRM A.6.5 `delay_or_event_control`: what names the slot an effect is due in,
@@ -87,7 +101,9 @@ using DelayOrEventControl = std::variant<
     DelayControl, EventControl, NamedEventControl, RepeatedEventControl>;
 
 // The effect happens where the statement is reached.
-struct ImmediateEffect {};
+struct ImmediateEffect {
+  auto operator==(const ImmediateEffect&) const -> bool = default;
+};
 
 // The effect becomes a nonblocking update event, due in the NBA region of the
 // slot `control` names -- this one, where the source wrote none. Everything the
@@ -95,6 +111,8 @@ struct ImmediateEffect {};
 // carries on without waiting for it (LRM 4.4.2.4, 9.4.5, 10.4.2, 15.5.1).
 struct NonBlockingEffect {
   std::optional<DelayOrEventControl> control = std::nullopt;
+
+  auto operator==(const NonBlockingEffect&) const -> bool = default;
 };
 
 // When an effect the source wrote as one statement actually happens. A

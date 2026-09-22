@@ -506,7 +506,7 @@ auto LowerHirCallExpr(
             return LowerEnumMethod(lowerer, frame, c, e, result_type);
           },
           [&](const hir::PastValueRef& p) -> diag::Result<mir::Expr> {
-            return LowerPastValueCall(lowerer, frame, p);
+            return LowerPastValueCall(lowerer, frame, c, p);
           },
           [&](const hir::ValueChangeRef& v) -> diag::Result<mir::Expr> {
             return LowerValueChangeCall(

@@ -14,16 +14,22 @@ namespace lyra::hir {
 struct RangeConstantBounds {
   ExprId left_bound;
   ExprId right_bound;
+
+  auto operator==(const RangeConstantBounds&) const -> bool = default;
 };
 
 struct RangeIndexedUpBounds {
   ExprId base_index;
   ExprId width;
+
+  auto operator==(const RangeIndexedUpBounds&) const -> bool = default;
 };
 
 struct RangeIndexedDownBounds {
   ExprId base_index;
   ExprId width;
+
+  auto operator==(const RangeIndexedDownBounds&) const -> bool = default;
 };
 
 using RangeBounds = std::variant<

@@ -658,6 +658,9 @@ auto LowerNamedValueProc(
   if (auto clause = frame.FindIterationClause(sym)) {
     return MakeIterationElementRefExpr(unit_lowerer, named, *clause, span);
   }
+  if (const auto* filled = unit_lowerer.NameFilledDuringElaboration(sym)) {
+    return LowerValueRef(unit_lowerer, frame, *filled, *named.type, span);
+  }
 
   auto resolved = ResolveReferent(sym, span);
   if (!resolved) return std::unexpected(std::move(resolved.error()));
@@ -801,6 +804,9 @@ auto LowerNamedValueStructural(
   const auto& sym = named.symbol;
   if (auto clause = frame.FindIterationClause(sym)) {
     return MakeIterationElementRefExpr(unit_lowerer, named, *clause, span);
+  }
+  if (const auto* filled = unit_lowerer.NameFilledDuringElaboration(sym)) {
+    return LowerValueRef(unit_lowerer, frame, *filled, *named.type, span);
   }
   auto resolved = ResolveReferent(sym, span);
   if (!resolved) return std::unexpected(std::move(resolved.error()));

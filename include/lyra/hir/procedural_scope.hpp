@@ -79,6 +79,8 @@ struct ProceduralScopeDecl {
   std::optional<std::string> source_name;
   std::vector<ProceduralVarId> declarations;
   std::vector<ProceduralScopeId> child_scopes;
+
+  auto operator==(const ProceduralScopeDecl&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

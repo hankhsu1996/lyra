@@ -30,8 +30,13 @@ document conflicts with a North Star principle, the lower-level document is wron
    (module, package, interface), not the elaborated instance graph. Generate constructs (`if`,
    `for`, `case`) are constructor-time logic the runtime executes to build the object graph at time
    zero. Compile-time artifacts are class-level and shared across every instance; per-instance data
-   (parameter values, wiring, hierarchical position) flows in at runtime construction. Compile-time
-   work scales with the count of distinct unit specializations, not with instance count.
+   (parameter values, wiring, hierarchical position) flows in at runtime construction. The count of
+   compile-time **artifacts** scales with the count of distinct unit specializations, not with
+   instance count. Compile-time **work** is a different axis and is not this invariant's subject: a
+   front end that elaborates per instance makes some work proportional to instance count whatever is
+   built above it, and what the artifacts go on to cost dominates it by orders of magnitude. A
+   design that produces more artifacts in order to do less per-instance work has traded the wrong
+   way.
 3. **Correctness is independent of optimization.** The compiler produces correct output for every
    accepted program; the per-unit sharing of invariant 2 is admitted only when behavior-preserving,
    and a correct program is never rejected because an optimization cannot be applied.
@@ -54,8 +59,8 @@ document conflicts with a North Star principle, the lower-level document is wron
 
 - A design that improves one stage of the iteration loop at the cost of inflating another beyond the
   overall turnaround budget.
-- Letting per-instance compile-time work become the steady state, or foreclosing the per-unit shared
-  form.
+- Letting per-instance compile-time artifacts become the steady state, or foreclosing the per-unit
+  shared form.
 - Making the frontend-elaborated instance graph the compilation model, or the authority for unit or
   specialization identity.
 - Making an optimization a correctness precondition: rejecting or mis-lowering a correct program
@@ -73,3 +78,12 @@ Specialization policy, identity schemes, IR boundaries, and frontend boundaries 
 documents, not here. If a principle can be stated as a mechanism ("identity follows ownership",
 "frontend pointer identity stops at AST-to-HIR"), it is not North Star material. North Star names
 the objective and the first-class constraints; lower-level docs name the mechanisms.
+
+Invariant 2 used to say that compile-time **work** does not scale with instance count, and the
+separation it now draws was paid for. Measured on a repeated structure at 256 repetitions: the whole
+front end and both semantic IRs cost under half a second, of which the per-instance duplication is
+0.019s, while optimization and code generation cost 4.2s and compiling the emitted target 16.8s. So
+the work clause named a few percent of the cost, was unsatisfiable anyway because the front end
+elaborates per instance, and -- being the half that reads as the demanding one -- was twice used to
+reject a correct design in favour of one that would have produced more artifacts. An invariant is
+worth keeping when it selects; this one did, in the wrong direction, until the two axes were split.

@@ -13,6 +13,8 @@ inline constexpr std::int8_t kDefaultTimePrecisionPower = -9;
 struct TimeResolution {
   std::int8_t unit_power = kDefaultTimeUnitPower;
   std::int8_t precision_power = kDefaultTimePrecisionPower;
+
+  auto operator==(const TimeResolution&) const -> bool = default;
 };
 
 }  // namespace lyra

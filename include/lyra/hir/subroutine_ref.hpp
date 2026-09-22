@@ -25,7 +25,8 @@ namespace lyra::hir {
 // Calls a subroutine this compilation unit declares, on the object of the scope
 // that declares it. `hops` climbs to the nearest scope enclosing both the
 // reader and the callee, `descent` steps back down from there into the
-// declaring scope, and `subroutine` is that scope's own identity for it -- a
+// declaring scope -- each step naming a child and which of the objects that
+// child stands for -- and `subroutine` is that scope's own identity for it, a
 // registry position, so it means nothing without the scope the route lands on.
 //
 // A climb alone reaches only a subroutine of an enclosing scope. One this unit
@@ -34,8 +35,10 @@ namespace lyra::hir {
 // out and in are separate axes and no single number is both.
 struct StructuralSubroutineRef {
   StructuralHops hops;
-  std::vector<OwnedChildRef> descent;
+  std::vector<OwnedChildStep> descent;
   StructuralSubroutineId subroutine;
+
+  auto operator==(const StructuralSubroutineRef&) const -> bool = default;
 };
 
 // Calls a DPI-C import (LRM 35.4). `id` names the unit's own record of the
@@ -54,6 +57,8 @@ struct StructuralSubroutineRef {
 struct ForeignImportRef {
   ForeignImportId id{};
   std::optional<StructuralHops> declaring_scope;
+
+  auto operator==(const ForeignImportRef&) const -> bool = default;
 };
 
 // Which object an instance-method call runs against (LRM 8.6, 8.11, 8.15).
@@ -77,9 +82,15 @@ struct ForeignImportRef {
 // plus a super-flag would admit an invalid state.
 struct HandleReceiver {
   ExprId expr;
+
+  auto operator==(const HandleReceiver&) const -> bool = default;
 };
-struct SelfReceiver {};
-struct SuperReceiver {};
+struct SelfReceiver {
+  auto operator==(const SelfReceiver&) const -> bool = default;
+};
+struct SuperReceiver {
+  auto operator==(const SuperReceiver&) const -> bool = default;
+};
 
 using MethodReceiver =
     std::variant<HandleReceiver, SelfReceiver, SuperReceiver>;
@@ -105,6 +116,8 @@ struct ExternalMethodCallee {
   ExternalClassMethodTarget target;
   std::optional<CrossUnitDispatchSlot> slot;
   ExternalCalleeInterface interface;
+
+  auto operator==(const ExternalMethodCallee&) const -> bool = default;
 };
 
 // A method reached through the body the design settled, which is how a call on
@@ -115,6 +128,8 @@ struct ExternalMethodCallee {
 struct SettledMethodCallee {
   UnpublishedBehaviorBody body;
   ExternalCalleeInterface interface;
+
+  auto operator==(const SettledMethodCallee&) const -> bool = default;
 };
 
 // The method a call reaches. Intra-unit it is a slot in a class's own method
@@ -129,12 +144,16 @@ using MethodCallee = std::variant<
 struct MethodCallRef {
   MethodReceiver receiver;
   MethodCallee callee;
+
+  auto operator==(const MethodCallRef&) const -> bool = default;
 };
 
 // Calls a `$xxx` system subroutine. The id resolves through
 // `support::LookupSystemSubroutine` to the descriptor that drives lowering.
 struct SystemSubroutineRef {
   support::SystemSubroutineId id;
+
+  auto operator==(const SystemSubroutineRef&) const -> bool = default;
 };
 
 // Calls a built-in runtime method (LRM 6.16 string, 7.9 associative, 7.10
@@ -146,6 +165,8 @@ struct SystemSubroutineRef {
 struct BuiltinMethodRef {
   support::BuiltinFn method{};
   std::optional<ExprId> receiver;
+
+  auto operator==(const BuiltinMethodRef&) const -> bool = default;
 };
 
 // Calls a method LRM 6.19.5 defines on an enumerated type. The enumeration is
@@ -154,6 +175,8 @@ struct BuiltinMethodRef {
 // runtime library declares these, so nothing below this layer names one.
 struct EnumMethodRef {
   EnumMethod method;
+
+  auto operator==(const EnumMethodRef&) const -> bool = default;
 };
 
 // The two shapes a sampled value function that reaches across the ticks of a
@@ -165,13 +188,18 @@ struct EnumMethodRef {
 // `$sampled` is neither. It names no event, so it reads the cell directly and
 // stays an ordinary system subroutine call.
 
-// `$past`: the value one tick of that event settled, and nothing of the time
-// step the call stands in -- so it takes no argument. `ticks_back` is how far
-// back it reaches, which the standard requires to be an elaboration-time
-// constant and defaults to 1.
+// `$past`: the value one tick of that event settled. The operand is not an
+// argument of this call -- it is the history's subject, evaluated at the tick
+// rather than here -- but how far back to reach is, and it is the call's one
+// argument: the expression the source wrote there, or the 1 it defaults to
+// (LRM 16.9.3). That clause requires the expression to settle before the
+// program runs, which says its value is known and not that this has to hold it:
+// a history answers by counting back through entries it already has, so a
+// different distance is the same history reached at another offset.
 struct PastValueRef {
   SampledHistoryId history;
-  std::uint32_t ticks_back = 1;
+
+  auto operator==(const PastValueRef&) const -> bool = default;
 };
 
 // `$rose`, `$fell`, `$stable`, `$changed`: a comparison between the sampled
@@ -181,6 +209,8 @@ struct PastValueRef {
 struct ValueChangeRef {
   SampledHistoryId history;
   support::ValueChangeReading reading = support::ValueChangeReading::kRoseToOne;
+
+  auto operator==(const ValueChangeRef&) const -> bool = default;
 };
 
 // Calls a subroutine that belongs to another compilation unit -- a package
@@ -193,6 +223,8 @@ struct ExternalUnitSubroutineRef {
   std::string unit_name;
   std::string subroutine_name;
   ExternalCalleeInterface interface;
+
+  auto operator==(const ExternalUnitSubroutineRef&) const -> bool = default;
 };
 
 // Calls a subroutine another compilation unit declares in its own body, enabled
@@ -208,6 +240,8 @@ struct ExternalUnitMethodRef {
   RoutedRef receiver;
   ExternalUnitObjectId object;
   PublishedCallableId callable;
+
+  auto operator==(const ExternalUnitMethodRef&) const -> bool = default;
 };
 
 // Calls a subroutine another compilation unit declares in its own body, on one
@@ -227,6 +261,8 @@ struct OpaqueUnitMethodRef {
   RoutedRef receiver;
   RoutedRef entry;
   ExternalCalleeInterface interface;
+
+  auto operator==(const OpaqueUnitMethodRef&) const -> bool = default;
 };
 
 // Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`
@@ -246,6 +282,8 @@ struct OpaqueUnitMethodRef {
 struct StaticMethodCallRef {
   MethodCallee callee;
   std::optional<StructuralHops> declaring_scope_hops;
+
+  auto operator==(const StaticMethodCallRef&) const -> bool = default;
 };
 
 using SubroutineRef = std::variant<

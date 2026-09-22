@@ -222,19 +222,19 @@ class ProcessLowerer {
   // this forwards to them so a templated call handler reaches a user subroutine
   // through the same surface on either pass class.
   [[nodiscard]] auto LookupHirSubroutine(
-      hir::StructuralHops hops, std::span<const hir::OwnedChildRef> descent,
+      hir::StructuralHops hops, std::span<const hir::OwnedChildStep> descent,
       hir::StructuralSubroutineId id) const -> const hir::SubroutineDecl& {
     return EnclosingScopeLowerer().LookupHirSubroutine(hops, descent, id);
   }
   [[nodiscard]] auto TranslateStructuralSubroutine(
-      hir::StructuralHops hops, std::span<const hir::OwnedChildRef> descent,
+      hir::StructuralHops hops, std::span<const hir::OwnedChildStep> descent,
       hir::StructuralSubroutineId id) const -> mir::Direct {
     return EnclosingScopeLowerer().TranslateStructuralSubroutine(
         hops, descent, id);
   }
   [[nodiscard]] auto ScopeAt(
       hir::StructuralHops hops,
-      std::span<const hir::OwnedChildRef> descent) const
+      std::span<const hir::OwnedChildStep> descent) const
       -> const StructuralScopeLowerer& {
     return EnclosingScopeLowerer().ScopeAt(hops, descent);
   }

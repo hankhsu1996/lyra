@@ -29,10 +29,11 @@ namespace lyra::lowering::hir_to_mir {
     -> diag::Result<mir::CallableDecl>;
 
 // `$past`: the value the tick it names settled, and nothing else (LRM 16.9.3).
+// Which tick that is, is the call's one argument.
 template <ExprLowerer Lowerer>
 [[nodiscard]] auto LowerPastValueCall(
-    Lowerer& lowerer, const WalkFrame& frame, const hir::PastValueRef& ref)
-    -> diag::Result<mir::Expr>;
+    Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call,
+    const hir::PastValueRef& ref) -> diag::Result<mir::Expr>;
 
 // A value change function: the sampled value of this time step -- the one
 // `$sampled` gives, read here the same way -- against the one the most recent

@@ -16,7 +16,6 @@
 #include <slang/numeric/SVInt.h>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
@@ -138,24 +137,6 @@ auto DimensionCount(const slang::ast::Type& operand, bool unpacked_only)
     ++count;
   }
   return count;
-}
-
-// The dimension index the call names, defaulting to 1 when the call omits it
-// (LRM 20.7). Syntax 20-9 makes the index an ordinary expression rather than a
-// constant one, so whether it has a value before the program runs is the front
-// end's answer and not a question to ask again: absent here means the index is
-// one only simulation knows, which is legal and leaves the query itself a
-// run-time value.
-auto ConstantDimensionIndex(const slang::ast::CallExpression& call)
-    -> std::optional<std::int64_t> {
-  if (call.arguments().size() < 2) {
-    return 1;
-  }
-  const slang::ConstantValue* index = call.arguments()[1]->getConstant();
-  if (index == nullptr || !*index) {
-    return std::nullopt;
-  }
-  return index->integer().as<std::int64_t>();
 }
 
 // A value of the type slang gave the call, so the literal carries that type's
@@ -482,17 +463,21 @@ auto LowerComposedDimensionQuery(
           "LowerComposedDimensionQuery: dimension index out of range");
     }
     // LRM 20.7.1: a variable-sized dimension below the top has no single extent
-    // -- each outer element carries its own -- so naming it is an error. A
-    // run-time index could land there, and the value-build table cannot carry a
-    // per-arm error, so the operand shape is rejected rather than half-served.
-    if (i != 1 && !dimension->hasFixedRange()) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "an array query with a run-time dimension index is not yet supported "
-          "over an array with a variable-sized dimension below the top");
-    }
+    // -- each outer element carries its own -- so the query has no answer for
+    // it and reports the `'x` it reports for any dimension it cannot answer.
+    // Naming such a dimension is an error, and every index that names one and
+    // can be read before the program runs is rejected where it is written, so
+    // what reaches this entry is an index only the run reveals, in a program
+    // the standard has already called erroneous.
     auto row_or =
-        LowerDimensionResult(lowerer, frame, call, *dimension, query, span);
+        i != 1 && !dimension->hasFixedRange()
+            ? MakeQueryConstant(
+                  unit_lowerer, frame, call,
+                  slang::ConstantValue{slang::SVInt::createFillX(
+                      call.type->getBitWidth(), call.type->isSigned())},
+                  span)
+            : LowerDimensionResult(
+                  lowerer, frame, call, *dimension, query, span);
     if (!row_or) {
       return std::unexpected(std::move(row_or.error()));
     }
@@ -525,24 +510,21 @@ auto LowerComposedDimensionQuery(
       .span = span};
 }
 
+// The dimension the query asks about, where the source wrote none: LRM 20.7
+// defaults it to 1, so there is no expression and nothing to select among.
 template <ExprLowerer Lowerer>
 auto LowerDimensionQuery(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
     QueryKind query, diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  const std::optional<std::int64_t> index = ConstantDimensionIndex(call);
-  if (!index.has_value()) {
-    return LowerComposedDimensionQuery(lowerer, frame, call, query, span);
+  if (call.arguments().size() < 2) {
+    const slang::ast::Type* dimension =
+        DimensionType(*call.arguments()[0]->type, 1);
+    if (dimension == nullptr) {
+      throw InternalError("LowerDimensionQuery: operand has no dimension");
+    }
+    return LowerDimensionResult(lowerer, frame, call, *dimension, query, span);
   }
-
-  // A constant index names a dimension the frontend has already checked the
-  // operand has, so failing to reach it means this unwrapping and the
-  // frontend's disagree.
-  const slang::ast::Type* dimension = DimensionType(
-      *call.arguments()[0]->type, static_cast<std::int32_t>(*index));
-  if (dimension == nullptr) {
-    throw InternalError("LowerDimensionQuery: dimension index out of range");
-  }
-  return LowerDimensionResult(lowerer, frame, call, *dimension, query, span);
+  return LowerComposedDimensionQuery(lowerer, frame, call, query, span);
 }
 
 }  // namespace

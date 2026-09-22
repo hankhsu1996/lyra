@@ -33,6 +33,19 @@ inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
 inline constexpr std::string_view kDepartureTypeSymbol =
     "lyra_rt_departure_type_info";
 
+// How a scope of the design hierarchy is built: one prototype for every class,
+// because what reaches a construction holds the class's definition and not its
+// name. It opens with what every construction shares -- the scope itself, the
+// parent it hangs under, and the identity it is reached by -- and ends in one
+// span holding whatever values that class alone is parameterized by.
+//
+// The count is restated here rather than read off the entry type, because what
+// this target emits describes the boundary in its own terms: a value crosses it
+// as an opaque pointer precisely so that generated code depends on no host
+// declaration's layout. So the two sides are held together by the policy check
+// over this boundary instead of by the compiler.
+inline constexpr std::size_t kScopeConstructSharedParams = 3;
+
 // The domain a LIR type is realized in, absent for a type the runtime library
 // has no value realization for. The one place a LIR type is classified, so the
 // entry a call names and the storage a cell owns cannot disagree.

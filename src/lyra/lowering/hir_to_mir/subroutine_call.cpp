@@ -44,7 +44,7 @@ namespace {
 // encloses the caller is the empty descent.
 struct EnclosingScopeReceiver {
   mir::EnclosingHops hops;
-  std::span<const hir::OwnedChildRef> descent;
+  std::span<const hir::OwnedChildStep> descent;
 };
 
 // The same scope, handed to a callee that dispatches on nothing: a
@@ -583,28 +583,38 @@ auto BuildAmbientHandle(
             mir::ExprId nav = BuildEnclosingScopeReceiver(
                 frame, lowerer.Owner().Unit(), r.hops);
             // Each descent step is the borrowed handle the scope standing here
-            // holds for that child: the same typed member access a route step
-            // makes, run from a receiver the climb already produced. The
-            // handle's type comes off the shape rather than the finished class,
-            // because a child's class is still being built while the scope that
-            // declares it lowers its own bodies.
+            // holds for that child, then which of the objects that child stands
+            // for: the same typed member access a route step makes, run from a
+            // receiver the climb already produced. The handle's type comes off
+            // the shape rather than the finished class, because a child's class
+            // is still being built while the scope that declares it lowers its
+            // own bodies.
             const hir::StructuralHops climbed{
                 .value = static_cast<std::uint32_t>(r.hops.value)};
             for (std::size_t i = 0; i < r.descent.size(); ++i) {
               const StructuralScopeLowerer& standing =
                   lowerer.ScopeAt(climbed, r.descent.first(i));
               const OwnedChildAnchor anchor = standing.TranslateOwnedChild(
-                  hir::StructuralHops{.value = 0}, r.descent[i]);
+                  hir::StructuralHops{.value = 0}, r.descent[i].child);
               const mir::ClassId owner = standing.ClassId();
-              nav = frame.current_block->exprs.Add(
-                  mir::MakeFieldAccessExpr(
-                      nav,
-                      mir::ClassFieldTarget{
-                          .owner = owner, .slot = anchor.borrowed_handle},
-                      lowerer.Owner()
-                          .GetClassShape(owner)
-                          .fields.Get(anchor.borrowed_handle)
-                          .type));
+              const mir::TypeId reached =
+                  lowerer.Owner()
+                      .GetClassShape(owner)
+                      .fields.Get(anchor.borrowed_handle)
+                      .type;
+              nav = IndexCoordinates(
+                        lowerer.Owner(), *frame.current_block,
+                        ReachedObject{
+                            .expr = frame.current_block->exprs.Add(
+                                mir::MakeFieldAccessExpr(
+                                    nav,
+                                    mir::ClassFieldTarget{
+                                        .owner = owner,
+                                        .slot = anchor.borrowed_handle},
+                                    reached)),
+                            .type = reached},
+                        CoordinatesAt(anchor, r.descent[i].indices))
+                        .expr;
             }
             return nav;
           },

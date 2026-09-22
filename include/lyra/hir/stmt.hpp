@@ -27,17 +27,23 @@ struct StmtId {
   auto operator<=>(const StmtId&) const -> std::strong_ordering = default;
 };
 
-struct EmptyStmt {};
+struct EmptyStmt {
+  auto operator==(const EmptyStmt&) const -> bool = default;
+};
 
 // The SystemVerilog point of declaration, which is what its position in the
 // statement stream marks. What is declared -- including the declaration
 // assignment -- is the declaration's own content; this statement names it.
 struct VarDeclStmt {
   ProceduralVarId var = {};
+
+  auto operator==(const VarDeclStmt&) const -> bool = default;
 };
 
 struct ExprStmt {
   ExprId expr;
+
+  auto operator==(const ExprStmt&) const -> bool = default;
 };
 
 // A `begin ... end` (LRM 9.3.4): statements run in sequence in a lexical
@@ -55,6 +61,8 @@ struct ExprStmt {
 struct BlockStmt {
   std::vector<StmtId> statements;
   ProceduralScopeId scope;
+
+  auto operator==(const BlockStmt&) const -> bool = default;
 };
 
 // LRM 9.3.2 Table 9-1: which join keyword controls when the forking process
@@ -77,6 +85,8 @@ struct ForkStmt {
   std::vector<StmtId> locals;
   std::vector<StmtId> branches;
   ProceduralScopeId scope;
+
+  auto operator==(const ForkStmt&) const -> bool = default;
 };
 
 enum class UniquePriorityCheck : std::uint8_t {
@@ -106,11 +116,15 @@ struct IfStmt {
   StmtId then_stmt;
   std::optional<StmtId> else_stmt;
   std::optional<UniquePriorityCheck> check;
+
+  auto operator==(const IfStmt&) const -> bool = default;
 };
 
 struct CaseItem {
   std::vector<ExprId> labels;
   StmtId stmt;
+
+  auto operator==(const CaseItem&) const -> bool = default;
 };
 
 struct CaseStmt {
@@ -119,6 +133,8 @@ struct CaseStmt {
   std::vector<CaseItem> items;
   std::optional<StmtId> default_stmt;
   std::optional<UniquePriorityCheck> check;
+
+  auto operator==(const CaseStmt&) const -> bool = default;
 };
 
 // LRM 12.6.1 pattern-matching case item: a pattern plus an optional Boolean
@@ -128,6 +144,8 @@ struct PatternCaseItem {
   PatternId pattern = {};
   std::optional<ExprId> filter;
   StmtId stmt = {};
+
+  auto operator==(const PatternCaseItem&) const -> bool = default;
 };
 
 // LRM 12.6.1 pattern-matching case statement (`case (expr) matches ... /
@@ -141,6 +159,8 @@ struct PatternCaseStmt {
   std::vector<PatternCaseItem> items;
   std::optional<StmtId> default_stmt;
   std::optional<UniquePriorityCheck> check;
+
+  auto operator==(const PatternCaseStmt&) const -> bool = default;
 };
 
 // LRM 16.2 verification directive of an immediate assertion. The two state
@@ -177,6 +197,8 @@ struct AssertStmt {
   ExprId condition;
   std::optional<StmtId> pass_stmt;
   std::optional<StmtId> fail_stmt;
+
+  auto operator==(const AssertStmt&) const -> bool = default;
 };
 
 // LRM 16.3 simple immediate cover: success of the expression is a coverage
@@ -186,6 +208,8 @@ struct AssertStmt {
 struct CoverStmt {
   ExprId condition;
   std::optional<StmtId> pass_stmt;
+
+  auto operator==(const CoverStmt&) const -> bool = default;
 };
 
 // LRM 16.14 concurrent assert / assume, written where a procedure reaches it.
@@ -205,6 +229,8 @@ struct ConcurrentAssertStmt {
   PropertySpec spec;
   std::optional<StmtId> pass_stmt;
   std::optional<StmtId> fail_stmt;
+
+  auto operator==(const ConcurrentAssertStmt&) const -> bool = default;
 };
 
 // LRM 16.14.3 concurrent cover: the statement runs once for each attempt that
@@ -213,6 +239,8 @@ struct ConcurrentAssertStmt {
 struct ConcurrentCoverStmt {
   PropertySpec spec;
   std::optional<StmtId> pass_stmt;
+
+  auto operator==(const ConcurrentCoverStmt&) const -> bool = default;
 };
 
 // The two dispositions a concurrent assertion carries, named apart from the
@@ -225,10 +253,14 @@ using ConcurrentAssertion =
 struct ForInitDecl {
   ProceduralVarId var = {};
   std::optional<ExprId> init;
+
+  auto operator==(const ForInitDecl&) const -> bool = default;
 };
 
 struct ForInitExpr {
   ExprId expr;
+
+  auto operator==(const ForInitExpr&) const -> bool = default;
 };
 
 using ForInit = std::variant<ForInitDecl, ForInitExpr>;
@@ -239,42 +271,60 @@ struct ForStmt {
   std::vector<ExprId> step;
   StmtId body;
   std::optional<LoopLabelId> break_label = std::nullopt;
+
+  auto operator==(const ForStmt&) const -> bool = default;
 };
 
 struct WhileStmt {
   ExprId condition;
   StmtId body;
+
+  auto operator==(const WhileStmt&) const -> bool = default;
 };
 
 struct RepeatStmt {
   ExprId count;
   StmtId body;
+
+  auto operator==(const RepeatStmt&) const -> bool = default;
 };
 
 struct DoWhileStmt {
   ExprId condition;
   StmtId body;
+
+  auto operator==(const DoWhileStmt&) const -> bool = default;
 };
 
 struct ForeverStmt {
   StmtId body;
+
+  auto operator==(const ForeverStmt&) const -> bool = default;
 };
 
 struct BreakStmt {
   std::optional<LoopLabelId> target = std::nullopt;
+
+  auto operator==(const BreakStmt&) const -> bool = default;
 };
 
-struct ContinueStmt {};
+struct ContinueStmt {
+  auto operator==(const ContinueStmt&) const -> bool = default;
+};
 
 // LRM 13.4.1 `return [expr];`. `value` carries the returned expression for a
 // non-void function; it is absent for `return;` and for void functions / tasks.
 struct ReturnStmt {
   std::optional<ExprId> value;
+
+  auto operator==(const ReturnStmt&) const -> bool = default;
 };
 
 struct TimedStmt {
   TimingControl timing;
   StmtId stmt;
+
+  auto operator==(const TimedStmt&) const -> bool = default;
 };
 
 // LRM 15.5.1 `-> e;` and `->> [ delay_or_event_control ] e;`. The `event`
@@ -285,6 +335,8 @@ struct TimedStmt {
 struct EventTriggerStmt {
   ExprId event;
   EffectTiming timing;
+
+  auto operator==(const EventTriggerStmt&) const -> bool = default;
 };
 
 // LRM 9.4.3 level-sensitive `wait (cond) body`. `sensitivity_list` is the
@@ -295,19 +347,25 @@ struct WaitStmt {
   ExprId cond;
   StmtId body;
   std::vector<SensitivityEntry> sensitivity_list;
+
+  auto operator==(const WaitStmt&) const -> bool = default;
 };
 
 // LRM 9.6.1 `wait fork`: block the enclosing process until all of its immediate
 // child subprocesses have terminated. Carries no operand -- the child set is
 // the executing process's, resolved at runtime.
-struct WaitForkStmt {};
+struct WaitForkStmt {
+  auto operator==(const WaitForkStmt&) const -> bool = default;
+};
 
 // LRM 9.6.3 `disable fork`: terminate every descendant of the enclosing
 // process, including the descendants of subprocesses that have already
 // terminated. Like `wait fork` it carries no operand -- the descendant set is
 // the executing process's, resolved at runtime -- but it does not block the
 // caller.
-struct DisableForkStmt {};
+struct DisableForkStmt {
+  auto operator==(const DisableForkStmt&) const -> bool = default;
+};
 
 // The scope a `disable` names, when it belongs to the declaration scope the
 // statement's own body does. The identity indexes that scope's registry, so
@@ -316,6 +374,8 @@ struct DisableForkStmt {};
 // which stands on the design hierarchy a route walks.
 struct DirectDisableTarget {
   ProceduralScopeId scope;
+
+  auto operator==(const DirectDisableTarget&) const -> bool = default;
 };
 
 // The scope a `disable` names elsewhere on the elaborated hierarchy (LRM 23.6):
@@ -324,6 +384,8 @@ struct DirectDisableTarget {
 // says where the target lives and nothing about how the source spelled it.
 struct RoutedDisableTarget {
   RoutedRef target;
+
+  auto operator==(const RoutedDisableTarget&) const -> bool = default;
 };
 
 using DisableTarget = std::variant<DirectDisableTarget, RoutedDisableTarget>;
@@ -336,6 +398,8 @@ using DisableTarget = std::variant<DirectDisableTarget, RoutedDisableTarget>;
 // not carried here.
 struct DisableStmt {
   DisableTarget target;
+
+  auto operator==(const DisableStmt&) const -> bool = default;
 };
 
 // LRM 10.6 `assign` and `force`: take `target` over with an expression that is
@@ -349,6 +413,9 @@ struct ProceduralContinuousAssignStmt {
   ExprId target;
   ExprId source;
   std::vector<SensitivityEntry> sensitivity_list;
+
+  auto operator==(const ProceduralContinuousAssignStmt&) const
+      -> bool = default;
 };
 
 // LRM 10.6 `deassign` and `release`: end the takeover `level` names, handing
@@ -358,6 +425,8 @@ struct ProceduralContinuousAssignStmt {
 struct ProceduralContinuousEndStmt {
   support::TakeoverLevel level;
   ExprId target;
+
+  auto operator==(const ProceduralContinuousEndStmt&) const -> bool = default;
 };
 
 using StmtData = std::variant<
@@ -372,6 +441,8 @@ struct Stmt {
   std::optional<std::string> label;
   StmtData data;
   diag::SourceSpan span;
+
+  auto operator==(const Stmt&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

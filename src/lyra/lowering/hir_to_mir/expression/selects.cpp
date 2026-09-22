@@ -170,18 +170,6 @@ auto BuildSliceFormLiteral(
   return BuildIntLiteral(unit, block, static_cast<std::int64_t>(form));
 }
 
-// The coordinates one element step descends by: the source index, then
-// whatever the value's family takes from its static type rather than from the
-// value. The same list the read-side access passes, because reading a part and
-// designating one name the same step.
-auto ElementStepOperands(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId base_type,
-    mir::ExprId idx_id) -> std::vector<mir::ExprId> {
-  std::vector<mir::ExprId> operands = {idx_id};
-  AppendReceiverCoordinates(unit_lowerer, block, base_type, operands);
-  return operands;
-}
-
 // `arr[hi:lo]` / `arr[base+:w]` / `arr[base-:w]` range select, lowered to a raw
 // selector `(a, b, form)`: a constant range passes its two source endpoints; an
 // indexed part-select passes its base and (constant) width, with the direction
@@ -418,6 +406,18 @@ auto UnpackedMemberReach(
 }
 
 }  // namespace
+
+// The coordinates one element step descends by: the source index, then
+// whatever the value's family takes from its static type rather than from the
+// value. The same list the read-side access passes, because reading a part and
+// designating one name the same step.
+auto ElementStepOperands(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId base_type,
+    mir::ExprId idx_id) -> std::vector<mir::ExprId> {
+  std::vector<mir::ExprId> operands = {idx_id};
+  AppendReceiverCoordinates(unit_lowerer, block, base_type, operands);
+  return operands;
+}
 
 auto BuildElementAccessCallExpr(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,

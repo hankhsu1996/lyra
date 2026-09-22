@@ -207,6 +207,22 @@ Rules:
         matches fails until it goes, so the record only shrinks.
         Scope: every .cpp/.hpp under src/lyra and include/lyra.
 
+  A023  In the AST-to-HIR lowering, an expression a body states is lowered,
+        never read for the value the elaboration settled. The front end folds
+        every expression it can, so the opportunity is always there and taking
+        it is always a choice: an elaboration-time answer becomes part of what
+        is built where it could have been supplied to what is built, and two
+        elaborations of one source then differ over something neither the
+        language nor the artifact required them to differ over. What that costs
+        is one compiled artifact per elaboration, which is the cost this
+        compiler exists to avoid. A clause requiring a constant expression is
+        not a reason to read one: it says the value is known, not that the
+        artifact has to hold it. A unit's header and a type declaration are
+        exempt: a parameterization is already its own artifact, so an
+        expression written there cannot cost a second one.
+        Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
+        include/lyra/lowering/ast_to_hir.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -1022,6 +1038,43 @@ A022_ADMITTED: dict[str, str] = {
     ),
 }
 
+# Rule A023
+# The two ways to reach the answer the front end already has for an expression:
+# take the value it cached on the expression, or evaluate the expression again.
+A023_PATTERN = re.compile(r"(?:->|\.)\s*(?:getConstant|eval)\s*\(")
+
+# Where reading one is not the lowering of a body. A unit's header and a type
+# declaration are elaborated once per parameterization, and a parameterization
+# is already its own artifact, so an expression written there cannot name the
+# index of a structure being repeated and cannot cost a second artifact. A body
+# is the opposite case, which is what the rule is for, and it has no exception:
+# no position a body states is read for the value the elaboration settled.
+A023_EXEMPT = (
+    "src/lyra/lowering/ast_to_hir/port_connection.cpp",
+    "src/lyra/lowering/ast_to_hir/publish_signature.cpp",
+    "src/lyra/lowering/ast_to_hir/type.cpp",
+)
+
+
+def check_a023(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_files(
+            repo_root,
+            "src/lyra/lowering/ast_to_hir",
+            "include/lyra/lowering/ast_to_hir"):
+        if rel in A023_EXEMPT:
+            continue
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if A023_PATTERN.search(strip_comment(line)):
+                errors.append(
+                    f"  {rel}:{lineno}: A023 takes an expression for the value "
+                    f"the elaboration settled instead of lowering it; lower "
+                    f"it, or -- if the standard fixes that position before the "
+                    f"program runs -- say so where the positions the standard "
+                    f"fixes are named, with the clause"
+                )
+    return errors
+
 
 def check_a022(repo_root: Path) -> list[str]:
     errors = []
@@ -1582,6 +1635,7 @@ CHECKS = [
     ("A020 switch over a closed set carries default", check_a020),
     ("A021 visit arm naming no alternative", check_a021),
     ("A022 holds a sequence of compilation units", check_a022),
+    ("A023 expression taken for its folded value", check_a023),
 ]
 
 

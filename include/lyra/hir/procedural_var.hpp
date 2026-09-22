@@ -51,6 +51,8 @@ struct ProceduralVarDecl {
   // the declaration, not to any statement: the lifetime above decides when it
   // runs against storage of that lifetime, never whose it is.
   std::optional<ExprId> init = std::nullopt;
+
+  auto operator==(const ProceduralVarDecl&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

@@ -77,25 +77,11 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return LowerHirConditionalExpr(lowerer, frame, c, result_type);
           },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {
-            if constexpr (kProcedural) {
-              return LowerHirAssignExprProc(
-                  lowerer, frame, a, expr.span, result_type);
-            } else {
-              throw InternalError(
-                  "structural expression lowering: HIR AssignExpr is "
-                  "unreachable; assignment expressions are rejected in "
-                  "structural context at AST-to-HIR (LRM 10.3)");
-            }
+            return LowerHirAssignExpr(
+                lowerer, frame, a, expr.span, result_type);
           },
           [&](const hir::IncDecExpr& inc) -> diag::Result<mir::Expr> {
-            if constexpr (kProcedural) {
-              return LowerHirIncDecExprProc(lowerer, frame, inc, result_type);
-            } else {
-              throw InternalError(
-                  "structural expression lowering: HIR IncDecExpr is "
-                  "unreachable; increment / decrement is rejected in "
-                  "structural context at AST-to-HIR (LRM 11.4.2)");
-            }
+            return LowerHirIncDecExpr(lowerer, frame, inc, result_type);
           },
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
             return LowerHirConversionExpr(lowerer, frame, cv, result_type);

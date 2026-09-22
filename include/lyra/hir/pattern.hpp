@@ -22,11 +22,15 @@ namespace lyra::hir {
 // boolean test over tag and field primitives happens at HIR-to-MIR.
 
 // LRM 12.6 wildcard pattern `.*`: matches any value, binds nothing.
-struct WildcardPattern {};
+struct WildcardPattern {
+  auto operator==(const WildcardPattern&) const -> bool = default;
+};
 
 // LRM 12.6 constant pattern: matches if the case value equals `value`.
 struct ConstantPattern {
   ExprId value;
+
+  auto operator==(const ConstantPattern&) const -> bool = default;
 };
 
 // LRM 12.6 variable pattern `.identifier`: always matches, and declares the
@@ -38,6 +42,8 @@ struct ConstantPattern {
 // is matched against, whole.
 struct VariablePattern {
   std::string name;
+
+  auto operator==(const VariablePattern&) const -> bool = default;
 };
 
 // LRM 12.6 tagged pattern `tagged Member [pattern]`: matches iff the tagged
@@ -48,6 +54,8 @@ struct VariablePattern {
 struct TaggedPattern {
   base::ComponentIndex member_index;
   std::optional<PatternId> value_pattern;
+
+  auto operator==(const TaggedPattern&) const -> bool = default;
 };
 
 // LRM 12.6 structure pattern `'{...}`: always matches (types are known
@@ -56,6 +64,8 @@ struct TaggedPattern {
 // simply absent from the list.
 struct StructurePattern {
   std::vector<std::pair<std::size_t, PatternId>> field_patterns;
+
+  auto operator==(const StructurePattern&) const -> bool = default;
 };
 
 using PatternData = std::variant<
@@ -71,6 +81,8 @@ struct Pattern {
   // subject's type in step with the pattern and keeping the two aligned.
   TypeId subject_type;
   diag::SourceSpan span;
+
+  auto operator==(const Pattern&) const -> bool = default;
 };
 
 // One clause of an `if` / `?:` predicate. LRM 12.6.2 / 12.6.3 define the
@@ -83,6 +95,8 @@ struct Pattern {
 struct ConditionClause {
   ExprId expr = {};
   std::optional<PatternId> pattern;
+
+  auto operator==(const ConditionClause&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

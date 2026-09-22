@@ -770,16 +770,17 @@ auto LowerHirBindingConditionalExpr(
       .type = result_type};
 }
 
-auto LowerHirIncDecExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::IncDecExpr& inc,
+template <ExprLowerer Lowerer>
+auto LowerHirIncDecExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::IncDecExpr& inc,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   // An increment both reads and writes its target, so the target lowers as a
   // write target (LRM 11.4.2), not as a read.
   auto target_or =
-      process.LowerLhsExpr(process.HirExprs().Get(inc.target), frame);
+      lowerer.LowerLhsExpr(lowerer.HirExprs().Get(inc.target), frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
-  auto& unit = process.Owner().Unit();
+  auto& unit = lowerer.Owner().Unit();
   // An increment reads and writes the storage its target reaches, so the target
   // names that storage rather than the wrapper standing for it.
   return mir::Expr{
@@ -843,6 +844,12 @@ template auto LowerHirUnaryExpr(
     -> diag::Result<mir::Expr>;
 template auto LowerHirUnaryExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::UnaryExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirIncDecExpr(
+    ProcessLowerer&, WalkFrame, const hir::IncDecExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirIncDecExpr(
+    const StructuralScopeLowerer&, WalkFrame, const hir::IncDecExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirBinaryExpr(
     ProcessLowerer&, WalkFrame, const hir::BinaryExpr&, mir::TypeId)

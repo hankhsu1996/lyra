@@ -10,19 +10,27 @@ namespace lyra::hir {
 
 struct IntegerLiteral {
   IntegralConstant value;
+
+  auto operator==(const IntegerLiteral&) const -> bool = default;
 };
 
 struct StringLiteral {
   std::string value;
+
+  auto operator==(const StringLiteral&) const -> bool = default;
 };
 
 struct RealLiteral {
   double value;
+
+  auto operator==(const RealLiteral&) const -> bool = default;
 };
 
 // LRM 8.4 `null`: the handle literal that refers to no object. Its type is the
 // class handle type it is compared or assigned against.
-struct NullLiteral {};
+struct NullLiteral {
+  auto operator==(const NullLiteral&) const -> bool = default;
+};
 
 // LRM 8.11 `this`: the handle referring to the object the subroutine it appears
 // in was invoked on -- a constructor as much as a method. The other
@@ -30,7 +38,9 @@ struct NullLiteral {};
 // this one names the object running. It appears only where the source asks for
 // the object itself; qualifying a member with `this` names what the bare name
 // names and never reaches here.
-struct ThisHandle {};
+struct ThisHandle {
+  auto operator==(const ThisHandle&) const -> bool = default;
+};
 
 // Primary mirrors LRM 11.2.1 - the atomic leaf level of the expression
 // grammar. Refs are listed directly here so the same DirectMemberRef /

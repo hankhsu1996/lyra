@@ -1,8 +1,9 @@
 #pragma once
 
-// Lowering of `AssignExpr` (LRM 10.4). `AssignExpr` has no structural form --
-// continuous assignment is its own scope-level construct, not an expression --
-// so this family is procedural only.
+// Lowering of `AssignExpr` (LRM 10.4). What a write puts where is the same
+// question in either context, so the assignment itself is one template; what
+// differs is that a procedure may defer its update to a later region and a
+// construction may not, so the deferral below it is procedural only.
 
 #include <optional>
 #include <span>
@@ -11,6 +12,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/timing.hpp"
+#include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -19,8 +21,9 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-auto LowerHirAssignExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::AssignExpr& a,
+template <ExprLowerer Lowerer>
+auto LowerHirAssignExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::AssignExpr& a,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 // One part of a left-hand-side destructuring (LRM 11.4.12): the place it

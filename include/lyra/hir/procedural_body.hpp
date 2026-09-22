@@ -40,6 +40,8 @@ struct ProceduralBody {
   auto AddLoopLabel() -> LoopLabelId {
     return LoopLabelId{loop_label_count++};
   }
+
+  auto operator==(const ProceduralBody&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

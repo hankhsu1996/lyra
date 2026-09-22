@@ -18,6 +18,8 @@ struct DpiParamAbi {
   support::DpiCarrier carrier =
       support::ScalarCarrier{support::DpiScalarAbi::kVoid};
   support::DpiDirection direction = support::DpiDirection::kInput;
+
+  auto operator==(const DpiParamAbi&) const -> bool = default;
 };
 
 // A subroutine declared `import "DPI-C"` (LRM 35.4). It has no SV body, so it
@@ -42,6 +44,8 @@ struct ForeignImportDecl {
   support::DpiScalarAbi ret_abi = support::DpiScalarAbi::kVoid;
   TypeId ret_sv_type{};
   std::vector<DpiParamAbi> params;
+
+  auto operator==(const ForeignImportDecl&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

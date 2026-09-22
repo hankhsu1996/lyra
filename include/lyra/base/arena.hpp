@@ -78,6 +78,13 @@ class Arena {
     return items_.end();
   }
 
+  // Two pools are equal when they hold the same values in the same order, which
+  // is also what makes their ids mean the same thing -- an id is a position, so
+  // equal contents in equal order is the whole of what an id can agree about.
+  // Derived rather than written, so a `T` that gains a field is compared on it
+  // without anyone remembering to.
+  auto operator==(const Arena&) const -> bool = default;
+
  private:
   std::vector<T> items_;
 };

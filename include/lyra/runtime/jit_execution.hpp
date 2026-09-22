@@ -536,11 +536,13 @@ auto lyra_rt_dist_erlang(const void* seed, const void* stages, const void* mean)
 // a transient runtime value owned by the current call scope.
 auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void*;
 
-// Allocates a generic instance of `definition`, runs its construct entry to
-// build its subtree, and returns the owning handle to the caller, which hands
-// it on to be attached. `definition` is an opaque cross-unit reference the
-// generated code never inspects.
-auto lyra_rt_make_scope(const void* definition, void* parent, void* segment)
+// Allocates a generic instance of `definition`, runs its construct entry over
+// the values the site builds this class with -- empty for a class that takes
+// none -- to build its subtree, and returns the owning handle to the caller,
+// which hands it on to be attached. `definition` is an opaque cross-unit
+// reference the generated code never inspects.
+auto lyra_rt_make_scope(
+    const void* definition, void* parent, void* segment, LyraSpan arguments)
     -> void*;
 
 // The scope's hierarchical name (LRM 21.2.1.5; the `%m` source), as a transient
@@ -574,10 +576,14 @@ auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void*;
 
 // The sequence of handles a declaration standing for several objects builds,
 // in the order its coordinates count, and the handle at a position in one. A
-// sequence is built once where its owner is built and held by address for the
-// rest of the run, which is what lets a dimension of a multidimensional
-// declaration be an ordinary handle in the dimension above it.
-auto lyra_rt_sequence_make(LyraSpan handles) -> const void*;
+// sequence is held by address for the rest of the run, which is what lets a
+// dimension of a multidimensional declaration be an ordinary handle in the
+// dimension above it. A declaration counts its objects out as it builds them,
+// so a sequence starts from the handles already in hand and is extended once
+// per object after that; what the owner keeps is the last answer, and until it
+// does nothing else names the sequence being extended.
+auto lyra_rt_sequence_make(LyraSpan handles) -> void*;
+auto lyra_rt_sequence_extend(void* sequence, void* element) -> void*;
 auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
     -> void*;
 

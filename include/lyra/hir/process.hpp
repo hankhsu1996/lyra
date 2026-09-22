@@ -36,6 +36,8 @@ struct Process {
   // process kind -- `always @*` carries its sensitivity inside
   // hir::ImplicitEventControl on the body's TimedStmt instead.
   std::vector<SensitivityEntry> implicit_sensitivity_list;
+
+  auto operator==(const Process&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

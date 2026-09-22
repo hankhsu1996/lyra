@@ -575,6 +575,12 @@ enum class BuiltinFn : std::uint16_t {
   // re-states them.
   kRegisterSignal,
   kAddOwnedChild,
+  // Extends a sequence still being composed by one element, answering with
+  // what it became. A declaration standing for several objects counts them out
+  // as it builds them (LRM 23.3.2), and what the member finally holds is the
+  // last answer -- so nothing a member holds is ever partly composed, and the
+  // count never has to be known before the objects are.
+  kExtendSequence,
   // A constructor also hands a scope what a `disable` naming it terminates
   // (LRM 9.6.2), which is unnamed because a scope carries exactly one.
   kRegisterDisableTarget,

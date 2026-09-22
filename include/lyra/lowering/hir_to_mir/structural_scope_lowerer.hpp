@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -57,12 +59,33 @@ struct ChildStructuralScopeBinding {
 struct OwnedChildAnchor {
   mir::FieldId borrowed_handle{};
   const StructuralScopeLowerer* target_scope = nullptr;
+  // Which object of the handle the child named, where the handle stands for
+  // several and the source spelled no index for it. A generate whose blocks
+  // are one body binds one handle holding an object per block, so the block a
+  // name meant is an index into it; every other child is the handle itself.
+  std::optional<std::uint32_t> element;
 };
 
-// What a single `hir::Generate` settled for each block it elaborated, reached
-// by that block's own id.
+// What a single `hir::Generate` settled for each scope it compiled, reached by
+// that scope's own id.
 using GenerateBindings =
     base::Translation<hir::StructuralScopeId, ChildStructuralScopeBinding>;
+
+// Every coordinate a route applies at one step: the child's own, where the
+// handle stands for several objects and the source spelled no index, then the
+// ones the source did spell. Both sites that descend a step read them this way,
+// so which of the two a coordinate came from is settled once.
+[[nodiscard]] inline auto CoordinatesAt(
+    const OwnedChildAnchor& anchor, std::span<const std::uint32_t> spelled)
+    -> std::vector<std::uint32_t> {
+  std::vector<std::uint32_t> at;
+  at.reserve(spelled.size() + (anchor.element.has_value() ? 1 : 0));
+  if (anchor.element.has_value()) {
+    at.push_back(*anchor.element);
+  }
+  at.insert(at.end(), spelled.begin(), spelled.end());
+  return at;
+}
 
 // The MIR slot a HIR routed ref resolves to: the slot's field id bundled
 // with the slot's MIR type, so a body reader decides whether the read
@@ -162,17 +185,19 @@ class StructuralScopeLowerer {
   // not yet built (forward / mutual reference, LRM 13.7). The desugar reads the
   // formals' directions and types from here.
   [[nodiscard]] auto LookupHirSubroutine(
-      hir::StructuralHops hops, std::span<const hir::OwnedChildRef> descent,
+      hir::StructuralHops hops, std::span<const hir::OwnedChildStep> descent,
       hir::StructuralSubroutineId id) const -> const hir::SubroutineDecl& {
     return ScopeAt(hops, descent).hir_scope_->structural_subroutines.Get(id);
   }
 
   // The scope a reach lands on: `hops` enclosing edges out, then one owned
   // child per descent step. Every step is one this unit declares, so the walk
-  // is total -- a reach that leaves the layout never reaches here.
+  // is total -- a reach that leaves the layout never reaches here. Which object
+  // a step means says nothing about the scope it lands on, because a child
+  // standing for several of them stands for one body.
   [[nodiscard]] auto ScopeAt(
       hir::StructuralHops hops,
-      std::span<const hir::OwnedChildRef> descent) const
+      std::span<const hir::OwnedChildStep> descent) const
       -> const StructuralScopeLowerer& {
     if (hops.value > 0) {
       if (parent_ == nullptr) {
@@ -184,9 +209,9 @@ class StructuralScopeLowerer {
           hir::StructuralHops{.value = hops.value - 1}, descent);
     }
     const StructuralScopeLowerer* scope = this;
-    for (const hir::OwnedChildRef& child : descent) {
-      const OwnedChildAnchor anchor =
-          scope->TranslateOwnedChild(hir::StructuralHops{.value = 0}, child);
+    for (const hir::OwnedChildStep& step : descent) {
+      const OwnedChildAnchor anchor = scope->TranslateOwnedChild(
+          hir::StructuralHops{.value = 0}, step.child);
       if (anchor.target_scope == nullptr) {
         throw InternalError(
             "StructuralScopeLowerer::ScopeAt: a descent step reached an "
@@ -305,13 +330,34 @@ class StructuralScopeLowerer {
                 // opaque from there.
                 return OwnedChildAnchor{
                     .borrowed_handle = instance_member_fields_.Get(id),
-                    .target_scope = nullptr};
+                    .target_scope = nullptr,
+                    .element = std::nullopt};
               },
               [&](const hir::GenerateChildRef& g) -> OwnedChildAnchor {
-                const auto& b = generate_bindings_.Get(g.generate).Get(g.scope);
-                return OwnedChildAnchor{
-                    .borrowed_handle = b.borrowed_handle,
-                    .target_scope = b.lowerer};
+                // The reference names a block; how the construct was compiled
+                // says whether that block is a scope of its own or a position
+                // in the one scope the loop builds repeatedly.
+                const GenerateBindings& scopes =
+                    generate_bindings_.Get(g.generate);
+                return std::visit(
+                    Overloaded{
+                        [&](const hir::BlocksStandAlone&) -> OwnedChildAnchor {
+                          const auto& b =
+                              scopes.Get(hir::StructuralScopeId{g.block});
+                          return OwnedChildAnchor{
+                              .borrowed_handle = b.borrowed_handle,
+                              .target_scope = b.lowerer,
+                              .element = std::nullopt};
+                        },
+                        [&](const hir::BlocksRepeat&) -> OwnedChildAnchor {
+                          const auto& b = scopes.Get(hir::StructuralScopeId{0});
+                          return OwnedChildAnchor{
+                              .borrowed_handle = b.borrowed_handle,
+                              .target_scope = b.lowerer,
+                              .element = g.block};
+                        },
+                    },
+                    HirScope().generates.Get(g.generate).counting);
               },
           },
           child);
@@ -381,7 +427,7 @@ class StructuralScopeLowerer {
   // that owns the callable, `hops` enclosing edges out from this one, and the
   // callable's identity within it.
   [[nodiscard]] auto TranslateStructuralSubroutine(
-      hir::StructuralHops hops, std::span<const hir::OwnedChildRef> descent,
+      hir::StructuralHops hops, std::span<const hir::OwnedChildStep> descent,
       hir::StructuralSubroutineId hir_id) const -> mir::Direct {
     const StructuralScopeLowerer& owner = ScopeAt(hops, descent);
     return mir::Direct{
@@ -431,6 +477,10 @@ class StructuralScopeLowerer {
   // a whole declared callable.
   base::Translation<hir::ProcessId, StaticVarBindings> process_static_bindings_;
   mir::ClassId class_id_{};
+  // The declaration whose value whoever constructs this scope supplies, where
+  // the scope has one: it takes the last constructor parameter and is filled
+  // from it before anything the construction does can read it.
+  std::optional<hir::StructuralDataObjectId> construction_value_;
   std::vector<std::unique_ptr<StructuralScopeLowerer>> children_;
   // The classes this scope declares (LRM 23.9). A class declared here is a type
   // of this scope's instance (LRM 6.22), so the scope both settles its shape
@@ -482,5 +532,20 @@ auto BuildClassPropertyAccess(
                   .mutability = mir::Mutability::kMutable}})});
   return mir::MakeDerefExpr(typed, reached);
 }
+
+// A value the walk has reached, and the type it has there.
+struct ReachedObject {
+  mir::ExprId expr;
+  mir::TypeId type;
+};
+
+// Picks one object out of a value standing for several: one index per
+// coordinate, each taking a dimension off what the value holds. Which object a
+// reach means is settled during elaboration, so an index crosses as a constant
+// rather than as a value the design computes, and a value standing for one
+// object names no coordinate and comes back as it went in.
+auto IndexCoordinates(
+    UnitLowerer& unit_lowerer, mir::Block& block, ReachedObject reached,
+    std::span<const std::uint32_t> indices) -> ReachedObject;
 
 }  // namespace lyra::lowering::hir_to_mir

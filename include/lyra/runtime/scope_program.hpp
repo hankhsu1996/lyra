@@ -9,6 +9,7 @@
 
 namespace lyra::runtime {
 
+class HierarchySegment;
 class Scope;
 struct ObjectDefinition;
 
@@ -27,6 +28,36 @@ using ScopeEntry = void (*)(Scope*);
 // work for that phase, so a null entry always means "not supplied" (a build /
 // link error) rather than "nothing to do".
 void ScopeNoOp(Scope* scope);
+
+// The values one scope class in particular is built with, crossing the
+// generated-runtime boundary as plain data -- a pointer plus a count, not a C++
+// container, so a non-C++ backend fills it without depending on a C++ type's
+// layout. Each element is a runtime value the constructing site computed, and
+// it stays alive for as long as the construction runs.
+struct ScopeConstructArguments {
+  void* const* data = nullptr;
+  std::uint64_t size = 0;
+};
+
+// How construction crosses that boundary. It is not a lifecycle entry, because
+// a constructing site may hold nothing of the scope it builds but its
+// definition -- which is all one unit names of another unit's scope -- so the
+// constructor's own prototype cannot be restored there and one entry type has
+// to serve every class. What every scope is built against travels as itself;
+// what a particular class is parameterized by travels erased and counted, and
+// that class's own entry is what restores it.
+using ScopeConstructEntry = void (*)(
+    Scope* self, Scope* parent, HierarchySegment* segment,
+    ScopeConstructArguments arguments);
+
+// The canonical no-op construction points at where nothing builds a scope
+// through its definition -- a backend whose construction site names the class's
+// own constructor builds it there instead -- so a null entry always means "not
+// supplied" (a build / link error) rather than "nothing to do", exactly as it
+// does for the lifecycle entries.
+void ScopeConstructNoOp(
+    Scope* self, Scope* parent, HierarchySegment* segment,
+    ScopeConstructArguments arguments);
 
 // A string that crosses the generated-runtime boundary as plain data -- a
 // pointer plus a length, not a C++ `std::string_view`, so a non-C++ backend
@@ -304,19 +335,17 @@ struct MemberStorageSchema {
 // scope class has one, whether it is the class a compilation unit publishes or
 // a class that unit keeps to itself -- what differs is only how a constructing
 // site names the definition, by linkage symbol across the unit boundary and by
-// in-artifact constant within it. Construction is bootstrap-called (a JIT
-// design) or realized by the backend's own constructor (the C++ backend),
-// distinct from the per-phase lifecycle dispatch. The schema tells a generic
-// instance what storage to own for each member; a backend that lays members out
-// natively leaves it empty.
+// in-artifact constant within it. Construction is reached through the
+// definition, distinct from the per-phase lifecycle dispatch. The schema tells
+// a generic instance what storage to own for each member; a backend that lays
+// members out natively leaves it empty.
 struct ScopeDefinition {
   ScopeProgram program;
-  ScopeEntry construct = &ScopeNoOp;
+  ScopeConstructEntry construct = &ScopeConstructNoOp;
   MemberStorageSchema members;
 
   constexpr ScopeDefinition() = default;
-  constexpr ScopeDefinition(ScopeProgram program, ScopeEntry construct)
-      : program(program), construct(construct) {
+  constexpr explicit ScopeDefinition(ScopeProgram program) : program(program) {
   }
 };
 

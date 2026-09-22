@@ -55,6 +55,42 @@ So the order is:
 A design argument that ends "...therefore invariant N forbids it" has not been made. The argument is
 the derivation; the invariant is a witness.
 
+**And the ban covers using one as a filter, not only as a conclusion.** Striking a candidate
+mid-derivation because a record forbids it is the same move made where nobody can see it: no
+sentence cites the record, nothing conflicts, and the write-up reads complete with the option
+already gone. That is the common case and the harmless-feeling one -- a record that blocks you
+announces itself, a record that prunes you does not.
+
+**Elimination is admissible only against a requirement** -- what the standard demands, what the
+north star fixes, what a measurement establishes. Against a previous answer a conflict is a
+question, and the newer requirement is the reason to suspect the record rather than the derivation.
+
+## Why a prohibition is the part that goes wrong
+
+A derivation establishes that **a requirement selected a shape**. It does not establish that no
+other shape is admissible. Those are different claims and only the first was proved, so a Forbidden
+Shapes entry is an inference from "I picked S" to "everything else is wrong" -- a step that does not
+follow, made on the day the record was written rather than by going stale later.
+
+The cost arrives when requirements widen. A design derived under a narrow set records its
+prohibitions unconditionally, because the set it rested on was ambient and felt like the world
+rather than like a premise. Later a wider requirement cannot be met by the old shape, the
+prohibition is still there and still reads as authority, and what gets built is a band-aid around it
+instead of the design the new requirement asked for.
+
+**So a prohibition is written as the requirement it serves.** Not "X is a forbidden shape" but "X
+fails R". It is as useful to a reader avoiding a known mistake; it is self-invalidating wherever R
+is not in force, because the premise now travels with the conclusion; and it is checkable, since the
+later designer asks "is R one of my requirements?" rather than "am I allowed to do X?". A
+prohibition that cannot be restated that way was never derived, and dropping it costs nothing.
+
+That also makes the sweep possible. When a requirement widens, the work is to find which recorded
+conclusions rest on the narrower one -- which is a search for the requirement, and only searchable
+once prohibitions name theirs.
+
+**Reading rule, for everything already written: a forbidden shape or an invariant that does not name
+the requirement it serves is a hypothesis, not a constraint.** Weigh it; do not obey it.
+
 ## The motivations, in one line each
 
 - **HIR** -- so that "what did the user write" has exactly one answer, and it is SystemVerilog.

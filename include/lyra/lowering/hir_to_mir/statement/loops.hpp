@@ -18,12 +18,21 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// A loop that runs `body_scope` as many times as `count` says (LRM 12.7.3),
-// with the count read once before the first iteration. It takes an already
-// lowered count and an already built body, so a caller whose body is not a
-// source statement -- the repeat event control of LRM 9.4.5 -- reaches the same
-// loop as the repeat statement. The declarations it needs are appended to
-// `block`, whose statements must therefore run before the returned loop.
+// A loop that counts out the positions below `count` and runs `body_scope` at
+// each, with the count read once before the first iteration. `position` is the
+// caller's local, so a body that names which iteration it is reads that local
+// and one that does not simply leaves it alone. It takes an already lowered
+// count and an already built body, so a caller whose body is not a source
+// statement reaches the same loop as one whose body is. The declarations it
+// needs are appended to `block`, whose statements must therefore run before the
+// returned loop.
+auto BuildCountingLoopStmt(
+    const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
+    mir::ExprId count, mir::LocalId position, mir::BlockId body_scope)
+    -> mir::Stmt;
+
+// The same loop for a body that runs a number of times and never asks which
+// time this is (LRM 12.7.3, and the repeat event control of LRM 9.4.5).
 auto BuildRepeatLoopStmt(
     const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
     mir::ExprId count, mir::BlockId body_scope) -> mir::Stmt;

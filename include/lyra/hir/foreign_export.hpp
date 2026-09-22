@@ -24,6 +24,8 @@ struct ForeignExportDecl {
   support::DpiScalarAbi ret_abi = support::DpiScalarAbi::kVoid;
   TypeId ret_sv_type{};
   std::vector<DpiParamAbi> params;
+
+  auto operator==(const ForeignExportDecl&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

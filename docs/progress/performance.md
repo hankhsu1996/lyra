@@ -5,9 +5,11 @@ optimization with a defined target shape, not a correctness gap: the feature alr
 correctly without it, and the item only makes the same behavior cheaper. Split into two domains that
 have different cost models and different measurement methods.
 
-One item departs from that and says so where it sits. The information a write discards is what makes
-it expensive here and what makes one construct answer wrongly elsewhere, so the same change closes
-both; the wrong answer is tracked with the construct it affects rather than here.
+Two items depart from that and each says so where it sits. The information a write discards is what
+makes it expensive here and what makes one construct answer wrongly elsewhere, so the same change
+closes both; the wrong answer is tracked with the construct it affects rather than here. And an
+artifact that grows with something the design chooses stops being a cost at some width and becomes a
+wall, because the host compiler is what runs out -- which is what the generate item below was.
 
 ## Runtime performance
 
@@ -198,21 +200,38 @@ specializations, not with instance count.
       (`docs/decisions/specialization-identity.md`) is fed only the code-shape-affecting subset, and
       value-only parameters are demoted to constructor inputs.
 
-- [ ] The generate axis of that same sharing. A `generate for` lowers concretely: N iterations
-      become N scope classes and N construction statements, so the artifact grows one-for-one with
-      the iteration count even when no parameter varies and every body is identical. Measured over
-      16, 64, and 256 iterations of one trivial child, emitted lines and generated classes both
-      scale linearly with N. This is the concrete baseline `specialization_model.md` invariant 1
-      calls correct, in its simplest form; the optimization is recognizing that iterations whose
-      generated code is identical can share one class carrying a loop, which is the shape
-      `runtime_model.md` describes. It needs a construction-time iteration vehicle, the same thing
-      the parameter classification above needs, so the two are naturally taken together.
+- [x] The generate axis of that same sharing. A `generate for` used to lower concretely: N
+      iterations became N scope classes and N construction statements, so the artifact grew
+      one-for-one with the iteration count even when no parameter varied and every body was
+      identical. Measured over 16, 64, and 256 iterations of one trivial child, emitted lines and
+      generated classes both scaled linearly with N -- about 4.2 KB per elaborated block in the
+      bodies file and 1.85 KB in the declarations header, the second of which every referrer parses.
+      This is the one item here that was not a cost but a wall: past some width the host C++
+      compiler does not finish, and a design that does not compile has no behaviour to be correct.
+
+      A loop's blocks now compile to one class the constructor builds once per index it counts out,
+      and the index reaches the block as a value that construction supplies rather than as a constant
+      folded into its body -- which is what lets the body of a loop that uses its index be one body
+      at all. Measured at 256 iterations of a block declaring one variable and writing `sink[i] = i`:
+      9,666 bytes of bodies and 7,072 of declarations, which is what four iterations emit, against
+      1,064,336 and 765,273 before; the host compile of that emitted project goes from 16.8 seconds
+      to 3.5. Where the index instead fixes something a class settles once -- a width, a
+      specialization, which members exist -- separate compilation is the correct answer and stays,
+      which is `specialization_model.md` invariant 1.
+      [../decisions/one-body-built-at-every-index.md](../decisions/one-body-built-at-every-index.md)
+      holds how a body qualifies, why the question deciding that is checked rather than trusted, and
+      what a scope's construction receives.
+
+      What this does **not** touch is the front end's own elaboration, which still produces a symbol
+      per block, so the lowering phase stays linear in the iteration count and its wall clock and
+      peak memory stay roughly where they were. What goes away is the emit and the host compile.
 
       `runtime_model.md` states this one as an absolute ("if you find compile-time work that scales
       with instance count, the design has been violated") where `specialization_model.md` invariant
       1 admits the concrete form as correct and scopes the requirement to the optimized steady
-      state. The two should be reconciled when this is picked up, with the specialization model
-      governing.
+      state. The two are reconciled by the entry above, with the specialization model governing: the
+      concrete form stays the baseline and the shared form is what a program gets when a proof
+      exists for it.
 
 - [ ] What remains of the instance array on that same axis. The member and the construction
       statement no longer scale: `Child c[0:N-1]` is one member whose type carries the multiplicity

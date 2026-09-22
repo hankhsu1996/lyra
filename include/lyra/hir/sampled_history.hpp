@@ -33,14 +33,19 @@ struct SampledHistoryId {
 // clock rather than the expression, so a tick the gate does not admit is not a
 // prior tick.
 //
-// `depth` is how far back any read of this history reaches -- 1 for a value
-// change function, which compares against the most recent prior tick, and the
-// largest count any `$past` names. That count is an elaboration-time constant
-// (LRM 16.9.3), so the depth is settled where the storage is declared.
+// `depth` is how far back the read this history serves reaches -- 1 for a value
+// change function, which compares against the most recent prior tick, and what
+// `$past` names otherwise. It is the expression the source wrote, evaluated
+// once where the history is filled: the standard settles that expression before
+// the program runs (LRM 16.9.3), which says its value is known and not that
+// this has to hold it, and how many entries are kept is a number the storage is
+// handed rather than anything its type states.
 struct SampledHistoryDecl {
   ExprId subject;
   EventControl clock;
-  std::uint32_t depth = 0;
+  ExprId depth;
+
+  auto operator==(const SampledHistoryDecl&) const -> bool = default;
 };
 
 }  // namespace lyra::hir
