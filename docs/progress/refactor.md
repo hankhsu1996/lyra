@@ -1972,6 +1972,28 @@ enough to warrant its own focused review.
       a loop generate's step is exactly such a position. A sparse index array reaches the shared
       body for the first time, carrying the value the genvar held rather than an ordinal.
 
+- [ ] R120 -- On the execution backend, a body that does not suspend holds every value it builds
+      until it returns, so a run's footprint grows with the amount of work rather than with what the
+      design declares. Values crossing into generated code are owned by the scope wrapping the call
+      that made them and released when that scope ends; a process body that loops without waiting is
+      one such scope for its whole duration, so nothing is released while it runs.
+
+      Measured 2026-09-17 on the representative compute-block case under a 8 GB address-space cap:
+      it completes at 20 table passes and is killed for memory at 50, identically before and after
+      the constant work landed, so this is neither caused nor relieved by it. A case whose body waits
+      on a clock releases per stretch and runs 60,000 cycles in the same cap without difficulty,
+      which is what places the cause at the scope's extent rather than at the total.
+
+      **What it costs beyond the ceiling itself**: the throughput of this backend cannot be compared
+      against the other one on any case whose body does not wait, because the case ends in memory
+      before it runs long enough to time. That is why the two backends' figures under runtime
+      performance are taken on different cases and do not compare.
+
+      **Target shape**: a value whose last reader is inside the stretch that made it does not have to
+      outlive the statement that made it. The scope's extent is right for what crosses a call
+      boundary and wrong as the lifetime of every intermediate a loop produces, and separating those
+      two is the question -- not a larger arena, which moves the ceiling and keeps the growth.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

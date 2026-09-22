@@ -15,6 +15,7 @@
 #include "lyra/lir/external_unit_object_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
+#include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 
@@ -288,11 +289,13 @@ struct CompilationUnit {
   std::vector<ExternalClass> external_classes;
   base::Registry<Function, FunctionId> functions;
   std::vector<StaticStorage> static_storage;
-  // The nullary function building each type's runtime descriptor, one answer
-  // per type and present only for a described one. Building a value is an
-  // instruction sequence like any other, so a description is code here, and the
-  // type it describes is what reaches it.
-  base::Translation<TypeId, std::optional<FunctionId>> packed_type_initializers;
+  // The nullary function building each value the unit holds, one answer per
+  // entry of the pool that holds it. Building a value is an instruction
+  // sequence like any other, so a description and a constant are both code
+  // here, and the entry naming one is what reaches its function.
+  base::Translation<TypeDescriptorId, FunctionId> type_descriptor_initializers;
+  base::Translation<IntegralConstantId, FunctionId>
+      integral_constant_initializers;
   std::optional<ClassId> root;
 };
 

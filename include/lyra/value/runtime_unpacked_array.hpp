@@ -108,13 +108,13 @@ class RuntimeUnpackedArray {
   [[nodiscard]] auto ElementDefault() const -> const RuntimeValue&;
 
   // LRM 7.4.5: reads the element the source index `sv_index` names, resolved
-  // against the declared range `[left:right]` the receiver's static type
-  // supplies. An index the range does not name, or an x / z one, reads the
-  // element default. The caller copies the result out across the opaque-handle
-  // boundary rather than aliasing it.
+  // against the declared range the receiver's static type supplies. An index
+  // the range does not name, or an x / z one, reads the element default. The
+  // caller copies the result out across the opaque-handle boundary rather than
+  // aliasing it.
   [[nodiscard]] auto Element(
-      const PackedArray& sv_index, const PackedArray& left,
-      const PackedArray& right) const -> const RuntimeValue&;
+      const PackedArray& sv_index, const UnpackedRange& range) const
+      -> const RuntimeValue&;
 
   // The element at storage position `position`, counted from the first in the
   // array's own order -- the coordinate LRM 7.12 walks a container by, and the
@@ -127,19 +127,17 @@ class RuntimeUnpackedArray {
   // named element replaced by `value`. LRM 7.4.5: an index the declared range
   // does not name, or an x / z one, leaves the array unchanged.
   [[nodiscard]] auto WithElement(
-      const PackedArray& sv_index, const PackedArray& left,
-      const PackedArray& right, RuntimeValue value) const
-      -> RuntimeUnpackedArray;
+      const PackedArray& sv_index, const UnpackedRange& range,
+      RuntimeValue value) const -> RuntimeUnpackedArray;
 
   // LRM 7.4.5 contiguous-range selector. The raw selector `(a, b, form)` is
   // resolved to the storage-ordinal window against the receiver's declared
-  // `[left:right]` range; a partial-out-of-range position yields the element
-  // default and an x / z base yields a wholly-default sub-array. The result is
-  // ordinal-only payload, so it carries no declared range of its own.
+  // range; a partial-out-of-range position yields the element default and an
+  // x / z base yields a wholly-default sub-array. The result is ordinal-only
+  // payload, so it carries no declared range of its own.
   [[nodiscard]] auto Slice(
       const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedArray& left, const PackedArray& right) const
-      -> RuntimeUnpackedArray;
+      const UnpackedRange& range) const -> RuntimeUnpackedArray;
 
   // A functional whole-slice write (LRM 7.6): yields a new array equal to this
   // one with the window the selector names replaced, element for element, by
@@ -149,8 +147,8 @@ class RuntimeUnpackedArray {
   // unchanged. Assignment compatibility gives the two the same element count.
   [[nodiscard]] auto WithSlice(
       const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedArray& left, const PackedArray& right,
-      const RuntimeUnpackedArray& replacement) const -> RuntimeUnpackedArray;
+      const UnpackedRange& range, const RuntimeUnpackedArray& replacement) const
+      -> RuntimeUnpackedArray;
 
   // LRM 11.4.5 `==` / `!=` (Any data type): an element-wise reduction that
   // propagates X / Z through each element's own equality.

@@ -28,6 +28,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -249,8 +250,12 @@ auto LowerFileReadCall(
   operands.push_back(body.exprs.Add(*std::move(fd_or)));
 
   if (memory != nullptr) {
-    operands.push_back(BuildIntLiteral(unit, body, memory->dim.left));
-    operands.push_back(BuildIntLiteral(unit, body, memory->dim.right));
+    // The destination's declared range, as the one description its type has --
+    // the same operand a select on it takes, because both are asking the
+    // declaration where an address lands.
+    operands.push_back(
+        mir::BuildTypeDescriptorRef(
+            unit, body, mir::ValueTypeOf(unit, dest_type)));
     const std::int64_t lowest = std::min(memory->dim.left, memory->dim.right);
     const std::int64_t highest = std::max(memory->dim.left, memory->dim.right);
     // The start the source left out is the lowest declared index, and the

@@ -50,6 +50,7 @@ enum class AddressKind : std::uint8_t { kStorage, kCode };
 enum class RuntimeLibraryKind : std::uint8_t {
   kPackedType,
   kPackedRange,
+  kUnpackedRange,
   kPrintItem,
   kPrintLiteralItem,
   kPrintValueItem,

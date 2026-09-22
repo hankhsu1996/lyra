@@ -284,21 +284,19 @@ void WriteMemAssoc(
       });
 }
 
-// The grid a bounds list describes: the addressed dimension read in ascending
-// address, and how many leaves each of its addresses expands to.
+// The grid a run of declared ranges describes: the addressed dimension read in
+// ascending address, and how many leaves each of its addresses expands to.
 struct MemoryGrid {
   std::int64_t lo;
   std::int64_t hi;
   std::size_t inner;
 };
 
-auto GridOf(std::span<const value::PackedArray> dims) -> MemoryGrid {
-  const std::int64_t left = dims[0].ToInt64();
-  const std::int64_t right = dims[1].ToInt64();
+auto GridOf(std::span<const value::UnpackedRange> dims) -> MemoryGrid {
   return MemoryGrid{
-      .lo = std::min(left, right),
-      .hi = std::max(left, right),
-      .inner = detail::InnerLeafCount(dims.subspan(2))};
+      .lo = dims[0].Low(),
+      .hi = dims[0].High(),
+      .inner = detail::InnerLeafCount(dims.subspan(1))};
 }
 
 // Where in a memory's run of words the leaf at one grid coordinate sits.
@@ -621,7 +619,7 @@ void WriteMemWithin(
 
 auto ReadMem(
     RuntimeEffects& runtime, const value::RuntimeUnpackedArray& dest,
-    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
     const value::PackedArray& base, const value::PackedArray& start,
     std::optional<std::int64_t> finish) -> value::RuntimeUnpackedArray {
   std::vector<value::PackedArray> words = value::MemoryWords(dest, dims);
@@ -638,7 +636,7 @@ auto ReadMem(
 
 void WriteMem(
     RuntimeEffects& runtime, const value::RuntimeUnpackedArray& src,
-    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
     const value::PackedArray& base, const value::PackedArray& start,
     std::optional<std::int64_t> finish) {
   const std::vector<value::PackedArray> words = value::MemoryWords(src, dims);

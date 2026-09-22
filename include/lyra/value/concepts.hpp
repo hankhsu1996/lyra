@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "lyra/value/net_resolution.hpp"
+#include "lyra/value/unpacked_range.hpp"
 
 // Runtime value-layer concept catalogue. Each concept names a contract that a
 // `lyra::value::*` type claims via `static_assert(<Concept><T>)` in its own
@@ -249,33 +250,33 @@ concept SliceableRef = requires(
   { t.SliceRef(p1, p2, p3) };
 };
 
-// The unpacked family supplies its declared coordinate range at the select as a
-// `[left:right]` operand pair sourced from the receiver's static type, rather
-// than carrying it in the value. A dynamic array is zero-based and needs no
-// operand at all; the packed family takes a whole declared shape instead,
-// because one packed select consumes a dimension out of a stack rather than a
-// single range.
+// The unpacked family supplies its declared coordinate range at the select, as
+// one operand sourced from the receiver's static type rather than carried in
+// the value. It arrives as the range it is: what a select does with it is map a
+// source coordinate onto a storage ordinal, which the range answers, so taking
+// it apart into endpoints would only oblige every access to put it back
+// together. A dynamic array is zero-based and needs no operand at all; the
+// packed family takes a whole declared shape instead, because one packed select
+// consumes a dimension out of a stack rather than a single range.
 template <typename T>
-concept RangedIndexable = requires(
-    T& t, const PackedArray& pos, const PackedArray& left,
-    const PackedArray& right) {
-  { t.Element(pos, left, right) };
-  { t.ElementRef(pos, left, right) };
-};
+concept RangedIndexable =
+    requires(T& t, const PackedArray& pos, const UnpackedRange& range) {
+      { t.Element(pos, range) };
+      { t.ElementRef(pos, range) };
+    };
 
 template <typename T>
 concept RangedSliceable = requires(
     const T& t, const PackedArray& a, const PackedArray& b,
-    const PackedArray& form, const PackedArray& left,
-    const PackedArray& right) {
-  { t.Slice(a, b, form, left, right) };
+    const PackedArray& form, const UnpackedRange& range) {
+  { t.Slice(a, b, form, range) };
 };
 
 template <typename T>
 concept RangedSliceableRef = requires(
     T& t, const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedArray& left, const PackedArray& right) {
-  { t.SliceRef(a, b, form, left, right) };
+    const UnpackedRange& range) {
+  { t.SliceRef(a, b, form, range) };
 };
 
 // The packed family states the receiver's declared shape as a trailing operand

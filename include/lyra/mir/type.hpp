@@ -391,6 +391,11 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // payload of that type's descriptor rather than a value any expression has,
   // so it appears in a type position only.
   kPackedRange,
+  // The declared range of an unpacked array: the coordinate system a select on
+  // one resolves a source index against. It is that type's whole description,
+  // where an integral type's is a stack of dimensions plus its signedness and
+  // state domain -- one description each, of the shape each family needs.
+  kUnpackedRange,
   kPrintItem,
   kPrintLiteralItem,
   kPrintValueItem,

@@ -12,6 +12,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
+#include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/type_id.hpp"
 
 namespace llvm {
@@ -81,11 +82,21 @@ class CodeGenModule {
   // by the type, so the run builds it once and every later use loads what the
   // first left here. It starts null, which is the one state a built descriptor
   // is never in: the runtime hands back the address of storage it owns.
-  auto PackedTypeCell(lir::TypeId integral) -> llvm::GlobalVariable*;
+  auto TypeDescriptorCell(lir::TypeDescriptorId descriptor)
+      -> llvm::GlobalVariable*;
+
+  // The module-level home of one constant. Same shape and same reason as the
+  // cell above: the value is settled before the run, so the run builds it once
+  // and every later use loads what the first left here.
+  auto IntegralConstantCell(lir::IntegralConstantId constant)
+      -> llvm::GlobalVariable*;
 
  private:
   auto DeclareCallable(lir::FunctionId id) -> llvm::Function*;
-  auto DeclarePackedTypeCell(lir::TypeId integral) -> llvm::GlobalVariable*;
+  auto DeclareTypeDescriptorCell(lir::TypeDescriptorId descriptor)
+      -> llvm::GlobalVariable*;
+  auto DeclareIntegralConstantCell(lir::IntegralConstantId constant)
+      -> llvm::GlobalVariable*;
 
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::Module> module_;
@@ -96,7 +107,10 @@ class CodeGenModule {
   // other way round from how the unit states it: a class names the function
   // that builds a value of it, and what asks here is a function being emitted.
   std::unordered_set<lir::FunctionId> scope_constructions_;
-  base::Translation<lir::TypeId, llvm::GlobalVariable*> packed_type_cells_;
+  base::Translation<lir::TypeDescriptorId, llvm::GlobalVariable*>
+      type_descriptor_cells_;
+  base::Translation<lir::IntegralConstantId, llvm::GlobalVariable*>
+      integral_constant_cells_;
 };
 
 }  // namespace lyra::backend::llvm_backend

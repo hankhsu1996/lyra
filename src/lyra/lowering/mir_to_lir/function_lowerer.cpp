@@ -430,7 +430,7 @@ FunctionLowerer::FunctionLowerer(
       code_(&code),
       constructed_class_(nullptr),
       closure_(nullptr),
-      description_(nullptr),
+      build_(nullptr),
       name_(std::move(name)),
       variable_slot_(code.locals.size(), std::nullopt),
       locals_(code.locals.size(), std::nullopt) {
@@ -442,7 +442,7 @@ FunctionLowerer::FunctionLowerer(
       code_(&cls.constructor.code),
       constructed_class_(&cls),
       closure_(nullptr),
-      description_(nullptr),
+      build_(nullptr),
       name_(std::move(name)),
       variable_slot_(cls.constructor.code.locals.size(), std::nullopt),
       locals_(cls.constructor.code.locals.size(), std::nullopt) {
@@ -454,20 +454,19 @@ FunctionLowerer::FunctionLowerer(
       code_(&closure.invoke),
       constructed_class_(nullptr),
       closure_(&closure),
-      description_(nullptr),
+      build_(nullptr),
       name_(std::move(name)),
       variable_slot_(closure.invoke.locals.size(), std::nullopt),
       locals_(closure.invoke.locals.size(), std::nullopt) {
 }
 
 FunctionLowerer::FunctionLowerer(
-    UnitLowerer& unit, const mir::PackedTypeDescription& description,
-    std::string name)
+    UnitLowerer& unit, const mir::ValueBuild& build, std::string name)
     : unit_(&unit),
       code_(nullptr),
       constructed_class_(nullptr),
       closure_(nullptr),
-      description_(&description),
+      build_(&build),
       name_(std::move(name)) {
 }
 
@@ -483,17 +482,20 @@ void FunctionLowerer::BindCaptureReceiver(mir::LocalId receiver) {
   BindLocal(receiver, type, lir::Use{.value = value});
 }
 
-auto FunctionLowerer::LowerDescription(
-    UnitLowerer& unit, const mir::PackedTypeDescription& description,
-    std::string name) -> diag::Result<lir::Function> {
-  return FunctionLowerer(unit, description, std::move(name)).RunDescription();
+auto FunctionLowerer::LowerValueBuild(
+    UnitLowerer& unit, const mir::ValueBuild& build, std::string name)
+    -> diag::Result<lir::Function> {
+  return FunctionLowerer(unit, build, std::move(name)).RunValueBuild();
 }
 
-auto FunctionLowerer::RunDescription() -> diag::Result<lir::Function> {
+auto FunctionLowerer::RunValueBuild() -> diag::Result<lir::Function> {
   fn_.name = std::move(name_);
-  fn_.result_type = unit_->TranslateType(unit_->Mir().builtins.packed_type);
+  // The type is the built expression's own, so a description and a constant
+  // reach this the same way and neither is named here.
+  fn_.result_type =
+      unit_->TranslateType(build_->body.exprs.Get(build_->value).type);
   SetCurrent(NewBlock());
-  auto value = LowerExpr(description_->body, description_->value);
+  auto value = LowerExpr(build_->body, build_->value);
   if (!value) {
     return std::unexpected(std::move(value.error()));
   }
@@ -1597,9 +1599,15 @@ auto FunctionLowerer::ReferenceValue(
                     }},
                 *binding);
           },
-          [&](const mir::PackedTypeRef& ref) -> diag::Result<lir::Operand> {
-            return lir::Operand{lir::PackedTypeRef{
-                .integral = unit_->TranslateType(ref.integral),
+          [&](const mir::TypeDescriptorRef& ref) -> diag::Result<lir::Operand> {
+            return lir::Operand{lir::TypeDescriptorRef{
+                .descriptor = UnitLowerer::TranslateDescriptor(ref.descriptor),
+                .type = unit_->TranslateType(type)}};
+          },
+          [&](const mir::IntegralConstantRef& ref)
+              -> diag::Result<lir::Operand> {
+            return lir::Operand{lir::IntegralConstantRef{
+                .constant = UnitLowerer::TranslateConstant(ref.constant),
                 .type = unit_->TranslateType(type)}};
           },
           [](const mir::FunctionRef&) -> diag::Result<lir::Operand> {
@@ -1743,11 +1751,14 @@ auto FunctionLowerer::ReferencePlace(
                                 .mutability = lir::Mutability::kReadOnly}})},
                 .chain = {lir::Projection{lir::DerefProjection{}}}};
           },
-          // A descriptor and a function are values the unit generates, not
-          // storage anything writes through.
-          [](const mir::PackedTypeRef&) -> diag::Result<lir::Place> {
+          // A descriptor, a constant and a function are values the unit holds,
+          // not storage anything writes through.
+          [](const mir::TypeDescriptorRef&) -> diag::Result<lir::Place> {
             return Unsupported(
                 "mir_to_lir: a type's runtime descriptor names no place");
+          },
+          [](const mir::IntegralConstantRef&) -> diag::Result<lir::Place> {
+            return Unsupported("mir_to_lir: a constant names no place");
           },
           [](const mir::FunctionRef&) -> diag::Result<lir::Place> {
             return Unsupported("mir_to_lir: a function names no place");

@@ -309,11 +309,12 @@ as structural context -- an access asking whether the value it reaches is held t
 reading the input it was handed, not looking around.
 
 The shape a conversion or factory call must hand the runtime therefore travels as an ordinary MIR
-operand: a node that names the type whose shape it is, and whose own type is that type's runtime
-descriptor. It carries no contents, because the width, signedness, state domain, and dimension stack
-are the named type's. It reaches render as its own leaf node, never composed by the consuming call's
-render from the call's type. A render branch that reads the type a call is built at to append shape
-arguments is the forbidden shape; naming the type as an operand is the mechanical alternative.
+operand: a node naming what a declaration says, whose own type is the runtime descriptor that saying
+is a value of. It carries no contents, because the width, signedness, state domain, and dimension
+stack are the declaration's and the unit states them once. It reaches render as its own leaf node,
+never composed by the consuming call's render from the call's type. A render branch that reads the
+type a call is built at to append shape arguments is the forbidden shape; naming the description as
+an operand is the mechanical alternative.
 
 A value of that type would say the same thing, and is the wrong way to say it: nothing downstream
 can tell such an operand from one whose contents matter, so every backend builds contents it then

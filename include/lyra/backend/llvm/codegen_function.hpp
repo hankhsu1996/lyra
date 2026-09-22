@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -150,8 +151,18 @@ class CodeGenFunction {
   auto LowerRealConst(const lir::RealConst& constant)
       -> diag::Result<llvm::Value*>;
   auto LowerNullConst(const lir::NullConst& constant) -> llvm::Value*;
-  auto LowerPackedTypeRef(const lir::PackedTypeRef& ref)
+  auto LowerTypeDescriptorRef(const lir::TypeDescriptorRef& ref)
       -> diag::Result<llvm::Value*>;
+  auto LowerIntegralConstantRef(const lir::IntegralConstantRef& ref)
+      -> llvm::Value*;
+  // Reads what `cell` holds, running `make` to fill it on the first use that
+  // finds it empty. What a cell starts out holding is the one state a built
+  // value is never in, which is what lets the emptiness be the question. What
+  // building means is the caller's, because what each kind of value owes before
+  // its address can be kept differs.
+  auto BuiltOnce(
+      llvm::GlobalVariable* cell, const std::function<llvm::Value*()>& make)
+      -> llvm::Value*;
   auto LowerTerminatorInto(const lir::Terminator& terminator)
       -> diag::Result<void>;
 

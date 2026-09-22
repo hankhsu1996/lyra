@@ -48,13 +48,19 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   for (const lir::FunctionId id : unit_->functions.Ids()) {
     functions_.Append(DeclareCallable(id));
   }
-  packed_type_cells_ = base::Translation<lir::TypeId, llvm::GlobalVariable*>(
-      unit_->types.size());
-  for (const lir::TypeId id : unit_->types.Ids()) {
-    packed_type_cells_.Append(
-        unit_->packed_type_initializers.Get(id).has_value()
-            ? DeclarePackedTypeCell(id)
-            : nullptr);
+  type_descriptor_cells_ =
+      base::Translation<lir::TypeDescriptorId, llvm::GlobalVariable*>(
+          unit_->type_descriptor_initializers.size());
+  for (const lir::TypeDescriptorId id :
+       unit_->type_descriptor_initializers.Ids()) {
+    type_descriptor_cells_.Append(DeclareTypeDescriptorCell(id));
+  }
+  integral_constant_cells_ =
+      base::Translation<lir::IntegralConstantId, llvm::GlobalVariable*>(
+          unit_->integral_constant_initializers.size());
+  for (const lir::IntegralConstantId id :
+       unit_->integral_constant_initializers.Ids()) {
+    integral_constant_cells_.Append(DeclareIntegralConstantCell(id));
   }
   for (const lir::FunctionId id : unit_->functions.Ids()) {
     auto generated = CodeGenFunction(*this, id).Run();
@@ -141,19 +147,34 @@ auto CodeGenModule::VariableSchemaRef(const lir::Function& fn)
       lir::VariableSchemaSymbol(fn.name), llvm::Type::getInt8Ty(*context_));
 }
 
-auto CodeGenModule::PackedTypeCell(lir::TypeId integral)
+auto CodeGenModule::TypeDescriptorCell(lir::TypeDescriptorId descriptor)
     -> llvm::GlobalVariable* {
-  return packed_type_cells_.Get(integral);
+  return type_descriptor_cells_.Get(descriptor);
+}
+
+auto CodeGenModule::IntegralConstantCell(lir::IntegralConstantId constant)
+    -> llvm::GlobalVariable* {
+  return integral_constant_cells_.Get(constant);
 }
 
 // The module owns its globals, so what the list keeps is the module's cells
 // rather than a second owner of them. The label reaches no linker, so a type's
 // own identity is enough to tell one cell from another.
-auto CodeGenModule::DeclarePackedTypeCell(lir::TypeId integral)
+auto CodeGenModule::DeclareTypeDescriptorCell(lir::TypeDescriptorId descriptor)
     -> llvm::GlobalVariable* {
   llvm::PointerType* ptr_ty = types_.Ptr();
   auto* cell = llvm::cast<llvm::GlobalVariable>(module_->getOrInsertGlobal(
-      std::format("packed_type_{}", integral.value), ptr_ty));
+      std::format("type_descriptor_{}", descriptor.value), ptr_ty));
+  cell->setLinkage(llvm::GlobalValue::PrivateLinkage);
+  cell->setInitializer(llvm::ConstantPointerNull::get(ptr_ty));
+  return cell;
+}
+
+auto CodeGenModule::DeclareIntegralConstantCell(
+    lir::IntegralConstantId constant) -> llvm::GlobalVariable* {
+  llvm::PointerType* ptr_ty = types_.Ptr();
+  auto* cell = llvm::cast<llvm::GlobalVariable>(module_->getOrInsertGlobal(
+      std::format("constant_{}", constant.value), ptr_ty));
   cell->setLinkage(llvm::GlobalValue::PrivateLinkage);
   cell->setInitializer(llvm::ConstantPointerNull::get(ptr_ty));
   return cell;

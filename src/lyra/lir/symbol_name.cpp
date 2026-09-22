@@ -56,6 +56,8 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 's';
     case SymbolCategory::kTypeDescription:
       return 't';
+    case SymbolCategory::kIntegralConstant:
+      return 'l';
   }
   throw InternalError("SymbolName: unknown symbol category");
 }
@@ -183,6 +185,13 @@ auto TypeDescriptionSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string {
   return SymbolName(
       SymbolCategory::kTypeDescription,
+      {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
+}
+
+auto IntegralConstantSymbol(std::string_view unit_name, std::uint32_t ordinal)
+    -> std::string {
+  return SymbolName(
+      SymbolCategory::kIntegralConstant,
       {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
 }
 

@@ -1,6 +1,5 @@
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -22,8 +21,9 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
-#include "lyra/mir/packed_type_descriptor.hpp"
+#include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
+#include "lyra/mir/type_descriptor_id.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -206,32 +206,38 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     out_.structs.Define(StructDeclaration(id), std::move(record));
   }
 
-  // Descriptions are lowered after the bodies: each one translates types of
-  // its own, and what receives them below is indexed by LIR type, so its
-  // extent is settled only once nothing more will translate. Building a value
-  // is an instruction sequence at this layer, so a description is a function
-  // here, and the type it describes is what reaches it.
-  std::vector<std::pair<lir::TypeId, lir::FunctionId>> described;
-  for (const mir::TypeId id : mir::DescribedPackedTypes(*mir_)) {
-    const mir::PackedTypeDescription description =
-        mir::DescribePackedType(*mir_, id);
-    // A description is unique only within its unit, while the whole program
-    // links into one name space, so the unit qualifies it -- the same reason a
-    // namespace callable is qualified.
-    auto fn = FunctionLowerer::LowerDescription(
-        *this, description, lir::TypeDescriptionSymbol(mir_->name, id.value));
+  // Building a value is an instruction sequence at this layer, so each value
+  // the unit holds is a function here and the entry holding it is what reaches
+  // that function. What each is built from was settled upstream, so this reads
+  // two finished sets and takes them in either order.
+  base::Translation<lir::IntegralConstantId, lir::FunctionId> constants(
+      mir_->integral_constants.size());
+  for (const mir::IntegralConstantId id : mir_->integral_constants.Ids()) {
+    auto fn = FunctionLowerer::LowerValueBuild(
+        *this, mir_->builds.constants.Get(id),
+        lir::IntegralConstantSymbol(mir_->name, id.value));
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    described.emplace_back(
-        TranslateType(id), out_.functions.Add(*std::move(fn)));
+    constants.Append(out_.functions.Add(*std::move(fn)));
   }
-  std::vector<std::optional<lir::FunctionId>> initializers(
-      out_.types.size(), std::nullopt);
-  for (const auto& [type, initializer] : described) {
-    initializers[type.value] = initializer;
+  out_.integral_constant_initializers = std::move(constants);
+
+  base::Translation<lir::TypeDescriptorId, lir::FunctionId> descriptors(
+      mir_->type_descriptors.size());
+  for (const mir::TypeDescriptorId id : mir_->type_descriptors.Ids()) {
+    // A description is unique only within its unit, while the whole program
+    // links into one name space, so the unit qualifies it -- the same reason a
+    // namespace callable is qualified.
+    auto fn = FunctionLowerer::LowerValueBuild(
+        *this, mir_->builds.descriptors.Get(id),
+        lir::TypeDescriptionSymbol(mir_->name, id.value));
+    if (!fn) {
+      return std::unexpected(std::move(fn.error()));
+    }
+    descriptors.Append(out_.functions.Add(*std::move(fn)));
   }
-  out_.packed_type_initializers = {out_.types.size(), std::move(initializers)};
+  out_.type_descriptor_initializers = std::move(descriptors);
 
   // A type reached during lowering had no LIR mirror; surface it now, once the
   // whole unit has been walked, rather than from the non-failing translator.

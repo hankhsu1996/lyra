@@ -331,6 +331,11 @@ class UnitLowerer {
   }
 
  private:
+  // The finished unit, and the one way out of this pass. Every value the unit
+  // holds is settled here, so a consumer reads a complete set however the
+  // lowering reached its end.
+  auto Finish() -> mir::CompilationUnit;
+
   // Lowers a scope whose root is an object type into the unit's top class,
   // which the unit then names as its root. The namespace list is empty for a
   // source module and names every namespace of the design for the design root

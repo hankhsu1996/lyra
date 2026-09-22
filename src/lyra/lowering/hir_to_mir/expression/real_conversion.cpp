@@ -10,7 +10,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/packed_type_descriptor.hpp"
+#include "lyra/mir/type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -60,7 +60,7 @@ auto LowerRealConversionCall(
                   .arguments = {}},
           .type = unit_lowerer.Unit().builtins.machine_int64});
   const mir::ExprId packed_type =
-      mir::BuildPackedTypeRef(unit_lowerer.Unit(), block, result_type);
+      mir::BuildTypeDescriptorRef(unit_lowerer.Unit(), block, result_type);
   return mir::Expr{
       .data =
           mir::CallExpr{

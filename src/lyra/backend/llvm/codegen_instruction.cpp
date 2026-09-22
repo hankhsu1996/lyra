@@ -1306,8 +1306,11 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
                 llvm::Type::getInt1Ty(module_->Context()),
                 static_cast<std::uint64_t>(c.value));
           },
-          [&](const lir::PackedTypeRef& c) -> diag::Result<llvm::Value*> {
-            return LowerPackedTypeRef(c);
+          [&](const lir::TypeDescriptorRef& c) -> diag::Result<llvm::Value*> {
+            return LowerTypeDescriptorRef(c);
+          },
+          [&](const lir::IntegralConstantRef& c) -> diag::Result<llvm::Value*> {
+            return LowerIntegralConstantRef(c);
           },
           [&](const lir::FuncRef& f) -> diag::Result<llvm::Value*> {
             return module_->UnitFunction(f.function);
@@ -1351,19 +1354,13 @@ auto CodeGenFunction::LowerIntConst(const lir::IntConst& constant)
       machine->signedness == lir::Signedness::kSigned);
 }
 
-// The descriptor is built by the first use that reaches it; every later use in
-// the run loads the same pointer. It is built once because the type it
-// describes settles it once, and the cell is what gives it an address that
-// outlives the call that built it.
-auto CodeGenFunction::LowerPackedTypeRef(const lir::PackedTypeRef& ref)
-    -> diag::Result<llvm::Value*> {
-  const std::optional<lir::FunctionId>& initializer =
-      module_->Unit().packed_type_initializers.Get(ref.integral);
-  if (!initializer.has_value()) {
-    throw InternalError(
-        "llvm codegen: a described type reached a use with no description");
-  }
-  llvm::GlobalVariable* cell = module_->PackedTypeCell(ref.integral);
+// A value whose contents are settled before the run is built by the first use
+// that reaches it; every later use loads what that one left in the cell. It is
+// built once because whatever settles it settles it once, and the cell is what
+// gives it an address that outlives the call that built it.
+auto CodeGenFunction::BuiltOnce(
+    llvm::GlobalVariable* cell, const std::function<llvm::Value*()>& make)
+    -> llvm::Value* {
   auto* ptr_ty = module_->Types().Ptr();
   llvm::Value* cached = builder_.CreateLoad(ptr_ty, cell);
 
@@ -1374,16 +1371,42 @@ auto CodeGenFunction::LowerPackedTypeRef(const lir::PackedTypeRef& ref)
   builder_.CreateCondBr(builder_.CreateIsNull(cached), build, ready);
 
   builder_.SetInsertPoint(build);
-  llvm::Value* built =
-      builder_.CreateCall(module_->UnitFunction(*initializer), {});
+  llvm::Value* built = make();
   builder_.CreateStore(built, cell);
   builder_.CreateBr(ready);
 
   builder_.SetInsertPoint(ready);
-  llvm::PHINode* packed_type = builder_.CreatePHI(ptr_ty, 2);
-  packed_type->addIncoming(cached, entry);
-  packed_type->addIncoming(built, build);
-  return packed_type;
+  llvm::PHINode* value = builder_.CreatePHI(ptr_ty, 2);
+  value->addIncoming(cached, entry);
+  value->addIncoming(built, build);
+  return value;
+}
+
+auto CodeGenFunction::LowerTypeDescriptorRef(const lir::TypeDescriptorRef& ref)
+    -> diag::Result<llvm::Value*> {
+  const lir::FunctionId initializer =
+      module_->Unit().type_descriptor_initializers.Get(ref.descriptor);
+  // A description comes back owned by the run already, so keeping its address
+  // is the whole of what the cell does.
+  return BuiltOnce(module_->TypeDescriptorCell(ref.descriptor), [&] {
+    return builder_.CreateCall(module_->UnitFunction(initializer), {});
+  });
+}
+
+// A built value belongs to the arena of the stretch that built it, so the run
+// takes its own copy before the cell keeps the address.
+auto CodeGenFunction::LowerIntegralConstantRef(
+    const lir::IntegralConstantRef& ref) -> llvm::Value* {
+  llvm::Function* build = module_->UnitFunction(
+      module_->Unit().integral_constant_initializers.Get(ref.constant));
+  return BuiltOnce(module_->IntegralConstantCell(ref.constant), [&] {
+    const std::array<llvm::Value*, 1> built{builder_.CreateCall(build, {})};
+    return builder_.CreateCall(
+        Entry(
+            RuntimeSymbol(RuntimeOp::kRetainConstant), module_->Types().Ptr(),
+            built),
+        built);
+  });
 }
 
 // A string literal materializes as its native constant bytes; the owning
@@ -1730,6 +1753,8 @@ auto CodeGenFunction::ConstructionOf(
                 return entry(RuntimeSymbol(RuntimeOp::kMakeFormatSpec));
               case lir::RuntimeLibraryKind::kPackedRange:
                 return entry(RuntimeSymbol(RuntimeOp::kMakePackedRange));
+              case lir::RuntimeLibraryKind::kUnpackedRange:
+                return entry(RuntimeSymbol(RuntimeOp::kMakeUnpackedRange));
               case lir::RuntimeLibraryKind::kPackedType:
                 return entry(RuntimeSymbol(RuntimeOp::kMakePackedType));
               // What a value formats as is the value's own answer, so both of

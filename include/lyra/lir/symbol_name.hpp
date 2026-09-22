@@ -32,6 +32,7 @@ enum class SymbolCategory : std::uint8_t {
   kScopeEntry,
   kStruct,
   kTypeDescription,
+  kIntegralConstant,
   kVariableSchema,
 };
 
@@ -137,9 +138,14 @@ auto ScopeEntrySymbol(
 // in the unit's registry is the whole of its identity.
 auto StructSymbol(std::string_view unit_name, SymbolPart record) -> std::string;
 // The run-time description of one of a unit's types. The source declares no
-// such thing, so the position the type sits at in its unit's pool is the whole
-// of what identifies it.
+// such thing, so the position the description sits at in its unit's pool is the
+// whole of what identifies it.
 auto TypeDescriptionSymbol(std::string_view unit_name, std::uint32_t ordinal)
+    -> std::string;
+// The body building one of a unit's constants. The source wrote the value and
+// never a name for it, so the position it sits at in its unit's pool is the
+// whole of what identifies it.
+auto IntegralConstantSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
 // A closure is counted rather than named, having no declaration of the source

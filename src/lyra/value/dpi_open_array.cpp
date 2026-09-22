@@ -15,18 +15,11 @@
 namespace lyra::value {
 
 void DpiOpenArray::Shape(
-    std::span<const PackedArray> bounds, const PackedArray& leaf,
+    std::span<const UnpackedRange> bounds, const PackedArray& leaf,
     bool addressable_elements) {
   addressable_elements_ = addressable_elements;
   element_width_ = static_cast<std::uint32_t>(leaf.BitWidth());
-  const std::size_t dimensions = bounds.size() / 2;
-  dims_.reserve(dimensions);
-  for (std::size_t d = 0; d < dimensions; ++d) {
-    dims_.push_back(
-        UnpackedRange{
-            .left = bounds[2 * d].ToInt64(),
-            .right = bounds[(2 * d) + 1].ToInt64()});
-  }
+  dims_.assign(bounds.begin(), bounds.end());
   const std::size_t words = ElementCount() * GroupsPerElement();
   if (leaf.IsFourState()) {
     storage_ = std::vector<svLogicVecVal>(words);
@@ -265,8 +258,7 @@ auto svLow(void* handle, int d) -> int {
 }
 
 auto svHigh(void* handle, int d) -> int {
-  const lyra::value::UnpackedRange range = Bounds(handle, d);
-  return static_cast<int>(range.IsAscending() ? range.right : range.left);
+  return static_cast<int>(Bounds(handle, d).High());
 }
 
 auto svIncrement(void* handle, int d) -> int {

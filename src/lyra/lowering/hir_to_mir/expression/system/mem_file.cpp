@@ -28,6 +28,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -37,8 +38,8 @@ namespace {
 // The leaf element type, the addressing operands a memory shape hands to the
 // runtime call, and the address a run starts from where the source names none.
 // Each shape describes its addressing differently -- a fixed array of any depth
-// by every dimension's bounds as one array, an associative array by a key
-// prototype that carries the index width, and a dynamic array or queue by
+// by every dimension's declared range as one array, an associative array by a
+// key prototype that carries the index width, and a dynamic array or queue by
 // nothing (its `[0, size-1]` range comes from the container). `DescribeMemory`
 // is the one place that knows this, so the call assembly stays uniform.
 struct MemAddressing {
@@ -52,10 +53,6 @@ auto DescribeMemory(
     bool is_store, std::string_view task) -> diag::Result<MemAddressing> {
   UnitLowerer& unit_lowerer = process.Owner();
   auto& wrapper = *wrapper_frame.current_block;
-  const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
-  const auto int_literal = [&](std::int64_t value) {
-    return BuildIntLiteral(unit_lowerer.Unit(), wrapper, value);
-  };
   const auto not_a_memory = [&]() -> diag::Result<MemAddressing> {
     return diag::Fail(
         diag::DiagCode::kUnsupportedSubroutineArgument,
@@ -67,26 +64,39 @@ auto DescribeMemory(
   return unit_lowerer.Hir().types.Get(mem_type).Visit(
       Overloaded{
           [&](const hir::UnpackedArrayType&) -> diag::Result<MemAddressing> {
-            // Every dimension's bounds ride as one array, highest dimension
-            // first, so the runtime traverses row-major by ascending address
-            // (LRM 21.4.3) and a one-dimensional memory is the two-element case
-            // of the same traversal.
+            // Every dimension's declared range rides as one array, highest
+            // dimension first, so the runtime traverses row-major by ascending
+            // address (LRM 21.4.3) and a one-dimensional memory is the
+            // one-element case of the same traversal. Each range is the
+            // description that dimension's type already states, so a task
+            // addresses a memory through the same coordinate system an
+            // ordinary select on it resolves against.
+            const mir::CompilationUnit& unit = unit_lowerer.Unit();
             const hir::UnpackedShape shape =
                 hir::UnpackedShapeOf(unit_lowerer.Hir().types, mem_type);
-            std::vector<mir::ExprId> bounds;
-            bounds.reserve(shape.dims.size() * 2);
-            for (const hir::UnpackedRange& dim : shape.dims) {
-              bounds.push_back(int_literal(dim.left));
-              bounds.push_back(int_literal(dim.right));
+            std::vector<mir::ExprId> ranges;
+            ranges.reserve(shape.dims.size());
+            mir::TypeId level = unit_lowerer.TranslateType(mem_type);
+            for (;;) {
+              const auto* nested =
+                  unit.types.Get(level).As<mir::UnpackedArrayType>();
+              if (nested == nullptr) break;
+              // Read before the descriptor is named: naming one interns the
+              // type it is a value of, and a reference into the type pool does
+              // not survive its growth.
+              const mir::TypeId element = nested->element_type;
+              ranges.push_back(
+                  mir::BuildTypeDescriptorRef(unit, wrapper, level));
+              level = element;
             }
-            const mir::TypeId bounds_type = mir::MachineArrayOf(
-                unit_lowerer.Unit().types, int_type, bounds.size());
+            const mir::TypeId ranges_type = mir::MachineArrayOf(
+                unit.types, unit.builtins.unpacked_range, ranges.size());
             return MemAddressing{
                 .element = shape.element_type,
                 .operands = {wrapper.exprs.Add(
                     mir::Expr{
-                        .data = mir::CompositeExpr{.parts = std::move(bounds)},
-                        .type = bounds_type})},
+                        .data = mir::CompositeExpr{.parts = std::move(ranges)},
+                        .type = ranges_type})},
                 .lowest_address = std::min(
                     shape.dims.front().left, shape.dims.front().right)};
           },

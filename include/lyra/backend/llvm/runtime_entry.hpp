@@ -105,6 +105,7 @@ enum class RuntimeOp : std::uint8_t {
   kMakeSegment,
   kMakeTrigger,
   kMakePackedRange,
+  kMakeUnpackedRange,
   kMakePackedType,
   kMakePrintLiteralItem,
   kMakePrintValueItem,
@@ -115,6 +116,7 @@ enum class RuntimeOp : std::uint8_t {
   kMakeDpiLogicBuffer,
   kMakeDpiOpenArray,
   kClaimDeparture,
+  kRetainConstant,
 };
 
 // What a member slot is for, which two declarations answer differently for a

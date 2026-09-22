@@ -18,14 +18,14 @@ namespace lyra::value {
 namespace detail {
 
 // The leftmost leaf of a nest of unpacked layers, whose declared width and
-// state domain every leaf of the nest shares.
-[[nodiscard]] inline auto FirstLeaf(const PackedArray& value)
-    -> const PackedArray& {
+// state domain every leaf of the nest shares. Answered by value: what a caller
+// wants of it is the shape it has, and a reference would outlive nothing a
+// temporary actual could keep alive.
+[[nodiscard]] inline auto FirstLeaf(const PackedArray& value) -> PackedArray {
   return value;
 }
 template <typename T>
-[[nodiscard]] auto FirstLeaf(const UnpackedArray<T>& value)
-    -> const PackedArray& {
+[[nodiscard]] auto FirstLeaf(const UnpackedArray<T>& value) -> PackedArray {
   return FirstLeaf(value.RawAt(0));
 }
 
@@ -49,15 +49,14 @@ template <typename T>
 // the call site supplied (Annex H.7.5, H.7.6).
 class DpiOpenArray {
  public:
-  // `bounds` is the declared `(left, right)` pair of each unpacked dimension,
-  // outermost first -- empty where the actual is a single packed value.
-  // `addressable_elements` says an individual value of the element type crosses
-  // in the same canonical form the image holds it in, which is what lets the
-  // foreign side take the address of the array or of one element (Annex
-  // H.12.4).
+  // `bounds` is the declared range of each unpacked dimension, outermost first
+  // -- empty where the actual is a single packed value. `addressable_elements`
+  // says an individual value of the element type crosses in the same canonical
+  // form the image holds it in, which is what lets the foreign side take the
+  // address of the array or of one element (Annex H.12.4).
   template <typename T>
   DpiOpenArray(
-      const T& sv, std::span<const PackedArray> bounds,
+      const T& sv, std::span<const UnpackedRange> bounds,
       bool addressable_elements) {
     Shape(bounds, detail::FirstLeaf(sv), addressable_elements);
     std::size_t position = 0;
@@ -115,7 +114,7 @@ class DpiOpenArray {
   // Fixes the coordinate system, the element shape, and the storage the image
   // needs, all of which follow from the bounds and one leaf.
   void Shape(
-      std::span<const PackedArray> bounds, const PackedArray& leaf,
+      std::span<const UnpackedRange> bounds, const PackedArray& leaf,
       bool addressable_elements);
 
   // The 32-bit groups one element occupies in canonical form (Annex H.7.7).

@@ -377,18 +377,18 @@ auto ReplicateLiteral(
   return collected;
 }
 
-// A run of packed values, each crossing as the opaque handle every value
-// crosses as -- the per-axis indices that pick one instance out of an array of
-// them, or the bounds a memory's dimensions are addressed through. What the run
-// points at is the whole of what the two sides must agree on, the signature
-// saying only that a run crosses, so it is read in one place.
-auto PackedValuesOf(LyraSpan values) -> std::vector<value::PackedArray> {
+// A run of values of one kind, each crossing as the opaque handle every value
+// crosses as. What the run points at is the whole of what the two sides must
+// agree on, the signature saying only that a run crosses, so it is read in one
+// place whatever kind of value the run holds.
+template <typename T>
+auto ValuesOf(LyraSpan values) -> std::vector<T> {
   const std::span<const void* const> raw(
       static_cast<const void* const*>(values.data), values.count);
-  std::vector<value::PackedArray> resolved;
+  std::vector<T> resolved;
   resolved.reserve(raw.size());
   for (const void* value : raw) {
-    resolved.push_back(Read<value::PackedArray>(value));
+    resolved.push_back(Read<T>(value));
   }
   return resolved;
 }
@@ -578,7 +578,6 @@ using lyra::runtime::ObjectOf;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
 using lyra::runtime::Own;
-using lyra::runtime::PackedValuesOf;
 using lyra::runtime::ProcessAwait;
 using lyra::runtime::ProcessKill;
 using lyra::runtime::ProcessOf;
@@ -611,6 +610,7 @@ using lyra::runtime::TakeEvaluator;
 using lyra::runtime::TestPlusargs;
 using lyra::runtime::Trigger;
 using lyra::runtime::TriggersOf;
+using lyra::runtime::ValuesOf;
 using lyra::runtime::Var;
 using lyra::runtime::WaitAny;
 using lyra::runtime::WaitFork;
@@ -643,6 +643,7 @@ using lyra::value::RuntimeValue;
 using lyra::value::ShortReal;
 using lyra::value::String;
 using lyra::value::TimeFormat;
+using lyra::value::UnpackedRange;
 
 extern "C" {
 
@@ -706,18 +707,17 @@ auto lyra_rt_file_read(void* files, const void* dest, const void* fd) -> void* {
 }
 
 auto lyra_rt_file_read_memory(
-    void* files, const void* dest, const void* fd, const void* left,
-    const void* right, const void* start, const void* count) -> void* {
+    void* files, const void* dest, const void* fd, const void* declared,
+    const void* start, const void* count) -> void* {
   const auto memory = Read<lyra::value::RuntimeUnpackedArray>(dest);
-  const std::array<PackedArray, 2> dims{
-      Read<PackedArray>(left), Read<PackedArray>(right)};
-  const std::int64_t lowest = std::min(dims[0].ToInt64(), dims[1].ToInt64());
+  const auto& range = Read<UnpackedRange>(declared);
+  const std::array dims{range};
+  const std::int64_t lowest = range.Low();
   std::vector<PackedArray> words = lyra::value::MemoryWords(memory, dims);
   const std::int32_t read = lyra::runtime::ReadMemoryWords(
       *static_cast<FileTable*>(files), Read<PackedArray>(fd),
-      std::get<PackedArray>(memory.ElementDefault().value), dims[0].ToInt64(),
-      dims[1].ToInt64(), Read<PackedArray>(start).ToInt64(),
-      Read<PackedArray>(count).ToInt64(),
+      std::get<PackedArray>(memory.ElementDefault().value), range,
+      Read<PackedArray>(start).ToInt64(), Read<PackedArray>(count).ToInt64(),
       [&words, lowest](std::int64_t sv, PackedArray word) {
         words[static_cast<std::size_t>(sv - lowest)] = std::move(word);
       });
@@ -821,6 +821,11 @@ auto lyra_rt_packed_from_words(
 auto lyra_rt_make_packed_range(std::int64_t left, std::int64_t right) -> const
     void* {
   return ProgramLifetime(PackedRange{.left = left, .right = right});
+}
+
+auto lyra_rt_make_unpacked_range(std::int64_t left, std::int64_t right) -> const
+    void* {
+  return ProgramLifetime(UnpackedRange{.left = left, .right = right});
 }
 
 auto lyra_rt_make_packed_type(LyraSpan dims, bool is_signed, bool is_four_state)
@@ -1115,6 +1120,12 @@ auto lyra_rt_triggered(const void* event, void* runtime) -> void* {
           *static_cast<RuntimeEffects*>(runtime)));
 }
 
+auto lyra_rt_retain_constant(const void* value) -> const void* {
+  // A copy rather than a move: the stretch that built it goes on owning what it
+  // built, and this is the run taking its own.
+  return ProgramLifetime(Read<PackedArray>(value));
+}
+
 auto lyra_rt_claim_departure(void* exception) -> void* {
   // The landing is handed what the unwinder carries, not the effect itself;
   // claiming is what turns one into the other, and it is the point after which
@@ -1402,7 +1413,8 @@ void lyra_rt_run_exported_task_to_completion(void* activation) {
 
 auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void* {
   return GeneratedCallScope::Current().Arena().New<HierarchySegment>(
-      std::string(static_cast<const char*>(label)), PackedValuesOf(indices));
+      std::string(static_cast<const char*>(label)),
+      ValuesOf<PackedArray>(indices));
 }
 
 auto lyra_rt_make_scope(
@@ -1440,13 +1452,13 @@ auto lyra_rt_add_owned_child(void* parent, void* child) -> void* {
 auto lyra_rt_resolve_visible_child(
     void* self, const void* head_name, LyraSpan head_indices) -> void* {
   return static_cast<Scope*>(self)->ResolveVisibleChild(
-      static_cast<const char*>(head_name), PackedValuesOf(head_indices));
+      static_cast<const char*>(head_name), ValuesOf<PackedArray>(head_indices));
 }
 
 auto lyra_rt_find_child(void* self, const void* name, LyraSpan indices)
     -> void* {
   return static_cast<Scope*>(self)->FindChild(
-      static_cast<const char*>(name), PackedValuesOf(indices));
+      static_cast<const char*>(name), ValuesOf<PackedArray>(indices));
 }
 
 auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void* {
@@ -3493,26 +3505,23 @@ auto lyra_rt_unpackedarray_merge_conditional(const void* lhs, const void* rhs)
 }
 
 // Reads the element the source index names, resolved against the declared range
-// `[left:right]` the receiver's static type supplies. An index the range does
-// not name reads the element default (LRM 7.4.5).
+// the receiver's static type supplies. An index the range does not name reads
+// the element default (LRM 7.4.5).
 auto lyra_rt_unpackedarray_element(
-    const void* array, const void* index, const void* left, const void* right)
-    -> void* {
+    const void* array, const void* index, const void* declared) -> void* {
   return lyra::runtime::ElementHandle(
       Read<RuntimeUnpackedArray>(array).Element(
-          Read<PackedArray>(index), Read<PackedArray>(left),
-          Read<PackedArray>(right)));
+          Read<PackedArray>(index), Read<UnpackedRange>(declared)));
 }
 
 // The functional element write (LRM 7.4.5): yields a new array with the named
 // element replaced, and the original unchanged when the range does not name it.
 auto lyra_rt_unpackedarray_with_element(
-    const void* array, const void* index, const void* left, const void* right,
-    void* value) -> void* {
+    const void* array, const void* index, const void* declared, void* value)
+    -> void* {
   const auto& source = Read<RuntimeUnpackedArray>(array);
   return Own(source.WithElement(
-      Read<PackedArray>(index), Read<PackedArray>(left),
-      Read<PackedArray>(right),
+      Read<PackedArray>(index), Read<UnpackedRange>(declared),
       lyra::runtime::ElementFrom(source.ElementDefault(), value)));
 }
 
@@ -3624,20 +3633,20 @@ auto lyra_rt_unpackedarray_size(const void* array) -> void* {
 
 auto lyra_rt_unpackedarray_slice(
     const void* array, const void* a, const void* b, const void* form,
-    const void* left, const void* right) -> void* {
+    const void* declared) -> void* {
   return Own(
       Read<RuntimeUnpackedArray>(array).Slice(
           Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
-          Read<PackedArray>(left), Read<PackedArray>(right)));
+          Read<UnpackedRange>(declared)));
 }
 
 auto lyra_rt_unpackedarray_with_slice(
     const void* array, const void* a, const void* b, const void* form,
-    const void* left, const void* right, const void* replacement) -> void* {
+    const void* declared, const void* replacement) -> void* {
   return Own(
       Read<RuntimeUnpackedArray>(array).WithSlice(
           Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
-          Read<PackedArray>(left), Read<PackedArray>(right),
+          Read<UnpackedRange>(declared),
           Read<RuntimeUnpackedArray>(replacement)));
 }
 
@@ -4859,7 +4868,7 @@ auto lyra_rt_unpackedarray_read_mem(
       std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
           *static_cast<RuntimeEffects*>(runtime),
           Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-          PackedValuesOf(dims), Read<PackedArray>(base),
+          ValuesOf<UnpackedRange>(dims), Read<PackedArray>(base),
           Read<PackedArray>(start), std::nullopt)}});
 }
 
@@ -4870,7 +4879,7 @@ auto lyra_rt_unpackedarray_read_mem_within(
       std::vector<RuntimeValue>{RuntimeValue{lyra::runtime::ReadMem(
           *static_cast<RuntimeEffects*>(runtime),
           Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-          PackedValuesOf(dims), Read<PackedArray>(base),
+          ValuesOf<UnpackedRange>(dims), Read<PackedArray>(base),
           Read<PackedArray>(start), Read<PackedArray>(finish).ToInt64())}});
 }
 
@@ -4880,8 +4889,8 @@ void lyra_rt_unpackedarray_write_mem(
   lyra::runtime::WriteMem(
       *static_cast<RuntimeEffects*>(runtime),
       Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-      PackedValuesOf(dims), Read<PackedArray>(base), Read<PackedArray>(start),
-      std::nullopt);
+      ValuesOf<UnpackedRange>(dims), Read<PackedArray>(base),
+      Read<PackedArray>(start), std::nullopt);
 }
 
 void lyra_rt_unpackedarray_write_mem_within(
@@ -4890,8 +4899,8 @@ void lyra_rt_unpackedarray_write_mem_within(
   lyra::runtime::WriteMem(
       *static_cast<RuntimeEffects*>(runtime),
       Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-      PackedValuesOf(dims), Read<PackedArray>(base), Read<PackedArray>(start),
-      Read<PackedArray>(finish).ToInt64());
+      ValuesOf<UnpackedRange>(dims), Read<PackedArray>(base),
+      Read<PackedArray>(start), Read<PackedArray>(finish).ToInt64());
 }
 
 auto lyra_rt_dynarray_read_mem(
@@ -5109,12 +5118,7 @@ auto lyra_rt_from_sv_logic(std::uint8_t encoded, const void* type) -> void* {
 // single packed actual is therefore what images, and an array of them says so.
 auto lyra_rt_make_dpi_open_array(
     void* sv, LyraSpan bounds, bool addressable_elements) -> void* {
-  const std::span<const void* const> handles{
-      static_cast<const void* const*>(bounds.data), bounds.count};
-  std::vector<PackedArray> declared(handles.size());
-  std::ranges::transform(handles, declared.begin(), [](const void* handle) {
-    return *static_cast<const PackedArray*>(handle);
-  });
+  const std::vector<UnpackedRange> declared = ValuesOf<UnpackedRange>(bounds);
   const RuntimeValue actual = lyra::runtime::ErasedValue(sv);
   const auto* packed = std::get_if<PackedArray>(&actual.value);
   if (packed == nullptr) {

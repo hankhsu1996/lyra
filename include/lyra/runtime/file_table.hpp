@@ -250,8 +250,7 @@ class FileTable {
   auto ReadMemory(
       lyra::value::UnpackedArray<lyra::value::PackedArray> dest,
       const lyra::value::PackedArray& fd,
-      const lyra::value::PackedArray& declared_left,
-      const lyra::value::PackedArray& declared_right,
+      const lyra::value::UnpackedRange& declared,
       const lyra::value::PackedArray& sv_start,
       const lyra::value::PackedArray& count) -> MemoryRead;
 
@@ -303,7 +302,7 @@ class FileTable {
 // LRM 21.3.4.4 memory load, over whatever holds the words. Reads from
 // `start_sv` toward the highest declared index, stopping at end of file or
 // after `count` words, and hands each word to `write_word` by its
-// source-declared index -- the coordinate system the declared bounds state,
+// source-declared index -- the coordinate system the declared range states,
 // which the holder resolves. `element_prototype` states the shape a word
 // takes, which is what decides how many bytes one costs. Answers with the byte
 // count, zero where nothing was read.
@@ -315,8 +314,8 @@ class FileTable {
 auto ReadMemoryWords(
     FileTable& files, const lyra::value::PackedArray& fd,
     const lyra::value::PackedArray& element_prototype,
-    std::int64_t declared_left, std::int64_t declared_right,
-    std::int64_t start_sv, std::int64_t count,
+    const lyra::value::UnpackedRange& declared, std::int64_t start_sv,
+    std::int64_t count,
     const std::function<void(std::int64_t, lyra::value::PackedArray)>&
         write_word) -> std::int32_t;
 

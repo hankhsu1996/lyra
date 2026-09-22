@@ -1,6 +1,5 @@
 #include "lyra/value/runtime_memory.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -24,10 +23,10 @@ namespace {
 // from, so an address the range does not name is a caller defect.
 auto PositionOf(
     const RuntimeUnpackedArray& level, std::int64_t address,
-    const PackedArray& left, const PackedArray& right) -> std::size_t {
+    const UnpackedRange& range) -> std::size_t {
   const auto size = static_cast<std::size_t>(level.Size().ToInt64());
   const std::optional<std::size_t> position = ResolveUnpackedOrdinal(
-      PackedArray::Int(static_cast<std::int32_t>(address)), left, right, size);
+      PackedArray::Int(static_cast<std::int32_t>(address)), range, size);
   if (!position) {
     throw InternalError(
         "memory walk: the bounds name an address the memory does not hold");
@@ -47,15 +46,13 @@ auto LevelOf(const RuntimeValue& value) -> const RuntimeUnpackedArray& {
 }
 
 void CollectLevel(
-    const RuntimeUnpackedArray& level, std::span<const PackedArray> dims,
+    const RuntimeUnpackedArray& level, std::span<const UnpackedRange> dims,
     std::vector<PackedArray>& out) {
-  const std::int64_t left = dims[0].ToInt64();
-  const std::int64_t right = dims[1].ToInt64();
-  const std::span<const PackedArray> inner = dims.subspan(2);
-  for (std::int64_t address = std::min(left, right);
-       address <= std::max(left, right); ++address) {
+  const UnpackedRange& range = dims[0];
+  const std::span<const UnpackedRange> inner = dims.subspan(1);
+  for (std::int64_t address = range.Low(); address <= range.High(); ++address) {
     const RuntimeValue& element =
-        level.ElementAt(PositionOf(level, address, dims[0], dims[1]));
+        level.ElementAt(PositionOf(level, address, range));
     if (inner.empty()) {
       out.push_back(MemoryWordOf(element));
     } else {
@@ -65,21 +62,19 @@ void CollectLevel(
 }
 
 auto RebuildLevel(
-    const RuntimeUnpackedArray& level, std::span<const PackedArray> dims,
+    const RuntimeUnpackedArray& level, std::span<const UnpackedRange> dims,
     std::span<const PackedArray> words, std::size_t& cursor)
     -> RuntimeUnpackedArray {
-  const std::int64_t left = dims[0].ToInt64();
-  const std::int64_t right = dims[1].ToInt64();
-  const std::span<const PackedArray> inner = dims.subspan(2);
+  const UnpackedRange& range = dims[0];
+  const std::span<const UnpackedRange> inner = dims.subspan(1);
   const auto size = static_cast<std::size_t>(level.Size().ToInt64());
   std::vector<RuntimeValue> elements;
   elements.reserve(size);
   for (std::size_t position = 0; position < size; ++position) {
     elements.push_back(level.ElementAt(position));
   }
-  for (std::int64_t address = std::min(left, right);
-       address <= std::max(left, right); ++address) {
-    const std::size_t position = PositionOf(level, address, dims[0], dims[1]);
+  for (std::int64_t address = range.Low(); address <= range.High(); ++address) {
+    const std::size_t position = PositionOf(level, address, range);
     if (inner.empty()) {
       if (cursor >= words.size()) {
         throw InternalError("memory walk: the words run out before the memory");
@@ -105,7 +100,7 @@ auto MemoryWordOf(const RuntimeValue& element) -> const PackedArray& {
 }
 
 auto MemoryWords(
-    const RuntimeUnpackedArray& memory, std::span<const PackedArray> dims)
+    const RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims)
     -> std::vector<PackedArray> {
   std::vector<PackedArray> words;
   CollectLevel(memory, dims, words);
@@ -113,7 +108,7 @@ auto MemoryWords(
 }
 
 auto MemoryWithWords(
-    const RuntimeUnpackedArray& memory, std::span<const PackedArray> dims,
+    const RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
     std::span<const PackedArray> words) -> RuntimeUnpackedArray {
   std::size_t cursor = 0;
   return RebuildLevel(memory, dims, words, cursor);

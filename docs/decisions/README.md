@@ -15,6 +15,9 @@ the detail lives in the entry itself.
 
 ### Value types and representation
 
+- [a-constant-is-stated-not-computed](a-constant-is-stated-not-computed.md) -- a unit holds the
+  values it was written with and an occurrence names one, because a value fixed before the run costs
+  a read rather than a construction, and no optimizer recovers that.
 - [integral-representation](integral-representation.md) -- one fat `PackedArray` carries integral
   shape as runtime fields, not C++ template parameters.
 - [value-store-discipline](value-store-discipline.md) -- a value is pure; preserving the

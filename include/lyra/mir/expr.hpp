@@ -20,12 +20,14 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
+#include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/namespace_storage_phase.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_id.hpp"
+#include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -570,13 +572,26 @@ struct ObjectRecordRef {
   ClassRef of;
 };
 
-// An integral type's runtime descriptor, named by the type it describes. The
-// descriptor is settled at compile time and shared by every value of that type,
-// so the unit states it once and a use names which one; the type is the
-// identity, so nothing about where a use appears decides what it reaches.
-// `Expr::type` is the descriptor, not the integral type described.
-struct PackedTypeRef {
-  TypeId integral;
+// A runtime description, named by the entry holding it: what an operation on a
+// value needs from that value's declaration rather than from the value. An
+// integral type says its dimension stack, its signedness and its state domain;
+// an unpacked array says the declared range a select resolves a coordinate
+// against. A description is settled at compile time and shared by every use
+// that needs the same thing of a declaration, so the unit states it once and a
+// use names which one. `Expr::type` is the description's own runtime type,
+// which is also what says which of the descriptions this is.
+struct TypeDescriptorRef {
+  TypeDescriptorId descriptor;
+};
+
+// A constant integral value the unit was written with, named by the entry
+// holding it. The value is settled before the program runs and shared by every
+// use that reaches it, so the unit states it once and a use says which one --
+// the same relation a type's run-time description has to the uses naming one,
+// over a value rather than over what describes it. `Expr::type` is the
+// constant's own integral type.
+struct IntegralConstantRef {
+  IntegralConstantId constant;
 };
 
 // A place naming a class's static property (`Class::name`, LRM 8.9): the
@@ -634,9 +649,9 @@ struct ExternalStaticPropertyRef {
 // referent's business: every one of them reaches storage or code that exists
 // whether or not this expression names it.
 using ReferenceTarget = std::variant<
-    LocalRef, FunctionRef, StaticConstantRef, ObjectRecordRef, PackedTypeRef,
-    StaticPropertyRef, StaticVariableRef, ExternalUnitVariableRef,
-    ExternalStaticPropertyRef>;
+    LocalRef, FunctionRef, StaticConstantRef, ObjectRecordRef,
+    TypeDescriptorRef, IntegralConstantRef, StaticPropertyRef,
+    StaticVariableRef, ExternalUnitVariableRef, ExternalStaticPropertyRef>;
 
 // Names a declared thing. Reading it loads what the name reaches, assigning to
 // it stores there, and taking its address yields a pointer to it -- one node

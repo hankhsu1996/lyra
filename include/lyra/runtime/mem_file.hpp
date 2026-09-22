@@ -18,6 +18,7 @@
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
 #include "lyra/value/unpacked_array.hpp"
+#include "lyra/value/unpacked_range.hpp"
 
 namespace lyra::runtime {
 
@@ -119,12 +120,12 @@ void WriteMemWithin(
 // needs in order to keep the words the file does not reach.
 auto ReadMem(
     RuntimeEffects& runtime, const value::RuntimeUnpackedArray& dest,
-    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
     const value::PackedArray& base, const value::PackedArray& start,
     std::optional<std::int64_t> finish) -> value::RuntimeUnpackedArray;
 void WriteMem(
     RuntimeEffects& runtime, const value::RuntimeUnpackedArray& src,
-    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
     const value::PackedArray& base, const value::PackedArray& start,
     std::optional<std::int64_t> finish);
 
@@ -163,9 +164,9 @@ void WriteMem(
 // address at every dimension (the file is address-ordered even when a dimension
 // is declared descending) -- while the file / parse / render / diagnostic logic
 // stays in the non-template cores below, reached through a leaf accessor. The
-// dimensions ride as a `[left0, right0, left1, right1, ...]` bounds array: the
-// first pair is the highest (addressed) dimension, the rest describe the leaves
-// each highest-dimension word expands to, row-major.
+// dimensions ride as one declared range each: the first is the highest
+// (addressed) dimension, the rest describe the leaves each highest-dimension
+// word expands to, row-major.
 namespace detail {
 
 // A level of a memory: an array of the level below, or the packed word the
@@ -179,63 +180,56 @@ template <typename U>
 struct IsMemoryLevel<value::UnpackedArray<U>> : std::true_type {};
 
 // Leaf count of one highest-dimension word: the product of the inner dimension
-// sizes. An empty bounds list (the highest dimension is itself the leaf level)
-// is one leaf.
+// sizes. No inner dimension (the highest is itself the leaf level) is one leaf,
+// which is the empty product rather than a case of its own.
 [[nodiscard]] inline auto InnerLeafCount(
-    std::span<const value::PackedArray> dims) -> std::size_t {
+    std::span<const value::UnpackedRange> dims) -> std::size_t {
   std::size_t count = 1;
-  for (std::size_t i = 0; i + 1 < dims.size(); i += 2) {
-    const std::int64_t left = dims[i].ToInt64();
-    const std::int64_t right = dims[i + 1].ToInt64();
-    count *= static_cast<std::size_t>(
-        (left >= right ? left - right : right - left) + 1);
+  for (const value::UnpackedRange& dim : dims) {
+    count *= dim.Count();
   }
   return count;
 }
 
 // Resolves a row-major leaf ordinal within one subtree to its storage cell,
-// mapping each dimension's ascending-address position through the declared
-// `[left, right]` so a descending declaration still reads low address first.
-// The load path takes a mutable cell (`ElementRef`); the dump path reads a
-// const cell (`Element`); the ordinal decode is identical.
+// mapping each dimension's ascending-address position through its declared
+// range so a descending declaration still reads low address first. The load
+// path takes a mutable cell (`ElementRef`); the dump path reads a const cell
+// (`Element`); the ordinal decode is identical.
 template <typename T>
 [[nodiscard]] auto LeafByLinearIndex(
-    T& node, std::span<const value::PackedArray> dims, std::size_t linear)
+    T& node, std::span<const value::UnpackedRange> dims, std::size_t linear)
     -> value::PackedArray& {
   if constexpr (std::is_same_v<T, value::PackedArray>) {
     return node;
   } else {
-    const std::int64_t left = dims[0].ToInt64();
-    const std::int64_t right = dims[1].ToInt64();
-    const std::span<const value::PackedArray> rest = dims.subspan(2);
+    const value::UnpackedRange& range = dims[0];
+    const std::span<const value::UnpackedRange> rest = dims.subspan(1);
     const std::size_t inner = InnerLeafCount(rest);
     const std::int64_t address =
-        std::min(left, right) + static_cast<std::int64_t>(linear / inner);
+        range.Low() + static_cast<std::int64_t>(linear / inner);
     return LeafByLinearIndex(
         node.ElementRef(
-            value::PackedArray::Int(static_cast<std::int32_t>(address)),
-            dims[0], dims[1]),
+            value::PackedArray::Int(static_cast<std::int32_t>(address)), range),
         rest, linear % inner);
   }
 }
 
 template <typename T>
 [[nodiscard]] auto LeafByLinearIndexConst(
-    const T& node, std::span<const value::PackedArray> dims, std::size_t linear)
-    -> const value::PackedArray& {
+    const T& node, std::span<const value::UnpackedRange> dims,
+    std::size_t linear) -> const value::PackedArray& {
   if constexpr (std::is_same_v<T, value::PackedArray>) {
     return node;
   } else {
-    const std::int64_t left = dims[0].ToInt64();
-    const std::int64_t right = dims[1].ToInt64();
-    const std::span<const value::PackedArray> rest = dims.subspan(2);
+    const value::UnpackedRange& range = dims[0];
+    const std::span<const value::UnpackedRange> rest = dims.subspan(1);
     const std::size_t inner = InnerLeafCount(rest);
     const std::int64_t address =
-        std::min(left, right) + static_cast<std::int64_t>(linear / inner);
+        range.Low() + static_cast<std::int64_t>(linear / inner);
     return LeafByLinearIndexConst(
         node.Element(
-            value::PackedArray::Int(static_cast<std::int32_t>(address)),
-            dims[0], dims[1]),
+            value::PackedArray::Int(static_cast<std::int32_t>(address)), range),
         rest, linear % inner);
   }
 }
@@ -270,21 +264,18 @@ template <typename Inner>
   requires detail::IsMemoryLevel<Inner>::value
 void ReadMemMultidim(
     RuntimeEffects& runtime, value::UnpackedArray<Inner>& dest,
-    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
     unsigned base, std::optional<std::int64_t> start,
     std::optional<std::int64_t> finish) {
-  const std::int64_t top_left = dims[0].ToInt64();
-  const std::int64_t top_right = dims[1].ToInt64();
-  const std::span<const value::PackedArray> inner = dims.subspan(2);
+  const value::UnpackedRange addressed = dims[0];
+  const std::span<const value::UnpackedRange> inner = dims.subspan(1);
   ReadMemGridCore(
-      runtime, filename, base, std::min(top_left, top_right),
-      std::max(top_left, top_right), detail::InnerLeafCount(inner), start,
-      finish,
-      [&dest, dims, inner](
+      runtime, filename, base, addressed.Low(), addressed.High(),
+      detail::InnerLeafCount(inner), start, finish,
+      [&dest, addressed, inner](
           std::int64_t top, std::size_t ordinal) -> value::PackedArray& {
         auto& slot = dest.ElementRef(
-            value::PackedArray::Int(static_cast<std::int32_t>(top)), dims[0],
-            dims[1]);
+            value::PackedArray::Int(static_cast<std::int32_t>(top)), addressed);
         return detail::LeafByLinearIndex(slot, inner, ordinal);
       });
 }
@@ -293,34 +284,31 @@ template <typename Inner>
   requires detail::IsMemoryLevel<Inner>::value
 void WriteMemMultidim(
     RuntimeEffects& runtime, const value::UnpackedArray<Inner>& src,
-    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
     unsigned base, std::optional<std::int64_t> start,
     std::optional<std::int64_t> finish) {
-  const std::int64_t top_left = dims[0].ToInt64();
-  const std::int64_t top_right = dims[1].ToInt64();
-  const std::span<const value::PackedArray> inner = dims.subspan(2);
+  const value::UnpackedRange addressed = dims[0];
+  const std::span<const value::UnpackedRange> inner = dims.subspan(1);
   WriteMemGridCore(
-      runtime, filename, base, std::min(top_left, top_right),
-      std::max(top_left, top_right), detail::InnerLeafCount(inner), start,
-      finish,
-      [&src, dims, inner](
+      runtime, filename, base, addressed.Low(), addressed.High(),
+      detail::InnerLeafCount(inner), start, finish,
+      [&src, addressed, inner](
           std::int64_t top, std::size_t ordinal) -> const value::PackedArray& {
         const auto& slot = src.Element(
-            value::PackedArray::Int(static_cast<std::int32_t>(top)), dims[0],
-            dims[1]);
+            value::PackedArray::Int(static_cast<std::int32_t>(top)), addressed);
         return detail::LeafByLinearIndexConst(slot, inner, ordinal);
       });
 }
 
-// An unpacked memory of any depth. The bounds ride as a
-// `[left0, right0, left1, right1, ...]` array whose first pair is the addressed
-// dimension and whose rest describe the leaves each address expands to, so a
-// one-dimensional memory is the two-element case of the same traversal.
+// An unpacked memory of any depth. The bounds ride as one declared range per
+// dimension, the first being the addressed dimension and the rest describing
+// the leaves each address expands to, so a one-dimensional memory is the
+// one-element case of the same traversal.
 template <typename Inner>
   requires detail::IsMemoryLevel<Inner>::value
 auto ReadMem(
     RuntimeEffects& runtime, value::UnpackedArray<Inner> dest,
-    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
     const value::PackedArray& base, const value::PackedArray& start)
     -> MemoryLoad<value::UnpackedArray<Inner>> {
   ReadMemMultidim(
@@ -333,7 +321,7 @@ template <typename Inner>
   requires detail::IsMemoryLevel<Inner>::value
 auto ReadMemWithin(
     RuntimeEffects& runtime, value::UnpackedArray<Inner> dest,
-    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
     const value::PackedArray& base, const value::PackedArray& start,
     const value::PackedArray& finish)
     -> MemoryLoad<value::UnpackedArray<Inner>> {
@@ -347,7 +335,7 @@ template <typename Inner>
   requires detail::IsMemoryLevel<Inner>::value
 void WriteMem(
     RuntimeEffects& runtime, const value::UnpackedArray<Inner>& src,
-    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
     const value::PackedArray& base, const value::PackedArray& start) {
   WriteMemMultidim(
       runtime, src, filename, dims, static_cast<unsigned>(base.ToInt64()),
@@ -358,7 +346,7 @@ template <typename Inner>
   requires detail::IsMemoryLevel<Inner>::value
 void WriteMemWithin(
     RuntimeEffects& runtime, const value::UnpackedArray<Inner>& src,
-    const value::String& filename, std::span<const value::PackedArray> dims,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
     const value::PackedArray& base, const value::PackedArray& start,
     const value::PackedArray& finish) {
   WriteMemMultidim(

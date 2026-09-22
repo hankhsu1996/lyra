@@ -3,11 +3,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/hash.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/class_ref.hpp"
@@ -54,11 +54,8 @@ namespace {
 
 template <typename T>
 auto Combine(std::size_t seed, const T& value) -> std::size_t {
-  // The mixing constant and shifts are Boost's `hash_combine`, which spreads
-  // the low-entropy inputs here -- small ids, enum tags, container sizes --
-  // across the whole word.
-  return seed ^
-         (std::hash<T>{}(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2));
+  base::HashField(seed, value);
+  return seed;
 }
 
 auto HashTypeId(std::size_t seed, TypeId id) -> std::size_t {
