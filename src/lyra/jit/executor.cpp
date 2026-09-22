@@ -511,6 +511,12 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
       &lyra_rt_assocarray_sampled_history_push);
   add("lyra_rt_assocarray_sampled_history_at",
       &lyra_rt_assocarray_sampled_history_at);
+  add("lyra_rt_managedref_sampled_history_install",
+      &lyra_rt_managedref_sampled_history_install);
+  add("lyra_rt_managedref_sampled_history_push",
+      &lyra_rt_managedref_sampled_history_push);
+  add("lyra_rt_managedref_sampled_history_at",
+      &lyra_rt_managedref_sampled_history_at);
   add("lyra_rt_evaluation_attempts_install",
       &lyra_rt_evaluation_attempts_install);
   add("lyra_rt_evaluation_attempts_seed_word",
@@ -774,6 +780,10 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_managedref_cell_initialize",
       &lyra_rt_managedref_cell_initialize);
   add("lyra_rt_managedref_cell_set", &lyra_rt_managedref_cell_set);
+  add("lyra_rt_managedref_cell_arm_sampling",
+      &lyra_rt_managedref_cell_arm_sampling);
+  add("lyra_rt_managedref_cell_sampled_load",
+      &lyra_rt_managedref_cell_sampled_load);
   add("lyra_rt_managedref_eq", &lyra_rt_managedref_eq);
   add("lyra_rt_managedref_ne", &lyra_rt_managedref_ne);
   add("lyra_rt_managedref_case_equal", &lyra_rt_managedref_case_equal);

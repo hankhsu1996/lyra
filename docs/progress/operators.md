@@ -32,7 +32,12 @@ The numeric IDs (W1..W15) imply execution order; where a cut is independent the 
       / Z that meets a known right-operand bit and no other bit definitely mismatches. W1's value
       items use `==?` so wildcard items in `inside` work.
 - [x] W3 -- Case equality `===` / `!==` (LRM 11.4.5). Bit-exact 4-state compare (X matches X, Z
-      matches Z, X does not match Z); deterministic bool.
+      matches Z, X does not match Z); deterministic bool. Over a variable naming an object the
+      clause gives it the meaning `==` / `!=` have there, so it answers which object is named, with
+      `null` admitted on either side and a handle of a base type comparing equal to a handle of a
+      derived type naming the one object (LRM 8.4). What an operand of the null literal is compared
+      at is the handle's type, which is what a case statement's item expressions are brought to as
+      well (LRM 12.5).
   - [x] The conditional operator's `&&&` multi-condition form (LRM 12.4): the `&&&`-separated
         conditions form a conjunction, taken iff every condition is true, desugared to the same
         chained logical-AND the `if`-statement predicate uses.

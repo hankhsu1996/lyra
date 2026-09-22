@@ -32,10 +32,10 @@ class ManagedRef {
  public:
   ManagedRef() = default;
 
-  // `null` is the only literal a handle admits (LRM 8.4), and it arrives as the
-  // host `nullptr` a null literal renders to. Implicit so a comparison against
-  // `null` and a store of `null` each bind without a cast. The parameter is a
-  // type tag carrying no value, so it stays unnamed.
+  // `null` is the only literal a handle admits (LRM 8.4), and the host spells
+  // it `nullptr`. Implicit so a comparison against `null` and a store of `null`
+  // each bind without a cast. The parameter is a type tag carrying no value, so
+  // it stays unnamed.
   // NOLINTNEXTLINE(google-explicit-constructor,readability-named-parameter)
   ManagedRef(std::nullptr_t) {
   }

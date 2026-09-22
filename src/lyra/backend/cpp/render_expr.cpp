@@ -475,7 +475,17 @@ auto RenderExpr(const ScopeView& view, const mir::Expr& expr) -> std::string {
           [&](const mir::StringLiteral& s) -> std::string {
             return RenderCStringLiteral(s.value);
           },
-          [](const mir::NullLiteral&) -> std::string {
+          [&](const mir::NullLiteral&) -> std::string {
+            // A handle naming no object and a chandle carrying no pointer are
+            // values of their own types (LRM 8.4, 6.14), so each is spelled as
+            // one and receives an operation the way any other value of that
+            // type does. Every other type a null literal takes names an
+            // address, which is spelled as itself.
+            const mir::Type& type = view.Unit().types.Get(expr.type);
+            if (type.Is<mir::ManagedRefType>() || type.Is<mir::ChandleType>()) {
+              return std::format(
+                  "{}{{}}", RenderTypeAsCpp(view.Unit(), expr.type));
+            }
             return std::string{"nullptr"};
           },
           [](const mir::MachineBoolLiteral& b) -> std::string {

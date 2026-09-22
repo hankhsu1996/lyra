@@ -115,7 +115,8 @@ class MemberStorage {
       SampledHistory<value::RuntimeDynamicArray>,
       SampledHistory<value::RuntimeUnpackedArray>,
       SampledHistory<value::RuntimeQueue>,
-      SampledHistory<value::RuntimeAssociativeArray>>
+      SampledHistory<value::RuntimeAssociativeArray>,
+      SampledHistory<value::ManagedRef>>
       object_;
 };
 

@@ -1379,9 +1379,6 @@ auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
       module_->Types().Map(constant.type), constant.value);
 }
 
-// A null value is the host null pointer, a native LLVM constant. Every
-// pointer-like domain (chandle, class handle, pointer) shares it: the value is
-// the pointer, so its null needs no runtime constructor.
 auto CodeGenFunction::LowerNullConst(const lir::NullConst& constant)
     -> llvm::Value* {
   // Referring to nothing is a value of the type like any other, so where the

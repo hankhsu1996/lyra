@@ -279,9 +279,13 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
                 mir::RuntimeClassType{.symbol = "lyra::runtime::Scope"}};
           },
           [](const hir::NullType&) -> mir::Type {
-            // The `null` literal carries no class identity; it renders as a
-            // null pointer that any handle absorbs, so MIR types it as the
-            // opaque handle. Its value, not its type, drives the comparison.
+            // The `null` literal names no object, so it carries no class of its
+            // own and is typed as the opaque handle. What it is read at is
+            // whatever it meets: a comparison against a handle brings it to
+            // that handle's type first, because which kind of value it is
+            // decides how it reaches generated code, and the opaque handle is
+            // the one kind that crosses as the pointer rather than as the
+            // address of what holds it.
             return mir::Type{mir::ChandleType{}};
           },
           [](const hir::VoidType&) -> mir::Type {

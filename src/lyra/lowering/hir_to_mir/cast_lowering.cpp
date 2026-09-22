@@ -362,4 +362,13 @@ auto ConvertToType(
       BuildValueConversion(unit, block, operand_id, dst_type));
 }
 
+auto OperandAtHandleType(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
+    mir::TypeId compared_with) -> mir::ExprId {
+  if (!unit.types.Get(compared_with).Is<mir::ManagedRefType>()) {
+    return operand_id;
+  }
+  return ConvertToType(unit, block, operand_id, compared_with);
+}
+
 }  // namespace lyra::lowering::hir_to_mir

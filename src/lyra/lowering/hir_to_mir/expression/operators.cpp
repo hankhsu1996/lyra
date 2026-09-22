@@ -420,29 +420,34 @@ auto BuildMirBinaryExpr(
   const bool string_lhs = lhs_ty.Is<mir::StringType>();
   const bool string_rhs = rhs_ty.Is<mir::StringType>();
 
-  // LRM 8.4 admits `null` as one operand of a handle comparison. A comparison
-  // states no destination, so the front end leaves such an operand at the null
-  // type and the handle's type is what it is being compared at; converting says
-  // that once, in the one place a value crossing to another type is
-  // materialized.
+  // The two families LRM 11.4.5 names, which differ in what an unknown operand
+  // bit means and in nothing else.
+  const bool logical_equality =
+      op == hir::BinaryOp::kEquality || op == hir::BinaryOp::kInequality;
+  const bool case_equality = op == hir::BinaryOp::kCaseEquality ||
+                             op == hir::BinaryOp::kCaseInequality;
+
+  // LRM 8.4 gives a handle both families and LRM 11.4.5 gives them the same
+  // meaning there, so all four are compared at the handle's type and which was
+  // written decides only what is built out of the operands. Either side may be
+  // the one carrying that type, since `null` is admitted on either.
   const auto is_handle = [](const mir::Type& ty) {
     return ty.Is<mir::ManagedRefType>();
   };
   if ((is_handle(lhs_ty) || is_handle(rhs_ty)) &&
-      (op == hir::BinaryOp::kEquality || op == hir::BinaryOp::kInequality)) {
+      (logical_equality || case_equality)) {
     const mir::TypeId handle_type = is_handle(lhs_ty)
                                         ? block.exprs.Get(lhs_id).type
                                         : block.exprs.Get(rhs_id).type;
-    const auto at_handle_type = [&](mir::ExprId operand) -> mir::ExprId {
-      return ConvertToType(unit, block, operand, handle_type);
-    };
-    return mir::Expr{
-        .data =
-            mir::BinaryExpr{
-                .op = LowerBinaryOp(op),
-                .lhs = at_handle_type(lhs_id),
-                .rhs = at_handle_type(rhs_id)},
-        .type = result_type};
+    lhs_id = OperandAtHandleType(unit, block, lhs_id, handle_type);
+    rhs_id = OperandAtHandleType(unit, block, rhs_id, handle_type);
+    if (logical_equality) {
+      return mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = LowerBinaryOp(op), .lhs = lhs_id, .rhs = rhs_id},
+          .type = result_type};
+    }
   }
 
   // LRM 11.3.1 / LRM 6.16 logical operator on real / string operands needs
@@ -470,8 +475,7 @@ auto BuildMirBinaryExpr(
   // known 1'b0 or 1'b1, so the entry answers with a two-state bit whatever its
   // operands carry; the call is stated at that, and a context wanting another
   // representation takes the conversion.
-  if (op == hir::BinaryOp::kCaseEquality ||
-      op == hir::BinaryOp::kCaseInequality) {
+  if (case_equality) {
     const mir::TypeId known = unit.builtins.bit1;
     mir::ExprId answer = block.exprs.Add(MakeBuiltinFnCall(
         support::BuiltinFn::kCaseEqual, lhs_id, {rhs_id}, known));

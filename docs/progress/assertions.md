@@ -96,8 +96,14 @@ The IDs are stable references and do not imply execution order beyond the depend
       LRM 16.9.3) used as ordinary logic, outside any assertion. These read a value as of the
       Preponed region, so they need sampling to exist independently of the assertion machinery.
       Inside an assertion they disappear with it, which is why this item is separable from AS5. All
-      six are in place on both backends. `$sampled` reads a different value: an observable cell may
-      be armed to answer for the value it held before the current time slot first changed it, and an
+      six are in place on both backends, over every kind of value a variable can hold except an
+      opaque handle, whose value is the pointer it carries and which LRM 16.6 keeps out of a
+      concurrent assertion anyway. A variable naming an object is included: what a tick settles for
+      one is which object it named, and every entry a history keeps is a reference to that object,
+      so an object nothing else names is still there for a past tick to answer with (LRM 8.4).
+      `$rose` and `$fell` are refused over a value with no least significant bit, which is what LRM
+      16.9.3 defines them on. `$sampled` reads a different value: an observable cell may be armed to
+      answer for the value it held before the current time slot first changed it, and an
       expression's sampled value is that expression over its variables' sampled ones. The other five
       answer across the ticks of a clocking event, so a scope keeps a history of what is read that
       way, filled with the expression's default sampled value where the design activates and
@@ -113,10 +119,13 @@ The IDs are stable references and do not imply execution order beyond the depend
       the cycle-delay operator are refused.
 
       Three things are refused rather than answered. An expression that reads an automatic variable
-      has no single value a tick can settle, so a history of it would have to be composed from the
-      parts that have one -- legal SystemVerilog, and the one corner of the clause left out. A call
-      outside a procedure reaches only the default clocking rule, which is not wired. And a clocking
-      event that is a named event rather than a value change is not carried.
+      stops before sampling is reached at all: such a name is resolved as if it named a signal of
+      the enclosing scope and the refusal says so, which describes neither the construct nor what is
+      missing. What the standard asks for there is not a history -- LRM 16.5.1 makes the sampled
+      value of an automatic variable its current value, and a past value of one the current value
+      too -- so what is owed is a plain read rather than any storage. A call outside a procedure
+      reaches only the default clocking rule, which is not wired. And a clocking event that is a
+      named event rather than a value change is not carried.
 
 - [ ] AS5 -- Concurrent assertions (LRM 16.5-16.13): sequences, properties, their named
       declarations, `disable iff`, and the clocking a property is evaluated against. Evaluation is

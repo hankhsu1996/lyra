@@ -180,6 +180,16 @@ would be an upstream leak.
   policy can stand in for, because `b <= $past(a)` with `$past` removed has no defensible answer.
 - What a concurrent assertion will later need from sampling is this and nothing more: it evaluates
   against sampled values on a clock tick, which is D1 through D4 with a different consumer.
+
+- **Where the value is a handle, what D1 retains and what D5 keeps are references, so sampling
+  extends an object's life.** An object the program no longer names anywhere is still named by the
+  entries of every history over it and by the retained value of every armed cell that held it, and
+  it is reclaimed only once those move on. That is not a cost to be avoided but the requirement: LRM
+  8.4 reclaims an object when nothing references it, and `$past` has to answer with a handle whoever
+  reads it may reach a member through, so an answer that did not hold the object would name a
+  reclaimed one. The extension is bounded by the declared depth, which D5 fixes where the storage is
+  declared -- so a design that samples a handle holds at most that many objects it would otherwise
+  have dropped, per history, and never a growing number.
 - The front end's analysis diagnostics have to reach the user for the refusal in D2 to be the
   standard's error rather than silence. They are currently computed and dropped.
 - A clocking block is carried only as far as D2 needs it -- a name and an event that a scope may
