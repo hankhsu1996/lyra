@@ -87,10 +87,11 @@ class FunctionLowerer {
 
   // Where a source local's storage is. A local whose type the runtime holds
   // values of gets storage of its own among the body's variables, and the
-  // binding names it by the reference the body opened over it -- which is the
-  // one storage a reference can bind and the one that outlives the stretch
-  // that wrote it. A local whose type is stable as it stands -- a pointer, a
-  // code reference, a machine scalar -- is a slot of the body's own frame.
+  // binding names it by the address the body opened over that storage -- which
+  // is the one storage a reference can bind and the one that outlives the
+  // stretch that wrote it. A local whose type is stable as it stands -- a
+  // pointer, a code reference, a machine scalar -- is a slot of the body's own
+  // frame.
   //
   // Nothing about what the body does with the local is consulted. The two
   // follow from the declared type alone, so a local's storage is settled where
@@ -99,7 +100,7 @@ class FunctionLowerer {
     lir::ValueId slot;
   };
   struct CellBinding {
-    lir::Operand reference;
+    lir::Operand cell;
   };
   using LocalBinding = std::variant<PlaceBinding, CellBinding>;
 
@@ -289,14 +290,17 @@ class FunctionLowerer {
   auto LowerObjectConstruction(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
-  // A reference is the address of the cell its referent lives in.
+  // A reference is the address of the storage its referent lives in, carrying
+  // which of the two kinds that storage is. One built over a reference denotes
+  // the storage at the end of the chain rather than binding afresh, so it
+  // carries what it was handed (LRM 23.3.3.2).
   auto LowerReferenceBind(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
-  // The place naming the cell a referent lives in -- the storage a reference
-  // binds. A referent that is itself a cell is that place already; one that is
-  // a value has a cell only where the lowering gave it one, which it does for a
-  // local whose storage is lent.
+  // The place naming the storage a reference binds. It is the same storage a
+  // write to the referent descends into, so what may be lent and what may be
+  // written are one question; only a local the body gave storage of its own is
+  // reached differently, by the handle the body already holds on it.
   auto LowerCellPlace(const mir::Block& block, mir::ExprId referent)
       -> diag::Result<lir::Place>;
   auto LowerAssign(const mir::Block& block, const mir::AssignExpr& assign)
@@ -361,14 +365,12 @@ class FunctionLowerer {
   auto Load(lir::Place place, lir::TypeId type) -> lir::Operand;
   auto Store(lir::Place place, lir::Operand value) -> lir::Operand;
 
-  // The cell operations, emitted for a value-typed local in a suspending body.
-  // Allocating builds the slot uninitialized, the first store installing its
-  // representation; a load copies the current value out and a store overwrites
-  // it. The handle is typed as the slot's value type -- both cross the boundary
-  // as one opaque handle -- so each operation states the value the slot holds,
-  // which is what names the entry realizing it: a store settles nothing and a
-  // handle is opaque, so neither of those carries it.
-  auto AllocateActivationValue(lir::TypeId value_type) -> lir::Operand;
+  // Reading and writing a slot the activation owns: a load copies the current
+  // value out and a store overwrites it, the first store installing the slot's
+  // representation. The handle is typed as the slot's value type -- both cross
+  // the boundary as one opaque handle -- so each operation states the value the
+  // slot holds, which is what names the entry realizing it: a store settles
+  // nothing and a handle is opaque, so neither of those carries it.
   auto LoadActivationValue(lir::Operand handle, lir::TypeId value_type)
       -> lir::Operand;
   auto StoreActivationValue(
@@ -382,7 +384,7 @@ class FunctionLowerer {
   auto AllocateCompletionFor(lir::TypeId payload) -> lir::Operand;
 
   // Brings the storage this body's variables live in into existence and binds
-  // each of them to a reference over its own piece of it. Runs once, before
+  // each of them to the address of its own piece of it. Runs once, before
   // anything the body does, because a declaration reached many times is one
   // variable in one storage and only its contents begin afresh.
   void OpenVariables();
@@ -391,15 +393,14 @@ class FunctionLowerer {
   void CloseVariables();
   // Installs a cell's representation and initial contents, the one write it
   // takes before it will accept a store.
-  auto InitializeCell(lir::Operand reference, lir::Operand value)
-      -> lir::Operand;
-  // The two places a reference names: opening it reaches the cell it binds, and
-  // reaching through that cell names the value. A local whose storage is a cell
-  // holds a reference to it, so it names both the same way.
-  [[nodiscard]] static auto ReferencedCell(lir::Operand reference)
-      -> lir::Place;
-  [[nodiscard]] static auto ReferencedValue(lir::Operand reference)
-      -> lir::Place;
+  auto InitializeCell(lir::Operand cell, lir::Operand value) -> lir::Operand;
+  // The place an address opens to, and the place reached by opening that in
+  // turn. What the first names is storage, reached through whatever protocol
+  // that storage has rather than by loading it; the second is for an address
+  // whose storage holds a value of its own, where reaching the value takes the
+  // storage's step and then the value's.
+  [[nodiscard]] static auto StorageAt(lir::Operand address) -> lir::Place;
+  [[nodiscard]] static auto ValueAt(lir::Operand address) -> lir::Place;
   auto NewBlock() -> lir::BlockId;
   void SetCurrent(lir::BlockId id);
   void Terminate(lir::TerminatorData data);
@@ -421,8 +422,6 @@ class FunctionLowerer {
   // leaves it -- and for a block control never reaches, only the end of the
   // body settles it -- so what it accumulates is not yet a basic block and does
   // not claim to be one.
-  // A block under construction: what it holds so far, how control leaves it
-  // once that is decided, and the identity every branch to it names.
   struct OpenBlock {
     lir::BlockId id;
     std::vector<lir::Instr> instrs;

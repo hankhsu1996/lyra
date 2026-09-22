@@ -16,9 +16,9 @@ a latent tidiness problem but two live defects, and they look nothing alike:
 - A whole-value store between two unpacked arrays whose declared ranges differ is position-wise (LRM
   7.6), and the declared range deliberately does not travel below MIR -- so both sides are the same
   LIR type. They arrived as unequal identities, and the store was refused by name.
-- A reference names the cell its referent lives in, and that cell type is built both by translating
-  a MIR observable type and by the lowering itself, for a local whose storage is lent. The two
-  arrived as unequal identities, and the address-of failed its own verification.
+- A reference was then typed as the cell its referent lives in, and that cell type is built both by
+  translating a MIR observable type and by the lowering itself, for a local given storage of its
+  own. The two arrived as unequal identities, and the address-of failed its own verification.
 
 The second was patched by keying the cell and the reference through hand-written caches on the
 lowering, which is [mir-type-interning](mir-type-interning.md)'s rejected alternative -- a plain

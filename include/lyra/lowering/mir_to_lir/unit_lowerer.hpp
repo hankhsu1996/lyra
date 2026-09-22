@@ -94,7 +94,7 @@ class UnitLowerer {
   // A control effect crossing to or from the runtime. Its shape does not
   // depend on which region catches it -- an effect is the target it names --
   // so a point that asks the runtime for one names the type directly.
-  auto ControlEffectType() -> lir::TypeId;
+  [[nodiscard]] auto ControlEffectType() const -> lir::TypeId;
 
   // The type of the values one closure declaration builds. A closure whose
   // invoke completes as a coroutine states that protocol as its own type, so
@@ -226,7 +226,8 @@ class UnitLowerer {
   // every backend, so a record only the C++ backend realizes reaches here
   // whenever a program uses the construct behind it, and is recorded as an
   // unsupported type rather than read as a broken invariant.
-  auto TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind) -> lir::Type;
+  static auto TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
+      -> lir::Type;
   // Records `what` (a human phrase like "a closure") as the unit's first
   // unmirrored-type error and returns a benign placeholder type; the unit fails
   // at `Run` before the placeholder is observed.

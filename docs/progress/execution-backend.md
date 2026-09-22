@@ -217,20 +217,24 @@ ownership, or native in-frame layout) for every value.
       either. The storage a reference lives in is described, which is what root enumeration would
       walk, so what is left is the collector rather than a second home for the reference. Contract:
       `../architecture/lifetime.md`.
-- [ ] **A reference argument aliasing storage that is not a cell.** A reference binds the cell its
-      referent lives in, so a signal is lent by taking the address of the cell it already is, and a
-      write through the reference raises the update event a write to that signal owes its
-      subscribers. A declared variable is lent the same way, and nothing about the body it sits in
-      or what that body does with it takes part: every variable is one storage of the kind a
-      reference binds, opened with the body and ended on every way out of it, including the one
-      taken when the driver ends a parked execution rather than resuming it. A formal that lends
-      what it was lent hands on the alias it holds, so a chain of `ref` ports denotes the one
-      variable at its end. What is left refuses because the referent's value lives somewhere no
-      address reaches: a class property is a member owning its value rather than a cell holding it,
-      and a component of an aggregate is realized here as part of one value rather than as storage
-      of its own -- for which the accepted answer is an owner-relative projection reference rather
-      than an interior address, and realizing one here is what remains. An `output` / `inout`
-      argument is not subject to this -- it copies out through the actual's own write path.
+- [x] **A reference argument aliasing storage that is not a cell.** A reference names the storage
+      its referent lives in, and that storage is of one of two kinds: a subscribable variable, where
+      a write through the reference raises the update event the variable owes its subscribers, and
+      storage nothing subscribes to, where it does not. Which of the two a reference holds travels
+      with it rather than with its type, because a body that takes one is lowered once for every
+      caller and so cannot ask what it was lent (LRM 13.5.2). So a signal, a declared variable and a
+      class property are all lent, and nothing about the body a variable sits in or what that body
+      does with it takes part. A formal that lends what it was lent hands on what it holds, so a
+      chain of `ref` ports denotes the one variable at its end. An `output` / `inout` argument is
+      not subject to this -- it copies out through the actual's own write path.
+
+      Two things still refuse. A component of an aggregate is realized here as part of one value
+      rather than as storage of its own, which the entry below covers. And reaching the storage a
+      reference binds, rather than reading or writing through it, is not an operation here: the two
+      kinds are different storage with one type between them, so an address taken through a
+      reference would name whichever kind the type does not admit. Waiting on a `ref` port's own
+      name is what asks for it (LRM 9.4.2).
+
 - [ ] **A component of an aggregate is storage of its own.** The language gives a member of an
       unpacked structure and an element of an unpacked array an identity a second name may denote,
       independent of the position it sits at and of the value its parent currently holds

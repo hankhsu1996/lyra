@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/closure.hpp"
@@ -263,6 +265,103 @@ template <typename T>
 auto Held(T value) -> const T& {
   return *static_cast<const T*>(Own(std::move(value)));
 }
+
+// The storage a caller lent, and which of the two forms it is. A body holding
+// a reference is lowered once for every caller and so cannot ask what it was
+// handed (LRM 13.5.2), while the two forms answer a write differently: one is
+// a subscribable variable, where a write wakes whoever waited on it, and one
+// is storage nothing subscribes to, where it does not. So the form travels in
+// the address, in the low bit the alignment of every referenceable storage
+// leaves free.
+class LentStorage {
+ public:
+  [[nodiscard]] static auto OverCell(void* cell) -> void* {
+    return std::bit_cast<void*>(
+        std::bit_cast<std::uintptr_t>(cell) | kSubscribable);
+  }
+
+  [[nodiscard]] static auto OverValue(void* storage) -> void* {
+    return storage;
+  }
+
+  explicit LentStorage(void* reference)
+      : bits_(std::bit_cast<std::uintptr_t>(reference)) {
+  }
+
+  [[nodiscard]] auto Subscribable() const -> bool {
+    return (bits_ & kSubscribable) != 0;
+  }
+
+  template <value::LyraValue T>
+  [[nodiscard]] auto Cell() const -> Var<T>* {
+    return std::bit_cast<Var<T>*>(bits_ & ~kSubscribable);
+  }
+
+  template <value::LyraValue T>
+  [[nodiscard]] auto Value() const -> ActivationValueCell<T>* {
+    return std::bit_cast<ActivationValueCell<T>*>(bits_);
+  }
+
+ private:
+  static constexpr std::uintptr_t kSubscribable = 1;
+
+  std::uintptr_t bits_;
+};
+
+// Reading and writing storage a caller lent. Each asks the form the reference
+// carries which storage answers, and the answer is that storage's own access:
+// a subscribable variable's write raises its update event, and storage nothing
+// subscribes to is written directly.
+template <value::LyraValue T>
+auto RefGet(void* reference) -> void* {
+  const LentStorage lent{reference};
+  return lent.Subscribable() ? Own(lent.Cell<T>()->Get())
+                             : Own(lent.Value<T>()->Get());
+}
+
+template <value::LyraValue T>
+void RefSet(void* reference, const void* value) {
+  const LentStorage lent{reference};
+  if (lent.Subscribable()) {
+    lent.Cell<T>()->Set(Read<T>(value));
+  } else {
+    lent.Value<T>()->Store(Read<T>(value));
+  }
+}
+
+// What a time slot moved away from is kept only where something retains it, so
+// arming storage nothing subscribes to asks for nothing.
+template <value::LyraValue T>
+void RefArmSampling(void* reference) {
+  const LentStorage lent{reference};
+  if (lent.Subscribable()) {
+    lent.Cell<T>()->ArmSampling();
+  }
+}
+
+// LRM 16.5.1 gives a variable its value in the Preponed region, excepting an
+// automatic variable, whose sampled value is the value it holds. Storage
+// nothing subscribes to covers both -- a caller may lend an automatic variable
+// or a class property -- and what the reference carries is which of the two
+// forms the storage is, never which kind of variable, so neither answer can be
+// given without risking the other's. Refused rather than guessed.
+template <value::LyraValue T>
+auto RefSampledLoad(void* reference) -> void* {
+  const LentStorage lent{reference};
+  if (!lent.Subscribable()) {
+    throw lyra::SimulationError(
+        "a sampled value of storage lent by reference is only available where "
+        "that storage is an observable cell");
+  }
+  return Own(lent.Cell<T>()->SampledGet());
+}
+
+// The obligation the encoding above places on storage, claimed here rather
+// than assumed: storage a reference can name is built at an alignment that
+// leaves the low bit free. Every representation is reached through one of
+// these two families, so checking them checks the family.
+static_assert(alignof(Var<value::PackedArray>) > 1);
+static_assert(alignof(ActivationValueCell<value::PackedArray>) > 1);
 
 // A net and one of its drivers, behind the addresses the ABI carries them as.
 // The fold a net resolves under travels in the net object itself, so one
@@ -567,6 +666,7 @@ using lyra::runtime::GeneratedScope;
 using lyra::runtime::Held;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::LeaveCancellationTarget;
+using lyra::runtime::LentStorage;
 using lyra::runtime::MakeForeignExecution;
 using lyra::runtime::ManagedObject;
 using lyra::runtime::MemberStorageSchema;
@@ -591,6 +691,10 @@ using lyra::runtime::PropertyAt;
 using lyra::runtime::PropertyCoordinate;
 using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
+using lyra::runtime::RefArmSampling;
+using lyra::runtime::RefGet;
+using lyra::runtime::RefSampledLoad;
+using lyra::runtime::RefSet;
 using lyra::runtime::Region;
 using lyra::runtime::ResumeInNbaRegion;
 using lyra::runtime::RunHostCommand;
@@ -1605,10 +1709,6 @@ void lyra_rt_variables_close(void* variables) {
       static_cast<StorageBlock*>(variables));
 }
 
-auto lyra_rt_packed_cell_alloc() -> void* {
-  return GeneratedCallScope::Current().Arena().New<Var<PackedArray>>();
-}
-
 auto lyra_rt_packed_cell_get(void* cell) -> void* {
   return Own(static_cast<Var<PackedArray>*>(cell)->Get());
 }
@@ -1630,6 +1730,206 @@ auto lyra_rt_packed_cell_sampled_load(void* cell) -> void* {
   return Own(static_cast<Var<PackedArray>*>(cell)->SampledGet());
 }
 
+auto lyra_rt_ref_to_cell(void* cell) -> void* {
+  return LentStorage::OverCell(cell);
+}
+
+auto lyra_rt_ref_to_value(void* storage) -> void* {
+  return LentStorage::OverValue(storage);
+}
+
+auto lyra_rt_packed_ref_get(void* reference) -> void* {
+  return RefGet<PackedArray>(reference);
+}
+
+void lyra_rt_packed_ref_set(void* reference, const void* value) {
+  RefSet<PackedArray>(reference, value);
+}
+
+void lyra_rt_packed_ref_arm_sampling(void* reference) {
+  RefArmSampling<PackedArray>(reference);
+}
+
+auto lyra_rt_packed_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<PackedArray>(reference);
+}
+
+auto lyra_rt_string_ref_get(void* reference) -> void* {
+  return RefGet<String>(reference);
+}
+
+void lyra_rt_string_ref_set(void* reference, const void* value) {
+  RefSet<String>(reference, value);
+}
+
+void lyra_rt_string_ref_arm_sampling(void* reference) {
+  RefArmSampling<String>(reference);
+}
+
+auto lyra_rt_string_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<String>(reference);
+}
+
+auto lyra_rt_real_ref_get(void* reference) -> void* {
+  return RefGet<Real>(reference);
+}
+
+void lyra_rt_real_ref_set(void* reference, const void* value) {
+  RefSet<Real>(reference, value);
+}
+
+void lyra_rt_real_ref_arm_sampling(void* reference) {
+  RefArmSampling<Real>(reference);
+}
+
+auto lyra_rt_real_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<Real>(reference);
+}
+
+auto lyra_rt_shortreal_ref_get(void* reference) -> void* {
+  return RefGet<ShortReal>(reference);
+}
+
+void lyra_rt_shortreal_ref_set(void* reference, const void* value) {
+  RefSet<ShortReal>(reference, value);
+}
+
+void lyra_rt_shortreal_ref_arm_sampling(void* reference) {
+  RefArmSampling<ShortReal>(reference);
+}
+
+auto lyra_rt_shortreal_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<ShortReal>(reference);
+}
+
+auto lyra_rt_managedref_ref_get(void* reference) -> void* {
+  return RefGet<ManagedRef>(reference);
+}
+
+void lyra_rt_managedref_ref_set(void* reference, const void* value) {
+  RefSet<ManagedRef>(reference, value);
+}
+
+void lyra_rt_managedref_ref_arm_sampling(void* reference) {
+  RefArmSampling<ManagedRef>(reference);
+}
+
+auto lyra_rt_managedref_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<ManagedRef>(reference);
+}
+
+auto lyra_rt_tuple_ref_get(void* reference) -> void* {
+  return RefGet<RuntimeTuple>(reference);
+}
+
+void lyra_rt_tuple_ref_set(void* reference, const void* value) {
+  RefSet<RuntimeTuple>(reference, value);
+}
+
+void lyra_rt_tuple_ref_arm_sampling(void* reference) {
+  RefArmSampling<RuntimeTuple>(reference);
+}
+
+auto lyra_rt_tuple_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<RuntimeTuple>(reference);
+}
+
+auto lyra_rt_union_ref_get(void* reference) -> void* {
+  return RefGet<RuntimeUnion>(reference);
+}
+
+void lyra_rt_union_ref_set(void* reference, const void* value) {
+  RefSet<RuntimeUnion>(reference, value);
+}
+
+void lyra_rt_union_ref_arm_sampling(void* reference) {
+  RefArmSampling<RuntimeUnion>(reference);
+}
+
+auto lyra_rt_union_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<RuntimeUnion>(reference);
+}
+
+auto lyra_rt_tagged_union_ref_get(void* reference) -> void* {
+  return RefGet<RuntimeTaggedUnion>(reference);
+}
+
+void lyra_rt_tagged_union_ref_set(void* reference, const void* value) {
+  RefSet<RuntimeTaggedUnion>(reference, value);
+}
+
+void lyra_rt_tagged_union_ref_arm_sampling(void* reference) {
+  RefArmSampling<RuntimeTaggedUnion>(reference);
+}
+
+auto lyra_rt_tagged_union_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<RuntimeTaggedUnion>(reference);
+}
+
+auto lyra_rt_dynarray_ref_get(void* reference) -> void* {
+  return RefGet<RuntimeDynamicArray>(reference);
+}
+
+void lyra_rt_dynarray_ref_set(void* reference, const void* value) {
+  RefSet<RuntimeDynamicArray>(reference, value);
+}
+
+void lyra_rt_dynarray_ref_arm_sampling(void* reference) {
+  RefArmSampling<RuntimeDynamicArray>(reference);
+}
+
+auto lyra_rt_dynarray_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<RuntimeDynamicArray>(reference);
+}
+
+auto lyra_rt_unpackedarray_ref_get(void* reference) -> void* {
+  return RefGet<RuntimeUnpackedArray>(reference);
+}
+
+void lyra_rt_unpackedarray_ref_set(void* reference, const void* value) {
+  RefSet<RuntimeUnpackedArray>(reference, value);
+}
+
+void lyra_rt_unpackedarray_ref_arm_sampling(void* reference) {
+  RefArmSampling<RuntimeUnpackedArray>(reference);
+}
+
+auto lyra_rt_unpackedarray_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<RuntimeUnpackedArray>(reference);
+}
+
+auto lyra_rt_queue_ref_get(void* reference) -> void* {
+  return RefGet<RuntimeQueue>(reference);
+}
+
+void lyra_rt_queue_ref_set(void* reference, const void* value) {
+  RefSet<RuntimeQueue>(reference, value);
+}
+
+void lyra_rt_queue_ref_arm_sampling(void* reference) {
+  RefArmSampling<RuntimeQueue>(reference);
+}
+
+auto lyra_rt_queue_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<RuntimeQueue>(reference);
+}
+
+auto lyra_rt_assocarray_ref_get(void* reference) -> void* {
+  return RefGet<RuntimeAssociativeArray>(reference);
+}
+
+void lyra_rt_assocarray_ref_set(void* reference, const void* value) {
+  RefSet<RuntimeAssociativeArray>(reference, value);
+}
+
+void lyra_rt_assocarray_ref_arm_sampling(void* reference) {
+  RefArmSampling<RuntimeAssociativeArray>(reference);
+}
+
+auto lyra_rt_assocarray_ref_sampled_load(void* reference) -> void* {
+  return RefSampledLoad<RuntimeAssociativeArray>(reference);
+}
+
 auto lyra_rt_packed_cell_begin_takeover(void* cell, const void* level)
     -> void* {
   return Own(
@@ -1647,10 +1947,6 @@ auto lyra_rt_packed_cell_drive_takeover(
 
 void lyra_rt_packed_cell_end_takeover(void* cell, const void* level) {
   static_cast<Var<PackedArray>*>(cell)->EndTakeover(Read<PackedArray>(level));
-}
-
-auto lyra_rt_string_cell_alloc() -> void* {
-  return GeneratedCallScope::Current().Arena().New<Var<String>>();
 }
 
 auto lyra_rt_string_cell_get(void* cell) -> void* {
@@ -1673,10 +1969,6 @@ auto lyra_rt_string_cell_sampled_load(void* cell) -> void* {
   return Own(static_cast<Var<String>*>(cell)->SampledGet());
 }
 
-auto lyra_rt_real_cell_alloc() -> void* {
-  return GeneratedCallScope::Current().Arena().New<Var<Real>>();
-}
-
 auto lyra_rt_real_cell_get(void* cell) -> void* {
   return Own(static_cast<Var<Real>*>(cell)->Get());
 }
@@ -1695,10 +1987,6 @@ void lyra_rt_real_cell_arm_sampling(void* cell) {
 
 auto lyra_rt_real_cell_sampled_load(void* cell) -> void* {
   return Own(static_cast<Var<Real>*>(cell)->SampledGet());
-}
-
-auto lyra_rt_shortreal_cell_alloc() -> void* {
-  return GeneratedCallScope::Current().Arena().New<Var<ShortReal>>();
 }
 
 auto lyra_rt_shortreal_cell_get(void* cell) -> void* {
@@ -3068,10 +3356,6 @@ auto lyra_rt_tuple_is_unknown(const void* value) -> void* {
   return Own(Read<RuntimeTuple>(value).IsUnknown());
 }
 
-auto lyra_rt_tuple_cell_alloc() -> void* {
-  return GeneratedCallScope::Current().Arena().New<Var<RuntimeTuple>>();
-}
-
 auto lyra_rt_tuple_cell_get(void* cell) -> void* {
   return Own(static_cast<Var<RuntimeTuple>*>(cell)->Get());
 }
@@ -3145,10 +3429,6 @@ auto lyra_rt_union_case_equal(const void* lhs, const void* rhs) -> void* {
 
 auto lyra_rt_union_is_unknown(const void* value) -> void* {
   return Own(Read<RuntimeUnion>(value).IsUnknown());
-}
-
-auto lyra_rt_union_cell_alloc() -> void* {
-  return GeneratedCallScope::Current().Arena().New<Var<RuntimeUnion>>();
 }
 
 auto lyra_rt_union_cell_get(void* cell) -> void* {
@@ -3237,10 +3517,6 @@ auto lyra_rt_tagged_union_case_equal(const void* lhs, const void* rhs)
 
 auto lyra_rt_tagged_union_is_unknown(const void* value) -> void* {
   return Own(Read<RuntimeTaggedUnion>(value).IsUnknown());
-}
-
-auto lyra_rt_tagged_union_cell_alloc() -> void* {
-  return GeneratedCallScope::Current().Arena().New<Var<RuntimeTaggedUnion>>();
 }
 
 auto lyra_rt_tagged_union_cell_get(void* cell) -> void* {
@@ -3401,10 +3677,6 @@ auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> void* {
 auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs) -> void* {
   return Own(
       Read<RuntimeDynamicArray>(lhs).CaseEqual(Read<RuntimeDynamicArray>(rhs)));
-}
-
-auto lyra_rt_dynarray_cell_alloc() -> void* {
-  return GeneratedCallScope::Current().Arena().New<Var<RuntimeDynamicArray>>();
 }
 
 auto lyra_rt_dynarray_cell_get(void* cell) -> void* {
@@ -3669,10 +3941,6 @@ auto lyra_rt_unpackedarray_case_equal(const void* lhs, const void* rhs)
 
 auto lyra_rt_unpackedarray_is_unknown(const void* value) -> void* {
   return Own(Read<RuntimeUnpackedArray>(value).IsUnknown());
-}
-
-auto lyra_rt_unpackedarray_cell_alloc() -> void* {
-  return GeneratedCallScope::Current().Arena().New<Var<RuntimeUnpackedArray>>();
 }
 
 auto lyra_rt_unpackedarray_cell_get(void* cell) -> void* {
@@ -4081,10 +4349,6 @@ auto lyra_rt_queue_value_box(const void* value) -> void* {
   return Own(RuntimeValue{Read<RuntimeQueue>(value)});
 }
 
-auto lyra_rt_queue_cell_alloc() -> void* {
-  return GeneratedCallScope::Current().Arena().New<Var<RuntimeQueue>>();
-}
-
 auto lyra_rt_queue_cell_get(void* cell) -> void* {
   return Own(static_cast<Var<RuntimeQueue>*>(cell)->Get());
 }
@@ -4234,12 +4498,6 @@ auto lyra_rt_assocarray_count_bits(const void* array, const void* control_bits)
 
 auto lyra_rt_assocarray_value_box(const void* value) -> void* {
   return Own(RuntimeValue{Read<RuntimeAssociativeArray>(value)});
-}
-
-auto lyra_rt_assocarray_cell_alloc() -> void* {
-  return GeneratedCallScope::Current()
-      .Arena()
-      .New<Var<RuntimeAssociativeArray>>();
 }
 
 auto lyra_rt_assocarray_cell_get(void* cell) -> void* {
