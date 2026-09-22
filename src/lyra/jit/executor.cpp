@@ -44,12 +44,12 @@
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/jit_execution.hpp"
-#include "lyra/runtime/managed_object.hpp"
 #include "lyra/runtime/member_storage.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/runtime.hpp"
@@ -342,8 +342,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_object_deref", &lyra_rt_object_deref);
   add("lyra_rt_make_promoted_scope", &lyra_rt_make_promoted_scope);
   add("lyra_rt_promoted_scope_deref", &lyra_rt_promoted_scope_deref);
-  add("lyra_rt_object_method", &lyra_rt_object_method);
-  add("lyra_rt_object_member_addr", &lyra_rt_object_member_addr);
+  add("lyra_rt_method", &lyra_rt_method);
+  add("lyra_rt_member_addr", &lyra_rt_member_addr);
   add("lyra_rt_class_find_property", &lyra_rt_class_find_property);
   add("lyra_rt_class_find_behavior", &lyra_rt_class_find_behavior);
   add("lyra_rt_class_find_behavior_body", &lyra_rt_class_find_behavior_body);
@@ -409,7 +409,6 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_hierarchical_path", &lyra_rt_hierarchical_path);
   add("lyra_rt_parent", &lyra_rt_parent);
   add("lyra_rt_add_owned_child", &lyra_rt_add_owned_child);
-  add("lyra_rt_member_addr", &lyra_rt_member_addr);
   add("lyra_rt_sequence_make", &lyra_rt_sequence_make);
   add("lyra_rt_sequence_extend", &lyra_rt_sequence_extend);
   add("lyra_rt_sequence_element", &lyra_rt_sequence_element);
@@ -1495,20 +1494,21 @@ struct LoadedScopeEntries {
   std::string construct;
 };
 
-// One scope class loaded into the JIT: the storage schema its instances
-// realize, and the runtime definition built from its compiled entries, which
-// owns a stable address every site constructing an instance references. The
-// schema is held here because the definition names it as plain data it does not
-// own.
+// The scope half of one class whose values stand in the object tree: the
+// entries the runtime drives an instance through, the surfaces a hierarchical
+// name is answered from, and the definition record every instance shares. That
+// record sits behind its own allocation because generated code holds its
+// address, so it has to outlive this list and stay where it was.
 struct LoadedScopeClass {
   // The symbol the class links under. What its bodies link under are further
   // symbols over the same parts rather than words appended to this one, so
   // nothing is derived from it.
   std::string name;
   std::string definition_symbol;
-  LoadedScopeEntries entries;
+  // Absent on a class that stands in the tree and supplies no way to run --
+  // what a unit promised of its instances, which nothing constructs.
+  std::optional<LoadedScopeEntries> entries;
   TimeResolution time_resolution;
-  std::vector<runtime::MemberStorageDescriptor> members;
   std::unique_ptr<PublishedCallables> subroutines;
   std::unique_ptr<PublishedCallables> exports;
   std::unique_ptr<DeclaredClasses> classes;
@@ -1538,14 +1538,19 @@ void FillDefinition(llvm::orc::LLJIT& jit, LoadedScopeClass& cls) {
   runtime::ScopeDefinition& definition = *cls.definition;
   definition.program.metadata = runtime::ScopeMetadata{
       cls.time_resolution.unit_power, cls.time_resolution.precision_power};
-  definition.program.resolve_state =
-      lookup(cls.entries.resolve_state).toPtr<runtime::ScopeEntry>();
-  definition.program.initialize_state =
-      lookup(cls.entries.initialize_state).toPtr<runtime::ScopeEntry>();
-  definition.program.create_processes =
-      lookup(cls.entries.create_processes).toPtr<runtime::ScopeEntry>();
-  definition.construct =
-      lookup(cls.entries.construct).toPtr<runtime::ScopeConstructEntry>();
+  // A class that supplies no way to run keeps the entries a class with none
+  // starts with, which do nothing: nothing constructs one, so nothing enters
+  // them, and the name tables below are equally empty.
+  if (cls.entries.has_value()) {
+    definition.program.resolve_state =
+        lookup(cls.entries->resolve_state).toPtr<runtime::ScopeEntry>();
+    definition.program.initialize_state =
+        lookup(cls.entries->initialize_state).toPtr<runtime::ScopeEntry>();
+    definition.program.create_processes =
+        lookup(cls.entries->create_processes).toPtr<runtime::ScopeEntry>();
+    definition.construct =
+        lookup(cls.entries->construct).toPtr<runtime::ScopeConstructEntry>();
+  }
 
   const auto resolve_table =
       [&](PublishedCallables& published) -> runtime::ScopeCallableTable {
@@ -1611,23 +1616,138 @@ auto OwnedChildClass(const lir::CompilationUnit& unit, lir::TypeId type)
   return object != nullptr ? std::optional{object->class_id} : std::nullopt;
 }
 
-// One entry per node of the unit's object tree, reached by descending
-// containment from its root. A class no containment edge reaches is one the
-// program allocates as an ordinary object; the runtime never builds it and it
-// needs no definition, and neither does one a containment edge reaches that
-// stands outside the tree all the same.
+// One behavior a class takes over from its lineage (LRM 8.20), as far as one
+// unit can state it: the declaration that introduced the behavior and which of
+// that declaration's introductions it is, with the introducer named the way
+// every reference across an artifact boundary is, and the symbol the body
+// answering it is emitted under.
+struct LoadedTakeover {
+  std::string introduced_by;
+  std::uint32_t ordinal = 0;
+  std::string body;
+};
+
+// One name a class declares, and the position it gave that declaration among
+// its own.
+struct LoadedDeclaredName {
+  std::string name;
+  std::uint32_t position = 0;
+};
+
+// One name a class answers with a body outright rather than with a position
+// (LRM 8.14), and the symbol that body is emitted under.
+struct LoadedDeclaredBody {
+  std::string name;
+  std::string symbol;
+};
+
+// The names one class answers while a reference to it resolves, kept apart from
+// the positional schema the realization builds from them: one is the resolution
+// aid, the other is what an access reads. It sits behind its own allocation for
+// the reason a scope's callable surface does -- what the definition ends up
+// holding names these identifiers rather than copying them, so they keep their
+// addresses however the list of classes grows.
+struct DeclaredNames {
+  std::vector<LoadedDeclaredName> properties;
+  std::vector<LoadedDeclaredName> behaviors;
+  std::vector<LoadedDeclaredBody> bodies;
+};
+
+// What one class adds to its lineage, the flat forms realizing it produced, and
+// the definition every value of it shares. The realization is held here because
+// the definition names it as plain data it does not own, so it has to outlive
+// the definition and stay where it was.
+struct LoadedClass {
+  std::string name;
+  std::string definition_symbol;
+  std::optional<std::string> base;
+  std::vector<runtime::MemberStorageDescriptor> members;
+  std::unique_ptr<DeclaredNames> declared;
+  // The symbol the body of each behavior this class introduces is emitted
+  // under, in the order the class introduces them. A behavior declared with no
+  // implementation names none (LRM 8.21 pure virtual).
+  std::vector<std::optional<std::string>> introductions;
+  std::vector<LoadedTakeover> takeovers;
+  runtime::RealizedClass realization;
+  // Owned where nothing else holds a definition for the class; borrowed where
+  // the class's values stand in the design hierarchy, because there the class
+  // half is part of the record those instances already carry. Realizing one is
+  // the same step either way, which is why both arrive here rather than each
+  // kind of value getting a realization of its own.
+  std::unique_ptr<runtime::ObjectDefinition> owned;
+  runtime::ObjectDefinition* definition = nullptr;
+};
+
+// The declaration a class extends, under the name it is linked by, or nothing
+// where it extends nothing.
+auto ExtendedClassName(const lir::CompilationUnit& unit, const lir::Class& cls)
+    -> std::optional<std::string> {
+  if (!cls.base.has_value()) {
+    return std::nullopt;
+  }
+  const std::optional<lir::TypeId> base = lir::BaseType(unit, *cls.base);
+  return base.has_value() ? lir::DeclarationSymbol(unit, *base) : std::nullopt;
+}
+
+// The symbol answering each behavior the class introduces, in the order it
+// introduces them, and nothing where it declared one without an implementation
+// (LRM 8.21).
+auto LoadIntroductions(const lir::CompilationUnit& unit, const lir::Class& cls)
+    -> std::vector<std::optional<std::string>> {
+  std::vector<std::optional<std::string>> introductions;
+  introductions.reserve(cls.introduces.size());
+  for (const lir::Introduction& introduced : cls.introduces) {
+    introductions.push_back(
+        introduced.body.has_value()
+            ? std::optional{unit.functions.Get(*introduced.body).name}
+            : std::nullopt);
+  }
+  return introductions;
+}
+
+auto LoadTakeovers(const lir::CompilationUnit& unit, const lir::Class& cls)
+    -> diag::Result<std::vector<LoadedTakeover>> {
+  std::vector<LoadedTakeover> takeovers;
+  takeovers.reserve(cls.takeovers.size());
+  for (const lir::DispatchTakeover& taken : cls.takeovers) {
+    const std::optional<std::string> introduced_by =
+        lir::DeclarationSymbol(unit, taken.method.introduced_by);
+    if (!introduced_by.has_value()) {
+      throw InternalError(
+          "jit executor: a class takes over a behavior of a declaration that "
+          "is linked under no name");
+    }
+    takeovers.push_back(
+        LoadedTakeover{
+            .introduced_by = *introduced_by,
+            .ordinal = taken.method.ordinal.value,
+            .body = unit.functions.Get(taken.body).name});
+  }
+  return takeovers;
+}
+
+// Every class of the unit whose values stand in the object tree, with the class
+// half of each beside the scope half: the two are one class, held in two
+// records because what the runtime drives a value through is the tree's own and
+// what a value answers a behavior with is every class's. A class outside the
+// tree is one the program allocates as an ordinary object and is loaded with
+// those.
+struct LoadedScopeClasses {
+  std::vector<LoadedScopeClass> scopes;
+  std::vector<LoadedClass> classes;
+};
+
 auto LoadScopeClasses(
     const lir::CompilationUnit& unit,
     const compiler::ElaboratedUnitMetadata& metadata)
-    -> diag::Result<std::vector<LoadedScopeClass>> {
-  std::vector<LoadedScopeClass> loaded;
-  const auto descend = [&](const auto& self_ref,
-                           lir::ClassId id) -> diag::Result<void> {
+    -> diag::Result<LoadedScopeClasses> {
+  LoadedScopeClasses loaded;
+  for (const lir::ClassId id : unit.classes.Ids()) {
     const lir::Class& cls = unit.classes.Get(id);
-    const lir::ObjectTreeBase* stands_in_tree = lir::ObjectTreeBaseOf(cls);
-    if (stands_in_tree == nullptr) {
-      return {};
+    if (!lir::StandsInObjectTree(unit, cls.base)) {
+      continue;
     }
+    const lir::ObjectTreeProgram* driven_by = lir::TreeProgramOf(cls);
     auto members = DescribeMembers(unit, cls.members, SlotRole::kVariable);
     if (!members) {
       return std::unexpected(std::move(members.error()));
@@ -1658,116 +1778,53 @@ auto LoadScopeClasses(
                                  unit.classes.Get(declared.declaration).name,
                                  declared.declaration.value))});
     }
-    loaded.push_back(
+    const std::string symbol =
+        lir::ClassSymbol(unit.name, lir::SymbolPartOf(cls.name, id.value));
+    std::optional<LoadedScopeEntries> entries;
+    if (driven_by != nullptr) {
+      entries = LoadedScopeEntries{
+          .resolve_state = unit.functions.Get(driven_by->resolve_state).name,
+          .initialize_state =
+              unit.functions.Get(driven_by->initialize_state).name,
+          .create_processes =
+              unit.functions.Get(driven_by->create_processes).name,
+          .construct = unit.functions.Get(cls.constructor).name};
+    }
+    loaded.scopes.push_back(
         LoadedScopeClass{
-            .name = lir::ClassSymbol(
-                unit.name, lir::SymbolPartOf(cls.name, id.value)),
+            .name = symbol,
             .definition_symbol = lir::ClassDefinitionSymbol(
                 unit.name, lir::SymbolPartOf(cls.name, id.value)),
-            .entries =
-                LoadedScopeEntries{
-                    .resolve_state =
-                        unit.functions.Get(stands_in_tree->resolve_state).name,
-                    .initialize_state =
-                        unit.functions.Get(stands_in_tree->initialize_state)
-                            .name,
-                    .create_processes =
-                        unit.functions.Get(stands_in_tree->create_processes)
-                            .name,
-                    .construct = unit.functions.Get(cls.constructor).name},
+            .entries = std::move(entries),
             .time_resolution = metadata.time_resolution,
-            .members = *std::move(members),
             .subroutines = load_table(cls.subroutines),
             .exports = load_table(cls.exports),
             .classes = std::move(declares),
             .definition = std::make_unique<runtime::ScopeDefinition>()});
-    // A member whose type reaches an object of this unit is a child this class
-    // owns; one reaching a value reaches storage instead. The type says which,
-    // so descending it needs nothing beside the members already declared.
-    for (const lir::Member& member : cls.members) {
-      if (const auto child = OwnedChildClass(unit, member.type)) {
-        auto descended = self_ref(self_ref, *child);
-        if (!descended) {
-          return std::unexpected(std::move(descended.error()));
-        }
-      }
+
+    // The class half, pointed at the record the scope half owns. A scope's
+    // by-name surface is its program's, so the tables a class answers a name
+    // from stay empty here; what this half carries is what a value of the class
+    // holds and what it answers a behavior with.
+    auto introductions = LoadIntroductions(unit, cls);
+    auto takeovers = LoadTakeovers(unit, cls);
+    if (!takeovers) {
+      return std::unexpected(std::move(takeovers.error()));
     }
-    return {};
-  };
-  if (unit.root.has_value()) {
-    auto descended = descend(descend, *unit.root);
-    if (!descended) {
-      return std::unexpected(std::move(descended.error()));
-    }
+    loaded.classes.push_back(
+        LoadedClass{
+            .name = symbol,
+            .definition_symbol = loaded.scopes.back().definition_symbol,
+            .base = ExtendedClassName(unit, cls),
+            .members = *std::move(members),
+            .declared = std::make_unique<DeclaredNames>(),
+            .introductions = std::move(introductions),
+            .takeovers = *std::move(takeovers),
+            .realization = {},
+            .owned = nullptr});
+    loaded.classes.back().definition = loaded.scopes.back().definition.get();
   }
   return loaded;
-}
-
-// One behavior a class takes over from its lineage (LRM 8.20), as far as one
-// unit can state it: the declaration that introduced the behavior and which of
-// that declaration's introductions it is, with the introducer named the way
-// every reference across an artifact boundary is, and the symbol the body
-// answering it is emitted under.
-struct LoadedTakeover {
-  std::string introduced_by;
-  std::uint32_t ordinal = 0;
-  std::string body;
-};
-
-// One declaration whose values the program builds itself, rather than one the
-// object tree owns an instance of: what it adds to its lineage, the flat forms
-// realizing it produced, and the definition every value of it shares. The
-// realization is held here because the definition names it as plain data it
-// does not own, so it has to outlive the definition and stay where it was.
-// One name a class declares, and the position it gave that declaration among
-// its own.
-struct LoadedDeclaredName {
-  std::string name;
-  std::uint32_t position = 0;
-};
-
-// One name a class answers with a body outright rather than with a position
-// (LRM 8.14), and the symbol that body is emitted under.
-struct LoadedDeclaredBody {
-  std::string name;
-  std::string symbol;
-};
-
-// The names one class answers while a reference to it resolves, held apart from
-// whatever each answer is applied to afterwards. It sits behind its own
-// allocation for the reason a scope's callable surface does -- what the
-// definition ends up holding names these identifiers rather than copying them,
-// so they keep their addresses however the list of classes grows.
-struct DeclaredNames {
-  std::vector<LoadedDeclaredName> properties;
-  std::vector<LoadedDeclaredName> behaviors;
-  std::vector<LoadedDeclaredBody> bodies;
-};
-
-struct LoadedClass {
-  std::string name;
-  std::string definition_symbol;
-  std::optional<std::string> base;
-  std::vector<runtime::MemberStorageDescriptor> members;
-  std::unique_ptr<DeclaredNames> declared;
-  // The symbol the body of each behavior this class introduces is emitted
-  // under, in the order the class introduces them. A behavior declared with no
-  // implementation names none (LRM 8.21 pure virtual).
-  std::vector<std::optional<std::string>> introductions;
-  std::vector<LoadedTakeover> takeovers;
-  runtime::RealizedClass realization;
-  std::unique_ptr<runtime::ObjectDefinition> definition;
-};
-
-// The declaration a class extends, under the name it is linked by, or nothing
-// where it extends nothing.
-auto ExtendedClassName(const lir::CompilationUnit& unit, const lir::Class& cls)
-    -> std::optional<std::string> {
-  if (!cls.base.has_value()) {
-    return std::nullopt;
-  }
-  const std::optional<lir::TypeId> base = lir::BaseType(unit, *cls.base);
-  return base.has_value() ? lir::DeclarationSymbol(unit, *base) : std::nullopt;
 }
 
 auto LoadObjectClasses(const lir::CompilationUnit& unit)
@@ -1775,26 +1832,23 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
   std::vector<LoadedClass> loaded;
   for (const lir::ClassId id : unit.classes.Ids()) {
     const lir::Class& cls = unit.classes.Get(id);
-    if (lir::IsObjectTreeNode(cls)) {
+    if (lir::StandsInObjectTree(unit, cls.base)) {
       continue;
     }
     auto members = DescribeMembers(unit, cls.members, SlotRole::kVariable);
     if (!members) {
       return std::unexpected(std::move(members.error()));
     }
-    std::vector<std::optional<std::string>> introductions;
-    introductions.reserve(cls.introduces.size());
+    std::vector<std::optional<std::string>> introductions =
+        LoadIntroductions(unit, cls);
     auto declared = std::make_unique<DeclaredNames>();
     declared->behaviors.reserve(cls.introduces.size());
     for (const lir::Introduction& introduced : cls.introduces) {
       declared->behaviors.push_back(
           LoadedDeclaredName{
               .name = introduced.name,
-              .position = static_cast<std::uint32_t>(introductions.size())});
-      introductions.push_back(
-          introduced.body.has_value()
-              ? std::optional{unit.functions.Get(*introduced.body).name}
-              : std::nullopt);
+              .position =
+                  static_cast<std::uint32_t>(declared->behaviors.size())});
     }
     declared->properties.reserve(cls.named_members.size());
     for (const lir::NamedMember& named : cls.named_members) {
@@ -1808,21 +1862,9 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
               .name = declares.name,
               .symbol = unit.functions.Get(declares.body).name});
     }
-    std::vector<LoadedTakeover> takeovers;
-    takeovers.reserve(cls.takeovers.size());
-    for (const lir::DispatchTakeover& taken : cls.takeovers) {
-      const std::optional<std::string> introduced_by =
-          lir::DeclarationSymbol(unit, taken.method.introduced_by);
-      if (!introduced_by.has_value()) {
-        throw InternalError(
-            "jit executor: a class takes over a behavior of a declaration that "
-            "is linked under no name");
-      }
-      takeovers.push_back(
-          LoadedTakeover{
-              .introduced_by = *introduced_by,
-              .ordinal = taken.method.ordinal.value,
-              .body = unit.functions.Get(taken.body).name});
+    auto takeovers = LoadTakeovers(unit, cls);
+    if (!takeovers) {
+      return std::unexpected(std::move(takeovers.error()));
     }
     loaded.push_back(
         LoadedClass{
@@ -1834,9 +1876,10 @@ auto LoadObjectClasses(const lir::CompilationUnit& unit)
             .members = *std::move(members),
             .declared = std::move(declared),
             .introductions = std::move(introductions),
-            .takeovers = std::move(takeovers),
+            .takeovers = *std::move(takeovers),
             .realization = {},
-            .definition = std::make_unique<runtime::ObjectDefinition>()});
+            .owned = std::make_unique<runtime::ObjectDefinition>()});
+    loaded.back().definition = loaded.back().owned.get();
   }
   return loaded;
 }
@@ -1864,7 +1907,8 @@ auto LoadStructs(const lir::CompilationUnit& unit)
             .introductions = {},
             .takeovers = {},
             .realization = {},
-            .definition = std::make_unique<runtime::ObjectDefinition>()});
+            .owned = std::make_unique<runtime::ObjectDefinition>()});
+    loaded.back().definition = loaded.back().owned.get();
   }
   return loaded;
 }
@@ -1904,7 +1948,7 @@ void FillDeclaredClasses(
         runtime::AbiStringRef{
             declared.name.data(),
             static_cast<std::uint32_t>(declared.name.size())},
-        found->definition.get());
+        found->definition);
   }
   scope.definition->program.classes = runtime::ScopeClassTable{
       declares.table.data(), static_cast<std::uint32_t>(declares.table.size())};
@@ -1938,7 +1982,7 @@ void RealizeClasses(llvm::orc::LLJIT& jit, std::vector<LoadedClass>& classes) {
             "' a class extends is defined by no unit of this program");
       }
       self_ref(self_ref, found->second);
-      base = classes[found->second].definition.get();
+      base = classes[found->second].definition;
     }
     // A behavior declared with no implementation is answered by nothing, which
     // no object of a constructible class ever reaches (LRM 8.21).
@@ -1959,7 +2003,7 @@ void RealizeClasses(llvm::orc::LLJIT& jit, std::vector<LoadedClass>& classes) {
             "program");
       }
       takeovers.emplace_back(
-          classes[found->second].definition.get(), taken.ordinal,
+          classes[found->second].definition, taken.ordinal,
           MethodEntry(jit, taken.body));
     }
     // The realization copies these entries, and each keeps naming the string it
@@ -2142,14 +2186,21 @@ auto Execute(
   // Each definition owns a stable address for the whole run; the runtime holds
   // pointers into it.
   std::vector<LoadedScopeClass> loaded;
+  std::vector<LoadedClass> objects;
+  const auto take = [&](LoadedScopeClasses from) {
+    loaded.insert(
+        loaded.end(), std::make_move_iterator(from.scopes.begin()),
+        std::make_move_iterator(from.scopes.end()));
+    objects.insert(
+        objects.end(), std::make_move_iterator(from.classes.begin()),
+        std::make_move_iterator(from.classes.end()));
+  };
   for (const compiler::ExecutableUnit& unit : units) {
     auto unit_classes = LoadScopeClasses(unit.body, unit.definition);
     if (!unit_classes) {
       return std::unexpected(std::move(unit_classes.error()));
     }
-    loaded.insert(
-        loaded.end(), std::make_move_iterator(unit_classes->begin()),
-        std::make_move_iterator(unit_classes->end()));
+    take(*std::move(unit_classes));
   }
   const lir::CompilationUnit& root_body = root_unit.body;
   if (!root_body.root.has_value()) {
@@ -2163,11 +2214,8 @@ auto Execute(
   if (!root_classes) {
     return std::unexpected(std::move(root_classes.error()));
   }
-  loaded.insert(
-      loaded.end(), std::make_move_iterator(root_classes->begin()),
-      std::make_move_iterator(root_classes->end()));
+  take(*std::move(root_classes));
 
-  std::vector<LoadedClass> objects;
   for (const lir::CompilationUnit* unit : loaded_units) {
     auto unit_objects = LoadObjectClasses(*unit);
     if (!unit_objects) {
@@ -2200,12 +2248,7 @@ auto Execute(
 
   // The schema is named only once every declaration is in place, so no
   // descriptor vector is reallocated out from under a definition that points at
-  // it.
-  for (LoadedScopeClass& entry : loaded) {
-    entry.definition->members = runtime::MemberStorageSchema{
-        .data = entry.members.data(),
-        .size = static_cast<std::uint32_t>(entry.members.size())};
-  }
+  // it. A scope's is named where every other class's is, by realizing it.
   for (LoadedClosure& entry : closures) {
     entry.definition->captures = runtime::MemberStorageSchema{
         .data = entry.captures.data(),
@@ -2230,7 +2273,12 @@ auto Execute(
     publish(entry.definition_symbol, entry.definition.get());
   }
   for (const LoadedClass& entry : objects) {
-    publish(entry.definition_symbol, entry.definition.get());
+    // A class whose values stand in the design hierarchy publishes nothing
+    // here: the record its instances carry is one the scope half already
+    // published, and one symbol names one record.
+    if (entry.owned != nullptr) {
+      publish(entry.definition_symbol, entry.definition);
+    }
   }
   // A body's variables are described exactly as a declaration's members are:
   // the host builds one description from what the body states, and the body
@@ -2338,8 +2386,8 @@ auto Execute(
   }
   const runtime::ScopeDefinition& root_definition = *root_entry->definition;
   runtime::HierarchySegment root_segment{"$root", {}};
-  auto root = std::make_unique<runtime::GeneratedScope>(
-      nullptr, root_segment, &root_definition);
+  auto root =
+      std::make_unique<runtime::Scope>(nullptr, root_segment, &root_definition);
   {
     runtime::GeneratedCallScope construct_scope;
     root_definition.construct(root.get(), nullptr, &root_segment, {});

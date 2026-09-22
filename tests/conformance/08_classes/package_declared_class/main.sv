@@ -6,9 +6,12 @@
 // called on the class and takes no object, so a handle passed to one is an
 // ordinary argument and not the object the call acts on. A generic class
 // declared in a package is visible throughout the system, so its matching
-// specializations are one type as well, and a class declared elsewhere may
-// extend one of them and call its constructor through super (LRM 6.22.1,
-// 8.10, 8.13, 8.25, 26.3).
+// specializations are one type as well, and a class declared elsewhere -- in
+// another package as readily as in a module -- may extend one of them and call
+// its constructor through super. A class that extends one and declares nothing
+// of its own still carries what it inherited, and reaching that property names
+// the class that declares it rather than the one the handle was written as
+// (LRM 6.22.1, 8.10, 8.13, 8.14, 8.25, 26.3).
 package pkg;
   class Counter;
     int value = 0;
@@ -44,6 +47,24 @@ package pkg;
       x = seed;
     endfunction
   endclass
+
+  class Tag;
+    int label = 4;
+  endclass
+endpackage
+
+package tagging_pkg;
+  class Labeled extends pkg::Tag;
+  endclass
+endpackage
+
+// A third package extending the second's, so one class is both what another
+// package rests on and what rests on a third. Nothing about the chain is
+// bounded by how many packages it crosses.
+package stamping_pkg;
+  class Stamped extends tagging_pkg::Labeled;
+    int stamp = 9;
+  endclass
 endpackage
 
 module Top;
@@ -70,6 +91,9 @@ module Top;
   int peeked_value;
   byte derived_x;
   byte derived_y;
+  int inherited_label;
+  int label_through_chain;
+  int own_stamp;
 
   initial begin
     pkg::Counter c1;
@@ -79,6 +103,8 @@ module Top;
     pkg::Box #() b_int;
     pkg::Box #(byte) b_byte;
     Derived d;
+    tagging_pkg::Labeled labeled;
+    stamping_pkg::Stamped stamped;
 
     c1 = new;
     c1.incr();
@@ -106,6 +132,13 @@ module Top;
     d = new(8'sd5, 8'sd6);
     derived_x = d.x;
     derived_y = d.y;
+
+    labeled = new;
+    inherited_label = labeled.label;
+
+    stamped = new;
+    label_through_chain = stamped.label;
+    own_stamp = stamped.stamp;
   end
 
   final begin
@@ -135,6 +168,16 @@ module Top;
       $fatal(1, "derived_x was %0d, expected 5", derived_x);
     if (derived_y !== 6)
       $fatal(1, "derived_y was %0d, expected 6", derived_y);
+    // `Labeled` declares nothing, so the only property it carries is the one
+    // `pkg::Tag` declares and the access names that class.
+    if (inherited_label !== 4)
+      $fatal(1, "inherited_label was %0d, expected 4", inherited_label);
+    // Reached two packages up from where the handle's class is declared.
+    if (label_through_chain !== 4)
+      $fatal(
+          1, "label_through_chain was %0d, expected 4", label_through_chain);
+    if (own_stamp !== 9)
+      $fatal(1, "own_stamp was %0d, expected 9", own_stamp);
     $display("All checks passed");
   end
 endmodule

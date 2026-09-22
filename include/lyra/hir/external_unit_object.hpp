@@ -24,10 +24,10 @@ struct ExternalUnitObjectId {
 
 // The object of a unit this one references, as that unit's signature promised
 // it: which unit defines it, the class an instance of it is, the members it
-// published in the order that fixes where their storage sits, and the
-// subroutines it published. Every type here is this unit's own -- taken into
-// its pool where the signature was consumed -- so nothing below this record
-// reads a signature or a type it does not own.
+// published in the order that fixes which behavior answers with each of them,
+// and the subroutines it published. Every type here is this unit's own -- taken
+// into its pool where the signature was consumed -- so nothing below this
+// record reads a signature or a type it does not own.
 //
 // This unit compiles none of it; it holds what it compiled against.
 struct ExternalUnitObject {

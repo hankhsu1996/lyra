@@ -7,6 +7,7 @@
 
 #include "lyra/base/arena.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -74,15 +75,18 @@ class RuntimeRecordBuilder {
             .type = MachineArrayOf(unit_->types, element, size)});
   }
 
-  // The address of `adapter`, typed as the function it is. A backend that must
-  // name that type -- to erase it, or to restore it -- reads it off the node
-  // rather than off a convention the two sides would have to keep in step.
-  auto FunctionRef(const Class& cls, AbiAdapterId adapter) -> ExprId;
+  // The address of `owner`'s `adapter`, typed as the function it is. A backend
+  // that must name that type -- to erase it, or to restore it -- reads it off
+  // the node rather than off a convention the two sides would have to keep in
+  // step.
+  auto FunctionRef(ClassId owner, const Class& cls, AbiAdapterId adapter)
+      -> ExprId;
 
   // The adapter's address named as the erased entry type, so entries of
   // different prototypes share one table. It is restored to the prototype it
   // was generated with at the one place that calls it.
-  auto ErasedFunctionRef(const Class& cls, AbiAdapterId adapter) -> ExprId;
+  auto ErasedFunctionRef(ClassId owner, const Class& cls, AbiAdapterId adapter)
+      -> ExprId;
 
   auto StringRef(const std::string& text) -> ExprId;
 

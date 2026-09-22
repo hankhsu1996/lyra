@@ -345,13 +345,13 @@ auto FunctionLowerer::LowerCallTarget(
                       return lir::CallTarget{ExternalMethodSymbol(
                           t.unit_name, t.class_name, t.method_name)};
                     },
-                    [&](const mir::ExternalUnitStorageTarget& t)
+                    [&](const mir::ExternalUnitMintedEntryTarget& t)
                         -> diag::Result<lir::CallTarget> {
-                      // Neither entry answers to a name, so its symbol is
-                      // composed from the unit and which of the two it is --
-                      // the same parts the unit that defines it composes.
+                      // It answers to no name, so its symbol is composed from
+                      // the unit and which of them it is -- the same parts the
+                      // unit that defines it composes.
                       return lir::CallTarget{lir::ForeignTarget{
-                          .symbol = StorageEntrySymbol(t.unit_name, t.phase)}};
+                          .symbol = MintedEntrySymbol(t.unit_name, t.entry)}};
                     }},
                 d.target);
           },
@@ -1473,9 +1473,6 @@ auto FunctionLowerer::MemberRefOf(const mir::FieldRef& field)
           },
           [&](const mir::ClosureFieldTarget& t) {
             return at(unit_->ClosureValueType(t.owner), t.slot);
-          },
-          [&](const mir::ExternalUnitObjectFieldTarget& t) {
-            return at(unit_->ExternalUnitObjectValueType(t.owner), t.slot);
           },
           [&](const mir::CrossUnitClassFieldTarget& t) {
             return at(

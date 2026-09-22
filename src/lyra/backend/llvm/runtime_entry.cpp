@@ -60,10 +60,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_promoted_scope";
     case RuntimeOp::kPromotedScopeDeref:
       return "promoted_scope_deref";
-    case RuntimeOp::kObjectMemberAddress:
-      return "object_member_addr";
-    case RuntimeOp::kObjectMethod:
-      return "object_method";
+    case RuntimeOp::kMethod:
+      return "method";
     case RuntimeOp::kClassFindProperty:
       return "class_find_property";
     case RuntimeOp::kClassFindBehavior:

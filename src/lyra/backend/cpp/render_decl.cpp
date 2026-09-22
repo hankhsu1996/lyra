@@ -28,20 +28,6 @@ namespace {
 // declared representation, a net's fold, an initial value -- arrives as
 // ordinary MIR statements in the constructor body, so the declaration
 // value-initializes and carries nothing else.
-auto RenderField(
-    const mir::CompilationUnit& unit,
-    std::span<const mir::NamedField> named_fields,
-    const base::Arena<mir::FieldDecl, mir::FieldId>& fields, mir::FieldId slot,
-    std::size_t indent) -> std::string {
-  return std::format(
-      "{}{} {}{{}};\n", Indent(indent),
-      RenderTypeAsCpp(unit, fields.Get(slot).type),
-      CppFieldName(named_fields, slot));
-}
-
-// The value-init field declarations of any field-bearing storage -- a class's
-// fields, a promoted scope's fields. Shared so a generated struct carries no
-// field-emission of its own; it feeds the same declarations a class does.
 auto RenderFieldList(
     const mir::CompilationUnit& unit,
     std::span<const mir::NamedField> named_fields,
@@ -49,23 +35,42 @@ auto RenderFieldList(
     -> std::string {
   std::string out;
   for (const mir::FieldId slot : fields.Ids()) {
-    out += RenderField(unit, named_fields, fields, slot, indent);
+    const std::string type = RenderTypeAsCpp(unit, fields.Get(slot).type);
+    const std::string name = CppFieldName(named_fields, slot);
+    out += RenderDeclaration(
+        DeclaredCell{
+            .owner = CellOwner::kObject,
+            .text = CellText::kDefined,
+            .immutable = false,
+            .type = type,
+            .name = name,
+            .qualifier = {},
+            .value = {}},
+        indent);
   }
   return out;
 }
 
-// A class static property (LRM 8.9) renders as an `inline static` member of
-// the C++ class: one cell owned by the type, default-constructed here and
-// given its declared representation and value where whatever brings the class's
-// owner up runs, never baked into the declaration.
+// A class static property (LRM 8.9): one cell the type owns, established here
+// and given its declared representation and value where whatever brings the
+// class's owner up runs, never baked into the declaration.
 auto RenderClassStaticProperty(
     const mir::CompilationUnit& unit, const mir::Class& s,
     mir::StaticPropertyId slot, std::size_t indent) -> std::string {
   const std::string type =
       RenderTypeAsCpp(unit, s.static_properties.Get(slot).type);
-  return std::format(
-      "{}inline static {} {}{{}};\n", Indent(indent), type,
-      CppStaticPropertyName(s.named_static_properties, slot));
+  const std::string name =
+      CppStaticPropertyName(s.named_static_properties, slot);
+  return RenderDeclaration(
+      DeclaredCell{
+          .owner = CellOwner::kType,
+          .text = CellText::kDefined,
+          .immutable = false,
+          .type = type,
+          .name = name,
+          .qualifier = {},
+          .value = {}},
+      indent);
 }
 
 auto RenderClassStaticProperties(
@@ -131,7 +136,7 @@ auto RenderClassCallableDecl(
   const bool has_receiver = code.HasReceiver(s.self_pointer_type);
   const std::string sig = std::format(
       "{}{}auto {}({}) -> {}{}", has_receiver ? "" : "static ",
-      VirtualPrefix(m), CppClassCallableName(s, id),
+      VirtualPrefix(m), CppClassCallableName(unit, s, id),
       RenderUserParams(unit, code, has_receiver ? 1 : 0),
       RenderTypeAsCpp(unit, code.result_type), OverrideSuffix(m));
   // A class method this declaration does not define is a pure virtual (LRM
@@ -157,7 +162,7 @@ auto RenderClassCallableDef(
   const bool has_receiver = code.HasReceiver(s.self_pointer_type);
   std::string out = std::format(
       "auto {}::{}({}) -> {} {{\n", CppClassName(s, cls_id),
-      CppClassCallableName(s, id),
+      CppClassCallableName(unit, s, id),
       RenderUserParams(unit, code, has_receiver ? 1 : 0),
       RenderTypeAsCpp(unit, code.result_type));
   if (has_receiver) {
@@ -299,54 +304,81 @@ auto RenderStruct(
   return out;
 }
 
-// A class-level static constant: a name, a type, and the value it is settled
-// with. A runtime scope's generated-behavior record is one such constant; the
-// constructor forwards its address to the base.
+// A class-level static constant: the class body declares it, and the value is
+// given apart from the class, beside the unit's own bodies. A runtime scope's
+// generated-behavior record is one such constant; the constructor forwards its
+// address to the base. What a referrer needs of one is its address, which the
+// declaration alone settles, so the expression building the value is the
+// declaring unit's own and never travels with the declaration. A constant that
+// points into another only ever takes its address, which does not depend on
+// that one's value having been given.
 //
-// Every one of them is declared in the class body and valued after it. A value
-// written after the class names anything the class holds, and one written in
-// the body cannot name a member declared below it -- so the second shape serves
-// every constant and the first serves none the second does not. What differs
-// between constants is what they are called, which is the caller's to say.
-auto RenderClassConstantDecl(
-    const mir::CompilationUnit& unit, std::string_view name,
-    const mir::StaticConstantDecl& c) -> std::string {
-  return Indent(1) + ClassConstantDeclOf(RenderTypeAsCpp(unit, c.type), name);
-}
-
-auto RenderClassConstantDef(
+// What one is called is the caller's to say: the record every object carries
+// takes a name off the class, because it is the one constant a class outside
+// this unit spells, and the rest take one off the position they sit at, which
+// nothing outside can count.
+auto RenderStaticConstant(
     const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s,
-    std::string_view name, const mir::StaticConstantDecl& c) -> std::string {
+    std::string_view name, const mir::StaticConstantDecl& c) -> UnitText {
   const ScopeView view = ScopeView::ForClassConstant(unit, cls_id, s, c.body);
-  return ClassConstantDefOf(
-      CppClassName(s, cls_id), RenderTypeAsCpp(unit, c.type), name,
-      RenderExpr(view, view.Expr(c.value)));
+  const std::string type = RenderTypeAsCpp(unit, c.type);
+  const std::string owner = CppClassName(s, cls_id);
+  const std::string value = RenderExpr(view, view.Expr(c.value));
+  return UnitText{
+      .signature = RenderDeclaration(
+          DeclaredCell{
+              .owner = CellOwner::kType,
+              .text = CellText::kAnnounced,
+              .immutable = true,
+              .type = type,
+              .name = name,
+              .qualifier = {},
+              .value = {}},
+          1),
+      .code = RenderDeclaration(
+          DeclaredCell{
+              .owner = CellOwner::kType,
+              .text = CellText::kDefined,
+              .immutable = true,
+              .type = type,
+              .name = name,
+              .qualifier = owner,
+              .value = value},
+          0)};
 }
 
 auto RenderClass(
     const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s)
     -> UnitText;
 
-// Appends a class and every intra-unit base it depends on, in an order that
-// guarantees each base is a complete C++ type before its derived (C++ requires
-// base completeness at derivation). The interning walk sets the registry order,
-// which may reach a derived class first, so this walker climbs the base chain
-// first and marks visited classes in `emitted`.
+// Appends a class and every intra-unit class it rests on, each before whatever
+// rests on it. The interning walk sets the registry order, which may reach a
+// resting class first, so this walker climbs what a class rests on before
+// writing it and marks written classes in `emitted`.
+//
+// What the order is for is the code artifact, where a definition may name any
+// class of the unit. A class a referrer may name takes a file of its own and is
+// reached through the include its own file carries, so where it sits in this
+// list decides nothing.
 void AppendClassInDependencyOrder(
     const mir::CompilationUnit& unit, mir::ClassId id,
-    std::vector<bool>& emitted, UnitText& text) {
+    std::vector<bool>& emitted, UnitClasses& text) {
   if (emitted[id.value]) return;
+  emitted[id.value] = true;
   const mir::Class& cls = unit.GetClass(id);
-  if (cls.base.has_value()) {
-    if (const auto* intra = std::get_if<mir::IntraUnitClassRef>(&*cls.base)) {
+  for (const mir::ClassRef& rests_on : mir::RestsOnDeclaredClasses(cls)) {
+    if (const auto* intra = std::get_if<mir::IntraUnitClassRef>(&rests_on)) {
       AppendClassInDependencyOrder(unit, intra->class_id, emitted, text);
     }
   }
-  if (emitted[id.value]) return;
-  emitted[id.value] = true;
   const UnitText rendered = RenderClass(unit, id, cls);
-  AppendSection(text.signature, rendered.signature);
-  AppendSection(text.code, rendered.code);
+  if (mir::IsPromised(unit, id)) {
+    text.promised.push_back(
+        PromisedClass{.id = id, .text = rendered.signature});
+  } else {
+    AppendSection(text.internal, rendered.signature);
+  }
+  AppendSection(text.definitions, rendered.code);
 }
 
 auto RenderClass(
@@ -427,37 +459,33 @@ auto RenderClass(
   }
   AppendSection(out, adapter_decls);
 
-  // The constants this class declares, each declared here and valued after the
-  // class. What one is called is all that separates them: the record every
-  // object carries takes a name off the class, because it is the one constant a
-  // class outside this unit spells, and the rest take one off the position they
-  // sit at, which nothing outside can count.
-  //
-  // Beside the record goes the name the allocation reads to hand an object its
-  // record, which is what a class of the source language states about its own
-  // objects.
+  // The class's static constants (a tree node's generated-behavior record among
+  // them), each declared here and given its value apart from the class, in the
+  // order the class states them -- which is the order a constant built from
+  // another one needs, since a file initializes its own constants in the order
+  // it writes them.
   for (const mir::StaticConstantId constant_id : s.static_constants.Ids()) {
-    const mir::StaticConstantDecl& c = s.static_constants.Get(constant_id);
-    AppendSection(
-        out,
-        RenderClassConstantDecl(unit, CppStaticConstantName(constant_id), c));
-    AppendSection(
-        text.code, RenderClassConstantDef(
-                       unit, id, s, CppStaticConstantName(constant_id), c));
+    const UnitText constant = RenderStaticConstant(
+        unit, id, s, CppStaticConstantName(constant_id),
+        s.static_constants.Get(constant_id));
+    AppendSection(out, constant.signature);
+    AppendSection(text.code, constant.code);
   }
+
+  // The record every object of the class carries, and beside it the name the
+  // allocation reads to hand an object that record. It takes a name off the
+  // class rather than off a position, because it is the one constant a class
+  // outside this unit spells.
   if (s.object_record.has_value()) {
-    const std::string record_type =
-        RenderTypeAsCpp(unit, s.object_record->type);
+    const UnitText record = RenderStaticConstant(
+        unit, id, s, CppObjectRecordName(), *s.object_record);
     AppendSection(
-        out,
-        RenderClassConstantDecl(unit, CppObjectRecordName(), *s.object_record) +
-            Indent(1) +
-            std::format(
-                "static constexpr const {}* {} = &{};\n", record_type,
-                CppClassRecordHookName(), CppObjectRecordName()));
-    AppendSection(
-        text.code, RenderClassConstantDef(
-                       unit, id, s, CppObjectRecordName(), *s.object_record));
+        out, record.signature + Indent(1) +
+                 std::format(
+                     "static constexpr const {}* {} = &{};\n",
+                     RenderTypeAsCpp(unit, s.object_record->type),
+                     CppClassRecordHookName(), CppObjectRecordName()));
+    AppendSection(text.code, record.code);
   }
 
   out += "};\n";
@@ -520,22 +548,26 @@ auto RenderFreeCallable(
 
 }  // namespace
 
-auto RenderUnitClasses(const mir::CompilationUnit& unit) -> UnitText {
+auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
+    -> UnitText {
   UnitText text;
-  std::string forward_declarations;
-  std::string struct_definitions;
   for (const mir::ClassId id : unit.classes.Ids()) {
-    forward_declarations +=
+    (mir::IsPromised(unit, id) ? text.signature : text.code) +=
         std::format("class {};\n", CppClassName(unit.GetClass(id), id));
   }
-  // A struct's forward declaration leads every struct body, because one
-  // generated scope's field may name another's.
+  // A struct is a scope a lowering promoted out of some body, so nothing
+  // outside this unit reaches one.
   for (const mir::StructId id : unit.structs.Ids()) {
-    forward_declarations += std::format("struct {};\n", CppStructName(id));
-    struct_definitions += RenderStruct(unit, id, unit.GetStruct(id));
+    text.code += std::format("struct {};\n", CppStructName(id));
   }
-  AppendSection(text.signature, forward_declarations);
-  AppendSection(text.signature, struct_definitions);
+  return text;
+}
+
+auto RenderUnitClasses(const mir::CompilationUnit& unit) -> UnitClasses {
+  UnitClasses text;
+  for (const mir::StructId id : unit.structs.Ids()) {
+    text.internal += RenderStruct(unit, id, unit.GetStruct(id));
+  }
   std::vector<bool> emitted(unit.classes.size(), false);
   for (const mir::ClassId id : unit.classes.Ids()) {
     AppendClassInDependencyOrder(unit, id, emitted, text);
@@ -576,8 +608,26 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText {
         RenderTypeAsCpp(unit, unit.static_variables.Get(id).type);
     const std::string name =
         CppStaticVariableName(unit.named_static_variables, id);
-    text.signature += std::format("extern {} {};\n", type, name);
-    text.code += std::format("{} {}{{}};\n", type, name);
+    text.signature += RenderDeclaration(
+        DeclaredCell{
+            .owner = CellOwner::kNamespace,
+            .text = CellText::kAnnounced,
+            .immutable = false,
+            .type = type,
+            .name = name,
+            .qualifier = {},
+            .value = {}},
+        0);
+    text.code += RenderDeclaration(
+        DeclaredCell{
+            .owner = CellOwner::kNamespace,
+            .text = CellText::kDefined,
+            .immutable = false,
+            .type = type,
+            .name = name,
+            .qualifier = {},
+            .value = {}},
+        0);
   }
   return text;
 }

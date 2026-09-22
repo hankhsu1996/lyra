@@ -363,7 +363,7 @@ void InstallObjectRecord(
     std::vector<mir::ExprId> entries;
     entries.reserve(slots.size());
     for (const mir::AbiAdapterId slot : slots) {
-      entries.push_back(records.FunctionRef(cls, slot));
+      entries.push_back(records.FunctionRef(id, cls, slot));
     }
     const mir::TypeId entry_type =
         entries.empty() ? unit.types.Intern(
@@ -391,7 +391,7 @@ void InstallObjectRecord(
     for (const std::optional<mir::AbiAdapterId>& body : introductions) {
       entries.push_back(
           body.has_value()
-              ? records.ErasedFunctionRef(cls, *body)
+              ? records.ErasedFunctionRef(id, cls, *body)
               : records.Add(
                     mir::Expr{.data = mir::NullLiteral{}, .type = entry_type}));
     }
@@ -426,7 +426,7 @@ void InstallObjectRecord(
                mir::MakeAddressOfExpr(
                    introducer, BorrowedPointerTo(unit, record_type))),
            records.MachineInt(static_cast<std::int64_t>(taken.ordinal)),
-           records.ErasedFunctionRef(cls, taken.body)}));
+           records.ErasedFunctionRef(id, cls, taken.body)}));
     }
     takeovers_decl.value = records.MachineArray(
         records.Type(mir::RuntimeLibraryKind::kDispatchTakeover),
@@ -489,7 +489,7 @@ void InstallObjectRecord(
     for (const auto& [name, body] : body_names) {
       entries.push_back(records.Construct(
           mir::RuntimeLibraryKind::kDeclaredBody,
-          {records.StringRef(name), records.ErasedFunctionRef(cls, body)}));
+          {records.StringRef(name), records.ErasedFunctionRef(id, cls, body)}));
     }
     body_names_decl.value = records.MachineArray(
         records.Type(mir::RuntimeLibraryKind::kDeclaredBody),
@@ -568,7 +568,7 @@ void InstallObjectRecord(
             mir::RuntimeLibraryKind::kDeclaredBodyTable, body_name_count);
     const mir::ExprId view =
         to_base.has_value()
-            ? record.FunctionRef(cls, *to_base)
+            ? record.FunctionRef(id, cls, *to_base)
             : record.Add(mir::Expr{.data = mir::NullLiteral{}, .type = opaque});
 
     record_decl.value = record.Construct(

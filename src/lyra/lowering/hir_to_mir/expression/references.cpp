@@ -218,7 +218,7 @@ auto LowerExternalUnitValueRefExpr(
                 .target = mir::StaticVariableRef{.variable = *variable}},
         .type = cell_type};
   }
-  unit.AddExternalReferencedUnit(r.unit_name);
+  unit.ConsumeNamespaceOf(r.unit_name);
   return mir::Expr{
       .data =
           mir::ReferenceExpr{

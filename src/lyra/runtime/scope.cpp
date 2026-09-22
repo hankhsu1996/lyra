@@ -31,7 +31,10 @@ void ScopeConstructNoOp(
 
 Scope::Scope(
     Scope* parent, HierarchySegment segment, const ScopeDefinition* definition)
-    : parent_(parent), segment_(std::move(segment)), definition_(definition) {
+    : ClassValue(definition),
+      parent_(parent),
+      segment_(std::move(segment)),
+      program_(&definition->program) {
 }
 
 auto Scope::AddOwnedChild(std::unique_ptr<Scope> child) -> Scope* {
@@ -82,7 +85,7 @@ auto Scope::FindChild(
 
 auto Scope::FindSubroutine(std::string_view name) -> ErasedScopeCallable {
   if (ErasedScopeCallable entry =
-          FindInCallableTable(definition_->program.subroutines, name)) {
+          FindInCallableTable(program_->subroutines, name)) {
     return entry;
   }
   throw SimulationError(NoSuchName("subroutine", name));
@@ -90,7 +93,7 @@ auto Scope::FindSubroutine(std::string_view name) -> ErasedScopeCallable {
 
 auto Scope::FindClass(std::string_view name) -> const ObjectDefinition* {
   if (const ObjectDefinition* definition =
-          FindInClassTable(definition_->program.classes, name)) {
+          FindInClassTable(program_->classes, name)) {
     return definition;
   }
   throw SimulationError(NoSuchName("class", name));
@@ -186,17 +189,17 @@ auto Scope::HierarchicalPath() const -> lyra::value::String {
 
 void Scope::Resolve() {
   GeneratedCallScope call;
-  definition_->program.resolve_state(this);
+  program_->resolve_state(this);
 }
 
 void Scope::Initialize() {
   GeneratedCallScope call;
-  definition_->program.initialize_state(this);
+  program_->initialize_state(this);
 }
 
 void Scope::CreateProcesses() {
   GeneratedCallScope call;
-  definition_->program.create_processes(this);
+  program_->create_processes(this);
 }
 
 auto Scope::ResolveVisibleChild(

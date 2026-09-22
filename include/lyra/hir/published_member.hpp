@@ -12,9 +12,9 @@
 
 namespace lyra::hir {
 
-// Where a published member sits in the object that publishes it. The position
-// is the signature's own order, so the unit that publishes and the unit that
-// reads both count it out of the same list and neither states it to the other.
+// Which of a promise's behaviors answers with this member. The position is the
+// signature's own order, so the unit that publishes and the unit that reads
+// both count it out of the same list and neither states it to the other.
 struct PublishedMemberId {
   std::uint32_t value = base::kUnassignedId;
 

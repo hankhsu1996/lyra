@@ -559,8 +559,10 @@ auto CppProjectSink::Finish(const mir::CompilationUnit& root)
 auto CppProjectSink::WriteUnit(const mir::CompilationUnit& unit)
     -> diag::Result<void> {
   backend::cpp::CppUnitArtifacts files = backend::cpp::EmitCppUnit(unit);
-  if (auto r = Write(std::move(files.signature)); !r) {
-    return r;
+  for (backend::cpp::CppArtifact& declarations : files.declarations) {
+    if (auto r = Write(std::move(declarations)); !r) {
+      return r;
+    }
   }
   return WriteTranslationUnit(std::move(files.code));
 }

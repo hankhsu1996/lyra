@@ -121,15 +121,15 @@ matches neither existing group. It is not a data object -- it holds no value and
 neither constructs it nor frees it, which is the single fact every consumer of that arena acts on.
 
 It is a third thing: a member the scope declares, does not build, and is dotted into. So it has its
-own arena, and the list fixing where published members sit names either kind, since an interface
-port is always published and always sits in that prefix.
+own arena, and the list fixing the order a unit published its members in names either kind, since an
+interface port is always published and always takes a place in that order.
 
 ### D6. A referrer holds a published member's representation, and its identity only where it reaches through
 
 A unit that reaches a member on another unit's object holds what that unit published, which is what
 having consumed its signature means. A published member it never reaches through is different: what
-it needs from that member is enough to place the ones after it, and for a port standing for an
-object that is a pointer -- one machine word, whatever it points at.
+it needs from that member is the identifier and the place it takes in the published order, and for a
+port standing for an object that is all it ever needs, whatever the port points at.
 
 So the object a pointer points at is named only where the referrer reaches into it. Naming it
 otherwise would declare a dependency the referrer's own output does not have: its artifact would
@@ -189,8 +189,8 @@ is what it reaches -- read at the member level.
 
 - A member reached through an interface port is an ordinary positional member access at every layer
   below the one that resolved the name, so both backends realize it and refuse the same designs.
-- An interface's object has a stable published prefix like any other unit's, and a module bound to
-  it is compiled once per interface specialization rather than once per instance.
+- An interface promises what it published in a stable order like any other unit, and a module bound
+  to it is compiled once per interface specialization rather than once per instance.
 - A module's ports and the interfaces its ports carry are the two things a parent selects, and both
   now feed one identity, so a change to either re-emits exactly the instantiations that chose it.
 - An interface port needs no MIR vocabulary of its own: it is a borrowed pointer to another unit's

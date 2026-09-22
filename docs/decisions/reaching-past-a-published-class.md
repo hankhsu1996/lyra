@@ -153,14 +153,14 @@ class, and the position is fixed when that class is realized.
   no ordering rule is needed and both sides count the same list. Rejected because a `local` property
   (LRM 8.18) declared ahead of a public one would move it, so adding one re-emits every referrer and
   a stale one reads the wrong storage -- the fragile base class problem, inside a single class. What
-  a class publishes sits in a fixed prefix of its own storage instead, exactly as a unit's published
-  members sit in a prefix of its object.
+  a class publishes sits in a fixed prefix of its own storage instead.
 
 ## Consequences
 
 - A unit that reaches a property or a behavior introduced further up a published lineage consumes
   that unit's promise and depends on it. A change to what that class declares or introduces re-emits
-  the referrer; a change to what it keeps to itself re-emits nobody.
+  the referrer; a change to what it keeps to itself re-emits nobody, and neither does a change to
+  another class of the same unit -- what was consumed is the class, not the unit holding it.
 - The coordinate a referrer emits names the class that declares or introduces the thing, so it is
   the same coordinate whichever class the source reached it through, and two units reaching one
   behavior through different intermediates emit the same identity.
@@ -168,6 +168,10 @@ class, and the position is fixed when that class is realized.
   whether the interface class is this unit's or another's. Before the promise carried what a class
   is, the cross-unit case could not be told apart and answered with whatever sat at that position.
 - Nothing decides in advance which promises a unit may read. What it read is what it depended on.
+- Nothing downstream re-derives that a value carries the declaration a coordinate names. The
+  coordinate is the answer, so a consumer reads the declaration and never the lineage the value
+  reached it through -- which is what keeps a unit from carrying the promises of classes it passes
+  through and uses for nothing else.
 
 ## Cross-references
 

@@ -174,6 +174,49 @@ scope.
 
 ## Notes / Examples
 
+### What a resolution covers
+
+```systemverilog
+wire [7:0] w;
+assign w = a;           // one contribution
+assign w = b;           // another, independent of the first
+
+wire [7:0] p, q;
+alias p = q;            // one resolution now covers runs of both
+assign p = 8'hA5;       // q is driven by nothing and still has a value
+```
+
+```mermaid
+flowchart LR
+  DA["assign w = a"] -->|contribution| RW
+  DB["assign w = b"] -->|contribution| RW
+  TW["the net type's own<br/>contribution"] -->|contribution| RW
+  RW{{"one resolution<br/>the net type fixes the fold"}} --> W["w's observable value"]
+
+  DP["assign p = 8'hA5"] -->|contribution| RP
+  TP["the net type's own<br/>contribution"] -->|contribution| RP
+  RP{{"one resolution,<br/>covering runs of p and of q"}} --> P["p's value"]
+  RP --> Q["q's value"]
+
+  W --> OB["an observer wakes only where<br/>the resolved value moved"]
+  Q --> OB
+```
+
+Three things the picture is for.
+
+**Nothing writes a net.** Every arrow into a resolution is a contribution, and the arrows out are
+values read. A driver that changes moves its own contribution and nothing else; what an observer
+sees is the fold re-run.
+
+**A resolution is the unit, and it need not be one net.** `q` is driven by nothing and has a value,
+because the alias placed its positions in the resolution `p`'s driver reaches. That is invariant 1's
+coupled case, and an uncoupled net is the same picture with one net in the box -- there is no second
+representation for either.
+
+**The net type contributes like a driver does.** It is in the same list, which is why a net with no
+driver at all needs no special case: resolving contributes-nothing-but-the-type is the N=0 reading
+of the same fold.
+
 A single-driver wire `assign w = e;` has one contribution; resolving one contribution yields that
 contribution's value, so `w` tracks `e`. This is the N=1 case of the general model, not a distinct
 shape (LRM 6.5, 6.6.1).

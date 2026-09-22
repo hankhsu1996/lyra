@@ -1,16 +1,25 @@
 #pragma once
 
+#include <vector>
+
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::backend::cpp {
 
-// The two files one compiled unit becomes: the declarations a referrer compiles
-// against, and the translation unit realizing them. Keeping them apart is what
-// lets a unit be compiled with no other unit's bodies present, and what lets
-// two units that reference each other both compile.
+// The files one compiled unit becomes: the declarations a referrer compiles
+// against, and the translation unit realizing them. Keeping the two apart is
+// what lets a unit be compiled with no other unit's bodies present.
+//
+// The declarations are several files, which is what lets any two units
+// reference each other. A file is read once, so it is the unit an order can be
+// given to, while what actually has to be ordered is one class against the
+// class it rests on. Writing each class the unit promised in a file
+// of its own makes the two the same size, and the order among the files is then
+// the order among the classes -- which a program always has, since a class may
+// not rest on itself.
 struct CppUnitArtifacts {
-  CppArtifact signature;
+  std::vector<CppArtifact> declarations;
   CppArtifact code;
 };
 

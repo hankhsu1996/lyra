@@ -329,24 +329,4 @@ struct MemberStorageSchema {
   }
 };
 
-// The immutable definition of one scope class: its program (held by value, so a
-// class's whole generated behavior is one constant), its
-// structural-construction entry, and the storage schema of its members. Every
-// scope class has one, whether it is the class a compilation unit publishes or
-// a class that unit keeps to itself -- what differs is only how a constructing
-// site names the definition, by linkage symbol across the unit boundary and by
-// in-artifact constant within it. Construction is reached through the
-// definition, distinct from the per-phase lifecycle dispatch. The schema tells
-// a generic instance what storage to own for each member; a backend that lays
-// members out natively leaves it empty.
-struct ScopeDefinition {
-  ScopeProgram program;
-  ScopeConstructEntry construct = &ScopeConstructNoOp;
-  MemberStorageSchema members;
-
-  constexpr ScopeDefinition() = default;
-  constexpr explicit ScopeDefinition(ScopeProgram program) : program(program) {
-  }
-};
-
 }  // namespace lyra::runtime

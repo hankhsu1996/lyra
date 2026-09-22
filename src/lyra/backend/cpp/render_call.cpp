@@ -145,7 +145,7 @@ auto ResolveDirectSpelling(
             return {
                 .name = std::format(
                     "{}::{}", CppClassName(cls, t.owner),
-                    CppClassCallableName(cls, t.slot)),
+                    CppClassCallableName(view.Unit(), cls, t.slot)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           // This unit's C++ peer is a namespace too, so a body of its own is
@@ -183,14 +183,14 @@ auto ResolveDirectSpelling(
                     ToCppName(t.class_name), ToCppName(t.method_name)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
-          // A body that brings up another unit's namespace answers to no name,
-          // so it is named through that unit's namespace by which of the two it
-          // is -- the same identifier that unit emitted it under.
-          [](const mir::ExternalUnitStorageTarget& t) -> CalleeSpelling {
+          // A body of another unit that answers to no name is named through
+          // that unit's namespace by which of them it is -- the same identifier
+          // that unit emitted it under.
+          [](const mir::ExternalUnitMintedEntryTarget& t) -> CalleeSpelling {
             return {
                 .name = std::format(
                     "{}::{}", CppUnitScope(t.unit_name),
-                    CppStorageEntryName(t.phase)),
+                    CppMintedEntryName(t.entry)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           // A DPI-C symbol is program-global, so it is spelled unqualified
@@ -220,31 +220,21 @@ auto ResolveCalleeSpelling(
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           [&](const mir::Virtual& v) -> CalleeSpelling {
-            return std::visit(
-                Overloaded{
-                    [&](const mir::LocalVirtualSlot& l) -> CalleeSpelling {
-                      return {
-                          .name = CppClassCallableName(
-                              view.Unit().GetClass(l.owner_class), l.slot),
-                          .placement = ReceiverPlacement::kIntoCalleeName};
-                    },
-                    [&](const mir::ExternalVirtualSlot& e) -> CalleeSpelling {
-                      const mir::ExternalClass* introducer =
-                          mir::FindExternalClass(
-                              view.Unit().external_classes, e.unit_name,
-                              e.class_name);
-                      if (introducer == nullptr ||
-                          e.ordinal.value >= introducer->behaviors.size()) {
-                        throw InternalError(
-                            "RenderCall: a dispatch names a behavior no "
-                            "consumed promise describes");
-                      }
-                      return {
-                          .name =
-                              ToCppName(introducer->behaviors[e.ordinal.value]),
-                          .placement = ReceiverPlacement::kIntoCalleeName};
-                    }},
-                v.slot);
+            return {
+                .name = std::visit(
+                    Overloaded{
+                        [&](const mir::LocalVirtualSlot& l) -> std::string {
+                          return CppClassCallableName(
+                              view.Unit(), view.Unit().GetClass(l.owner_class),
+                              l.slot);
+                        },
+                        [&](const mir::ExternalVirtualSlot& e) -> std::string {
+                          return CppExternalBehaviorName(
+                              view.Unit(), e.unit_name, e.class_name,
+                              e.ordinal);
+                        }},
+                    v.slot),
+                .placement = ReceiverPlacement::kIntoCalleeName};
           },
           // A type has one way to come into existence, and what names it is the
           // type's own answer -- read through type mapping, the way every other

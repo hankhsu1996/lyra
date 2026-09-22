@@ -92,11 +92,11 @@ layer directly.
       own object, so what is missing is the record rather than the shape: what a referrer compiled
       against, and whether it still holds.
 
-      Behind it sits a second question that decides how much the record is worth. What a referrer
-      compiles against today is the declaring unit's whole class rather than the part it published,
-      so a change to something a unit never published still moves what every referrer reads -- and
-      an invalidation record laid over that would be correct and buy little. The signature
-      workstream owns that half; this one owns the record.
+      The second question behind it is now answered, which is what makes the record worth building.
+      What a referrer compiles against is the part the declaring unit published and nothing else, so
+      a change to what a unit kept to itself moves no text any referrer reads -- an invalidation
+      record laid over that is precise rather than nominally correct. The signature workstream owned
+      that half; this one owns the record.
 
       Measured 2026-09-16 on a three-unit design: a build that changes nothing still takes the same
       two and a quarter seconds as the one before it, and every object is written again. The Ibex

@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/dpi_boundary.hpp"

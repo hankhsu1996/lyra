@@ -24,7 +24,7 @@ flowchart TD
   D --> A1[base lineage]
   D --> A2[reference kind]
   D --> A3[lifecycle]
-  A1 --> V1[runtime instance base<br/>runtime generate-scope base<br/>another class<br/>none]
+  A1 --> V1[runtime tree base<br/>what a unit promised<br/>another class<br/>none]
   A2 --> V2[owning<br/>borrowed<br/>shared<br/>managed]
   A3 --> V3[elaboration phases<br/>none]
 ```
@@ -209,8 +209,8 @@ reference -- destroys a distinction a consumer has to read.
 - **HIR carries the source vocabulary.** `class`, `extends`, `virtual`, `interface class`, and `new`
   survive verbatim in HIR (`hir.md`); HIR-to-MIR translates each into this generic object model.
 - **`elaboration_lifecycle.md` owns when the lifecycle runs.** This doc owns that the
-  post-construction lifecycle bodies are method overrides of the runtime base; that doc owns their
-  phase ordering.
+  post-construction lifecycle bodies are the class's own, stated by it; that doc owns their phase
+  ordering.
 - **`reference_resolution.md` and `emission_model.md` own cross-unit resolution.** This doc owns
   that a cross-unit object reference is by-name against an imported interface; those docs own when
   and how it resolves.
@@ -271,20 +271,24 @@ reference -- destroys a distinction a consumer has to read.
 A module instance, a generate scope, and a SystemVerilog class differ only along the three generic
 axes:
 
-- A module instance extends the runtime instance base, participates in the elaboration lifecycle,
-  and is reached from its parent by an owning reference.
-- A generate scope extends the runtime generate-scope base, participates in the same lifecycle, and
-  is likewise an owning child.
+- A module instance extends what its unit promised of one, which is itself rooted in the runtime's
+  tree; it participates in the elaboration lifecycle and is reached from its parent by an owning
+  reference.
+- A generate scope extends the same runtime tree base directly, participates in the same lifecycle,
+  and is likewise an owning child. Nothing outside its unit names one, so it promises nothing and
+  has no class between it and the tree.
 - A SystemVerilog class extends another class or no class, is reached by a managed reference, and is
   built by `new`.
 
 The same field, method, override, and construction machinery serves all three; none has a private
 object system.
 
-The post-construction lifecycle bodies are overrides of the runtime base's lifecycle methods,
-through the same override relation a SystemVerilog `virtual` method uses. There is one override
-machinery: the lifecycle is its first user, a user-defined virtual method is another, and a backend
-renders both the same way.
+The post-construction lifecycle bodies are the class's own, stated by whichever class supplies them
+rather than carried on a reference to a base: what roots a value in the tree says nothing about how
+one runs, and a class rooted there supplying none is what a unit promises of its object. What the
+override relation does serve here is everything a unit published, which a promise states and its
+realization takes over -- one override machinery, with a user-defined virtual method as the other
+user, and a backend realizing both the same way.
 
 A static method is an associated function under the type, invoked without an instance. A static
 property is a single cell the type owns, observed identically from every instance. Neither is part

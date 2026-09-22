@@ -25,6 +25,7 @@ enum class SymbolCategory : std::uint8_t {
   kNamespaceCallable,
   kNamespaceStorageInstall,
   kNamespaceStorageInitialize,
+  kObjectEntry,
   kNamespaceVariable,
   kStaticProperty,
   kClosure,
@@ -112,13 +113,16 @@ auto VariableSchemaSymbol(std::string_view body_symbol) -> std::string;
 auto NamespaceCallableSymbol(std::string_view unit_name, SymbolPart callable)
     -> std::string;
 
-// The symbols of the two bodies a unit's namespace is brought up through. The
-// source declares neither, so neither is composed from a name: a category over
-// the unit alone is what lets the design root and the unit that defines them
-// arrive at the same symbol with nothing shared between them.
+// The symbols of the bodies a unit publishes that the source declares none of:
+// the two its namespace is brought up through, and the one that makes an object
+// of it. None is composed from a name, because none has one; a category over
+// the unit alone is what lets the unit that defines one and whoever calls it
+// arrive at the same symbol with nothing shared between them, and a unit
+// publishes at most one of each.
 auto NamespaceStorageInstallSymbol(std::string_view unit_name) -> std::string;
 auto NamespaceStorageInitializeSymbol(std::string_view unit_name)
     -> std::string;
+auto ObjectEntrySymbol(std::string_view unit_name) -> std::string;
 // A unit's own storage. A package variable answers to the identifier the source
 // declared, which is what another unit reaches it by; the cell a subroutine's
 // static-lifetime local keeps answers to none, and takes its position instead.

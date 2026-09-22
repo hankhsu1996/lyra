@@ -39,22 +39,18 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   class_identities_ = {mir_->classes.size(), std::move(classes)};
 
-  // What each unit this one references promised about its object, taken whole
-  // and before any body lowers: a member step names a position counted out of
-  // that whole list. Every identity comes first, because one record's members
-  // may name another of them and have to resolve to an identity that exists,
-  // whichever order the two were reached in.
+  // Which unit and class each unit this one references promised of its object,
+  // taken before any body lowers, since a body naming one resolves against an
+  // identity that has to exist by then. A record names no other, so each is
+  // minted carrying its value.
   external_unit_object_identities_ =
       base::Translation<mir::ExternalUnitObjectId, lir::ExternalUnitObjectId>{
           mir_->external_unit_objects.size()};
-  for (std::size_t i = 0; i < mir_->external_unit_objects.size(); ++i) {
-    external_unit_object_identities_.Append(
-        out_.external_unit_objects.Declare());
-  }
   for (const mir::ExternalUnitObjectId id : mir_->external_unit_objects.Ids()) {
-    out_.external_unit_objects.Define(
-        external_unit_object_identities_.Get(id),
-        LowerExternalUnitObject(mir_->external_unit_objects.Get(id)));
+    const mir::ExternalUnitObject& object = mir_->external_unit_objects.Get(id);
+    external_unit_object_identities_.Append(out_.external_unit_objects.Add(
+        lir::ExternalUnitObject{
+            .unit_name = object.unit_name, .class_name = object.class_name}));
   }
 
   // What each class of another unit promised, taken whole: a property step on
@@ -66,8 +62,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
         .base = {},
         .members = {}};
     if (cls.base.has_value()) {
-      record.base = lir::CrossUnitBase{
-          .unit_name = cls.base->unit_name, .class_name = cls.base->class_name};
+      record.base = LowerBase(*cls.base);
     }
     record.members.reserve(cls.fields.size());
     for (const mir::FieldId id : cls.fields.Ids()) {
@@ -247,16 +242,17 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   return std::move(out_);
 }
 
-auto StorageEntrySymbol(
-    std::string_view unit_name, mir::NamespaceStoragePhase phase)
+auto MintedEntrySymbol(std::string_view unit_name, mir::MintedEntry entry)
     -> std::string {
-  switch (phase) {
-    case mir::NamespaceStoragePhase::kInstall:
+  switch (entry) {
+    case mir::MintedEntry::kInstallStorage:
       return lir::NamespaceStorageInstallSymbol(unit_name);
-    case mir::NamespaceStoragePhase::kInitialize:
+    case mir::MintedEntry::kInitializeStorage:
       return lir::NamespaceStorageInitializeSymbol(unit_name);
+    case mir::MintedEntry::kMakeObject:
+      return lir::ObjectEntrySymbol(unit_name);
   }
-  throw InternalError("mir_to_lir: unknown namespace storage phase");
+  throw InternalError("mir_to_lir: unknown minted entry");
 }
 
 auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
@@ -270,8 +266,8 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
             return lir::NamespaceCallableSymbol(
                 mir_->name, lir::SymbolPart::Name(r.name));
           },
-          [&](const mir::ReachedByStoragePhase& r) {
-            return StorageEntrySymbol(mir_->name, r.phase);
+          [&](const mir::ReachedByMintedEntry& r) {
+            return MintedEntrySymbol(mir_->name, r.entry);
           },
           [&](const mir::ReachedByPosition& r) {
             return lir::NamespaceCallableSymbol(
@@ -332,25 +328,22 @@ auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
   return identities;
 }
 
-auto UnitLowerer::LowerExternalUnitObject(const mir::ExternalUnitObject& object)
-    -> lir::ExternalUnitObject {
-  lir::ExternalUnitObject out{
-      .unit_name = object.unit_name,
-      .class_name = object.class_name,
-      .members = {}};
-  out.members.reserve(object.fields.size());
-  for (const mir::PromisedField& field : object.fields) {
-    out.members.push_back(lir::Member{.type = TranslateType(field.type)});
-  }
-  return out;
-}
-
 auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     -> diag::Result<lir::Class> {
   lir::Class out;
   out.name = cls.name;
   if (cls.base.has_value()) {
-    out.base = LowerBase(owner, *cls.base);
+    out.base = LowerBase(*cls.base);
+  }
+  // The three bodies are callables of the class that supplies them, so each is
+  // the function that callable lowers to.
+  if (cls.tree_program.has_value()) {
+    out.tree_program = lir::ObjectTreeProgram{
+        .resolve_state = MethodFunction(owner, cls.tree_program->resolve_state),
+        .initialize_state =
+            MethodFunction(owner, cls.tree_program->initialize_state),
+        .create_processes =
+            MethodFunction(owner, cls.tree_program->create_processes)};
   }
 
   for (const mir::FieldId id : cls.fields.Ids()) {
@@ -579,13 +572,6 @@ auto UnitLowerer::StructValueType(mir::StructId record) -> lir::TypeId {
       lir::Type{lir::StructType{.struct_id = StructDeclaration(record)}});
 }
 
-auto UnitLowerer::ExternalUnitObjectValueType(mir::ExternalUnitObjectId object)
-    -> lir::TypeId {
-  return out_.types.Intern(
-      lir::Type{lir::ExternalUnitObjectType{
-          .object = external_unit_object_identities_.Get(object)}});
-}
-
 auto UnitLowerer::ExternalClassValueType(
     const std::string& unit_name, const std::string& class_name) const
     -> lir::TypeId {
@@ -619,8 +605,7 @@ auto UnitLowerer::ProductOf(std::vector<lir::TypeId> components)
   return id;
 }
 
-auto UnitLowerer::LowerBase(mir::ClassId owner, const mir::ClassRef& base) const
-    -> lir::Base {
+auto UnitLowerer::LowerBase(const mir::ClassRef& base) const -> lir::Base {
   return std::visit(
       Overloaded{
           [this](const mir::IntraUnitClassRef& i) -> lir::Base {
@@ -631,15 +616,11 @@ auto UnitLowerer::LowerBase(mir::ClassId owner, const mir::ClassRef& base) const
             return lir::Base{lir::CrossUnitBase{
                 .unit_name = e.unit_name, .class_name = e.class_name}};
           },
-          [&](const mir::RuntimeClassRef& e) -> lir::Base {
-            // The three bodies are callables of the class that stands in the
-            // tree, so each is the function that callable lowers to. What the
-            // runtime library calls the class it provides is one target's
-            // spelling and stops here.
-            return lir::Base{lir::ObjectTreeBase{
-                .resolve_state = MethodFunction(owner, e.resolve_state),
-                .initialize_state = MethodFunction(owner, e.initialize_state),
-                .create_processes = MethodFunction(owner, e.create_processes)}};
+          // What the runtime library calls the class it provides is one
+          // target's spelling and stops here, so what crosses is that the base
+          // is the runtime's and nothing else.
+          [](const mir::RuntimeClassRef&) -> lir::Base {
+            return lir::Base{lir::ObjectTreeBase{}};
           }},
       base);
 }

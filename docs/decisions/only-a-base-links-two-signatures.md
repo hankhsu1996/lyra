@@ -24,7 +24,7 @@ experiments to find out whether it holds in general.
 
 ## Decisions
 
-### D1. A unit's declarations and its bodies are two files, and the program is compiled per file and linked
+### D1. A unit's declarations and its bodies are separate, and the program is compiled per translation unit and linked
 
 Each unit specialization emits the declarations a referrer compiles against and, separately, the
 translation unit realizing them. Every translation unit is compiled on its own and the results are
@@ -51,27 +51,41 @@ type:
 Everything needing a complete type -- constructing an instance, reaching a member, casting to the
 class -- is an operation rather than a declaration, and operations are in the other file.
 
-### D3. A base is the one name that needs a complete type, and a cycle of those has no form
+### D3. A base is the one name that needs a complete type, so a class is what a file holds
 
 A base must be complete where the derived class is declared (LRM 8.13, and 8.26 for an interface
 class), so a class extending a class of another unit is the single cross-unit name a declaration
-cannot reach through a pointer. The declarations name that unit's file, and only the files of units
-whose classes this one extends: the edge exists exactly where a base crosses and nowhere else.
+cannot reach through a pointer: the edge exists exactly where a base crosses and nowhere else.
 
-A cycle in those edges is the one thing this shape cannot carry. The front end accepts two units
-each extending a class the other declares, and no arrangement of includes satisfies it -- whichever
-file is entered first reaches a base whose declarations the second entry cannot supply, because that
-file is already open. Such a design is refused rather than emitted.
+**A file is read once, so a file is the unit an order can be given to.** What actually has to be
+ordered is one class against the class it rests on. Where a file holds several classes, an order
+over classes that exists can fail to have a corresponding order over files -- whichever file is
+entered first reaches a base the second entry cannot supply, because that file is already open. The
+circle is manufactured by the packaging; the design never had one.
 
-**Refusing it is not a unit's own judgement.** A unit sees the bases it extends and cannot see who
-extends back, which is the boundary working rather than failing. The cycle is a property of the
-declared edges between artifacts, so the party that assembles the program answers it, from the edges
-each unit declared and no unit's contents -- the same reading a linker does.
+So each class a unit promised is written in a file of its own, alongside one file for what the unit
+declares that rests on no class at all. The include graph is then the class graph, which is acyclic
+because a class may not be its own ancestor -- and the front end checks that, so this backend
+inherits the guarantee instead of restating it. A referrer names the file from the pair naming the
+class, which both sides have, so no list says where a class was put.
 
-It is not reachable today, and the reason is upstream: a unit whose own namespace extends a class of
-another unit aborts during lowering on a class no consumed promise describes, so the only cross-unit
-base that reaches emission is a design element's class extending a namespace's. Nothing names a
-design element's class from outside to extend it, so those edges cannot close a cycle.
+**This reverses an earlier reading, which refused such a design.** That reading was derived with the
+per-unit file taken as given, and concluded that "a cycle in those edges is the one thing this shape
+cannot carry" and that the party assembling the program should detect one and report it. Two things
+answer that rationale. The program is well-formed -- no class in such a circle is its own ancestor,
+and the standard's only ordering rule that could reach it is LRM 26.3, whose normative sentence
+requires a package's compilation to precede scopes in which the package is _imported_, while a
+qualified reference is resolved where it is written; LRM 3.12 paraphrases that rule more widely but
+cites it rather than adding one, and says in the same breath that a package is a design element and
+that the standard "does not normally specify requirements regarding the order of compilation for
+design elements". And `../architecture/north_star.md` inv 3 forbids rejecting a correct program
+because a sharing cannot be applied, which is what refusing it was. The per-unit file was never a
+requirement; it was the shape that happened to be there when the question was first asked.
+
+**Interleaving includes with class definitions inside one per-unit header is the cheaper-looking
+answer and does not work.** A valid order can require entering one file's later part after another
+file's later part, which the guard forbids, so it succeeds from one translation unit's entry point
+and fails from another's.
 
 ### D4. A symbol several units each define takes a merge rule that keeps an unreferenced definition
 
@@ -93,7 +107,8 @@ rule permitting the drop drops it from every artifact and the program fails to l
   library's forward-declaration header. It is the general answer where declarations may cycle.
   Rejected because D2 leaves only D3's construct needing one, and a base needs the contents rather
   than the name -- so the extra artifact would serve none of the cases and miss the one that is
-  left.
+  left. D3's own answer splits the contents instead, which is why it reaches the case this one
+  misses.
 
 - **A referrer naming the declaring unit's file for every external name.** Simpler to emit, and it
   is what the single-file shape did. Rejected because it makes one unit's declarations depend on
@@ -110,6 +125,11 @@ rule permitting the drop drops it from every artifact and the program fails to l
 - The declarations complete without any other unit's file except where a base crosses, so what a
   referrer compiles against is bounded by what the unit it references promised rather than by what
   that unit consumed.
+- A design whose units extend each other in a circle emits and runs. Nothing detects the circle,
+  because the shape has none to detect: the files are the size of the thing an order is over, and a
+  program that could be ordered at all can be ordered here.
+- Incremental reuse over the declarations is per class rather than per unit, which is finer than the
+  boundary this entry set out to draw and falls out of the same change.
 - Every build still compiles every unit: nothing records which artifact a change invalidated. The
   boundary makes incremental compilation available and does not perform it; compiling several units
   at once is spent, and [a-build-is-told-how-wide-to-run](a-build-is-told-how-wide-to-run.md)

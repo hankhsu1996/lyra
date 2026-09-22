@@ -274,8 +274,9 @@ struct ObjectType {
 };
 
 // An instance of the object another unit defines, named by this unit's record
-// of what that unit published about it. Only the published prefix of its
-// members is reachable through it.
+// of what that unit published about it. No member of it is reachable through
+// it: what that unit published is reached by performing a behavior of the
+// promise, so a step into its storage is a shape nothing states.
 struct ExternalUnitObjectType {
   ExternalUnitObjectId object;
 

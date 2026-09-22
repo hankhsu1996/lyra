@@ -19,6 +19,12 @@ namespace lyra::hir {
 struct TypePoolOwner {
   std::string_view unit_name;
   const ClassRegistry* classes;
+  // Whether a unit reading these types may name the classes this one declares.
+  // A design element's are types of its instance (LRM 6.22) and no signature
+  // carries them, so a handle to one leaves this pool as the handle that names
+  // no class -- which is the whole of what a reader can hold, since everything
+  // it could ask of such a class it asks the declaring scope by name.
+  bool classes_are_nameable = true;
 };
 
 // What one source pool's identities became in a destination pool. Held outside

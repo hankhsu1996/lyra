@@ -422,13 +422,21 @@ class UnitLowerer {
       -> hir::ExternalUnitObjectId;
 
   // This unit's record of what `unit_name` promised about its class
-  // `class_name`, taken from that unit's signature the first time a property or
-  // a behavior on it is reached. Nothing where that unit published no such
-  // class, which is what leaves such a reference with nothing to compile
-  // against.
+  // `class_name`, taken from that unit's signature the first time this unit
+  // reaches that class -- by extending it, by naming a property or a behavior
+  // on it. Nothing where that unit published no such class, which is what
+  // leaves such a reference with nothing to compile against.
   auto ExternalClassOf(
       const std::string& unit_name, const std::string& class_name)
       -> const hir::ExternalClass*;
+
+  // Reads the promise `ref` names, where what it names is another unit's class,
+  // and does nothing where it is this unit's own. A class extending or
+  // implementing one of another unit crosses the boundary in the declaration
+  // itself rather than in a body, and the promise is read wherever the crossing
+  // happens, because reading it is what puts the class within this unit's
+  // reach.
+  void ConsumePromiseOf(const hir::ClassRef& ref);
 
   // Whether `cls` has no name in this unit. A class a design element declares
   // is a type of each instance of that element rather than one type of the unit
@@ -1223,6 +1231,11 @@ class UnitLowerer {
   // its declaration takes its identity, and every one is filled before the unit
   // is handed on.
   std::vector<std::optional<hir::PublishedDecl>> published_members_;
+  // The identifier each published subroutine answers to, in the order this
+  // unit's signature published them. Taken where that signature is built, which
+  // is the one place that order is decided; a unit with no object publishes
+  // none and leaves this empty.
+  std::vector<std::string> published_callables_;
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   // The classification of every class this unit's lowering has resolved: the

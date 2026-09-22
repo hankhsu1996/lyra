@@ -117,6 +117,24 @@ subject is similar (a runtime mechanism with a handful of load-bearing decisions
 subject drive the structure: state the mental model up front, then walk the decisions, each with the
 reason and any rejected alternative that is non-obvious.
 
+### A Doc Owes a Diagram Where Its Subject Is a Graph
+
+Prose is linear, so a reader rebuilds it into whatever shape it describes. Where that shape is also
+linear -- a sequence of stages, a classification, a list of rules -- the rebuilding costs nothing
+and a diagram only says it twice. Where the shape is a **graph**, and which edges exist is the
+content, the rebuilding is work every reader repeats and gets wrong: what a reader needs is which
+arrows are there and which are not, and that is what prose states worst.
+
+So a doc whose subject is a set of things with edges among them owes a picture of those edges, and a
+doc whose subject is an order, a taxonomy, or a rule owes none. Where the doc already draws the same
+structure another way -- pseudocode of the same recursion, a table of the same relation -- it has
+paid the debt, and adding a second picture states one thing twice.
+
+A diagram is held to the rule below on what a picture carries: the edges, never a judgement about a
+box. It is also held to being true. A picture of a structure the code produces is checked against
+what the code produced, not against the prose beside it -- an edge left out reads as an edge that
+does not exist, which is the one error a reader cannot catch.
+
 ## Architecture vs Other Docs
 
 Architecture docs under `architecture/` are the source of truth for the system's target shape. The

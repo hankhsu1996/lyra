@@ -14,9 +14,9 @@ Both backends exist; the LLVM one is where the design is heading. The rules here
 backend. Where a backend takes a transitional shortcut, that is noted as non-conforming code, not as
 a relaxation of the contract.
 
-The artifact rules below are met. Each unit specialization is emitted as two files -- the
-declarations a referrer compiles against, and the translation unit realizing them -- and the program
-is formed by compiling each and linking the results, so no unit's bodies are read while another is
+The artifact rules below are met. Each unit specialization is emitted as the declarations a referrer
+compiles against and the translation unit realizing them, and the program is formed by compiling
+each translation unit and linking the results, so no unit's bodies are read while another is
 compiled. A build may compile several at once, and how many is stated by whoever invoked it rather
 than chosen by the build. What the boundary still does not buy is recompiling less than everything:
 nothing records which artifact a change invalidated, so every build compiles every unit, however
@@ -54,14 +54,22 @@ many of them it works on at a time.
 
 ## Core Invariants
 
-1. **Two artifacts per unit specialization; the program is linked, not aggregated.** A backend emits
-   each unit specialization as a signature artifact and a code artifact. The signature is derived
-   from the unit's declarations alone, so it completes without lowering a single body; the code
-   carries the bodies. No emitted artifact contains the bodies of more than one unit, and none
-   enumerates "all units." The program is formed by linking the per-unit artifacts. This is what
-   keeps compilation parallel and incremental (`north_star.md` inv 3, 4), and the split is what
-   makes it pipelined: a unit's referrers compile against its signature while its own code is still
-   being emitted.
+1. **A signature and a code artifact per unit specialization; the program is linked, not
+   aggregated.** A backend emits each unit specialization as a signature and a code artifact. The
+   signature is derived from the unit's declarations alone, so it completes without lowering a
+   single body; the code carries the bodies. No emitted artifact contains the bodies of more than
+   one unit, and none enumerates "all units." The program is formed by linking the per-unit
+   artifacts. This is what keeps compilation parallel and incremental (`north_star.md` inv 3, 4),
+   and the split is what makes it pipelined: a unit's referrers compile against its signature while
+   its own code is still being emitted.
+
+   **A signature is one artifact and may be more than one file.** Where the target reads
+   declarations in an order and reads each file once, the files have to be no coarser than what the
+   order is actually over -- otherwise a design whose declarations can be ordered has files that
+   cannot, and a correct program is refused for the shape of its artifacts, which `north_star.md`
+   inv 3 forbids. Which file a declaration is written in is the backend's own business and no
+   consumer of the signature reads it.
+
 2. **A unit's emission depends only on itself, the signatures of the units it references, and the
    SDK.** The inputs to emitting unit U are: U's own MIR; the signature of each unit U references;
    and the runtime SDK. U references a unit it instantiates, one it holds a handle to an instance
@@ -114,11 +122,20 @@ many of them it works on at a time.
    mechanism being coarse. A referrer that only reaches past a signature consumes nothing and is
    re-emitted by no change to the unit it reaches -- the price of a reference to something never
    published, paid as an elaboration failure instead of a compile error.
-8. **A published member's placement is derivable from the signature alone.** A signature member sits
-   in a fixed prefix of its object, ahead of everything the unit did not publish, so a referrer and
-   the declaring unit derive the same placement independently from the same signature, and a
-   declaration a unit never published cannot move one that it did. A backend realizes this rule with
-   whatever its target provides; it never re-decides it.
+
+   **A referrer consumes a part of a signature, not the unit whole.** What a unit publishes is its
+   namespace and each class it promised, and a reference reads one of those; recording which one is
+   what keeps a change to a class nobody read from reaching anybody. Recording the unit instead
+   would make every referrer of a package depend on every class in it, which is the mechanism being
+   coarse rather than the dependency being real.
+
+8. **What a unit published is reached by asking it, never by locating storage.** A member on a
+   signature is reached through a behavior the promise states, so a referrer counts no position and
+   its artifact carries nothing about where the member sits; the declaring unit answers with the
+   member's storage and every later access names what came back. A declaration a unit never
+   published therefore cannot move one that it did, and neither can the placement of one that it
+   did. A backend realizes this rule with whatever its target provides for dispatch; it never
+   re-decides it.
 
 9. **The design's own link-level unit is a unit, and invariant 2 binds it.** A design needs one
    artifact nothing in the source declares -- the one whose construct elaborates the design by
@@ -192,6 +209,60 @@ many of them it works on at a time.
 
 ## Notes / Examples
 
+### What a unit emits, and what reads what
+
+Two packages, where `high` declares a class extending one of `low`'s and a subroutine calling one of
+`low`'s. Every arrow is "reads first"; every box is one emitted file.
+
+```mermaid
+flowchart TB
+  subgraph LOW["unit low"]
+    LO["low.opening<br/>names, cells, bodies"]
+    LT["low.Thing<br/>one promised class"]
+    LU["low umbrella<br/>the name a referrer writes"]
+    LC["low code<br/>every body"]
+  end
+  subgraph HIGH["unit high"]
+    HO["high.opening"]
+    HD["high.Derived<br/>extends low::Thing"]
+    HU["high umbrella"]
+    HC["high code"]
+  end
+  LT --> LO
+  LU --> LO
+  LU --> LT
+  LC --> LU
+  HD --> HO
+  HD --> LT
+  HU --> HO
+  HU --> HD
+  HC --> HU
+  HC --> LT
+  HC --> LO
+```
+
+Three things the picture is for, none of which a sentence carries as well.
+
+**No arrow crosses into a unit's code file.** That is invariant 1: a referrer reads declarations and
+never bodies, so `low`'s bodies can still be changing while `high` compiles.
+
+**The arrows between units land on a part, never on a unit.** `high.Derived` reads `low.Thing`
+because that is the class it extends, and `high`'s code reads `low.opening` because that is where
+the subroutine it calls is declared. Neither reads `low`'s umbrella, so a second class of `low` that
+`high` never named is text `high` never sees.
+
+**A code file names every part its unit read, including the ones its own declarations already
+brought.** `high`'s code reads `low.Thing` although `high.Derived` did too. The repetition is the
+point: what a unit depends on is stated in one place a reader can open, rather than being whatever
+the declarations happened to pull in behind them.
+
+**The graph cannot close.** The only arrow a declaration can draw to another unit is the one a class
+draws to the class it rests on (invariant 1's second paragraph and D3 of
+`../decisions/only-a-base-links-two-signatures.md`), so the shape of the cross-unit edges is the
+shape of the class-extends graph -- which no program can make circular, since a class may not be its
+own ancestor. An umbrella is read by code files alone, so it starts arrows and never receives one
+from another unit.
+
 **Same-unit sibling reference.** `always_comb from_b = b.bx;` inside generate block `a` of `Top`.
 The route has two segments: `a -> Top` (typed; the parent edge whose target class lives in Top's
 artifact) and `Top -> b -> bx` (typed; sibling member access plus variable access, both in Top's
@@ -206,14 +277,14 @@ typed access against `c`'s signature and a renamed port fails where the parent c
 opaque, so the parent emits one SDK by-name lookup the SDK answers from `c`'s registered signals,
 and a renamed `x` fails at elaboration instead.
 
-**What each backend borrows to realize a declared cross-unit segment.** A referrer needs three
-things to reach a published member: the name resolved against the declaring unit's declaration, the
-member's placement, and the binding of its use to that unit's definition. A backend emitting to a
-language with its own name resolution borrows all three from that language's compiler, which is why
-including a declaration-only header is sufficient there. A backend emitting machine code borrows
-none of them and performs all three itself, resolving the name against the signature it consumed and
-deriving the placement from the prefix rule (inv 8). Both realize the same reference; only the party
-doing the work differs.
+**What each backend borrows to realize a declared cross-unit segment.** A referrer needs two things
+to reach a published member: which of the promise's behaviors answers with it, and the binding of
+that behavior to the declaring unit's implementation. The first is the position the signature
+published it at, which both sides count out of the same signature; the second is the dispatch the
+target provides. A backend emitting to a language with its own name resolution borrows both from
+that language's compiler, which is why including a declaration-only header is sufficient there. A
+backend emitting machine code reaches the same behavior through the position it occupies in the
+promise's dispatch table. Neither reaches the object's storage, which is what invariant 8 states.
 
 **Cross-unit upward reference.** `always_comb x = Top.g;`. The referrer does not instantiate `Top`.
 The entire route is opaque: the SDK climbs the runtime tree by canonical instance name to the scope

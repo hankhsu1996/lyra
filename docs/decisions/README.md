@@ -657,6 +657,15 @@ the detail lives in the entry itself.
   referrer records the object it compiled against in its own IR, in a registry separate from the
   classes it compiles, so no pass below the one that consumes a signature reads one. Carrying the
   position on the reference, handing signatures to a lower pass, and a by-name lookup are rejected.
+  **Its D1 and D5 are reversed by
+  [a-referrer-calls-rather-than-navigates](a-referrer-calls-rather-than-navigates.md)**, which
+  removes the position rather than deciding where it is computed.
+- [a-referrer-calls-rather-than-navigates](a-referrer-calls-rather-than-navigates.md) -- a unit
+  promises what it offers and never how it is laid out: its promise is a class with no storage and
+  one behavior per published member, subroutine and entry, which the unit's object realizes, so a
+  referrer calls and never navigates and what a unit kept to itself cannot move what a referrer
+  compiles against. A promise carrying the published storage, an interface class, a per-member
+  offset, a by-name lookup, and free entries over an opaque handle are rejected.
 - [publishing-part-of-a-member](publishing-part-of-a-member.md) -- a connection point names a
   projection of a published member, a folded value, or nothing; a signature carries a closed
   selector path and never an expression, an interface publishes its modports, and the referrer

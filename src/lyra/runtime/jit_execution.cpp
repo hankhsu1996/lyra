@@ -638,6 +638,7 @@ using lyra::runtime::BehaviorAt;
 using lyra::runtime::BehaviorCoordinate;
 using lyra::runtime::CancellationTarget;
 using lyra::runtime::ChannelCancellation;
+using lyra::runtime::ClassValue;
 using lyra::runtime::ClosureDefinition;
 using lyra::runtime::ClosureValue;
 using lyra::runtime::Coroutine;
@@ -662,7 +663,6 @@ using lyra::runtime::ForkWaitFirst;
 using lyra::runtime::GcNew;
 using lyra::runtime::GcObject;
 using lyra::runtime::GeneratedCallScope;
-using lyra::runtime::GeneratedScope;
 using lyra::runtime::Held;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::LeaveCancellationTarget;
@@ -1526,8 +1526,8 @@ auto lyra_rt_make_scope(
     -> void* {
   const auto* def = static_cast<const ScopeDefinition*>(definition);
   auto* identity = static_cast<HierarchySegment*>(segment);
-  auto instance = std::make_unique<GeneratedScope>(
-      static_cast<Scope*>(parent), *identity, def);
+  auto instance =
+      std::make_unique<Scope>(static_cast<Scope*>(parent), *identity, def);
   {
     GeneratedCallScope scope;
     def->construct(
@@ -1565,8 +1565,10 @@ auto lyra_rt_find_child(void* self, const void* name, LyraSpan indices)
       static_cast<const char*>(name), ValuesOf<PackedArray>(indices));
 }
 
-auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void* {
-  return static_cast<GeneratedScope*>(self)->MemberAddress(index);
+auto lyra_rt_member_addr(
+    void* value, const void* declared_by, std::uint32_t slot) -> void* {
+  return static_cast<ClassValue*>(value)->Member(
+      static_cast<const ObjectDefinition*>(declared_by), slot);
 }
 
 auto lyra_rt_sequence_make(LyraSpan handles) -> void* {
@@ -1600,24 +1602,11 @@ auto lyra_rt_object_deref(void* handle) -> void* {
   return object.Share().get();
 }
 
-// A name counted out of a declaration this artifact could read and one settled
-// while the design elaborated ask the object the same question and differ only
-// in where the pair came from, so both arrive at the same answer. What varies
-// between them is the shape the pair travels in, which is why there are two
-// entries and one operation.
-auto lyra_rt_object_member_addr(
-    void* object, const void* declared_by, std::uint32_t slot) -> void* {
-  const PropertyCoordinate at{
-      static_cast<const ObjectDefinition*>(declared_by), slot};
-  return PropertyAt(static_cast<const GcObject*>(object), &at);
-}
-
-auto lyra_rt_object_method(
-    void* object, const void* introduced_by, std::uint32_t ordinal)
+auto lyra_rt_method(
+    void* value, const void* introduced_by, std::uint32_t ordinal)
     -> LyraMethodEntry {
-  const BehaviorCoordinate at{
-      static_cast<const ObjectDefinition*>(introduced_by), ordinal};
-  return BehaviorAt(static_cast<const GcObject*>(object), &at);
+  return static_cast<const ClassValue*>(value)->Method(
+      static_cast<const ObjectDefinition*>(introduced_by), ordinal);
 }
 
 auto lyra_rt_class_find_property(const void* definition, const void* name)

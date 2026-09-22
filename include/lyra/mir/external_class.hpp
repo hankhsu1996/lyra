@@ -19,16 +19,24 @@ namespace lyra::mir {
 // properties are a prefix of the class's own storage, so a slot counted here is
 // the slot the declaring unit gave.
 //
+// What a unit promised of its own object is such a class too, and lists no
+// properties, because what it published is reached by performing a behavior
+// rather than by a slot. Nothing about the name tells the two apart and nothing
+// needs to: what differs is what each extends.
+//
 // This unit compiles none of it, which is why it sits apart from the classes
 // this unit declares: a walk that emits those cannot reach one, and so cannot
 // emit a second definition of a symbol another unit already defines.
 struct ExternalClass {
   std::string unit_name;
   std::string class_name;
-  // The class it extends, as its own unit promised, named by the same pair and
-  // absent where it extends nothing. What it inherited is not listed above:
-  // reaching an inherited property is a walk along this chain.
-  std::optional<CrossUnitClassRef> base;
+  // The class it extends, as its own unit promised, absent where it extends
+  // nothing. What it inherited is not listed above: reaching an inherited
+  // property is a walk along this chain, and so is asking whether values of it
+  // stand in the declaring unit's object tree -- a promise extends the
+  // runtime's own class, which is what puts them there, and that is the same
+  // answer read the same way as for a class this unit declares.
+  std::optional<ClassRef> base;
   // Whether values of it answer behaviors through a lineage at all. A class
   // commits to an interface rather than extending it, so a behavior an
   // interface class states sits on no lineage and has no position counted

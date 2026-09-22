@@ -41,9 +41,9 @@ This workstream reasons from these architecture docs and does not restate them:
   design elaborates.
 - `../decisions/interface-port-binding.md` -- what the port's declared type names, what its member
   holds, and why the interface a port carries is part of the module's specialization identity.
-- `../decisions/published-member-placement.md` -- a published member sits at the position its
-  signature states, derived independently by the declaring unit and by every referrer, so how many
-  positions one member occupies is settled there rather than here.
+- `../decisions/a-referrer-calls-rather-than-navigates.md` -- a published member is reached by
+  performing what the promise states for it, counted out of the order the signature published, so
+  how many of those positions one member occupies is settled there rather than here.
 - `../decisions/publishing-part-of-a-member.md` -- what a connection point names when it is not a
   whole declaration, why an interface publishes its views, and why a signature carries a closed
   descent rather than an expression.

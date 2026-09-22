@@ -751,15 +751,15 @@ enough to warrant its own focused review.
         endpoint-capability decisions (`../decisions/net-driver-resolution.md`,
         `../decisions/reference-as-data-type.md`).
 
-- [x] R54 -- Runtime `RunDesignHost` consolidates every invariant host-boundary concern (argv
-      parsing, plusarg collection, engine construction, `BindDesign`, exception mapping). The
-      emitted host is a design-supplied `$root` builder plus a one-line `main` hand-off, so new
-      host-boundary concepts (seed CLI flags, a VCD sink path, a simulation deadline, verbosity,
-      signal handling) grow runtime C++, not the emitter's string surface. The builder body itself
-      remains the C++ backend's allocation form (composed by the emitter from the root class name
-      and hierarchy-segment type rather than rendered from a single MIR/LIR root-construct
-      artifact); unifying it with the JIT's allocation shape waits for instance-representation
-      unification.
+- [x] R54 -- One runtime entry consolidates every invariant host-boundary concern (argv parsing,
+      plusarg collection, engine construction, binding the design, exception mapping), so a new
+      host-boundary concept (seed CLI flags, a waveform sink, a simulation deadline, verbosity,
+      signal handling) grows runtime C++ rather than the emitter's string surface. A design's whole
+      contribution to the emitted host is two names: the entry its root unit publishes for making an
+      object, and the label that root carries. Nothing about the allocation is composed by the
+      emitter any more -- the root is asked for the way every referrer asks for an instance -- so
+      what is left of the shell is a one-line hand-off, and what still keeps it from being ordinary
+      generated behaviour is tracked in `emit-readability.md`.
 
 - [x] R55 -- A receiver-less associated callable names its own owner. An instance method's call
       target recovers its declaring class from its receiver; a type-associated callable -- a DPI-C
@@ -2020,6 +2020,86 @@ enough to warrant its own focused review.
       is where the distinction lives, since it is a fact about the declaration and the thing carried
       to the callee is an address. Not blocked. Found by reading the two targets' answers side by
       side and noticing they disagreed.
+
+- [ ] R123 -- The record fixing how generated behavior reaches the runtime
+      (`../decisions/generated-behavior-boundary.md`) sketches that boundary with a shape the
+      runtime no longer has: a per-unit definition record held apart from a scope's, an instance
+      kind distinct from a scope, and user dispatch as a table still to come. All three moved when a
+      unit's object became a promise and a realization -- one definition record, carrying the
+      dispatch table, read off whatever kind of value holds the class. The record's principle is
+      intact and only its shape sketch is stale, which is the worst combination: it reads as
+      current, and someone building against it builds against a boundary that is not there.
+
+      Target: the sketch says what the runtime holds, or the record says outright that it fixes the
+      principle and not the shape. Not blocked. Found while sweeping what a unit promises, which is
+      what merged the two definition records.
+
+- [x] R124 -- A value of a class is one shape, and nothing above the runtime asks which kind of
+      value it is. That shape holds the class's record and the storage that class asks a value of it
+      to own; an instance in the design hierarchy and an object the program built are that shape
+      plus what differs between them -- the lifecycle each joins and the reference that reaches it.
+      So every entry that acts on a value through its class takes the value and nothing about its
+      kind, and the entries are one family rather than one family per kind.
+
+      The two had been apart, each holding the record at an offset of its own in types sharing no
+      base, which made every such entry exist twice and obliged whoever emitted a call to work out
+      which to name first. They differed by less than that suggested: reaching a member was the only
+      entry that genuinely read differently, and only because a hierarchy instance was allowed to
+      skip naming the class declaring the member -- which the general form already covers by
+      starting that class's storage at zero. The narrow entry was the general one with an
+      optimization folded in, and folding it in was what obliged every caller to know what it held.
+
+      The shared shape has to be where a value's address points, not merely somewhere inside it: an
+      entry is handed an untyped address and reads the class off it, and a kind that declares a
+      virtual no type below it declares takes that address for its own table pointer. So the shape
+      extends the base an object already carries, that base is where the destructor is declared
+      virtual, and every kind extends the shape by single inheritance -- which puts all of those
+      addresses at one place and leaves what class a value is stated once rather than once per kind.
+      Declaring it lower instead compiles, and passes everything except what builds emitted text:
+      the kinds a target derives from the shape are written by this compiler rather than found in
+      its own sources, so a search for them inside the tree comes back empty and says nothing.
+
+- [ ] R125 -- A referrer reads the part of a unit's signature it named, so editing a class it never
+      named moves nothing it compiles. What it still reads is the unit's name set: every class the
+      unit promised is announced where the unit's namespace is declared, so adding or removing a
+      class re-emits every referrer of that unit even where none of them could name the new one.
+
+      That announcement exists so a declaration can reach a sibling class through a reference
+      without the sibling being complete. Which siblings a given class needs announced is a property
+      of that class, so the announcement could sit with the class that needs it rather than with the
+      unit -- after which a unit's name set stops being something a referrer reads at all. What has
+      to be settled first is what a class names by reference that is neither its own unit's nor
+      already reached through a promise, because that is the set each class would announce, and
+      nothing enumerates it today.
+
+- [ ] R126 -- A class answers where a property lives and which body fills a dispatch position in one
+      of two ways: by walking what it extends and asking the target that laid the value out, or by
+      reading the flat schema a runtime-owned realization built for it. Which one a class uses is
+      installed when that realization runs. A class whose values stand in the design hierarchy is
+      not realized that way -- the declaring unit states its definition outright -- so it keeps the
+      walking answers while its values hold runtime-owned storage the walk cannot reach.
+
+      Nothing asks it that way today, because a value standing in the hierarchy is reached as its
+      own address and the entry for that reads the flat schema without consulting the class at all.
+      So there are two statements of one answer that agree everywhere anyone currently looks, which
+      is the shape that stays wrong until someone looks somewhere else. Target: a class states one
+      answer whoever built it, and every entry asks the class rather than reading past it -- which
+      also settles whether the indirection belongs on the member-access path at all, since today it
+      is avoided by not asking. Not blocked. Found while merging the two into one value of a class.
+
+- [ ] R127 -- A design element's signature lists the classes it declares, under a field whose own
+      definition is the classes another unit may name. Another unit may name none of them: a class a
+      design element declares is a type of that element's instance (LRM 6.22), which is why a
+      reference to one is reached by asking the declaring scope rather than by naming the class.
+
+      What keeps the listing from doing harm is that it carries no members, so every reader that
+      looks for one falls through to asking by name -- an emptiness doing the work a statement
+      should. A reader that asked a different question of the same listing would get an answer that
+      looks authoritative and means nothing, which is what a published member's type did until its
+      class was taken off it at publication. Target: what a unit publishes says which classes it
+      offers, and a design element offers none, so nothing downstream reads an entry to find it
+      hollow. Not blocked. Found while a referrer's artifact asked to read a class that has no
+      readable form.
 
 ## Out of Scope
 

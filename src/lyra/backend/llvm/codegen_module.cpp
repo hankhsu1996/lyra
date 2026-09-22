@@ -31,7 +31,13 @@ CodeGenModule::CodeGenModule(const lir::CompilationUnit& unit)
       functions_(unit.functions.size()) {
   for (const lir::ClassId id : unit.classes.Ids()) {
     const lir::Class& cls = unit.classes.Get(id);
-    if (lir::ObjectTreeBaseOf(cls) != nullptr) {
+    // A class the runtime drives is the one a construction reaches holding a
+    // definition and nothing else, so its construction is what answers to the
+    // shared prototype. A class standing in the tree that supplies no way to
+    // run is what a unit promised of its object: nothing constructs one through
+    // a definition, and what extends it enters it by name with its own
+    // arguments already in hand.
+    if (cls.tree_program.has_value()) {
       scope_constructions_.insert(cls.constructor);
     }
   }

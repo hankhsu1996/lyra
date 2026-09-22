@@ -17,7 +17,9 @@
 
 namespace lyra::runtime {
 
-auto RunDesignHost(int argc, char** argv, const RootBuilder& builder) -> int {
+auto RunDesignRoot(
+    int argc, char** argv, std::string_view root_name, const RootFactory& make)
+    -> int {
   // A built program's own argv leads with its name, which is not one of the
   // simulation's arguments.
   const std::span<char*> args{argv, static_cast<std::size_t>(argc)};
@@ -34,7 +36,9 @@ auto RunDesignHost(int argc, char** argv, const RootBuilder& builder) -> int {
   // leave and no final procedure to reach, so it is reported and the run never
   // starts.
   try {
-    runtime.BindDesign(std::make_unique<Design>(builder()));
+    runtime.BindDesign(
+        std::make_unique<Design>(
+            make(nullptr, HierarchySegment{std::string{root_name}, {}})));
   } catch (const std::exception&) {
     ReportRaisedError(runtime, std::current_exception());
     return EXIT_FAILURE;

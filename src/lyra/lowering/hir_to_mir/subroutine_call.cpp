@@ -101,8 +101,12 @@ struct NamedCallee {
 // The callee is a slot, and which implementation runs is the receiver's dynamic
 // type to decide (LRM 8.20). The receiver rides the callee rather than the
 // argument list, so nothing leads the arguments the source wrote.
+// The receiver is named the way every origin binding one is, because which of
+// them a dispatch is entered on differs: a method the source wrote names the
+// object it was written on, and a subroutine another unit published names the
+// endpoint elaboration sealed for the instance it stands on.
 struct DispatchedCallee {
-  hir::MethodReceiver receiver;
+  AmbientHandle receiver;
   mir::VirtualSlot slot;
 };
 
@@ -239,35 +243,43 @@ auto ReadMethodCallee(
                         })}};
           },
           [&](const hir::ExternalMethodCallee& ext) -> MethodCalleeFacts {
-            MethodCalleeFacts facts{
+            using Target = std::variant<NamedTarget, SettledTarget>;
+            const auto named =
+                [&](std::optional<mir::VirtualSlot> slot) -> Target {
+              return NamedTarget{
+                  .direct =
+                      mir::Direct{
+                          .target = unit_lowerer.MakeExternalMethodTarget(
+                              ext.target)},
+                  .slot = std::move(slot)};
+            };
+            // Which way the call reaches the body is settled before anything
+            // takes a name off the callee. A class that published nothing left
+            // no name to reach a body by, so the whole call goes through what
+            // the design settled -- and taking the name anyway would say this
+            // unit compiles against a promise there is none of.
+            Target target =
+                ext.slot.has_value()
+                    ? std::visit(
+                          Overloaded{
+                              [&](const hir::ExternalDispatchSlot& published)
+                                  -> Target {
+                                return named(
+                                    mir::VirtualSlot{
+                                        unit_lowerer.MakeExternalVirtualSlot(
+                                            published)});
+                              },
+                              [&](const hir::UnpublishedBehaviorSlot& settled)
+                                  -> Target {
+                                return SettledTarget{
+                                    .at = settled, .interface = ext.interface};
+                              }},
+                          *ext.slot)
+                    : named(std::nullopt);
+            return MethodCalleeFacts{
                 .kind = ext.interface.kind,
                 .formals = CalleeFormalsOf(unit_lowerer, ext.interface),
-                .target = NamedTarget{
-                    .direct =
-                        mir::Direct{
-                            .target = unit_lowerer.MakeExternalMethodTarget(
-                                ext.target)},
-                    .slot = std::nullopt}};
-            if (!ext.slot.has_value()) {
-              return facts;
-            }
-            std::visit(
-                Overloaded{
-                    [&](const hir::ExternalDispatchSlot& published) {
-                      std::get<NamedTarget>(facts.target).slot =
-                          mir::VirtualSlot{
-                              unit_lowerer.MakeExternalVirtualSlot(published)};
-                    },
-                    // A class that published nothing left no name to reach a
-                    // body by, so what this unit read off the callee does not
-                    // apply: the whole call goes through what the design
-                    // settled.
-                    [&](const hir::UnpublishedBehaviorSlot& settled) {
-                      facts.target = SettledTarget{
-                          .at = settled, .interface = ext.interface};
-                    }},
-                *ext.slot);
-            return facts;
+                .target = std::move(target)};
           },
           [&](const hir::SettledMethodCallee& settled) -> MethodCalleeFacts {
             return MethodCalleeFacts{
@@ -318,7 +330,8 @@ auto PlanClassMethodCall(
           [&](NamedTarget& named) -> CalleeForm {
             if (receiver.has_value() && !through_super && named.slot) {
               return DispatchedCallee{
-                  .receiver = *receiver, .slot = *std::move(named.slot)};
+                  .receiver = AmbientHandle{CalledObject{.source = *receiver}},
+                  .slot = *std::move(named.slot)};
             }
             return NamedCallee{
                 .callee = std::move(named.direct),
@@ -406,13 +419,12 @@ auto PlanSubroutineCall(
                     hir::ExternalCalleeInterface{
                         .kind = promised.kind, .params = promised.params}),
                 result_type);
-            plan.form = NamedCallee{
-                .callee =
-                    mir::Direct{
-                        .target = unit_lowerer.MakeExternalUnitMethodTarget(
-                            ref.object, ref.callable)},
-                .handle =
-                    AmbientHandle{SealedObject{.reference = ref.receiver}}};
+            plan.form = DispatchedCallee{
+                .receiver =
+                    AmbientHandle{SealedObject{.reference = ref.receiver}},
+                .slot =
+                    mir::VirtualSlot{unit_lowerer.MakeExternalUnitMethodSlot(
+                        ref.object, ref.callable)}};
             return plan;
           },
           [&](const hir::OpaqueUnitMethodRef& ref) -> Planned {
@@ -685,7 +697,7 @@ auto EmitSubroutineCall(
           [&](const DispatchedCallee& dispatched)
               -> diag::Result<ResolvedCallee> {
             auto receiver_or =
-                BuildReceiverPointer(lowerer, frame, dispatched.receiver);
+                BuildAmbientHandle(lowerer, frame, dispatched.receiver);
             if (!receiver_or) {
               return std::unexpected(std::move(receiver_or.error()));
             }

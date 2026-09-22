@@ -16,66 +16,17 @@ namespace lyra::lir {
 
 namespace {
 
-// The class the declaration `type` names extends, or nothing where the lineage
-// ends. One walk covers both sides of the unit boundary: a class this unit
-// compiles states its base outright, and one another unit declares states it on
-// the promise this unit read.
-auto ExtendedBy(const CompilationUnit& unit, TypeId type)
-    -> std::optional<TypeId> {
-  const std::optional<TypeDeclaration> declaration =
-      unit.types.Get(type).Declaration();
-  if (!declaration) {
-    return std::nullopt;
-  }
-  return std::visit(
-      Overloaded{
-          [&](const ObjectType& object) -> std::optional<TypeId> {
-            const std::optional<Base>& base =
-                unit.classes.Get(object.class_id).base;
-            return base.has_value() ? BaseType(unit, *base) : std::nullopt;
-          },
-          [&](const CrossUnitClassType& cls) -> std::optional<TypeId> {
-            const ExternalClass* record =
-                FindExternalClass(unit, cls.unit_name, cls.class_name);
-            if (record == nullptr || !record->base.has_value()) {
-              return std::nullopt;
-            }
-            return BaseType(unit, Base{*record->base});
-          },
-          // A lineage is a class's. An instance of another unit's design
-          // element reaches only what that unit published about it, and the
-          // two a lowering introduces extend nothing.
-          [](const ExternalUnitObjectType&) -> std::optional<TypeId> {
-            return std::nullopt;
-          },
-          [](const ClosureType&) -> std::optional<TypeId> {
-            return std::nullopt;
-          },
-          [](const StructType&) -> std::optional<TypeId> {
-            return std::nullopt;
-          }},
-      *declaration);
-}
-
-// The type the member `stated` names, reached on a place that has arrived at
-// `carrier`. Every failure here is this artifact disagreeing with itself: the
-// step names a declaration, so a step naming one the place has not reached, or
-// a slot that declaration does not have, could only have been built wrongly.
+// The type the member `stated` names. The step says which declaration the
+// member belongs to, and the front end settled that the value it runs on
+// carries that declaration's members when it resolved the name (LRM 8.14), so
+// the only thing left to disagree with itself here is the slot.
 auto StatedMemberType(
-    const CompilationUnit& unit, TypeId carrier, const StatedMemberRef& member)
-    -> TypeId {
+    const CompilationUnit& unit, const StatedMemberRef& member) -> TypeId {
   const std::optional<MemberList> declared =
       DeclaredMembers(unit, member.declared_by);
   if (!declared) {
     throw InternalError(
         "lir: member projection names a declaration that declares no members");
-  }
-  if (!CarriesMembersOf(unit, carrier, member.declared_by)) {
-    throw InternalError(
-        std::format(
-            "lir: member step names '{}', which the place has not reached a "
-            "carrier of",
-            declared->owner));
   }
   if (member.slot.value >= declared->members.size()) {
     throw InternalError(
@@ -87,17 +38,6 @@ auto StatedMemberType(
 }
 
 }  // namespace
-
-auto CarriesMembersOf(
-    const CompilationUnit& unit, TypeId type, TypeId declaration) -> bool {
-  for (std::optional<TypeId> at = type; at.has_value();
-       at = ExtendedBy(unit, *at)) {
-    if (*at == declaration) {
-      return true;
-    }
-  }
-  return false;
-}
 
 auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
     -> std::optional<MemberList> {
@@ -118,12 +58,11 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
                 .owner = cls.name.has_value() ? std::string_view{*cls.name}
                                               : "a scope of the hierarchy"};
           },
-          [&](const ExternalUnitObjectType& external)
-              -> std::optional<MemberList> {
-            const ExternalUnitObject& object =
-                unit.external_unit_objects.Get(external.object);
-            return MemberList{
-                .members = object.members, .owner = object.class_name};
+          // What another unit published of its object is reached by performing
+          // a behavior of the promise, so no step names a member of one and
+          // this side holds no list to name one out of.
+          [](const ExternalUnitObjectType&) -> std::optional<MemberList> {
+            return std::nullopt;
           },
           [&](const CrossUnitClassType& cls) -> std::optional<MemberList> {
             const ExternalClass* record =
@@ -182,7 +121,7 @@ auto PlaceType(
               current = *target;
             },
             [&](const MemberProjection& projection) {
-              current = StatedMemberType(unit, current, projection.member);
+              current = StatedMemberType(unit, projection.member);
             }},
         step);
   }

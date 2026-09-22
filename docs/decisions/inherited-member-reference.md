@@ -54,8 +54,8 @@ the IR carries: LIR states the pair and nothing else.
   count its base's `local` members (8.18) and cannot see another unit's unpublished members at all,
   so the position it would compute is not knowable where it would have to be computed. It also makes
   a base's private addition move every derived member, which is the fragile base class problem and
-  contradicts the reason `published-member-placement.md` fixes a published member's position ahead
-  of every unpublished one.
+  contradicts the reason `reaching-past-a-published-class.md` fixes what a class publishes ahead of
+  everything it does not.
 
 - **A base subobject as a step in the place vocabulary.** Nothing in SystemVerilog names a base
   subobject as a value: `super` is not an expression, `super.new` is a call, and `$cast` yields a

@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <expected>
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -172,9 +171,9 @@ class UnitLowerer {
   [[nodiscard]] auto UnitObjectNamed(const std::string& unit_name) const
       -> mir::Type;
 
-  // Where a published member sits in the object this unit recorded. The HIR and
-  // MIR records list the same members in the same order, so the position
-  // crosses unchanged.
+  // Which of a promise's behaviors answers with a published member, in the
+  // record this unit kept. The HIR and MIR records list the same members in the
+  // same order, so the position crosses unchanged.
   [[nodiscard]] static auto TranslatePublishedMember(hir::PublishedMemberId id)
       -> mir::FieldId {
     return mir::FieldId{id.value};
@@ -213,13 +212,16 @@ class UnitLowerer {
   }
 
   // Cross-unit reference builders. Each converts a HIR-level cross-unit
-  // reference into its MIR peer AND records the referenced unit's name on
-  // the unit's cross-unit dependency list in one operation, so a caller
-  // never touches the raw dependency-list mutators. The class-side builders
-  // below record on the class dependency list; the trailing callable
-  // builder records on the callable dependency list, since a package
-  // callable and a class member of another unit are two independent
-  // include axes for a backend.
+  // reference into its MIR peer AND records that this unit consumed the named
+  // unit's signature, in one operation, so a caller never records the
+  // dependency for itself and cannot build a reference that leaves one
+  // unrecorded. Which reference it was is not kept, because what a unit depends
+  // on another for is that it read the signature.
+  //
+  // The type is one of them, which is easy to read as too much: building a
+  // value of a class names that class outright, and the type is the whole of
+  // what a construction states it by, so a unit holding the type without ever
+  // naming the class is indistinguishable from one about to build one.
   auto MakeExternalClassPointee(const hir::ExternalClassRef& ref)
       -> mir::TypeId;
 
@@ -233,23 +235,27 @@ class UnitLowerer {
   // variant itself.
   auto TranslateClassRef(const hir::ClassRef& ref) -> mir::ClassRef;
 
-  // The same, for the class a class extends, which is the one class reference
-  // whose promise this unit's own lowering reads: a construction enters the
-  // base's ahead of its own, and whether a forward the language supplies can
-  // enter that construction is a property only the base's promise states.
-  auto TranslateBaseClassRef(const hir::ClassRef& ref) -> mir::ClassRef;
-
   auto MakeCrossUnitClassFieldTarget(
       const hir::ExternalClassPropertyTarget& target)
       -> mir::CrossUnitClassFieldTarget;
 
-  // Takes this unit's record of what another unit promised about one of its
-  // classes into MIR, once per class reached. Every reference that reads the
-  // promise runs through here -- a property, a behavior, and the class a class
-  // extends -- so such a reference and the record it reads cannot come apart.
-  // A reference that merely names the class reads nothing and records nothing.
-  auto RecordExternalClass(
-      const std::string& unit_name, const std::string& class_name) -> void;
+  // Takes one promise this unit read of another unit's class into MIR. Every
+  // promise the unit read is taken, before anything names one: a place reaching
+  // a member of a class an ancestor declares walks the lineage over these
+  // records, so a class the walk only passes through has to be among them, and
+  // which classes those are is not a question any one reference can answer.
+  //
+  // Which of them this unit depends on is a narrower set and is not decided
+  // here: a promise is read as soon as the elaborating design asks anything of
+  // it, so what is taken includes classes this unit names nowhere.
+  auto TakeClassPromise(const hir::ExternalClass& published) -> void;
+
+  // Takes this unit's record of what another unit promised about its object
+  // into MIR, once per unit reached. A promise is a class of that unit like any
+  // other, so what a reference to one reads is the same record; it is taken
+  // where the promise is consumed rather than where a member is reached,
+  // because consuming it is what makes the unit a dependency.
+  auto RecordPromisedClass(const hir::ExternalUnitObject& promised) -> void;
 
   // Convenience that dispatches a HIR class property reference to its MIR
   // `FieldRef` peer: the intra-unit arm translates the owner class and the
@@ -286,12 +292,13 @@ class UnitLowerer {
       -> mir::DirectTarget;
 
   // A callable another unit published on the object its instances are (LRM
-  // 25.7), named by that unit, that object's class, and the callable's own
-  // name -- all three read off what the unit promised. Reaching the object is
+  // 25.7), as one of the behaviors that unit promised of it: the promise is
+  // what a referrer holds, so the call reaches the implementation the object
+  // turns out to have rather than one named outright. Reaching the object is
   // already the dependency, so nothing further is recorded here.
-  [[nodiscard]] auto MakeExternalUnitMethodTarget(
+  [[nodiscard]] auto MakeExternalUnitMethodSlot(
       hir::ExternalUnitObjectId object, hir::PublishedCallableId callable) const
-      -> mir::ExternalUnitClassMethodTarget;
+      -> mir::ExternalVirtualSlot;
 
   // Mints a fresh owner-site id for a synthesized binding origin -- a carrier a
   // lowering creates that has no source-level variable (an activation handle, a
