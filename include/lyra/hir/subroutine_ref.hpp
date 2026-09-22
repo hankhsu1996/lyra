@@ -128,6 +128,8 @@ struct ExternalMethodCallee {
 struct SettledMethodCallee {
   UnpublishedBehaviorBody body;
   ExternalCalleeInterface interface;
+
+  auto operator==(const SettledMethodCallee&) const -> bool = default;
 };
 
 // The method a call reaches. Intra-unit it is a slot in a class's own method

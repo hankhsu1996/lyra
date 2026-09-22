@@ -1930,18 +1930,16 @@ enough to warrant its own focused review.
       the count, and the count really does decide how much is kept, and the conclusion still did
       not follow.
 
-      A declaration's packed width stays a class fact, so a repeated structure whose packed
-      dimension is written from its own index is compiled once per index. Today's measurement says
-      the opposite -- every width shares one storage type and travels in a descriptor -- but that
-      one storage type was chosen together with what pays for it: the operations are inline, and the
-      cost is bounded by a compiler that sees the declared width as a constant where the object is
-      built. Supplying the width there instead does not defer that fast path, it removes what the
-      fast path folds against. Two earlier reasons here are withdrawn as false: the front end does
-      keep the dimension's expressions and hands them back on request, and how rare the construct is
-      decides nothing, since the answer is not a cost-benefit one. What would reverse this is a
-      profile showing that fast path does not pay, not a design found sitting on it.
+      A declared width sits in the type, so two widths are two types and a repeated structure whose
+      packed dimension is written from its own index is compiled once per index. That is a
+      consequence of where the width lives rather than a position this entry took, and where it
+      should live belongs to whoever owns the value representation; the decision record says so and
+      names the entry that settles it. Three reasons this entry once gave for treating it as a
+      position of its own are withdrawn -- a constant-width fast path that no longer exists, a claim
+      that the front end discards the dimension's expressions, and an appeal to how rare the
+      construct is.
 
-      A container's declared extent stays a class fact for the same reason, and both of them -- a
+      A container's declared extent sits in the type the same way, and both of them -- a
       fixed unpacked extent and a queue's declared bound -- are ordinary members of that answer
       rather than positions to move. What they turned up instead was a defect in how one body is
       decided, which is R117's subject and is recorded there.

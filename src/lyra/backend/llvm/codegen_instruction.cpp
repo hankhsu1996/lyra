@@ -1804,7 +1804,7 @@ auto CodeGenFunction::ConstructionOf(
                 return Construction{
                     .symbol = RuntimeSymbol(RuntimeOp::kMakePromotedScope),
                     .operand_form =
-                        ScopeOperandsAfterDefinition{.defined = p.pointee}};
+                        OperandsAfterDefinition{.defined = p.pointee}};
               case lir::PointerOwnership::kBorrowed:
                 return no_construct();
             }

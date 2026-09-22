@@ -2201,7 +2201,6 @@ auto InstallGeneratedDefinition(
        definition.FunctionRef(cls, init_abi),
        definition.FunctionRef(cls, create_abi), export_table, subroutine_table,
        class_table});
-  const mir::AbiAdapterId construct_abi = empty_adapter();
   def.value = definition.Construct(
       mir::RuntimeLibraryKind::kScopeDefinition, {program});
   def.type = definition.TypeOf(def.value);

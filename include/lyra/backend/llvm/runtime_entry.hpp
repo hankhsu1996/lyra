@@ -33,7 +33,6 @@ inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
 inline constexpr std::string_view kDepartureTypeSymbol =
     "lyra_rt_departure_type_info";
 
-
 // How a scope of the design hierarchy is built: one prototype for every class,
 // because what reaches a construction holds the class's definition and not its
 // name. It opens with what every construction shares -- the scope itself, the

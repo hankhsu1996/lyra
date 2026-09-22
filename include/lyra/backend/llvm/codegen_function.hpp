@@ -50,7 +50,6 @@ class CodeGenFunction {
     std::vector<llvm::Value*> args;
   };
 
-
   // The LLVM argument each of the body's parameters reads. They correspond one
   // for one, except where the body is how a scope is built: that answers to one
   // prototype for every class, so only what the construction shares with every

@@ -73,69 +73,49 @@ part of the class. **The question is answered by looking at what the artifact do
 never by how important the value sounds.** Looking took one read of the run-time declaration, and
 the entry shipped without it.
 
-**And "same class" is not the whole of the question, because something may be resting on the value
-being known where the object is built.** A representation can be one class for every value
-_precisely because_ its operations are inline and fold against a value the compiler can see at the
-construction, and then two values are one class and still not interchangeable: supplying one at
-construction removes what the folding had to fold. So the check has a second half, and it is asked
-of the same consumer -- does anything about how this representation pays for being uniform need the
-value to be a constant here. Where the answer is yes, the value stays settled however plainly the
-class is one class. D3 is that case, and it is the reason D3 comes out the other way from everything
-else here.
+**And the consumer to read is the one that decides, which is not always the one in front of you.**
+Where a value sits inside a type, what the artifact does with it is decided by whoever owns that
+type's representation, and this record follows that answer rather than reaching its own. D3 is the
+one position of that kind here, and it reads as an exception to D1 only because the answer is
+somebody else's to give.
 
-### D3. A width stays a class fact, because what bounds its cost needs it constant
+### D3. A declared width is not decided here, and this entry states where it stands
 
-A declaration's width stays a specialization axis: a declaration whose width an elaboration-time
-value decides gets its own class, and a repeated structure declaring one is compiled once per value.
-This is the one position in this record that comes out the other way from D1, and it is a derivation
-rather than a concession.
+A repeated structure whose packed dimension is written from its own index is compiled once per
+index. That is what happens; it is not what this record decided, and an earlier version of this
+entry claimed it was.
 
-What makes it look like the others is a measurement, and the measurement is true. `logic [3:0]`,
-`logic [7:0]` and `int` all emit as one storage type; the width travels in a descriptor the artifact
-builds by calling the runtime, and two part-selects of different widths emit the same operation
-sequence differing in two constants. Read against D2's question that says "same class, different
-value", which is what this entry used to conclude.
+What it said: the width stays a specialization axis, because one storage type for every integral is
+paid for by operations that are inline and fold against a width the compiler can see as a constant
+where the object is built, so supplying the width there instead would remove what the folding folds.
+The mechanism it named no longer exists. A packed value now carries its width as one of three
+scalars, an access naming a position takes the receiver's shape as an operand, and the structure the
+value used to hold is not in the value at all --
+[packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md) settles that, with the
+measurement and the survey. There is no constant-width fast path to protect.
 
-**It is the wrong reading, and what it misses is that one storage type for every width was chosen
-together with the thing that pays for it.** That every integral is one class is settled in
-[integral-representation](integral-representation.md), which rejected splitting the emitted type by
-width as an unmeasured optimization -- and reserved the performance answer explicitly: the class's
-operations are inline, so a compiler that can see the declared width **as a constant at the site
-where the object is built** folds the dispatch away without the emitted shape changing at all. The
-width being settled where a declaration is built is not an accident of the current lowering. It is
-the mechanism that decision named, and the only one it left itself.
+That record also closes the direction the withdrawn argument was defending. Making the width a
+compile-time type parameter is rejected there on the top-level objectives: distinct types per width
+is compile-time work scaling with the design rather than with its distinct specializations, and it
+forecloses the parameterized unit that compiles once, which needs a width that arrives at
+construction.
 
-So supplying the width where the object is built does not defer that; it removes it. A width the
-program computes cannot be folded against, whatever runs later, because there is nothing to fold.
-This record's own rule about gaps is what misleads here if the gap is named wrongly: the uniform
-storage type is not a gap waiting to be closed by specialization -- it is a decision, with its own
-recorded reason, whose cost is bounded by a fast path that needs a constant. Taking the constant
-away is not waiting out a gap; it is spending something already committed.
+So what is left is mechanical rather than chosen. A declared width sits in the type; two types are
+two classes; a repeated structure declaring differing widths is compiled apart. Whether the width
+should sit there at all belongs to whoever owns the value representation, and that question is open
+in their terms rather than settled in these.
 
-And for a repeated structure the two questions are one question. A shared body is exactly what makes
-the width stop being a literal where the object is built, so keeping the fast path reachable and
-compiling a class per width are the same decision seen from two sides.
+Two further arguments this entry once gave are withdrawn for being false rather than superseded,
+since a false reason for a right answer expires without warning. **The expression is not gone**: the
+front end keeps the bound left and right expressions beside the folded range, and a declaration
+hands them back on request, so nothing about moving the width is blocked by what the front end
+discarded. **And rarity decides nothing.** How unusual the construct is would matter only if the
+answer were a cost-benefit judgement, and no version of this entry was entitled to make one.
 
-**And this is the shape a parameterization already has.** A unit whose declared width comes from a
-parameter compiles once per distinct width, and nobody reads that as a failure of sharing. A packed
-dimension written from the index of the structure being repeated says the same thing with the
-parameter spelled differently, so a class per width there satisfies the rule that artifact count
-follows specializations rather than instances, instead of violating it.
-
-Two arguments this entry previously gave are withdrawn, because both are false and a false reason
-for a right answer expires without warning. **The expression is not gone**: the front end keeps the
-bound left and right expressions beside the folded range, and a declaration hands them back on
-request, so nothing about moving the width is blocked by what the front end discarded. **And rarity
-decides nothing here.** How unusual the construct is would matter only if the answer were a
-cost-benefit judgement, and it is not; a common construct written that way would get a class per
-width too, for the same reason.
-
-What would reverse this is not a design found sitting on it. It is a profile: the fast path that
-justifies one storage type per integral is reachable only while the width is a constant where the
-object is built, so if that path is measured not to pay, or is abandoned for a split by width, the
-reason given here goes with it and the width becomes a construction input like everything else.
-Either way the question belongs to whoever owns the value representation, and this record follows it
-rather than deciding it.
+The lesson this leaves is about reading rather than about widths. Every argument withdrawn here was
+derived carefully from documents that were current in one checkout, and a checkout announces nothing
+about being behind. What settles a question of this kind lands as somebody else's record, so the
+answer to "is there a decision about this" is only as good as the last fetch.
 
 ## Consequences
 
