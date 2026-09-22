@@ -928,26 +928,23 @@ void FunctionLowerer::OpenVariables() {
     }
     const lir::TypeId value =
         unit_->TranslateType(code_->locals.Get(local).type);
-    locals_[local.value] =
-        LocalBinding{
-            CellBinding{
-                .cell = Emit(
-                    unit_->Types().Intern(
-                        lir::Type{lir::PointerType{
-                            .pointee = lir::CellOf(unit_->Types(), value),
-                            .ownership = lir::PointerOwnership::kBorrowed,
-                            .mutability = lir::Mutability::kMutable}}),
-                    lir::CallInstr{
-                        .target = lir::VariableAddressTarget{},
-                        .args =
-                            {*variables_, lir::IntConst{
-                                              .value =
-                                                  lir::IntegralConstant{
-                                                      .value_words =
-                                                          {static_cast<std::uint64_t>(*variable_slot_[local
-                                                                                                          .value])},
-                                                      .state_words = {}},
-                                              .type = index_type}}})}};
+    const lir::TypeId address = unit_->Types().Intern(
+        lir::Type{lir::PointerType{
+            .pointee = lir::CellOf(unit_->Types(), value),
+            .ownership = lir::PointerOwnership::kBorrowed,
+            .mutability = lir::Mutability::kMutable}});
+    const lir::IntConst position{
+        .value =
+            lir::IntegralConstant{
+                .value_words = {static_cast<std::uint64_t>(
+                    *variable_slot_[local.value])},
+                .state_words = {}},
+        .type = index_type};
+    locals_[local.value] = LocalBinding{CellBinding{
+        .cell = Emit(
+            address, lir::CallInstr{
+                         .target = lir::VariableAddressTarget{},
+                         .args = {*variables_, position}})}};
   }
 }
 
