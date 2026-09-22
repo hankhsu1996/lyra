@@ -1994,6 +1994,33 @@ enough to warrant its own focused review.
       boundary and wrong as the lifetime of every intermediate a loop produces, and separating those
       two is the question -- not a larger arena, which moves the ceiling and keeps the growth.
 
+- [ ] R121 -- Every runtime entry the execution backend can call is registered in one function, and
+      that function is long enough that the editor reports its size when it grows. It is a flat list
+      of name-to-address pairs with no branching, so what the report is about is length rather than
+      anything a reader has to follow; the cost is that the answer to it is always to look away,
+      which is the habit a warning cannot afford.
+
+      Target: the registration is grouped so that each group is the set of entries some one thing
+      publishes, and adding a family touches the group that owns it. What has to be settled first is
+      what the groups are, and the answer is probably what already names the entries -- the value
+      representations, the wrappers, the operations that name themselves -- rather than a split by
+      size. Not blocked. Found by adding one family to it and reading what the editor then said.
+
+- [ ] R122 -- Asking for the sampled value of storage lent by reference is refused on both targets
+      wherever that storage is not a subscribable variable, and for one of the two things that can
+      be lent there the standard says what the answer is. LRM 16.5.1 gives a variable its value in
+      the Preponed region and excepts an automatic variable, whose sampled value is the value it
+      holds and whose past value is that same value. A reference may name either an automatic
+      variable or a class property, and what it carries is which form of storage it is -- whether
+      anything subscribes -- never which kind of variable, so the answer the standard fixes for one
+      of them cannot be told apart from the answer that would be wrong for the other.
+
+      Target: the automatic variable answers with the value it holds, and the property is refused by
+      naming what is missing, which is a value nothing retains for it. What has to be settled first
+      is where the distinction lives, since it is a fact about the declaration and the thing carried
+      to the callee is an address. Not blocked. Found by reading the two targets' answers side by
+      side and noticing they disagreed.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

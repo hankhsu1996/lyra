@@ -9,7 +9,7 @@ kind is the observable one: "a cell's address crosses as one `void*`, every cell
 the same type, and the trigger entry already requires that address to serve as the observable. One
 cell kind behind a reference is what keeps that `void*` meaning one thing."
 
-The consequence is visible in the runtime's own commentary, which states the coupling and its cost
+The consequence was visible in the runtime's own commentary, which stated the coupling and its cost
 in one sentence: a cell "is what a local whose storage is lent by reference gets, because a
 reference reaches storage through a cell and through nothing else; **nothing subscribes to a
 procedural local**, so the update event a write raises wakes no one."

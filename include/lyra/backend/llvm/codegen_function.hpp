@@ -109,6 +109,8 @@ class CodeGenFunction {
   auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
+  auto LowerAddrOf(const lir::AddrOfInstr& addr, lir::TypeId result_type)
+      -> diag::Result<llvm::Value*>;
   auto LowerBinary(const lir::BinaryInstr& binary, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerMachineBinary(
@@ -281,11 +283,6 @@ class CodeGenFunction {
       -> lir::TypeId;
   [[nodiscard]] auto DomainOf(lir::TypeId type) const
       -> diag::Result<support::ValueDomain>;
-  // The domain of the cell a reference addresses, for a cell operation. The
-  // reference is named by its type, since a cell is allocated before there is
-  // an operand holding it.
-  [[nodiscard]] auto CellDomain(lir::TypeId reference) const
-      -> diag::Result<support::ValueDomain>;
   // The domain of the value cell `place` names, where the storage it reaches is
   // one. Such storage is written and read through itself rather than off its
   // address, so an access to it is that storage's own operation. A place naming
@@ -295,8 +292,9 @@ class CodeGenFunction {
       -> std::optional<support::ValueDomain>;
   // The storage an operand reaches: this target holds storage as its address,
   // and holds as a handle only what names storage someone else owns -- a
-  // driver, which names a contribution the net owns -- so an operand is either
-  // that address or the handle itself, and either way reaches exactly one.
+  // driver, which names a contribution the net owns, and a reference, which
+  // names the storage a caller lent -- so an operand is either that address or
+  // the handle itself, and either way reaches exactly one.
   [[nodiscard]] auto StorageReached(lir::TypeId operand) const
       -> const lir::Type&;
   // The wrapper an operand reaches and the domain its storage is realized in,

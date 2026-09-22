@@ -71,7 +71,11 @@ auto SelectsByStatedIndex(
 // none of these. An operation any layer above can state is named in the entry
 // set both targets read instead, and reaches a symbol through that name.
 enum class RuntimeOp : std::uint8_t {
-  kCellAlloc,
+  // Which form of storage an address names, recorded in the address itself so
+  // it travels with the reference built over it. Neither depends on what the
+  // storage holds, so one of each serves every representation.
+  kRefToCell,
+  kRefToValue,
   kVariablesOpen,
   kVariableAddress,
   kVariablesClose,
@@ -180,7 +184,14 @@ auto MemberStorageKindOf(
 // slot moved away from and reads back what it retained -- and differ in which
 // of those they define, so this is what a type is classified into before an
 // access through it is named, whether it arrived as a place or as an operand.
-enum class WrapperKind : std::uint8_t { kCell, kNet, kDriver };
+//
+// A reference is the one whose answer is not decided by its type. It names
+// storage the caller lent (LRM 13.5.2), which may be a subscribable variable
+// or storage nothing subscribes to, and a body that takes one is lowered once
+// for every caller -- so which of the two it holds travels with the address
+// and the entry resolves it, where every other wrapper here is settled by the
+// type alone.
+enum class WrapperKind : std::uint8_t { kCell, kNet, kDriver, kRef };
 
 // The library realizes an operation once, whatever it is applied to: the
 // runtime performs the work and what it acts on -- the engine, the file broker,
@@ -259,16 +270,18 @@ auto RuntimeSymbol(support::ValueDomain domain, support::BuiltinFn fn)
     -> std::string;
 
 // An access through a capability wrapper leads with the wrapper as well, since
-// a cell, a net and a driver each answer a read of one domain differently. An
-// access the wrapper does not define is refused rather than spelled, because it
-// is an upstream mistake and not a gap. A net's value is the fold of its
-// drivers, so a value reaches it through one of them and never by being written
-// (LRM 6.5); a net's own install names the fold it resolves under, so the
-// install that names none is not one of its entries; a driver installs no
-// representation of its own, since what it contributes before it drives is the
-// identity the net gave it when it attached; and only a variable retains what a
-// time slot moved away from (LRM 16.5.1), the other two holding a value that is
-// recomputed rather than found there.
+// a cell, a net, a driver and a reference each answer a read of one domain
+// differently. An access the wrapper does not define is refused rather than
+// spelled, because it is an upstream mistake and not a gap. A net's value is
+// the fold of its drivers, so a value reaches it through one of them and never
+// by being written (LRM 6.5); a net's own install names the fold it resolves
+// under, so the install that names none is not one of its entries; a driver
+// installs no representation of its own, since what it contributes before it
+// drives is the identity the net gave it when it attached; a reference installs
+// none either, because the storage it names was given one where that storage
+// was declared; and what a time slot moved away from is retained only where a
+// variable holds it (LRM 16.5.1), so a reference naming one answers for it
+// while a net and a driver hold a value that is recomputed rather than found.
 auto RuntimeSymbol(
     support::ValueDomain domain, WrapperKind wrapper, support::BuiltinFn fn)
     -> std::string;

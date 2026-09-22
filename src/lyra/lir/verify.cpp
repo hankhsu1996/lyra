@@ -22,6 +22,20 @@ auto IsVoid(const CompilationUnit& unit, TypeId type) -> bool {
   return unit.types.Get(type).Is<VoidType>();
 }
 
+// What the storage at a place holds, for a place a reference is taken over.
+// LRM 13.5.2 admits a variable, a class property, a member of an unpacked
+// structure and an element of an unpacked array, and bars a net -- so such a
+// place reaches either a subscribable variable, which holds the value it
+// represents, or storage nothing wraps, which holds itself. No other wrapper
+// can stand there, which is why none is named.
+auto LentValues(const CompilationUnit& unit, TypeId storage) -> TypeId {
+  const Type& type = unit.types.Get(storage);
+  if (const auto* observable = type.As<ObservableType>()) {
+    return observable->value;
+  }
+  return storage;
+}
+
 void VerifyInstr(
     const CompilationUnit& unit, const Function& fn, const Instr& instr) {
   const TypeId result_type = fn.values.Get(instr.result).type;
@@ -67,12 +81,20 @@ void VerifyInstr(
           },
           [&](const AddrOfInstr& addr) {
             const TypeId place_type = PlaceType(unit, fn, addr.place);
-            const std::optional<TypeId> pointee =
-                unit.types.Get(result_type).Pointee();
-            if (!pointee || *pointee != place_type) {
+            const Type& result = unit.types.Get(result_type);
+            const std::optional<TypeId> pointee = result.Pointee();
+            // A reference states the values the storage it names holds rather
+            // than that storage's own type: what it is lent may be a
+            // subscribable variable or storage nothing subscribes to, and the
+            // body holding it is lowered once for both (LRM 13.5.2). Every
+            // other address names the storage it points at.
+            const TypeId named = result.Is<RefType>()
+                                     ? LentValues(unit, place_type)
+                                     : place_type;
+            if (!pointee || *pointee != named) {
               throw InternalError(
-                  "lir verify: address-of result is not a reference to its "
-                  "place type");
+                  "lir verify: address-of result does not name what its place "
+                  "holds");
             }
           },
           // Between two packed values a cast only renames what the program

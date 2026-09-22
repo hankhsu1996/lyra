@@ -420,7 +420,9 @@ Unlocks `refs/hierarchical_refs`, `refs/upward_refs`, and `instantiation/hierarc
       reach that variable differently, and the difference belongs to the reference: every operation
       on a cell -- a read, a write, a sampled read -- answers through the reference, while a wait
       needs the cell as storage in its own right, because a registration names storage. The
-      execution backend refuses the second, having no way there to name the cell a reference binds.
+      execution backend refuses the second: a reference there names storage of one of two kinds and
+      its type says which values that storage holds rather than which kind it is, so an address
+      taken through one would name whichever kind the type does not admit.
 - [x] E8 -- An input port left unconnected takes its declared default value (LRM 23.2.2.4). A
       declared default is a constant expression whose names resolve in the module that declares the
       port, not the instantiating scope; like a default argument at a call site, its value is

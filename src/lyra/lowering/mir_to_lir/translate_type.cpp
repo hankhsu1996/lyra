@@ -7,7 +7,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/type.hpp"
-#include "lyra/lir/type_builders.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 #include "lyra/mir/type.hpp"
@@ -247,11 +246,15 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{
                 lir::CoroutineType{.payload = TranslateType(co.payload)}};
           },
+          // A reference names the storage its referent lives in, and that
+          // storage may be a subscribable variable or one nothing subscribes
+          // to (LRM 13.5.2). A body taking a reference is lowered once for
+          // every caller, so the type cannot say which of the two it was
+          // handed: what it states is the values that storage holds.
           [&](const mir::RefType& r) -> lir::Type {
-            return out_.types.Get(
-                lir::ReferenceToCellOf(
-                    out_.types, TranslateType(r.pointee),
-                    TranslateMutability(r.mutability)));
+            return lir::Type{lir::RefType{
+                .pointee = TranslateType(r.pointee),
+                .mutability = TranslateMutability(r.mutability)}};
           },
           [&](const mir::PointerType& pt) -> lir::Type {
             return lir::Type{lir::PointerType{
@@ -315,7 +318,7 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           }});
 }
 
-auto UnitLowerer::ControlEffectType() -> lir::TypeId {
+auto UnitLowerer::ControlEffectType() const -> lir::TypeId {
   return out_.types.Intern(
       TranslateRuntimeLibrary(mir::RuntimeLibraryKind::kControlEffect));
 }

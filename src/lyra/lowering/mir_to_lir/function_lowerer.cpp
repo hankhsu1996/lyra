@@ -105,10 +105,9 @@ auto LocalPlace(lir::ValueId local) -> lir::Place {
   return lir::Place{.base = lir::Use{.value = local}, .chain = {}};
 }
 
-// Whether this call builds a reference over its one argument. A reference is
-// the address of the storage it binds, so the argument's storage is what the
-// value names -- which both the storage-topology pass and the lowering itself
-// have to know, and must agree on.
+// Whether this call builds a reference over its one argument. A construction
+// whose result is a reference names storage rather than assembling a value, so
+// it is lowered by naming that storage and never by the entries that build one.
 auto BindsReference(
     const mir::TypePool& types, const mir::CallExpr& call,
     mir::TypeId result_type) -> bool {
@@ -864,8 +863,7 @@ void FunctionLowerer::BindLocal(
     mir::LocalId local, lir::TypeId type, lir::Operand init) {
   if (variable_slot_[local.value].has_value()) {
     InitializeCell(
-        std::get<CellBinding>(*locals_[local.value]).reference,
-        std::move(init));
+        std::get<CellBinding>(*locals_[local.value]).cell, std::move(init));
     return;
   }
   const lir::ValueId slot = NewPlaceLocal(type);
@@ -882,17 +880,6 @@ auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
   return Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
       lir::StoreInstr{.place = std::move(place), .value = std::move(value)});
-}
-
-auto FunctionLowerer::AllocateActivationValue(lir::TypeId value_type)
-    -> lir::Operand {
-  return Emit(
-      value_type, lir::CallInstr{
-                      .target =
-                          lir::ValueCellTarget{
-                              .op = lir::ValueCellTarget::Op::kAllocate,
-                              .value = value_type},
-                      .args = {}});
 }
 
 auto FunctionLowerer::LoadActivationValue(
@@ -941,21 +928,26 @@ void FunctionLowerer::OpenVariables() {
     }
     const lir::TypeId value =
         unit_->TranslateType(code_->locals.Get(local).type);
-    locals_[local.value] = LocalBinding{CellBinding{
-        .reference = Emit(
-            lir::ReferenceToCellOf(
-                unit_->Types(), value, lir::Mutability::kMutable),
-            lir::CallInstr{
-                .target = lir::VariableAddressTarget{},
-                .args = {
-                    *variables_,
-                    lir::IntConst{
-                        .value =
-                            lir::IntegralConstant{
-                                .value_words = {static_cast<std::uint64_t>(
-                                    *variable_slot_[local.value])},
-                                .state_words = {}},
-                        .type = index_type}}})}};
+    locals_[local.value] =
+        LocalBinding{
+            CellBinding{
+                .cell = Emit(
+                    unit_->Types().Intern(
+                        lir::Type{lir::PointerType{
+                            .pointee = lir::CellOf(unit_->Types(), value),
+                            .ownership = lir::PointerOwnership::kBorrowed,
+                            .mutability = lir::Mutability::kMutable}}),
+                    lir::CallInstr{
+                        .target = lir::VariableAddressTarget{},
+                        .args =
+                            {*variables_, lir::IntConst{
+                                              .value =
+                                                  lir::IntegralConstant{
+                                                      .value_words =
+                                                          {static_cast<std::uint64_t>(*variable_slot_[local
+                                                                                                          .value])},
+                                                      .state_words = {}},
+                                              .type = index_type}}})}};
   }
 }
 
@@ -969,23 +961,23 @@ void FunctionLowerer::CloseVariables() {
           .target = lir::CloseVariablesTarget{}, .args = {*variables_}});
 }
 
-auto FunctionLowerer::InitializeCell(lir::Operand reference, lir::Operand value)
+auto FunctionLowerer::InitializeCell(lir::Operand cell, lir::Operand value)
     -> lir::Operand {
   return Emit(
       unit_->Types().Intern(lir::Type{lir::VoidType{}}),
       lir::CallInstr{
           .target = lir::BuiltinTarget{.fn = support::BuiltinFn::kInitialize},
-          .args = {std::move(reference), std::move(value)}});
+          .args = {std::move(cell), std::move(value)}});
 }
 
-auto FunctionLowerer::ReferencedCell(lir::Operand reference) -> lir::Place {
+auto FunctionLowerer::StorageAt(lir::Operand address) -> lir::Place {
   return lir::Place{
-      .base = std::move(reference),
+      .base = std::move(address),
       .chain = {lir::Projection{lir::DerefProjection{}}}};
 }
 
-auto FunctionLowerer::ReferencedValue(lir::Operand reference) -> lir::Place {
-  lir::Place place = ReferencedCell(std::move(reference));
+auto FunctionLowerer::ValueAt(lir::Operand address) -> lir::Place {
+  lir::Place place = StorageAt(std::move(address));
   place.chain.emplace_back(lir::DerefProjection{});
   return place;
 }
@@ -1559,10 +1551,12 @@ auto FunctionLowerer::WrapperContentsPlace(
   if (!pointer) {
     return std::unexpected(std::move(pointer.error()));
   }
-  // A reference points at a cell, so opening it lands on storage rather than on
-  // a value: naming the value it stands for takes the cell's own step as well.
+  // Opening a reference lands on the value the storage it names holds, which
+  // is what the reference states; which of the two forms that storage is, is
+  // the reference's own to answer, so every access through this place is one
+  // of its operations rather than a load or a store of an address.
   if (wrapper_ty.Is<mir::RefType>()) {
-    return ReferencedValue(*std::move(pointer));
+    return StorageAt(*std::move(pointer));
   }
   return lir::Place{
       .base = *std::move(pointer),
@@ -1593,7 +1587,7 @@ auto FunctionLowerer::ReferenceValue(
                     // reading of that type rather than the type itself.
                     [&](const CellBinding& cell) -> diag::Result<lir::Operand> {
                       return Load(
-                          ReferencedValue(cell.reference),
+                          ValueAt(cell.cell),
                           unit_->TranslateType(
                               code_->locals.Get(ref.var).type));
                     }},
@@ -1671,7 +1665,7 @@ auto FunctionLowerer::ReferencePlace(
                     // lives in, so the local's storage is what that reference
                     // points at: one step to the cell, one more to its value.
                     [&](const CellBinding& cell) -> diag::Result<lir::Place> {
-                      return ReferencedValue(cell.reference);
+                      return ValueAt(cell.cell);
                     }},
                 *binding);
           },
@@ -2013,6 +2007,14 @@ auto FunctionLowerer::LowerReferenceBind(
     throw InternalError(
         "mir_to_lir: a reference is built over exactly one referent");
   }
+  // A reference built over a reference denotes the storage at the end of the
+  // chain rather than binding afresh (LRM 23.3.3.2), so what it carries is the
+  // reference it was handed and there is no second address to take.
+  if (unit_->Mir()
+          .types.Get(block.exprs.Get(call.arguments[0]).type)
+          .Is<mir::RefType>()) {
+    return LowerExpr(block, call.arguments[0]);
+  }
   auto cell = LowerCellPlace(block, call.arguments[0]);
   if (!cell) {
     return std::unexpected(std::move(cell.error()));
@@ -2024,22 +2026,20 @@ auto FunctionLowerer::LowerReferenceBind(
 auto FunctionLowerer::LowerCellPlace(
     const mir::Block& block, mir::ExprId referent) -> diag::Result<lir::Place> {
   const mir::Expr& expr = block.exprs.Get(referent);
-  if (unit_->Mir().types.Get(expr.type).Is<mir::ObservableType>()) {
-    return LowerPlace(block, referent);
-  }
+  // A local the body gave storage of its own is named by the handle the body
+  // opened over that storage, which reaches the storage in one step where
+  // reading the local reaches its value in two.
   if (const std::optional<mir::LocalId> local = mir::ReferencedLocal(expr.data);
       local.has_value() && locals_[local->value].has_value()) {
     if (const auto* cell = std::get_if<CellBinding>(&*locals_[local->value])) {
-      return ReferencedCell(cell->reference);
+      return StorageAt(cell->cell);
     }
   }
-  // Every other referent holds its value somewhere a reference cannot name. A
-  // suspending body's local lives in a cell of the execution's own store,
-  // reached by that cell's calls rather than by an address; a member that is
-  // not a signal owns its value rather than a cell holding it; and a part of a
-  // value aggregate is no independent storage at all.
-  return Unsupported(
-      "mir_to_lir: storage of this kind is not yet lendable by reference");
+  // Every other referent is named the way a write to it names it: what a
+  // reference binds and what a store descends into are the same storage, so
+  // one answer serves both, and a referent that names no storage meets its
+  // refusal where naming is decided.
+  return LowerPlace(block, referent);
 }
 
 auto FunctionLowerer::LowerCall(
@@ -2713,10 +2713,13 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return Load(*std::move(place), unit_->TranslateType(type));
           },
           [&](const mir::AddressOfExpr& addr) -> diag::Result<lir::Operand> {
-            // Opening a reference names the cell it binds, and this target
-            // reaches the value that cell holds in one step instead -- so the
-            // cell in between is not a place here, and nothing can take its
-            // address.
+            // A reference carries which form of storage it names rather than
+            // stating it (LRM 13.5.2), and the two forms are different storage
+            // with one type between them -- so an address taken through one
+            // would name whichever form the type does not admit. Reading and
+            // writing through a reference are its own operations and need no
+            // address; reaching the storage itself, which is what registering
+            // a wait on it takes, is not yet one of them.
             if (const auto* opened = std::get_if<mir::DerefExpr>(
                     &block.exprs.Get(addr.operand).data);
                 opened != nullptr &&
@@ -2724,7 +2727,8 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                     .types.Get(block.exprs.Get(opened->pointer).type)
                     .Is<mir::RefType>()) {
               return Unsupported(
-                  "mir_to_lir: the cell a reference binds is not yet nameable "
+                  "mir_to_lir: reaching the storage a reference binds, rather "
+                  "than reading or writing through it, is not yet an operation "
                   "on this backend");
             }
             auto place = LowerPlace(block, addr.operand);

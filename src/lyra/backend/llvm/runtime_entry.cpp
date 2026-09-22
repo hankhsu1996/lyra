@@ -34,8 +34,10 @@ auto Symbol(support::ValueDomain domain, std::string_view operation)
 // module calls, so changing it renames a linked symbol.
 auto RuntimeOpName(RuntimeOp op) -> std::string_view {
   switch (op) {
-    case RuntimeOp::kCellAlloc:
-      return "cell_alloc";
+    case RuntimeOp::kRefToCell:
+      return "ref_to_cell";
+    case RuntimeOp::kRefToValue:
+      return "ref_to_value";
     case RuntimeOp::kVariablesOpen:
       return "variables_open";
     case RuntimeOp::kVariableAddress:
@@ -564,6 +566,14 @@ auto RuntimeSymbol(
       }
       retains_nothing(fn);
       return spelled("driver");
+    case WrapperKind::kRef:
+      if (fn == support::BuiltinFn::kInitialize) {
+        throw InternalError(
+            "llvm codegen: a reference installs no representation; the storage "
+            "it names was given one where it was declared, which is what makes "
+            "a reference an alias to it rather than a second variable");
+      }
+      return spelled("ref");
   }
   throw InternalError("llvm codegen: unknown capability wrapper");
 }

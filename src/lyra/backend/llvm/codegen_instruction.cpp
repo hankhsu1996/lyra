@@ -54,7 +54,7 @@ auto CallSignature(llvm::Type* result, std::span<llvm::Value* const> args)
 // Which capability wrapper a type is, and the value that wrapper represents;
 // nothing for a type that represents no storage. Classifying a wrapper in one
 // place is what keeps an access reached through a place and an operation
-// reached through a reference from disagreeing about what a wrapper is.
+// reached through an operand from disagreeing about what a wrapper is.
 auto WrapperOf(const lir::Type& type)
     -> std::optional<std::pair<WrapperKind, lir::TypeId>> {
   if (const auto* observable = type.As<lir::ObservableType>()) {
@@ -65,6 +65,13 @@ auto WrapperOf(const lir::Type& type)
   }
   if (const auto* driver = type.As<lir::DriverType>()) {
     return std::pair{WrapperKind::kDriver, driver->value};
+  }
+  // A reference is a wrapper rather than a way of reaching one: it is an
+  // address whose storage may be subscribable or not, and only the operation
+  // performed through it can tell which (LRM 13.5.2). So it is classified
+  // where it stands, before anything strips it to look at what it points at.
+  if (const auto* reference = type.As<lir::RefType>()) {
+    return std::pair{WrapperKind::kRef, reference->pointee};
   }
   return std::nullopt;
 }
@@ -126,7 +133,7 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
             return LowerStore(store);
           },
           [&](const lir::AddrOfInstr& addr) -> diag::Result<llvm::Value*> {
-            return ResolvePlaceAddress(addr.place);
+            return LowerAddrOf(addr, result_type);
           },
           [&](const lir::BinaryInstr& binary) -> diag::Result<llvm::Value*> {
             return LowerBinary(binary, result_type);
@@ -373,6 +380,32 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
   const std::array<llvm::Value*, 1> args{reference};
   return builder_.CreateCall(
       Entry(RuntimeSymbol(*op), module_->Types().Ptr(), args), args);
+}
+
+// Taking the address of a place. What that address is, is the place's own
+// answer; what it becomes depends on what is being built. A reference names
+// storage that may be subscribable or not, and the body holding one is lowered
+// once for every caller, so it cannot ask which it was lent (LRM 13.5.2) --
+// which is why the form is recorded here, where the place it came from still
+// answers. Every other address is the address itself.
+auto CodeGenFunction::LowerAddrOf(
+    const lir::AddrOfInstr& addr, lir::TypeId result_type)
+    -> diag::Result<llvm::Value*> {
+  auto address = ResolvePlaceAddress(addr.place);
+  if (!address) {
+    return std::unexpected(std::move(address.error()));
+  }
+  const lir::TypePool& types = module_->Unit().types;
+  if (!types.Get(result_type).Is<lir::RefType>()) {
+    return *address;
+  }
+  const lir::TypeId reached =
+      ReachedType(addr.place, std::ssize(addr.place.chain));
+  const RuntimeOp op = types.Get(reached).Is<lir::ObservableType>()
+                           ? RuntimeOp::kRefToCell
+                           : RuntimeOp::kRefToValue;
+  const std::array<llvm::Value*, 1> args{*address};
+  return builder_.CreateCall(Entry(RuntimeSymbol(op), result_type, args), args);
 }
 
 auto CodeGenFunction::IsHandleSequence(lir::TypeId type) const -> bool {
@@ -1575,7 +1608,14 @@ auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
 auto CodeGenFunction::StorageReached(lir::TypeId operand) const
     -> const lir::Type& {
   const lir::TypePool& types = module_->Unit().types;
-  const std::optional<lir::TypeId> pointee = types.Get(operand).Pointee();
+  const lir::Type& carried = types.Get(operand);
+  // A reference is a handle naming storage someone else owns, so it reaches
+  // that storage by being what it is rather than by pointing at it: what it
+  // states is the values the storage holds, which is not the storage.
+  if (carried.Is<lir::RefType>()) {
+    return carried;
+  }
+  const std::optional<lir::TypeId> pointee = carried.Pointee();
   return types.Get(pointee.value_or(operand));
 }
 
@@ -1621,18 +1661,6 @@ auto CodeGenFunction::PlaceValueCellDomain(
     return std::nullopt;
   }
   return ValueDomainOf(module_->Unit(), value);
-}
-
-auto CodeGenFunction::CellDomain(lir::TypeId reference) const
-    -> diag::Result<support::ValueDomain> {
-  auto wrapper = WrapperBehind(reference);
-  if (!wrapper) {
-    return std::unexpected(std::move(wrapper.error()));
-  }
-  if (wrapper->kind != WrapperKind::kCell) {
-    throw InternalError("llvm codegen: a cell operation needs a cell address");
-  }
-  return wrapper->domain;
 }
 
 auto CodeGenFunction::ConstructionOf(
@@ -1692,17 +1720,6 @@ auto CodeGenFunction::ConstructionOf(
           [&](const lir::ChandleType&) -> diag::Result<Construction> {
             return entry(RuntimeSymbol(
                 support::ValueDomain::kChandle, RuntimeOp::kMake));
-          },
-          // A reference comes into existence as the cell it binds, since that
-          // is the one storage it can name. The cell is empty until its
-          // initializer installs a representation, so the entry takes nothing
-          // but the domain it is chosen by.
-          [&](const lir::RefType&) -> diag::Result<Construction> {
-            auto domain = CellDomain(result);
-            if (!domain) {
-              return std::unexpected(std::move(domain.error()));
-            }
-            return entry(RuntimeSymbol(*domain, RuntimeOp::kCellAlloc));
           },
           [&](const lir::ClosureType&) -> diag::Result<Construction> {
             return Construction{
@@ -1953,6 +1970,12 @@ auto CodeGenFunction::ConstructionOf(
             return no_construct();
           },
           [&](const lir::RuntimeClassType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
+
+          // A reference is bound to storage that already exists, naming it
+          // rather than bringing it about, so nothing constructs one.
+          [&](const lir::RefType&) -> diag::Result<Construction> {
             return no_construct();
           },
 
