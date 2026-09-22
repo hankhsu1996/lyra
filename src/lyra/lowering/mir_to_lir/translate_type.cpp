@@ -370,6 +370,8 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kPropertyCoordinate);
     case mir::RuntimeLibraryKind::kBehaviorCoordinate:
       return mirror(lir::RuntimeLibraryKind::kBehaviorCoordinate);
+    case mir::RuntimeLibraryKind::kObjectDefinition:
+      return mirror(lir::RuntimeLibraryKind::kObjectDefinition);
     case mir::RuntimeLibraryKind::kScopeProgram:
     case mir::RuntimeLibraryKind::kScopeDefinition:
     case mir::RuntimeLibraryKind::kScopeMetadata:
@@ -378,7 +380,6 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
     case mir::RuntimeLibraryKind::kScopeCallableTable:
     case mir::RuntimeLibraryKind::kScopeClass:
     case mir::RuntimeLibraryKind::kScopeClassTable:
-    case mir::RuntimeLibraryKind::kObjectDefinition:
     case mir::RuntimeLibraryKind::kPropertySlotTable:
     case mir::RuntimeLibraryKind::kDispatchTakeover:
     case mir::RuntimeLibraryKind::kTakeoverTable:

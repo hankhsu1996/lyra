@@ -124,13 +124,25 @@ struct StaticRef {
   TypeId type;
 };
 
+// The record every object of one class carries, named by the object type it
+// describes. Its contents are a compile-time record the target assembles, and
+// an operand is a leaf, so what the operand carries is which class is described
+// rather than how the record is built -- the same shape as the descriptor
+// above, for the same reason. A member projection and a dispatch target name a
+// class the same way, by the object type; this is that name standing where a
+// value is wanted, which is what a call asking a question about a class takes.
+struct ObjectRecordRef {
+  TypeId object;
+  TypeId type;
+};
+
 // An instruction input: a prior value, an inline constant, or a reference to
 // code or to shared storage. A constant or a reference is an operand rather
 // than a value of its own because it has no dataflow origin to name -- it is
 // materialized at the use site.
 using Operand = std::variant<
     Use, IntConst, StrConst, RealConst, NullConst, BoolConst, PackedTypeRef,
-    FuncRef, StaticRef>;
+    FuncRef, StaticRef, ObjectRecordRef>;
 
 // A runtime-library entry. `position` names the part the entry acts on where
 // the call itself fixes it, carried on the callee rather than among the

@@ -37,6 +37,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/expression/query.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
@@ -591,6 +592,16 @@ auto LowerCallExpr(
   auto sampled = LowerSampledHistoryExpr(lowerer, frame, call, span);
   if (!sampled) return std::unexpected(std::move(sampled.error()));
   if (sampled->has_value()) return *std::move(*sampled);
+
+  // LRM 6.24.2: the first actual of a dynamic cast is the destination rather
+  // than an operand, so it is resolved before the argument loop. Reached as an
+  // expression the call is the function spelling, whose answer is the whole of
+  // what an invalid assignment produces; the task spelling is recognized where
+  // the statement is.
+  if (IsDynamicCast(call)) {
+    return LowerDynamicCastExpr(
+        lowerer, frame, call, hir::InvalidAssignmentHandling::kAnswered, span);
+  }
 
   std::vector<std::optional<hir::ExprId>> arg_ids;
   arg_ids.reserve(call.arguments().size());

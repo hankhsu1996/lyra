@@ -58,6 +58,11 @@ enum class TypeOwnedReading : std::uint8_t {
   // LRM 6.19.5.3 / 6.19.5.4: one traversal of an enumeration's member order,
   // shared by `next` and `prev`, which differ only in the sign of the step.
   kEnumerationStep,
+  // LRM 6.24.2: whether a value is a member of the enumeration, which is what
+  // separates a valid assignment into one of its variables from an invalid one.
+  // The members are fixed where the enumeration is declared, so the type is
+  // what answers.
+  kEnumerationMembership,
 };
 
 // Which reading of which type. The type is the SystemVerilog one because the

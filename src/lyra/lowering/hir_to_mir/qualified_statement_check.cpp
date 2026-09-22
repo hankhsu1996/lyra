@@ -84,17 +84,11 @@ void AppendReportEmit(
       block.exprs.Add(BuildDiagnosticCallExpr(unit, runtime_id));
   const mir::ExprId origin_id =
       BuildStringValueExpr(unit, block, std::move(origin));
-  const mir::ExprId emit_call_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kEmitWarning,
-                          .receiver = diagnostic_id},
-                  .arguments = {origin_id, text_id}},
-          .type = unit.builtins.void_type});
-  block.AppendStmt(mir::ExprStmt{.expr = emit_call_id});
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.exprs.Add(BuildReportCallExpr(
+              unit, support::BuiltinFn::kEmitWarning, diagnostic_id, origin_id,
+              text_id))});
 }
 
 // A pending violation report is scheduled where the check was decided and

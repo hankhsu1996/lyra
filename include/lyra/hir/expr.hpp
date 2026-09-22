@@ -237,6 +237,74 @@ struct ClassNewExpr {
   std::optional<StructuralHops> declaring_scope_hops;
 };
 
+// How an invalid assignment is handled, which LRM 6.24.2 makes the whole of
+// what the two spellings of the construct differ in: the answer is the only
+// report where the source called the function, and the design is told where it
+// called the task.
+enum class InvalidAssignmentHandling : std::uint8_t { kAnswered, kReported };
+
+// What a dynamic cast asks of the value while it runs, in the cases where the
+// two declared types allow the assignment at all. Which one it is follows from
+// who fixes the values the destination's type accepts: an enumeration fixes
+// them where it is declared, while the classes a handle may refer to are open
+// across compilation units, so there only the object itself can answer (LRM
+// 8.16).
+enum class RunTimeCheck : std::uint8_t {
+  // Nothing is asked while it runs: the declared types are the whole answer and
+  // every value of the source's passes.
+  kNone,
+  // An enumeration accepts the values it declares and no others, so one pair of
+  // types gives two answers -- 2 into a `{RED=1, GREEN=2}` is valid and 9 is
+  // not (LRM 6.19).
+  kValueIsAMemberOfTheEnumeration,
+  // A handle accepts an object of the destination's class or of one extending
+  // it, so one pair of types gives two answers -- the same superclass handle
+  // becomes a subclass one or does not, on what was constructed (LRM 8.16).
+  kObjectIsOfTheDestinationClass,
+};
+
+// The two declared types allow no assignment between them at all (LRM 6.22.4,
+// 6.22.5), so the destination is written on no run and the standard defines no
+// conversion to write it with.
+struct NoAssignmentAllowed {};
+
+// They allow one, and `check` is what the value is still asked.
+struct AssignmentAllowed {
+  RunTimeCheck check;
+};
+
+// What the front end settled about the pair of declared types before any value
+// is in hand (LRM 6.24.2, 6.22.3, 6.22.4). Whether there is an assignment to
+// state at all comes first, because where the types allow none there is no
+// conversion for one to be built out of and nothing left to ask the value.
+using AssignmentValidity = std::variant<NoAssignmentAllowed, AssignmentAllowed>;
+
+// LRM 6.24.2 `$cast`, the dynamic cast: the source asks for an assignment the
+// two declared types would not ordinarily allow, and the destination takes the
+// value where that assignment turns out to be valid. The expression answers 1
+// where it was and 0 where it was not, and the destination is written only in
+// the first case, so an invalid assignment leaves it holding what it held.
+//
+// `destination` names storage the way an assignment's left side does, by
+// standing in this position rather than by any tag on the expression. What
+// decides validity is the type that destination was declared with together
+// with the value, never the source expression's own type alone: an integral
+// becomes an enumeration only where it is one of the members (LRM 6.19), and a
+// handle becomes one of a subclass only where the object it refers to is of
+// that class (LRM 8.16).
+//
+// `validity` is the front end's verdict on the pair of declared types, which is
+// the half of the answer that does not wait for a value. It is carried rather
+// than re-derived because compatibility between two SystemVerilog types is the
+// front end's to decide, and a run-time check standing where the types already
+// make the assignment invalid answers a question that was settled.
+struct DynamicCastExpr {
+  ExprId destination;
+  ExprId source;
+  AssignmentValidity validity;
+  InvalidAssignmentHandling on_invalid;
+};
+
 // LRM 11.9 tagged union expression `tagged Member primary`. `member_index` is
 // the declaration-order position of the tagged member inside the union type,
 // which is the tag: a member is reached by where it sits, never by its name.
@@ -297,7 +365,7 @@ using ExprData = std::variant<
     StreamingConcatExpr, ReplicationExpr, AssignmentPatternExpr,
     AssignmentPatternReplicationExpr, DynamicArrayNewExpr, ClassNewExpr,
     AssociativeAssignmentPatternExpr, AssignmentPatternKeyedExpr,
-    TaggedUnionExpr>;
+    TaggedUnionExpr, DynamicCastExpr>;
 
 struct Expr {
   TypeId type;

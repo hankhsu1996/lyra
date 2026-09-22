@@ -423,6 +423,9 @@ class LirDumper {
             },
             [](const StaticRef& s) -> std::string {
               return std::format("staticref {}", s.symbol);
+            },
+            [](const ObjectRecordRef& r) -> std::string {
+              return std::format("objectrecord:t{}", r.object.value);
             }},
         op);
   }

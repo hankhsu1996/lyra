@@ -449,6 +449,27 @@ void RealizeClass(
   return BehaviorAt(ref.Handle(), at);
 }
 
+// Whether a handle refers to an object a variable of `wanted` may hold (LRM
+// 8.16): one of that class, or of a class extending it however far down. The
+// classes extending a given one are open across compilation units, so no unit
+// can hold that set and the object's own class is the only thing that answers
+// -- which is why this asks the object rather than comparing two declared
+// types. A handle referring to no object answers no, that being the same
+// question asked of nothing.
+//
+// The answer crosses as the machine integer every computed answer crosses as. A
+// host `bool` is what an entry returns at this boundary to say whether it
+// parked the caller, so it is not available to mean anything else.
+[[nodiscard]] auto ObjectIsOfClass(
+    const value::ManagedRef& handle, const ObjectDefinition* wanted)
+    -> std::int64_t;
+
+[[nodiscard]] inline auto ObjectIsOfClass(
+    const value::ObjectRef& ref, const ObjectDefinition* wanted)
+    -> std::int64_t {
+  return ObjectIsOfClass(ref.Handle(), wanted);
+}
+
 // A block of storage over a definition: one storage object per member, so a
 // member place resolves to that storage's address exactly as a scope member's
 // does. What class it is of it adopts like any other object, so that is a

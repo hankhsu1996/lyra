@@ -658,6 +658,27 @@ auto FunctionLowerer::ConstructorOf(const mir::ClassRef& cls)
       cls);
 }
 
+auto FunctionLowerer::ObjectTypeOf(const mir::ClassRef& cls)
+    -> diag::Result<lir::TypeId> {
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntraUnitClassRef& intra)
+              -> diag::Result<lir::TypeId> {
+            return unit_->ClassValueType(intra.class_id);
+          },
+          [&](const mir::CrossUnitClassRef& ext) -> diag::Result<lir::TypeId> {
+            return unit_->ExternalClassValueType(ext.unit_name, ext.class_name);
+          },
+          // A class of the runtime library is laid out by the library rather
+          // than by a unit, so it carries no record a unit could name.
+          [](const mir::RuntimeClassRef&) -> diag::Result<lir::TypeId> {
+            return Unsupported(
+                "mir_to_lir: a class the runtime library defines states no "
+                "record of its own");
+          }},
+      cls);
+}
+
 auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
   if (constructed_class_ == nullptr || !constructed_class_->base.has_value()) {
     return {};
@@ -1692,21 +1713,35 @@ auto FunctionLowerer::ReferencePlace(
                     lir::SymbolPart::Name(ref.property_name)),
                 type);
           },
-          // A class's static constant and the record its objects carry are
-          // compile-time records the backend consumes directly rather than
-          // storage a body reaches, the same way the unit-definition record
-          // types are.
+          // A class's static constant is a compile-time record the backend
+          // consumes directly rather than storage a body reaches, the same way
+          // the unit-definition record types are.
           [](const mir::StaticConstantRef&) -> diag::Result<lir::Place> {
             throw InternalError(
                 "mir_to_lir: a class's static constant is a compile-time "
                 "record consumed by the backend directly and names no place -- "
                 "please report this as a bug");
           },
-          [](const mir::ObjectRecordRef&) -> diag::Result<lir::Place> {
-            throw InternalError(
-                "mir_to_lir: a class's object record is a compile-time record "
-                "consumed by the backend directly and names no place -- please "
-                "report this as a bug");
+          // A class's record is not storage anything writes, but it has an
+          // address and a body reaches it to ask the class a question. So it
+          // opens the way storage named by a linkage symbol does: the operand
+          // says which class, and what the target calls that class's record is
+          // the target's own to know.
+          [&](const mir::ObjectRecordRef& r) -> diag::Result<lir::Place> {
+            auto object = ObjectTypeOf(r.of);
+            if (!object) {
+              return std::unexpected(std::move(object.error()));
+            }
+            return lir::Place{
+                .base =
+                    lir::ObjectRecordRef{
+                        .object = *object,
+                        .type = unit_->Types().Intern(
+                            lir::Type{lir::PointerType{
+                                .pointee = unit_->TranslateType(type),
+                                .ownership = lir::PointerOwnership::kBorrowed,
+                                .mutability = lir::Mutability::kReadOnly}})},
+                .chain = {lir::Projection{lir::DerefProjection{}}}};
           },
           // A descriptor and a function are values the unit generates, not
           // storage anything writes through.

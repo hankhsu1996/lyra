@@ -571,6 +571,15 @@ auto CodeGenFunction::LowerCast(
   }
   const lir::TypeId operand_type = OperandType(cast.operand);
   if (module_->Unit().types.Get(result_type).Is<lir::MachineBoolType>()) {
+    // A machine integer is a native value rather than a value-domain handle,
+    // so reducing one to a predicate is a machine comparison against zero and
+    // not a library call. What arrives this way is a runtime entry's plain
+    // answer, which stands for no value of the design and so belongs to no
+    // domain that could name an entry.
+    if (module_->Unit().types.Get(operand_type).MachineIntegerSignedness()) {
+      return builder_.CreateICmpNE(
+          *operand, llvm::ConstantInt::get((*operand)->getType(), 0));
+    }
     auto domain = DomainOf(operand_type);
     if (!domain) {
       return std::unexpected(std::move(domain.error()));
@@ -1295,6 +1304,13 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
           [&](const lir::StaticRef& s) -> diag::Result<llvm::Value*> {
             return module_->Module().getOrInsertGlobal(
                 s.symbol, llvm::Type::getInt8Ty(module_->Context()));
+          },
+          // The record a class's objects carry, named by the class rather than
+          // by a symbol, because what this target calls one is this target's
+          // own to know -- the same answer a member projection and a dispatch
+          // target already read off a class.
+          [&](const lir::ObjectRecordRef& r) -> diag::Result<llvm::Value*> {
+            return module_->DefinitionRef(r.object);
           }},
       operand);
 }
@@ -1737,6 +1753,9 @@ auto CodeGenFunction::ConstructionOf(
               // address.
               case lir::RuntimeLibraryKind::kPropertyCoordinate:
               case lir::RuntimeLibraryKind::kBehaviorCoordinate:
+              // A class's record is assembled where the class is emitted, so a
+              // body names one and never builds one.
+              case lir::RuntimeLibraryKind::kObjectDefinition:
               case lir::RuntimeLibraryKind::kPrintItem:
               case lir::RuntimeLibraryKind::kTimeFormat:
               case lir::RuntimeLibraryKind::kDpiBitChunk:

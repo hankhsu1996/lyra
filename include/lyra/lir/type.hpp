@@ -70,6 +70,10 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kControlEffect,
   kPropertyCoordinate,
   kBehaviorCoordinate,
+  // The record every object of one class carries. A body names it to ask the
+  // class a question, and forwards its address without reading it, so what
+  // reaches here is the kind and never the runtime struct's layout.
+  kObjectDefinition,
 };
 
 struct PackedRange {

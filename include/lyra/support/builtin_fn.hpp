@@ -617,6 +617,12 @@ enum class BuiltinFn : std::uint16_t {
   // reference to it, and a handle refers to one without being one, so a call
   // entering a body of a class it cannot name asks for the object here.
   kObjectOf,
+  // Whether a handle refers to an object a variable of the named class may hold
+  // (LRM 8.16). The classes extending one are open across compilation units, so
+  // the set no unit can hold is the object's own class to answer -- which is
+  // what separates this from the questions above, where the class an access
+  // names is what decides and the object only applies it.
+  kObjectIsOfClass,
   // Fork-join branch dispatch. Each entry spawns every branch as its own
   // coroutine and yields the parent's wait shape per LRM 9.3.2: `kForkWaitAll`
   // for `join` (resume after the last branch), `kForkWaitFirst` for

@@ -111,6 +111,38 @@ auto BuildDiagnosticCallExpr(
       .type = unit.builtins.diagnostic};
 }
 
+auto BuildReportCallExpr(
+    const mir::CompilationUnit& unit, support::BuiltinFn severity,
+    mir::ExprId diagnostic_id, mir::ExprId origin_id, mir::ExprId text_id)
+    -> mir::Expr {
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{.target = severity, .receiver = diagnostic_id},
+              .arguments = {origin_id, text_id}},
+      .type = unit.builtins.void_type};
+}
+
+void AppendToolReportStmt(
+    const UnitLowerer& unit_lowerer, mir::Block& block,
+    support::BuiltinFn severity, std::string text, diag::SourceSpan span) {
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  const mir::ExprId diagnostic_id =
+      block.exprs.Add(BuildDiagnosticCallExpr(unit, runtime_id));
+  const mir::ExprId origin_id = BuildStringValueExpr(
+      unit, block,
+      FormatRuntimeOriginString(span, unit_lowerer.SourceManager()));
+  const mir::ExprId text_id =
+      BuildStringValueExpr(unit, block, std::move(text));
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.exprs.Add(BuildReportCallExpr(
+              unit, severity, diagnostic_id, origin_id, text_id))});
+}
+
 auto BuildFormatCallExpr(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId runtime_id,
     mir::ExprId items_array) -> mir::Expr {

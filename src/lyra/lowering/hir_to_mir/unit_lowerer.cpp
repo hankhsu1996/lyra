@@ -520,6 +520,7 @@ void UnitLowerer::PublishTypeOwnedReadings() {
     if (is_enumeration(type)) {
       declare(TypeOwnedReading::kEnumerationName, type);
       declare(TypeOwnedReading::kEnumerationStep, type);
+      declare(TypeOwnedReading::kEnumerationMembership, type);
     }
   }
 
@@ -536,6 +537,9 @@ void UnitLowerer::PublishTypeOwnedReadings() {
       define(
           TypeOwnedReading::kEnumerationStep, type,
           BuildEnumerationStepCode(*this, type));
+      define(
+          TypeOwnedReading::kEnumerationMembership, type,
+          BuildEnumerationMembershipCode(*this, type));
     }
   }
 }

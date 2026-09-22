@@ -312,6 +312,14 @@ auto lyra_rt_behavior_at(const void* handle, const void* coordinate)
 // asking side already holds.
 auto lyra_rt_object_of(const void* handle) -> void*;
 
+// Whether a handle refers to an object a variable of the named class may hold.
+// The set of classes extending one is open across compilation units, so the
+// object's own class is what answers and nothing the asking side holds could.
+// The answer crosses as the machine integer every computed answer crosses as; a
+// host `bool` here would say the call parks its caller.
+auto lyra_rt_object_is_of_class(const void* handle, const void* definition)
+    -> std::int64_t;
+
 // The handle one capture crosses back to the body as, by declaration index. A
 // captured pointer answers the pointer it holds; a captured value answers the
 // storage the closure owns, which outlives every read of it. A body reaches its

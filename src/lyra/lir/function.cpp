@@ -64,7 +64,10 @@ auto OperandType(const Function& fn, const Operand& operand)
             return c.type;
           },
           [](const FuncRef&) -> std::optional<TypeId> { return std::nullopt; },
-          [](const StaticRef& s) -> std::optional<TypeId> { return s.type; }},
+          [](const StaticRef& s) -> std::optional<TypeId> { return s.type; },
+          [](const ObjectRecordRef& r) -> std::optional<TypeId> {
+            return r.type;
+          }},
       operand);
 }
 

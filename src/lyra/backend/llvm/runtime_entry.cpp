@@ -404,6 +404,10 @@ auto MemberStorageKindOf(
               // storage that outlives it rather than owning a copy.
               case lir::RuntimeLibraryKind::kPropertyCoordinate:
               case lir::RuntimeLibraryKind::kBehaviorCoordinate:
+              // A class's record is one per class for the whole run and every
+              // object of it shares it, so a member naming one points at
+              // storage outliving it for the same reason.
+              case lir::RuntimeLibraryKind::kObjectDefinition:
                 return MemberStorageKind::kBorrowedHandle;
               // The rest are transients of one call -- what a print or a format
               // is assembled from, what a boundary object images an argument
@@ -876,6 +880,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kPropertyAt:
     case support::BuiltinFn::kBehaviorAt:
     case support::BuiltinFn::kObjectOf:
+    case support::BuiltinFn::kObjectIsOfClass:
     case support::BuiltinFn::kForkWaitAll:
     case support::BuiltinFn::kForkWaitFirst:
     case support::BuiltinFn::kSpawnAll:

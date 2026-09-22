@@ -788,6 +788,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "object_of",
           .declaration = FreeFunction{"lyra::runtime::ObjectOf"}};
+    case BuiltinFn::kObjectIsOfClass:
+      return {
+          .name = "object_is_of_class",
+          .declaration = FreeFunction{"lyra::runtime::ObjectIsOfClass"}};
     case BuiltinFn::kClassFindBehaviorBody:
       return {
           .name = "class_find_behavior_body",

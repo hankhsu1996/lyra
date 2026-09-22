@@ -15,9 +15,12 @@
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/parsing/KnownSystemName.h>
+#include <slang/syntax/AllSyntax.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/hir/expr.hpp"
+#include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/statement/blocks.hpp"
@@ -150,7 +153,19 @@ auto LowerExpressionStmt(
       return LowerIntraAssignmentStmt(proc, frame, as, span);
     }
   }
-  auto expr = proc.LowerExpr(es.expr, frame);
+  // A statement discards whatever its expression answers, and is the one such
+  // position where the source can still say it called a function: a void cast
+  // (LRM 6.24.1). The front end checks that cast and then drops it, so the
+  // syntax this statement was built from is what still carries which was
+  // written.
+  const bool called_as_a_function =
+      es.syntax != nullptr &&
+      es.syntax->kind == slang::syntax::SyntaxKind::VoidCastedCallStatement;
+  auto expr = LowerExprWithDiscardedAnswer(
+      proc, frame, es.expr,
+      called_as_a_function ? hir::InvalidAssignmentHandling::kAnswered
+                           : hir::InvalidAssignmentHandling::kReported,
+      span);
   if (!expr) return std::unexpected(std::move(expr.error()));
   const hir::ExprId id = frame.Exprs().Add(*std::move(expr));
   return hir::Stmt{

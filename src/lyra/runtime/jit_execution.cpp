@@ -573,6 +573,7 @@ using lyra::runtime::MemberStorageSchema;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
 using lyra::runtime::ObjectDefinition;
+using lyra::runtime::ObjectIsOfClass;
 using lyra::runtime::ObjectOf;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
@@ -1516,6 +1517,13 @@ auto lyra_rt_class_find_behavior_body(const void* definition, const void* name)
 
 auto lyra_rt_object_of(const void* handle) -> void* {
   return ObjectOf(Read<ManagedRef>(handle));
+}
+
+auto lyra_rt_object_is_of_class(const void* handle, const void* definition)
+    -> std::int64_t {
+  return ObjectIsOfClass(
+      Read<ManagedRef>(handle),
+      static_cast<const ObjectDefinition*>(definition));
 }
 
 auto lyra_rt_property_at(const void* handle, const void* coordinate) -> void* {

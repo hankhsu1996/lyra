@@ -108,27 +108,9 @@ auto BuildDeferredReportSubmit(
 void AppendDefaultReport(
     ProcessLowerer& process, mir::Block& block,
     hir::AssertionDirective directive, diag::SourceSpan span) {
-  const mir::CompilationUnit& unit = process.Owner().Unit();
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId diagnostic_id =
-      block.exprs.Add(BuildDiagnosticCallExpr(unit, runtime_id));
-  const mir::ExprId origin_id = BuildStringValueExpr(
-      unit, block,
-      FormatRuntimeOriginString(span, process.Owner().SourceManager()));
-  const mir::ExprId text_id =
-      BuildStringValueExpr(unit, block, std::string(FailureText(directive)));
-  const mir::ExprId emit_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kEmitError,
-                          .receiver = diagnostic_id},
-                  .arguments = {origin_id, text_id}},
-          .type = unit.builtins.void_type});
-  block.AppendStmt(mir::ExprStmt{.expr = emit_id});
+  AppendToolReportStmt(
+      process.Owner(), block, support::BuiltinFn::kEmitError,
+      std::string(FailureText(directive)), span);
 }
 
 auto HasRealArm(const hir::ProceduralBody& body, std::optional<hir::StmtId> arm)

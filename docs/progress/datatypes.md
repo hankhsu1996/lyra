@@ -3,7 +3,8 @@
 Tracks SystemVerilog data type coverage on the current pipeline, other than the integral family
 (`int`, `byte`, `shortint`, `longint`, `time`, `integer`, `bit [N:0]`, `logic [N:0]`), whose surface
 is complete. This file covers every other family: enum, string, fixed unpacked arrays, chandle,
-parameters and typedef, real, tagged union, default initialization, and value representation.
+parameters and typedef, real, tagged union, default initialization, and value representation -- and
+the conversions between types that LRM 6.24 states over all of them.
 
 ## Actionable
 
@@ -15,7 +16,8 @@ into one has to survive is not, and is recorded with the conformance gaps below.
 union, tagged and untagged, are complete. Default initialization (LRM Table 6-7) and value
 representation, including a wide value carrying X/Z across the 64-bit word boundary, are complete.
 Chandle is complete. Bit-stream casting is complete between fixed-size types; the dynamically sized
-form is the one gap, recorded below.
+form is the one gap, recorded below. Dynamic casting is complete for every operand family, in both
+of its spellings.
 
 ## Tagged union
 
@@ -101,6 +103,37 @@ total width convert into each other without either naming the other's members.
   - [ ] A cast whose operand or casting type is a union, or a class. Both wait on the value layer
         carrying a bit stream for those at all, which is also what `$bits` of one waits on; neither
         is specific to casting.
+
+## Dynamic casting
+
+LRM 6.24.2: `$cast` assigns a source expression to a destination variable whose declared type would
+not ordinarily allow it, and decides while the program runs whether that particular assignment is
+valid. Two families of types make validity depend on the value rather than on the pair of types
+alone -- an enumeration, whose members its declaration fixes, and a class handle, where which
+classes extend the destination's is open across compilation units (LRM 8.16) -- and for every other
+pair the declared types settle it once.
+
+- [x] DC1 -- Both spellings (LRM 6.24.2): called as a function the answer is 1 or 0 and no error is
+      issued; called as a task an invalid assignment is reported to the design and the run goes on,
+      which is what leaving the destination unchanged is for. Writing the answer down is what
+      calling it as a function means, so the positions that discard one -- a statement, and a
+      for-loop step (LRM A.6.8) -- are the task spelling; a void cast of the call is the exception,
+      and the step admits no cast around a call, so only a statement can carry it.
+- [x] DC2 -- An integral value into an enumeration: valid exactly where the value is one of the
+      declared members, tested against the value the assignment would store.
+- [x] DC3 -- A class handle into a variable of a subclass (LRM 8.16): valid where the object the
+      source refers to is of that class or of one extending it, however deep, so the same downcast
+      succeeds or fails on what was constructed. A handle referring to no object satisfies no such
+      check, while the destination being the source's own class or a superclass of it, and the
+      literal `null`, are valid whatever the value. An interface class handle is a legal source for
+      the same check (LRM 8.26).
+- [x] DC4 -- A pair of types between which the standard defines no conversion answers 0 and leaves
+      the destination alone, and is not a compile-time error (LRM 6.22.4, 6.22.5).
+
+### Cross-references
+
+- LRM 6.24.2 (`$cast` dynamic casting), 6.22.3 / 6.22.4 / 6.22.5 (compatibility), 8.16 (casting
+  between class handles), 20.10 (severity of the report the task spelling issues).
 
 ## Structural Initializers
 

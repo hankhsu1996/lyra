@@ -87,6 +87,12 @@ each stage establishes, not how.
       `super.new` -- so a backend never resorts to its target language's default-construction
       convention.
 
+- [x] Assigning a handle to a variable of a subclass (LRM 8.16): illegal to write directly and legal
+      through the dynamic cast, which succeeds on what the object turns out to be rather than on
+      what the source was declared as. Its coverage is tracked whole in `datatypes.md`, with the
+      enumeration half of the same construct, because one construct with two operand families splits
+      badly across two files.
+
 - [x] Pure-virtual and abstract classes (LRM 8.21): a virtual method with no body is a contract the
       derived must fill, and a class carrying such a slot is not directly constructible. Each layer
       states the "declared, no source body" fact as a structural property of the method, orthogonal
