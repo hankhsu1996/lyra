@@ -755,6 +755,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kAddOwnedChild:
       return {
           .name = "add_owned_child", .declaration = Method{"AddOwnedChild"}};
+    case BuiltinFn::kExtendSequence:
+      return {
+          .name = "sequence_extend",
+          .declaration = FreeFunction{"lyra::runtime::ExtendSequence"}};
     case BuiltinFn::kRegisterDisableTarget:
       return {
           .name = "register_disable_target",

@@ -56,12 +56,18 @@ render, which `mir.md` requires to be a stated call.
    conversion, not a join. HIR-to-MIR states it as one, so the degenerate case exists in one place
    instead of at every consumer.
 
-3. **A replication's multiplier reaches the entry as a machine count.** LRM 11.4.12.1 makes it a
-   constant expression over packed operands, so the front end has already folded it and HIR-to-MIR
-   states the folded value as a literal argument. LRM 11.4.12.2 allows a non-constant multiplier
-   over a string, so that form evaluates an integral expression and states the reshape to a machine
-   count as a call in the argument list. Where the count comes from is the only difference between
-   the two, and neither leaves a backend anything to insert.
+3. **A replication's multiplier reaches the entry as a machine count.** The multiplier is lowered as
+   the expression the source wrote and reshaped to a machine count by a call in the argument list,
+   so a backend has nothing to insert. LRM 11.4.12.1 requires a constant expression over packed
+   operands and 11.4.12.2 admits a non-constant one over a string, and that difference reaches
+   nothing here: a constant multiplier is an expression that happens to have a known value, so both
+   take the one path, and the entry cannot tell which it was handed.
+
+   This entry used to say the packed form arrives already folded and is stated as a literal
+   argument, with the string form as a second path beside it. Neither half held. Nothing in either
+   lowering reads what an expression settled to, so there was one path all along -- and the sentence
+   was reasoning from the clause to what the compiler must be doing, which is the inference
+   `an-elaboration-time-value-is-an-input` exists to stop.
 
 4. **A join reaches MIR already folded to the arity its entries take.** Nothing composes an operand
    list of arbitrary length: a C ABI has no such entry, and neither does the runtime's C++ surface.

@@ -34,6 +34,8 @@ struct ContinuousAssign {
   ExprId rhs;
   support::StrengthLevel strength;
   std::vector<SensitivityEntry> sensitivity_list;
+
+  auto operator==(const ContinuousAssign&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

@@ -14,7 +14,6 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
@@ -241,18 +240,26 @@ auto ApplyAssignEffect(
       });
 }
 
+}  // namespace
+
 // Axis A: the store itself, against the storage the target designates.
 // Timing-agnostic: the same effect serves blocking and NBA.
-auto LowerObservableAssign(
-    ProcessLowerer& process, WalkFrame frame, const hir::AssignExpr& a,
+template <ExprLowerer Lowerer>
+auto LowerHirAssignExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::AssignExpr& a,
     diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const auto& hir_process = process.HirBody();
+  if (a.compound_op.has_value() &&
+      std::holds_alternative<hir::NonBlockingEffect>(a.timing)) {
+    throw InternalError(
+        "LowerHirAssignExpr: compound assignment with non-blocking timing "
+        "is not a legal SV form (LRM A.6.2 grammar)");
+  }
   auto& block = *frame.current_block;
 
-  auto rhs_or = process.LowerExpr(hir_process.exprs.Get(a.rhs), frame);
+  auto rhs_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.rhs), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const mir::ExprId rhs_id = block.exprs.Add(*std::move(rhs_or));
-  auto lhs_or = process.LowerLhsExpr(hir_process.exprs.Get(a.lhs), frame);
+  auto lhs_or = lowerer.LowerLhsExpr(lowerer.HirExprs().Get(a.lhs), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
 
   const std::optional<CompoundOperation> compound_op =
@@ -260,34 +267,29 @@ auto LowerObservableAssign(
           ? std::optional{LowerCompoundOperation(*a.compound_op)}
           : std::nullopt;
   const std::array<mir::ExprId, 1> operands{rhs_id};
-  return ApplyAssignEffect(
-      process, frame, a.timing, span, *lhs_or, operands,
-      [&](mir::Block& blk, const WriteTarget& target,
-          std::span<const mir::ExprId> ops) -> mir::Expr {
-        return BuildStoreExpr(
-            process.Owner().Unit(), blk, target, ops[0], compound_op,
-            result_type);
-      });
-}
-
-}  // namespace
-
-auto LowerHirAssignExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::AssignExpr& a,
-    diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  if (a.compound_op.has_value() &&
-      std::holds_alternative<hir::NonBlockingEffect>(a.timing)) {
-    throw InternalError(
-        "LowerHirAssignExprProc: compound assignment with non-blocking timing "
-        "is not a legal SV form (LRM A.6.2 grammar)");
+  const auto store = [&](mir::Block& blk, const WriteTarget& target,
+                         std::span<const mir::ExprId> ops) -> mir::Expr {
+    return BuildStoreExpr(
+        lowerer.Owner().Unit(), blk, target, ops[0], compound_op, result_type);
+  };
+  // What a write to the target is belongs to the store built above, and what
+  // belongs here is when it takes place. Only a procedure has a later region
+  // to place one in (LRM 10.4); a write a construction performs takes place
+  // where the construction reaches it, so there is nothing to choose.
+  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+    return ApplyAssignEffect(
+        lowerer, frame, a.timing, span, *lhs_or, operands, store);
+  } else {
+    return store(block, *lhs_or, operands);
   }
-
-  // What a write to the target is belongs to the store built against it, and
-  // what belongs here is that the same write serves either timing: applied
-  // where the statement is reached, or frozen and applied when the update is
-  // due (LRM 10.4).
-  return LowerObservableAssign(process, frame, a, span, result_type);
 }
+
+template auto LowerHirAssignExpr(
+    ProcessLowerer&, WalkFrame, const hir::AssignExpr&, diag::SourceSpan,
+    mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirAssignExpr(
+    const StructuralScopeLowerer&, WalkFrame, const hir::AssignExpr&,
+    diag::SourceSpan, mir::TypeId) -> diag::Result<mir::Expr>;
 
 auto BuildDestructuredDeferredAssign(
     ProcessLowerer& process, WalkFrame frame, diag::SourceSpan span,

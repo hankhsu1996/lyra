@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <unordered_set>
 
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
@@ -53,6 +54,15 @@ class CodeGenModule {
   // reconstructed symbol name.
   auto UnitFunction(lir::FunctionId function) -> llvm::Function*;
 
+  // Whether this function is how a scope of the design hierarchy is built. Such
+  // a function is reached through its class's definition rather than by name --
+  // which is all one unit holds of another unit's scope -- so it is emitted
+  // with the one prototype every class's construction shares, and reads back
+  // the values its own class is parameterized by from the span that prototype
+  // ends in.
+  [[nodiscard]] auto IsScopeConstruction(lir::FunctionId function) const
+      -> bool;
+
   // The definition-reference projection of a type whose values the runtime
   // builds -- a scope class, or a closure: the address of that declaration's
   // runtime definition, as an external symbol the host resolves. A construct
@@ -82,6 +92,10 @@ class CodeGenModule {
   const lir::CompilationUnit* unit_;
   CodeGenTypes types_;
   base::Translation<lir::FunctionId, llvm::Function*> functions_;
+  // Which of the unit's functions a class names as its construction, read the
+  // other way round from how the unit states it: a class names the function
+  // that builds a value of it, and what asks here is a function being emitted.
+  std::unordered_set<lir::FunctionId> scope_constructions_;
   base::Translation<lir::TypeId, llvm::GlobalVariable*> packed_type_cells_;
 };
 

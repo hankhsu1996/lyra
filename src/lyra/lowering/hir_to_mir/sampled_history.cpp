@@ -75,7 +75,7 @@ auto ComparisonOf(support::ValueChangeReading reading)
 template <ExprLowerer Lowerer>
 auto BuildPriorTickRead(
     Lowerer& lowerer, const WalkFrame& frame, hir::SampledHistoryId id,
-    std::uint32_t ticks_back) -> mir::Expr {
+    mir::ExprId ticks_back) -> mir::Expr {
   if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
     throw InternalError(
         "BuildPriorTickRead: a sampled value function outside a procedure is "
@@ -86,8 +86,7 @@ auto BuildPriorTickRead(
     const mir::ExprId history = BuildSampledHistoryExpr(
         block, frame, lowerer.EnclosingScopeLowerer(), id);
     return mir::MakeSampledHistoryAtCallExpr(
-        history,
-        BuildIntLiteral(unit, block, static_cast<std::int64_t>(ticks_back)),
+        history, ticks_back,
         unit.types.Get(block.exprs.Get(history).type)
             .Get<mir::SampledHistoryType>()
             .value);
@@ -217,9 +216,19 @@ auto LowerSampledHistorySampler(
 
 template <ExprLowerer Lowerer>
 auto LowerPastValueCall(
-    Lowerer& lowerer, const WalkFrame& frame, const hir::PastValueRef& ref)
-    -> diag::Result<mir::Expr> {
-  return BuildPriorTickRead(lowerer, frame, ref.history, ref.ticks_back);
+    Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& call,
+    const hir::PastValueRef& ref) -> diag::Result<mir::Expr> {
+  if (call.arguments.size() != 1 || !call.arguments.front().has_value()) {
+    throw InternalError(
+        "LowerPastValueCall: a prior-tick read states how far back it reaches "
+        "and states nothing else");
+  }
+  auto back_or =
+      lowerer.LowerExpr(lowerer.HirExprs().Get(*call.arguments.front()), frame);
+  if (!back_or) return std::unexpected(std::move(back_or.error()));
+  return BuildPriorTickRead(
+      lowerer, frame, ref.history,
+      frame.current_block->exprs.Add(*std::move(back_or)));
 }
 
 template <ExprLowerer Lowerer>
@@ -235,8 +244,11 @@ auto LowerValueChangeCall(
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Block& block = *frame.current_block;
 
-  const mir::ExprId prior =
-      block.exprs.Add(BuildPriorTickRead(lowerer, frame, ref.history, 1));
+  // A value change function names no distance: LRM 16.9.3 defines it against
+  // the most recent strictly prior tick, so the one here is this compiler's own
+  // rather than anything the source wrote.
+  const mir::ExprId prior = block.exprs.Add(BuildPriorTickRead(
+      lowerer, frame, ref.history, BuildIntLiteral(unit, block, 1)));
   const mir::TypeId value_type = block.exprs.Get(prior).type;
 
   // The current side is the sampled value of this time step, which is what
@@ -286,11 +298,11 @@ auto LowerValueChangeCall(
 }
 
 template auto LowerPastValueCall(
-    ProcessLowerer&, const WalkFrame&, const hir::PastValueRef&)
-    -> diag::Result<mir::Expr>;
+    ProcessLowerer&, const WalkFrame&, const hir::CallExpr&,
+    const hir::PastValueRef&) -> diag::Result<mir::Expr>;
 template auto LowerPastValueCall(
-    const StructuralScopeLowerer&, const WalkFrame&, const hir::PastValueRef&)
-    -> diag::Result<mir::Expr>;
+    const StructuralScopeLowerer&, const WalkFrame&, const hir::CallExpr&,
+    const hir::PastValueRef&) -> diag::Result<mir::Expr>;
 template auto LowerValueChangeCall(
     ProcessLowerer&, const WalkFrame&, const hir::CallExpr&,
     const hir::ValueChangeRef&, mir::TypeId, diag::SourceSpan)

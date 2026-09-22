@@ -162,6 +162,10 @@ auto FormatStructuralDataObject(const StructuralDataObjectDecl& decl)
           },
           [](const StructuralReferenceDecl& reference) {
             return std::string{ReferenceBindingLabel(reference.binding)};
+          },
+          [](const StructuralGenvarDecl&) { return std::string{" genvar"}; },
+          [](const StructuralConstructionValueDecl&) {
+            return std::string{" given at construction"};
           }},
       decl.kind);
 }
@@ -866,18 +870,26 @@ class HirDumper {
         Overloaded{
             [this](const StructuralSubroutineRef& u) -> std::string {
               const StructuralScope* owner = &ResolveScope(u.hops);
-              for (const OwnedChildRef& child : u.descent) {
-                const auto* generate = std::get_if<GenerateChildRef>(&child);
+              std::string descent;
+              for (const OwnedChildStep& step : u.descent) {
+                const auto* generate =
+                    std::get_if<GenerateChildRef>(&step.child);
                 if (generate == nullptr) break;
-                owner = &owner->generates.Get(generate->generate)
-                             .child_scopes.Get(generate->scope);
+                descent += std::format(
+                    " . Generate[{}].Block[{}]{}", generate->generate.value,
+                    generate->block, FormatIndices(step.indices));
+                const Generate& gen = owner->generates.Get(generate->generate);
+                owner = &gen.child_scopes.Get(
+                    StructuralScopeId{
+                        std::holds_alternative<BlocksRepeat>(gen.counting)
+                            ? 0
+                            : generate->block});
               }
               const auto& decl =
                   owner->structural_subroutines.Get(u.subroutine);
               return std::format(
-                  "StructuralSubroutine[{}](hops={}, descent={}) \"{}\"",
-                  u.subroutine.value, u.hops.value, u.descent.size(),
-                  decl.name);
+                  "StructuralSubroutine[{}](self^{}{}) \"{}\"",
+                  u.subroutine.value, u.hops.value, descent, decl.name);
             },
             [](const MethodCallRef& m) -> std::string {
               const std::string recv = std::visit(
@@ -915,9 +927,7 @@ class HirDumper {
                   "EnumMethod \"{}\"", FormatEnumMethod(e.method));
             },
             [](const PastValueRef& p) -> std::string {
-              return std::format(
-                  "PastValue history={} ticks_back={}", p.history.value,
-                  p.ticks_back);
+              return std::format("PastValue history={}", p.history.value);
             },
             [](const ValueChangeRef& v) -> std::string {
               return std::format(
@@ -1226,7 +1236,7 @@ class HirDumper {
                   entries += ", ";
                 }
                 entries += std::format(
-                    "{}: Expr[{}]", k.entries[i].index,
+                    "Expr[{}]: Expr[{}]", k.entries[i].index.value,
                     k.entries[i].value.value);
               }
               const std::string fill =
@@ -1452,8 +1462,8 @@ class HirDumper {
                         },
                         [&](const GenerateChildRef& g) {
                           return std::format(
-                              " . Generate[{}].Scope[{}]{}", g.generate.value,
-                              g.scope.value, FormatIndices(owned.indices));
+                              " . Generate[{}].Block[{}]{}", g.generate.value,
+                              g.block, FormatIndices(owned.indices));
                         }},
                     owned.child);
               },
@@ -1587,8 +1597,8 @@ class HirDumper {
       const auto& h = s.sampled_histories.Get(id);
       Line(
           std::format(
-              "SampledHistory[{}] subject=Expr[{}] depth={}", id.value,
-              h.subject.value, h.depth));
+              "SampledHistory[{}] subject=Expr[{}] depth=Expr[{}]", id.value,
+              h.subject.value, h.depth.value));
       Indent();
       Line(std::format("clock: {}", FormatEventControl(h.clock)));
       Dedent();

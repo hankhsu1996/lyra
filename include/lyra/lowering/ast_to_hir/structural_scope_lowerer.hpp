@@ -34,11 +34,31 @@ class StructuralScopeLowerer {
         frame_(unit_lowerer.LookupScopeFrame(slang_scope)) {
   }
 
+  // A parameter of the scope whose value whoever constructs the scope supplies,
+  // rather than one folded to what a single elaboration gave it (LRM 27.4). It
+  // is declared before any member is walked, so a name reaching it resolves to
+  // the declaration; `declared` comes back so the construction can say which
+  // declaration it fills.
+  struct ConstructionValue {
+    const slang::ast::ValueSymbol* parameter = nullptr;
+    hir::StructuralDataObjectId declared{};
+  };
+
   // Stack-allocates the output `hir::StructuralScope`, walks every member of
   // `slang_scope_` into it, and returns it. `parent_frame` is the caller's walk
   // frame; this scope's own ScopeFrameId and `&scope` are pushed by Run before
   // dispatching to per-member helpers.
-  auto Run(WalkFrame parent_frame) -> diag::Result<hir::StructuralScope>;
+  auto Run(WalkFrame parent_frame, ConstructionValue* construction_value)
+      -> diag::Result<hir::StructuralScope>;
+  auto Run(WalkFrame parent_frame) -> diag::Result<hir::StructuralScope> {
+    return Run(parent_frame, nullptr);
+  }
+
+  // This scope's identity on the walk, which a declaration added to it is
+  // bound against.
+  [[nodiscard]] auto Frame() const -> ScopeFrameId {
+    return frame_;
+  }
 
   [[nodiscard]] auto Owner() -> UnitLowerer& {
     return *owner_;

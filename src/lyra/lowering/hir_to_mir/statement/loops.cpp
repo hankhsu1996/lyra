@@ -166,9 +166,10 @@ auto LowerDoWhileStmt(
       .data = mir::DoWhileStmt{.condition = cond_id, .scope = body_scope_id}};
 }
 
-auto BuildRepeatLoopStmt(
+auto BuildCountingLoopStmt(
     const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
-    mir::ExprId count, mir::BlockId body_scope) -> mir::Stmt {
+    mir::ExprId count, mir::LocalId position, mir::BlockId body_scope)
+    -> mir::Stmt {
   const mir::TypeId int_type = unit.builtins.int_type;
   const mir::TypeId bit_type = unit.builtins.bit1;
 
@@ -178,7 +179,7 @@ auto BuildRepeatLoopStmt(
   const mir::LocalId count_var = frame.bindings->DeclareAnonymous(int_type);
   block.AppendStmt(mir::LocalDeclStmt{.target = count_var, .init = count});
 
-  const mir::LocalId idx_var = frame.bindings->DeclareAnonymous(int_type);
+  const mir::LocalId idx_var = position;
 
   const mir::ExprId zero_id = BuildIntLiteral(unit, block, 0);
   const mir::ExprId one_id = BuildIntLiteral(unit, block, 1);
@@ -224,6 +225,14 @@ auto BuildRepeatLoopStmt(
           .condition = cond_id,
           .step = {step_id},
           .scope = body_scope}};
+}
+
+auto BuildRepeatLoopStmt(
+    const mir::CompilationUnit& unit, WalkFrame frame, mir::Block& block,
+    mir::ExprId count, mir::BlockId body_scope) -> mir::Stmt {
+  const mir::LocalId position =
+      frame.bindings->DeclareAnonymous(unit.builtins.int_type);
+  return BuildCountingLoopStmt(unit, frame, block, count, position, body_scope);
 }
 
 auto LowerRepeatStmt(

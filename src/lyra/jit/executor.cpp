@@ -410,6 +410,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_add_owned_child", &lyra_rt_add_owned_child);
   add("lyra_rt_member_addr", &lyra_rt_member_addr);
   add("lyra_rt_sequence_make", &lyra_rt_sequence_make);
+  add("lyra_rt_sequence_extend", &lyra_rt_sequence_extend);
   add("lyra_rt_sequence_element", &lyra_rt_sequence_element);
   add("lyra_rt_register_signal", &lyra_rt_register_signal);
   add("lyra_rt_find_signal", &lyra_rt_find_signal);
@@ -1493,7 +1494,7 @@ void FillDefinition(llvm::orc::LLJIT& jit, LoadedScopeClass& cls) {
   definition.program.create_processes =
       lookup(cls.entries.create_processes).toPtr<runtime::ScopeEntry>();
   definition.construct =
-      lookup(cls.entries.construct).toPtr<runtime::ScopeEntry>();
+      lookup(cls.entries.construct).toPtr<runtime::ScopeConstructEntry>();
 
   const auto resolve_table =
       [&](PublishedCallables& published) -> runtime::ScopeCallableTable {
@@ -1543,9 +1544,14 @@ auto LoadStaticStorage(const lir::CompilationUnit& unit)
 // storage instead.
 auto OwnedChildClass(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<lir::ClassId> {
-  // A child is reached by a pointer at it. A handle to an object the program
-  // built is a managed reference rather than a pointer, so it is not one of
-  // these however its pointee is declared.
+  // A child is reached by a pointer at it, and a member standing for several
+  // children holds a sequence of that pointer -- one wrapper per dimension it
+  // covers -- so the pointer is what is left once they are opened. A handle to
+  // an object the program built is a managed reference rather than a pointer,
+  // so it is not one of these however its pointee is declared.
+  while (const auto* sequence = unit.types.Get(type).As<lir::VectorType>()) {
+    type = sequence->element;
+  }
   const auto* pointer = unit.types.Get(type).As<lir::PointerType>();
   if (pointer == nullptr) {
     return std::nullopt;
@@ -2280,11 +2286,12 @@ auto Execute(
     throw InternalError("jit executor: the design root has no scope class");
   }
   const runtime::ScopeDefinition& root_definition = *root_entry->definition;
+  runtime::HierarchySegment root_segment{"$root", {}};
   auto root = std::make_unique<runtime::GeneratedScope>(
-      nullptr, runtime::HierarchySegment{"$root", {}}, &root_definition);
+      nullptr, root_segment, &root_definition);
   {
     runtime::GeneratedCallScope construct_scope;
-    root_definition.construct(root.get());
+    root_definition.construct(root.get(), nullptr, &root_segment, {});
   }
   auto design = std::make_unique<runtime::Design>(std::move(root));
   runtime_instance.BindDesign(std::move(design));

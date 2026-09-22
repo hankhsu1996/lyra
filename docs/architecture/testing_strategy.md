@@ -68,6 +68,16 @@ published standard, and everything below follows from that.
 10. **No test asserts on the text of an HIR, MIR, or LIR dump.** A dump is a debugging view whose
     wording is free to change; what a lowering produced is proven by what the program does.
 
+11. **A property no program can observe is stated by a test that reads what the compiler built.**
+    How many artifacts a design compiles into is the standing example: a structure compiled once and
+    the same structure compiled once per repetition run identically, so nothing the corpus can write
+    separates them and the standard requires neither. Such a property still has to be held to,
+    because which of the two a design gets decides whether a large one compiles at all -- so it is
+    stated by reading the lowered form through the interface the command line uses, never through a
+    dump, and asserted in both directions: what must be shared and what must not. An assertion that
+    only ever holds one way is satisfied by a compiler that shares nothing, which is the failure it
+    exists to catch. This is not language coverage and never stands in for any.
+
 ## Boundary to Adjacent Layers
 
 - A case exercises the whole pipeline, so a failure in one may point at any layer. Bisecting it is

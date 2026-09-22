@@ -769,6 +769,22 @@ auto CodeGenFunction::ArgsInForm(
             return std::vector<llvm::Value*>{
                 *definition, SpanOver(operands, module_->Types().Ptr())};
           },
+          [&](const ScopeOperandsAfterDefinition& f)
+              -> diag::Result<std::vector<llvm::Value*>> {
+            auto definition = module_->DefinitionRef(f.defined);
+            if (!definition) {
+              return std::unexpected(std::move(definition.error()));
+            }
+            const std::span<llvm::Value* const> stated{operands};
+            std::vector<llvm::Value*> args{*definition};
+            args.insert(
+                args.end(), stated.begin(),
+                stated.begin() + kScopeStructuralOperands);
+            args.push_back(SpanOver(
+                stated.subspan(kScopeStructuralOperands),
+                module_->Types().Ptr()));
+            return args;
+          },
           [&](const OperandsAfterVariableSchema&)
               -> diag::Result<std::vector<llvm::Value*>> {
             std::vector<llvm::Value*> args{module_->VariableSchemaRef(*fn_)};
@@ -1783,12 +1799,12 @@ auto CodeGenFunction::ConstructionOf(
                 return Construction{
                     .symbol = RuntimeSymbol(RuntimeOp::kMakeScope),
                     .operand_form =
-                        OperandsAfterDefinition{.defined = p.pointee}};
+                        ScopeOperandsAfterDefinition{.defined = p.pointee}};
               case lir::PointerOwnership::kShared:
                 return Construction{
                     .symbol = RuntimeSymbol(RuntimeOp::kMakePromotedScope),
                     .operand_form =
-                        OperandsAfterDefinition{.defined = p.pointee}};
+                        ScopeOperandsAfterDefinition{.defined = p.pointee}};
               case lir::PointerOwnership::kBorrowed:
                 return no_construct();
             }

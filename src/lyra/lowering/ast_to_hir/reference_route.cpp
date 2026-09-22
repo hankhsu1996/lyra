@@ -584,7 +584,7 @@ auto UnitLowerer::ReachOwnScope(
           "a subroutine reached through a scope this module does not lay out "
           "is not yet supported");
     }
-    reach.descent.push_back(owned->child);
+    reach.descent.push_back(*owned);
   }
   return reach;
 }
@@ -845,6 +845,20 @@ void UnitLowerer::ClassifyDescent(
   }
   route.unit_name = typed ? std::move(standing) : std::nullopt;
   route.open = std::move(open);
+}
+
+auto UnitLowerer::NameFilledDuringElaboration(
+    const slang::ast::Symbol& named) const -> const slang::ast::ValueSymbol* {
+  if (named.kind != slang::ast::SymbolKind::Parameter &&
+      named.kind != slang::ast::SymbolKind::Genvar) {
+    return nullptr;
+  }
+  const auto* value = named.as_if<slang::ast::ValueSymbol>();
+  if (value == nullptr) {
+    return nullptr;
+  }
+  return LookupStructuralDataObjectBinding(*value).has_value() ? value
+                                                               : nullptr;
 }
 
 auto UnitLowerer::ResolveValueTarget(

@@ -99,7 +99,8 @@ auto BuildInstanceMember(
 
 }  // namespace
 
-auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
+auto StructuralScopeLowerer::Run(
+    WalkFrame parent_frame, ConstructionValue* construction_value)
     -> diag::Result<hir::StructuralScope> {
   hir::StructuralScope scope;
   // Filling a declaration is defining the identity a peer may already hold,
@@ -114,6 +115,24 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
       parent_frame.WithStructuralFrame(frame_, slang_scope_, &scope)
           .WithProceduralScopeOwner(slang_scope_, &scope.procedural_scopes);
   scope.time_resolution = ResolveTimeResolution(slang_scope_->getTimeScale());
+
+  // Declared before anything else so that a name reaching it during the walk
+  // below resolves to the declaration rather than folding to what one
+  // elaboration gave it.
+  if (construction_value != nullptr) {
+    const slang::ast::ValueSymbol& parameter = *construction_value->parameter;
+    auto type_or = owner_->InternType(
+        parameter.getType(),
+        owner_->SourceMapper().PointSpanOf(parameter.location));
+    if (!type_or) return std::unexpected(std::move(type_or.error()));
+    construction_value->declared = scope.structural_data_objects.Add(
+        hir::StructuralDataObjectDecl{
+            .name = std::string{parameter.name},
+            .type = *type_or,
+            .kind = hir::StructuralConstructionValueDecl{}});
+    owner_->MapStructuralDataObjectBinding(
+        parameter, frame_, construction_value->declared, *type_or);
+  }
 
   // A `disable` names a block or task by static identity (LRM 9.6.2), so it can
   // name one whose body lowers later, or lives in another process entirely.

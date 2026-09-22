@@ -42,6 +42,7 @@ class Expression;
 class ClassPropertySymbol;
 class ClassType;
 class HierarchicalReference;
+class GenerateBlockArraySymbol;
 class InterfacePortSymbol;
 class ModportPortSymbol;
 class Scope;
@@ -240,7 +241,7 @@ struct ScopeRoute {
 // both halves at once.
 struct InUnitReach {
   hir::StructuralHops hops;
-  std::vector<hir::OwnedChildRef> descent;
+  std::vector<hir::OwnedChildStep> descent;
 };
 
 // What a hop of a descent could be, where the unit standing above it published
@@ -1009,6 +1010,18 @@ class UnitLowerer {
   [[nodiscard]] auto ResolveValueTarget(
       const WalkFrame& frame, const slang::ast::ValueSymbol& value,
       diag::SourceSpan span) -> diag::Result<hir::ValueTarget>;
+
+  // The value a name denotes, where elaboration fills that value rather than
+  // having folded it: the index a loop generate counts with, and the implicit
+  // localparam each of its blocks holds that index in (LRM 27.4). The front end
+  // spells both as constants -- a genvar does not exist at simulation time and
+  // a localparam has a value -- so what separates them from an ordinary
+  // constant is that this unit declared somewhere to put one, which it does
+  // exactly where one block stands for every index it is built at. Absent for
+  // every other name, including one of another unit, whose own lowering
+  // answered this for itself.
+  [[nodiscard]] auto NameFilledDuringElaboration(
+      const slang::ast::Symbol& named) const -> const slang::ast::ValueSymbol*;
 
   // Where a static class property's cell lives (LRM 8.9). It belongs to the
   // type rather than to any object of it, so it is reached without a receiver,

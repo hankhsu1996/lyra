@@ -171,8 +171,7 @@ auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
       MapOwnedChildBinding(
           block, frame,
           hir::GenerateChildRef{
-              .generate = decls.generates.Declare(),
-              .scope = hir::StructuralScopeId{0}});
+              .generate = decls.generates.Declare(), .block = 0});
       if (auto r = DeclareStructuralIdentities(block); !r) {
         return std::unexpected(std::move(r.error()));
       }
@@ -180,18 +179,16 @@ auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
       const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
       if (array.entries.empty()) continue;
       // A loop generate elaborates each iteration into a block of its own
-      // (LRM 27.4), so every iteration is a distinct child of this scope and
-      // gets its own id rather than sharing the array's. Which iteration a
-      // hierarchical reference names is then part of the child's identity,
-      // not a coordinate carried alongside it.
+      // (LRM 27.4), and a name reaching one means that block. How many scopes
+      // the construct compiles to belongs to where its bodies are built, so a
+      // name resolves here without it.
       const hir::GenerateId generate = decls.generates.Declare();
-      std::uint32_t block_index = 0;
+      std::uint32_t block = 0;
       for (const auto* entry : array.entries) {
         MapOwnedChildBinding(
             *entry, frame,
-            hir::GenerateChildRef{
-                .generate = generate,
-                .scope = hir::StructuralScopeId{block_index++}});
+            hir::GenerateChildRef{.generate = generate, .block = block});
+        ++block;
         if (auto r = DeclareStructuralIdentities(*entry); !r) {
           return std::unexpected(std::move(r.error()));
         }
@@ -524,6 +521,19 @@ auto UnitLowerer::EnsureForeignImport(const slang::ast::SubroutineSymbol& sym)
   }
   auto decl_or = LowerForeignImport(*this, sym);
   if (!decl_or) return std::unexpected(std::move(decl_or.error()));
+  // One foreign symbol is one import however many declarations spell it: LRM
+  // 35.5.4 requires every declaration of a C identifier to agree on the
+  // signature, so two that agree are the same import and not two of them. The
+  // record is therefore keyed by what it states rather than by which
+  // declaration stated it -- two generate blocks each declaring the same
+  // import is the ordinary case, and recording it twice makes two blocks that
+  // state the same thing hold different ids for it.
+  for (const hir::ForeignImportId id : unit_.foreign_imports.Ids()) {
+    if (unit_.foreign_imports.Get(id) == *decl_or) {
+      foreign_import_bindings_.emplace(&sym, id);
+      return id;
+    }
+  }
   const hir::ForeignImportId id =
       unit_.foreign_imports.Add(*std::move(decl_or));
   foreign_import_bindings_.emplace(&sym, id);

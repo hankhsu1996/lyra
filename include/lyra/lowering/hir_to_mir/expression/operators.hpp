@@ -10,7 +10,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
-#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
@@ -85,10 +84,13 @@ auto LowerHirConversionExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
-// Increment / decrement is a write (LRM 11.4.2) and has no structural form, so
-// it stays a procedural-only handler rather than a shared template.
-auto LowerHirIncDecExprProc(
-    ProcessLowerer& process, WalkFrame frame, const hir::IncDecExpr& inc,
+// Increment / decrement is a write (LRM 11.4.2), and where the write happens
+// says nothing about what it is, so one template serves both contexts. The
+// structural one is a loop generate's step, which LRM 27.4 admits in this form
+// as readily as in an assignment's.
+template <ExprLowerer Lowerer>
+auto LowerHirIncDecExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::IncDecExpr& inc,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 // The clause-chain `?:` whose predicate declares identifiers (LRM 12.6.3).

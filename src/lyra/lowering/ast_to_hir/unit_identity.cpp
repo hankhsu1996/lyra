@@ -11,6 +11,7 @@
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
@@ -176,15 +177,33 @@ auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
 // that owns it, outermost first. Each is a declaration scope of its own, so two
 // of them may declare the same class name; the path is what tells those
 // declarations apart in a name space that has no nesting of its own.
+//
+// A block is spelled the way the hierarchy spells it, which is what makes the
+// path tell two of them apart. An `if` or `case` arm answers to its own label;
+// a loop's block carries no label of its own and answers to the construct's
+// label together with the index it elaborated at (LRM 27.4), so both halves are
+// needed for it.
 auto DeclaringBlockPath(const slang::ast::Symbol& decl)
-    -> std::vector<std::string_view> {
-  std::vector<std::string_view> path;
+    -> std::vector<std::string> {
+  std::vector<std::string> path;
   for (const slang::ast::Scope* scope = decl.getParentScope(); scope != nullptr;
        scope = scope->asSymbol().getParentScope()) {
     const slang::ast::Symbol& sym = scope->asSymbol();
-    if (sym.kind == slang::ast::SymbolKind::GenerateBlock) {
-      path.push_back(sym.name);
+    if (sym.kind != slang::ast::SymbolKind::GenerateBlock) {
+      continue;
     }
+    const auto& block = sym.as<slang::ast::GenerateBlockSymbol>();
+    const slang::SVInt* index = block.getArrayIndex();
+    if (index == nullptr) {
+      path.emplace_back(sym.name);
+      continue;
+    }
+    const slang::ast::Scope* array = sym.getHierarchicalParent();
+    path.push_back(
+        std::format(
+            "{}_{}",
+            array == nullptr ? std::string_view{} : array->asSymbol().name,
+            index->as<std::int64_t>().value_or(0)));
   }
   std::ranges::reverse(path);
   return path;
@@ -248,7 +267,7 @@ auto SpecializationKeyOf(const slang::ast::ClassType& cls)
   // to be unique there. The source name alone is not: SystemVerilog scopes the
   // declaration, so sibling generate blocks may each declare the same one.
   std::string definition;
-  for (const std::string_view block : DeclaringBlockPath(cls)) {
+  for (const std::string& block : DeclaringBlockPath(cls)) {
     definition += block;
     definition += '_';
   }

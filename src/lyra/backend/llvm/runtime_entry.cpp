@@ -865,6 +865,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kResolveVisibleChild:
     case support::BuiltinFn::kRegisterSignal:
     case support::BuiltinFn::kAddOwnedChild:
+    case support::BuiltinFn::kExtendSequence:
     case support::BuiltinFn::kRegisterDisableTarget:
     case support::BuiltinFn::kFindSignal:
     case support::BuiltinFn::kFindSubroutine:

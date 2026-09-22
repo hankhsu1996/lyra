@@ -56,24 +56,6 @@ auto RepeatBitPattern(
   return filled;
 }
 
-// The element an array pattern's key designates (LRM 10.9.1). A key names a
-// position the way a structure pattern's key names a member, and the front end
-// settles which one while binding the pattern -- it accepts no program whose
-// key is not a constant -- so the position is read rather than worked out. An
-// index runs whichever way its dimension was declared, so it is signed.
-auto DesignatedIndex(const slang::ast::Expression& key) -> std::int64_t {
-  const slang::ConstantValue* position = key.getConstant();
-  const std::optional<std::int64_t> index =
-      position != nullptr && *position ? position->integer().as<std::int64_t>()
-                                       : std::nullopt;
-  if (!index.has_value()) {
-    throw InternalError(
-        "DesignatedIndex: an array pattern's key designates no element, which "
-        "the front end accepts no program for");
-  }
-  return *index;
-}
-
 // What a stream element actually carries: the operand, or -- where
 // LRM 11.4.14.4 names a range with `with` -- the selection over it, which the
 // front end has already bound as an ordinary selector. Everything that reads an
@@ -396,10 +378,12 @@ auto LowerStructuredAssignmentPattern(
     std::vector<hir::AssignmentPatternKeyedExpr::Entry> entries;
     entries.reserve(ap.indexSetters.size());
     for (const auto& setter : ap.indexSetters) {
+      auto index = lowerer.LowerExpr(*setter.index, frame);
+      if (!index) return std::unexpected(std::move(index.error()));
       auto value = lowerer.LowerExpr(*setter.expr, frame);
       if (!value) return std::unexpected(std::move(value.error()));
       entries.push_back(
-          {.index = DesignatedIndex(*setter.index),
+          {.index = frame.Exprs().Add(*std::move(index)),
            .value = frame.Exprs().Add(*std::move(value))});
     }
     return hir::Expr{

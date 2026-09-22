@@ -646,11 +646,13 @@ struct ManagedRefType {
 };
 
 // A homogeneous sequence: one element type, laid down as many times as the
-// declaration standing for several objects covers (LRM 23.3.2). Composed whole
-// and never grown afterwards. Unlike `MachineArrayType`, which is the plain
-// data an element list is, this is a library type whose representation the
-// target owns -- so one comes into existence through its own constructor, with
-// that element list among the arguments.
+// declaration standing for several objects covers (LRM 23.3.2). A member
+// holding one receives it complete, so how many objects stand behind a
+// declaration is settled before anything can name them. Unlike
+// `MachineArrayType`, which is the plain data an element list is, this is a
+// library type whose representation the target owns -- so one comes into
+// existence through its own constructor, and the entries that compose it are
+// the library's.
 struct VectorType {
   TypeId element;
 

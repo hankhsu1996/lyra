@@ -193,16 +193,7 @@ auto LowerExprImpl(
     case slang::ast::ExpressionKind::UnaryOp: {
       const auto& un = expr.as<slang::ast::UnaryExpression>();
       if (slang::ast::OpInfo::isLValue(un.op)) {
-        if constexpr (kProcedural) {
-          return LowerIncDecExprProc(lowerer, frame, un, span);
-        } else {
-          // The front end refuses an increment or a decrement outside
-          // procedural code, so a structural walk meeting one means it
-          // accepted an expression the language does not admit there.
-          throw InternalError(
-              "structural expression lowering: an increment or decrement "
-              "reached a structural expression");
-        }
+        return LowerIncDecExpr(lowerer, frame, un, span);
       }
       return LowerUnaryExpr(lowerer, frame, un, span);
     }
@@ -220,17 +211,8 @@ auto LowerExprImpl(
           lowerer, frame, expr.as<slang::ast::CallExpression>(), span);
 
     case slang::ast::ExpressionKind::Assignment:
-      if constexpr (kProcedural) {
-        return LowerAssignmentExprProc(
-            lowerer, frame, expr.as<slang::ast::AssignmentExpression>(), span);
-      } else {
-        // As above: the front end refuses an assignment expression in this
-        // position, so reaching here means one was accepted where the language
-        // admits none.
-        throw InternalError(
-            "structural expression lowering: an assignment expression reached "
-            "a structural expression");
-      }
+      return LowerAssignmentExpr(
+          lowerer, frame, expr.as<slang::ast::AssignmentExpression>(), span);
 
     case slang::ast::ExpressionKind::ValueRange: {
       const auto& vr = expr.as<slang::ast::ValueRangeExpression>();

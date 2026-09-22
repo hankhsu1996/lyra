@@ -52,21 +52,6 @@ struct InterfacePortId {
 using PublishedDecl =
     std::variant<StructuralDataObjectId, InstanceMemberId, InterfacePortId>;
 
-// One navigation step whose source and target objects are both declared by
-// this compilation unit, so it realizes as typed member navigation.
-// `indices` are the element coordinates within the named child, one per
-// declared dimension: an instance array is a single child spanning every
-// element (LRM 23.3.2), so the coordinates pick the element out of it. A
-// generate loop instead elaborates each iteration into a child of its own
-// (LRM 27.4), whose identity already fixes which iteration it is, so a
-// generate step carries no coordinates.
-struct OwnedChildStep {
-  OwnedChildRef child;
-  std::vector<std::uint32_t> indices;
-
-  auto operator==(const OwnedChildStep&) const -> bool = default;
-};
-
 // One navigation step past this compilation unit's layout, into an object
 // whose declaration another unit owns. The canonical hierarchical name is the
 // only identity that crosses the boundary, so the step carries it verbatim for
@@ -326,6 +311,8 @@ struct RoutedPathRecipe {
 // is read / written / observed through one stored direct reference.
 struct RoutedRefDecl {
   RoutedPathRecipe recipe;
+
+  auto operator==(const RoutedRefDecl&) const -> bool = default;
 };
 
 // A name on a class this artifact cannot name, and where that name lands on it.
@@ -349,6 +336,8 @@ struct ClassNameDecl {
   std::vector<PathStep> steps;
   std::string class_name;
   std::string name;
+
+  auto operator==(const ClassNameDecl&) const -> bool = default;
 };
 
 struct ConcurrentAssertionId {
@@ -379,6 +368,8 @@ struct ConcurrentAssertionDecl {
   ConcurrentAssertion assertion;
   ProceduralBody action;
   ProceduralScopeId standing_scope;
+
+  auto operator==(const ConcurrentAssertionDecl&) const -> bool = default;
 };
 
 // A child built from another compilation unit, standing on this unit's record
@@ -389,6 +380,8 @@ struct InstanceMemberDecl {
   std::string instance_name;
   ExternalUnitObjectId object;
   std::vector<std::uint32_t> array_dims;
+
+  auto operator==(const InstanceMemberDecl&) const -> bool = default;
 };
 
 // An interface port's internal name (LRM 25.3). The scope names instances of
@@ -404,6 +397,8 @@ struct InterfacePortDecl {
   std::string name;
   ExternalUnitObjectId object;
   std::vector<std::uint32_t> array_dims;
+
+  auto operator==(const InterfacePortDecl&) const -> bool = default;
 };
 
 // How the child port is reached, by endpoint capability. An input or output
@@ -416,6 +411,8 @@ struct InterfacePortDecl {
 // slot, since a `ref` needs no simulation-time reach (LRM 23.3.3.2).
 struct PortCellEndpoint {
   ExprId cell;
+
+  auto operator==(const PortCellEndpoint&) const -> bool = default;
 };
 using PortEndpoint = std::variant<PortCellEndpoint, RoutedPathRecipe>;
 
@@ -443,6 +440,8 @@ struct DataPortConnection {
   PortEndpoint endpoint;
   ExprId peer;
   std::vector<SensitivityEntry> sensitivity;
+
+  auto operator==(const DataPortConnection&) const -> bool = default;
 };
 
 // A connection binding a child's interface port to the interface instances it
@@ -456,11 +455,15 @@ struct DataPortConnection {
 struct InterfacePortConnection {
   RoutedPathRecipe endpoint;
   std::vector<RoutedPathRecipe> peers;
+
+  auto operator==(const InterfacePortConnection&) const -> bool = default;
 };
 
 struct PortConnection {
   diag::SourceSpan span;
   std::variant<DataPortConnection, InterfacePortConnection> kind;
+
+  auto operator==(const PortConnection&) const -> bool = default;
 };
 
 // A run of one net's positions and an equally wide run of another's, which a
@@ -486,18 +489,47 @@ struct NetJoin {
   ExprId there;
   std::uint32_t there_offset{};
   std::uint32_t width{};
+
+  auto operator==(const NetJoin&) const -> bool = default;
 };
 
-// The lowered form of every generate construct (LRM 27): after frontend
-// elaboration each construct is a set of blocks with an instantiated / not
-// flag, so the lowering is one fully concrete scope per instantiated block,
-// constructed unconditionally. Each scope is lowered from its own elaborated
-// body -- its own selected arm, types, and slice widths, the genvar folded to
-// a constant -- never borrowed from another block and never a runtime
-// induction value or branch. A block's position here is its identity, so
-// nothing restates which block a scope is.
+// Each scope stands for one instantiated block and is built once: an `if` or
+// `case` arm, a bare block, and a loop whose blocks did not lower alike. Every
+// scope is lowered from its own elaborated body -- its own selected arm, types
+// and slice widths -- and the index reaches it as a value its construction
+// supplies here too, because that is what leaves two blocks differing in
+// nothing else with nothing to differ in.
+struct BlocksStandAlone {
+  auto operator==(const BlocksStandAlone&) const -> bool = default;
+};
+
+// The one scope is built once at every index the loop counts out (LRM 27.4).
+// What makes one scope enough is that the index reaches the block as a value
+// construction supplies rather than as a constant folded into its body, so
+// `index` is that block's own declaration of it. `variable` is the loop's
+// index, declared by the scope holding the generate, and the three expressions
+// are the loop's own: where the index starts, whether a block stands at it,
+// and how it reaches the next one. The first two are values the loop reads;
+// the step is written for its effect on the index and its own value is
+// discarded, the same way a loop written among statements states its step.
+struct BlocksRepeat {
+  StructuralDataObjectId variable;
+  ExprId initial;
+  ExprId condition;
+  ExprId step;
+  StructuralDataObjectId index;
+
+  auto operator==(const BlocksRepeat&) const -> bool = default;
+};
+
+// The lowered form of every generate construct (LRM 27). A block's position in
+// `child_scopes` is its identity, so nothing restates which block a scope is,
+// and how many objects a scope stands for is what `counting` says.
 struct Generate {
   base::Arena<StructuralScope, StructuralScopeId> child_scopes;
+  std::variant<BlocksStandAlone, BlocksRepeat> counting = BlocksStandAlone{};
+
+  auto operator==(const Generate&) const -> bool = default;
 };
 
 struct StructuralScope {
@@ -575,6 +607,17 @@ struct StructuralScope {
   // later. That is what the declare-then-define gap buys: the id exists up
   // front and the body pass fills the contents when it reaches the scope.
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
+
+  // Two scopes are equal when everything they state is equal, `index` included
+  // -- so a caller asking whether two scopes are one body clears that field
+  // first, which is the one thing a loop's blocks differ in on purpose.
+  //
+  // Derived rather than written. A field added to any node below is compared
+  // without anyone remembering to, and a field that cannot be compared breaks
+  // the build rather than being silently left out -- which is the direction
+  // this has to fail in, because a comparison that misses something answers
+  // "the same" about two things that are not.
+  auto operator==(const StructuralScope&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

@@ -704,7 +704,33 @@ the detail lives in the entry itself.
   classification and constructor-input threading are deferred.
 - [generate-variable-specialization](generate-variable-specialization.md) -- a generate variable is
   a specialization input like a parameter; demoting it to a runtime input is a proof-gated
-  optimization.
+  optimization. Its conservative default is superseded on the loop axis by the next entry.
+- [one-body-built-at-every-index](one-body-built-at-every-index.md) -- the loop axis of that record,
+  with its default inverted: a loop generate's blocks are one compiled class the constructor builds
+  once per index, because the index reaches the block as a value construction supplies rather than
+  as a constant folded into it. Read it for the shape that makes that safe -- one mechanism decides
+  which blocks qualify and a second proves the decision by lowering the rest and comparing, so a
+  hole in the first costs a build rather than a wrong program -- and for why a question asked of the
+  source can never be completed. The measurement that removed speed from the argument is there too,
+  as is what a scope's construction receives: one entry for every class, because the constructing
+  site may hold only the definition.
+- [an-elaboration-time-value-is-an-input](an-elaboration-time-value-is-an-input.md) -- the rule the
+  entry above turned out to be one case of. The front end evaluates whatever it can, so an already
+  computed answer sits beside nearly every expression, and taking one decides where that value
+  enters the artifact rather than what the program means. Every position a body states is lowered,
+  with no exception for one the standard fixes: a clause requiring a constant says the value is
+  known, never that the artifact has to hold it, and the question that actually decides is whether a
+  different value there would be a different class or the same class holding a different number.
+  Read it before adding any site that reads a folded value, for why a width passes the citation test
+  and still is not a class, and for the entry's own reversal -- it once filed a sampled value's
+  depth as class-level on a sentence that was true in both halves and wrong in its conclusion.
+- [a-structural-expression-may-write](a-structural-expression-may-write.md) -- an expression a
+  construction evaluates may write, and both lowering boundaries used to refuse one on the stated
+  grounds that the language admits none outside a procedure. LRM 27.4 gives a loop generate's step
+  three forms and every one of them writes. What is really procedural is deferring an update to a
+  later region, which sits above a store both positions share. Read it before writing anything that
+  treats a constructor-time expression as read-only, and for why a loop's step is carried as written
+  rather than read for the value it names next.
 
 ### Runtime execution and scheduling
 

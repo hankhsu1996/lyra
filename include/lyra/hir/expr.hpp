@@ -25,17 +25,23 @@ namespace lyra::hir {
 
 struct PrimaryExpr {
   Primary data;
+
+  auto operator==(const PrimaryExpr&) const -> bool = default;
 };
 
 struct UnaryExpr {
   UnaryOp op;
   ExprId operand;
+
+  auto operator==(const UnaryExpr&) const -> bool = default;
 };
 
 struct BinaryExpr {
   BinaryOp op;
   ExprId lhs;
   ExprId rhs;
+
+  auto operator==(const BinaryExpr&) const -> bool = default;
 };
 
 // LRM 11.4.11 / 12.6.3. `conditions` is the predicate's clause sequence,
@@ -45,6 +51,8 @@ struct ConditionalExpr {
   std::vector<ConditionClause> conditions;
   ExprId then_value;
   ExprId else_value;
+
+  auto operator==(const ConditionalExpr&) const -> bool = default;
 };
 
 // `compound_op.has_value()` marks a compound assignment (`+=`, `-=`, etc.):
@@ -66,6 +74,8 @@ struct AssignExpr {
   ExprId lhs;
   std::optional<BinaryOp> compound_op = std::nullopt;
   ExprId rhs;
+
+  auto operator==(const AssignExpr&) const -> bool = default;
 };
 
 // LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Behave as blocking assignments;
@@ -77,11 +87,15 @@ struct AssignExpr {
 struct IncDecExpr {
   IncDecOp op;
   ExprId target;
+
+  auto operator==(const IncDecExpr&) const -> bool = default;
 };
 
 struct ConversionExpr {
   ConversionKind kind;
   ExprId operand;
+
+  auto operator==(const ConversionExpr&) const -> bool = default;
 };
 
 // LRM 7.12 array-method `with` clause. `id` names this clause; the element
@@ -94,6 +108,8 @@ struct WithClause {
   WithClauseId id;
   std::string element_name;
   ExprId expr;
+
+  auto operator==(const WithClause&) const -> bool = default;
 };
 
 // LRM 21.3.4.4 form 2d (`$fread(mem, fd, , count)`) and any future
@@ -105,6 +121,8 @@ struct CallExpr {
   SubroutineRef callee;
   std::vector<std::optional<ExprId>> arguments;
   std::optional<WithClause> with_clause = std::nullopt;
+
+  auto operator==(const CallExpr&) const -> bool = default;
 };
 
 // LRM 11.4.13 value range `[lo:hi]`. slang models it as an ordinary
@@ -116,21 +134,29 @@ struct CallExpr {
 struct ValueRangeExpr {
   ExprId lo;
   ExprId hi;
+
+  auto operator==(const ValueRangeExpr&) const -> bool = default;
 };
 
 struct InsideExpr {
   ExprId lhs;
   std::vector<ExprId> items;
+
+  auto operator==(const InsideExpr&) const -> bool = default;
 };
 
 struct ElementSelectExpr {
   ExprId base_value;
   ExprId index;
+
+  auto operator==(const ElementSelectExpr&) const -> bool = default;
 };
 
 struct RangeSelectExpr {
   ExprId base_value;
   RangeBounds bounds;
+
+  auto operator==(const RangeSelectExpr&) const -> bool = default;
 };
 
 // Struct or union member access (LRM 7.2 / 7.3): `field_index` is the
@@ -140,6 +166,8 @@ struct RangeSelectExpr {
 struct MemberAccessExpr {
   ExprId base_value;
   base::ComponentIndex field_index;
+
+  auto operator==(const MemberAccessExpr&) const -> bool = default;
 };
 
 // Class property access (LRM 8.4 / 8.13): `target` names the declaring
@@ -151,10 +179,14 @@ struct MemberAccessExpr {
 struct ClassPropertyAccessExpr {
   ExprId base_value;
   ClassPropertyTarget target;
+
+  auto operator==(const ClassPropertyAccessExpr&) const -> bool = default;
 };
 
 struct ConcatExpr {
   std::vector<ExprId> operands;
+
+  auto operator==(const ConcatExpr&) const -> bool = default;
 };
 
 // LRM 11.4.14: `{<< n {a, b}}` -- the bits of each operand laid end to end, the
@@ -171,6 +203,8 @@ struct ConcatExpr {
 struct StreamingConcatExpr {
   std::vector<ExprId> operands;
   std::uint64_t block_bits;
+
+  auto operator==(const StreamingConcatExpr&) const -> bool = default;
 };
 
 // LRM 11.4.12: `{multiplier{...}}` is a replication built around an inner
@@ -178,6 +212,8 @@ struct StreamingConcatExpr {
 struct ReplicationExpr {
   ExprId count;
   ExprId concat;
+
+  auto operator==(const ReplicationExpr&) const -> bool = default;
 };
 
 // LRM 10.9 assignment pattern in the form that states every element by
@@ -192,6 +228,8 @@ struct ReplicationExpr {
 // disagree for a descending dimension.
 struct AssignmentPatternExpr {
   std::vector<ExprId> elements;
+
+  auto operator==(const AssignmentPatternExpr&) const -> bool = default;
 };
 
 // LRM 10.9 replicated assignment pattern `'{count{items...}}`. `items` is the
@@ -203,6 +241,9 @@ struct AssignmentPatternExpr {
 struct AssignmentPatternReplicationExpr {
   ExprId count;
   std::vector<ExprId> items;
+
+  auto operator==(const AssignmentPatternReplicationExpr&) const
+      -> bool = default;
 };
 
 // LRM 7.5.1 `new[N]` / `new[N](other)` dynamic array constructor. The result
@@ -215,6 +256,8 @@ struct AssignmentPatternReplicationExpr {
 struct DynamicArrayNewExpr {
   ExprId size;
   std::optional<ExprId> initializer;
+
+  auto operator==(const DynamicArrayNewExpr&) const -> bool = default;
 };
 
 // LRM 8.5 class object construction `new`. Allocates a new object of the named
@@ -235,6 +278,8 @@ struct ClassNewExpr {
   ClassRef class_ref;
   std::vector<ExprId> arguments;
   std::optional<StructuralHops> declaring_scope_hops;
+
+  auto operator==(const ClassNewExpr&) const -> bool = default;
 };
 
 // How an invalid assignment is handled, which LRM 6.24.2 makes the whole of
@@ -312,6 +357,8 @@ struct DynamicCastExpr {
 struct TaggedUnionExpr {
   base::ComponentIndex member_index;
   std::optional<ExprId> payload;
+
+  auto operator==(const TaggedUnionExpr&) const -> bool = default;
 };
 
 // LRM 7.9.11 associative-array literal `'{index: value, ..., default: d}`. Each
@@ -324,9 +371,14 @@ struct AssociativeAssignmentPatternExpr {
   struct Entry {
     ExprId key;
     ExprId value;
+
+    auto operator==(const Entry&) const -> bool = default;
   };
   std::vector<Entry> entries;
   std::optional<ExprId> default_value;
+
+  auto operator==(const AssociativeAssignmentPatternExpr&) const
+      -> bool = default;
 };
 
 // LRM 10.9.1 `'{index: value, ..., default: value}` over an array. An
@@ -342,20 +394,29 @@ struct AssociativeAssignmentPatternExpr {
 // language as a four-megabyte expression that no compiler will accept.
 //
 // A key designates an element of the target rather than computing one, the way
-// a structure pattern's key names a member, so what it contributes is a
-// position and not an operand. It is kept as the index it was written as rather
-// than as a storage offset, because the two orders differ: offsets run from the
-// dimension's left end, which is the most significant element of a packed
-// array, while indices run whichever way the dimension was declared. Resolving
-// one to the other is the target type's own arithmetic and belongs wherever
-// that type is in hand.
+// a structure pattern's key names a member. It is carried as the expression the
+// source wrote, evaluated where the pattern is: the standard requires the key
+// to be settled before the program runs, and what settles it may be an
+// elaboration-time input the compiled form does not fix -- a loop index the
+// construction supplies -- so reading the value the front end reached would
+// bake one repetition's answer into every one of them.
+//
+// What it yields is an index and not a storage offset, because the two orders
+// differ: offsets run from the dimension's left end, which is the most
+// significant element of a packed array, while indices run whichever way the
+// dimension was declared. Resolving one to the other is the target type's own
+// arithmetic and belongs wherever that type is in hand.
 struct AssignmentPatternKeyedExpr {
   struct Entry {
-    std::int64_t index{};
+    ExprId index;
     ExprId value;
+
+    auto operator==(const Entry&) const -> bool = default;
   };
   std::vector<Entry> entries;
   std::optional<ExprId> default_value;
+
+  auto operator==(const AssignmentPatternKeyedExpr&) const -> bool = default;
 };
 
 using ExprData = std::variant<
@@ -371,6 +432,8 @@ struct Expr {
   TypeId type;
   ExprData data;
   diag::SourceSpan span;
+
+  auto operator==(const Expr&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

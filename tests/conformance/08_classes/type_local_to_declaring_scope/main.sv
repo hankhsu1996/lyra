@@ -53,6 +53,24 @@ module Top;
     initial second_block_v = p.g2_only;
   end
 
+  // A loop generate's blocks are scopes of their own too, and they carry no
+  // label to tell them apart -- the label belongs to the construct and the
+  // block is named by the index it elaborated at (LRM 27.4). So the same class
+  // name declared here is one declaration per block, each a type of that
+  // block, whatever the source wrote it once.
+  localparam int N = 3;
+  int looped_v [N];
+
+  for (genvar i = 0; i < N; i++) begin : g3
+    class Packet;
+      int loop_only = (i * 10) + 1;
+    endclass
+
+    Packet p = new();
+
+    initial looped_v[i] = p.loop_only;
+  end
+
   final begin
     if (alpha_v !== 11) $fatal(1, "alpha_v was %0d, expected 11", alpha_v);
     if (beta_v !== 22) $fatal(1, "beta_v was %0d, expected 22", beta_v);
@@ -60,6 +78,11 @@ module Top;
       $fatal(1, "first_block_v was %0d, expected 33", first_block_v);
     if (second_block_v !== 44)
       $fatal(1, "second_block_v was %0d, expected 44", second_block_v);
+    for (int k = 0; k < N; k++) begin
+      if (looped_v[k] !== (k * 10) + 1)
+        $fatal(1, "looped_v[%0d] was %0d, expected %0d", k, looped_v[k],
+               (k * 10) + 1);
+    end
     $display("All checks passed");
   end
 endmodule

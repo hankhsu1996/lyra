@@ -297,13 +297,13 @@ auto ErasedValue(void* handle) -> value::RuntimeValue {
   return std::move(*static_cast<value::RuntimeValue*>(handle));
 }
 
-// Storage for one value the generated program builds once and then holds by
-// address for the rest of the run. Every other value crossing the boundary
-// belongs to the arena of the stretch that made it, which is released when that
-// stretch returns; these cannot, because generated code keeps their addresses
-// across calls. The store only grows, and it grows to what the design declares.
+// Storage for one value the generated program builds and then holds by address
+// for the rest of the run. Every other value crossing the boundary belongs to
+// the arena of the stretch that made it, which is released when that stretch
+// returns; these cannot, because generated code keeps their addresses across
+// calls. The store only grows, and it grows to what the design declares.
 template <class T>
-auto ProgramLifetime(T value) -> const T* {
+auto ProgramLifetime(T value) -> T* {
   static std::deque<T> stored;
   stored.push_back(std::move(value));
   return &stored.back();
@@ -1405,15 +1405,20 @@ auto lyra_rt_make_segment(void* label, LyraSpan indices) -> void* {
       std::string(static_cast<const char*>(label)), PackedValuesOf(indices));
 }
 
-auto lyra_rt_make_scope(const void* definition, void* parent, void* segment)
+auto lyra_rt_make_scope(
+    const void* definition, void* parent, void* segment, LyraSpan arguments)
     -> void* {
   const auto* def = static_cast<const ScopeDefinition*>(definition);
+  auto* identity = static_cast<HierarchySegment*>(segment);
   auto instance = std::make_unique<GeneratedScope>(
-      static_cast<Scope*>(parent), *static_cast<HierarchySegment*>(segment),
-      def);
+      static_cast<Scope*>(parent), *identity, def);
   {
     GeneratedCallScope scope;
-    def->construct(instance.get());
+    def->construct(
+        instance.get(), static_cast<Scope*>(parent), identity,
+        lyra::runtime::ScopeConstructArguments{
+            .data = static_cast<void* const*>(arguments.data),
+            .size = arguments.count});
   }
   return instance.release();
 }
@@ -1448,10 +1453,15 @@ auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void* {
   return static_cast<GeneratedScope*>(self)->MemberAddress(index);
 }
 
-auto lyra_rt_sequence_make(LyraSpan handles) -> const void* {
+auto lyra_rt_sequence_make(LyraSpan handles) -> void* {
   const std::span<void* const> raw(
       static_cast<void* const*>(handles.data), handles.count);
   return ProgramLifetime(std::vector<void*>(raw.begin(), raw.end()));
+}
+
+auto lyra_rt_sequence_extend(void* sequence, void* element) -> void* {
+  static_cast<std::vector<void*>*>(sequence)->push_back(element);
+  return sequence;
 }
 
 auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)

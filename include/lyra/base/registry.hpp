@@ -122,6 +122,13 @@ class Registry {
     return Iterator{this, static_cast<std::uint32_t>(slots_.size())};
   }
 
+  // Two pools are equal when they hold the same values at the same identities,
+  // an identity declared but not yet defined included -- a pool still being
+  // built differs from the finished one, which is what a caller comparing two
+  // of them means. Derived rather than written, so a `T` that gains a field is
+  // compared on it without anyone remembering to.
+  auto operator==(const Registry&) const -> bool = default;
+
  private:
   std::vector<std::optional<T>> slots_;
 };

@@ -1843,6 +1843,135 @@ enough to warrant its own focused review.
       Target: a literal that names no object carries no kind of value of its own, so whatever
       consumes one states the type it is read at and the shape stops being forgettable. Not blocked.
       Found by a legal four-line program dying in a comparison entry.
+- [ ] R116 -- A scope's construction is entered through one prototype every class shares, and the
+      execution backend works out which of a unit's functions that applies to by reading the class
+      table the other way round. Three sites ask -- where the function is declared, and twice where
+      its parameters are bound -- so the prototype is decided by a consumer rather than stated by
+      what it consumes.
+
+      Target: the lowering states the signature it means. A construction's parameters past the ones
+      every construction shares arrive as one run of values, and reading them apart is then an
+      ordinary body doing what its own parameter list says, with nothing anywhere asking what kind
+      of function this is.
+
+      Blocked on the execution IR having no way to read one element of a run of plain values. It
+      can build one -- that is how every entry taking a span is called -- but the read side exists
+      only for values a runtime domain owns and for a sequence of object handles, so a body handed
+      a run cannot take it apart. That read is the prerequisite, and it is worth having on its own:
+      a form that can only be written is one generated code can hand on and never use.
+
+      Two of the parameters that prototype carries are dead, and this is where they go. A
+      construction is handed the parent the scope hangs under and the identity it is reached by,
+      which the object it is handed already holds -- the runtime installed both before entering it.
+      Nothing reads them: the only thing that would is the base construction, and a scope's base is
+      the runtime's own object tree, which the lowering enters no constructor for. So the entry
+      takes the scope and the values its class is parameterized by, and the two dead parameters go
+      with the rest of this. Not blocked on the read above, but not worth doing apart from it
+      either, because both change the same prototype.
+
+- [ ] R117 -- The semantic layer states the elaborated blocks of a loop generate wherever they are
+      not one body, rather than stating the loop the source wrote. That layer exists so that what
+      the user wrote has exactly one answer, and the user wrote a loop; the blocks are what the
+      front end produced to answer its own questions. Everything awkward about the lowering follows
+      from taking them as the form.
+
+      Target: the semantic layer states the loop and one body, always. What makes one body enough is
+      that an elaboration-time value reaches it as a construction input rather than as a constant,
+      and a body that needs a constant anyway refuses -- falling back to the concrete form, which
+      stays only as the correctness escape the top-level objectives require. No question about the
+      source is asked, because there is nothing to choose between.
+
+      What was blocking it is done: a name reaching `g[k]` now means the k-th elaborated block, and
+      which compiled scope that is, is resolved where the construct is realized. So no pass commits
+      to a form before the blocks exist, and the prediction is gone with everything it needed --
+      every block is lowered, the lowered scopes are compared with each other, and one of them is
+      kept where they agree. That costs what the prediction cost, because both forms already lowered
+      every block, and it removes the failure the prediction could not be relieved of: a hole in it
+      refused a legal program as a compiler bug, which the top-level objectives forbid.
+
+      What remains is the rest of the target. The semantic layer still states the blocks where they
+      did not lower alike, rather than stating the loop and letting a body that needs a fixed value
+      fall back on its own; and the half that widens what can be shared is still every site that
+      stops folding the index.
+
+      One position on that half is measured and has a tension worth stating before anyone moves it.
+      A block declaring a class keeps the blocks apart, because a class takes an identity of the
+      whole unit and one is minted per elaborated declaration, so blocks alike in everything else
+      hold different ones. That identity also carries which block declared it, and it has to: a
+      unit holds its classes in one flat name space, a loop's blocks answer to the construct's
+      label and their index rather than to labels of their own, so without the index every block's
+      class reached the same identifier -- which the C++ backend emitted as several definitions of
+      one class and the host compiler refused. So the index is load-bearing for the blocks kept
+      apart and would name one block while serving all of them if they were shared. Sharing here
+      means the identity stops being settled before the blocks are compared, which is the same
+      shape as keying a record by what it states rather than by which declaration spelled it.
+
+      Measured, because the argument for the shape was twice made from an assumption instead. At 256
+      iterations the whole semantic and generic-IR pipeline is under half a second and the elaborated
+      duplication inside it costs 0.019s; the optimizer and code generation cost 4.2s and compiling
+      the emitted target 16.8s. Duplication is free everywhere above the artifact, so lowering every
+      block costs nothing worth weighing -- and the speed argument that twice chose a worse shape was
+      about a few percent of the cost.
+
+      Why the previous shape could not be finished, rather than merely improved, and what the field
+      does instead, are in `one-body-built-at-every-index`.
+
+- [ ] R119 -- The positions where this compiler still settles an elaboration-time value into the
+      artifact, rather than supplying it to the artifact. Each is a place the front end had an
+      answer available and it was taken; the question each owes is whether a different value there
+      would be a different class, or the same class holding a different value.
+
+      A sampled value's depth was on this list as settled, on the grounds that the count decides
+      how much history is kept and two counts are therefore two shapes. That was wrong: the storage
+      is a run-time sequence sized from a number it is handed, and a read reaches an entry by a
+      number it is handed, so neither the count nor the distance is stated by any type. Both are
+      now supplied at construction, and a loop whose blocks reach back by their own index is one
+      body. What the mistake looked like is worth more than the fix -- the clause really does fix
+      the count, and the count really does decide how much is kept, and the conclusion still did
+      not follow.
+
+      A declaration's packed width stays a class fact, so a repeated structure whose packed
+      dimension is written from its own index is compiled once per index. Today's measurement says
+      the opposite -- every width shares one storage type and travels in a descriptor -- but that
+      one storage type was chosen together with what pays for it: the operations are inline, and the
+      cost is bounded by a compiler that sees the declared width as a constant where the object is
+      built. Supplying the width there instead does not defer that fast path, it removes what the
+      fast path folds against. Two earlier reasons here are withdrawn as false: the front end does
+      keep the dimension's expressions and hands them back on request, and how rare the construct is
+      decides nothing, since the answer is not a cost-benefit one. What would reverse this is a
+      profile showing that fast path does not pay, not a design found sitting on it.
+
+      A container's declared extent stays a class fact for the same reason, and both of them -- a
+      fixed unpacked extent and a queue's declared bound -- are ordinary members of that answer
+      rather than positions to move. What they turned up instead was a defect in how one body is
+      decided, which is R117's subject and is recorded there.
+
+      Audited and needing nothing. An assignment pattern's keys are lowered already, whichever form
+      the pattern takes; where a key names a member or a type rather than a value, it names
+      something the class is made of, which is where it belongs. A reference's coordinate arrives
+      already resolved, because the front end hands back the index and not the expression behind it.
+      Three further positions are fixed by the standard itself -- a port's declared default (LRM
+      23.2.2.4), a structure member's default (LRM 7.2.2), and a port reference's coordinate (LRM
+      23.2.2.1) -- and each is written in a unit's header or in a type declaration, which a
+      parameterization already separates into its own artifact, so reading one there cannot cost a
+      second artifact.
+
+      What has already moved, as the worked examples: a dimension query's index, and both of a
+      sampled value's numbers -- the depth its history runs to, and the distance a read reaches
+      back.
+
+- [x] R118 -- A loop generate's blocks are one compiled body whatever form its step is written in.
+      Of the seventeen operator forms LRM 27.4 admits for a step, twelve used to fall back to one
+      built block per index -- every compound assignment operator, including the one the clause
+      names where it allows the index array to be sparse. What decided it was read off the step's
+      spelling before any block was looked at.
+
+      The step is now the expression the source wrote, placed in the construction for its effect on
+      the index, so nothing asks what form it took. That took one decision, which is that an
+      expression a construction evaluates may write: both lowering boundaries had refused an
+      assignment there on the stated grounds that the language admits none outside a procedure, and
+      a loop generate's step is exactly such a position. A sparse index array reaches the shared
+      body for the first time, carrying the value the genvar held rather than an ordinal.
 
 ## Out of Scope
 

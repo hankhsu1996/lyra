@@ -11,6 +11,11 @@ into one shared body) and a "two lowering modes" framing. There are not two mode
 lowering; there is one correctness baseline and one deferred compile-performance optimization,
 uniform with how parameters are handled.
 
+Decision 4 -- the conservative default, and the consequence that follows from it that the exploded
+scopes are the only representation -- is superseded on the loop axis by
+[one-body-built-at-every-index](one-body-built-at-every-index.md), which supplies the proof decision
+2 waits for. Everything else here stands, F3's split included.
+
 ## Why this decision matters
 
 A generate variable is an elaboration-time input, exactly like a module parameter: its value is
@@ -94,11 +99,11 @@ correct concrete form.
   concrete genvar value with its own valid, concretely-typed body; there is no shared body to
   reconcile and no witness to select. (Re-symbolizing a concrete arm into one shared runtime loop is
   itself a demote, not the correctness baseline.)
-- The exploded, per-block concrete scopes are the **sole** generate lowering representation today:
-  every `if` / `case` / `for` construct lowers to one unconditionally-constructed scope per
-  instantiated block. The demoted shared representation is not materialized; implementing demote
-  reintroduces a shared body plus runtime construction control flow, produced only for a construct
-  the classifier proves representation-invariant.
+- The exploded, per-block concrete scopes were the **sole** generate lowering representation when
+  this was written: every `if` / `case` / `for` construct lowered to one unconditionally-constructed
+  scope per instantiated block, and the demoted shared representation was not materialized. That is
+  no longer so on the loop axis -- see the Status above. An `if` / `case` construct still lowers
+  this way, and has nothing to share, producing at most one block each.
 - The demotion proof is one classifier over elaboration-time inputs (parameters and generate
   variables together), with demote as the shared deferred optimization -- not a genvar special case.
 - Cross-unit identity stays clean: an iteration-specialized generated scope does not enter a

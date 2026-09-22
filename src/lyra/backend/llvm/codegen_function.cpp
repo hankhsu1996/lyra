@@ -24,19 +24,46 @@
 
 namespace lyra::backend::llvm_backend {
 
-CodeGenFunction::CodeGenFunction(
-    CodeGenModule& module, const lir::Function& fn, llvm::Function* value)
-    : module_(&module), fn_(&fn), value_(value), builder_(module.Context()) {
+CodeGenFunction::CodeGenFunction(CodeGenModule& module, lir::FunctionId id)
+    : module_(&module),
+      id_(id),
+      fn_(&module.Unit().functions.Get(id)),
+      value_(module.UnitFunction(id)),
+      builder_(module.Context()) {
 }
 
 auto CodeGenFunction::IsCoroutine() const -> bool {
   return module_->Unit().types.Get(fn_->result_type).Is<lir::CoroutineType>();
 }
 
-auto CodeGenFunction::Run() -> diag::Result<void> {
-  for (std::uint32_t i = 0; i < fn_->params.size(); ++i) {
+auto CodeGenFunction::BindParameters() -> void {
+  const std::size_t positional = module_->IsScopeConstruction(id_)
+                                     ? kScopeConstructSharedParams
+                                     : fn_->params.size();
+  for (std::size_t i = 0; i < positional; ++i) {
     values_.emplace(fn_->params[i], value_->getArg(i));
   }
+}
+
+auto CodeGenFunction::BindConstructionArguments() -> void {
+  if (!module_->IsScopeConstruction(id_)) {
+    return;
+  }
+  llvm::Value* arguments =
+      builder_.CreateExtractValue(value_->getArg(value_->arg_size() - 1), {0});
+  for (std::size_t i = kScopeConstructSharedParams; i < fn_->params.size();
+       ++i) {
+    const lir::ValueId param = fn_->params[i];
+    llvm::Type* type = module_->Types().Map(fn_->values.Get(param).type);
+    llvm::Value* slot = builder_.CreateConstInBoundsGEP1_64(
+        module_->Types().Ptr(), arguments,
+        static_cast<std::uint64_t>(i - kScopeConstructSharedParams));
+    values_.emplace(param, builder_.CreateLoad(type, slot));
+  }
+}
+
+auto CodeGenFunction::Run() -> diag::Result<void> {
+  BindParameters();
 
   // Every block exists before any is filled, so a branch resolves its successor
   // regardless of the order the blocks are emitted in.
@@ -61,6 +88,7 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
   // A place local is frame storage: its slot is allocated once, in the entry
   // block, so every path that reaches it names the same address.
   builder_.SetInsertPoint(entry);
+  BindConstructionArguments();
   for (const lir::ValueId id : fn_->values.Ids()) {
     const lir::Local& local = fn_->values.Get(id);
     if (local.NamesStorage()) {

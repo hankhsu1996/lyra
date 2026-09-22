@@ -80,6 +80,23 @@ struct PublishedMember {
           },
           [](const StructuralReferenceDecl& reference) -> PublishedStorage {
             return ReferenceStorage{.binding = reference.binding};
+          },
+          // Both hold a value the scope was given rather than one a driver
+          // resolves or another declaration owns, so both are storage of the
+          // first kind. Neither is ever reached from outside the unit -- a loop
+          // index does not exist at simulation time (LRM 27.4) and a value
+          // construction supplies is named only from inside the scope it was
+          // supplied to -- so neither ever stands on a signature, which is a
+          // fact about who asks rather than about what the storage is.
+          // Both hold a value elaboration settled and the simulation never
+          // changes, so a cell of their own is what they take -- the same
+          // storage a declared variable takes, over-provisioned only by what
+          // nothing ever waits on.
+          [](const StructuralGenvarDecl&) -> PublishedStorage {
+            return VariableStorage{};
+          },
+          [](const StructuralConstructionValueDecl&) -> PublishedStorage {
+            return VariableStorage{};
           }},
       decl.kind);
 }

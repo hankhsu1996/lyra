@@ -21,6 +21,14 @@ namespace lyra::runtime {
 void ScopeNoOp(Scope*) {
 }
 
+// The same for construction, which a definition nothing builds a scope through
+// keeps.
+// NOLINTBEGIN(readability-named-parameter)
+void ScopeConstructNoOp(
+    Scope*, Scope*, HierarchySegment*, ScopeConstructArguments) {
+}
+// NOLINTEND(readability-named-parameter)
+
 Scope::Scope(
     Scope* parent, HierarchySegment segment, const ScopeDefinition* definition)
     : parent_(parent), segment_(std::move(segment)), definition_(definition) {
