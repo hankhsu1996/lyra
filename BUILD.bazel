@@ -3,7 +3,7 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("//tools/bazel:copts.bzl", "LYRA_COPTS")
-load("//tools/bazel:shipped.bzl", "shipped_artifact")
+load("//tools/bazel:shipped.bzl", "shipped_artifact", "shipped_headers")
 
 # Compile every declared header once on its own, so a header that only builds
 # because some source happened to include its dependency first fails here
@@ -19,6 +19,18 @@ filegroup(
         "include/lyra/support/*.hpp",
         "include/lyra/base/*.hpp",
     ]),
+    visibility = ["//visibility:public"],
+)
+
+# The surface an emitted project compiles against, under a root of its own. The
+# compiler copies what it finds around one of these headers, so what shares that
+# root is what a user's project receives -- and beside the sources it would be
+# every header this repository has, including the layers and the backends.
+shipped_headers(
+    name = "runtime_surface",
+    hdrs = [":runtime_headers"],
+    root = "runtime_surface",
+    strip_prefix = "include",
     visibility = ["//visibility:public"],
 )
 
@@ -388,7 +400,7 @@ cc_binary(
     copts = LYRA_COPTS,
     data = [
         ":cpp_runtime",
-        ":runtime_headers",
+        ":runtime_surface",
         "//third_party/systemverilog:svdpi.h",
     ],
     linkopts = ["-rdynamic"],

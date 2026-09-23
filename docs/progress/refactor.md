@@ -2142,20 +2142,30 @@ enough to warrant its own focused review.
       What stands at the top of that case now is making a value at all: blanking one, zeroing its
       words, masking the bits above its width. That is what tops the representative block too, so
       the two no longer disagree about where the time goes.
-- [ ] R129 -- What an emitted project is given of the runtime is the surface a design compiles
-      against, and nothing else. Today it is given whatever sits beside that surface: run from a
-      build tree, an emitted project receives every header this compiler has, including the semantic
-      layers, the front end and both backends, none of which anything in the project includes. An
-      installation ships only the surface, so the two disagree about what an emitted project
-      contains, and the one everybody develops against is the wrong one.
+- [x] R129 -- What an emitted project is given of the runtime is the surface a design compiles
+      against, and nothing else. It used to receive every header this compiler has -- the semantic
+      layers, the front end, both backends -- none of which anything in the project includes: 413
+      headers and 2.11 MB where the surface is 132 and 1.01 MB.
 
-      Two consequences beyond the size of the directory. A prepared header is named by the bytes of
-      the tree it was built from, so editing any header of this compiler -- a lowering, an IR node --
-      renames the entry and the next build of any design prepares one again, which during development
-      is most builds. And a project handed to someone else carries the compiler's internals.
+      **The build had always stated the set correctly, and the compiler was not reading it.** The
+      surface is named as a set here, and what the compiler did was resolve one member of it and take
+      the directory around that member. Where a member physically sits is not something the naming
+      controls: a source file sits where this repository keeps it, so the directory around it is the
+      whole tree. What the set said was never consulted -- and nothing about the resolution looked
+      wrong, because the file it named was the right file.
 
-      What it needs is for the surface to be staged as a directory in its own right, so that what an
-      emitted project is given is chosen rather than inherited from where a binary happens to sit.
+      So the surface is staged under a root that holds it and nothing else, the way the runtime
+      library a project links already was. Then the directory around any member is the set by
+      construction, and the walk that reads it cannot reach what the set excludes. The lesson is the
+      general one: **navigating by parent directory from a resolved file leaves whatever the build
+      arranged**, and it is the staging rather than the care taken at the call site that makes such a
+      walk answer correctly.
+
+      Two things it was costing beyond the size of the directory, both now closed. A prepared header
+      is named by the bytes of the tree it was built from, so editing any header of this compiler --
+      a lowering, an IR node -- renamed the entry and made the next build of any design prepare one
+      again, which during development is most builds; that tree now holds the surface alone. And a
+      project handed to someone else no longer carries the compiler's internals.
 
 - [x] R130 -- What the merge gate spends its time on is the corpus again. Measured 2026-09-22, the
       CLI suite had become the longest target in the gate at 117 s of processor time, roughly four
