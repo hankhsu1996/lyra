@@ -34,7 +34,17 @@ business holding an answer the user did not write.
 A clause requiring a constant expression there does not change this. It says the value is known
 before the program runs, which is a fact about the source; whether the artifact has to hold it is a
 fact about the artifact, and D2 is how that one is answered. **No position in the lowering of a body
-is read for its settled value, and the policy check enforcing that carries no exception.**
+is read for its settled value.**
+
+**The policy check enforcing that is a proxy and this entry used to describe it as the thing
+itself.** It bans two spellings of taking the answer the front end cached. A parameter's value comes
+through a third, its own accessor, so the check never saw a block's parameter being folded to a
+literal while this entry said every position had been dealt with. The list being short is not the
+defect: no list of spellings is the property, because the next accessor is outside it on the day it
+lands. What a site actually owes is the name of what its value varies with, checked against the axes
+an artifact's identity has -- here, the unit and its parameterization and nothing else -- and that
+is a sentence a reader checks rather than a pattern a script matches. Until a check states it that
+way, the two legitimate folds say it in a comment at the site.
 
 The exception this entry originally reserved -- a position the standard fixes, read while citing the
 clause -- turned out to have one candidate, and the candidate failed D2 on inspection. What is left
@@ -142,6 +152,11 @@ queue.
 - `$past`'s tick count is lowered (LRM 16.9.3), both where a read names its distance and where the
   history is told how many entries to keep. A loop whose blocks reach back by their own index is now
   one body.
+- A parameter a generate block declares is a declaration of that block holding the expression the
+  source wrote (LRM 6.20.4, 27.4), rather than the literal one index folded it to. A loop whose
+  blocks name a constant worked out from their own index is now one body. This one was on the list
+  as done while it was not, which is what the paragraph under D1 is about: the check could not see
+  it, and the entry that said the list was complete was read as the evidence that it was.
 
 Two positions stay where they are, for reasons that are not the same reason. A declaration's width
 is chosen to be a class fact, by D3, and the choice would hold even if moving it cost nothing. A

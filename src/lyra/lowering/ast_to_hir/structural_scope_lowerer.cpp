@@ -18,6 +18,7 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -134,6 +135,19 @@ auto StructuralScopeLowerer::Run(
         parameter, frame_, construction_value->declared, *type_or);
   }
 
+  // A parameter the block itself declares is settled the same way, one step
+  // further along: the scope works its value out instead of being handed it.
+  // Declared before the walk for the same reason, and in member order, so a
+  // parameter written from an earlier one reaches a declaration that exists.
+  //
+  // Only a generate block's. A unit's own parameter varies with the unit's
+  // parameterization, and a parameterization is already an artifact of its own,
+  // so reading its value cannot cost a second one.
+  if (slang_scope_->asSymbol().kind == slang::ast::SymbolKind::GenerateBlock) {
+    auto declared = DeclareBlockParameters(scope, frame);
+    if (!declared) return std::unexpected(std::move(declared.error()));
+  }
+
   // A `disable` names a block or task by static identity (LRM 9.6.2), so it can
   // name one whose body lowers later, or lives in another process entirely.
   DeclareProceduralScopes(
@@ -202,6 +216,50 @@ auto StructuralScopeLowerer::Run(
   scope.behavior_coordinates = owner_->TakeBehaviorCoordinatesForFrame(frame_);
   scope.behavior_bodies = owner_->TakeBehaviorBodiesForFrame(frame_);
   return scope;
+}
+
+// The constants a generate block declares, as declarations of it holding the
+// expressions the source assigned them. The index the block was built at is
+// left out: no expression of the block settles that one, so it is supplied.
+//
+// An expression naming the index resolves to the declaration the construction
+// fills, so every block a loop counts out states the same thing whatever index
+// it was built at.
+auto StructuralScopeLowerer::DeclareBlockParameters(
+    hir::StructuralScope& scope, WalkFrame frame) -> diag::Result<void> {
+  for (const auto& member : slang_scope_->members()) {
+    const auto* parameter = member.as_if<slang::ast::ParameterSymbol>();
+    if (parameter == nullptr || parameter->isFromGenvar()) {
+      continue;
+    }
+    const auto span = owner_->SourceMapper().PointSpanOf(parameter->location);
+    auto type_or = owner_->InternType(parameter->getType(), span);
+    if (!type_or) return std::unexpected(std::move(type_or.error()));
+
+    // LRM 6.20.4 makes `parameter` a synonym for `localparam` in a generate
+    // block, and a local parameter is assigned where it is declared, so the
+    // only parameter of one that states no expression is the implicit index,
+    // which this does not reach.
+    const slang::ast::Expression* initializer = parameter->getInitializer();
+    if (initializer == nullptr) {
+      throw InternalError(
+          "StructuralScopeLowerer::DeclareBlockParameters: a generate block's "
+          "parameter states no expression");
+    }
+    auto lowered = LowerExpr(*initializer, frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+
+    const hir::StructuralDataObjectId declared =
+        scope.structural_data_objects.Add(
+            hir::StructuralDataObjectDecl{
+                .name = std::string{parameter->name},
+                .type = *type_or,
+                .kind = hir::StructuralParameterDecl{
+                    .initializer = frame.Exprs().Add(*std::move(lowered))}});
+    owner_->MapStructuralDataObjectBinding(
+        *parameter, frame_, declared, *type_or);
+  }
+  return {};
 }
 
 // Total over slang's symbol kinds with no `default`: a member that carries
@@ -329,8 +387,11 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::GenericClassDef:
       return {};
 
-    // Resolved before lowering begins: what a parameter, a genvar or an
-    // import contributes is already folded into the members that read it.
+    // Nothing to build at the walk. A generate block's parameters are already
+    // declarations of it, settled before this walk began so that the members
+    // below reach them; every other scope's parameter belongs to that scope's
+    // own artifact, which makes reading its value cost nothing. A genvar and an
+    // import contribute to the members that read them and nothing of their own.
     case SymbolKind::Parameter:
     case SymbolKind::Specparam:
     case SymbolKind::DefParam:

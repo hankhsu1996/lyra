@@ -2250,6 +2250,51 @@ enough to warrant its own focused review.
       the runtime at all. It belongs with the flag that already chooses between iterating and
       running, rather than to whoever next reads an object.
 
+- [ ] R135 -- The rule that a lowering states the expression rather than the answer the front end
+      computed is enforced by matching two spellings of taking that answer. The property it stands
+      for is what the value varies with: an artifact's identity has a closed set of axes -- the unit
+      and its parameterization -- and a value varying with anything else, a repetition index or a
+      position in the hierarchy, must not be settled into what is compiled. A spelling is a proxy
+      for that and admits whatever it does not enumerate.
+
+      It has already cost one position. A parameter's value reaches the front end's answer through a
+      third spelling, so a constant a repeated block worked out from its own index was folded into
+      the artifact for as long as the rule stood, while the record the rule serves said every such
+      position had been dealt with and was read as the evidence that it had. That one is closed, and
+      the next accessor the front end gains is outside the pattern on the day it lands.
+
+      What is owed is the enforcement and not the practice. Every site that reads a symbol's settled
+      value -- four of them, counted rather than estimated, covering a specialization's own identity,
+      an enumeration's members twice, and a unit's parameter -- now says in a comment what its value
+      varies with, and all four vary with an axis an artifact already has. The remaining six matches
+      of the same accessor are literals, where the value is what the source wrote and there is no
+      second thing to prefer.
+
+      So the open part is the design of a check, not a sweep. Neither mechanism the current one has
+      can express the property: a spelling cannot, as above, and the per-file exemption cannot
+      either, because one file holds both the body lowering the rule is for and two of the four
+      legitimate reads. A per-site marker comment would work and is a per-site suppression, which is
+      the ladder this codebase declines to climb, so the answer is something else and finding it is
+      the subject. Not blocked, and small in surface rather than large -- what makes it its own
+      change is that it needs an answer nobody has, not that it touches much. Found while settling
+      why a block deriving a constant from its index compiled once per index.
+
+- [ ] R136 -- Which lifecycle phase brings a scope's declaration up is decided in two places, and
+      neither can see the other's answer. One region installs the index a loop counts with and the
+      value construction supplies; a second, further down the same body, installs a net and runs a
+      variable's assignment. Each reaches its cases by asking whether a declaration is of one kind,
+      so a kind neither region names gets no phase at all: it is given storage and then nothing ever
+      brings it up, and the build stays green because no consumer of the set is exhaustive.
+
+      That happened while a constant a generate block settles for itself was being added, and it is
+      the argument rather than the anecdote: the shape cannot report its own omissions. Making one
+      region exhaustive was tried and does not work -- it would have to state something about the
+      kinds the other region owns, and whatever it states is either a second copy of that answer or
+      contradicts it, since a net really is installed in the constructor and reads as though it waits
+      for the initialize phase. Target: the phase a kind comes up in is stated once, over the whole
+      set, so that adding a kind fails to compile until its phase is named. Two regions of one long
+      body, and a phase model stated once rather than inferred from where the code sits. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

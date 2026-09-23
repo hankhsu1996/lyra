@@ -45,13 +45,15 @@ auto LowerGenerateScope(
 
 // The implicit localparam the index name denotes inside one block (LRM 27.4).
 // Every block declares its own, holding the value the index had when that block
-// elaborated.
-auto BlockIndexParameter(
-    const slang::ast::GenerateBlockSymbol& block, std::string_view index_name)
+// elaborated. The clause gives it the genvar's name, and the front end marks
+// which declaration it is; the mark is what this asks, because a block's other
+// parameters share the loop's name with nothing and must not be taken for it.
+auto BlockIndexParameter(const slang::ast::GenerateBlockSymbol& block)
     -> const slang::ast::ParameterSymbol* {
   for (const auto& member : block.members()) {
-    if (member.name == index_name) {
-      return member.as_if<slang::ast::ParameterSymbol>();
+    const auto* parameter = member.as_if<slang::ast::ParameterSymbol>();
+    if (parameter != nullptr && parameter->isFromGenvar()) {
+      return parameter;
     }
   }
   return nullptr;
@@ -128,15 +130,11 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
   // Whether one scope serves them all is what the lowered scopes say, and the
   // comparison is derived from the node definitions rather than written, so a
   // field added anywhere below is compared without anyone remembering to.
-  const std::string_view index_name = array.loopVariable == nullptr
-                                          ? std::string_view{}
-                                          : array.loopVariable->name;
   std::vector<hir::StructuralScope> blocks;
   blocks.reserve(array.entries.size());
   std::optional<hir::StructuralDataObjectId> first_index;
   for (const auto* entry : array.entries) {
-    ConstructionValue index{
-        .parameter = BlockIndexParameter(*entry, index_name)};
+    ConstructionValue index{.parameter = BlockIndexParameter(*entry)};
     auto scope_or = LowerGenerateScope(
         *owner_, *entry, array.name, frame,
         index.parameter == nullptr ? nullptr : &index);

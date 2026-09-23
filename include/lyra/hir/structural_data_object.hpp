@@ -94,14 +94,25 @@ struct StructuralConstructionValueDecl {
       -> bool = default;
 };
 
+// A named constant of the scope (LRM 6.20.4), holding the expression the source
+// assigned it. The scope settles it once, when it is built, and nothing writes
+// it afterwards; a name from outside reaches it, including a hierarchical one
+// inside a loop generate's block (LRM 27.4).
+struct StructuralParameterDecl {
+  ExprId initializer;
+
+  auto operator==(const StructuralParameterDecl&) const -> bool = default;
+};
+
 // A module-scope data object (LRM 6.5: "two main groups of data objects:
 // variables and nets"), plus the name a `ref` port introduces for storage the
-// object does not own, the index a loop counts with, and a value construction
-// supplies. Peer kinds sharing only identity and value type; each kind carries
-// its own payload.
+// object does not own, the index a loop counts with, a value construction
+// supplies, and a constant the scope settles for itself. Peer kinds sharing
+// only identity and value type; each kind carries its own payload.
 using StructuralDataObjectKind = std::variant<
     StructuralVariableDecl, StructuralNetDecl, StructuralReferenceDecl,
-    StructuralGenvarDecl, StructuralConstructionValueDecl>;
+    StructuralGenvarDecl, StructuralConstructionValueDecl,
+    StructuralParameterDecl>;
 
 struct StructuralDataObjectDecl {
   std::string name;

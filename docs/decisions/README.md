@@ -748,13 +748,16 @@ the detail lives in the entry itself.
 - [an-elaboration-time-value-is-an-input](an-elaboration-time-value-is-an-input.md) -- the rule the
   entry above turned out to be one case of. The front end evaluates whatever it can, so an already
   computed answer sits beside nearly every expression, and taking one decides where that value
-  enters the artifact rather than what the program means. Every position a body states is lowered,
-  with no exception for one the standard fixes: a clause requiring a constant says the value is
-  known, never that the artifact has to hold it, and the question that actually decides is whether a
-  different value there would be a different class or the same class holding a different number.
-  Read it before adding any site that reads a folded value, for why a width passes the citation test
-  and still is not a class, and for the entry's own reversal -- it once filed a sampled value's
-  depth as class-level on a sentence that was true in both halves and wrong in its conclusion.
+  enters the artifact rather than what the program means. No position a body states is read for its
+  settled value, with no exception for one the standard fixes: a clause requiring a constant says
+  the value is known, never that the artifact has to hold it, and the question that actually decides
+  is whether a different value there would be a different class or the same class holding a
+  different number. Read it also for why the check enforcing that is a proxy -- it matches spellings
+  of taking the answer, and a parameter's own accessor is a third one that walked past it for as
+  long as the entry claimed the list was complete. Read it before adding any site that reads a
+  folded value, for why a width passes the citation test and still is not a class, and for the
+  entry's own reversal -- it once filed a sampled value's depth as class-level on a sentence that
+  was true in both halves and wrong in its conclusion.
 - [a-structural-expression-may-write](a-structural-expression-may-write.md) -- an expression a
   construction evaluates may write, and both lowering boundaries used to refuse one on the stated
   grounds that the language admits none outside a procedure. LRM 27.4 gives a loop generate's step
