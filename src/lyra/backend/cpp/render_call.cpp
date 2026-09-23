@@ -1,18 +1,16 @@
 #include "lyra/backend/cpp/render_call.hpp"
 
 #include <cstdint>
-#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
-#include <vector>
 
-#include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
+#include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/expr.hpp"
@@ -34,31 +32,39 @@ enum class ReceiverPlacement : std::uint8_t {
   kIntoArgumentList
 };
 
-// What C++ names a callee, and where the object it dispatches on goes. Every
-// callee form -- an instance method, a factory on the type it builds, a free
-// function, an indirect closure, a type constructor -- answers with these two
-// and nothing else, so one site composes the call text out of them.
-struct CalleeSpelling {
+// A callee C++ spells with a name of its own -- an instance method, a factory
+// on the type it builds, a free function, a type constructor -- and where the
+// object it dispatches on goes.
+struct NamedCallee {
   std::string name;
   ReceiverPlacement placement;
 };
 
-// The object a call dispatches on, ready to compose into a callee: the rendered
-// expression, and the token C++ reaches a member through it with.
-struct RenderedReceiver {
-  std::string expr;
+// A callee the program computes rather than names: the call reaches it through
+// the value an expression produces, which C++ spells by parenthesizing that
+// expression so it stands wherever a name would.
+struct ComputedCallee {
+  mir::ExprId code;
+};
+
+using CalleeSpelling = std::variant<NamedCallee, ComputedCallee>;
+
+// The object a call dispatches on: which expression it is, and the token C++
+// reaches a member through it with.
+struct CallReceiver {
+  mir::ExprId expr;
   std::string_view member_access;
 };
 
-auto RenderReceiver(const ScopeView& view, const mir::Callee& callee)
-    -> std::optional<RenderedReceiver> {
+auto ResolveReceiver(const ScopeView& view, const mir::Callee& callee)
+    -> std::optional<CallReceiver> {
   const std::optional<mir::ExprId> receiver = mir::CalleeReceiver(callee);
   if (!receiver.has_value()) {
     return std::nullopt;
   }
   const mir::Expr& expr = view.Expr(*receiver);
-  return RenderedReceiver{
-      .expr = RenderExpr(view, expr),
+  return CallReceiver{
+      .expr = *receiver,
       .member_access =
           view.Unit().types.Get(expr.type).Is<mir::PointerType>() ? "->" : "."};
 }
@@ -82,7 +88,7 @@ auto SpelledAt(
   }
   const std::string_view dependent =
       reached == NameReachedThrough::kAValue ? "template " : "";
-  return std::format("{}{}<{}>", dependent, identifier, position->value);
+  return TextOf(dependent, identifier, "<", position->value, ">");
 }
 
 // A runtime entry, spelled the way the library declares it. Nothing here reads
@@ -90,13 +96,12 @@ auto SpelledAt(
 // written with, are the entry's own declaration.
 auto ResolveEntrySpelling(
     const ScopeView& view, const support::RuntimeEntry& entry,
-    const std::optional<RenderedReceiver>& receiver,
-    const std::optional<base::ComponentIndex>& position,
+    bool has_receiver, const std::optional<base::ComponentIndex>& position,
     mir::TypeId result_type) -> CalleeSpelling {
   return std::visit(
       Overloaded{
           [](const support::FreeFunction& f) -> CalleeSpelling {
-            return {
+            return NamedCallee{
                 .name = std::string{f.qualified_name},
                 .placement = ReceiverPlacement::kIntoArgumentList};
           },
@@ -104,13 +109,13 @@ auto ResolveEntrySpelling(
           // spelling without an object to reach it through has no C++ text at
           // all.
           [&](const support::Method& m) -> CalleeSpelling {
-            if (!receiver.has_value()) {
+            if (!has_receiver) {
               throw InternalError(
                   "Direct call: the instance form of a runtime entry is "
                   "reached through the object it acts on, and this call names "
                   "none -- please report this as a bug");
             }
-            return {
+            return NamedCallee{
                 .name = SpelledAt(
                     m.identifier, position, NameReachedThrough::kAValue),
                 .placement = ReceiverPlacement::kIntoCalleeName};
@@ -118,9 +123,9 @@ auto ResolveEntrySpelling(
           // A factory is reached on the type it builds, which is the type of
           // the value the call answers with.
           [&](const support::StaticFactory& s) -> CalleeSpelling {
-            return {
-                .name = std::format(
-                    "{}::{}", RenderTypeAsCpp(view.Unit(), result_type),
+            return NamedCallee{
+                .name = TextOf(
+                    RenderTypeAsCpp(view.Unit(), result_type), "::",
                     SpelledAt(
                         s.identifier, position, NameReachedThrough::kAType)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
@@ -132,9 +137,8 @@ auto ResolveEntrySpelling(
 // that resolves its own identity space, and how a receiver rides follows from
 // what that lookup found.
 auto ResolveDirectSpelling(
-    const ScopeView& view, const mir::Direct& direct,
-    const std::optional<RenderedReceiver>& receiver, mir::TypeId result_type)
-    -> CalleeSpelling {
+    const ScopeView& view, const mir::Direct& direct, bool has_receiver,
+    mir::TypeId result_type) -> CalleeSpelling {
   return std::visit(
       Overloaded{
           // The owner prefix is a fixed function of the target's owner: it is
@@ -142,33 +146,33 @@ auto ResolveDirectSpelling(
           // call reaches (LRM 8.15 super), is what makes C++ bypass the vtable.
           [&](const mir::CallableTarget& t) -> CalleeSpelling {
             const auto& cls = view.Unit().GetClass(t.owner);
-            return {
-                .name = std::format(
-                    "{}::{}", CppClassName(cls, t.owner),
-                    CppClassCallableName(view.Unit(), cls, t.slot)),
+            return NamedCallee{
+                .name = TextOf(
+                    CppClassName(cls, t.owner),
+                    "::", CppClassCallableName(view.Unit(), cls, t.slot)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           // This unit's C++ peer is a namespace too, so a body of its own is
           // named through that namespace exactly as another unit's body is.
           [&](const mir::UnitCallableTarget& t) -> CalleeSpelling {
-            return {
-                .name = std::format(
-                    "{}::{}", CppUnitScope(view.Unit().name),
-                    CppUnitCallableName(view.Unit(), t.slot)),
+            return NamedCallee{
+                .name = TextOf(
+                    CppUnitScope(view.Unit().name),
+                    "::", CppUnitCallableName(view.Unit(), t.slot)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           [&](const support::BuiltinFn& id) -> CalleeSpelling {
             return ResolveEntrySpelling(
-                view, support::RuntimeEntryOf(id), receiver, direct.position,
-                result_type);
+                view, support::RuntimeEntryOf(id), has_receiver,
+                direct.position, result_type);
           },
           // Another compilation unit's C++ peer is a namespace, so a callable
           // of it (LRM 26.3) is named through that namespace.
           [](const mir::ExternalUnitCallableTarget& t) -> CalleeSpelling {
-            return {
-                .name = std::format(
-                    "{}::{}", CppUnitScope(t.unit_name),
-                    ToCppName(t.callable_name)),
+            return NamedCallee{
+                .name = TextOf(
+                    CppUnitScope(t.unit_name),
+                    "::", ToCppName(t.callable_name)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           // A method on one of that namespace's classes is named through the
@@ -177,27 +181,27 @@ auto ResolveDirectSpelling(
           // makes C++ bypass the vtable, exactly as a direct call to a virtual
           // method demands (LRM 8.15 super).
           [](const mir::ExternalUnitClassMethodTarget& t) -> CalleeSpelling {
-            return {
-                .name = std::format(
-                    "{}::{}::{}", CppUnitScope(t.unit_name),
-                    ToCppName(t.class_name), ToCppName(t.method_name)),
+            return NamedCallee{
+                .name = TextOf(
+                    CppUnitScope(t.unit_name), "::", ToCppName(t.class_name),
+                    "::", ToCppName(t.method_name)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           // A body of another unit that answers to no name is named through
           // that unit's namespace by which of them it is -- the same identifier
           // that unit emitted it under.
           [](const mir::ExternalUnitMintedEntryTarget& t) -> CalleeSpelling {
-            return {
-                .name = std::format(
-                    "{}::{}", CppUnitScope(t.unit_name),
-                    CppMintedEntryName(t.entry)),
+            return NamedCallee{
+                .name = TextOf(
+                    CppUnitScope(t.unit_name),
+                    "::", CppMintedEntryName(t.entry)),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           },
           // A DPI-C symbol is program-global, so it is spelled unqualified
           // (LRM 35.4); the prototype it resolves against is declared once in
           // this artifact.
           [](const mir::ForeignSymbolTarget& t) -> CalleeSpelling {
-            return {
+            return NamedCallee{
                 .name = t.linkage_name,
                 .placement = ReceiverPlacement::kIntoCalleeName};
           }},
@@ -205,22 +209,18 @@ auto ResolveDirectSpelling(
 }
 
 auto ResolveCalleeSpelling(
-    const ScopeView& view, const mir::CallExpr& call,
-    const std::optional<RenderedReceiver>& receiver, mir::TypeId result_type)
-    -> CalleeSpelling {
+    const ScopeView& view, const mir::CallExpr& call, bool has_receiver,
+    mir::TypeId result_type) -> CalleeSpelling {
   return std::visit(
       Overloaded{
           [&](const mir::Direct& d) -> CalleeSpelling {
-            return ResolveDirectSpelling(view, d, receiver, result_type);
+            return ResolveDirectSpelling(view, d, has_receiver, result_type);
           },
           [&](const mir::Indirect& i) -> CalleeSpelling {
-            return {
-                .name =
-                    std::format("({})", RenderExpr(view, view.Expr(i.code))),
-                .placement = ReceiverPlacement::kIntoCalleeName};
+            return ComputedCallee{.code = i.code};
           },
           [&](const mir::Virtual& v) -> CalleeSpelling {
-            return {
+            return NamedCallee{
                 .name = std::visit(
                     Overloaded{
                         [&](const mir::LocalVirtualSlot& l) -> std::string {
@@ -240,44 +240,74 @@ auto ResolveCalleeSpelling(
           // type's own answer -- read through type mapping, the way every other
           // target-language spelling of a type is.
           [&](const mir::Construct&) -> CalleeSpelling {
-            return {
+            return NamedCallee{
                 .name = RenderTypeConstructionAsCpp(view.Unit(), result_type),
                 .placement = ReceiverPlacement::kIntoCalleeName};
           }},
       call.callee);
 }
 
+// Where the object a call dispatches on goes, asked only of a call that has
+// one. A callee the program computes is reached through no name, and MIR states
+// no object to dispatch on for such a call, so this is refused rather than
+// answered: an answer here would be one no call can ask for.
+auto PlacementOf(const CalleeSpelling& callee) -> ReceiverPlacement {
+  return std::visit(
+      Overloaded{
+          [](const NamedCallee& named) { return named.placement; },
+          [](const ComputedCallee&) -> ReceiverPlacement {
+            throw InternalError(
+                "RenderCallExpr: a call reaching a computed callee names an "
+                "object to dispatch on, which MIR states for no such call -- "
+                "please report this as a bug");
+          }},
+      callee);
+}
+
+void RenderCallee(
+    const ScopeView& view, const CalleeSpelling& callee, TargetText& out) {
+  std::visit(
+      Overloaded{
+          [&](const NamedCallee& named) { out += named.name; },
+          [&](const ComputedCallee& computed) {
+            Write(view, out, "(", computed.code, ")");
+          }},
+      callee);
+}
+
 }  // namespace
 
-auto RenderCallExpr(
-    const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type)
-    -> std::string {
-  const std::optional<RenderedReceiver> receiver =
-      RenderReceiver(view, call.callee);
+void RenderCallExpr(
+    const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type,
+    TargetText& out) {
+  const std::optional<CallReceiver> receiver =
+      ResolveReceiver(view, call.callee);
   const CalleeSpelling callee =
-      ResolveCalleeSpelling(view, call, receiver, result_type);
+      ResolveCalleeSpelling(view, call, receiver.has_value(), result_type);
 
   // The object the call dispatches on goes where the spelling puts it, and a
-  // call that dispatches on none puts nothing anywhere. Everything after this
-  // is punctuation.
-  std::string callee_text = callee.name;
-  std::vector<std::string> args;
-  args.reserve(call.arguments.size() + 1);
-  if (receiver.has_value()) {
-    switch (callee.placement) {
-      case ReceiverPlacement::kIntoCalleeName:
-        callee_text = std::format(
-            "({}){}{}", receiver->expr, receiver->member_access, callee.name);
-        break;
-      case ReceiverPlacement::kIntoArgumentList:
-        args.push_back(receiver->expr);
-        break;
-    }
+  // call that dispatches on none puts nothing anywhere and asks nothing.
+  // Everything after this is punctuation.
+  const bool receiver_leads_the_name =
+      receiver.has_value() &&
+      PlacementOf(callee) == ReceiverPlacement::kIntoCalleeName;
+  if (receiver_leads_the_name) {
+    Write(view, out, "(", receiver->expr, ")", receiver->member_access);
+  }
+  RenderCallee(view, callee, out);
+
+  out += "(";
+  bool first = true;
+  if (receiver.has_value() && !receiver_leads_the_name) {
+    Write(view, out, receiver->expr);
+    first = false;
   }
   for (const mir::ExprId id : call.arguments) {
-    args.push_back(RenderExpr(view, view.Expr(id)));
+    if (!first) out += ", ";
+    Write(view, out, id);
+    first = false;
   }
-  return CallOf(callee_text, args);
+  out += ")";
 }
 
 }  // namespace lyra::backend::cpp

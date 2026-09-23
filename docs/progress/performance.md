@@ -365,6 +365,22 @@ specializations, not with instance count.
       the instrument here resolves a couple of microseconds per binding, so the reading bounds the
       call from above and says nothing else about it.
 
+- [x] Writing out the target text no longer costs more the deeper a design nests its expressions.
+      Every part of an emitted artifact used to be built as a value and copied into the value
+      enclosing it, so a byte near the bottom of an expression was copied once per level above it,
+      and the punctuation between the parts was a format description read again at run time for
+      every part written. Each byte is now written once, where it goes.
+
+      Measured as instructions over one emission, because the host this was taken on is shared: 15.6%
+      fewer over 1.3 MB of C++ from many small units, and 17.2% fewer over 2.0 MB whose expressions
+      nest two hundred deep. The text produced is identical, which is what the whole conformance
+      corpus was emitted twice to establish. [refactor.md](refactor.md) R137 holds the reading and
+      the prediction it falsified.
+
+      This is a rate rather than a count, so no coverage record holds it and the corpus cannot see
+      it: every conformance case is one small design, and what it measures only shows at a scale
+      none of them reach.
+
 ### Open questions
 
 - How thin the specialization key goes. The fat-value runtime representation carries packed width

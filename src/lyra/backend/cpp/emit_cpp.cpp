@@ -1,6 +1,8 @@
-#include <format>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
@@ -10,6 +12,7 @@
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
+#include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -23,25 +26,31 @@ namespace lyra::backend::cpp {
 
 namespace {
 
+void WriteInclude(TargetText& out, std::string_view path) {
+  Write(out, "#include \"", path, "\"\n");
+}
+
 // One value the unit settles before the program runs, written as a constant of
 // the namespace: the type it has, the name it is reached by, and the expression
 // that builds it. The build is an expression tree with no statements, so what
-// renders it is the ordinary expression render over a scope holding nothing but
+// writes it is the ordinary expression render over a scope holding nothing but
 // that tree.
-auto NamespaceValueOf(
+void RenderNamespaceValue(
     const mir::CompilationUnit& unit, mir::TypeId type, std::string_view name,
-    const mir::ValueBuild& build) -> std::string {
+    const mir::ValueBuild& build, TargetText& out) {
   const ScopeView view = ScopeView::ForUnitConstant(unit, build.body);
-  return RenderDeclaration(
+  WriteDeclaration(
+      out,
       DeclaredCell{
           .owner = CellOwner::kNamespace,
           .text = CellText::kDefined,
           .immutable = true,
           .type = RenderTypeAsCpp(unit, type),
           .name = name,
-          .qualifier = {},
-          .value = RenderExpr(view, view.Expr(build.value))},
-      0);
+          .qualifier = {}},
+      [&](TargetText& value) {
+        RenderExpr(view, view.Expr(build.value), value);
+      });
 }
 
 // The descriptions the unit holds, one definition each, ahead of any code that
@@ -49,28 +58,25 @@ auto NamespaceValueOf(
 // constant may name one in its initializer, and two constants of one file are
 // initialized in the order the file writes them, which is a guarantee that ends
 // at the file boundary.
-auto RenderTypeDescriptions(const mir::CompilationUnit& unit) -> std::string {
-  std::string out;
+void RenderTypeDescriptions(const mir::CompilationUnit& unit, TargetText& out) {
   for (const mir::TypeDescriptorId id : unit.type_descriptors.Ids()) {
-    out += NamespaceValueOf(
+    RenderNamespaceValue(
         unit, mir::TypeDescriptorTypeOf(unit, id), CppTypeDescriptorName(id),
-        unit.builds.descriptors.Get(id));
+        unit.builds.descriptors.Get(id), out);
   }
-  return out;
 }
 
 // The values the unit was written with, one definition per distinct value,
 // after the descriptions because every one of them names the description of its
 // own type. A use is the name written here, so each is built once for the whole
 // artifact.
-auto RenderIntegralConstants(const mir::CompilationUnit& unit) -> std::string {
-  std::string out;
+void RenderIntegralConstants(
+    const mir::CompilationUnit& unit, TargetText& out) {
   for (const mir::IntegralConstantId id : unit.integral_constants.Ids()) {
-    out += NamespaceValueOf(
+    RenderNamespaceValue(
         unit, unit.integral_constants.Get(id).type, CppIntegralConstantName(id),
-        unit.builds.constants.Get(id));
+        unit.builds.constants.Get(id), out);
   }
-  return out;
 }
 
 // The file a class of this unit is written in. Every class a unit promised
@@ -140,55 +146,74 @@ auto RenderUnitFiles(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
   const UnitText callables = RenderUnitCallables(unit);
   const UnitText variables = RenderUnitStaticVariables(unit);
   const UnitText forwards = RenderUnitForwardDeclarations(unit);
-  const UnitClasses classes = RenderUnitClasses(unit);
+  UnitClasses classes = RenderUnitClasses(unit);
+  const std::string unit_namespace = UnitNamespaceOf(unit.name);
 
-  std::string opened;
+  TargetText opened;
   AppendSection(opened, forwards.signature);
   AppendSection(opened, callables.signature);
   AppendSection(opened, variables.signature);
   opened += "\n";
 
-  std::string opening;
+  TargetText opening;
   opening += "#pragma once\n";
-  opening += std::format("#include \"{}\"\n", support::kRuntimePreludeHeader);
+  WriteInclude(opening, support::kRuntimePreludeHeader);
   opening += "\n";
-  AppendSection(opening, RenderExternalObjectDeclarations(unit));
-  opening += NamespaceBlockOf(UnitNamespaceOf(unit.name), opened);
+  {
+    const TargetText::Section external(opening);
+    RenderExternalObjectDeclarations(unit, opening);
+  }
+  OpenNamespace(opening, unit_namespace);
+  opening += opened.View();
+  CloseNamespace(opening, unit_namespace);
 
   std::vector<CppArtifact> declarations;
   declarations.push_back(
-      {.relpath = UnitOpeningFileOf(unit.name), .content = std::move(opening)});
+      {.relpath = UnitOpeningFileOf(unit.name),
+       .content = std::move(opening).Take()});
 
-  std::string umbrella;
+  TargetText umbrella;
   umbrella += "#pragma once\n";
-  umbrella += std::format("#include \"{}\"\n", UnitOpeningFileOf(unit.name));
+  WriteInclude(umbrella, UnitOpeningFileOf(unit.name));
   for (const PromisedClass& promised : classes.promised) {
     const mir::Class& cls = unit.GetClass(promised.id);
-    std::string file;
+    TargetText file;
     file += "#pragma once\n";
-    file += std::format("#include \"{}\"\n", UnitOpeningFileOf(unit.name));
+    WriteInclude(file, UnitOpeningFileOf(unit.name));
     for (const mir::ClassRef& rests_on : mir::RestsOnDeclaredClasses(cls)) {
-      file += std::format("#include \"{}\"\n", FileDeclaring(unit, rests_on));
+      WriteInclude(file, FileDeclaring(unit, rests_on));
     }
     file += "\n";
-    file += NamespaceBlockOf(UnitNamespaceOf(unit.name), promised.text);
+    OpenNamespace(file, unit_namespace);
+    file += promised.text.View();
+    CloseNamespace(file, unit_namespace);
     const std::string relpath = FileDeclaring(unit, promised.id);
-    umbrella += std::format("#include \"{}\"\n", relpath);
-    declarations.push_back({.relpath = relpath, .content = std::move(file)});
+    WriteInclude(umbrella, relpath);
+    declarations.push_back(
+        {.relpath = relpath, .content = std::move(file).Take()});
   }
   declarations.push_back(
       {.relpath = UnitSignatureFileOf(unit.name),
-       .content = std::move(umbrella)});
+       .content = std::move(umbrella).Take()});
 
-  std::string realized;
+  TargetText realized;
   AppendSection(realized, forwards.code);
-  AppendSection(realized, RenderTypeDescriptions(unit));
-  AppendSection(realized, RenderIntegralConstants(unit));
+  {
+    const TargetText::Section descriptions(realized);
+    RenderTypeDescriptions(unit, realized);
+  }
+  {
+    const TargetText::Section constants(realized);
+    RenderIntegralConstants(unit, realized);
+  }
   AppendSection(realized, classes.internal);
   AppendSection(realized, variables.code);
   AppendSection(realized, classes.definitions);
   AppendSection(realized, callables.code);
-  AppendSection(realized, RenderForeignScopeSymbols(unit));
+  {
+    const TargetText::Section foreign(realized);
+    RenderForeignScopeSymbols(unit, realized);
+  }
   realized += "\n";
 
   // The runtime umbrella names everything a rendered body may call into, and
@@ -196,19 +221,22 @@ auto RenderUnitFiles(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
   // include set and the precompiled header's coverage the same set. What this
   // unit read of every other follows, each named as the part it read, so a
   // change to a class this file never named moves nothing it compiles.
-  std::string code;
-  code += std::format("#include \"{}\"\n", support::kRuntimePreludeHeader);
-  code += std::format("#include \"{}\"\n", UnitSignatureFileOf(unit.name));
+  TargetText code;
+  WriteInclude(code, support::kRuntimePreludeHeader);
+  WriteInclude(code, UnitSignatureFileOf(unit.name));
   for (const mir::ConsumedSignature& consumed : unit.consumed_signatures) {
-    code += std::format("#include \"{}\"\n", FileConsumed(consumed));
+    WriteInclude(code, FileConsumed(consumed));
   }
   code += "\n";
-  code += NamespaceBlockOf(UnitNamespaceOf(unit.name), realized);
+  OpenNamespace(code, unit_namespace);
+  code += realized.View();
+  CloseNamespace(code, unit_namespace);
 
   return {
       .declarations = std::move(declarations),
       .code = {
-          .relpath = UnitCodeFileOf(unit.name), .content = std::move(code)}};
+          .relpath = UnitCodeFileOf(unit.name),
+          .content = std::move(code).Take()}};
 }
 
 // The program entry. A design's whole contribution to it is how one makes the
@@ -227,17 +255,17 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
     throw InternalError("backend::cpp: the design root roots no tree");
   }
 
-  std::string out;
-  out += std::format("#include \"{}\"\n", support::kHostEntryHeader);
-  out += std::format("#include \"{}\"\n", UnitSignatureFileOf(root.name));
+  TargetText out;
+  WriteInclude(out, support::kHostEntryHeader);
+  WriteInclude(out, UnitSignatureFileOf(root.name));
   out += "\n";
   out += "auto main(int argc, char** argv) -> int {\n";
-  out += std::format(
-      "  return lyra::runtime::RunDesignRoot(argc, argv, \"{}\", {}::{});\n",
-      root.name, CppUnitScope(root.name),
-      CppMintedEntryName(mir::MintedEntry::kMakeObject));
+  Write(
+      out, "  return lyra::runtime::RunDesignRoot(argc, argv, \"", root.name,
+      "\", ", CppUnitScope(root.name),
+      "::", CppMintedEntryName(mir::MintedEntry::kMakeObject), ");\n");
   out += "}\n";
-  return out;
+  return std::move(out).Take();
 }
 
 }  // namespace

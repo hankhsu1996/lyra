@@ -1,33 +1,19 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
-#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::backend::cpp {
 
-[[nodiscard]] inline auto Indent(std::size_t level) -> std::string {
-  std::string result(level * 2, ' ');
-  return result;
-}
-
-// A blank line sets each section of an emitted body apart, and a section the
-// subject has none of contributes nothing at all -- separator included -- so no
-// caller asks whether its section is there.
-inline void AppendSection(std::string& out, const std::string& section) {
-  if (section.empty()) return;
-  out += "\n";
-  out += section;
-}
-
-// The comma-separated form of already-rendered parts. Empty parts yield the
-// empty string, which is the form every such list takes when it has none.
+// The comma-separated form of already-spelled parts. A type spelled out of
+// other types composes their spellings, which are names rather than text of the
+// program, so they are values and this joins them.
 [[nodiscard]] inline auto JoinCommaSeparated(
     const std::vector<std::string>& parts) -> std::string {
   std::string out;
@@ -36,17 +22,6 @@ inline void AppendSection(std::string& out, const std::string& section) {
     out.append(part);
   }
   return out;
-}
-
-// The call form composed around the renders of a call's parts. One entry
-// renders a call, so this is spelled once and the punctuation -- how many
-// arguments there are and where the separators go -- is never a per-site
-// decision. A construct that merely looks like a call, such as a
-// member-initializer, is not one and does not reach here.
-[[nodiscard]] inline auto CallOf(
-    std::string_view callee, const std::vector<std::string>& args)
-    -> std::string {
-  return std::string{callee} + "(" + JoinCommaSeparated(args) + ")";
 }
 
 // Whose cell a declaration brings into being: one that every object of a class
@@ -76,11 +51,6 @@ struct DeclaredCell {
   // text sits inside that class, which is where a storage keyword is spelled
   // and where it is spelled once.
   std::optional<std::string_view> qualifier;
-  // What the cell starts at, absent where the declaration states nothing. A
-  // definition that states nothing still establishes a value: the language's
-  // own default, spelled so a scalar is zeroed rather than left holding
-  // whatever the storage had.
-  std::optional<std::string_view> value;
 };
 
 // The keywords this target wants before the cell's type. A definition written
@@ -105,13 +75,9 @@ struct DeclaredCell {
   throw InternalError("backend::cpp: a declared cell belongs to no owner");
 }
 
-// A declaration, whole: what the cell needs in front of it, its type, its name
-// under whatever qualifies it, what it starts at, and the semicolon. Every site
-// that declares storage comes here, so the shape of a declaration is one thing
-// this target states rather than something each site arrives at.
-[[nodiscard]] inline auto RenderDeclaration(
-    const DeclaredCell& cell, std::size_t indent) -> std::string {
-  std::string out = Indent(indent);
+inline void WriteDeclarationUpToTheValue(
+    TargetText& out, const DeclaredCell& cell) {
+  out.OpenLine();
   out += CellKeywords(cell);
   if (cell.immutable) {
     out += "const ";
@@ -123,24 +89,51 @@ struct DeclaredCell {
     out += "::";
   }
   out += cell.name;
-  if (cell.value.has_value()) {
-    out += " = ";
-    out += *cell.value;
-  } else if (cell.text == CellText::kDefined) {
+}
+
+// A declaration stating no value of its own: what the cell needs in front of
+// it, its type, its name under whatever qualifies it, and the semicolon. A
+// definition that states nothing still establishes a value -- the language's
+// own default, spelled so a scalar is zeroed rather than left holding whatever
+// the storage had.
+inline void WriteDeclaration(TargetText& out, const DeclaredCell& cell) {
+  WriteDeclarationUpToTheValue(out, cell);
+  if (cell.text == CellText::kDefined) {
     out += "{}";
   }
   out += ";\n";
-  return out;
 }
 
-// A namespace enclosing `body`, which is written whole and ends with its own
-// newline. Opening one and closing it are the same decision seen twice -- the
-// closing comment repeats the name -- so both are spelled here and a caller
-// supplies only what goes inside.
-[[nodiscard]] inline auto NamespaceBlockOf(
-    std::string_view name, std::string_view body) -> std::string {
-  return std::format(
-      "namespace {} {{\n{}}}  // namespace {}\n", name, body, name);
+// A declaration whose value is an expression of the program, written where the
+// declaration puts it rather than handed over as text.
+template <typename WriteValue>
+void WriteDeclaration(
+    TargetText& out, const DeclaredCell& cell, WriteValue write_value) {
+  WriteDeclarationUpToTheValue(out, cell);
+  out += " = ";
+  write_value(out);
+  out += ";\n";
+}
+
+// A namespace enclosing what is written between the two. Opening one and
+// closing it are the same decision seen twice -- the closing comment repeats
+// the name -- so both are spelled here.
+inline void OpenNamespace(TargetText& out, std::string_view name) {
+  out += "namespace ";
+  out += name;
+  out += " {\n";
+}
+
+inline void CloseNamespace(TargetText& out, std::string_view name) {
+  out += "}  // namespace ";
+  out += name;
+  out += "\n";
+}
+
+// Text already assembled elsewhere, placed as a section of this artifact.
+inline void AppendSection(TargetText& out, const TargetText& section) {
+  const TargetText::Section placed(out);
+  out += section.View();
 }
 
 }  // namespace lyra::backend::cpp

@@ -352,6 +352,16 @@ cross-check predicts. This file owns only which instances are known and what is 
       [aggregate-names-are-type-content](../decisions/aggregate-names-are-type-content.md) holds the
       argument, and what the two superseded records keep.
 
+- [ ] T38 -- A member access states a receiver for every kind of member it reaches, and one kind
+      never reads it. A capture of a closure is reached by its own name in the enclosing scope, so
+      the source backend's arm for it writes no receiver at all -- which leaves the receiver an
+      operand that is built and whose text is never emitted. Nothing is wrong with the emitted
+      program today, because what the lowering puts there has no effect to lose; what is wrong is
+      that nothing says so, and an operand no consumer reads is one whose effect a later change can
+      drop with no test able to see the difference. Either the receiver belongs to the kinds that
+      have one, or a capture is not that kind of access. Found by a render review on 2026-09-23,
+      while converting every value-emission entry to write into the artifact.
+
 ## Callable and assignment identity
 
 - [ ] T11 -- Callable identity is one space whose entries name a declaration carrying signature,
@@ -597,6 +607,46 @@ cross-check predicts. This file owns only which instances are known and what is 
       makes it the same item rather than a new one is that no owner fits it either: it is not a
       type, not an access protocol, and not an operation, but a name two sides agree on by both
       reading one spelling. Whatever answers the re-view answers this.
+
+- [ ] T39 -- Which of two operations an await is, is stated rather than worked out by each consumer
+      from what is being awaited. Awaiting an execution hands control to that body and waits for it
+      to reach its end; awaiting a registered wait suspends only where the call that registered it
+      answers that this execution must park. Those are different programs, and **both consumers say
+      so in their own comments** -- the execution lowering's reads "the two are different operations
+      rather than two readings of one", and the source backend's reads "what is awaited says which
+      of the two this is". Each then decides it alone, from the awaited operand's type, and nothing
+      holds the two in step; the execution side additionally matches on whether the awaited
+      expression is a call, which is a second input to the same question and disagrees with the
+      first wherever an execution is awaited through anything but a call.
+
+      That is the canonical shape: a node that leaves the choice open makes every consumer decide
+      what the program means rather than how to represent it, and the consumer that decides
+      differently is a wrong answer nobody is positioned to see. The fix is that the node says
+      which, so both consumers translate. Which form it takes is not derived: the shape was created
+      by removing the type whose whole meaning was "something this target can await", and whether
+      the answer is two nodes or one node with a stated kind has to be settled against the reasoning
+      that removed it. Found by a render review on 2026-09-23.
+
+- [ ] T36 -- How a member is reached through the object a call dispatches on is answered in two
+      places by two mechanisms. A member access asks the dispatch that owns a wrapper's access
+      protocol and then writes the target's own member token; a call tests whether its receiver's
+      type is a pointer and picks the token itself. Both arms of that test reach the member and
+      nothing the program does tells them apart, which is why it was once looked at and set aside --
+      but spelling-versus-operation is not the only test, and the one it fails is the other: which
+      question is answered in more than one place. It fails a second, since the token it picks is
+      the shortened form of what the dispatch already answers. What blocks it is that the two sites
+      do not see the same types: the dispatch refuses a type that stands for no storage, and a
+      call's receiver can be a plain value where a member access's apparently cannot. Settle that
+      first -- either a call's receiver is always a place, or reaching a member through a value is a
+      second question and has no owner yet.
+
+- [ ] T37 -- How a value that names nothing is spelled is a per-type answer, not a list of the two
+      types that answer differently. The source backend names a managed reference and a chandle,
+      gives each the type's own empty braces, and gives every other type the target's null address.
+      It is a spelling and it does read a fact the type states, so it is admissible as written; what
+      it is not is a dispatch, so a type variant added later takes the null address silently and
+      nothing fails to compile. This is T28's question reached from a second side -- whether the
+      list of naming owners is short one owner -- and closes with it rather than beside it.
 
 - [ ] T35 -- Which of a scope's bodies a hierarchical name may end at is stated on that body, not
       recovered by matching identifiers across two lists. A scope carries its callables in one pool

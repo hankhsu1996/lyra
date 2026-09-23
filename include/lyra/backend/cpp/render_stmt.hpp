@@ -1,22 +1,16 @@
 #pragma once
 
-#include <cstddef>
-#include <string>
-
 #include "lyra/backend/cpp/scope_view.hpp"
+#include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::backend::cpp {
 
-auto RenderNestedBlock(
-    const ScopeView& parent, const mir::Block& block, std::size_t indent)
-    -> std::string;
+void RenderNestedBlock(
+    const ScopeView& parent, const mir::Block& block, TargetText& out);
 
-auto RenderBlockStatements(const ScopeView& view, std::size_t indent)
-    -> std::string;
+void RenderBlockStatements(const ScopeView& view, TargetText& out);
 
-auto RenderStmt(
-    const ScopeView& view, const mir::Stmt& stmt, std::size_t indent)
-    -> std::string;
+void RenderStmt(const ScopeView& view, const mir::Stmt& stmt, TargetText& out);
 
 }  // namespace lyra::backend::cpp

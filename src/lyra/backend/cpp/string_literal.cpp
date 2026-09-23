@@ -1,14 +1,28 @@
 #include "lyra/backend/cpp/string_literal.hpp"
 
-#include <format>
-#include <string>
+#include <cstddef>
 #include <string_view>
+
+#include "lyra/backend/cpp/target_text.hpp"
 
 namespace lyra::backend::cpp {
 
-auto RenderCStringLiteral(std::string_view s) -> std::string {
-  std::string out;
-  out.push_back('"');
+namespace {
+
+constexpr std::string_view kHexDigits = "0123456789abcdef";
+
+// A control character is written as the two-digit escape C++ reads back, so the
+// width is fixed and both digits come from the table.
+void WriteControlEscape(unsigned char c, TargetText& out) {
+  out += "\\x";
+  out += kHexDigits.substr(static_cast<std::size_t>(c >> 4U), 1);
+  out += kHexDigits.substr(static_cast<std::size_t>(c & 0x0FU), 1);
+}
+
+}  // namespace
+
+void WriteCStringLiteral(std::string_view s, TargetText& out) {
+  out += "\"";
   for (char c : s) {
     switch (c) {
       case '"':
@@ -28,15 +42,14 @@ auto RenderCStringLiteral(std::string_view s) -> std::string {
         break;
       default:
         if (static_cast<unsigned char>(c) < 0x20) {
-          out += std::format("\\x{:02x}", static_cast<unsigned char>(c));
+          WriteControlEscape(static_cast<unsigned char>(c), out);
         } else {
-          out.push_back(c);
+          out += std::string_view{&c, 1};
         }
         break;
     }
   }
-  out.push_back('"');
-  return out;
+  out += "\"";
 }
 
 }  // namespace lyra::backend::cpp

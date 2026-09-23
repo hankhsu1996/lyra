@@ -1,8 +1,7 @@
 #include "lyra/backend/cpp/render_decl.hpp"
 
 #include <cstddef>
-#include <format>
-#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -14,6 +13,7 @@
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
+#include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -28,69 +28,54 @@ namespace {
 // declared representation, a net's fold, an initial value -- arrives as
 // ordinary MIR statements in the constructor body, so the declaration
 // value-initializes and carries nothing else.
-auto RenderFieldList(
+void RenderFieldList(
     const mir::CompilationUnit& unit,
     std::span<const mir::NamedField> named_fields,
-    const base::Arena<mir::FieldDecl, mir::FieldId>& fields, std::size_t indent)
-    -> std::string {
-  std::string out;
+    const base::Arena<mir::FieldDecl, mir::FieldId>& fields, TargetText& out) {
   for (const mir::FieldId slot : fields.Ids()) {
     const std::string type = RenderTypeAsCpp(unit, fields.Get(slot).type);
     const std::string name = CppFieldName(named_fields, slot);
-    out += RenderDeclaration(
-        DeclaredCell{
-            .owner = CellOwner::kObject,
-            .text = CellText::kDefined,
-            .immutable = false,
-            .type = type,
-            .name = name,
-            .qualifier = {},
-            .value = {}},
-        indent);
+    WriteDeclaration(
+        out, DeclaredCell{
+                 .owner = CellOwner::kObject,
+                 .text = CellText::kDefined,
+                 .immutable = false,
+                 .type = type,
+                 .name = name,
+                 .qualifier = {}});
   }
-  return out;
 }
 
 // A class static property (LRM 8.9): one cell the type owns, established here
 // and given its declared representation and value where whatever brings the
 // class's owner up runs, never baked into the declaration.
-auto RenderClassStaticProperty(
-    const mir::CompilationUnit& unit, const mir::Class& s,
-    mir::StaticPropertyId slot, std::size_t indent) -> std::string {
-  const std::string type =
-      RenderTypeAsCpp(unit, s.static_properties.Get(slot).type);
-  const std::string name =
-      CppStaticPropertyName(s.named_static_properties, slot);
-  return RenderDeclaration(
-      DeclaredCell{
-          .owner = CellOwner::kType,
-          .text = CellText::kDefined,
-          .immutable = false,
-          .type = type,
-          .name = name,
-          .qualifier = {},
-          .value = {}},
-      indent);
-}
-
-auto RenderClassStaticProperties(
-    const mir::CompilationUnit& unit, const mir::Class& s) -> std::string {
-  std::string out;
+void RenderClassStaticProperties(
+    const mir::CompilationUnit& unit, const mir::Class& s, TargetText& out) {
   for (const mir::StaticPropertyId slot : s.static_properties.Ids()) {
-    out += RenderClassStaticProperty(unit, s, slot, 1);
+    const std::string type =
+        RenderTypeAsCpp(unit, s.static_properties.Get(slot).type);
+    const std::string name =
+        CppStaticPropertyName(s.named_static_properties, slot);
+    WriteDeclaration(
+        out, DeclaredCell{
+                 .owner = CellOwner::kType,
+                 .text = CellText::kDefined,
+                 .immutable = false,
+                 .type = type,
+                 .name = name,
+                 .qualifier = {}});
   }
-  return out;
 }
 
-auto RenderCallableParam(
+void RenderCallableParam(
     const mir::CompilationUnit& unit, const mir::CallableCode& code,
-    mir::LocalId param) -> std::string {
+    mir::LocalId param, TargetText& out) {
   // Every formal is a value parameter: an `input` by value (LRM 13.5.1), a
   // `ref` / `const ref` whose `RefType` already renders as `(const) Ref<T>` so
   // the reference value carries the aliasing (LRM 13.5.2). `output` / `inout`
   // are not parameters -- they ride the completion payload.
-  return std::format(
-      "{} {}", RenderTypeAsCpp(unit, code.locals.Get(param).type),
+  Write(
+      out, RenderTypeAsCpp(unit, code.locals.Get(param).type), " ",
       CppLocalName(code.named_locals, param));
 }
 
@@ -112,39 +97,39 @@ auto OverrideSuffix(const mir::CallableDecl& m) -> std::string_view {
   return mir::IntroducesSlot(m.virtual_dispatch) ? "" : " override";
 }
 
-// The parameter list a class callable declares, and the position its user
+// The parameter list a class callable declares, from the position its user
 // formals start at. Instance vs static (LRM 8.10) is a signature-level fact
 // carried by the presence of a self-typed `params[0]`: the C++ `static` prefix,
 // the omission of that parameter from the C++ list, and the body's
 // receiver-alias all read off this one check, so no side flag restates what the
 // signature already fixes.
-auto RenderUserParams(
+void RenderUserParams(
     const mir::CompilationUnit& unit, const mir::CallableCode& code,
-    std::size_t start) -> std::string {
-  std::string out;
+    std::size_t start, TargetText& out) {
   for (std::size_t i = start; i < code.params.size(); ++i) {
     if (i != start) out += ", ";
-    out += RenderCallableParam(unit, code, code.params[i]);
+    RenderCallableParam(unit, code, code.params[i], out);
   }
-  return out;
 }
 
-auto RenderClassCallableDecl(
+void RenderClassCallableDecl(
     const mir::CompilationUnit& unit, const mir::Class& s, mir::CallableId id,
-    const mir::CallableDecl& m) -> std::string {
+    const mir::CallableDecl& m, TargetText& out) {
   const mir::CallableCode& code = m.code;
   const bool has_receiver = code.HasReceiver(s.self_pointer_type);
-  const std::string sig = std::format(
-      "{}{}auto {}({}) -> {}{}", has_receiver ? "" : "static ",
-      VirtualPrefix(m), CppClassCallableName(unit, s, id),
-      RenderUserParams(unit, code, has_receiver ? 1 : 0),
-      RenderTypeAsCpp(unit, code.result_type), OverrideSuffix(m));
+  out.OpenLine();
+  if (!has_receiver) out += "static ";
+  out += VirtualPrefix(m);
+  Write(out, "auto ", CppClassCallableName(unit, s, id), "(");
+  RenderUserParams(unit, code, has_receiver ? 1 : 0, out);
+  Write(out, ") -> ", RenderTypeAsCpp(unit, code.result_type));
+  out += OverrideSuffix(m);
   // A class method this declaration does not define is a pure virtual (LRM
   // 8.21) -- the only bodyless form a class member takes, since a foreign
   // callable is never one. `= 0` states that, and C++ then treats the enclosing
   // class as abstract with no class-level marker of its own.
-  return std::format(
-      "{}{}{};\n", Indent(1), sig, code.body.has_value() ? "" : " = 0");
+  if (!code.body.has_value()) out += " = 0";
+  out += ";\n";
 }
 
 // The definition of a class-owned callable -- an instance method (LRM 8.6), a
@@ -154,50 +139,56 @@ auto RenderClassCallableDecl(
 // expressions resolve receiver-relative references uniformly. A pure virtual
 // prototype has no definition. A namespace's receiver-less callable renders
 // through the free-function path instead.
-auto RenderClassCallableDef(
+void RenderClassCallableDef(
     const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s,
-    mir::CallableId id, const mir::CallableDecl& m) -> std::string {
+    mir::CallableId id, const mir::CallableDecl& m, TargetText& out) {
   const mir::CallableCode& code = m.code;
-  if (!code.body.has_value()) return "";
+  if (!code.body.has_value()) return;
   const bool has_receiver = code.HasReceiver(s.self_pointer_type);
-  std::string out = std::format(
-      "auto {}::{}({}) -> {} {{\n", CppClassName(s, cls_id),
-      CppClassCallableName(unit, s, id),
-      RenderUserParams(unit, code, has_receiver ? 1 : 0),
-      RenderTypeAsCpp(unit, code.result_type));
-  if (has_receiver) {
-    const mir::LocalId self = code.params[0];
-    out += std::format(
-        "{}{} {} = this;\n", Indent(1),
-        RenderTypeAsCpp(unit, code.locals.Get(self).type),
-        CppLocalName(code.named_locals, self));
+  Write(
+      out, "auto ", CppClassName(s, cls_id),
+      "::", CppClassCallableName(unit, s, id), "(");
+  RenderUserParams(unit, code, has_receiver ? 1 : 0, out);
+  Write(out, ") -> ", RenderTypeAsCpp(unit, code.result_type), " {\n");
+  {
+    const TargetText::BodyDepth body(out, 1);
+    if (has_receiver) {
+      const mir::LocalId self = code.params[0];
+      out.OpenLine();
+      Write(
+          out, RenderTypeAsCpp(unit, code.locals.Get(self).type), " ",
+          CppLocalName(code.named_locals, self), " = this;\n");
+    }
+    RenderBlockStatements(ScopeView::ForRoot(unit, cls_id, s, code), out);
   }
-  out += RenderBlockStatements(ScopeView::ForRoot(unit, cls_id, s, code), 1);
   out += "}\n";
-  return out;
 }
 
 // A runtime-callback adapter: a static class member so its address decays to a
 // plain function pointer of the shape the runtime callback table requires. The
 // receiver is the callable's first explicit parameter, rendered like any other
 // formal.
-auto RenderAbiAdapterDecl(
+void RenderAbiAdapterDecl(
     const mir::CompilationUnit& unit, mir::AbiAdapterId id,
-    const mir::AbiAdapter& a) -> std::string {
-  return std::format(
-      "{}static auto {}({}) -> {};\n", Indent(1), CppAbiAdapterName(id),
-      RenderUserParams(unit, a.code, 0),
-      RenderTypeAsCpp(unit, a.code.result_type));
+    const mir::AbiAdapter& a, TargetText& out) {
+  out.OpenLine();
+  Write(out, "static auto ", CppAbiAdapterName(id), "(");
+  RenderUserParams(unit, a.code, 0, out);
+  Write(out, ") -> ", RenderTypeAsCpp(unit, a.code.result_type), ";\n");
 }
 
-auto RenderAbiAdapterDef(
+void RenderAbiAdapterDef(
     const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s,
-    mir::AbiAdapterId id, const mir::AbiAdapter& a) -> std::string {
-  return std::format(
-      "auto {}::{}({}) -> {} {{\n{}}}\n", CppClassName(s, cls_id),
-      CppAbiAdapterName(id), RenderUserParams(unit, a.code, 0),
-      RenderTypeAsCpp(unit, a.code.result_type),
-      RenderBlockStatements(ScopeView::ForRoot(unit, cls_id, s, a.code), 1));
+    mir::AbiAdapterId id, const mir::AbiAdapter& a, TargetText& out) {
+  Write(
+      out, "auto ", CppClassName(s, cls_id), "::", CppAbiAdapterName(id), "(");
+  RenderUserParams(unit, a.code, 0, out);
+  Write(out, ") -> ", RenderTypeAsCpp(unit, a.code.result_type), " {\n");
+  {
+    const TargetText::BodyDepth body(out, 1);
+    RenderBlockStatements(ScopeView::ForRoot(unit, cls_id, s, a.code), out);
+  }
+  out += "}\n";
 }
 
 // The C++ construction shell, split the way every other member is: the class
@@ -213,44 +204,43 @@ auto RenderAbiAdapterDef(
 // body, already in the order LRM 8.7 requires. The body is threaded through a
 // static `init(self, ...)` helper so a body-local `self` reference resolves the
 // same way it does in every other method render.
-auto RenderConstructor(
-    const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s)
-    -> UnitText {
+//
+// Two parameter lists are written twice each, once where the class declares
+// them and once where the definition repeats them, so each is built once and
+// written where it is needed.
+void RenderConstructor(
+    const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s,
+    TargetText& signature, TargetText& code) {
   const ScopeView scope_view =
       ScopeView::ForRoot(unit, cls_id, s, s.constructor.code);
   const auto& ctor_code = s.constructor.code;
-  const auto render_typed_name = [&](mir::TypeId type, std::string_view name) {
-    return std::format("{} {}", RenderTypeAsCpp(unit, type), name);
-  };
+  const std::string cpp_name = CppClassName(s, cls_id);
 
-  std::vector<std::string> sig_args;
-  std::vector<std::string> forward_names;
-  sig_args.reserve(ctor_code.params.size());
-  forward_names.reserve(ctor_code.params.size());
+  TargetText params_text;
+  TargetText init_params_text;
+  TargetText forward_text;
   // Skip params[0] (self, MIR contract); the C++ ctor's receiver is `this`.
+  Write(
+      init_params_text, cpp_name, "* ",
+      CppLocalName(ctor_code.named_locals, ctor_code.params[0]));
+  forward_text += "this";
   for (std::size_t i = 1; i < ctor_code.params.size(); ++i) {
     const mir::LocalId param = ctor_code.params[i];
     const std::string name = CppLocalName(ctor_code.named_locals, param);
-    sig_args.push_back(
-        render_typed_name(ctor_code.locals.Get(param).type, name));
-    forward_names.push_back(name);
+    const std::string type =
+        RenderTypeAsCpp(unit, ctor_code.locals.Get(param).type);
+    if (i != 1) params_text += ", ";
+    Write(params_text, type, " ", name);
+    Write(init_params_text, ", ", type, " ", name);
+    Write(forward_text, ", ", name);
   }
+  const std::string params = std::move(params_text).Take();
+  const std::string init_params = std::move(init_params_text).Take();
 
-  std::optional<std::string> base_clause;
-  if (s.base.has_value()) {
-    std::vector<std::string> base_args_rendered;
-    base_args_rendered.reserve(s.constructor.base_args.size());
-    for (const mir::ExprId arg : s.constructor.base_args) {
-      base_args_rendered.push_back(
-          RenderExpr(scope_view, scope_view.Expr(arg)));
-    }
-    base_clause = std::format(
-        " : {}({})", RenderClassRefAsCpp(unit, *s.base),
-        JoinCommaSeparated(base_args_rendered));
-  }
-
-  const std::string cpp_name = CppClassName(s, cls_id);
-  const std::string params = JoinCommaSeparated(sig_args);
+  signature.OpenLine();
+  Write(signature, cpp_name, "(", params, ");\n");
+  signature.OpenLine();
+  Write(signature, "static auto init(", init_params, ") -> void;\n");
 
   // The base subobject is constructed before any statement of the body can
   // run, so that one step stays in the C++ constructor's own initializer
@@ -261,47 +251,32 @@ auto RenderConstructor(
   // construction rather than by both reaching for one word. The constructor
   // formals ride alongside it so the body reaches them the same way it reaches
   // any parameter.
-  std::vector<std::string> init_params;
-  init_params.reserve(sig_args.size() + 1);
-  init_params.push_back(
-      std::format(
-          "{}* {}", cpp_name,
-          CppLocalName(ctor_code.named_locals, ctor_code.params[0])));
-  for (const std::string& arg : sig_args) {
-    init_params.push_back(arg);
+  Write(code, cpp_name, "::", cpp_name, "(", params, ")");
+  if (s.base.has_value()) {
+    Write(code, " : ", RenderClassRefAsCpp(unit, *s.base), "(");
+    WriteCommaSeparated(scope_view, code, s.constructor.base_args);
+    code += ")";
   }
-  std::vector<std::string> init_call_args;
-  init_call_args.reserve(forward_names.size() + 1);
-  init_call_args.emplace_back("this");
-  for (const std::string& name : forward_names) {
-    init_call_args.push_back(name);
+  Write(code, " { init(", forward_text.View(), "); }\n");
+  Write(code, "auto ", cpp_name, "::init(", init_params, ") -> void {\n");
+  {
+    const TargetText::BodyDepth body(code, 1);
+    RenderBlockStatements(scope_view, code);
   }
-  const std::string init_signature = JoinCommaSeparated(init_params);
-  return UnitText{
-      .signature = std::format(
-          "{0}{1}({2});\n"
-          "{0}static auto init({3}) -> void;\n",
-          Indent(1), cpp_name, params, init_signature),
-      .code = std::format(
-          "{0}::{0}({1}){2} {{ init({3}); }}\n"
-          "auto {0}::init({4}) -> void {{\n"
-          "{5}"
-          "}}\n",
-          cpp_name, params, base_clause.value_or(std::string{}),
-          JoinCommaSeparated(init_call_args), init_signature,
-          RenderBlockStatements(scope_view, 1))};
+  code += "}\n";
 }
 
 // A compiler-generated struct emits as a plain struct of value-init fields --
 // a promoted automatic scope synthesized while lowering some body. Storage
 // only: no base, no constructor, no methods.
-auto RenderStruct(
+void RenderStruct(
     const mir::CompilationUnit& unit, mir::StructId id,
-    const mir::StructDecl& decl) -> std::string {
-  std::string out = "struct " + CppStructName(id) + " {\n";
-  out += RenderFieldList(unit, {}, decl.fields, 1);
+    const mir::StructDecl& decl, TargetText& out) {
+  Write(out, "struct ", CppStructName(id), " {\n");
+  out.Indent();
+  RenderFieldList(unit, {}, decl.fields, out);
+  out.Outdent();
   out += "};\n";
-  return out;
 }
 
 // A class-level static constant: the class body declares it, and the value is
@@ -317,39 +292,36 @@ auto RenderStruct(
 // takes a name off the class, because it is the one constant a class outside
 // this unit spells, and the rest take one off the position they sit at, which
 // nothing outside can count.
-auto RenderStaticConstant(
+void RenderStaticConstant(
     const mir::CompilationUnit& unit, mir::ClassId cls_id, const mir::Class& s,
-    std::string_view name, const mir::StaticConstantDecl& c) -> UnitText {
+    std::string_view name, const mir::StaticConstantDecl& c,
+    TargetText& signature, TargetText& code) {
   const ScopeView view = ScopeView::ForClassConstant(unit, cls_id, s, c.body);
   const std::string type = RenderTypeAsCpp(unit, c.type);
   const std::string owner = CppClassName(s, cls_id);
-  const std::string value = RenderExpr(view, view.Expr(c.value));
-  return UnitText{
-      .signature = RenderDeclaration(
-          DeclaredCell{
-              .owner = CellOwner::kType,
-              .text = CellText::kAnnounced,
-              .immutable = true,
-              .type = type,
-              .name = name,
-              .qualifier = {},
-              .value = {}},
-          1),
-      .code = RenderDeclaration(
-          DeclaredCell{
-              .owner = CellOwner::kType,
-              .text = CellText::kDefined,
-              .immutable = true,
-              .type = type,
-              .name = name,
-              .qualifier = owner,
-              .value = value},
-          0)};
+  WriteDeclaration(
+      signature, DeclaredCell{
+                     .owner = CellOwner::kType,
+                     .text = CellText::kAnnounced,
+                     .immutable = true,
+                     .type = type,
+                     .name = name,
+                     .qualifier = {}});
+  WriteDeclaration(
+      code,
+      DeclaredCell{
+          .owner = CellOwner::kType,
+          .text = CellText::kDefined,
+          .immutable = true,
+          .type = type,
+          .name = name,
+          .qualifier = owner},
+      [&](TargetText& value) { RenderExpr(view, view.Expr(c.value), value); });
 }
 
-auto RenderClass(
-    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s)
-    -> UnitText;
+void RenderClass(
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s,
+    TargetText& signature, TargetText& code);
 
 // Appends a class and every intra-unit class it rests on, each before whatever
 // rests on it. The interning walk sets the registry order, which may reach a
@@ -371,22 +343,22 @@ void AppendClassInDependencyOrder(
       AppendClassInDependencyOrder(unit, intra->class_id, emitted, text);
     }
   }
-  const UnitText rendered = RenderClass(unit, id, cls);
+  const TargetText::Section defined(text.definitions);
   if (mir::IsPromised(unit, id)) {
-    text.promised.push_back(
-        PromisedClass{.id = id, .text = rendered.signature});
-  } else {
-    AppendSection(text.internal, rendered.signature);
+    PromisedClass promised{.id = id, .text = TargetText{}};
+    RenderClass(unit, id, cls, promised.text, text.definitions);
+    text.promised.push_back(std::move(promised));
+    return;
   }
-  AppendSection(text.definitions, rendered.code);
+  const TargetText::Section declared(text.internal);
+  RenderClass(unit, id, cls, text.internal, text.definitions);
 }
 
-auto RenderClass(
-    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s)
-    -> UnitText {
-  UnitText text;
-  std::string& out = text.signature;
-  out += "class " + CppClassName(s, id);
+void RenderClass(
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& s,
+    TargetText& signature, TargetText& code) {
+  TargetText& out = signature;
+  Write(out, "class ", CppClassName(s, id));
   if (s.is_final) {
     out += " final";
   }
@@ -416,48 +388,58 @@ auto RenderClass(
   }
   out += " {\n";
   out += " public:\n";
+  out.Indent();
 
   // An interface class carries only pure virtual method contracts and no
   // instance storage (LRM 8.26), so it has no constructor to emit; C++
   // makes the class implicitly abstract by virtue of the pure virtual
   // methods and forbids `new` on it.
   if (!s.is_interface_class) {
-    const UnitText ctor = RenderConstructor(unit, id, s);
-    AppendSection(out, ctor.signature);
-    AppendSection(text.code, ctor.code);
+    const TargetText::Section declared(out);
+    const TargetText::Section defined(code);
+    RenderConstructor(unit, id, s, out, code);
   }
 
   // Members are public so cross-unit references can reach them directly.
-  AppendSection(out, RenderFieldList(unit, s.named_fields, s.fields, 1));
+  {
+    const TargetText::Section fields(out);
+    RenderFieldList(unit, s.named_fields, s.fields, out);
+  }
 
   // Type-associated storage (LRM 8.9): one cell per class, declared here and
   // given its value where whatever brings the class's owner up runs, the same
   // way an instance member is given one by the constructor.
-  AppendSection(out, RenderClassStaticProperties(unit, s));
+  {
+    const TargetText::Section properties(out);
+    RenderClassStaticProperties(unit, s, out);
+  }
 
   // Every callable the class owns. The constructor is not in this arena; it was
   // emitted above with C++ mem-init-list syntax. A pure virtual prototype (LRM
   // 8.21) declares its `= 0` marker and defines nothing, so its definition is
   // an empty section.
-  std::string callable_decls;
-  for (const mir::CallableId callable_id : s.callables.Ids()) {
-    const mir::CallableDecl& callable = s.callables.Get(callable_id);
-    callable_decls += RenderClassCallableDecl(unit, s, callable_id, callable);
-    AppendSection(
-        text.code, RenderClassCallableDef(unit, id, s, callable_id, callable));
+  {
+    const TargetText::Section declared(out);
+    for (const mir::CallableId callable_id : s.callables.Ids()) {
+      const mir::CallableDecl& callable = s.callables.Get(callable_id);
+      RenderClassCallableDecl(unit, s, callable_id, callable, out);
+      const TargetText::Section defined(code);
+      RenderClassCallableDef(unit, id, s, callable_id, callable, code);
+    }
   }
-  AppendSection(out, callable_decls);
 
   // The class's runtime-callback adapters. Each renders as a static member
   // whose address decays to a plain function pointer for the runtime
   // callback table.
-  std::string adapter_decls;
-  for (const mir::AbiAdapterId adapter_id : s.abi_adapters.Ids()) {
-    const mir::AbiAdapter& a = s.abi_adapters.Get(adapter_id);
-    adapter_decls += RenderAbiAdapterDecl(unit, adapter_id, a);
-    AppendSection(text.code, RenderAbiAdapterDef(unit, id, s, adapter_id, a));
+  {
+    const TargetText::Section declared(out);
+    for (const mir::AbiAdapterId adapter_id : s.abi_adapters.Ids()) {
+      const mir::AbiAdapter& a = s.abi_adapters.Get(adapter_id);
+      RenderAbiAdapterDecl(unit, adapter_id, a, out);
+      const TargetText::Section defined(code);
+      RenderAbiAdapterDef(unit, id, s, adapter_id, a, code);
+    }
   }
-  AppendSection(out, adapter_decls);
 
   // The class's static constants (a tree node's generated-behavior record among
   // them), each declared here and given its value apart from the class, in the
@@ -465,11 +447,11 @@ auto RenderClass(
   // another one needs, since a file initializes its own constants in the order
   // it writes them.
   for (const mir::StaticConstantId constant_id : s.static_constants.Ids()) {
-    const UnitText constant = RenderStaticConstant(
+    const TargetText::Section declared(out);
+    const TargetText::Section defined(code);
+    RenderStaticConstant(
         unit, id, s, CppStaticConstantName(constant_id),
-        s.static_constants.Get(constant_id));
-    AppendSection(out, constant.signature);
-    AppendSection(text.code, constant.code);
+        s.static_constants.Get(constant_id), out, code);
   }
 
   // The record every object of the class carries, and beside it the name the
@@ -477,19 +459,19 @@ auto RenderClass(
   // class rather than off a position, because it is the one constant a class
   // outside this unit spells.
   if (s.object_record.has_value()) {
-    const UnitText record = RenderStaticConstant(
-        unit, id, s, CppObjectRecordName(), *s.object_record);
-    AppendSection(
-        out, record.signature + Indent(1) +
-                 std::format(
-                     "static constexpr const {}* {} = &{};\n",
-                     RenderTypeAsCpp(unit, s.object_record->type),
-                     CppClassRecordHookName(), CppObjectRecordName()));
-    AppendSection(text.code, record.code);
+    const TargetText::Section declared(out);
+    const TargetText::Section defined(code);
+    RenderStaticConstant(
+        unit, id, s, CppObjectRecordName(), *s.object_record, out, code);
+    out.OpenLine();
+    Write(
+        out, "static constexpr const ",
+        RenderTypeAsCpp(unit, s.object_record->type), "* ",
+        CppClassRecordHookName(), " = &", CppObjectRecordName(), ";\n");
   }
 
+  out.Outdent();
   out += "};\n";
-  return text;
 }
 
 // The language linkage a free callable is reached by. A foreign one takes C
@@ -507,25 +489,20 @@ auto RenderFreeCallableLinkage(const mir::CallableDecl& callable)
 // type. Every use of this -- an import's declaration, an export entry point's
 // definition, a package function's definition -- reads the one signature its
 // code carries, so no two of them can disagree.
-auto RenderFreeSignature(
+void RenderFreeSignature(
     const mir::CompilationUnit& unit, std::string_view linkage,
-    std::string_view symbol, const mir::CallableCode& code) -> std::string {
-  std::vector<std::string> params;
-  params.reserve(code.params.size());
-  for (const mir::LocalId param : code.params) {
-    params.push_back(RenderCallableParam(unit, code, param));
-  }
-  return std::format(
-      "{}auto {}({}) -> {}", linkage, symbol, JoinCommaSeparated(params),
-      RenderTypeAsCpp(unit, code.result_type));
+    std::string_view symbol, const mir::CallableCode& code, TargetText& out) {
+  Write(out, linkage, "auto ", symbol, "(");
+  RenderUserParams(unit, code, 0, out);
+  Write(out, ") -> ", RenderTypeAsCpp(unit, code.result_type));
 }
 
-auto RenderFreeCallableSignature(
+void RenderFreeCallableSignature(
     const mir::CompilationUnit& unit, mir::CallableId id,
-    const mir::CallableDecl& callable) -> std::string {
-  return RenderFreeSignature(
+    const mir::CallableDecl& callable, TargetText& out) {
+  RenderFreeSignature(
       unit, RenderFreeCallableLinkage(callable), CppUnitCallableName(unit, id),
-      callable.code);
+      callable.code, out);
 }
 
 // A callable the unit owns directly, rendered as a free function definition:
@@ -535,15 +512,16 @@ auto RenderFreeCallableSignature(
 // means its context recovery, marshaling, exported-subroutine call, and
 // writeback all render mechanically, the inner call reaching its class by the
 // one name that class carries.
-auto RenderFreeCallable(
+void RenderFreeCallable(
     const mir::CompilationUnit& unit, mir::CallableId id,
-    const mir::CallableDecl& callable) -> std::string {
-  std::string out;
-  out +=
-      std::format("{} {{\n", RenderFreeCallableSignature(unit, id, callable));
-  out += RenderBlockStatements(ScopeView::ForNamespace(unit, callable.code), 1);
+    const mir::CallableDecl& callable, TargetText& out) {
+  RenderFreeCallableSignature(unit, id, callable, out);
+  out += " {\n";
+  {
+    const TargetText::BodyDepth body(out, 1);
+    RenderBlockStatements(ScopeView::ForNamespace(unit, callable.code), out);
+  }
   out += "}\n";
-  return out;
 }
 
 }  // namespace
@@ -552,13 +530,13 @@ auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
     -> UnitText {
   UnitText text;
   for (const mir::ClassId id : unit.classes.Ids()) {
-    (mir::IsPromised(unit, id) ? text.signature : text.code) +=
-        std::format("class {};\n", CppClassName(unit.GetClass(id), id));
+    TargetText& out = mir::IsPromised(unit, id) ? text.signature : text.code;
+    Write(out, "class ", CppClassName(unit.GetClass(id), id), ";\n");
   }
   // A struct is a scope a lowering promoted out of some body, so nothing
   // outside this unit reaches one.
   for (const mir::StructId id : unit.structs.Ids()) {
-    text.code += std::format("struct {};\n", CppStructName(id));
+    Write(text.code, "struct ", CppStructName(id), ";\n");
   }
   return text;
 }
@@ -566,7 +544,7 @@ auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
 auto RenderUnitClasses(const mir::CompilationUnit& unit) -> UnitClasses {
   UnitClasses text;
   for (const mir::StructId id : unit.structs.Ids()) {
-    text.internal += RenderStruct(unit, id, unit.GetStruct(id));
+    RenderStruct(unit, id, unit.GetStruct(id), text.internal);
   }
   std::vector<bool> emitted(unit.classes.size(), false);
   for (const mir::ClassId id : unit.classes.Ids()) {
@@ -589,9 +567,11 @@ auto RenderUnitCallables(const mir::CompilationUnit& unit) -> UnitText {
   // them. Only a callable this program defines has a definition to land.
   for (const mir::CallableId id : unit.callables.Ids()) {
     const mir::CallableDecl& callable = unit.callables.Get(id);
-    text.signature += RenderFreeCallableSignature(unit, id, callable) + ";\n";
+    RenderFreeCallableSignature(unit, id, callable, text.signature);
+    text.signature += ";\n";
     if (callable.code.body.has_value()) {
-      AppendSection(text.code, RenderFreeCallable(unit, id, callable));
+      const TargetText::Section defined(text.code);
+      RenderFreeCallable(unit, id, callable, text.code);
     }
   }
   return text;
@@ -608,61 +588,56 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText {
         RenderTypeAsCpp(unit, unit.static_variables.Get(id).type);
     const std::string name =
         CppStaticVariableName(unit.named_static_variables, id);
-    text.signature += RenderDeclaration(
-        DeclaredCell{
-            .owner = CellOwner::kNamespace,
-            .text = CellText::kAnnounced,
-            .immutable = false,
-            .type = type,
-            .name = name,
-            .qualifier = {},
-            .value = {}},
-        0);
-    text.code += RenderDeclaration(
-        DeclaredCell{
-            .owner = CellOwner::kNamespace,
-            .text = CellText::kDefined,
-            .immutable = false,
-            .type = type,
-            .name = name,
-            .qualifier = {},
-            .value = {}},
-        0);
+    WriteDeclaration(
+        text.signature, DeclaredCell{
+                            .owner = CellOwner::kNamespace,
+                            .text = CellText::kAnnounced,
+                            .immutable = false,
+                            .type = type,
+                            .name = name,
+                            .qualifier = {}});
+    WriteDeclaration(
+        text.code, DeclaredCell{
+                       .owner = CellOwner::kNamespace,
+                       .text = CellText::kDefined,
+                       .immutable = false,
+                       .type = type,
+                       .name = name,
+                       .qualifier = {}});
   }
   return text;
 }
 
-auto RenderExternalObjectDeclarations(const mir::CompilationUnit& unit)
-    -> std::string {
-  std::string out;
+void RenderExternalObjectDeclarations(
+    const mir::CompilationUnit& unit, TargetText& out) {
   for (const mir::ExternalUnitObjectId id : unit.external_unit_objects.Ids()) {
     const mir::ExternalUnitObject& object = unit.external_unit_objects.Get(id);
-    out += std::format(
-        "namespace {} {{\nclass {};\n}}\n", UnitNamespaceOf(object.unit_name),
-        ToCppName(object.class_name));
+    OpenNamespace(out, UnitNamespaceOf(object.unit_name));
+    Write(out, "class ", ToCppName(object.class_name), ";\n");
+    out += "}\n";
   }
-  return out;
 }
 
 // The merge rule has to be one that holds a definition nothing in this language
 // references, because such a symbol is reached only from outside it (LRM 35.4,
 // 35.7): a rule free to drop an unreferenced definition drops it from every
 // artifact at once and the program fails to link.
-auto RenderForeignScopeSymbols(const mir::CompilationUnit& unit)
-    -> std::string {
-  std::string out;
+void RenderForeignScopeSymbols(
+    const mir::CompilationUnit& unit, TargetText& out) {
   for (const mir::ForeignScopeEntry& entry : unit.foreign_scope_entries) {
-    std::string definition = std::format(
-        "{} {{\n", RenderFreeSignature(
-                       unit, R"(extern "C" [[gnu::weak]] )",
-                       CppForeignSymbolName(entry.linkage.foreign_name),
-                       entry.definition));
-    definition += RenderBlockStatements(
-        ScopeView::ForNamespace(unit, entry.definition), 1);
-    definition += "}\n";
-    AppendSection(out, definition);
+    const TargetText::Section defined(out);
+    RenderFreeSignature(
+        unit, R"(extern "C" [[gnu::weak]] )",
+        CppForeignSymbolName(entry.linkage.foreign_name), entry.definition,
+        out);
+    out += " {\n";
+    {
+      const TargetText::BodyDepth body(out, 1);
+      RenderBlockStatements(
+          ScopeView::ForNamespace(unit, entry.definition), out);
+    }
+    out += "}\n";
   }
-  return out;
 }
 
 }  // namespace lyra::backend::cpp
