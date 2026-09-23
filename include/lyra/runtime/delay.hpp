@@ -1,57 +1,13 @@
 #pragma once
 
-#include <cmath>
 #include <cstdint>
-#include <limits>
 
 #include "lyra/base/time.hpp"
-#include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/wait.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 
 namespace lyra::runtime {
-
-// Multiplies by a power of ten, capping at the widest duration rather than
-// wrapping. The cap is not defensive: LRM 9.4.1 gives a negative delay the
-// value of its own bits read as an unsigned integer, which is a wait no
-// simulation reaches, and wrapping would turn exactly that into a short one.
-inline auto ScaleByPowerOfTen(SimDuration value, int exponent) noexcept
-    -> SimDuration {
-  SimDuration result = value;
-  for (int i = 0; i < exponent; ++i) {
-    if (result > std::numeric_limits<SimDuration>::max() / 10) {
-      return std::numeric_limits<SimDuration>::max();
-    }
-    result *= 10;
-  }
-  return result;
-}
-
-// Adds a duration to a time, capping rather than wrapping: a deadline past the
-// end of the time axis has to stay past it, or the longest wait the language
-// can name comes back round as an imminent one.
-inline auto DeadlineAfter(SimTime now, SimDuration duration) noexcept
-    -> SimTime {
-  if (now > std::numeric_limits<SimTime>::max() - duration) {
-    return std::numeric_limits<SimTime>::max();
-  }
-  return now + duration;
-}
-
-// Scales `ticks`, expressed in `from_power` precision steps, up to the engine's
-// `global_power` tick (LRM 3.14.3). `from_power >= global_power` because the
-// global precision is the finest in the design, so the factor is a non-negative
-// power of ten. A single-precision design has `from_power == global_power` and
-// the factor is one.
-inline auto ScaleToGlobalTicks(
-    SimDuration ticks, std::int8_t from_power,
-    std::int8_t global_power) noexcept -> SimDuration {
-  return ScaleByPowerOfTen(ticks, from_power - global_power);
-}
 
 // The steps of `precision_power` a delay written as an integral expression
 // waits. The value counts time units, and a whole number of units is already a
@@ -60,16 +16,9 @@ inline auto ScaleToGlobalTicks(
 // rejecting them: an unknown or high-impedance value is no delay, and a
 // negative value is its own bits read as an unsigned integer the width of a
 // time variable, which is the widest wait the language can name.
-inline auto DelayTicks(
+auto DelayTicks(
     const value::PackedArray& duration, std::int8_t unit_power,
-    std::int8_t precision_power) -> SimDuration {
-  if (duration.HasUnknown()) {
-    return 0;
-  }
-  return ScaleByPowerOfTen(
-      static_cast<SimDuration>(duration.ToInt64()),
-      unit_power - precision_power);
-}
+    std::int8_t precision_power) -> SimDuration;
 
 // The same for a delay written as a real expression, which unlike an integral
 // one can name a fraction of a time unit finer than the precision records. LRM
@@ -80,38 +29,17 @@ inline auto DelayTicks(
 // integer, and a real has no bits to read that way. What the rule achieves is a
 // wait no simulation reaches, so any amount below zero -- and any value with no
 // finite magnitude at all -- gets that wait directly.
-inline auto DelayTicksReal(
+auto DelayTicksReal(
     const value::Real& duration, std::int8_t unit_power,
-    std::int8_t precision_power) -> SimDuration {
-  constexpr auto kWidest = std::numeric_limits<SimDuration>::max();
-  const auto units = static_cast<long double>(duration.Value());
-  if (!std::isfinite(units)) {
-    return kWidest;
-  }
-  const long double factor =
-      std::pow(10.0L, static_cast<long double>(unit_power - precision_power));
-  const long double steps = std::roundl(units * factor);
-  if (steps < 0.0L) {
-    return kWidest;
-  }
-  if (steps >= static_cast<long double>(kWidest)) {
-    return kWidest;
-  }
-  return static_cast<SimDuration>(steps);
-}
+    std::int8_t precision_power) -> SimDuration;
 
 // The absolute simulation time a delay of `ticks` steps of `precision_power`
 // reaches. The scope's steps scale up to the engine's global tick before they
 // are added, because a design may declare several precisions and the engine
 // counts in the finest of them (LRM 3.14.3).
-inline auto DelayDeadline(
+auto DelayDeadline(
     RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
-    -> SimTime {
-  return DeadlineAfter(
-      runtime.Now(),
-      ScaleToGlobalTicks(
-          ticks, precision_power, runtime.GlobalPrecisionPower()));
-}
+    -> SimTime;
 
 // Waiting for a moment in simulation time. What is kept is the moment, not the
 // amount of time left to it, which is what LRM 9.7 asks for when a process
@@ -122,67 +50,17 @@ inline auto DelayDeadline(
 // inactive region of the current time slot so that active work already pending
 // finishes first. The engine does not know about delays as a category -- it
 // only sees an activation arriving in a region at the right time.
-class DelayWait : public Wait {
- public:
-  DelayWait(SimTime deadline, Region region)
-      : deadline_(deadline), region_(region) {
-  }
-
-  auto Begin(RuntimeEffects& services, CoroutineHandle leaf)
-      -> WaitOutcome override {
-    services.Schedule(deadline_, region_, leaf);
-    return WaitOutcome::kBlocked;
-  }
-
-  auto Again(RuntimeEffects& services, CoroutineHandle leaf)
-      -> WaitOutcome override {
-    if (services.Now() >= deadline_) {
-      return WaitOutcome::kSatisfied;
-    }
-    services.Schedule(deadline_, Region::kActive, leaf);
-    return WaitOutcome::kBlocked;
-  }
-
-  // A delay waits for time, not for a condition, so resuming from it is not a
-  // flush point (LRM 12.4.2.1): a report raised before the delay stays pending.
-  [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
-    return false;
-  }
-
- private:
-  SimTime deadline_;
-  Region region_;
-};
-
-// Waits `ticks` steps of `precision_power`, answering whether the caller must
-// give up control. The two delay entries meet here: they differ only in how the
-// amount the design wrote becomes that count.
-inline auto DelayForTicks(
-    RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
-    -> bool {
-  return runtime.CurrentProcess().ParkOn<DelayWait>(
-      runtime, DelayDeadline(runtime, ticks, precision_power),
-      ticks == 0 ? Region::kInactive : Region::kActive);
-}
-
-inline auto Delay(
+//
+// The two entries differ only in how the amount the design wrote becomes a
+// count of steps; both answer whether the caller must give up control.
+auto Delay(
     RuntimeEffects& runtime, const value::PackedArray& duration,
     const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> bool {
-  const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
-  const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
-  return DelayForTicks(
-      runtime, DelayTicks(duration, unit, precision), precision);
-}
+    const value::PackedArray& precision_power) -> bool;
 
-inline auto DelayReal(
+auto DelayReal(
     RuntimeEffects& runtime, const value::Real& duration,
     const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> bool {
-  const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
-  const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
-  return DelayForTicks(
-      runtime, DelayTicksReal(duration, unit, precision), precision);
-}
+    const value::PackedArray& precision_power) -> bool;
 
 }  // namespace lyra::runtime

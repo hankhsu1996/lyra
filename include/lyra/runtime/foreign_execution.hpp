@@ -2,7 +2,6 @@
 
 #include <functional>
 #include <memory>
-#include <utility>
 
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
@@ -125,11 +124,7 @@ auto EnterForeignTask(
 // the call actually suspended, since one that returns without consuming time is
 // over before this returns. What continues the import frame afterwards is the
 // vehicle rather than a wait, because the call is on a stack of its own.
-inline auto RunForeignTaskOnFiber(
-    RuntimeEffects& effects, std::function<void()> foreign_call) -> bool {
-  return !EnterForeignTask(
-      effects, effects.CurrentProcess().CurrentLeaf(),
-      MakeForeignExecution(std::move(foreign_call)));
-}
+auto RunForeignTaskOnFiber(
+    RuntimeEffects& effects, std::function<void()> foreign_call) -> bool;
 
 }  // namespace lyra::runtime

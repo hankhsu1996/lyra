@@ -1,7 +1,5 @@
 #pragma once
 
-#include <string_view>
-
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
@@ -17,24 +15,12 @@ namespace lyra::runtime {
 // argument. `$stop` suspends where `$finish` exits, and a run nothing can
 // resume tells the two apart only in what it prints, so the task's own name is
 // what reaches the engine.
-inline auto EndRunFrom(
-    RuntimeEffects& runtime, std::string_view task,
-    const lyra::value::String& origin, const lyra::value::PackedArray& level)
-    -> bool {
-  runtime.EndRun(task, origin, level);
-  return true;
-}
-
-inline auto Finish(
+auto Finish(
     RuntimeEffects& runtime, const lyra::value::String& origin,
-    const lyra::value::PackedArray& level) -> bool {
-  return EndRunFrom(runtime, "$finish", origin, level);
-}
+    const lyra::value::PackedArray& level) -> bool;
 
-inline auto Stop(
+auto Stop(
     RuntimeEffects& runtime, const lyra::value::String& origin,
-    const lyra::value::PackedArray& level) -> bool {
-  return EndRunFrom(runtime, "$stop", origin, level);
-}
+    const lyra::value::PackedArray& level) -> bool;
 
 }  // namespace lyra::runtime

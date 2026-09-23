@@ -710,6 +710,7 @@ using lyra::runtime::SampledHistory;
 using lyra::runtime::Scope;
 using lyra::runtime::ScopeDefinition;
 using lyra::runtime::SimTimeInUnit;
+using lyra::runtime::SpawnAll;
 using lyra::runtime::STimeInUnit;
 using lyra::runtime::StorageBlock;
 using lyra::runtime::SubscribeToLeaves;
@@ -1036,19 +1037,20 @@ void lyra_rt_release_coroutine(void* runtime) {
 
 void lyra_rt_spawn_all(void* runtime, LyraSpan branches) {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  for (Coroutine<void>& branch : TakeBranches(branches)) {
-    svc.Spawn(std::move(branch));
-  }
+  std::vector<Coroutine<void>> taken = TakeBranches(branches);
+  SpawnAll(svc, std::span<Coroutine<void>>{taken});
 }
 
 auto lyra_rt_fork_wait_all(void* runtime, LyraSpan branches) -> bool {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  return ForkWaitAll(svc, TakeBranches(branches));
+  std::vector<Coroutine<void>> taken = TakeBranches(branches);
+  return ForkWaitAll(svc, std::span<Coroutine<void>>{taken});
 }
 
 auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches) -> bool {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  return ForkWaitFirst(svc, TakeBranches(branches));
+  std::vector<Coroutine<void>> taken = TakeBranches(branches);
+  return ForkWaitFirst(svc, std::span<Coroutine<void>>{taken});
 }
 
 auto lyra_rt_wait_fork(void* runtime) -> bool {

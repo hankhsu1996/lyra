@@ -91,9 +91,12 @@ way. It also leaves this in place: the copy is made whatever the optimizer then 
 **Making a unit include less of the surface.** Falsified by the probe above -- including all of it
 and deriving nothing costs a kilobyte. The umbrella header is not what this costs.
 
-**Asking for the instantiations to be suppressed rather than moved.** The declaration that does
-that, for a template, is explicitly powerless over inline functions, and what repeats here is the
-implicitly defined members of ordinary classes rather than any template the surface names.
+**Asking for the instantiations to be suppressed rather than moved.** The declaration that does that
+names a template specialization, and what repeats here is the implicitly defined members of ordinary
+classes, which no such declaration reaches. That is a statement about these classes and not about
+the mechanism: where what repeats is a template the library can name, suppressing is the better
+answer and [a-published-operation-is-compiled-once](a-published-operation-is-compiled-once.md) takes
+it.
 
 **Giving the storage a form the surface does not define.** It would also work, and it is a change to
 what a published class holds rather than to where its functions live; the smaller change is the one
@@ -111,8 +114,10 @@ gain is disk, and what disk buys is a build of a large design finishing at all.
 
 ## What is left
 
-A unit still instantiates the standard-library machinery behind the value operations it calls,
-because those are defined in headers too: after this, 78% of the remaining symbol bytes in a design
-unit still have vague linkage. Moving those out of the headers would be the same move made again --
-and it is not the same decision, because the optimizer being able to read them is measured to be
-worth half the run time of a simulation. That trade belongs with the flag that already names it.
+A unit still carries 78% of its symbol bytes as vague-linkage copies, and this section used to read
+them as the value operations a design calls, deferred on the grounds that moving those would cost
+the optimizer its view of them. Both halves were wrong and
+[a-published-operation-is-compiled-once](a-published-operation-is-compiled-once.md) settles what
+they were: the copies were of the library's own entries and of the families written over the value
+domains, the arithmetic a design calls is defined in the library already, and a family is stated as
+compiled rather than moved, which leaves its definition where an optimized build reads it.

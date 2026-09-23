@@ -184,6 +184,24 @@ layer directly.
       while a build runs and a design of a thousand units holds a thousand of these at once.
       `decisions/a-published-class-is-emitted-once.md` settles the shape and states what is left.
 
+- [x] D17 -- The same for the library's functions, which is where most of it turned out to be. A
+      function the shipped headers defined was compiled again by every unit that called it, along
+      with everything its body reached -- and for anything touching a runtime value that is the
+      machinery of a variant over every value domain. Stating one wait in a unit cost 400,064 bytes
+      of object, and a unit stating one scope, one variable, one write and one wait weighed 636,328
+      against an empty one's 1,112.
+
+      Measured 2026-09-23 on a 32-unit design: its objects total 11,043,672 bytes against
+      26,613,176, and its leaf unit 285,400 against 756,496. **This one buys build time as well**,
+      where the entry above bought only disk: the same project builds warm in 13.66 s against
+      17.46 s, and 34.4 s of processor time against 45.2 s, because a unit no longer performs the
+      instantiations it was also writing out.
+
+      What a unit now pays for holding a variable and stating a body is its own, and what remains
+      beyond that is the standard-library machinery of the scope-construction surface itself.
+      `decisions/a-published-operation-is-compiled-once.md` settles the shape and states what is
+      left.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

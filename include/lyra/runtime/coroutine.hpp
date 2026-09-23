@@ -8,7 +8,6 @@
 #include <utility>
 #include <variant>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/registration.hpp"
@@ -65,7 +64,11 @@ struct PromiseBase {
   auto operator=(const PromiseBase&) -> PromiseBase& = delete;
   PromiseBase(PromiseBase&&) = delete;
   auto operator=(PromiseBase&&) -> PromiseBase& = delete;
-  ~PromiseBase() = default;
+  // Defined in this struct's own source file, as is every member of it that is
+  // not parameterized: what a member of the shipped surface compiles to is the
+  // library's to decide once, and a definition written in a header is decided
+  // again in every translation unit that reaches it.
+  ~PromiseBase();
 
   // Builds what this activation is about to wait for, and hands it to the
   // activation. A frame waits for one thing at a time, so building a second
@@ -80,26 +83,15 @@ struct PromiseBase {
 
   // Parks this activation on `target` and hands back the membership, so a
   // caller whose target carries a fire condition can record it.
-  auto Park(RegistrationList& target) -> Registration& {
-    Registration& reg = registrations.emplace_back();
-    reg.activation = this;
-    target.PushBack(reg);
-    return reg;
-  }
+  auto Park(RegistrationList& target) -> Registration&;
 
   // Drops every membership: the activation is runnable again, so nothing it was
   // parked on may fire it a second time.
-  void RevokeRegistrations() noexcept {
-    registrations.clear();
-  }
+  void RevokeRegistrations() noexcept;
 
   // A promise protocol hook is an instance customization point by contract, so
-  // it stays a member even when an implementation reads no promise state; the
-  // convert-to-static check is a false positive here.
-  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-  auto initial_suspend() noexcept -> std::suspend_always {
-    return {};
-  }
+  // it stays a member even when an implementation reads no promise state.
+  auto initial_suspend() noexcept -> std::suspend_always;
 
   // On completion, run the completion hook (a fork branch reports to its join
   // group) then transfer to the enabler if there is one (a task returning to
@@ -108,38 +100,17 @@ struct PromiseBase {
   struct FinalAwaiter {
     PromiseBase* promise;
     // A coroutine awaiter hook is an instance customization point by contract,
-    // so it stays a member even when an implementation reads no awaiter state;
-    // the convert-to-static check is a false positive here.
-    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-    [[nodiscard]] auto await_ready() const noexcept -> bool {
-      return false;
-    }
-    // NOLINTNEXTLINE(readability-named-parameter)
+    // so each stays a member even where an implementation reads no awaiter
+    // state. The handle the language hands `await_suspend` is the frame that is
+    // suspending, which this one already holds as the promise it names.
+    [[nodiscard]] auto await_ready() const noexcept -> bool;
     [[nodiscard]] auto await_suspend(std::coroutine_handle<>) const noexcept
-        -> std::coroutine_handle<> {
-      if (promise->on_complete) {
-        promise->on_complete();
-      }
-      if (promise->continuation) {
-        return promise->continuation;
-      }
-      return std::noop_coroutine();
-    }
-    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-    void await_resume() const noexcept {
-    }
+        -> std::coroutine_handle<>;
+    void await_resume() const noexcept;
   };
-  auto final_suspend() noexcept -> FinalAwaiter {
-    return FinalAwaiter{.promise = this};
-  }
+  auto final_suspend() noexcept -> FinalAwaiter;
 
-  [[nodiscard]] auto Process() const -> RuntimeProcess& {
-    if (process == nullptr) {
-      throw InternalError(
-          "PromiseBase::Process: no RuntimeProcess back-pointer set");
-    }
-    return *process;
-  }
+  [[nodiscard]] auto Process() const -> RuntimeProcess&;
 };
 
 // A nested activation -- a called task -- takes over its process's thread and
@@ -212,44 +183,24 @@ class CompletionSlot {
   std::variant<std::monostate, Value, Cancelled, Raised> outcome_;
 };
 
+// The one such slot no body parameterizes -- a process body and every task
+// returning nothing settle through it -- so what it compiles to is decided once
+// in the library rather than in every unit that states a body.
 template <>
 class CompletionSlot<void> {
  public:
-  void return_void() {
-    outcome_.emplace<Succeeded>();
-  }
-  void unhandled_exception() noexcept {
-    Unwound unwound = ClassifyUnwind();
-    if (unwound.control_effect) {
-      outcome_.emplace<Cancelled>(std::move(unwound.raised));
-      return;
-    }
-    outcome_.emplace<Raised>(std::move(unwound.raised));
-  }
+  void return_void();
+  void unhandled_exception() noexcept;
   // Whether the body was left by a control effect no region claimed, which its
   // landing reports as a forced termination rather than as an end of body.
-  [[nodiscard]] auto WasCancelled() const -> bool {
-    return std::holds_alternative<Cancelled>(outcome_);
-  }
+  [[nodiscard]] auto WasCancelled() const -> bool;
   // Hands a raised error out without raising it (null unless one left the
   // body), so a consumer that must run its own teardown first can settle and
   // report afterward.
-  auto TakeRaisedError() -> std::exception_ptr {
-    if (auto* raised = std::get_if<Raised>(&outcome_)) {
-      return std::move(raised->error);
-    }
-    return nullptr;
-  }
+  auto TakeRaisedError() -> std::exception_ptr;
   // An awaiting frame is not the activation's landing: both departures carry on
   // past it, which is why both are raised here.
-  void Take() {
-    if (const auto* cancelled = std::get_if<Cancelled>(&outcome_)) {
-      std::rethrow_exception(cancelled->effect);
-    }
-    if (auto raised = TakeRaisedError()) {
-      std::rethrow_exception(raised);
-    }
-  }
+  void Take();
 
  private:
   struct Succeeded {};
