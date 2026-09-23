@@ -620,19 +620,30 @@ each meets the same lifetime question above.
       that closes it. Absence of an entry is a claim the run checks, which is what makes the record
       a measurement rather than an assertion.
 
-- [ ] **A check that only a failing design reaches.** Reading a tagged union's member against a tag
-      it does not currently hold (LRM 7.3.2) is a run-time failure, and the entry that states the
-      check is not published by this backend's runtime library -- so such a design refuses to lower
-      here where the other path runs it and reports the failure. One entry is known missing by name;
-      whether it is the only one is not known, because nothing enumerates the checks a design can
-      fail against what the library publishes.
+- [x] **A check that only a failing design reaches.** A guard the language requires to run as part
+      of evaluating an access (LRM 11.3.5) -- reading a tagged union's member against a tag it does
+      not hold is the one that has it (LRM 11.9) -- is realized here, and a design that trips it now
+      reports the failure where it used to refuse to lower.
 
-      **What is worth more than the gap is that the corpus cannot see it.** Every conformance case is
-      a program that passes, and what this reaches is a program that must not, so no case can hold
-      it and the refusal record has no entry to shrink. The gap surfaced from a command-line case
-      asking how a failing design is reported. So the record measures what this backend refuses to
-      compile and says nothing about what it refuses to check, and the second question needs an
-      instrument of its own.
+      **The gap was a naming claim rather than a missing function.** The guard was filed as realized
+      once per representation of the value it acts on, which asserts a family of entries exists. It
+      reads its condition and yields what it was handed, so it acts on no representation at all: one
+      realization serves every value, and serves a cell an access reached through as well. Filing it
+      as that one turned a family nobody had written into a single entry.
+
+      **The second thing is a boundary convention, and it is the one that cost the time.** The text a
+      guard raises crosses as a pointer to a constant rather than as a value of the string domain,
+      which is what a literal argument to any entry does. Reading it as a string value yields a view
+      over whatever the bytes happen to say, and the failure lands as the host running out of memory
+      while building the message -- a symptom that names neither the entry nor the operand. An entry
+      whose operand is a literal says so in its prototype, and that is the only place it is said.
+
+      **What is worth more than either is that the corpus cannot see this class.** Every conformance
+      case is a program that passes, and what a guard reaches is a program that must not, so no case
+      can hold it and the refusal record has no entry to shrink. It surfaced from a command-line case
+      asking how a failing design is reported. So that record measures what this backend refuses to
+      compile and says nothing about what it refuses to check, and the second question still has no
+      instrument.
 
 - [ ] **Running a design selects this backend without being asked.** Today it selects the C++ one,
       so the ordinary way to see what a source does spawns a host compiler, waits for a project to

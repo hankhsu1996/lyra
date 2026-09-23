@@ -603,6 +603,7 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_string_value_cell_load", &lyra_rt_string_value_cell_load);
   add("lyra_rt_packed_add", &lyra_rt_packed_add);
   add("lyra_rt_packed_replicate", &lyra_rt_packed_replicate);
+  add("lyra_rt_require", &lyra_rt_require);
   add("lyra_rt_packed_concat", &lyra_rt_packed_concat);
   add("lyra_rt_packed_sub", &lyra_rt_packed_sub);
   add("lyra_rt_packed_mul", &lyra_rt_packed_mul);

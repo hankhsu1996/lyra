@@ -557,13 +557,7 @@ TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
                      << "  initial $display(\"v=%0d\", v);\n"
                      << "endmodule\n";
 
-  // The one case here that names the slower backend, and not because the
-  // reporting is that backend's: the check itself is a runtime entry the other
-  // one does not publish yet, so a design written to trip it refuses to lower
-  // there instead of running and failing. Nothing in the corpus says so, since
-  // a conformance case is a program that passes and this is a program that
-  // must not.
-  const std::vector<std::string> args = {"run",   "--backend", "cpp",
+  const std::vector<std::string> args = {"run",   "--backend", "jit",
                                          "--top", "Test",      src.string()};
   const auto run = RunChildProcess(lyra, args, 120s);
   EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
