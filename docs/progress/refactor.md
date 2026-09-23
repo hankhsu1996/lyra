@@ -2218,6 +2218,22 @@ enough to warrant its own focused review.
       runtime ABI's own question rather than a caller's, and grouping the list by hand first would
       spend the same reading twice.
 
+- [ ] R133 -- A compiled artifact is a function of the design, and the front end's own containers
+      are the one thing that can break it without anyone writing an error. They key on where a
+      symbol was allocated, so iterating one yields an order that differs between two runs of one
+      design; carry that order into what is emitted and the compiler answers differently the second
+      time, which nothing a simulated program can observe will report.
+
+      One such leak is closed, at the boundary where the front end's reads become identities this
+      compiler minted, and a check now compiles every corpus design twice and compares what was
+      written. That is an instance plus a detector: nothing stops the next one being written, and
+      the detector reports only what some design happens to exercise. Target: the leak cannot be
+      written. Every container keyed by a front-end pointer answers lookups and cannot be iterated,
+      so a pass that wants an order has to key on something the design decides -- which is what the
+      rule already says, stated so that the compiler holds it. About forty-six declarations, almost
+      all of them caches that never wanted iteration. Not blocked. Found while settling why one
+      design emitted two programs.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

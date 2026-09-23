@@ -96,7 +96,8 @@ struct LocalStaticPropertyTarget {
   ClassId owner;
   StaticPropertyId prop;
 
-  auto operator==(const LocalStaticPropertyTarget&) const -> bool = default;
+  auto operator<=>(const LocalStaticPropertyTarget&) const
+      -> std::strong_ordering = default;
 };
 
 // A reference to a class static property (LRM 8.9) declared by another
@@ -107,7 +108,8 @@ struct ExternalStaticPropertyTarget {
   std::string class_name;
   std::string property_name;
 
-  auto operator==(const ExternalStaticPropertyTarget&) const -> bool = default;
+  auto operator<=>(const ExternalStaticPropertyTarget&) const
+      -> std::strong_ordering = default;
 };
 
 using StaticPropertyTarget =

@@ -4,6 +4,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -1113,6 +1114,21 @@ auto UnitLowerer::TranslateSensitivityReads(
             "denotes no value");
     }
   }
+
+  // What arrives here is a set: a process woken by any of these is woken the
+  // same way however they are written down, and what hands them over reaches
+  // them through the front end's own containers, which order by where its
+  // symbols were allocated. What leaves here is a sequence the compiled
+  // artifact carries, and an artifact is a function of the design -- so the
+  // order is settled against the identities this step has just given them,
+  // which the design decides and nothing about the run touches.
+  std::ranges::sort(
+      out,
+      [](const hir::SensitivityEntry& left,
+         const hir::SensitivityEntry& right) -> bool {
+        return std::tie(left.ref, left.footprint) <
+               std::tie(right.ref, right.footprint);
+      });
   return out;
 }
 
