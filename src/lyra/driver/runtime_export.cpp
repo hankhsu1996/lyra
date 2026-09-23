@@ -63,10 +63,13 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
         diag::DiagCode::kHostIoError,
         std::format("cannot access the Lyra runtime: {}", rf_error));
   }
-  // The header closure is staged under `include/lyra/`; resolve one known
-  // header and walk up to the `include` root the emitted code includes from.
+  // The surface is staged under a root holding it and nothing else, so the
+  // root around any one of its headers is the whole of what a project gets.
+  // What makes that true is the staging rather than this walk: a header
+  // resolved where this repository keeps it would hand back a directory
+  // carrying every header the compiler has.
   const std::filesystem::path anchor =
-      runfiles->Rlocation("_main/include/lyra/runtime/runtime.hpp");
+      runfiles->Rlocation("_main/runtime_surface/lyra/runtime/runtime.hpp");
   if (anchor.empty() || !std::filesystem::exists(anchor)) {
     return diag::Fail(
         diag::DiagCode::kHostIoError, "cannot locate the Lyra runtime headers");

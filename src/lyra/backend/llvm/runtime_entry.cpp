@@ -606,7 +606,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kPart:
     case support::BuiltinFn::kPartRef:
     case support::BuiltinFn::kTagMatches:
-    case support::BuiltinFn::kRequire:
     case support::BuiltinFn::kSize:
     case support::BuiltinFn::kLen:
     case support::BuiltinFn::kBitstreamWidth:
@@ -957,6 +956,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // tell them apart.
     case support::BuiltinFn::kStringCStr:
     case support::BuiltinFn::kChandlePtr:
+    // A guard the language requires to run as part of evaluating an access
+    // (LRM 11.3.5). It reads the condition and yields what it was handed, so
+    // what it guards decides nothing about the code: one realization serves
+    // every value, and serves a cell reached through the same access too.
+    case support::BuiltinFn::kRequire:
     // The DPI-C boundary marshaling (LRM 35.5.6, Annex H.7.7, H.10). Each of
     // these is one library function and not a family: what a canonical buffer,
     // an `svLogic` scalar and an open-array image hold is fixed by the C ABI,

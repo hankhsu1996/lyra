@@ -849,10 +849,21 @@ void lyra_rt_string_value_cell_store(void* cell, const void* value);
 auto lyra_rt_packed_value_cell_load(const void* cell) -> void*;
 auto lyra_rt_string_value_cell_load(const void* cell) -> void*;
 
+// A guard the language requires to run as part of evaluating an access rather
+// than ahead of it (LRM 11.3.5): it raises `message` unless `condition` is a
+// definite one, and otherwise yields what it was handed, so the access composes
+// onto it. What is guarded decides nothing here -- the guard reads it not at
+// all -- so this is one entry rather than one per value domain, and the same
+// one serves a cell the access reached through. `message` is a literal and
+// crosses as the constant itself, which is what every literal operand does.
+auto lyra_rt_require(void* value, const void* condition, const char* message)
+    -> void*;
+
 // One entry per operator per value domain: the generated module names the entry
 // it means, so no operator code crosses the boundary. Each is the library peer
 // of the C++ operator a native target would emit. The result is a transient
 // value owned by the current call scope.
+
 // Joining values and laying one down a stated number of times (LRM 11.4.12).
 // What is joined follows the operand's domain, so one entry each serves both
 // spellings. A join takes two operands: a longer source-level one folds into a

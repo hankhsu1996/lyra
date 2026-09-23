@@ -60,6 +60,7 @@
 #include "lyra/value/managed_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
+#include "lyra/value/require.hpp"
 #include "lyra/value/runtime_array_manipulation.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
@@ -2444,6 +2445,15 @@ auto lyra_rt_packed_clog2(const void* value) -> void* {
 
 auto lyra_rt_packed_pow(const void* base, const void* exponent) -> void* {
   return Own(Read<PackedArray>(base).Pow(Read<PackedArray>(exponent)));
+}
+
+// The guarded value is handed back rather than copied: what crosses here is the
+// handle the caller already holds, and a guard that let the access through has
+// changed nothing about it.
+auto lyra_rt_require(void* value, const void* condition, const char* message)
+    -> void* {
+  lyra::value::RequireCondition(Read<PackedArray>(condition), message);
+  return value;
 }
 
 auto lyra_rt_packed_concat(const void* lhs, const void* rhs) -> void* {

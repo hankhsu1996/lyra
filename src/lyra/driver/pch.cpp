@@ -153,18 +153,39 @@ auto HeaderTreeFingerprint(const std::filesystem::path& include_root)
   return std::hash<std::string>{}(buf);
 }
 
+// Everything the compiler is told when a prelude is prepared. One list, so the
+// command that prepares one and the name it is filed under cannot describe
+// different things.
+auto PreparationFlags(Optimization optimization) -> std::vector<std::string> {
+  return {
+      std::string(kCxxStandardFlag),
+      std::string(OptimizationFlag(optimization)),
+      std::string(kPchContentValidationFlag),
+      std::string(kPchInstantiateTemplatesFlag)};
+}
+
+auto HashPreparationFlags(Optimization optimization) -> std::uint64_t {
+  std::string key;
+  for (const auto& flag : PreparationFlags(optimization)) {
+    key += flag;
+    key.push_back('\0');
+  }
+  return std::hash<std::string>{}(key);
+}
+
 // Cache filename derived from cxx identity + include-root path + tree content
-// + optimization. The four provide independent invalidation axes: upgrading
-// the compiler, swapping runtime installations, editing any header, or
-// compiling the design differently. Two cache entries with the same name are
-// byte-equivalent by construction.
+// + how the prelude was prepared. The four provide independent invalidation
+// axes: upgrading the compiler, swapping runtime installations, editing any
+// header, or asking for something different to go into the artifact. Two cache
+// entries with the same name are byte-equivalent by construction, which holds
+// only while the last axis covers the whole command line a preparation runs.
 auto CacheFilename(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
     Optimization optimization) -> std::string {
   return std::format(
-      "prelude-{:016x}-{:016x}-{:016x}-{}.pch", HashCxxIdentity(cxx),
+      "prelude-{:016x}-{:016x}-{:016x}-{:016x}.pch", HashCxxIdentity(cxx),
       HashIncludeRootPath(include_root), HeaderTreeFingerprint(include_root),
-      OptimizationFlag(optimization).substr(1));
+      HashPreparationFlags(optimization));
 }
 
 // 64 bits of entropy for a tmp filename suffix. Two random_device draws are
@@ -195,16 +216,10 @@ auto BuildAt(
   const auto prelude = include_root / support::kRuntimePreludeHeader;
   const auto tmp = pch_path.parent_path() /
                    std::format(".prelude.pch.tmp.{}", RandomTmpSuffix());
-  const std::vector<std::string> args = {
-      std::string(kCxxStandardFlag),
-      std::string(OptimizationFlag(optimization)),
-      std::string(kPchContentValidationFlag),
-      "-I",
-      include_root.string(),
-      "-xc++-header",
-      prelude.string(),
-      "-o",
-      tmp.string()};
+  std::vector<std::string> args = PreparationFlags(optimization);
+  args.insert(
+      args.end(), {"-I", include_root.string(), "-xc++-header",
+                   prelude.string(), "-o", tmp.string()});
   auto result_or = support::RunProcessCaptured(cxx, args);
   if (!result_or) {
     return IoError(std::move(result_or.error()));

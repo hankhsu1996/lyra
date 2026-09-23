@@ -2143,6 +2143,81 @@ enough to warrant its own focused review.
       words, masking the bits above its width. That is what tops the representative block too, so
       the two no longer disagree about where the time goes.
 
+- [x] R129 -- What an emitted project is given of the runtime is the surface a design compiles
+      against, and nothing else. It used to receive every header this compiler has -- the semantic
+      layers, the front end, both backends -- none of which anything in the project includes: 413
+      headers and 2.11 MB where the surface is 132 and 1.01 MB.
+
+      **The build had always stated the set correctly, and the compiler was not reading it.** The
+      surface is named as a set here, and what the compiler did was resolve one member of it and take
+      the directory around that member. Where a member physically sits is not something the naming
+      controls: a source file sits where this repository keeps it, so the directory around it is the
+      whole tree. What the set said was never consulted -- and nothing about the resolution looked
+      wrong, because the file it named was the right file.
+
+      So the surface is staged under a root that holds it and nothing else, the way the runtime
+      library a project links already was. Then the directory around any member is the set by
+      construction, and the walk that reads it cannot reach what the set excludes. The lesson is the
+      general one: **navigating by parent directory from a resolved file leaves whatever the build
+      arranged**, and it is the staging rather than the care taken at the call site that makes such a
+      walk answer correctly.
+
+      Two things it was costing beyond the size of the directory, both now closed. A prepared header
+      is named by the bytes of the tree it was built from, so editing any header of this compiler --
+      a lowering, an IR node -- renamed the entry and made the next build of any design prepare one
+      again, which during development is most builds; that tree now holds the surface alone. And a
+      project handed to someone else no longer carries the compiler's internals.
+
+- [x] R130 -- What the merge gate spends its time on is the corpus again. Measured 2026-09-22, the
+      CLI suite had become the longest target in the gate at 117 s of processor time, roughly four
+      times the conformance run beside it, and the only argument recorded for it being there was a
+      written claim that the host-compiling targets outside the corpus "cost a fraction of a minute
+      between them" -- off by about five times.
+
+      **The cost was not repetition, which is why the answer was not a cleanup.** Six of the sixteen
+      cases build an emitted project and were the whole of the cost, and no two of them can share a
+      prepared header: what one holds is bound to the paths of the headers it was made from, and
+      every emitted project carries its own copy. Nothing was being answered twice.
+
+      So they were split off by subject, and the subject happened to be the cost. What those six ask
+      is whether an emitted project still builds and runs, which is what the corpus through that
+      path asks, so they are answered on the same schedule and under a name that says so. What is
+      left gates and costs seconds, and the cases that only reached the host compiler because
+      running a design defaulted to it now ask for the backend that needs none. The exposure this
+      accepts is a regression in the shipped recipe reaching `main` and being found within a day --
+      the same trade that path already had, and whoever could cause it is already told to run that
+      schedule before committing.
+
+- [ ] R131 -- Which run-time checks belong inside the expression that carries them. A guard the
+      language requires to run as part of evaluating an access rather than ahead of it (LRM 11.3.5)
+      is stated once, as an operation over any value that yields what it was handed, so the access
+      composes onto it instead of naming its subject twice. Exactly one construct is built on it:
+      reading a tagged union's member against a tag it does not hold (LRM 11.9).
+
+      What is unasked is whether that is the only one. The clause is about short-circuiting, so it
+      reaches every check a short-circuited operand must not raise -- and the other run-time checks
+      a design can fail are today written wherever each one happened to be needed rather than
+      against that question. The answer may be that this construct really is alone, and that is
+      worth establishing rather than assuming: a check hoisted out of the expression it belongs to
+      is wrong in a way no case that passes can show, because the program that would see it is one
+      that must not run the operand at all.
+
+- [ ] R132 -- Where the execution session learns each runtime entry's address. One function names
+      all 808 of them, one line apiece, in no order and under no heading: nearly a thousand lines
+      whose only structure is the order someone happened to add things in. It is the third place an
+      entry is written, after its prototype and its definition, and the one that carries no
+      information -- the name and the function it binds to are the same name twice.
+
+      A policy script holds it together rather than the code doing so: it is what catches an entry
+      declared and never bound, a name bound to another entry's address, and a name bound twice.
+      That the check exists is the finding. A binding that restates its own name is derivable from
+      the two places that do carry information, and a list nobody can read is where the mistakes
+      that check looks for come from.
+
+      Not attempted here. Whatever replaces it decides how this surface is organized, which is the
+      runtime ABI's own question rather than a caller's, and grouping the list by hand first would
+      spend the same reading twice.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

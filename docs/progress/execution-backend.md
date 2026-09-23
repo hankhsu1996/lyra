@@ -619,3 +619,58 @@ each meets the same lifetime question above.
       construct looks like -- in the same change, the way a checkbox above is flipped with the code
       that closes it. Absence of an entry is a claim the run checks, which is what makes the record
       a measurement rather than an assertion.
+
+- [x] **A check that only a failing design reaches.** A guard the language requires to run as part
+      of evaluating an access (LRM 11.3.5) -- reading a tagged union's member against a tag it does
+      not hold is the one that has it (LRM 11.9) -- is realized here, and a design that trips it now
+      reports the failure where it used to refuse to lower.
+
+      **The gap was a naming claim rather than a missing function.** The guard was filed as realized
+      once per representation of the value it acts on, which asserts a family of entries exists. It
+      reads its condition and yields what it was handed, so it acts on no representation at all: one
+      realization serves every value, and serves a cell an access reached through as well. Filing it
+      as that one turned a family nobody had written into a single entry.
+
+      **The second thing is a boundary convention, and it is the one that cost the time.** The text a
+      guard raises crosses as a pointer to a constant rather than as a value of the string domain,
+      which is what a literal argument to any entry does. Reading it as a string value yields a view
+      over whatever the bytes happen to say, and the failure lands as the host running out of memory
+      while building the message -- a symptom that names neither the entry nor the operand. An entry
+      whose operand is a literal says so in its prototype, and that is the only place it is said.
+
+      **What is worth more than either is that the corpus cannot see this class.** Every conformance
+      case is a program that passes, and what a guard reaches is a program that must not, so no case
+      can hold it and the refusal record has no entry to shrink. It surfaced from a command-line case
+      asking how a failing design is reported. So that record measures what this backend refuses to
+      compile and says nothing about what it refuses to check, and the second question still has no
+      instrument.
+
+- [ ] **What this backend refuses to _check_ is not measured by anything.** The refusal record is
+      the measurement of what it refuses to compile, and it works because a conformance case is a
+      program that passes: a case that starts running fails until its entry goes. A check a design
+      trips is reached only by a program that must not finish, so no case can hold one and the
+      record has no entry to shrink. The one gap found this way was found by a command-line case
+      asking how a failing design is reported, which is to say by accident.
+
+      What it needs is a way to enumerate the checks a design can fail and ask this backend for each
+      -- the checks are stated in the semantic layers rather than discovered, so the list is
+      derivable rather than guessable. Until then, the honest reading of a clean refusal record is
+      that it covers one of the two questions.
+
+- [ ] **Running a design selects this backend without being asked.** Today it selects the C++ one,
+      so the ordinary way to see what a source does spawns a host compiler, waits for a project to
+      build, and runs the program -- for an answer this backend gives in a fraction of the time and
+      with nothing written to disk. That is the edit loop the whole compiler is optimized for, and
+      the cheaper of the two paths is not the one it takes.
+
+      **Linking in process is what a run wants, and compiling ahead of time is what a long one
+      wants.** They are link-time choices over this one backend rather than two backends, and the
+      same trade decides between them as decides the other path's optimization level: a run that
+      exists to be watched pays no compile it cannot earn back, and a run long enough to earn one
+      asks for it. So running selects the in-process form, and the ahead-of-time form is what a
+      release run selects once it exists.
+
+      What it costs is the entries in this path's refusal record. A design that trips one gets a
+      diagnostic naming what is missing where it used to get an answer, and the other path still
+      answers it by name. That is the pressure the record is for, and it is the reason to make the
+      change while the record is short rather than after it has been short for a while.

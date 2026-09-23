@@ -6,19 +6,36 @@ Build and test by asking for the whole graph -- `bazel build //...`, `bazel test
 than naming targets, so a new target is covered the moment it exists and no list has to be kept in
 step with the `BUILD` files.
 
-One split cuts across that, on cost, and it is one target wide. `cpp_tests` host-compiles the whole
-corpus once per case, which no per-PR budget holds; it carries `nightly`, `.bazelrc` makes the
-default set its complement, and `host-cxx-nightly.yml` takes `--config=nightly`. `--config=full` is
-both. So a developer running the tests locally runs what the gate runs without naming anything, and
-the expensive target is asked for rather than avoided.
+One split cuts across that, and what it draws is a subject rather than a price: whether an emitted
+C++ project still builds and runs. `cpp_tests` asks it over the whole corpus, once per case, and
+`emitted_project_tests` asks what a project does once built. No per-PR budget holds either, so both
+carry `nightly`, `.bazelrc` makes the default set their complement, and `host-cxx-nightly.yml` takes
+`--config=nightly`. `--config=full` is both sides. So a developer running the tests locally runs
+what the gate runs without naming anything, and the expensive ones are asked for rather than
+avoided.
 
 Needing a host compiler is a separate question from being too expensive to gate on, and four targets
-need one: `cpp_tests`, `llvm_dpi_tests`, `cli_tests`, and `pch_audit_test`. All four carry
-`no-remote-exec`, because a compiler spawned from inside a test is not a Bazel action and remote
-execution cannot provision it. Only the first is excluded from the gate. The other three cost a
-fraction of a minute between them, and a target kept out of the gate should be kept out for its own
-reason -- holding the DPI cases back because they share a compiler with the expensive one is how
-foreign-boundary regressions reach `main` and wait a day to be found.
+need one: `cpp_tests`, `emitted_project_tests`, `llvm_dpi_tests`, and `pch_audit_test`. All four
+carry `no-remote-exec`, because a compiler spawned from inside a test is not a Bazel action and
+remote execution cannot provision it. The first two are excluded from the gate and the other two are
+not, and a target kept out should be kept out for its own reason -- holding the DPI cases back
+because they share a compiler with an expensive one is how foreign-boundary regressions reach `main`
+and wait a day to be found.
+
+**What the CLI suite cost was once "a fraction of a minute", and by 2026-09-22 it was 117 s of
+processor time and the longest target in the gate -- about four times the corpus run beside it.**
+Six of its sixteen cases build an emitted project, several more than once, and they were the whole
+of it. None of that is repetition that could be shared: what a prepared header holds is bound to the
+paths of the headers it was made from, and every emitted project carries its own copy, so no two
+projects can share one. The cost is what those cases assert.
+
+So they are not in the gate, and the reason is their subject rather than their price. What they ask
+-- that a directory rebuilds standalone through its shipped recipe, that a second toolchain accepts
+the headers and still links the runtime the first one compiled, that a build whose prepared header
+is refused still produces a program -- is the same question `cpp_tests` asks, so they are answered
+on the same schedule, as `emitted_project_tests`. A change that could break any of it already owes
+that schedule before it commits. What remains in `cli_tests` is the command line itself, it needs no
+compiler to answer, and it costs seconds.
 
 The two sides of `nightly` are complements, so every test target is covered once and none twice.
 That is the property to preserve: a new target joins whichever side its tag puts it on, and neither
@@ -67,6 +84,15 @@ Pre-commit and the merge gate are the same command, and that is the whole point:
 committing means "this lands green" only while the two sets are identical. Any change that makes the
 local command wider or narrower than the gate turns its answer back into a guess.
 
+Every run someone waits on stops at the first case that fails, and every scheduled run does not. The
+two want different things from a red result. A defect the whole corpus shares and a defect one case
+has are indistinguishable from outside while a run is still going, and only the first is worth
+waiting through -- so a person waiting is told as soon as anything is wrong, and pays one case for
+it rather than the corpus. What a scheduled run produces is the list of which cases fail, and a list
+that ends at its first entry is not one, so the two sets a schedule draws on turn it off and so does
+the gate. `--config=full` is not one of them: it is a developer asking for everything, and they are
+still waiting.
+
 On top of the default set, what a change touches selects what else to run:
 
 - **What the C++ backend emits** -- `--config=nightly`, the only thing that compiles emitted text.
@@ -75,8 +101,11 @@ On top of the default set, what a change touches selects what else to run:
   backend, and a green default run says nothing about whether the result compiles. Emitting one case
   and reading the file catches most of that class in seconds.
 - **The foreign boundary** -- `llvm_dpi_tests`, which the gate already runs.
-- **The driver, the CLI, or the prelude PCH** -- `cli_tests` and `pch_audit_test`, likewise already
-  in the gate.
+- **What an emitted project is or how it is built** -- the shipped recipe, what the project is given
+  of the runtime, how a prepared header is named -- `--config=nightly`, which carries
+  `emitted_project_tests` beside the corpus. This is the same selection as the line above it, seen
+  from the build rather than from the text.
+- **The command line, or the prelude PCH** -- `cli_tests` and `pch_audit_test`, already in the gate.
 - **Anything else** -- HIR, MIR, LIR, the execution backend, the runtime value library -- the
   default set is the whole answer.
 
@@ -104,8 +133,9 @@ The C++ path is on its way out of this table. Its subject is not what IEEE 1800 
 execution backend answers that -- but whether an emitted project still builds and runs under a host
 toolchain, which makes it a tool test rather than a conformance path. When the execution backend
 covers enough of the language, it stops running the corpus and becomes a small, explicitly chosen
-set of designs, sitting beside `cli_tests` rather than beside `llvm_tests`. Nothing in the corpus
-has to change for that, because no case names a path.
+set of designs -- which is what `emitted_project_tests` already is, so the two become one target
+rather than the corpus shrinking into a new one. Nothing in the corpus has to change for that,
+because no case names a path.
 
 ## Gating workflows
 

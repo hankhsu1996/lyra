@@ -123,12 +123,18 @@ bazel test //tests:llvm_tests --test_filter='12_statements.case_default_item'
 `bazel test //...` is the merge gate's own set, so a green run before committing is what says "this
 lands green". Do not widen or narrow it: the answer holds only while the two are the same command.
 
-One target is out of it. `cpp_tests` host-compiles the whole corpus once per case, carries `nightly`
-for that reason, and is reached by `--config=nightly`; `--config=full` is both sets. Run it whenever
-the change touches what the C++ backend emits -- which is not the same as editing `backend/cpp`,
-since the renderer is a function of MIR and LIR node shapes. A filtered run names only the tests it
-ran, so reach for `--config=full` whenever a result has to stand as evidence. `docs/ci/README.md`
-holds the whole strategy: which moment answers which question, and what a change selects.
+Two targets are out of it, and they are one subject: whether an emitted C++ project still builds and
+runs. `cpp_tests` asks that over the whole corpus, once per case, and `emitted_project_tests` asks
+what such a project does once built. Both carry `nightly` and are reached by `--config=nightly`;
+`--config=full` is both sets. Run them whenever the change touches what the C++ backend emits or how
+an emitted project is built -- which is not the same as editing `backend/cpp`, since the renderer is
+a function of MIR and LIR node shapes. A filtered run names only the tests it ran, so reach for
+`--config=full` whenever a result has to stand as evidence. `docs/ci/README.md` holds the whole
+strategy: which moment answers which question, and what a change selects.
+
+A run someone is waiting on stops at the first case that fails; a scheduled one reports every
+failure instead. So a red local run names one case and not the list, and
+`--test_arg=--gtest_fail_fast=false` is how to ask for the list.
 
 ## Code style
 

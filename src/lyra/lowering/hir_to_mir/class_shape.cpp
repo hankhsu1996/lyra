@@ -32,6 +32,7 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .time_resolution = time_resolution,
       .fields = fields,
       .named_fields = named_fields,
+      .tree_program = std::nullopt,
       .constructor = {},
       .contained = contained,
       .callables = {},

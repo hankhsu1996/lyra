@@ -104,8 +104,11 @@ constexpr std::string_view kBuildScriptTemplate = R"sh(#!/bin/sh
 # time is the default, because a script that was told nothing cannot know what
 # else is running on the machine.
 #
-# A precompiled header is built on first run and reused on later rebuilds to
-# amortize parsing of the runtime headers (clang only); --no-pch skips it.
+# A precompiled header carrying the runtime surface is built on first run and
+# reused on later rebuilds (clang only); --no-pch skips it. It lands inside the
+# project and serves that project alone: what it holds is bound to the paths of
+# the headers it was prepared from, and every project carries its own copy of
+# those, which is what lets a directory be moved to another machine.
 set -e
 CXX="@CXX@"
 NO_PCH=0
@@ -141,13 +144,26 @@ fi
 PCH_FLAG=""
 if [ "$USE_PCH" = "1" ]; then
   PRELUDE="@INCLUDE@/@PRELUDE@"
-  FP=$(find @INCLUDE@ -name '*.hpp' -print0 | sort -z | xargs -0 sha1sum | sha1sum | cut -c1-16)
+  # A prepared header is named by everything that decided its contents, and by
+  # nothing else: the headers it was built from, and the command line below that
+  # says what goes into it. Re-emitting into a directory that already holds one
+  # then cannot reuse a header prepared a different way from the same headers.
+  PREP="@STD@ @OPT@ @VALIDATE@ @PREPARE@"
+  FP=$( { find @INCLUDE@ -name '*.hpp' -print0 | sort -z | xargs -0 sha1sum; echo "$PREP"; } | sha1sum | cut -c1-16)
   PCH="@CACHE@/prelude-${FP}-@OPTTAG@.pch"
   if [ ! -f "$PCH" ]; then
     mkdir -p "$(dirname "$PCH")"
-    "$CXX" @STD@ @OPT@ @VALIDATE@ -I @INCLUDE@ -xc++-header "$PRELUDE" -o "$PCH"
+    # Preparing one is an attempt like using one: a build that cannot have the
+    # fast path takes the plain one instead of stopping, and a half-written file
+    # goes so that the next build does not find it and believe it.
+    if ! "$CXX" $PREP -I @INCLUDE@ -xc++-header "$PRELUDE" -o "$PCH" 2>/dev/null; then
+      rm -f "$PCH"
+      USE_PCH=0
+    fi
   fi
-  PCH_FLAG="-include-pch $PCH @VALIDATE@"
+  if [ "$USE_PCH" = "1" ]; then
+    PCH_FLAG="-include-pch $PCH @VALIDATE@"
+  fi
 fi
 mkdir -p @OBJDIR@
 LOG=@OBJDIR@/compile.log
@@ -269,7 +285,7 @@ auto RenderBuildScript(
   // The recipe keys its own PCH cache by header content, which does not
   // separate two builds clang will refuse to share.
   const std::string_view optimization_tag = optimization_flag.substr(1);
-  const std::array<std::pair<std::string_view, std::string_view>, 15> bindings =
+  const std::array<std::pair<std::string_view, std::string_view>, 16> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
           {"@PRELUDE@", support::kRuntimePreludeHeader},
@@ -278,6 +294,7 @@ auto RenderBuildScript(
           {"@STD@", kCxxStandardFlag},
           {"@OPT@", optimization_flag},
           {"@VALIDATE@", kPchContentValidationFlag},
+          {"@PREPARE@", kPchInstantiateTemplatesFlag},
           {"@OPTTAG@", optimization_tag},
           {"@CXX@", cxx_exe},
           {"@SOURCES@", sources},

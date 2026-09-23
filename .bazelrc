@@ -49,6 +49,21 @@ test --test_tag_filters=-nightly
 test:full --test_tag_filters=
 test:nightly --test_tag_filters=nightly
 
+# A run someone is waiting on stops at the first case that fails, because a
+# defect the whole corpus shares and a defect one case has look identical from
+# outside while the run is still going, and only the first is worth waiting
+# through. Someone waiting is the common case, so it is the default.
+#
+# What a scheduled run produces instead is the list of which cases fail, and a
+# list that ends at its first entry is not one -- so the two sets a schedule
+# draws on say so, and the gate, which names no config, says it in the untracked
+# layer it already writes. `full` is not among them: it is a developer asking
+# for everything, and they are still waiting. None of this changes which tests
+# are selected, so a local command and the gate still answer the same question.
+test --test_arg=--gtest_fail_fast
+test:nightly --test_arg=--gtest_fail_fast=false
+test:asan --test_arg=--gtest_fail_fast=false
+
 build:debug --compilation_mode=dbg
 
 build:release --compilation_mode=opt
