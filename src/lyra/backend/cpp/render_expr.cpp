@@ -30,7 +30,7 @@ namespace lyra::backend::cpp {
 namespace {
 
 auto LookupLocalName(const ScopeView& view, const mir::LocalRef& ref)
-    -> std::string {
+    -> MintedName {
   // Every local -- including the receiver (`locals[0]`), which the method emit
   // seeds from `this` -- renders under whichever of the two ranges names it.
   return CppLocalName(view.Code().named_locals, ref.var);
@@ -138,10 +138,9 @@ void RenderFieldAccessExpr(
     const ScopeView& view, const mir::FieldAccessExpr& m, TargetText& out) {
   const auto write_receiver = [&]() {
     const mir::Expr& receiver = view.Expr(m.receiver);
-    const PlaceAccess access = PlaceAccessAsCpp(view.Unit(), receiver.type);
-    out += access.before;
-    RenderExpr(view, receiver, out);
-    out += access.after;
+    WriteStorageOf(out, view.Unit(), receiver.type, [&]() {
+      RenderExpr(view, receiver, out);
+    });
     out += ".";
   };
   std::visit(
@@ -159,13 +158,13 @@ void RenderFieldAccessExpr(
           },
           [&](const mir::StructFieldTarget& t) {
             write_receiver();
-            out += CppStructFieldName(t.slot);
+            Write(out, CppStructFieldName(t.slot));
           },
           [&](const mir::ClosureFieldTarget& t) {
             // A closure is emitted as a lambda whose captures are bindings of
             // the enclosing scope, so naming the capture is the whole access
             // and the receiver never appears.
-            out += CppClosureCaptureName(t.slot);
+            Write(out, CppClosureCaptureName(t.slot));
           },
           [&](const mir::CrossUnitClassFieldTarget& t) {
             // The declaring unit's header pulls the property's declaration
@@ -184,14 +183,16 @@ void RenderFieldAccessExpr(
                   "consumed promise describes");
             }
             write_receiver();
-            out += CppFieldNameOf(t.slot, declaring->fields.Get(t.slot).name);
+            Write(
+                out,
+                CppFieldNameOf(t.slot, declaring->fields.Get(t.slot).name));
           }},
       m.field);
 }
 
 // The C++ text a reference names. Every alternative comes out as a name, or a
-// scope and a name joined; what differs is which table the strings are read out
-// of, which is the whole of what separates one referent from another. A
+// scope and a name joined; what differs is which table the name is read out of,
+// which is the whole of what separates one referent from another. A
 // function is named by its address, since C++ spells a bare function name as a
 // call -- and that address, alone among these, is not a primary expression, so
 // it carries the parentheses that let it stand wherever the others do.
@@ -200,7 +201,7 @@ void RenderReferenceExpr(
     TargetText& out) {
   std::visit(
       Overloaded{
-          [&](const mir::LocalRef& l) { out += LookupLocalName(view, l); },
+          [&](const mir::LocalRef& l) { Write(out, LookupLocalName(view, l)); },
           [&](const mir::FunctionRef& fr) {
             Write(
                 out, "(&",
@@ -214,14 +215,14 @@ void RenderReferenceExpr(
           },
           [&](const mir::ObjectRecordRef& r) {
             Write(
-                out, RenderClassRefAsCpp(view.Unit(), r.of),
+                out, CppClassRef(view.Unit(), r.of),
                 "::", CppObjectRecordName());
           },
           [&](const mir::TypeDescriptorRef& r) {
-            out += CppTypeDescriptorName(r.descriptor);
+            Write(out, CppTypeDescriptorName(r.descriptor));
           },
           [&](const mir::IntegralConstantRef& r) {
-            out += CppIntegralConstantName(r.constant);
+            Write(out, CppIntegralConstantName(r.constant));
           },
           [&](const mir::StaticPropertyRef& r) {
             const mir::Class& owner_cls = view.Unit().GetClass(r.owner);
@@ -431,10 +432,9 @@ void RenderPartsAsBraceInit(
 void RenderDerefExpr(
     const ScopeView& view, const mir::DerefExpr& d, TargetText& out) {
   const mir::Expr& pointer = view.Expr(d.pointer);
-  const PlaceAccess access = PlaceAccessAsCpp(view.Unit(), pointer.type);
-  out += access.before;
-  RenderExpr(view, pointer, out);
-  out += access.after;
+  WriteStorageOf(out, view.Unit(), pointer.type, [&]() {
+    RenderExpr(view, pointer, out);
+  });
 }
 
 // How a machine float literal is written so the target reads back the value it
@@ -483,7 +483,7 @@ void RenderMachineFloatLiteral(
 }  // namespace
 
 void WriteType(const ScopeView& view, TargetText& out, mir::TypeId type) {
-  out += RenderTypeAsCpp(view.Unit(), type);
+  Write(out, CppType(view.Unit(), type));
 }
 
 void WriteCommaSeparated(

@@ -84,10 +84,6 @@ ADMITTED: dict[str, str] = {
         "a runtime library entry is declared in C++ and named by the library, "
         "so what spells it is the entry declaration rather than this map"
     ),
-    "named.name": (
-        "a resolved callee is text this backend has already spelled, so "
-        "mapping it again would escape the punctuation it is made of"
-    ),
     "root.name": (
         "the design root's own name is formatted into a quoted slot, so it "
         "leaves as a string the simulation reports itself by rather than as an "

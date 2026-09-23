@@ -128,10 +128,10 @@ void Write(TargetText& out, const Pieces&... pieces) {
   (WriteOne(out, pieces), ...);
 }
 
-// Text that is a value rather than a contribution: a name, which has readers
-// besides the artifact -- the file a class is written in is composed from one
-// -- or a fragment the target repeats in two places. Anything a reader reads
-// once belongs in the artifact instead, written where it goes.
+// Text that is a value rather than a contribution: characters a reader other
+// than the artifact needs, such as the name of the file a class is written in.
+// Anything the artifact reads belongs in the artifact instead, written where it
+// goes.
 template <typename... Pieces>
 [[nodiscard]] auto TextOf(const Pieces&... pieces) -> std::string {
   TargetText text;

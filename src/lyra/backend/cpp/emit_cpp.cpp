@@ -36,7 +36,7 @@ void WriteInclude(TargetText& out, std::string_view path) {
 // writes it is the ordinary expression render over a scope holding nothing but
 // that tree.
 void RenderNamespaceValue(
-    const mir::CompilationUnit& unit, mir::TypeId type, std::string_view name,
+    const mir::CompilationUnit& unit, mir::TypeId type, const CppName& name,
     const mir::ValueBuild& build, TargetText& out) {
   const ScopeView view = ScopeView::ForUnitConstant(unit, build.body);
   WriteDeclaration(
@@ -45,7 +45,7 @@ void RenderNamespaceValue(
           .owner = CellOwner::kNamespace,
           .text = CellText::kDefined,
           .immutable = true,
-          .type = RenderTypeAsCpp(unit, type),
+          .type = CppType(unit, type),
           .name = name,
           .qualifier = {}},
       [&](TargetText& value) {
@@ -147,7 +147,7 @@ auto RenderUnitFiles(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
   const UnitText variables = RenderUnitStaticVariables(unit);
   const UnitText forwards = RenderUnitForwardDeclarations(unit);
   UnitClasses classes = RenderUnitClasses(unit);
-  const std::string unit_namespace = UnitNamespaceOf(unit.name);
+  const SourceName unit_namespace = UnitNamespaceOf(unit.name);
 
   TargetText opened;
   AppendSection(opened, forwards.signature);

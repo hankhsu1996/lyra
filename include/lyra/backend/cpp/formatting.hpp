@@ -2,27 +2,14 @@
 
 #include <cstdint>
 #include <optional>
-#include <string>
 #include <string_view>
-#include <vector>
 
+#include "lyra/backend/cpp/naming.hpp"
+#include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::backend::cpp {
-
-// The comma-separated form of already-spelled parts. A type spelled out of
-// other types composes their spellings, which are names rather than text of the
-// program, so they are values and this joins them.
-[[nodiscard]] inline auto JoinCommaSeparated(
-    const std::vector<std::string>& parts) -> std::string {
-  std::string out;
-  for (const std::string& part : parts) {
-    if (!out.empty()) out.append(", ");
-    out.append(part);
-  }
-  return out;
-}
 
 // Whose cell a declaration brings into being: one that every object of a class
 // holds, one the type itself owns (LRM 8.9), or one the unit's namespace owns
@@ -44,13 +31,13 @@ struct DeclaredCell {
   CellOwner owner = CellOwner::kObject;
   CellText text = CellText::kDefined;
   bool immutable = false;
-  std::string_view type;
-  std::string_view name;
+  CppType type;
+  CppName name;
   // The declaration this text sits outside of, for a definition written apart
   // from the class that declares the cell. Its absence is also what says the
   // text sits inside that class, which is where a storage keyword is spelled
   // and where it is spelled once.
-  std::optional<std::string_view> qualifier;
+  std::optional<CppName> qualifier;
 };
 
 // The keywords this target wants before the cell's type. A definition written
@@ -82,13 +69,11 @@ inline void WriteDeclarationUpToTheValue(
   if (cell.immutable) {
     out += "const ";
   }
-  out += cell.type;
-  out += " ";
+  Write(out, cell.type, " ");
   if (cell.qualifier.has_value()) {
-    out += *cell.qualifier;
-    out += "::";
+    Write(out, *cell.qualifier, "::");
   }
-  out += cell.name;
+  Write(out, cell.name);
 }
 
 // A declaration stating no value of its own: what the cell needs in front of
@@ -118,16 +103,12 @@ void WriteDeclaration(
 // A namespace enclosing what is written between the two. Opening one and
 // closing it are the same decision seen twice -- the closing comment repeats
 // the name -- so both are spelled here.
-inline void OpenNamespace(TargetText& out, std::string_view name) {
-  out += "namespace ";
-  out += name;
-  out += " {\n";
+inline void OpenNamespace(TargetText& out, SourceName name) {
+  Write(out, "namespace ", name, " {\n");
 }
 
-inline void CloseNamespace(TargetText& out, std::string_view name) {
-  out += "}  // namespace ";
-  out += name;
-  out += "\n";
+inline void CloseNamespace(TargetText& out, SourceName name) {
+  Write(out, "}  // namespace ", name, "\n");
 }
 
 // Text already assembled elsewhere, placed as a section of this artifact.

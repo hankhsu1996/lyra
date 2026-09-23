@@ -1,16 +1,14 @@
 #pragma once
 
-#include <algorithm>
 #include <array>
-#include <cctype>
 #include <cstdint>
-#include <format>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <variant>
 
+#include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/abi_adapter_id.hpp"
@@ -142,6 +140,14 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
      "xor",
      "xor_eq"});
 
+// What a name is called in the emitted C++, decided here and written wherever
+// it goes. A name is decided in one place because every party spelling it has
+// to arrive at the same one, and it answers with what decides the spelling
+// rather than with the spelling, because nearly every reader is the artifact:
+// the few that need the characters as a value -- a file path -- write it into a
+// value of their own. What each one holds is a view of the program being
+// emitted or of this target's own words, both of which outlive the writing.
+
 // A source name spelled as a C++ identifier. SystemVerilog admits every
 // printable character but white space in an identifier (LRM 5.6.1), while C++
 // admits letters, digits and underscores and refuses some of what those spell,
@@ -149,8 +155,8 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // refuses onto what it allows maps two declarations that differ onto one token,
 // and the emitted unit then declares one of them twice.
 //
-// A name renders as itself exactly when C++ would accept it as a name and it
-// does not begin with the minted prefix; everything else renders as that
+// A name is written as itself exactly when C++ would accept it as a name and it
+// does not begin with the minted prefix; everything else is written as that
 // prefix, an escape marker, and its bytes in hex. The two images are disjoint,
 // so no two source names meet and nothing the compiler mints is reachable from
 // one.
@@ -160,23 +166,45 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // reserves to an implementation rather than refusing -- a name carrying a
 // double underscore, or an underscore before a capital -- stay plain: such a
 // name compiles, and the compiler already spells names of its own that way.
-[[nodiscard]] inline auto ToCppName(std::string_view name) -> std::string {
-  const auto is_word = [](char c) {
-    return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
-  };
-  const bool plain =
-      !name.empty() && std::isdigit(static_cast<unsigned char>(name[0])) == 0 &&
-      !name.starts_with(kMintedPrefix) && std::ranges::all_of(name, is_word) &&
-      !std::ranges::contains(kCppReservedWords, name);
-  if (plain) {
-    return std::string{name};
-  }
-  std::string out{kMintedPrefix};
-  out += "esc_";
-  for (const char c : name) {
-    out += std::format("{:02x}", static_cast<unsigned char>(c));
-  }
-  return out;
+struct SourceName {
+  std::string_view name;
+};
+
+// A declaration the compiler synthesized. `what` says which kind it is and
+// `ordinal` which one, because such a declaration has no source name to take
+// one from. Where the source did give it an identifier, that follows the
+// position, so the emitted text still reads like the design without the
+// position ever ceasing to be what separates two declarations.
+struct MintedName {
+  std::string_view what;
+  std::uint32_t ordinal;
+  std::optional<std::string_view> source;
+};
+
+// A declaration the compiler mints exactly one of per place it may stand, so a
+// word says which it is and no position is needed.
+struct MintedWord {
+  std::string_view word;
+};
+
+// A name already spelled the way the target must see it, which crosses as
+// itself.
+struct VerbatimName {
+  std::string_view text;
+};
+
+// A name that may be any of the above, for a declaration whose kind decides
+// which.
+using CppName = std::variant<SourceName, MintedName, MintedWord, VerbatimName>;
+
+void WriteOne(TargetText& out, SourceName name);
+void WriteOne(TargetText& out, const MintedName& name);
+void WriteOne(TargetText& out, MintedWord name);
+void WriteOne(TargetText& out, VerbatimName name);
+void WriteOne(TargetText& out, const CppName& name);
+
+[[nodiscard]] inline auto ToCppName(std::string_view name) -> SourceName {
+  return SourceName{.name = name};
 }
 
 // The name of the namespace a unit's declarations live in, as the header that
@@ -185,7 +213,7 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // tells a reader which of the identifiers around it is a namespace and which is
 // a class.
 [[nodiscard]] inline auto UnitNamespaceOf(std::string_view unit_name)
-    -> std::string {
+    -> SourceName {
   return ToCppName(unit_name);
 }
 
@@ -195,22 +223,30 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // as the class at the root of that unit's hierarchy: from inside such a class
 // the unqualified prefix names the class, and the namespace behind it becomes
 // unreachable.
+struct UnitScope {
+  std::string_view unit_name;
+};
+
+void WriteOne(TargetText& out, UnitScope scope);
+
 [[nodiscard]] inline auto CppUnitScope(std::string_view unit_name)
-    -> std::string {
-  return std::format("::{}", UnitNamespaceOf(unit_name));
+    -> UnitScope {
+  return UnitScope{.unit_name = unit_name};
 }
 
 // The files a unit's emission produces. The same agreement the namespace needs
 // applies to every one of them, one level out -- whoever writes a file writes
 // its name, and whoever reads it writes the same name in an include, with no
 // list between them saying where anything was put. That is what lets a unit
-// name a file of another unit it has never seen emitted.
+// name a file of another unit it has never seen emitted. A file's name is a
+// value rather than text of the program, since what reads it first is the one
+// putting the file on disk.
 
 // What a referrer names, and the whole of what this unit promised: it reads the
 // opening file and every class file below, in an order that satisfies them.
 [[nodiscard]] inline auto UnitSignatureFileOf(std::string_view unit_name)
     -> std::string {
-  return std::format("{}.hpp", ToCppName(unit_name));
+  return TextOf(ToCppName(unit_name), ".hpp");
 }
 
 // What the unit's declarations open with: the names they will use, and the
@@ -218,7 +254,7 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // read before it, which is what lets a class written anywhere reach back to it.
 [[nodiscard]] inline auto UnitOpeningFileOf(std::string_view unit_name)
     -> std::string {
-  return std::format("{}.opening.hpp", ToCppName(unit_name));
+  return TextOf(ToCppName(unit_name), ".opening.hpp");
 }
 
 // One class the unit promised. Each takes a file of its own: a class is written
@@ -226,42 +262,26 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // files in any order reaches each class through the one file that has it, and
 // the order among the files is the order among the classes -- which a program
 // always has, since a class may not rest on itself.
-//
-// `cpp_class_name` is already spelled for the target, because what a class is
-// called there is decided in one place and a class the source never named still
-// has to be written somewhere. A unit always has a source name, so this maps
-// that one itself.
 [[nodiscard]] inline auto UnitClassFileOf(
-    std::string_view unit_name, std::string_view cpp_class_name)
-    -> std::string {
-  return std::format("{}.{}.hpp", ToCppName(unit_name), cpp_class_name);
+    std::string_view unit_name, const CppName& class_name) -> std::string {
+  return TextOf(ToCppName(unit_name), ".", class_name, ".hpp");
 }
 
 // The translation unit realizing everything above.
 [[nodiscard]] inline auto UnitCodeFileOf(std::string_view unit_name)
     -> std::string {
-  return std::format("{}.cpp", ToCppName(unit_name));
+  return TextOf(ToCppName(unit_name), ".cpp");
 }
 
-// The C++ identifier a declaration the compiler synthesized is emitted under.
-// `what` says which kind it is and `ordinal` which one, because such a
-// declaration has no source name to take one from.
 [[nodiscard]] inline auto MintedCppName(
-    std::string_view what, std::uint32_t ordinal) -> std::string {
-  return std::format("{}{}_{}", kMintedPrefix, what, ordinal);
+    std::string_view what, std::uint32_t ordinal) -> MintedName {
+  return MintedName{.what = what, .ordinal = ordinal, .source = std::nullopt};
 }
 
-// The same, with the identifier the source gave that declaration after the
-// position, so the emitted text still reads like the design without the
-// position ever ceasing to be what separates two declarations. A declaration
-// the source never named carries the position alone. One composition, so every
-// party spelling such a name arrives at the same one.
 [[nodiscard]] inline auto MintedCppNameWith(
     std::string_view what, std::uint32_t ordinal,
-    std::optional<std::string_view> name) -> std::string {
-  const std::string minted = MintedCppName(what, ordinal);
-  return name.has_value() ? std::format("{}_{}", minted, ToCppName(*name))
-                          : minted;
+    std::optional<std::string_view> name) -> MintedName {
+  return MintedName{.what = what, .ordinal = ordinal, .source = name};
 }
 
 // The C++ identifier a behavior another unit's class introduced is emitted
@@ -270,7 +290,7 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // both read it here.
 [[nodiscard]] inline auto CppExternalBehaviorName(
     const mir::CompilationUnit& unit, std::string_view unit_name,
-    std::string_view class_name, mir::BehaviorOrdinal ordinal) -> std::string {
+    std::string_view class_name, mir::BehaviorOrdinal ordinal) -> SourceName {
   const mir::ExternalClass* introducer =
       mir::FindExternalClass(unit.external_classes, unit_name, class_name);
   if (introducer == nullptr || ordinal.value >= introducer->behaviors.size()) {
@@ -298,12 +318,14 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // one it was built for.
 [[nodiscard]] inline auto CppClassCallableName(
     const mir::CompilationUnit& unit, const mir::Class& cls,
-    mir::CallableId body) -> std::string {
-  const auto declared_here = [&] {
+    mir::CallableId body) -> CppName {
+  const auto declared_here = [&]() -> CppName {
     const std::optional<std::string_view> name =
         mir::NameOf(cls.named_callables, body);
-    return name.has_value() ? ToCppName(*name)
-                            : MintedCppName("body", body.value);
+    if (name.has_value()) {
+      return ToCppName(*name);
+    }
+    return MintedCppName("body", body.value);
   };
   const std::optional<mir::VirtualDispatchRole>& role =
       cls.callables.Get(body).virtual_dispatch;
@@ -312,14 +334,14 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
   }
   return std::visit(
       Overloaded{
-          [&](const mir::IntroducesVirtualSlot&) -> std::string {
+          [&](const mir::IntroducesVirtualSlot&) -> CppName {
             return declared_here();
           },
-          [&](const mir::OverridesIntraUnitSlot& taken) -> std::string {
+          [&](const mir::OverridesIntraUnitSlot& taken) -> CppName {
             return CppClassCallableName(
                 unit, unit.GetClass(taken.slot_owner), taken.slot_id);
           },
-          [&](const mir::OverridesExternalSlot& taken) -> std::string {
+          [&](const mir::OverridesExternalSlot& taken) -> CppName {
             return CppExternalBehaviorName(
                 unit, taken.unit_name, taken.class_name, taken.ordinal);
           }},
@@ -337,12 +359,12 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // referrer reading the identifier out of the promise it consumed -- each with
 // the slot and whatever identifier it holds, so the two cannot come apart.
 [[nodiscard]] inline auto CppFieldNameOf(
-    mir::FieldId slot, std::optional<std::string_view> name) -> std::string {
+    mir::FieldId slot, std::optional<std::string_view> name) -> MintedName {
   return MintedCppNameWith("field", slot.value, name);
 }
 
 [[nodiscard]] inline auto CppFieldName(
-    std::span<const mir::NamedField> named, mir::FieldId slot) -> std::string {
+    std::span<const mir::NamedField> named, mir::FieldId slot) -> MintedName {
   return CppFieldNameOf(slot, mir::NameOf(named, slot));
 }
 
@@ -355,7 +377,7 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // source identifier does not decide a C++ one, and a slot, being a position, is
 // distinct by being one.
 [[nodiscard]] inline auto CppLocalName(
-    std::span<const mir::NamedLocal> named, mir::LocalId local) -> std::string {
+    std::span<const mir::NamedLocal> named, mir::LocalId local) -> MintedName {
   return MintedCppNameWith("local", local.value, mir::NameOf(named, local));
 }
 
@@ -365,38 +387,44 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // identifier.
 [[nodiscard]] inline auto CppStaticPropertyName(
     std::span<const mir::NamedStaticProperty> named, mir::StaticPropertyId slot)
-    -> std::string {
+    -> CppName {
   const std::optional<std::string_view> name = mir::NameOf(named, slot);
-  return name.has_value() ? ToCppName(*name)
-                          : MintedCppName("cell", slot.value);
+  if (name.has_value()) {
+    return ToCppName(*name);
+  }
+  return MintedCppName("cell", slot.value);
 }
 
 [[nodiscard]] inline auto CppStaticVariableName(
     std::span<const mir::NamedStaticVariable> named,
-    mir::StaticVariableId variable) -> std::string {
+    mir::StaticVariableId variable) -> CppName {
   const std::optional<std::string_view> name = mir::NameOf(named, variable);
-  return name.has_value() ? ToCppName(*name)
-                          : MintedCppName("variable", variable.value);
+  if (name.has_value()) {
+    return ToCppName(*name);
+  }
+  return MintedCppName("variable", variable.value);
 }
 
 // The C++ identifier a class is emitted under. A class the source declared
 // takes its declared name; a scope of the design hierarchy takes a minted name
 // over the identity its unit's registry gave it.
 [[nodiscard]] inline auto CppClassName(const mir::Class& cls, mir::ClassId id)
-    -> std::string {
-  return cls.name.has_value() ? ToCppName(*cls.name)
-                              : MintedCppName("scope", id.value);
+    -> CppName {
+  if (cls.name.has_value()) {
+    return ToCppName(*cls.name);
+  }
+  return MintedCppName("scope", id.value);
 }
 
 // The C++ identifier a gathered-scope aggregate, and one member of one, are
 // emitted under. The source declares no such aggregate, so neither it nor any
 // member of it answers to an identifier and a position is the whole of what
 // names one.
-[[nodiscard]] inline auto CppStructName(mir::StructId id) -> std::string {
+[[nodiscard]] inline auto CppStructName(mir::StructId id) -> MintedName {
   return MintedCppName("scope_storage", id.value);
 }
 
-[[nodiscard]] inline auto CppStructFieldName(mir::FieldId slot) -> std::string {
+[[nodiscard]] inline auto CppStructFieldName(mir::FieldId slot) -> MintedName {
   return CppFieldNameOf(slot, std::nullopt);
 }
 
@@ -405,7 +433,7 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // per-invocation parameters and body locals, so what separates it from them has
 // to be something no source identifier can reach: its position in the closure.
 [[nodiscard]] inline auto CppClosureCaptureName(mir::FieldId slot)
-    -> std::string {
+    -> MintedName {
   return MintedCppName("capture", slot.value);
 }
 
@@ -414,7 +442,7 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // identifier reaches it and its position in the unit's own pool is the whole of
 // its identity.
 [[nodiscard]] inline auto CppTypeDescriptorName(
-    mir::TypeDescriptorId descriptor) -> std::string {
+    mir::TypeDescriptorId descriptor) -> MintedName {
   return MintedCppName("type", descriptor.value);
 }
 
@@ -422,7 +450,7 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // the value, never a name for it, so its position in the unit's own pool is the
 // whole of its identity -- the same answer the description of a type takes.
 [[nodiscard]] inline auto CppIntegralConstantName(mir::IntegralConstantId c)
-    -> std::string {
+    -> MintedName {
   return MintedCppName("const", c.value);
 }
 
@@ -431,12 +459,12 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // over the position it sits at in the arena its class owns -- the same identity
 // every reference to one already carries.
 [[nodiscard]] inline auto CppAbiAdapterName(mir::AbiAdapterId id)
-    -> std::string {
+    -> MintedName {
   return MintedCppName("adapter", id.value);
 }
 
 [[nodiscard]] inline auto CppStaticConstantName(mir::StaticConstantId id)
-    -> std::string {
+    -> MintedName {
   return MintedCppName("constant", id.value);
 }
 
@@ -444,8 +472,8 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // constant of a class that another unit spells, and a position counted in this
 // unit's arena is not something that unit can count -- so it is named off the
 // class, which both sides already agree on.
-[[nodiscard]] inline auto CppObjectRecordName() -> std::string {
-  return std::format("{}object_record", kMintedPrefix);
+[[nodiscard]] inline auto CppObjectRecordName() -> MintedWord {
+  return MintedWord{.word = "object_record"};
 }
 
 // The identifier a class states its object record under for the allocation to
@@ -461,22 +489,22 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // foreign side must see it, so it crosses as itself -- and it must, since the
 // user's own C source names it and nothing maps that.
 [[nodiscard]] inline auto CppForeignSymbolName(std::string_view linkage_name)
-    -> std::string {
-  return std::string{linkage_name};
+    -> VerbatimName {
+  return VerbatimName{.text = linkage_name};
 }
 
 // The C++ identifier a body of a unit that answers to no name is emitted under.
 // Another unit's emitted text names it and the source declares no name for it,
 // so both ends compose it from which of them it is.
 [[nodiscard]] inline auto CppMintedEntryName(mir::MintedEntry entry)
-    -> std::string {
+    -> MintedWord {
   switch (entry) {
     case mir::MintedEntry::kInstallStorage:
-      return std::format("{}install_namespace_storage", kMintedPrefix);
+      return MintedWord{.word = "install_namespace_storage"};
     case mir::MintedEntry::kInitializeStorage:
-      return std::format("{}initialize_namespace_storage", kMintedPrefix);
+      return MintedWord{.word = "initialize_namespace_storage"};
     case mir::MintedEntry::kMakeObject:
-      return std::format("{}create", kMintedPrefix);
+      return MintedWord{.word = "create"};
   }
   throw InternalError("backend::cpp: unknown minted entry");
 }
@@ -487,17 +515,19 @@ inline constexpr auto kCppReservedWords = std::to_array<std::string_view>(
 // over the position it sits at, the way a class's own unnamed bodies already
 // do.
 [[nodiscard]] inline auto CppUnitCallableName(
-    const mir::CompilationUnit& unit, mir::CallableId body) -> std::string {
+    const mir::CompilationUnit& unit, mir::CallableId body) -> CppName {
   return std::visit(
       Overloaded{
-          [](const mir::ReachedByLinkageName& r) {
+          [](const mir::ReachedByLinkageName& r) -> CppName {
             return CppForeignSymbolName(r.name);
           },
-          [](const mir::ReachedByName& r) { return ToCppName(r.name); },
-          [](const mir::ReachedByMintedEntry& r) {
+          [](const mir::ReachedByName& r) -> CppName {
+            return ToCppName(r.name);
+          },
+          [](const mir::ReachedByMintedEntry& r) -> CppName {
             return CppMintedEntryName(r.entry);
           },
-          [](const mir::ReachedByPosition& r) {
+          [](const mir::ReachedByPosition& r) -> CppName {
             return MintedCppName("body", r.slot.value);
           }},
       mir::NamespaceReachOf(unit, body));

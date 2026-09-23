@@ -621,10 +621,11 @@ the detail lives in the entry itself.
   what a change recompiles.
 - [rendered-text-is-written-once](rendered-text-is-written-once.md) -- a render entry writes into
   the artifact it is producing and answers with no text, so a byte is not copied once per level of
-  nesting above it and no format description is read while the program runs. A name stays a value
-  because it has readers besides the artifact; what the destination owns is where a line opens, the
-  blank line between sections, and the depth a body opens at. Making the format calls cheaper and
-  answering with a lazy concatenation are rejected.
+  nesting above it and no format description is read while the program runs. A name and a type are
+  decided in one place and written the same way, and only a reader needing the characters -- a file
+  path -- builds a value; what the destination owns is where a line opens, the blank line between
+  sections, and the depth a body opens at. Making the format calls cheaper and answering with a lazy
+  concatenation are rejected.
 - [only-a-base-links-two-signatures](only-a-base-links-two-signatures.md) -- a unit emits its
   declarations and its bodies as two files compiled separately and linked. The declarations reach
   another unit through a pointer and so name the class without its file; a base is the one name

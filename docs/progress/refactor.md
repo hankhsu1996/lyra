@@ -825,7 +825,7 @@ enough to warrant its own focused review.
       side table is not a stray smell to patch: it is the correct consequence of structural
       interning -- one shared interned enum backs several typedefs, so it has no single intrinsic
       name. Target shape: an enum is interned by declaration identity, its name and member set live
-      on a nominal enum declaration reached from the type by id, and `RenderTypeAsCpp` resolves an
+      on a nominal enum declaration reached from the type by id, and the type mapping resolves an
       enum's name the same way it resolves a struct's or a class's; the unit side table, the
       enum-only typedef branch, and the dedicated enum-name renderer all retire, and distinct enum
       declarations become distinct types. The enum's value representation -- its base packed shape
@@ -2342,11 +2342,18 @@ enough to warrant its own focused review.
       default build, where this compiler's own code is inflated and the library primitives this
       change removes are not, so neither figure is the one a released compiler would show.
 
+      **Names and type spellings were left out on first landing, and they were the larger half.**
+      They were kept as values on the ground that a name has readers besides the artifact, which
+      grounds deciding one in one place and not building one at every mention. Measured with an
+      optimized build over 256 distinct unit specializations, the format calls left there were
+      30.5% of the run; with names and types written too, 683,818,727 instructions became
+      507,852,755, **25.7% fewer**, and the design nesting two hundred deep 4,137,785,696 and
+      3,420,803,905, **17.3% fewer**. The whole corpus emits the same 6,412 files to the byte.
+
       [../decisions/rendered-text-is-written-once.md](../decisions/rendered-text-is-written-once.md)
-      holds what a destination owns and why a name stays a value. What stops the shape coming back
-      is that the entries answer with nothing, so writing it no longer compiles, and a policy rule
-      refuses a format call where a node's text is written -- the two cannot be told apart by any
-      rule a type system can state, since both answer with a string.
+      holds what a destination owns and how a name and a type are written. What stops the shape
+      coming back is that the entries answer with nothing, so writing it no longer compiles, and a
+      policy rule refuses a format call anywhere in the backend.
 
 - [ ] R138 -- The three intermediate-form dumps compose their text the way the C++ backend used to.
       Each node answers with a string and whoever asked for it copies that string into the one it is
