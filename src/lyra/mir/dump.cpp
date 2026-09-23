@@ -243,11 +243,7 @@ class MirDumper {
                   "CrossUnit(\"{}::{}\")", e.unit_name, e.class_name);
             },
             [](const RuntimeClassRef& e) -> std::string {
-              return std::format(
-                  R"(Runtime("{}", resolve=Callable[{}], )"
-                  "initialize=Callable[{}], create=Callable[{}])",
-                  e.symbol, e.resolve_state.value, e.initialize_state.value,
-                  e.create_processes.value);
+              return std::format(R"(Runtime("{}"))", e.symbol);
             }},
         ref);
   }
@@ -638,15 +634,17 @@ class MirDumper {
         role);
   }
 
-  [[nodiscard]] static auto FormatStoragePhase(NamespaceStoragePhase phase)
+  [[nodiscard]] static auto FormatMintedEntry(MintedEntry entry)
       -> std::string_view {
-    switch (phase) {
-      case NamespaceStoragePhase::kInstall:
-        return "install";
-      case NamespaceStoragePhase::kInitialize:
-        return "initialize";
+    switch (entry) {
+      case MintedEntry::kInstallStorage:
+        return "install_storage";
+      case MintedEntry::kInitializeStorage:
+        return "initialize_storage";
+      case MintedEntry::kMakeObject:
+        return "make_object";
     }
-    throw InternalError("mir dump: unknown namespace storage phase");
+    throw InternalError("mir dump: unknown minted entry");
   }
 
   [[nodiscard]] auto FormatDirectTarget(const DirectTarget& target) const
@@ -677,10 +675,10 @@ class MirDumper {
                   "external_class_method={}::{}::{}", e.unit_name, e.class_name,
                   e.method_name);
             },
-            [](const ExternalUnitStorageTarget& e) -> std::string {
+            [](const ExternalUnitMintedEntryTarget& e) -> std::string {
               return std::format(
-                  "external_unit_storage={}::{}", e.unit_name,
-                  FormatStoragePhase(e.phase));
+                  "external_unit_minted_entry={}::{}", e.unit_name,
+                  FormatMintedEntry(e.entry));
             },
             [](const ForeignSymbolTarget& f) -> std::string {
               return std::format("foreign_symbol=\"{}\"", f.linkage_name);
@@ -728,7 +726,8 @@ class MirDumper {
             },
             [](const FunctionRef& fr) -> std::string {
               return std::format(
-                  "FunctionRef adapter=AbiAdapter[{}]", fr.adapter.value);
+                  "FunctionRef Class[{}]::AbiAdapter[{}]", fr.owner.value,
+                  fr.adapter.value);
             },
             [](const StaticConstantRef& r) -> std::string {
               return std::format(
@@ -886,12 +885,6 @@ class MirDumper {
                                 "Closure[{}]::Field[{}]", t.owner.value,
                                 t.slot.value);
                           },
-                          [](const ExternalUnitObjectFieldTarget& t)
-                              -> std::string {
-                            return std::format(
-                                "ExternalUnitObject(#{})::Field[{}]",
-                                t.owner.value, t.slot.value);
-                          },
                           [](const CrossUnitClassFieldTarget& t)
                               -> std::string {
                             return std::format(
@@ -952,6 +945,16 @@ class MirDumper {
 
     if (s.base.has_value()) {
       Line(std::format("Base: {}", FormatClassRef(*s.base)));
+    }
+
+    if (s.tree_program.has_value()) {
+      Line(
+          std::format(
+              "TreeProgram: resolve=Callable[{}], initialize=Callable[{}], "
+              "create=Callable[{}]",
+              s.tree_program->resolve_state.value,
+              s.tree_program->initialize_state.value,
+              s.tree_program->create_processes.value));
     }
 
     for (const auto& impl : s.implements) {

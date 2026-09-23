@@ -98,6 +98,18 @@ struct ConstructorDecl {
   std::vector<ExprId> base_args;
 };
 
+// The bodies the runtime enters on an object of a class it drives. Held
+// together because the runtime enters all three or none: a class that supplies
+// one supplies every one, so a consumer reads the group rather than asking
+// three times whether the next is there.
+struct ObjectTreeProgram {
+  CallableId resolve_state;
+  CallableId initialize_state;
+  CallableId create_processes;
+
+  auto operator==(const ObjectTreeProgram&) const -> bool = default;
+};
+
 struct Class {
   // The identifier the source declared this class under, absent where the
   // source declared no class at all -- a scope of the design hierarchy is one
@@ -123,6 +135,20 @@ struct Class {
   // does not, which is what makes "did the source write this" a question the
   // class answers rather than one a consumer reads out of a spelling.
   std::vector<NamedField> named_fields;
+  // How the runtime drives objects of this class, for a class it drives at
+  // all. The three bodies run in the order they stand here: every route and
+  // alias is bound while the tree is complete and nothing has run, then every
+  // cell takes the value its declaration gives it (LRM 10.5), then every
+  // process is created (LRM 9.2). Each is entered on one instance and returns
+  // before the next begins, which is why they are three bodies rather than one
+  // with phases inside it.
+  //
+  // They are this class's own bodies, so this class states them; what roots an
+  // object in the tree is what it extends, and that says nothing about how one
+  // runs. A class rooted there supplying none is one nothing constructs -- what
+  // a unit promises of its object, which states what may be reached and never
+  // how it runs.
+  std::optional<ObjectTreeProgram> tree_program;
   ConstructorDecl constructor;
   // The classes this one structurally owns -- the children it builds. Each
   // names a registry identity, in construction order. Ownership of the

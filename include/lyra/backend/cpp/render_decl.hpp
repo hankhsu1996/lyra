@@ -1,7 +1,9 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::backend::cpp {
@@ -15,13 +17,38 @@ struct UnitText {
   std::string code;
 };
 
-// Every class of the unit. The signature carries each class body -- which every
-// reference and every base derivation needs to see -- led by the forward
-// declarations that let a field or a parameter name a class whose own body has
-// not been reached yet; the code carries the member definitions, which need
-// every class of the unit complete, since a scope's body reaches its parent's
-// members while the parent's own body builds that scope.
-auto RenderUnitClasses(const mir::CompilationUnit& unit) -> UnitText;
+// Every declaration of the unit named before it is written out, in the artifact
+// whose text names it. It leads each artifact because everything after it may
+// name one: a field or a parameter reaching a class whose body has not been
+// written yet, and a signature naming the object of the unit it belongs to. A
+// forward declaration is a property of the artifact rather than of any one
+// declaration in it, which is why it is not produced with the bodies below.
+auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
+    -> UnitText;
+
+// One class another unit may name, written on its own. Nothing may be written
+// beside it: a reader entering files in any order has to be able to reach the
+// class this one rests on without reaching this one, and a file it had already
+// entered would give it nothing.
+struct PromisedClass {
+  mir::ClassId id;
+  std::string text;
+};
+
+// Every class of the unit, split by where each piece is written. A class
+// another unit may name is part of what this unit promised, so it is written
+// where a referrer compiles, one to a file; every other class is the unit's
+// own, however the source named it, and goes with the code. The definitions
+// follow every declaration of every kind, since a member definition may name
+// any class of the unit -- a scope's body reaches its parent's members while
+// the parent's own body builds that scope.
+struct UnitClasses {
+  std::vector<PromisedClass> promised;
+  std::string internal;
+  std::string definitions;
+};
+
+auto RenderUnitClasses(const mir::CompilationUnit& unit) -> UnitClasses;
 
 // Every callable the unit owns directly -- a package function or task, a DPI-C
 // import's prototype, the entry point of an export its own namespace defines --

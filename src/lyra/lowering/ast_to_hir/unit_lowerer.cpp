@@ -80,6 +80,7 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
     }
     unit_.root_scope.published_members.push_back(*decl);
   }
+  unit_.root_scope.published_callables = std::move(published_callables_);
   return std::move(unit_);
 }
 

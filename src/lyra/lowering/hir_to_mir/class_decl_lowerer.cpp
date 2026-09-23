@@ -229,7 +229,7 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
 
   std::optional<mir::ClassRef> base_ref;
   if (hir_class.base.has_value()) {
-    base_ref = unit_lowerer.TranslateBaseClassRef(*hir_class.base);
+    base_ref = unit_lowerer.TranslateClassRef(*hir_class.base);
   }
   std::vector<mir::ClassRef> implements;
   implements.reserve(hir_class.implements.size());

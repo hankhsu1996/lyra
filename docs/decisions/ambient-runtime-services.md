@@ -223,9 +223,9 @@ incidentally coupled under the module-only design; they are semantically indepen
 - HIR-to-MIR: `BuildCurrentRuntimeCallExpr(unit)` (zero frame dependency) is the site every
   runtime-effect lowering calls to obtain the runtime handle. The receiver-based construction helper
   (previously reached via a frame's `current_class`) is retired. The MIR-side runtime scope ctor
-  prefix no longer threads a runtime handle in; child-instance construction stops passing it; the
-  JIT ABI's `lyra_rt_make_unit` drops its runtime argument; the emit shim `BuildRoot()` becomes
-  zero-argument; `simulation_entry.hpp::RootBuilder` becomes `std::unique_ptr<Scope> (*)()`.
+  prefix no longer threads a runtime handle in, and nothing on the path that makes an object carries
+  one: not a child instance's construction, not the entry a host asks the design's root for, and not
+  the boundary entry either backend reaches an object through.
 
 - Callable-receiver invariant: `callable-receiver.md`'s "every SV callable's first binding is
   `self`" rule stays intact for the callables it was written for -- instance-method-shaped bodies.

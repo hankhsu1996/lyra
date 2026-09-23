@@ -1,4 +1,4 @@
-#include "lyra/runtime/managed_object.hpp"
+#include "lyra/runtime/class_definition.hpp"
 
 #include <cstdint>
 #include <format>
@@ -9,20 +9,12 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/runtime/class_value.hpp"
 #include "lyra/runtime/scope_program.hpp"
 
 namespace lyra::runtime {
 
 namespace {
-
-// The definition, checked before anything is read from it, because a reference
-// to a class with no definition is a linkage failure rather than a value.
-auto Checked(const ObjectDefinition* definition) -> const ObjectDefinition* {
-  if (definition == nullptr) {
-    throw InternalError("ManagedObject: the object has no definition");
-  }
-  return definition;
-}
 
 auto Text(AbiStringRef name) -> std::string_view {
   return {name.data, name.size};
@@ -60,55 +52,31 @@ auto Find(const ObjectDefinition* cls, auto table, std::string_view name)
   return nullptr;
 }
 
-// The body the class `of` answers `introduced_by`'s `ordinal`-th behavior with
-// (LRM 8.20, 8.22), read off the table its lineage left flat.
-auto MethodOf(
-    const ObjectDefinition* of, const ObjectDefinition* introduced_by,
-    std::uint32_t ordinal) -> ErasedMethodEntry {
-  const std::uint32_t position =
-      Checked(introduced_by)->first_behavior + ordinal;
-  const std::span<const ErasedMethodEntry> entries = of->methods.Entries();
-  if (position >= entries.size()) {
-    throw InternalError(
-        "ManagedObject: the object's class holds no dispatch position this "
-        "call names");
-  }
-  // A position nothing in the lineage supplied a body for belongs to a class
-  // LRM 8.21 forbids constructing, so an object holding one is a class that was
-  // built when it should not have been rather than a call that went wrong.
-  if (entries[position] == nullptr) {
-    throw InternalError(
-        "ManagedObject: the object's class supplies no body for the dispatch "
-        "position this call names");
-  }
-  return entries[position];
-}
-
 // The two answers a class whose storage the runtime owns gives. They are the
-// same for every such class, because what they read is the object's own storage
+// same for every such class, because what they read is the value's own storage
 // and its own dispatch table rather than anything one class settled.
 auto RuntimeOwnedPropertyAt(
-    const GcObject* object, const ObjectDefinition* declared_by,
-    std::uint32_t slot) -> void* {
-  return static_cast<ManagedObject*>(object->IdentityAddress())
-      ->MemberAddress(declared_by, slot);
+    GcObject* object, const ObjectDefinition* declared_by, std::uint32_t slot)
+    -> void* {
+  return static_cast<ClassValue*>(object->IdentityAddress())
+      ->Member(declared_by, slot);
 }
 
 auto RuntimeOwnedBehaviorAt(
-    const GcObject* object, const ObjectDefinition* introduced_by,
+    GcObject* object, const ObjectDefinition* introduced_by,
     std::uint32_t ordinal) -> ErasedMethodEntry {
-  return MethodOf(Checked(object->Class()), introduced_by, ordinal);
+  return BodyOf(object->Class(), introduced_by, ordinal);
 }
 
 // The object a coordinate is applied to, checked once for the two ways it can
 // fail to answer. Naming no object is the design's own failure (LRM 8.4);
 // naming one whose class answers nothing is a class that was brought up
 // incompletely, which is a bug in whoever generated it.
-auto Answering(const GcObject* object) -> const GcObject* {
+auto Answering(GcObject* object) -> GcObject* {
   if (object == nullptr) {
     value::RaiseNullObjectHandleAccess();
   }
-  const ObjectDefinition* of = Checked(object->Class());
+  const ObjectDefinition* of = RequireDefinition(object->Class());
   if (of->property_at == nullptr || of->behavior_at == nullptr) {
     throw InternalError(
         "an object's class was brought up without the answers a name resolved "
@@ -125,6 +93,14 @@ auto NoSuchName(std::string_view what, std::string_view name) -> std::string {
 }
 
 }  // namespace
+
+auto RequireDefinition(const ObjectDefinition* definition)
+    -> const ObjectDefinition* {
+  if (definition == nullptr) {
+    throw InternalError("class definition: the value has no definition");
+  }
+  return definition;
+}
 
 void RealizeClass(
     const ClassContribution& adds, RealizedClass& realization,
@@ -146,7 +122,7 @@ void RealizeClass(
   definition.base = adds.base;
   definition.first_member = base.members.size;
   definition.first_behavior = base.methods.size;
-  // Realizing a class here is what gives its objects runtime-owned storage, so
+  // Realizing a class here is what gives its values runtime-owned storage, so
   // the answers that read that storage are this step's to install.
   definition.property_at = &RuntimeOwnedPropertyAt;
   definition.behavior_at = &RuntimeOwnedBehaviorAt;
@@ -157,7 +133,7 @@ void RealizeClass(
 
   for (const DispatchTakeover& taken : adds.takeovers) {
     const std::uint32_t position =
-        Checked(taken.introduced_by)->first_behavior + taken.ordinal;
+        RequireDefinition(taken.introduced_by)->first_behavior + taken.ordinal;
     if (position >= realization.methods.size()) {
       throw InternalError(
           "RealizeClass: a class takes over a behavior its lineage does not "
@@ -183,10 +159,33 @@ void RealizeClass(
       static_cast<std::uint32_t>(realization.body_names.size())};
 }
 
+auto BodyOf(
+    const ObjectDefinition* cls, const ObjectDefinition* introduced_by,
+    std::uint32_t ordinal) -> ErasedMethodEntry {
+  const std::uint32_t position =
+      RequireDefinition(introduced_by)->first_behavior + ordinal;
+  const std::span<const ErasedMethodEntry> entries =
+      RequireDefinition(cls)->methods.Entries();
+  if (position >= entries.size()) {
+    throw InternalError(
+        "class definition: the value's class holds no dispatch position this "
+        "call names");
+  }
+  // A position nothing in the lineage supplied a body for belongs to a class
+  // LRM 8.21 forbids constructing, so a value holding one is a class that was
+  // built when it should not have been rather than a call that went wrong.
+  if (entries[position] == nullptr) {
+    throw InternalError(
+        "class definition: the value's class supplies no body for the dispatch "
+        "position this call names");
+  }
+  return entries[position];
+}
+
 auto FindProperty(const ObjectDefinition* cls, std::string_view name)
     -> const PropertyCoordinate* {
   const auto* found = Find<ResolvedProperty>(
-      Checked(cls), &ObjectDefinition::property_names, name);
+      RequireDefinition(cls), &ObjectDefinition::property_names, name);
   if (found == nullptr) {
     throw SimulationError(NoSuchName("a property", name));
   }
@@ -196,7 +195,7 @@ auto FindProperty(const ObjectDefinition* cls, std::string_view name)
 auto FindBehavior(const ObjectDefinition* cls, std::string_view name)
     -> const BehaviorCoordinate* {
   const auto* found = Find<ResolvedBehavior>(
-      Checked(cls), &ObjectDefinition::behavior_names, name);
+      RequireDefinition(cls), &ObjectDefinition::behavior_names, name);
   if (found == nullptr) {
     throw SimulationError(NoSuchName("a behavior", name));
   }
@@ -205,8 +204,8 @@ auto FindBehavior(const ObjectDefinition* cls, std::string_view name)
 
 auto FindBehaviorBody(const ObjectDefinition* cls, std::string_view name)
     -> ErasedMethodEntry {
-  const auto* found =
-      Find<DeclaredBody>(Checked(cls), &ObjectDefinition::body_names, name);
+  const auto* found = Find<DeclaredBody>(
+      RequireDefinition(cls), &ObjectDefinition::body_names, name);
   if (found == nullptr) {
     throw SimulationError(NoSuchName("a behavior", name));
   }
@@ -214,12 +213,12 @@ auto FindBehaviorBody(const ObjectDefinition* cls, std::string_view name)
 }
 
 auto LineagePropertyAt(
-    const GcObject* object, const ObjectDefinition* declared_by,
-    std::uint32_t slot) -> void* {
+    GcObject* object, const ObjectDefinition* declared_by, std::uint32_t slot)
+    -> void* {
   void* self = object->IdentityAddress();
-  for (const ObjectDefinition* at = Checked(object->Class()); at != nullptr;
-       at = at->base) {
-    if (at == Checked(declared_by)) {
+  for (const ObjectDefinition* at = RequireDefinition(object->Class());
+       at != nullptr; at = at->base) {
+    if (at == RequireDefinition(declared_by)) {
       const std::span<const PropertySlotEntry> entries =
           at->property_slots.Entries();
       if (slot >= entries.size()) {
@@ -235,19 +234,19 @@ auto LineagePropertyAt(
     self = at->to_base(self);
   }
   throw InternalError(
-      "the class an access names is not one the object's own class extends");
+      "the class an access names is not one the value's own class extends");
 }
 
 auto LineageBehaviorAt(
-    const GcObject* object, const ObjectDefinition* introduced_by,
+    GcObject* object, const ObjectDefinition* introduced_by,
     std::uint32_t ordinal) -> ErasedMethodEntry {
   // A class takes a behavior over from whatever introduced it (LRM 8.20), and
-  // the object's own class is where the answer starts, so the first class in
-  // the walk that answers this position is the one whose body runs (LRM 8.22).
-  for (const ObjectDefinition* at = Checked(object->Class()); at != nullptr;
-       at = at->base) {
+  // the value's own class is where the answer starts, so the first class in the
+  // walk that answers this position is the one whose body runs (LRM 8.22).
+  for (const ObjectDefinition* at = RequireDefinition(object->Class());
+       at != nullptr; at = at->base) {
     for (const DispatchTakeover& taken : at->takeovers.Entries()) {
-      if (taken.introduced_by == Checked(introduced_by) &&
+      if (taken.introduced_by == RequireDefinition(introduced_by) &&
           taken.ordinal == ordinal) {
         return taken.body;
       }
@@ -256,8 +255,8 @@ auto LineageBehaviorAt(
       const std::span<const ErasedMethodEntry> entries =
           at->introductions.Entries();
       // A position nothing in the lineage supplied a body for belongs to a
-      // class LRM 8.21 forbids constructing, so an object holding one is a
-      // class that was built when it should not have been.
+      // class LRM 8.21 forbids constructing, so a value holding one is a class
+      // that was built when it should not have been.
       if (ordinal >= entries.size() || entries[ordinal] == nullptr) {
         throw InternalError(
             "the class that introduced the behavior this call names supplies "
@@ -268,30 +267,20 @@ auto LineageBehaviorAt(
   }
   throw InternalError(
       "the class that introduced the behavior this call names is not one the "
-      "object's own class extends");
-}
-
-ManagedObject::ManagedObject(const ObjectDefinition* definition)
-    : members_(Checked(definition)->members) {
-  AdoptClass(definition);
-}
-
-auto ManagedObject::MemberAddress(
-    const ObjectDefinition* declared_by, std::uint32_t slot) -> void* {
-  return members_.Address(Checked(declared_by)->first_member + slot);
+      "value's own class extends");
 }
 
 auto ObjectOf(const value::ManagedRef& handle) -> void* {
-  return Answering(static_cast<const GcObject*>(handle.Share().get()))
+  return Answering(static_cast<GcObject*>(handle.Share().get()))
       ->IdentityAddress();
 }
 
-auto PropertyAt(const GcObject* object, const PropertyCoordinate* at) -> void* {
+auto PropertyAt(GcObject* object, const PropertyCoordinate* at) -> void* {
   return Answering(object)->Class()->property_at(
       object, at->declared_by, at->slot);
 }
 
-auto BehaviorAt(const GcObject* object, const BehaviorCoordinate* at)
+auto BehaviorAt(GcObject* object, const BehaviorCoordinate* at)
     -> ErasedMethodEntry {
   return Answering(object)->Class()->behavior_at(
       object, at->introduced_by, at->ordinal);
@@ -307,7 +296,7 @@ auto ObjectIsOfClass(
   for (const ObjectDefinition* at = object == nullptr ? nullptr
                                                       : object->Class();
        at != nullptr; at = at->base) {
-    if (at == Checked(wanted)) {
+    if (at == RequireDefinition(wanted)) {
       return 1;
     }
   }

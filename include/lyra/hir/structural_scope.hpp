@@ -546,10 +546,19 @@ struct StructuralScope {
   base::Arena<StructuralDataObjectDecl, StructuralDataObjectId>
       structural_data_objects;
   // The declarations this unit published, in the order its signature states
-  // them -- which is where their storage sits, since a referrer counts a
-  // published member's position out of that same order. Empty for a scope no
-  // other unit names, which is every scope but the one a unit's instances are.
+  // them -- which is the order the promise states a behavior for each of them
+  // in, since a referrer counts which behavior it wants out of that same order.
+  // Empty for a scope no other unit names, which is every scope but the one a
+  // unit's instances are.
   std::vector<PublishedDecl> published_members;
+  // The subroutines this unit published, by the identifier its signature states
+  // each under and in that same order, which continues the order above: a
+  // promise states a behavior per published member and then one per published
+  // subroutine. A name is what crosses because a name is what the signature
+  // carries, and the scope answers it from its own subroutines -- an identifier
+  // the signature minted for a view being one of those like any other. Empty on
+  // the same scopes the list above is.
+  std::vector<std::string> published_callables;
   base::Arena<Expr, ExprId> exprs;
   base::Arena<Pattern, PatternId> patterns;
   base::Registry<Process, ProcessId> processes;

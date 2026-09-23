@@ -8,6 +8,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -42,6 +43,7 @@
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -84,6 +86,117 @@ auto ConstructionValueOf(const hir::StructuralScope& scope)
     }
   }
   return std::nullopt;
+}
+
+// A class while it is being built: the class, the constructor a value of it is
+// entered through, and the locals that constructor hands its base. The three
+// are settled together and travel together -- whoever installs the runtime's
+// record and whoever finishes the constructor want all of them -- so which
+// class is meant is decided once rather than once per part.
+struct ClassUnderConstruction {
+  mir::Class* cls = nullptr;
+  mir::CallableCode* ctor = nullptr;
+  const std::vector<mir::LocalId>* prefix = nullptr;
+};
+
+// What a unit promised of its object, before its construction protocol is
+// settled: the class under construction, and the behavior stated for each
+// published member, which the realizing class takes over once it has one.
+struct BuiltPromise {
+  mir::Class cls;
+  mir::CallableCode ctor;
+  std::vector<mir::LocalId> ctor_prefix;
+  std::vector<PromisedAccessor> accessors;
+};
+
+// Builds what a unit promised of its object: a behavior per published member,
+// each answering with the storage behind that member, over the base that roots
+// an object in the runtime's tree. It declares no storage and defines no body
+// -- what each behavior answers with is the realizing class's, that being the
+// only thing that ever builds one -- so the constructor here forwards what it
+// is handed and stops.
+//
+// It is the promise rather than the realization that stands directly in the
+// tree, so whatever a target's tree class has to be entered with is entered
+// here. Nothing of it reaches the realization's own signature as a result,
+// which is what keeps a record only one target reads out of every signature.
+auto BuildPromise(
+    mir::CompilationUnit& unit, mir::ClassId promise, std::string name,
+    std::span<const PromisedMember> members,
+    std::span<const PromisedSubroutine> subroutines,
+    const mir::Class& realization) -> BuiltPromise {
+  const mir::TypeId self_pointer = unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit.types.Intern(
+              mir::Type{mir::ObjectType{.class_id = promise}}),
+          .ownership = mir::PointerOwnership::kBorrowed}});
+
+  mir::CallableCode ctor = mir::CallableCode::Defined();
+  const mir::LocalId ctor_self = ctor.AddLocal(self_pointer);
+  std::vector<mir::LocalId> prefix;
+  for (const mir::TypeId type :
+       {unit.builtins.scope_ptr, unit.builtins.hierarchy_segment}) {
+    prefix.push_back(ctor.AddLocal(type));
+  }
+  ctor.params = {ctor_self, prefix[0], prefix[1]};
+  ctor.result_type = unit.builtins.void_type;
+
+  mir::Class cls;
+  cls.name = std::move(name);
+  cls.base = mir::ClassRef{
+      mir::RuntimeClassRef{.symbol = std::string{mir::kObjectTreeClassSymbol}}};
+  cls.self_pointer_type = self_pointer;
+
+  std::vector<PromisedAccessor> stated;
+  stated.reserve(members.size());
+  for (const PromisedMember& member : members) {
+    mir::CallableCode code{};
+    const mir::LocalId self = code.AddLocal(self_pointer);
+    code.params = {self};
+    code.result_type = unit.types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = member.cell_type,
+            .ownership = mir::PointerOwnership::kBorrowed}});
+    const mir::CallableId id = cls.callables.Add(
+        mir::CallableDecl{
+            .code = std::move(code),
+            .foreign = std::nullopt,
+            .virtual_dispatch =
+                mir::VirtualDispatchRole{mir::IntroducesVirtualSlot{}}});
+    cls.named_callables.push_back(
+        mir::NamedCallable{.name = member.name, .body = id});
+    stated.push_back(PromisedAccessor{.behavior = id, .cell = member.cell});
+  }
+
+  // A published subroutine is a behavior like any other, stated with the
+  // signature the realizing body already has -- its own formals unchanged, and
+  // the object it is entered on retyped to what a referrer holds.
+  for (const PromisedSubroutine& subroutine : subroutines) {
+    const mir::CallableCode& body =
+        realization.callables.Get(subroutine.body).code;
+    mir::CallableCode code{};
+    code.params.reserve(body.params.size());
+    code.params.push_back(code.AddLocal(self_pointer));
+    for (std::size_t at = 1; at < body.params.size(); ++at) {
+      code.params.push_back(
+          code.AddLocal(body.locals.Get(body.params[at]).type));
+    }
+    code.result_type = body.result_type;
+    const mir::CallableId id = cls.callables.Add(
+        mir::CallableDecl{
+            .code = std::move(code),
+            .foreign = std::nullopt,
+            .virtual_dispatch =
+                mir::VirtualDispatchRole{mir::IntroducesVirtualSlot{}}});
+    cls.named_callables.push_back(
+        mir::NamedCallable{.name = subroutine.name, .body = id});
+  }
+
+  return BuiltPromise{
+      .cls = std::move(cls),
+      .ctor = std::move(ctor),
+      .ctor_prefix = std::move(prefix),
+      .accessors = std::move(stated)};
 }
 
 auto MakeUniqueObjectPointer(UnitLowerer& unit_lowerer, mir::ClassId class_id)
@@ -156,9 +269,9 @@ auto BuildSequenceIndex(
 // the position-free case, built by the same expression.
 auto BuildOwnedInstance(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId parent_self,
-    const std::string& runtime_label, mir::TypeId owning_pointer_type,
-    mir::TypeId borrowed_pointer_type, std::span<const mir::LocalId> coords)
-    -> mir::ExprId {
+    const std::string& runtime_label, std::string_view declaring_unit,
+    mir::TypeId owning_pointer_type, mir::TypeId borrowed_pointer_type,
+    std::span<const mir::LocalId> coords) -> mir::ExprId {
   mir::Block& block = *frame.current_block;
   const auto& builtins = unit_lowerer.Unit().builtins;
 
@@ -186,11 +299,19 @@ auto BuildOwnedInstance(
                        indices_id}},
           .type = builtins.hierarchy_segment});
 
+  // This unit consumed what the instantiated one promised, and a promise states
+  // what may be reached and never how much storage an object takes, so the
+  // object is asked for rather than made here.
   const mir::ExprId ctor_call_id = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Construct{},
+                  .callee =
+                      mir::Direct{
+                          .target =
+                              mir::ExternalUnitMintedEntryTarget{
+                                  .unit_name = std::string{declaring_unit},
+                                  .entry = mir::MintedEntry::kMakeObject}},
                   .arguments = {parent_self, segment_id}},
           .type = owning_pointer_type});
 
@@ -224,15 +345,16 @@ auto BuildOwnedInstance(
 // steps below own and nothing else can name.
 auto BuildInstanceMemberValue(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    const hir::InstanceMemberDecl& member, mir::TypeId owning,
-    mir::TypeId borrowed, std::vector<mir::LocalId>& coords) -> mir::ExprId {
+    const hir::InstanceMemberDecl& member, std::string_view declaring_unit,
+    mir::TypeId owning, mir::TypeId borrowed, std::vector<mir::LocalId>& coords)
+    -> mir::ExprId {
   mir::Block& block = *frame.current_block;
   if (coords.size() == member.array_dims.size()) {
     const mir::ExprId parent_self = block.exprs.Add(
         MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
     return BuildOwnedInstance(
-        unit_lowerer, frame, parent_self, member.instance_name, owning,
-        borrowed, coords);
+        unit_lowerer, frame, parent_self, member.instance_name, declaring_unit,
+        owning, borrowed, coords);
   }
 
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
@@ -256,7 +378,8 @@ auto BuildInstanceMemberValue(
   const WalkFrame element_frame = steps.Frame().WithBlock(&element_block);
   coords.push_back(position);
   const mir::ExprId element = BuildInstanceMemberValue(
-      unit_lowerer, element_frame, member, owning, borrowed, coords);
+      unit_lowerer, element_frame, member, declaring_unit, owning, borrowed,
+      coords);
   coords.pop_back();
 
   const mir::ExprId grown = element_block.exprs.Add(
@@ -306,9 +429,14 @@ void EmitInstanceMemberConstruction(
         unit_lowerer, im, mir::PointerOwnership::kUnique);
     const mir::TypeId borrowed = MakeExternalUnitPointer(
         unit_lowerer, im, mir::PointerOwnership::kBorrowed);
+    const std::string& declaring_unit =
+        unit_lowerer.Unit()
+            .external_unit_objects
+            .Get(unit_lowerer.TranslateExternalUnitObject(im.object))
+            .unit_name;
     std::vector<mir::LocalId> coords;
     const mir::ExprId value = BuildInstanceMemberValue(
-        unit_lowerer, frame, im, owning, borrowed, coords);
+        unit_lowerer, frame, im, declaring_unit, owning, borrowed, coords);
     const mir::TypeId member_type =
         SequenceOver(unit_lowerer, borrowed, im.array_dims.size());
     const mir::ExprId member = block.exprs.Add(
@@ -625,21 +753,40 @@ auto StepThroughInterfacePort(
   return RouteReceiver{.expr = object.expr, .target = ExternalObject{}};
 }
 
-// A member another unit published, as the field it is: the object recorded
-// from that unit's signature declares it, and the receiver the route has
-// descended to is an instance of exactly that object.
-auto PublishedMemberTarget(
-    const mir::CompilationUnit& unit, const mir::Block& block,
+// A member another unit published, reached the way that unit offers it: the
+// behavior of the promise that answers with the storage behind the member,
+// dispatched on the object the route has descended to. Which behavior it is is
+// counted out of the order the promise published its members in, and the
+// storage it answers with is the only thing this side learns about the object.
+auto ReadPublishedMember(
+    mir::CompilationUnit& unit, mir::Block& block,
     const RouteReceiver& receiver, hir::PublishedMemberId member)
-    -> mir::ExternalUnitObjectFieldTarget {
+    -> mir::ExprId {
   const mir::TypeId pointee =
       unit.types.Get(block.exprs.Get(receiver.expr).type)
           .Get<mir::PointerType>()
           .pointee;
-  return mir::ExternalUnitObjectFieldTarget{
-      .owner =
-          unit.types.Get(pointee).Get<mir::ExternalUnitObjectType>().object,
-      .slot = UnitLowerer::TranslatePublishedMember(member)};
+  const mir::ExternalUnitObject& promised = unit.external_unit_objects.Get(
+      unit.types.Get(pointee).Get<mir::ExternalUnitObjectType>().object);
+  const mir::FieldId slot = UnitLowerer::TranslatePublishedMember(member);
+  const mir::PromisedField& field = promised.fields.Get(slot);
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Virtual{
+                          .receiver = receiver.expr,
+                          .slot =
+                              mir::ExternalVirtualSlot{
+                                  .unit_name = promised.unit_name,
+                                  .class_name = promised.class_name,
+                                  .ordinal = mir::BehaviorOrdinal{slot.value}}},
+                  .arguments = {}},
+          .type = unit.types.Intern(
+              mir::Type{mir::PointerType{
+                  .pointee = field.type,
+                  .ownership = mir::PointerOwnership::kBorrowed}})});
 }
 
 // Descends one step onto a member another unit published whose type makes it an
@@ -648,17 +795,18 @@ auto PublishedMemberTarget(
 auto StepToSignatureMember(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
     const hir::SignatureMemberStep& step) -> RouteReceiver {
-  const mir::ExternalUnitObjectFieldTarget target =
-      PublishedMemberTarget(unit_lowerer.Unit(), block, receiver, step.member);
+  const mir::ExprId storage =
+      ReadPublishedMember(unit_lowerer.Unit(), block, receiver, step.member);
   const mir::TypeId reached = unit_lowerer.Unit()
-                                  .external_unit_objects.Get(target.owner)
-                                  .fields.Get(target.slot)
-                                  .type;
+                                  .types.Get(block.exprs.Get(storage).type)
+                                  .Get<mir::PointerType>()
+                                  .pointee;
   const ReachedObject object = IndexCoordinates(
       unit_lowerer, block,
       ReachedObject{
           .expr = block.exprs.Add(
-              mir::MakeFieldAccessExpr(receiver.expr, target, reached)),
+              mir::Expr{
+                  .data = mir::DerefExpr{.pointer = storage}, .type = reached}),
           .type = reached},
       step.indices);
   return RouteReceiver{.expr = object.expr, .target = ExternalObject{}};
@@ -697,15 +845,7 @@ auto MaterializeLeaf(
   // A published member is reached through the target unit's own object, whose
   // pointer the step before it produced.
   if (const auto* member = std::get_if<hir::SignatureMemberLeaf>(&leaf)) {
-    const auto& slot = unit.types.Get(slot_type).Get<mir::PointerType>();
-    const mir::ExprId access = block.exprs.Add(
-        mir::MakeFieldAccessExpr(
-            receiver.expr,
-            PublishedMemberTarget(unit, block, receiver, member->member),
-            slot.pointee));
-    return block.exprs.Add(
-        mir::Expr{
-            .data = mir::AddressOfExpr{.operand = access}, .type = slot_type});
+    return ReadPublishedMember(unit, block, receiver, member->member);
   }
 
   // A route ending at a scope names the object the steps landed on, which the
@@ -1602,7 +1742,13 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   const hir::StructuralScope& hir_scope = *hir_scope_;
 
   // The identity is minted before the shape is populated so the class's own
-  // `self_pointer_type` can name it.
+  // `self_pointer_type` can name it. A scope that is the object its unit
+  // publishes mints a second one for what the unit promised of it: the name the
+  // source wrote is what a referrer has and so is the promise's, and this
+  // class, which realizes it, answers to none.
+  if (name_.has_value()) {
+    promise_id_ = unit_lowerer.Unit().DeclareClass();
+  }
   class_id_ = unit_lowerer.Unit().DeclareClass();
   const mir::TypeId self_object_type = unit_lowerer.Unit().types.Intern(
       mir::Type{mir::ObjectType{.class_id = class_id_}});
@@ -1612,7 +1758,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
           .ownership = mir::PointerOwnership::kBorrowed}});
 
   ClassShape shape;
-  shape.name = name_;
   shape.is_final = true;
   shape.self_pointer_type = self_pointer_type;
   shape.time_resolution = hir_scope.time_resolution;
@@ -1630,25 +1775,24 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                     .type)});
   }
 
-  // A member this unit published sits in a fixed prefix of the object, in the
-  // order its signature states, so a unit reading that signature counts the
-  // same position; what it did not publish follows and can move none of it.
-  std::vector<hir::PublishedDecl> member_order = hir_scope.published_members;
-  const auto append_unpublished = [&](const auto& id) {
-    if (!std::ranges::contains(
-            hir_scope.published_members, hir::PublishedDecl{id})) {
-      member_order.emplace_back(id);
-    }
-  };
+  // Every member this scope holds, in the order it was declared. Nothing counts
+  // a position out of this order: what another unit reaches is a behavior the
+  // promise states, so a member sits where it was declared whether or not the
+  // unit published it -- which is also the order its initializer runs in (LRM
+  // 10.5).
+  std::vector<hir::PublishedDecl> member_order;
+  member_order.reserve(
+      hir_scope.structural_data_objects.size() +
+      hir_scope.instance_members.size() + hir_scope.interface_ports.size());
   for (const hir::StructuralDataObjectId id :
        hir_scope.structural_data_objects.Ids()) {
-    append_unpublished(id);
+    member_order.emplace_back(id);
   }
   for (const hir::InstanceMemberId id : hir_scope.instance_members.Ids()) {
-    append_unpublished(id);
+    member_order.emplace_back(id);
   }
   for (const hir::InterfacePortId id : hir_scope.interface_ports.Ids()) {
-    append_unpublished(id);
+    member_order.emplace_back(id);
   }
 
   std::vector<mir::FieldId> data_object_fields(
@@ -1701,11 +1845,46 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
             }},
         decl);
   }
+  // What the unit promised of this object, stated as the behaviors a referrer
+  // reaches it through, in the order the signature published them -- which is
+  // the order a referrer counts and the only thing both sides share about the
+  // object.
+  if (promise_id_.has_value()) {
+    std::vector<PromisedMember> members;
+    members.reserve(hir_scope.published_members.size());
+    for (const hir::PublishedDecl& decl : hir_scope.published_members) {
+      const mir::FieldId slot = std::visit(
+          Overloaded{
+              [&](const hir::StructuralDataObjectId& id) {
+                return data_object_fields[id.value];
+              },
+              [&](const hir::InstanceMemberId& id) {
+                return instance_fields[id.value];
+              },
+              [&](const hir::InterfacePortId& id) {
+                return interface_port_fields[id.value];
+              }},
+          decl);
+      const std::optional<std::string_view> named =
+          mir::NameOf(shape.named_fields, slot);
+      if (!named.has_value()) {
+        throw InternalError(
+            "hir_to_mir: a unit published a member the source never named");
+      }
+      members.push_back(
+          PromisedMember{
+              .name = std::string{*named},
+              .cell = slot,
+              .cell_type = shape.fields.Get(slot).type});
+    }
+    promised_members_ = std::move(members);
+  }
+
   data_object_fields_ = {
       hir_scope.structural_data_objects.size(), std::move(data_object_fields)};
 
-  // A history is storage nothing outside this scope names, so it takes no
-  // place in the published member order: what reaches it is the scope's own
+  // A history is storage nothing outside this scope names, so the unit promises
+  // nothing about it: what reaches it is the scope's own
   // activation, its sampler, and the reads that asked for it (LRM 16.9.3). Its
   // value type is the subject's own, because what a tick keeps is what that
   // expression settled.
@@ -1869,16 +2048,35 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // the other side will put things.
   // A structural scope has no inheritance, so no declaration names another
   // scope's callable and the scope is the authority for its own identity space.
+  // Which behavior of the promise each published subroutine answers, counted
+  // out of the signature's own order and continuing where the members left off.
+  // A subroutine the unit kept to itself answers none.
+  std::unordered_map<std::string_view, std::size_t> published_at;
+  promised_subroutines_.resize(hir_scope.published_callables.size());
+  for (std::size_t at = 0; at < hir_scope.published_callables.size(); ++at) {
+    published_at.emplace(hir_scope.published_callables[at], at);
+  }
   base::IdAllocator<mir::CallableId> subroutine_ids;
   std::vector<DeclaredCallable> declared_subroutines;
   std::vector<CallableSignature> signatures;
   declared_subroutines.reserve(hir_scope.structural_subroutines.size());
   signatures.reserve(hir_scope.structural_subroutines.size());
   for (const auto& s : hir_scope.structural_subroutines) {
-    signatures.push_back(CallableSignature{.virtual_dispatch = std::nullopt});
+    const mir::CallableId body = subroutine_ids.Take();
+    const auto published = published_at.find(s.name);
+    std::optional<mir::VirtualDispatchRole> dispatch;
+    if (published != published_at.end()) {
+      const auto behavior = static_cast<std::uint32_t>(
+          promised_members_.size() + published->second);
+      dispatch = mir::VirtualDispatchRole{mir::OverridesIntraUnitSlot{
+          .slot_owner = *promise_id_, .slot_id = mir::CallableId{behavior}}};
+      promised_subroutines_[published->second] =
+          PromisedSubroutine{.name = s.name, .body = body};
+    }
+    signatures.push_back(CallableSignature{.virtual_dispatch = dispatch});
     declared_subroutines.push_back(
         DeclaredCallable{
-            .callable = subroutine_ids.Take(),
+            .callable = body,
             .statics = BindBodyStatics(
                 unit_lowerer, hir_scope.procedural_scopes,
                 InstanceStorage{.shape = &shape}, s.body,
@@ -2001,19 +2199,25 @@ auto SynthesizeSubroutineEntry(
   return code;
 }
 
-// Builds a runtime scope class's definition as an ordinary constructed value
-// and installs it on `cls`: a per-phase ABI adapter that downcasts the generic
-// scope receiver to `cls` and forwards to the phase body (empty when the phase
-// has none), wrapped in a ScopeProgram, wrapped in turn in the definition that
-// adds the construct entry. Every scope class publishes the same record, so a
-// site constructing an instance of one reads the definition the same way
-// wherever the class came from. A class that is not a runtime tree node gets
-// none.
+// Builds a runtime scope class's definition as an ordinary constructed value: a
+// per-phase ABI adapter that downcasts the generic scope receiver to `cls` and
+// forwards to the phase body (empty when the phase has none), wrapped in a
+// ScopeProgram, wrapped in turn in the definition that adds the construct
+// entry. Every scope class publishes the same record, so a site constructing an
+// instance of one reads the definition the same way wherever the class came
+// from. A class that is not a runtime tree node gets none.
+//
+// The adapters belong to `cls`, whose bodies they enter. The record belongs to
+// `rooted`, which is the class standing in the runtime's tree and so the one
+// entering it -- the same class where the source declares no promise, and the
+// promise where it does. Answers with what `rooted`'s constructor hands its
+// base, which is why that constructor's own code is what the record's address
+// is formed in.
 auto InstallGeneratedDefinition(
     mir::CompilationUnit& unit, mir::Class& cls, mir::ClassId cls_id,
-    mir::CallableCode& ctor_code, mir::CallableId resolve_body,
-    mir::CallableId init_body, mir::CallableId create_body)
-    -> std::vector<mir::ExprId> {
+    mir::ClassRef base, mir::Class& rooted, mir::CallableCode& rooted_ctor,
+    mir::CallableId resolve_body, mir::CallableId init_body,
+    mir::CallableId create_body) -> std::vector<mir::ExprId> {
   const mir::TypeId scope_ptr = unit.builtins.scope_ptr;
   const mir::TypeId self_ptr = cls.self_pointer_type;
   const mir::TypeId void_type = unit.builtins.void_type;
@@ -2044,16 +2248,17 @@ auto InstallGeneratedDefinition(
         mir::AbiAdapter{
             .code = std::move(code), .published = mir::UnpublishedEntry{}});
   };
-  // Extending the runtime's scope is what puts this class on the object tree,
-  // and the three bodies are what it supplies to be driven through, so the two
-  // are one statement. The record below is a second reading of it, for a target
-  // whose runtime is entered through a function pointer; a target that reaches
-  // the bodies directly reads the statement and composes no record at all.
-  cls.base = mir::ClassRef{mir::RuntimeClassRef{
-      .symbol = "lyra::runtime::Scope",
+  // What this class extends roots an object in the tree -- the runtime's scope,
+  // or what its unit promised of this object, which is rooted there itself. The
+  // three bodies are what this class supplies to be driven through either way.
+  // The record below is a second reading of those bodies, for a target whose
+  // runtime is entered through a function pointer; a target that reaches them
+  // directly reads the statement and composes no record at all.
+  cls.base = std::move(base);
+  cls.tree_program = mir::ObjectTreeProgram{
       .resolve_state = resolve_body,
       .initialize_state = init_body,
-      .create_processes = create_body}};
+      .create_processes = create_body};
   const mir::AbiAdapterId resolve_abi = make_adapter(resolve_body);
   const mir::AbiAdapterId init_abi = make_adapter(init_body);
   const mir::AbiAdapterId create_abi = make_adapter(create_body);
@@ -2081,7 +2286,7 @@ auto InstallGeneratedDefinition(
       entries.push_back(records.Construct(
           mir::RuntimeLibraryKind::kScopeCallable,
           {records.StringRef(*name),
-           records.ErasedFunctionRef(cls, adapter_id)}));
+           records.ErasedFunctionRef(cls_id, cls, adapter_id)}));
     }
     const auto count = static_cast<std::uint32_t>(entries.size());
     decl.value = records.MachineArray(
@@ -2091,7 +2296,7 @@ auto InstallGeneratedDefinition(
     const mir::TypeId records_type = decl.type;
     return NameTable{
         .records_type = records_type,
-        .records = cls.static_constants.Add(std::move(decl)),
+        .records = rooted.static_constants.Add(std::move(decl)),
         .count = count};
   };
   const NameTable exports = publish(
@@ -2145,7 +2350,7 @@ auto InstallGeneratedDefinition(
   }
   const mir::TypeId classes_type = classes_decl.type;
   const mir::StaticConstantId classes_id =
-      cls.static_constants.Add(std::move(classes_decl));
+      rooted.static_constants.Add(std::move(classes_decl));
 
   mir::StaticConstantDecl def;
   mir::RuntimeRecordBuilder definition(unit, def.body.exprs);
@@ -2197,18 +2402,19 @@ auto InstallGeneratedDefinition(
       {classes_data, definition.MachineInt(class_count)});
   const mir::ExprId program = definition.Construct(
       mir::RuntimeLibraryKind::kScopeProgram,
-      {metadata, definition.FunctionRef(cls, resolve_abi),
-       definition.FunctionRef(cls, init_abi),
-       definition.FunctionRef(cls, create_abi), export_table, subroutine_table,
-       class_table});
+      {metadata, definition.FunctionRef(cls_id, cls, resolve_abi),
+       definition.FunctionRef(cls_id, cls, init_abi),
+       definition.FunctionRef(cls_id, cls, create_abi), export_table,
+       subroutine_table, class_table});
   def.value = definition.Construct(
       mir::RuntimeLibraryKind::kScopeDefinition, {program});
   def.type = definition.TypeOf(def.value);
   const mir::TypeId const_type = def.type;
-  const mir::StaticConstantId def_id = cls.static_constants.Add(std::move(def));
+  const mir::StaticConstantId def_id =
+      rooted.static_constants.Add(std::move(def));
 
   // The constructor hands the base the address of the constant just installed.
-  auto& cex = ctor_code.Body().exprs;
+  auto& cex = rooted_ctor.Body().exprs;
   const mir::ExprId ref = cex.Add(
       mir::Expr{
           .data =
@@ -2221,7 +2427,8 @@ auto InstallGeneratedDefinition(
           .type = unit.types.Intern(
               mir::Type{mir::PointerType{
                   .pointee = const_type,
-                  .ownership = mir::PointerOwnership::kBorrowed}})});
+                  .ownership = mir::PointerOwnership::kBorrowed,
+                  .mutability = mir::Mutability::kReadOnly}})});
   return {addr};
 }
 
@@ -2560,8 +2767,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // only for the design root, so a source unit's scope and a nested scope both
   // leave it empty.
   const auto call_namespace_unit = [&](const std::string& unit_name,
-                                       mir::NamespaceStoragePhase phase) {
-    unit_lowerer.Unit().AddExternalReferencedUnit(unit_name);
+                                       mir::MintedEntry entry) {
+    unit_lowerer.Unit().ConsumeNamespaceOf(unit_name);
     const mir::ExprId call = initialize_block.exprs.Add(
         mir::Expr{
             .data =
@@ -2569,17 +2776,17 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                     .callee =
                         mir::Direct{
                             .target =
-                                mir::ExternalUnitStorageTarget{
-                                    .unit_name = unit_name, .phase = phase}},
+                                mir::ExternalUnitMintedEntryTarget{
+                                    .unit_name = unit_name, .entry = entry}},
                     .arguments = {}},
             .type = void_type});
     initialize_block.AppendStmt(mir::ExprStmt{.expr = call});
   };
   for (const std::string& unit : namespaces_.units) {
-    call_namespace_unit(unit, mir::NamespaceStoragePhase::kInstall);
+    call_namespace_unit(unit, mir::MintedEntry::kInstallStorage);
   }
   for (const std::string& unit : namespaces_.units) {
-    call_namespace_unit(unit, mir::NamespaceStoragePhase::kInitialize);
+    call_namespace_unit(unit, mir::MintedEntry::kInitializeStorage);
   }
 
   // Commit the class of every procedural scope's name node. A name node is
@@ -2626,8 +2833,11 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     };
     const std::vector<mir::ExprId> node_base_trailing_args =
         InstallGeneratedDefinition(
-            unit_lowerer.Unit(), node_class, name_node.class_id, node_ctor_code,
-            empty_phase(), empty_phase(), empty_phase());
+            unit_lowerer.Unit(), node_class, name_node.class_id,
+            mir::ClassRef{mir::RuntimeClassRef{
+                .symbol = std::string{mir::kObjectTreeClassSymbol}}},
+            node_class, node_ctor_code, empty_phase(), empty_phase(),
+            empty_phase());
     FinalizeConstructor(
         unit_lowerer.Unit(), node_class, std::move(node_ctor_code),
         node_ctor_prefix_local_ids, node_base_trailing_args);
@@ -2796,11 +3006,16 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         ctor_frame, scopes_, declared.statics);
     auto code_or = subroutine_lowerer.Run(src);
     if (!code_or) return std::unexpected(std::move(code_or.error()));
+    // Which behavior of the promise this body answers was settled where the
+    // shape was declared, because that is where the promise's own order is; a
+    // subroutine the unit kept to itself answers none.
     mir_class.callables.Define(
-        declared.callable, mir::CallableDecl{
-                               .code = *std::move(code_or),
-                               .foreign = std::nullopt,
-                               .virtual_dispatch = std::nullopt});
+        declared.callable,
+        mir::CallableDecl{
+            .code = *std::move(code_or),
+            .foreign = std::nullopt,
+            .virtual_dispatch = shape.callable_signatures.Get(declared.callable)
+                                    .virtual_dispatch});
     subroutine_callables.push_back(declared.callable);
     for (const StaticVarBinding& binding : declared.statics) {
       auto integ = IntegrateStaticInitializer(
@@ -3064,11 +3279,21 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   const mir::CallableId init_body = add_body(initialize_code, init_self_id);
   const mir::CallableId create_body = add_body(activate_code, activate_self_id);
 
-  const std::vector<mir::ExprId> base_trailing_args =
-      InstallGeneratedDefinition(
-          unit, mir_class, class_id_, ctor_code, resolve_body, init_body,
-          create_body);
-
+  // A scope that is its unit's object stands in the tree through what the unit
+  // promised of it; every other scope stands there directly. Whichever of the
+  // two it is is the class the runtime's record belongs to, because that class
+  // is the one entering the tree.
+  std::optional<BuiltPromise> promise;
+  if (promise_id_.has_value()) {
+    promise = BuildPromise(
+        unit, *promise_id_, *name_, promised_members_, promised_subroutines_,
+        mir_class);
+  }
+  const mir::ClassRef base =
+      promise.has_value()
+          ? mir::ClassRef{mir::IntraUnitClassRef{.class_id = *promise_id_}}
+          : mir::ClassRef{mir::RuntimeClassRef{
+                .symbol = std::string{mir::kObjectTreeClassSymbol}}};
   // The base is entered with what its own contract demands and nothing else, so
   // a value this scope alone is supplied stays out of that call while still
   // standing on the constructor's own signature.
@@ -3076,9 +3301,67 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   if (construction_value_.has_value()) {
     base_prefix_local_ids.pop_back();
   }
+  const ClassUnderConstruction rooted =
+      promise.has_value()
+          ? ClassUnderConstruction{
+                .cls = &promise->cls,
+                .ctor = &promise->ctor,
+                .prefix = &promise->ctor_prefix}
+          : ClassUnderConstruction{
+                .cls = &mir_class,
+                .ctor = &ctor_code,
+                .prefix = &base_prefix_local_ids};
+  const std::vector<mir::ExprId> record_args = InstallGeneratedDefinition(
+      unit, mir_class, class_id_, base, *rooted.cls, *rooted.ctor, resolve_body,
+      init_body, create_body);
   FinalizeConstructor(
-      unit, mir_class, std::move(ctor_code), base_prefix_local_ids,
-      base_trailing_args);
+      unit, *rooted.cls, std::move(*rooted.ctor), *rooted.prefix, record_args);
+
+  // Where the two are different classes, the one below enters its base with
+  // nothing: the record is the tree's and the class standing there took it.
+  std::vector<PromisedAccessor> accessors;
+  if (promise.has_value()) {
+    accessors = std::move(promise->accessors);
+    FinalizeConstructor(
+        unit, mir_class, std::move(ctor_code), base_prefix_local_ids, {});
+    unit.DefineClass(*promise_id_, std::move(promise->cls));
+  }
+
+  // Each behavior the promise stated is taken over here, answering with the
+  // storage of the member it was stated for. Nothing names one -- a referrer
+  // reaches it through the promise -- so it takes its identity where it is
+  // built rather than being reserved with the bodies a peer may call.
+  for (const PromisedAccessor& accessor : accessors) {
+    const mir::FieldId slot = accessor.cell;
+    mir::CallableCode code = mir::CallableCode::Defined();
+    const mir::LocalId self = code.AddLocal(self_ptr_type);
+    code.params = {self};
+    const mir::TypeId cell_type = mir_class.fields.Get(slot).type;
+    code.result_type = unit.types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = cell_type,
+            .ownership = mir::PointerOwnership::kBorrowed}});
+    mir::Block& body = code.Body();
+    const mir::ExprId member = body.exprs.Add(
+        mir::MakeFieldAccessExpr(
+            body.exprs.Add(mir::MakeLocalRefExpr(self, self_ptr_type)),
+            mir::ClassFieldTarget{.owner = class_id_, .slot = slot},
+            cell_type));
+    body.AppendStmt(
+        mir::ReturnStmt{
+            .value = body.exprs.Add(
+                mir::Expr{
+                    .data = mir::AddressOfExpr{.operand = member},
+                    .type = code.result_type})});
+    mir_class.callables.Add(
+        mir::CallableDecl{
+            .code = std::move(code),
+            .foreign = std::nullopt,
+            .virtual_dispatch =
+                mir::VirtualDispatchRole{mir::OverridesIntraUnitSlot{
+                    .slot_owner = *promise_id_,
+                    .slot_id = accessor.behavior}}});
+  }
 
   unit.DefineClass(class_id_, std::move(mir_class));
   return {};

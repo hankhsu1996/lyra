@@ -78,6 +78,13 @@ locate-divergence feedback loop; this one owns the readability of what the loop 
       backends, so it is sized for its own change set.
 - [ ] An expression is parenthesized only where operator precedence requires it; an outermost
       expression carries no enclosing parentheses.
+- [ ] A cell reads as the identifier the source wrote rather than as its position with the
+      identifier after it. The position has to lead today because the target holds everything a
+      class declares in one name space, and a class holds its storage beside the behaviors it takes
+      over -- whose identifiers are the identifiers of the cells they answer with, since that is
+      what a referrer spells. Nothing shorter is available while both live in one name space, so
+      this closes only if the two stop sharing one, which is a question about how a unit offers what
+      it published rather than about how a field is spelled.
 - [ ] The design's top-level entry -- constructing each top-level unit and attaching the assembled
       hierarchy so the simulation can run -- is a mechanical rendering of ordinary generated
       behavior, shared by every backend, not a hand-fabricated harness. Today the ahead-of-time path
@@ -90,6 +97,28 @@ locate-divergence feedback loop; this one owns the readability of what the loop 
       thin runner shell (a compiled program's entry point, the in-process driver) stays
       target-specific, creating the engine and calling the root construct, then bind / run. A
       self-contained follow-up, not part of the current change set.
+
+      **Where the shell has to stay, and it is a language rule rather than a shortage of work.** A
+      compiled program's entry cannot itself be an ordinary body of the root unit: the target
+      reserves that name at global scope and forbids it the language linkage a unit's bodies are
+      reached by, and a body of a unit is reached either through that unit's own name space or
+      under a linkage name. So the shell survives any amount of work, and what it may shrink to is
+      one line handing its arguments to a body that is ordinary.
+
+      **What stands between here and that line.** The body would take what a host hands over and
+      answer with what a host expects, and its one statement would call the runtime's design entry
+      with the label the root carries and the entry that makes the root's object. Every piece of
+      that is sayable except one: **the entry is handed over as a value, and a reference to one of
+      a unit's own bodies that answers to no name has no value form.** A call reaches such a body by
+      naming its unit and which body it is; nothing names one where a value is wanted. That is the
+      piece to design first, and it is the same shape one layer over -- an identity that is not a
+      name -- so the design question is where a value form of it belongs rather than whether one
+      can exist.
+
+      **The measure of the gap, so a later reader can tell whether it moved.** What the entry writes
+      out is target text that names runtime library identifiers directly, which only the dispatch
+      owning type spellings may do. It named four of them and now names one; the remaining one is
+      the runtime's design entry itself, and it goes when the body above becomes ordinary.
 
 ## Out of Scope
 

@@ -6,8 +6,15 @@
 
 ## Status
 
-Accepted. Realizes `unit-signature.md` D4 and `emission_model.md` invariant 8 on the machine-code
-path; reverses nothing.
+Superseded in part by
+[a-referrer-calls-rather-than-navigates](a-referrer-calls-rather-than-navigates.md), which removes
+the premise D1 and D5 answer: a referrer no longer locates a published member, so there is no
+position for either side to compute. D2, D3 and D4 stand -- what a referrer records of another
+unit's object, which layer reads a signature, and how a member's type crosses the boundary are
+unaffected. Read that entry before applying anything here to a published member's placement.
+
+Realized `unit-signature.md` D4 and `emission_model.md` invariant 8 on the machine-code path;
+reversed nothing.
 
 ## Why this decision matters
 
@@ -47,6 +54,10 @@ like every other fact, rather than sideways by handing a signature to a lower pa
 ## Decisions
 
 ### D1. The position is the signature's order, computed on both sides and carried by neither
+
+_Superseded: a referrer performs a behavior the promise states rather than reaching storage, so
+neither side computes a position. See
+[a-referrer-calls-rather-than-navigates](a-referrer-calls-rather-than-navigates.md) D3._
 
 A published member's position in its object is its position in the signature. The declaring unit
 places its published members in that order at the front of its object; a referrer counts the same
@@ -101,6 +112,10 @@ layers must agree on something either can compute, a shared function makes disag
 and a carried value only makes it invisible.
 
 ### D5. The producer places its published members while lowering, not by reordering what the user wrote
+
+_Superseded: there is no prefix to establish, so a unit's members stay in declaration order all the
+way down. See [a-referrer-calls-rather-than-navigates](a-referrer-calls-rather-than-navigates.md)
+D3._
 
 A unit's declarations stay in source order in HIR, because that order is what the source says and
 other things read it as such. The prefix is established one layer down, where the object's members
@@ -157,7 +172,9 @@ signature, so the promise and the placement cannot describe different objects.
   carrying two strings, and a member of it is the same reference form as a member of a struct or a
   closure -- the arena is fixed by the receiver's type, so the reference states only which member.
 - A unit's object has a stable published prefix, which is the layout fact an incremental build
-  needs: a change confined to unpublished declarations moves no published member.
+  needs: a change confined to unpublished declarations moves no published member. _Superseded:
+  nothing locates a published member now, so an incremental build gets that property without any
+  layout fact at all._
 - The signature states a published member's storage kind, so a referrer builds the cell it reaches
   without reading the declaring unit's declaration. That completes what a port part already promised
   by naming its member rather than restating it.
@@ -166,8 +183,9 @@ signature, so the promise and the placement cannot describe different objects.
 
 - `unit-signature.md` -- D4 names a signature member where the referrer compiles; the placement rule
   and the forbidden design-wide numbering are stated there and applied here.
-- `../architecture/emission_model.md` -- invariant 8 states the prefix rule and invariant 2 the
-  inputs a unit's emission may depend on, which is what D2 keeps true below the consuming pass.
+- `../architecture/emission_model.md` -- invariant 2 states the inputs a unit's emission may depend
+  on, which is what D2 keeps true below the consuming pass. Invariant 8 carried the prefix rule and
+  now states what replaced it.
 - `../architecture/lir.md` -- a place names storage by logical identity with physical layout derived
   below it, which is why the name becomes a position at MIR-to-LIR and not later.
 - `member-slot-storage.md` -- a member is a logical place realized per backend; this entry says how

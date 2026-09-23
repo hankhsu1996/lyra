@@ -49,6 +49,31 @@ struct ChildStructuralScopeBinding {
   const StructuralScopeLowerer* lowerer = nullptr;
 };
 
+// One member a unit published, as the promise offers it: the identifier a
+// referrer spells, the storage of the realizing class the behavior answering it
+// hands back, and that storage's type.
+struct PromisedMember {
+  std::string name;
+  mir::FieldId cell;
+  mir::TypeId cell_type;
+};
+
+// One subroutine a unit published, as the promise offers it: the identifier a
+// referrer spells and the body of the realizing class that answers it. The
+// promise states the same signature, so the body takes the behavior over.
+struct PromisedSubroutine {
+  std::string name;
+  mir::CallableId body;
+};
+
+// One behavior a promise states, paired with the storage of the realizing class
+// that answers it. The pair is what the realization takes over: which behavior
+// it fills is the promise's, and what it answers with is its own.
+struct PromisedAccessor {
+  mir::CallableId behavior;
+  mir::FieldId cell;
+};
+
 // How a hierarchical route reaches an owned child: the parent's borrowed typed
 // handle on it, and the child's own lowerer. The handle's type carries the
 // declaration's multiplicity, so a step naming an element indexes the handle.
@@ -126,6 +151,13 @@ class StructuralScopeLowerer {
   // shape so peer body lowering can query it, and recurses to declare every
   // descendant scope's shape.
   auto DeclareShape() -> diag::Result<mir::ClassId>;
+
+  // What the unit promised of the object this scope is, for the scope that is
+  // one. Absent for a scope the lowering built, which nothing outside the unit
+  // reaches and so nothing was promised of.
+  [[nodiscard]] auto PromiseId() const -> std::optional<mir::ClassId> {
+    return promise_id_;
+  }
 
   // Lowers every body and every install statement against the already-
   // published shape, recurses into descendants, and commits the composed
@@ -481,6 +513,20 @@ class StructuralScopeLowerer {
   // the scope has one: it takes the last constructor parameter and is filled
   // from it before anything the construction does can read it.
   std::optional<hir::StructuralDataObjectId> construction_value_;
+  // What the unit promised of the object this scope is, for the one scope that
+  // is a unit's object: a behavior per published member and no storage, which
+  // the class above realizes. A referrer compiles against it and holds nothing
+  // else, so what the unit kept to itself moves without moving what a referrer
+  // reads. A scope the lowering built promises nothing and leaves this unset.
+  std::optional<mir::ClassId> promise_id_;
+  // What this unit published of the object, in the order its signature states
+  // them. Settled while the shape is declared, because that is where a member's
+  // storage is placed and where a subroutine's identity is taken; read where
+  // the promise is built. The promise states a behavior per member and then one
+  // per subroutine, which is the order a referrer counts out of the same
+  // signature.
+  std::vector<PromisedMember> promised_members_;
+  std::vector<PromisedSubroutine> promised_subroutines_;
   std::vector<std::unique_ptr<StructuralScopeLowerer>> children_;
   // The classes this scope declares (LRM 23.9). A class declared here is a type
   // of this scope's instance (LRM 6.22), so the scope both settles its shape

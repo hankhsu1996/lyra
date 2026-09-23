@@ -59,9 +59,11 @@ struct NamedField {
   return std::nullopt;
 }
 
-// A member another unit's promise describes -- the referrer's own slot-aligned
-// copy of the declaring unit's storage, which an access counts a position out
-// of exactly as the declaring unit does.
+// A member another unit's promise describes -- the identifier it published and
+// the type of the storage behind it. Its position is counted out of the
+// published order by both sides, and what that position reaches is the record
+// holding the member rather than anything stated here: which of a unit's
+// behaviors answers with it, or the slot a class gave it among its own.
 //
 // The name sits on the member rather than in a relation because a promise has
 // no member that answers to none: a unit publishes what its source declared and

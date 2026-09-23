@@ -286,9 +286,9 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
   }
 
   for (; step != place.chain.end(); ++step) {
-    // What the chain holds where this step applies, which decides how the step
-    // reaches what it names: crossing a class handle is an operation rather
-    // than a load, and a member's address comes from whatever declares it.
+    // What the chain holds where this step applies, which decides how a
+    // dereference reaches what it names: crossing a class handle is an
+    // operation rather than a load.
     const lir::TypeId reached =
         ReachedType(place, std::distance(place.chain.begin(), step));
     auto reached_storage = std::visit(
@@ -300,7 +300,7 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
             },
             [&](const lir::MemberProjection& projection)
                 -> diag::Result<llvm::Value*> {
-              return MemberStorage(address, reached, projection.member);
+              return MemberStorage(address, projection.member);
             }},
         *step);
     if (!reached_storage) {
@@ -312,33 +312,21 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
 }
 
 auto CodeGenFunction::MemberStorage(
-    llvm::Value* owner, lir::TypeId reached, const lir::StatedMemberRef& member)
+    llvm::Value* owner, const lir::StatedMemberRef& member)
     -> diag::Result<llvm::Value*> {
-  llvm::Value* const slot = llvm::ConstantInt::get(
-      llvm::Type::getInt32Ty(module_->Context()), member.slot.value);
-  switch (MemberOwnerOf(reached)) {
-    case MemberOwner::kScope: {
-      const std::array<llvm::Value*, 2> args{owner, slot};
-      return builder_.CreateCall(
-          Entry(
-              RuntimeSymbol(RuntimeOp::kMemberAddress), module_->Types().Ptr(),
-              args),
-          args);
-    }
-    case MemberOwner::kObject: {
-      auto declared_by = module_->DefinitionRef(member.declared_by);
-      if (!declared_by) {
-        return std::unexpected(std::move(declared_by.error()));
-      }
-      const std::array<llvm::Value*, 3> args{owner, *declared_by, slot};
-      return builder_.CreateCall(
-          Entry(
-              RuntimeSymbol(RuntimeOp::kObjectMemberAddress),
-              module_->Types().Ptr(), args),
-          args);
-    }
+  auto declared_by = module_->DefinitionRef(member.declared_by);
+  if (!declared_by) {
+    return std::unexpected(std::move(declared_by.error()));
   }
-  throw InternalError("llvm codegen: a member step reached unknown storage");
+  const std::array<llvm::Value*, 3> args{
+      owner, *declared_by,
+      llvm::ConstantInt::get(
+          llvm::Type::getInt32Ty(module_->Context()), member.slot.value)};
+  return builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(RuntimeOp::kMemberAddress), module_->Types().Ptr(),
+          args),
+      args);
 }
 
 // The type of the storage the chain has arrived at where step `index` applies,
@@ -410,36 +398,6 @@ auto CodeGenFunction::LowerAddrOf(
 
 auto CodeGenFunction::IsHandleSequence(lir::TypeId type) const -> bool {
   return module_->Unit().types.Get(type).Is<lir::VectorType>();
-}
-
-// Which entry answers the address of a member of what `owner` names. Every
-// owner holds a block of storage described the same way, so what an entry
-// differs in is the runtime type the address it is handed names.
-auto CodeGenFunction::MemberOwnerOf(lir::TypeId owner) const -> MemberOwner {
-  const lir::Type& type = module_->Unit().types.Get(owner);
-  if (const auto* object = type.As<lir::ObjectType>()) {
-    return lir::IsObjectTreeNode(module_->Unit().classes.Get(object->class_id))
-               ? MemberOwner::kScope
-               : MemberOwner::kObject;
-  }
-  // What another unit published is an object of its own tree.
-  if (type.Is<lir::ExternalUnitObjectType>()) {
-    return MemberOwner::kScope;
-  }
-  // A class another unit declares is the source language's own class, reached
-  // the way this unit's are.
-  if (type.Is<lir::CrossUnitClassType>()) {
-    return MemberOwner::kObject;
-  }
-  // A struct's fields are the same storage block a heap object's properties
-  // are, reached through the same handle.
-  if (type.Is<lir::StructType>()) {
-    return MemberOwner::kObject;
-  }
-  throw InternalError(
-      std::format(
-          "llvm codegen: a member of {} has no address entry",
-          type.KindName()));
 }
 
 auto CodeGenFunction::LowerBinary(
@@ -875,8 +833,8 @@ auto CodeGenFunction::ResolveCallee(
                     t.method.ordinal.value)};
             llvm::Value* body = builder_.CreateCall(
                 Entry(
-                    RuntimeSymbol(RuntimeOp::kObjectMethod),
-                    module_->Types().Ptr(), lookup),
+                    RuntimeSymbol(RuntimeOp::kMethod), module_->Types().Ptr(),
+                    lookup),
                 lookup);
             return llvm::FunctionCallee(
                 CallSignature(module_->Types().Map(result_type), args), body);

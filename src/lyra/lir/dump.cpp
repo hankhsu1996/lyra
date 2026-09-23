@@ -66,13 +66,6 @@ class LirDumper {
         std::format(
             "ExternalUnitObject \"{}.{}\" (#{})", object.unit_name,
             object.class_name, id.value));
-    Indent();
-    for (std::size_t i = 0; i < object.members.size(); ++i) {
-      Line(
-          std::format(
-              "member[{}] : {}", i, FormatType(object.members[i].type)));
-    }
-    Dedent();
   }
 
   void DumpExternalClass(const ExternalClass& cls) {
@@ -95,6 +88,14 @@ class LirDumper {
     Indent();
     if (cls.base.has_value()) {
       Line(std::format("Base: {}", FormatBase(*cls.base)));
+    }
+    if (cls.tree_program.has_value()) {
+      Line(
+          std::format(
+              "TreeProgram: resolve=Fn[{}], initialize=Fn[{}], create=Fn[{}]",
+              cls.tree_program->resolve_state.value,
+              cls.tree_program->initialize_state.value,
+              cls.tree_program->create_processes.value));
     }
     for (std::size_t i = 0; i < cls.members.size(); ++i) {
       Line(std::format("member[{}] : {}", i, FormatType(cls.members[i].type)));
@@ -291,13 +292,7 @@ class LirDumper {
               return std::format(
                   "CrossUnit(\"{}::{}\")", e.unit_name, e.class_name);
             },
-            [](const ObjectTreeBase& e) -> std::string {
-              return std::format(
-                  "ObjectTree(resolve=Fn[{}], initialize=Fn[{}], "
-                  "create=Fn[{}])",
-                  e.resolve_state.value, e.initialize_state.value,
-                  e.create_processes.value);
-            }},
+            [](const ObjectTreeBase&) -> std::string { return "ObjectTree"; }},
         base);
   }
 

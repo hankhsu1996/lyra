@@ -106,8 +106,9 @@ logical slot resolved to a native entry -- but are modeled as separate concepts 
 - **Lifecycle** is a closed set the engine calls at fixed elaboration phases (construct /
   resolve_state / initialize_state / create_processes). It is the `ScopeProgram`'s behavior half.
 - **Method dispatch** is the open set of user `virtual` methods with inheritance, override families,
-  receiver dynamic type, and signatures. It is object-oriented dispatch, a later `UnitDefinition`
-  table.
+  receiver dynamic type, and signatures. It is object-oriented dispatch, answered from the class a
+  value is rather than from the phase set above -- one table, whatever kind of value carries the
+  class.
 - **Published entries** are the open set a caller outside the design reaches by name -- a DPI-C
   export (LRM 35.4). The engine never calls them and they belong to no phase; the scope carries them
   so one program-global symbol can resolve against whichever scope is in effect, which is what lets

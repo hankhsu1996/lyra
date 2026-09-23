@@ -255,10 +255,18 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
           .modports = {}});
 
   hir::TypeImportMemo published;
+  // What a design element publishes is its ports and its object, never what it
+  // declares inside (LRM 23.2.1), so a member typed by a class this unit
+  // declares publishes at the handle that names no class: a reader holding one
+  // asks this scope by name for anything it wants of the class, which is the
+  // only thing it could do with the name anyway.
   const auto publish_type = [&](hir::TypeId own) {
     hir::TypeImporter importer(
         unit_.types,
-        hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
+        hir::TypePoolOwner{
+            .unit_name = unit_.name,
+            .classes = &unit_.classes,
+            .classes_are_nameable = false},
         signature_.types, published);
     return importer.Import(own);
   };
@@ -723,6 +731,13 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   for (const auto& [slot, instance] : published_instances) {
     published_members_[slot.value] = instance;
   }
+  // A published subroutine needs only the identifier it answers to, which this
+  // signature already carries, so it is taken here rather than found again once
+  // the bodies are lowered -- two walks agreeing is not the same as one order.
+  published_callables_.reserve(instance_class.callables.size());
+  for (const hir::PublishedCallableId id : instance_class.callables.Ids()) {
+    published_callables_.push_back(instance_class.callables.Get(id).name);
+  }
   return {};
 }
 
@@ -780,6 +795,12 @@ auto UnitLowerer::ExternalClassOf(
   unit_.external_classes.push_back(
       hir::ImportExternalClass(*signature, *published, unit_.types));
   return &unit_.external_classes.back();
+}
+
+void UnitLowerer::ConsumePromiseOf(const hir::ClassRef& ref) {
+  if (const auto* ext = std::get_if<hir::ExternalClassRef>(&ref)) {
+    ExternalClassOf(ext->unit_name, ext->class_name);
+  }
 }
 
 auto UnitLowerer::DeclaredByADesignElement(

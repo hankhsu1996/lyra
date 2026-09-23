@@ -23,19 +23,18 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
-#include "lyra/mir/namespace_storage_phase.hpp"
+#include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
-// The symbol one of the two bodies bringing up a unit's namespace is emitted
-// and linked under. It is composed from the unit and which of the two it is,
-// never from a name, so the unit that defines it and the design root that calls
-// it arrive at the same string with nothing shared between them.
-[[nodiscard]] auto StorageEntrySymbol(
-    std::string_view unit_name, mir::NamespaceStoragePhase phase)
-    -> std::string;
+// The symbol a body of a unit that answers to no name is emitted and linked
+// under. It is composed from the unit and which of them it is, never from a
+// name, so the unit that defines it and whoever calls it arrive at the same
+// string with nothing shared between them.
+[[nodiscard]] auto MintedEntrySymbol(
+    std::string_view unit_name, mir::MintedEntry entry) -> std::string;
 
 // Per-unit lowerer for the MIR-to-LIR pass. Reads the source MIR, owns the
 // in-progress LIR unit, and memoizes type translation so each distinct MIR type
@@ -109,12 +108,6 @@ class UnitLowerer {
 
   // The type of the values one generated-struct declaration builds.
   auto StructValueType(mir::StructId record) -> lir::TypeId;
-
-  // The type of the values one object another unit published is an instance
-  // of. Only the published prefix of its layout is named here, which is what a
-  // member reached through it may name.
-  auto ExternalUnitObjectValueType(mir::ExternalUnitObjectId object)
-      -> lir::TypeId;
 
   // The type naming a class another unit declares. The pair is the whole
   // identity, which is what lets a property step and a dispatch on one name the
@@ -232,12 +225,9 @@ class UnitLowerer {
   // unmirrored-type error and returns a benign placeholder type; the unit fails
   // at `Run` before the placeholder is observed.
   auto RecordUnsupportedType(std::string_view what) -> lir::Type;
-  auto LowerExternalUnitObject(const mir::ExternalUnitObject& object)
-      -> lir::ExternalUnitObject;
   auto LowerClass(mir::ClassId owner, const mir::Class& cls)
       -> diag::Result<lir::Class>;
-  auto LowerBase(mir::ClassId owner, const mir::ClassRef& base) const
-      -> lir::Base;
+  auto LowerBase(const mir::ClassRef& base) const -> lir::Base;
 
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;

@@ -266,23 +266,28 @@ auto lyra_rt_make_promoted_scope(const void* definition) -> void*;
 // storage behind one is an operation.
 auto lyra_rt_promoted_scope_deref(void* handle) -> void*;
 
-// The address of a property's storage on an object, named by the class that
+// The address of a property's storage on a value, named by the class that
 // declares the property and the slot that class gave it. A class carries what
 // its bases declare before what it declares itself, so a property keeps one
 // slot in the class that declares it and in every class extending that one, and
 // where that class's own properties begin is a fact of the class rather than of
 // the access -- which is why the access states a pair and this side adds.
-auto lyra_rt_object_member_addr(
-    void* object, const void* declared_by, std::uint32_t slot) -> void*;
+auto lyra_rt_member_addr(
+    void* value, const void* declared_by, std::uint32_t slot) -> void*;
 
-// The body an object's class answers one behavior with (LRM 8.20), the code
-// axis of the coordinate rule above and named the same way: the class that
+// The body a value's class answers one behavior with (LRM 8.20), the code axis
+// of the coordinate rule above and named the same way: the class that
 // introduced the behavior, and which of that class's introductions it is. What
-// class an object is, is a fact only this side holds, while entering a body
-// with the right arguments is only the asking code's to do -- so this answers
-// with the address and calls nothing.
-auto lyra_rt_object_method(
-    void* object, const void* introduced_by, std::uint32_t ordinal)
+// class a value is, is a fact only this side holds, while entering a body with
+// the right arguments is only the asking code's to do -- so this answers with
+// the address and calls nothing.
+//
+// Both of these take the value and nothing about what kind of value it is. An
+// instance standing in the design hierarchy and an object the program built
+// with `new` carry the class the same way, so the question is asked of the
+// class either way and one entry answers it.
+auto lyra_rt_method(
+    void* value, const void* introduced_by, std::uint32_t ordinal)
     -> LyraMethodEntry;
 
 // What a name reaches on a class, for a referrer with no name for that class
@@ -578,10 +583,6 @@ auto lyra_rt_resolve_visible_child(
     void* self, const void* head_name, LyraSpan head_indices) -> void*;
 auto lyra_rt_find_child(void* self, const void* name, LyraSpan indices)
     -> void*;
-
-// The address of a generic instance's member storage, by its position in the
-// storage that instance owns.
-auto lyra_rt_member_addr(void* self, std::uint32_t index) -> void*;
 
 // The sequence of handles a declaration standing for several objects builds,
 // in the order its coordinates count, and the handle at a position in one. A

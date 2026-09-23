@@ -20,8 +20,8 @@ This workstream reasons from these and does not restate them:
   publishes.
 - `../architecture/reference_resolution.md` -- routes classified per segment by whether the referrer
   has a declaration to compile against.
-- `../architecture/emission_model.md` -- two artifacts per unit specialization and the inputs one
-  unit's emission may depend on.
+- `../architecture/emission_model.md` -- a signature and a code artifact per unit specialization,
+  and the inputs one unit's emission may depend on.
 - `../architecture/lir.md` -- logical storage topology at LIR; physical placement derived below it.
 
 ## Why the artifact has to come first
@@ -124,11 +124,11 @@ why nothing a signature states may rest on it.
       elaboration. Which of the two a route's leaf takes is settled where the step reaching the
       target's owner is settled, because a route that has already left this unit's layout has no
       declaration to compile either the step or the leaf against.
-- [x] S9 -- The machine-code backend resolves a signature member's position by translating the
-      signatures of the units it references into its own type graph, so a cross-unit member access
-      is an ordinary member step and the layer below it derives the placement. A published member
-      sits in a fixed prefix of its object, so producer and consumer derive the same placement
-      independently.
+- [x] S9 -- The machine-code backend resolves a reference to a published member by translating the
+      signatures of the units it references into its own type graph, so the reference is an ordinary
+      operation on what the promise states. Which of the promise's behaviors answers with the member
+      is counted out of the order the signature published them, so producer and consumer arrive at
+      the same one independently and neither computes a placement at all.
 
       The referrer records what each signature promised about the object it reaches, where it
       consumes that signature, and carries the record down like any other declaration -- so no pass
@@ -141,10 +141,10 @@ why nothing a signature states may rest on it.
       inherited one is found by walking what each class promised about the class it extends.
 
 - [x] S10 -- The C++ backend emits a unit's signature as a declaration-only artifact distinct from
-      the artifact carrying its bodies, and a referrer consumes only the first. The published prefix
-      is expressed so the target language guarantees the same placement rule S9 states: the
-      declaring unit writes its members in that order and the target's own compiler places them. A
-      change confined to a unit's bodies changes no signature, so nothing a referrer compiles
+      the artifact carrying its bodies, and a referrer consumes only the first. What the unit
+      promised is a class of its own there, so the target language's own dispatch answers a
+      reference to a published member and the two sides share only the order S9 states. A change
+      confined to what a unit kept to itself changes no signature, so nothing a referrer compiles
       against moves. The program is formed by compiling each artifact and linking the results.
 
       A signature reaches another unit through a pointer, so it names the class without the file it
@@ -152,10 +152,13 @@ why nothing a signature states may rest on it.
       that is the only edge one unit's declarations have to another's, and two units that each
       extend a class the other declares have no target-language form and are refused.
 
-- [ ] S11 -- A referrer that only holds a handle to another unit's instance consumes that unit's
+- [x] S11 -- A referrer that only holds a handle to another unit's instance consumes that unit's
       signature and nothing more. Constructing an instance reaches the declaring unit's own entry
-      point rather than requiring its full layout at the instantiation site, so a declaration the
-      unit does not publish never re-emits a referrer either.
+      point rather than requiring its full layout at the instantiation site, and a published member
+      is reached by performing what the unit offers rather than by locating storage in its object.
+      So a declaration the unit does not publish moves nothing a referrer compiles against, which is
+      what the artifact now shows: adding one to a child leaves everything a referrer of that child
+      reads byte for byte the same, and moving a port does not.
 
 ## Out of scope
 

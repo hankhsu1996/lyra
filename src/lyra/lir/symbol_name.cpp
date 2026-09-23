@@ -40,6 +40,8 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'a';
     case SymbolCategory::kNamespaceStorageInitialize:
       return 'b';
+    case SymbolCategory::kObjectEntry:
+      return 'o';
     case SymbolCategory::kNamespaceVariable:
       return 'v';
     case SymbolCategory::kStaticProperty:
@@ -165,6 +167,11 @@ auto NamespaceStorageInitializeSymbol(std::string_view unit_name)
   return SymbolName(
       SymbolCategory::kNamespaceStorageInitialize,
       {SymbolPart::Name(unit_name)});
+}
+
+auto ObjectEntrySymbol(std::string_view unit_name) -> std::string {
+  return SymbolName(
+      SymbolCategory::kObjectEntry, {SymbolPart::Name(unit_name)});
 }
 
 auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)

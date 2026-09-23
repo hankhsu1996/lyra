@@ -18,11 +18,10 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local_ref.hpp"
-#include "lyra/mir/namespace_storage_phase.hpp"
+#include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
@@ -218,27 +217,30 @@ struct ExternalUnitCallableTarget {
   auto operator==(const ExternalUnitCallableTarget&) const -> bool = default;
 };
 
-// Identity of one of the two bodies bringing up another unit's namespace.
-// Neither is declared by the source, so neither answers to a name, and
-// SystemVerilog leaves no spelling reserved to the compiler (LRM 5.6.1) -- a
-// word minted for one would sit in the same name space as that unit's own
-// subroutines. The two ends agree on which body is meant by which of the two it
-// is, so this is its own identity space rather than a name in the unit's.
-struct ExternalUnitStorageTarget {
+// Identity of a body of another unit that answers to no name -- bringing that
+// unit's namespace up, or making one of its objects. The source declares none
+// of them, so none can be named (LRM 5.6.1); the two ends agree on which is
+// meant by which of them it is, so this is its own identity space rather than a
+// name in the unit's.
+struct ExternalUnitMintedEntryTarget {
   std::string unit_name;
-  NamespaceStoragePhase phase;
+  MintedEntry entry;
 
-  auto operator==(const ExternalUnitStorageTarget&) const -> bool = default;
+  auto operator==(const ExternalUnitMintedEntryTarget&) const -> bool = default;
 };
 
 // Identity of a method another compilation unit declares on a class -- an
-// instance method (LRM 8.6), including one on the object that unit's instances
-// are (LRM 25.7), or a type-associated method (LRM 8.10). The declaring class
-// carries no unit-local id here, so the target names the declaring unit, the
-// class's canonical (specialization) name, and the method's source name,
-// resolved against that unit's signature at link time. Whether the call
-// dispatches on an object is the presence of the callee's receiver, so the two
-// LRM forms are one identity here.
+// instance method (LRM 8.6) or a type-associated method (LRM 8.10). The
+// declaring class carries no unit-local id here, so the target names the
+// declaring unit, the class's canonical (specialization) name, and the method's
+// source name, resolved against that unit's signature at link time. Whether the
+// call dispatches on an object is the presence of the callee's receiver, so the
+// two LRM forms are one identity here.
+//
+// Naming the implementation outright is what this is for, which is why a
+// subroutine another unit published on its object (LRM 25.7) is not one: what a
+// referrer holds there is the promise, and which implementation answers is the
+// object's to decide, so that call names a behavior instead.
 struct ExternalUnitClassMethodTarget {
   std::string unit_name;
   std::string class_name;
@@ -253,9 +255,9 @@ struct ExternalUnitClassMethodTarget {
 // (`UnitCallableTarget`), the closed set of runtime library entries
 // (`BuiltinFn`), another compilation unit's namespace
 // (`ExternalUnitCallableTarget`) or one of its classes
-// (`ExternalUnitClassMethodTarget`), the fixed entries another unit's namespace
-// brings itself up through (`ExternalUnitStorageTarget`), and the DPI-C name
-// space (`ForeignSymbolTarget`, LRM 35.4). Inside this unit a body is named by
+// (`ExternalUnitClassMethodTarget`), the bodies of another unit that answer to
+// no name (`ExternalUnitMintedEntryTarget`), and the DPI-C name space
+// (`ForeignSymbolTarget`, LRM 35.4). Inside this unit a body is named by
 // its position and outside it by what the namespace published, so the two
 // namespace alternatives are total and do not overlap. Nothing here says
 // whether the call dispatches on an object -- that is the callee's receiver --
@@ -263,7 +265,7 @@ struct ExternalUnitClassMethodTarget {
 using DirectTarget = std::variant<
     CallableTarget, UnitCallableTarget, support::BuiltinFn,
     ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
-    ExternalUnitStorageTarget, ForeignSymbolTarget>;
+    ExternalUnitMintedEntryTarget, ForeignSymbolTarget>;
 
 // A direct call whose callee is settled at compile time. The single shape for
 // every direct invocation: a user method, a built-in, a subroutine of this
@@ -442,15 +444,6 @@ struct ClosureFieldTarget {
   auto operator==(const ClosureFieldTarget&) const -> bool = default;
 };
 
-// Identity of a member another compilation unit published on one of its
-// objects, at the position that unit's signature gave it.
-struct ExternalUnitObjectFieldTarget {
-  ExternalUnitObjectId owner;
-  FieldId slot;
-
-  auto operator==(const ExternalUnitObjectFieldTarget&) const -> bool = default;
-};
-
 // Identity of a property on an SV class another compilation unit declares: the
 // declaring unit, the class's canonical name -- matched at link time -- and the
 // slot that class gave the property, counted out of what it published. The
@@ -476,7 +469,7 @@ struct CrossUnitClassFieldTarget {
 // name in an arena, and it is a call.
 using FieldRef = std::variant<
     ClassFieldTarget, StructFieldTarget, ClosureFieldTarget,
-    ExternalUnitObjectFieldTarget, CrossUnitClassFieldTarget>;
+    CrossUnitClassFieldTarget>;
 
 // Field access through an explicit receiver expression: `receiver.field`. The
 // receiver is a value of whichever declaration the field names, reached by
@@ -549,7 +542,14 @@ struct VectorGetExpr {
 // wrapper object (a lifecycle hook slot in a per-class definition constant).
 // The referent is an `AbiAdapter`, never an instance method: instance
 // methods have no function-pointer-compatible identity.
+//
+// The class that owns the adapter is named here rather than left to whichever
+// declaration the reference sits inside, because the two are not always the
+// same one: the record a runtime is entered through belongs to the class
+// standing in its tree, and the bodies it names belong to the class supplying
+// them.
 struct FunctionRef {
+  ClassId owner;
   AbiAdapterId adapter;
 };
 

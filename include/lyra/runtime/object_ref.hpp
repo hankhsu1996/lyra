@@ -8,6 +8,8 @@
 
 namespace lyra::runtime {
 
+struct ObjectDefinition;
+
 // The base an object carries so a body running on it can name the reference
 // that refers to it. A body reaches its own object through a borrowed pointer,
 // which serves every member access; LRM 8.11 `this` asks for a reference
@@ -18,14 +20,25 @@ namespace lyra::runtime {
 //
 // Recovering a reference from an object is what a shared-owner realization
 // needs; where reachability retains an object a body already holds its receiver
-// as a root, and this record goes with the realization rather than into it. It
-// adds no virtual destructor: what releases an object is the deleter its
-// allocation fixed, so an object whose class declares no virtual method keeps
-// no table.
-struct ObjectDefinition;
-
+// as a root, and this record goes with the realization rather than into it.
+//
+// The destructor is virtual here and nowhere below. A value of a class is
+// released through a pointer to this base -- a scope by the tree that owns it,
+// an object by the share that holds it -- so the kind has to be recovered at
+// that pointer. Declaring it here rather than at whichever kind first needs it
+// is what keeps this base at the address every entry is handed: a kind
+// introducing the table pointer itself would take offset zero for it and push
+// this off the front, and an entry taking an untyped address to be one of these
+// would then read that table pointer as the first field.
 class GcObject : public std::enable_shared_from_this<GcObject> {
  public:
+  GcObject() = default;
+  virtual ~GcObject() = default;
+  GcObject(const GcObject&) = default;
+  auto operator=(const GcObject&) -> GcObject& = default;
+  GcObject(GcObject&&) = delete;
+  auto operator=(GcObject&&) -> GcObject& = delete;
+
   // Called once, by the allocation, with the address the allocation produced.
   void AdoptIdentity(void* address) {
     identity_ = address;

@@ -35,22 +35,28 @@ struct CrossUnitBase {
   std::string class_name;
 };
 
-// The runtime's object tree as a base: what a class extends by standing in that
-// tree, and the three functions it supplies to be driven through.
+// The runtime's object tree as a base: what a class extends to be rooted in
+// that tree.
 //
-// The runtime drives every object of the tree through them, in the order they
-// stand here: every route and alias is bound while the tree is complete and
-// nothing has run, then every cell takes the value its declaration gives it
-// (LRM 10.5), then every process is created (LRM 9.2). Each is entered on one
-// instance and returns before the next begins, which is why the three are
-// separate functions rather than one with phases inside it. Standing in the
-// tree and being driven are one fact, so a class in the tree that states no way
-// to run, and a way to run on a class outside it, are both unspellable.
+// A base form names a class and nothing else. How the runtime drives an object
+// is a property of whichever class supplies the functions it drives one
+// through, so that class states it.
 //
 // What the runtime calls the class it provides is a spelling of whichever
-// target emits against that library, so it is not here: this states that the
-// base is the runtime's, and how the class stands in it.
+// target emits against that library, so this states that the base is the
+// runtime's and nothing more.
 struct ObjectTreeBase {
+  auto operator==(const ObjectTreeBase&) const -> bool = default;
+};
+
+// The functions the runtime enters on an object of a class it drives. The
+// runtime enters all three or none, so they are read as a group: every route
+// and alias is bound while the tree is complete and nothing has run, then every
+// cell takes the value its declaration gives it (LRM 10.5), then every process
+// is created (LRM 9.2). Each is entered on one instance and returns before the
+// next begins, which is why they are three functions rather than one with
+// phases inside it.
+struct ObjectTreeProgram {
   FunctionId resolve_state;
   FunctionId initialize_state;
   FunctionId create_processes;
@@ -160,6 +166,11 @@ struct Class {
   // position where it is not, so the two ranges never meet.
   std::optional<std::string> name;
   std::optional<Base> base;
+  // How the runtime drives values of this class, for a class it drives at all.
+  // A class rooted in the tree that supplies none is one nothing constructs --
+  // what a unit promises of its object, which states what may be reached and
+  // never how it runs.
+  std::optional<ObjectTreeProgram> tree_program;
   std::vector<Member> members;
   std::vector<NamedMember> named_members;
   FunctionId constructor{};
@@ -171,54 +182,50 @@ struct Class {
   std::vector<DeclaredClass> declares;
 };
 
-// How values of this class stand in the runtime's object tree, or nothing where
-// they stand outside it. Extending a class -- this unit's or another's -- is
-// what a class of the source language does and says nothing about the tree, so
-// which base a class has is the whole of the answer.
+// How the runtime drives values of this class, or nothing where it drives none.
+// A class supplies these functions or it does not, and the class itself is the
+// only thing that can say so, because they are its own bodies.
+[[nodiscard]] inline auto TreeProgramOf(const Class& cls)
+    -> const ObjectTreeProgram* {
+  return cls.tree_program.has_value() ? &*cls.tree_program : nullptr;
+}
+
+// A class of another unit this one reaches into, as far as that unit published
+// it: which unit declares it and its canonical name, both resolved at link
+// time, what it extends, and the properties it published at the slots that
+// class gave them. Those properties are a prefix of the class's own storage, so
+// a slot counted here is the slot the declaring unit gave.
 //
-// One level is the whole answer because a scope is sealed: nothing extends one,
-// so a class either takes the tree as its base or stands outside it entirely.
-// Walking a lineage here would be looking for a shape the source language
-// cannot write.
-[[nodiscard]] inline auto ObjectTreeBaseOf(const Class& cls)
-    -> const ObjectTreeBase* {
-  if (!cls.base.has_value()) {
-    return nullptr;
-  }
-  return std::get_if<ObjectTreeBase>(&*cls.base);
-}
-
-// Whether they stand in it at all, for a reader that wants nothing else. Asking
-// this is the read above with the answer dropped, so the two cannot disagree.
-[[nodiscard]] inline auto IsObjectTreeNode(const Class& cls) -> bool {
-  return ObjectTreeBaseOf(cls) != nullptr;
-}
-
-// A class of another unit this one reaches a property on, as far as that unit
-// published it: which unit declares it and its canonical name, both resolved at
-// link time, and the properties it published at the slots that class gave them.
-// Those properties are a prefix of the class's own storage, so a slot counted
-// here is the slot the declaring unit gave. This unit compiles none of it,
-// which is why it sits apart from the classes above.
+// What a unit promised of its own object is such a class too, and lists no
+// properties, because what it published is reached by performing a behavior
+// rather than by a slot. Nothing about the name tells the two apart and nothing
+// needs to: what differs is what each extends, which is where the question of
+// whether its values stand in a tree is asked of either.
+//
+// This unit compiles none of it, which is why it sits apart from the classes
+// above.
 struct ExternalClass {
   std::string unit_name;
   std::string class_name;
   // The class it extends, as its own unit promised. What it inherited is not
   // among the members below, so a value of it carries a member of an ancestor
-  // by way of this chain.
-  std::optional<CrossUnitBase> base;
+  // by way of this chain, and so does the question of whether values of it
+  // stand in the declaring unit's object tree. A class one unit declares is
+  // never the base of a class another declares, so the intra-unit form this
+  // shares with a compiled class's base never arrives here.
+  std::optional<Base> base;
   std::vector<Member> members;
 };
 
 // The object of a unit this one references, as far as that unit published it:
 // which unit defines it and the class an instance of it is, both resolved at
-// link time, and the members it published at the positions their storage sits
-// in. This unit compiles none of it, which is why it sits apart from the
-// classes above: no walk that emits those can reach it.
+// link time. What that unit published is reached by performing a behavior of
+// the promise rather than by stepping into storage, so nothing here describes
+// storage and nothing may. This unit compiles none of it, which is why it sits
+// apart from the classes above: no walk that emits those can reach it.
 struct ExternalUnitObject {
   std::string unit_name;
   std::string class_name;
-  std::vector<Member> members;
 };
 
 // One compiled closure: the captures it holds and the one body that reads them.
@@ -335,6 +342,43 @@ struct CompilationUnit {
     }
   }
   return nullptr;
+}
+
+// Whether values of a class stand in the runtime's object tree, which is a
+// different question from what drives them and is answered by what the class
+// extends. It is the lineage rather than one base that answers: a unit's object
+// is a promise standing in the tree and a class realizing it, so a class one
+// step from the tree and a class two steps from it are equally in it, and only
+// the realizing one supplies the bodies. A class extending a class of the
+// source language leaves the lineage before reaching the tree, which is what
+// makes the walk end on an answer rather than run out of steps.
+//
+// The walk crosses the unit boundary, because a class this unit compiles and
+// one another unit promised are the same kind of thing asked the same question,
+// and taking what a class extends rather than the class lets one walk serve
+// both. A step into a promise this unit never consumed ends it: what goes
+// unrecorded there is a class of the source language, since a promise standing
+// in the tree reaches it in one step and is recorded wherever it is named.
+[[nodiscard]] inline auto StandsInObjectTree(
+    const CompilationUnit& unit, const std::optional<Base>& extends) -> bool {
+  const std::optional<Base>* standing = &extends;
+  while (standing->has_value()) {
+    if (std::holds_alternative<ObjectTreeBase>(**standing)) {
+      return true;
+    }
+    if (const auto* intra = std::get_if<IntraUnitBase>(&**standing)) {
+      standing = &unit.classes.Get(intra->class_id).base;
+      continue;
+    }
+    const auto& cross = std::get<CrossUnitBase>(**standing);
+    const ExternalClass* promised =
+        FindExternalClass(unit, cross.unit_name, cross.class_name);
+    if (promised == nullptr) {
+      return false;
+    }
+    standing = &promised->base;
+  }
+  return false;
 }
 
 }  // namespace lyra::lir

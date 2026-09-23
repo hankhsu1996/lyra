@@ -25,10 +25,11 @@ each stage establishes, not how.
       resolver case with no consumer change.)
 
 - [x] Each post-construction lifecycle body (the scope's resolve / initialize / activate work) is an
-      ordinary method that records, as a first-class fact, which runtime-base method it overrides --
-      a resolved declaration reference, not a textual name. The per-phase special fields on the
-      object declaration are gone. The full dynamic-dispatch slot machinery is not introduced here;
-      only the override relation. Behavior-neutral.
+      ordinary method of the class that supplies it, and that class states the three together as how
+      the runtime drives one of its objects. The per-phase special fields on the object declaration
+      are gone, and nothing recovers the group from what the class extends -- what a class is rooted
+      in says whether the runtime reaches its objects at all, never how it runs them.
+      Behavior-neutral.
 
 - [x] Object construction is already one generic, type-directed form -- what it builds (a value, an
       owned child, a managed handle) follows the result type, and a module's owned children
@@ -124,8 +125,12 @@ each stage establishes, not how.
       declared the class. A class declared elsewhere that extends one enters its base's construction
       the same way, and a class extending another states the complete argument list that
       construction carries however the source arrived at it -- an explicit `super.new`, or the
-      arguments written on the extends specifier (LRM 8.17). Settled in
-      `../decisions/constructing-another-units-class.md`.
+      arguments written on the extends specifier (LRM 8.17). Which kind of scope declares the
+      extending class makes no difference: a package's class extends another package's as readily as
+      a module's does, an extending class that declares nothing of its own still carries what it
+      inherited, a chain crosses as many units as it likes, and two units may extend each other's
+      classes in a circle -- legal, since no class in such a circle is its own ancestor, and running
+      on both backends. Settled in `../decisions/constructing-another-units-class.md`.
 
 - [x] A class's declaration scope reaches its compiled identity. A class declared inside a module, a
       generate scope, a package, or the compilation-unit scope (LRM 8.1, 27.6, 26, 3.12.1) is a

@@ -6,13 +6,12 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
+#include "lyra/runtime/class_value.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/scope_program.hpp"
-#include "lyra/runtime/storage_block.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
@@ -22,20 +21,24 @@ class CancellationTarget;
 
 // A node in the one canonical object tree. Every constructed
 // SystemVerilog scope -- a module instance, a generate block, the
-// implicit `$root` -- is a Scope. It carries the scope's structural
-// identity (parent plus HierarchySegment), its child scopes, and its
-// registered signals. The runtime walks this same tree; there is no
-// parallel topology. Every dynamic scheduler concern -- queues, process
-// registry, deferred-effect attribution, ambient identity -- lives on
-// the Runtime. Scope contributes only structural identity.
-class Scope {
+// implicit `$root` -- is a Scope.
+//
+// It is a value of a class like any other, which is where what it is of and the
+// storage that brings come from; what this kind adds is its place in the tree
+// (parent plus HierarchySegment, its child scopes, its registered signals) and
+// the program the runtime drives it through. The runtime walks this same tree;
+// there is no parallel topology. Every dynamic scheduler concern -- queues,
+// process registry, deferred-effect attribution, ambient identity -- lives on
+// the Runtime, so beyond being a value of its class a scope contributes
+// structural identity and nothing else.
+class Scope : public ClassValue {
  public:
   using ChildVisitor = std::function<void(Scope&)>;
 
   Scope(
       Scope* parent, HierarchySegment segment,
       const ScopeDefinition* definition);
-  virtual ~Scope() = default;
+  ~Scope() override = default;
   Scope(const Scope&) = delete;
   auto operator=(const Scope&) -> Scope& = delete;
   Scope(Scope&&) = delete;
@@ -71,7 +74,7 @@ class Scope {
   // lifecycle entries itself, so this is how a caller reaches a behavior the
   // scope publishes for someone outside the lifecycle to call.
   [[nodiscard]] auto Program() const -> const ScopeProgram& {
-    return definition_->program;
+    return *program_;
   }
 
   // Records, during construction, the address of a signal this scope owns
@@ -161,7 +164,7 @@ class Scope {
   // unspecified sentinel. The engine takes the minimum across the tree to fix
   // the design-global precision (LRM 3.14.3).
   [[nodiscard]] auto TimePrecisionPower() const -> std::int8_t {
-    return definition_->program.metadata.time_precision_power;
+    return program_->metadata.time_precision_power;
   }
 
   // The scope's time unit as a power of ten (LRM Table 20-2), read from its
@@ -170,7 +173,7 @@ class Scope {
   // `svGetTimeUnit` query and to scale `svGetTime` to the scope (LRM 35.5.3,
   // Annex H).
   [[nodiscard]] auto TimeUnitPower() const -> std::int8_t {
-    return definition_->program.metadata.time_unit_power;
+    return program_->metadata.time_unit_power;
   }
 
   // Per-scope lifecycle entries. Each runs this scope's generated body
@@ -220,8 +223,11 @@ class Scope {
 
   Scope* parent_ = nullptr;
   HierarchySegment segment_;
-  // Borrowed. The class this scope was built from, set at construction.
-  const ScopeDefinition* definition_ = nullptr;
+  // Borrowed. How the runtime drives an instance of the class this scope is,
+  // taken from that class at construction. What class it is, is what every
+  // value of one carries; this is the half that exists because the runtime
+  // enters this kind of value rather than only dispatching on it.
+  const ScopeProgram* program_ = nullptr;
   // Physical containment: every runtime child scope this object owns
   // appears here once, in attach order. Includes anonymous scopes
   // (unnamed begin/ends). A by-name reach scans this and recurses into
@@ -238,29 +244,6 @@ class Scope {
   // LRM 18.14.1 puts one on each module, interface, and program instance. A
   // generate scope is none of those and nothing draws from the one it carries.
   InitializationRng initialization_seeds_;
-};
-
-// A scope whose member storage the runtime owns, rather than a backend's native
-// object layout. The definition describes the storage schema, the scope owns
-// one storage object per member, and a member place resolves to that object's
-// address. This is the runtime-owned counterpart of native member fields: a
-// member is a logical place, and this is its realization when the backend does
-// not lay one out physically.
-class GeneratedScope : public Scope {
- public:
-  GeneratedScope(
-      Scope* parent, HierarchySegment segment,
-      const ScopeDefinition* definition)
-      : Scope(parent, std::move(segment), definition),
-        members_(definition->members) {
-  }
-
-  [[nodiscard]] auto MemberAddress(std::uint32_t index) -> void* {
-    return members_.Address(index);
-  }
-
- private:
-  StorageBlock members_;
 };
 
 }  // namespace lyra::runtime

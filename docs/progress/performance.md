@@ -293,6 +293,22 @@ specializations, not with instance count.
       endpoint members and its implied continuous assignments stay one per element; collapsing those
       needs the peer to be a function of the index, which is exactly what the distribution spent.
 
+- [ ] What a port binding costs at time zero. Measured 2026-09-17 over 500 instances of one trivial
+      child, built optimized, against an otherwise identical design whose child takes no ports and
+      whose parent holds the same cells: each binding adds about 7 microseconds to elaboration. It
+      is linear in the number of bindings -- two per instance and three per instance give the same
+      per-binding figure -- and does not depend on whether the port is driven across the boundary.
+      About half of it is kernel time, and that half grows with the binding count and with nothing
+      else the design holds, which points at an allocation per binding rather than at the work of
+      settling one. What makes it worth an entry is the scale: a design with a hundred thousand
+      ports spends most of a second before any process runs, and elaboration is paid on every run
+      rather than once per edit.
+
+      Asking the declaring unit for a published member is not what this is. That is one indirect call
+      per binding, three orders of magnitude under what a measurement at this size can separate --
+      the instrument here resolves a couple of microseconds per binding, so the reading bounds the
+      call from above and says nothing else about it.
+
 ### Open questions
 
 - How thin the specialization key goes. The fat-value runtime representation carries packed width

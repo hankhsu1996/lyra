@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <utility>
@@ -22,7 +23,7 @@
 #include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/namespace_storage_phase.hpp"
+#include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/struct_id.hpp"
@@ -91,9 +92,54 @@ struct NamedStaticVariable {
 }
 
 // A unit whose instances are a tree of objects the runtime drives (LRM 23.3):
-// the class at the root of that tree.
+// what the unit promised of one of those objects, the class at the root of the
+// tree that realizes it, and the one body that brings one into existence.
+//
+// The promise is the whole of what another unit may name here. A design element
+// exists to be instantiated and wired (LRM 23.2.1), so everything else it
+// declares -- the class realizing the promise, the scopes below it, and any
+// class of the source language it declares inside itself -- is its own, and no
+// referrer has a name for one.
+//
+// That body exists because a unit instantiating this one consumed what this one
+// promised, and a promise states what may be reached and never how much storage
+// an object takes -- so an instantiator cannot make one and asks for one
+// instead. The party that builds the design's tops asks the same way, having no
+// more than any other referrer. It answers to no name, which is why the unit
+// holds it as the body it is rather than among the bodies an identifier
+// reaches.
+
+// What one unit read of another's signature. A unit publishes its namespace --
+// the cells and bodies it declares outside any class of it (LRM 26.2) -- and
+// each class it promised, and a referrer reads one of those rather than the
+// whole, so what it depends on is that much and no more.
+struct ConsumedNamespace {
+  std::string unit_name;
+
+  auto operator==(const ConsumedNamespace&) const -> bool = default;
+};
+
+struct ConsumedClass {
+  std::string unit_name;
+  std::string class_name;
+
+  auto operator==(const ConsumedClass&) const -> bool = default;
+};
+
+using ConsumedSignature = std::variant<ConsumedNamespace, ConsumedClass>;
+
+// Which unit a consumption reached, whichever of the two it was.
+[[nodiscard]] inline auto UnitConsumed(const ConsumedSignature& consumed)
+    -> const std::string& {
+  return std::visit(
+      [](const auto& one) -> const std::string& { return one.unit_name; },
+      consumed);
+}
+
 struct RootedTree {
+  ClassId promise;
   ClassId root;
+  CallableId object_entry;
 };
 
 // A unit that is a namespace rather than a hierarchy -- a package (LRM 26.2) or
@@ -112,10 +158,8 @@ struct RootedTree {
 // that brings up none -- so the design root calls both without first asking
 // what this one supplied.
 //
-// Neither answers to a name. The source declares neither, and SystemVerilog
-// leaves no spelling reserved to the compiler (LRM 5.6.1), so a word minted for
-// them is a word the unit's own namespace could also answer; the design root
-// reaches them by which of the two they are instead.
+// Neither answers to a name, which is why the unit holds each as the body it is
+// rather than among the bodies an identifier reaches.
 struct BroughtUpNamespace {
   CallableId install_storage;
   CallableId initialize_storage;
@@ -283,22 +327,14 @@ struct CompilationUnit {
   // closure's type identity, in a separate registry from `structs`: a closure
   // is its own callable-value category, not a struct.
   base::Registry<ClosureDecl, ClosureId> closures;
-  // Names of other compilation units this unit reaches a namespace-level symbol
-  // of by name -- a package function or task called (LRM 26.3), or a package
-  // variable read or written (LRM 26.2). Such a reference carries no
-  // value-typed object of the target unit, so unlike an instantiation it
-  // interns no `ExternalUnitObjectType`; a backend reads this dependency list
-  // to emit the include and link edge to each referenced unit. Recorded once
-  // per distinct unit name.
-  std::vector<std::string> external_referenced_units;
-  // Names of other compilation units this unit references a class of (LRM 8,
-  // as a handle type, a `new` target, a field / method / static access, or a
-  // super-extended base). A backend reads this list -- a separate axis from
-  // `external_referenced_units`, because a package callable / variable and a
-  // class member of another unit are independent include edges -- to emit the
-  // include and link edge to each referenced unit. Recorded once per distinct
-  // unit name.
-  std::vector<std::string> external_class_units;
+  // Every other compilation unit whose signature this one consumed, once each.
+  // That set is the whole of what this unit depends on another for, so whoever
+  // asks what an edit reaches asks this and nothing else -- an instantiated
+  // child, a package symbol named by a body, a class reached into, a base
+  // extended, all arrive here rather than each in a list of its own. Each names
+  // the part it read rather than the unit whole, so a change to a class nobody
+  // read reaches nobody.
+  std::vector<ConsumedSignature> consumed_signatures;
 
   CompilationUnit()
       : builtins{
@@ -442,41 +478,36 @@ struct CompilationUnit {
     closures.Define(id, std::move(value));
   }
 
-  // Records a cross-unit namespace-symbol dependency, deduplicated. Called from
-  // HIR-to-MIR when a reference names a receiver-less callable or a static
-  // variable of another unit.
+  // Records what this unit read of another's signature. Called from HIR-to-MIR
+  // wherever a promise is read; the same part reached twice is one entry.
   //
   // This unit is not a dependency of itself, and that is settled here because
   // one caller cannot settle it: the design root realizes a plan of unit names
-  // it does not inspect, so it asks for every one of them and the list decides
+  // it does not inspect, so it asks for every one of them and the set decides
   // which are outside. A site that does read what it reaches names the position
   // instead and never arrives here at all.
-  void AddExternalReferencedUnit(std::string unit_name) {
+  void ConsumeNamespaceOf(std::string unit_name) {
     if (unit_name == name) {
       return;
     }
-    for (const std::string& existing : external_referenced_units) {
-      if (existing == unit_name) {
-        return;
-      }
-    }
-    external_referenced_units.push_back(std::move(unit_name));
+    Consume(ConsumedNamespace{.unit_name = std::move(unit_name)});
   }
 
-  // Records a cross-unit class-reference dependency, deduplicated. Called
-  // from HIR-to-MIR when a class handle type, a `new`, a field / method /
-  // static access, or a base extension names a class of another unit. Self is
-  // excluded for the reason above.
-  void AddExternalClassUnit(std::string unit_name) {
+  void ConsumeClassOf(std::string unit_name, std::string class_name) {
     if (unit_name == name) {
       return;
     }
-    for (const std::string& existing : external_class_units) {
-      if (existing == unit_name) {
-        return;
-      }
+    Consume(
+        ConsumedClass{
+            .unit_name = std::move(unit_name),
+            .class_name = std::move(class_name)});
+  }
+
+  void Consume(ConsumedSignature consumed) {
+    if (std::ranges::find(consumed_signatures, consumed) ==
+        consumed_signatures.end()) {
+      consumed_signatures.push_back(std::move(consumed));
     }
-    external_class_units.push_back(std::move(unit_name));
   }
 };
 
@@ -493,6 +524,47 @@ struct CompilationUnit {
 [[nodiscard]] inline auto BroughtUpNamespaceOf(const CompilationUnit& unit)
     -> const BroughtUpNamespace* {
   return std::get_if<BroughtUpNamespace>(&unit.content);
+}
+
+// Whether another unit can name this class, which is what a unit contributes to
+// the program deciding. A design element publishes what it promised of its
+// object and nothing else it declares inside (LRM 23.2.1); a namespace unit
+// publishes the classes it declares (LRM 26.2), which are the ones the source
+// named. Every consumer deciding which artifact a declaration belongs in asks
+// here, so none of them answers it a second way.
+[[nodiscard]] inline auto IsPromised(const CompilationUnit& unit, ClassId id)
+    -> bool {
+  if (const RootedTree* tree = RootedTreeOf(unit)) {
+    return id == tree->promise;
+  }
+  return unit.GetClass(id).name.has_value();
+}
+
+// The classes of the program this one's declaration rests on: the class it
+// extends (LRM 8.13) and each interface it commits to (LRM 8.26), counted only
+// where that is a class some unit declares. A class the runtime library defines
+// is not one, because the library is there before any unit is.
+//
+// This is the whole of what a declaration has to have behind it. Everything
+// else a class names -- the type of a property, of an argument, of a result --
+// is reached through a reference, so the named class may still be nothing but a
+// name when this one is written. A consumer that has to put declarations in an
+// order reads this and needs nothing else.
+[[nodiscard]] inline auto RestsOnDeclaredClasses(const Class& cls)
+    -> std::vector<ClassRef> {
+  std::vector<ClassRef> resting;
+  const auto take = [&resting](const ClassRef& ref) {
+    if (!std::holds_alternative<RuntimeClassRef>(ref)) {
+      resting.push_back(ref);
+    }
+  };
+  if (cls.base.has_value()) {
+    take(*cls.base);
+  }
+  for (const ClassRef& implemented : cls.implements) {
+    take(implemented);
+  }
+  return resting;
 }
 
 // What spells one body of a unit's namespace: the linkage name the source wrote
@@ -513,8 +585,8 @@ struct ReachedByLinkageName {
 struct ReachedByName {
   std::string_view name;
 };
-struct ReachedByStoragePhase {
-  NamespaceStoragePhase phase;
+struct ReachedByMintedEntry {
+  MintedEntry entry;
 };
 // A body nothing names, spelled from where it sits. A target mints the spelling
 // into a range no source name reaches; nothing outside this unit can ask for
@@ -524,7 +596,7 @@ struct ReachedByPosition {
 };
 
 using NamespaceReach = std::variant<
-    ReachedByLinkageName, ReachedByName, ReachedByStoragePhase,
+    ReachedByLinkageName, ReachedByName, ReachedByMintedEntry,
     ReachedByPosition>;
 
 // How `id` is spelled. Every target names it from this one answer, so no two
@@ -538,10 +610,15 @@ using NamespaceReach = std::variant<
   }
   if (const BroughtUpNamespace* ns = BroughtUpNamespaceOf(unit)) {
     if (id == ns->install_storage) {
-      return ReachedByStoragePhase{NamespaceStoragePhase::kInstall};
+      return ReachedByMintedEntry{MintedEntry::kInstallStorage};
     }
     if (id == ns->initialize_storage) {
-      return ReachedByStoragePhase{NamespaceStoragePhase::kInitialize};
+      return ReachedByMintedEntry{MintedEntry::kInitializeStorage};
+    }
+  }
+  if (const RootedTree* tree = RootedTreeOf(unit)) {
+    if (id == tree->object_entry) {
+      return ReachedByMintedEntry{MintedEntry::kMakeObject};
     }
   }
   if (const std::optional<std::string_view> name =

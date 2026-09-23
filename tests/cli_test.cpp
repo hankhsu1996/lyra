@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -7,7 +8,10 @@
 #include <format>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
 #include <memory>
+#include <regex>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -372,6 +376,208 @@ TEST(LyraEmit, ReEmitIntoSameDirectorySucceeds) {
   }
   EXPECT_TRUE(
       std::filesystem::exists(out_dir / "runtime/lib/libcpp_runtime.a"));
+}
+
+// A parent and the child it instantiates. `kept` is a declaration the child
+// never publishes, and `ports_reversed` swaps the order it publishes its two
+// ports in -- the two axes a referrer's dependency on the child is judged on.
+auto WriteParentAndChild(
+    const std::filesystem::path& path, bool kept, bool ports_reversed) -> void {
+  std::ofstream out(path);
+  out << "module Leaf (\n";
+  out
+      << (ports_reversed ? "    output logic [31:0] y,\n"
+                           "    input  logic [31:0] a\n"
+                         : "    input  logic [31:0] a,\n"
+                           "    output logic [31:0] y\n");
+  out << ");\n";
+  if (kept) {
+    out << "  logic [6:0] kept;\n";
+  }
+  out << "  always_comb begin\n";
+  if (kept) {
+    out << "    kept = 7'd3;\n";
+  }
+  out << "    y = a + 32'd1;\n"
+      << "  end\n"
+      << "endmodule\n"
+      << "module Test;\n"
+      << "  logic [31:0] src;\n"
+      << "  logic [31:0] dst;\n"
+      << "  Leaf u (.a(src), .y(dst));\n"
+      << "  initial begin\n"
+      << "    src = 32'd41;\n"
+      << "    #1;\n"
+      << "    $display(\"y=%0d\", dst);\n"
+      << "  end\n"
+      << "endmodule\n";
+}
+
+auto ReadWholeFile(const std::filesystem::path& path) -> std::string {
+  std::ifstream in(path, std::ios::binary);
+  return std::string{
+      std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+// Everything a referrer of `unit` compiles against, read out of `dir` as one
+// text. A unit's declarations are spread over several headers and which of them
+// a piece of text sits in is the backend's own business, so the claim below is
+// made against the whole of what a referrer reads.
+auto ReadDeclarationsOf(const std::filesystem::path& dir, std::string_view unit)
+    -> std::string {
+  std::vector<std::filesystem::path> files;
+  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+    const std::string name = entry.path().filename().string();
+    if (entry.path().extension() == ".hpp" &&
+        (name == std::format("{}.hpp", unit) ||
+         name.starts_with(std::format("{}.", unit)))) {
+      files.push_back(entry.path());
+    }
+  }
+  std::ranges::sort(files);
+  std::string out;
+  for (const std::filesystem::path& file : files) {
+    out += ReadWholeFile(file);
+  }
+  return out;
+}
+
+// Emits one variant of that design into its own directory and answers with
+// everything the child promised.
+auto EmitChildSignature(
+    const std::filesystem::path& lyra, const std::filesystem::path& root,
+    std::string_view variant, bool kept, bool ports_reversed) -> std::string {
+  const auto dir = root / variant;
+  std::filesystem::create_directories(dir);
+  const auto src = dir / "test.sv";
+  WriteParentAndChild(src, kept, ports_reversed);
+  const auto out_dir = dir / "out";
+  const std::vector<std::string> args = {
+      "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
+  const auto emit = RunChildProcess(lyra, args, 60s);
+  EXPECT_EQ(emit.termination, TerminationKind::kExitedNormally)
+      << variant << ": " << emit.stderr_text;
+  EXPECT_EQ(emit.exit_code, 0) << variant << ": " << emit.stderr_text;
+  return ReadDeclarationsOf(out_dir, "Leaf");
+}
+
+// What a unit's referrers compile against is what that unit promised. A
+// declaration the unit kept to itself must move none of it, and a change to
+// what it published must.
+TEST(LyraEmit, TheSignatureCarriesWhatTheUnitPromisedAndNothingElse) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const std::string promised =
+      EmitChildSignature(lyra, *tmp_or, "promised", false, false);
+  ASSERT_FALSE(promised.empty());
+
+  EXPECT_EQ(promised, EmitChildSignature(lyra, *tmp_or, "kept", true, false));
+  EXPECT_NE(
+      promised, EmitChildSignature(lyra, *tmp_or, "reordered", false, true));
+}
+
+// One package holding two classes with nothing to do with each other, and two
+// modules using one apiece. A flag gives one class a property nobody reads,
+// which is a change to what that class declares rather than to a body of it.
+auto WriteTwoClassPackage(
+    const std::filesystem::path& path, bool counter_grows, bool logger_grows)
+    -> void {
+  std::ofstream out(path);
+  out << "package pkg;\n"
+      << "  class Counter;\n"
+      << "    int n = 1;\n"
+      << (counter_grows ? "    int spare;\n" : "") << "  endclass\n"
+      << "  class Logger;\n"
+      << "    int m = 2;\n"
+      << (logger_grows ? "    int spare;\n" : "") << "  endclass\n"
+      << "endpackage\n"
+      << "module UsesCounter;\n"
+      << "  int seen;\n"
+      << "  initial begin\n"
+      << "    pkg::Counter c;\n"
+      << "    c = new();\n"
+      << "    seen = c.n;\n"
+      << "  end\n"
+      << "endmodule\n"
+      << "module UsesLogger;\n"
+      << "  int seen;\n"
+      << "  initial begin\n"
+      << "    pkg::Logger l;\n"
+      << "    l = new();\n"
+      << "    seen = l.m;\n"
+      << "  end\n"
+      << "endmodule\n"
+      << "module Test;\n"
+      << "  UsesCounter a ();\n"
+      << "  UsesLogger b ();\n"
+      << "endmodule\n";
+}
+
+// Every line of text one translation unit is handed: its own, and that of every
+// file it reaches through an include of the project's own. A referrer's
+// dependency is this and not the set of units it named, so this is what a claim
+// about what it compiles against has to be made against.
+auto ReadCompileInput(
+    const std::filesystem::path& dir, const std::filesystem::path& entry,
+    std::set<std::filesystem::path>& seen) -> std::string {
+  if (!seen.insert(entry).second) {
+    return {};
+  }
+  const std::string own = ReadWholeFile(dir / entry);
+  std::string out = own;
+  const std::regex include{"#include \"([^\"/]+)\""};
+  for (auto it = std::sregex_iterator(own.begin(), own.end(), include);
+       it != std::sregex_iterator(); ++it) {
+    const std::filesystem::path named = (*it)[1].str();
+    if (std::filesystem::exists(dir / named)) {
+      out += ReadCompileInput(dir, named, seen);
+    }
+  }
+  return out;
+}
+
+// Emits one variant of that design into its own directory and answers with
+// everything `UsesCounter`'s translation unit is handed.
+auto EmitAndReadCounterInput(
+    const std::filesystem::path& lyra, const std::filesystem::path& root,
+    std::string_view variant, bool counter_grows, bool logger_grows)
+    -> std::string {
+  const auto dir = root / variant;
+  std::filesystem::create_directories(dir);
+  const auto src = dir / "test.sv";
+  WriteTwoClassPackage(src, counter_grows, logger_grows);
+  const auto out_dir = dir / "out";
+  const std::vector<std::string> args = {
+      "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
+  const auto emit = RunChildProcess(lyra, args, 60s);
+  EXPECT_EQ(emit.exit_code, 0) << variant << ": " << emit.stderr_text;
+  std::set<std::filesystem::path> seen;
+  return ReadCompileInput(out_dir, "UsesCounter.cpp", seen);
+}
+
+// What a referrer depends on is the part of a signature it read, never the unit
+// holding it. One package holds two unrelated classes and two modules use one
+// apiece, so editing the class this module never named must move nothing it
+// compiles -- while editing the one it did must.
+TEST(LyraEmit, AReferrerCompilesAgainstThePartItRead) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const std::string base =
+      EmitAndReadCounterInput(lyra, *tmp_or, "base", false, false);
+  ASSERT_FALSE(base.empty());
+
+  EXPECT_EQ(
+      base, EmitAndReadCounterInput(lyra, *tmp_or, "other_class", false, true));
+  EXPECT_NE(
+      base, EmitAndReadCounterInput(lyra, *tmp_or, "own_class", true, false));
 }
 
 // A design spread over a directory, declared by a `lyra.toml` beside it. Every

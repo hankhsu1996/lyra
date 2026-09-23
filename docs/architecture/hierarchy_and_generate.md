@@ -121,5 +121,56 @@ shared by all consumers: external references, child routing, and construction.
 
 ## Notes / Examples
 
+### Every node kind, in one tree
+
+```systemverilog
+module Mid;
+  for (genvar i = 0; i < 2; i++) begin : g
+    Leaf leaf ();
+  end
+  if (1) begin            // unnamed in the source; LRM 27.6 gives it one
+    Leaf hidden ();
+  end
+  Leaf bank[0:1] ();
+  initial begin           // procedural, so it answers to no name at all
+    ...
+  end
+endmodule
+
+module Test;
+  Mid mid ();
+endmodule
+```
+
+```mermaid
+flowchart TB
+  R["$root"] --> T["Test<br/>top-level block"]
+  T --> M["mid<br/>module instance"]
+  M --> G0["g[0]<br/>generate scope, one index"]
+  M --> G1["g[1]"]
+  M --> GB["genblk2<br/>generate scope, name the standard gave it"]
+  M --> B0["bank[0]<br/>instance array element"]
+  M --> B1["bank[1]"]
+  M --> AN["(unnamed)<br/>procedural scope"]
+  G0 --> L0["leaf"]
+  G1 --> L1["leaf"]
+  GB --> H["hidden"]
+```
+
+Three things the picture is for.
+
+**There is one tree and every kind of node is in it.** A generate scope is not a second topology
+laid over the instances; it is a node beside them, with children of its own. Nothing anywhere holds
+a generate-specific parent relation, which is what invariant 1 means by generate having no identity
+system of its own.
+
+**An index is part of a node's own identity, not a separate structure.** `g[0]` and `bank[0]` carry
+theirs the same way, so an instance array and a generate loop differ in what declared them and in
+nothing a consumer of the tree can see.
+
+**A node with no name is in the tree and no hierarchical name reaches it.** The procedural scope is
+a child like any other and a by-name walk descends through it transparently, which is what lets a
+process declare its own scope without putting a segment in every path beneath it.
+
 If resolving a hierarchical reference requires a lookup through a table that mirrors the object
 tree, the table is redundant: the tree itself is the authority.

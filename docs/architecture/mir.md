@@ -317,7 +317,10 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   at one node and written through at another. Reading storage is place formation, and a call that
   stands for a destination obliges every other consumer to decode it back into that destination. A
   write is not this shape: it is an operation on the wrapper and names its destination among its
-  operands, so it yields nothing to decode. (Invariant 14.)
+  operands, so it yields nothing to decode. Nor is a call that answers with a typed pointer an
+  ordinary dereference consumes -- reaching what another unit published is one, since only the unit
+  owning the storage knows where it sits: nothing has to recognize that result, because its type
+  already says what it is. (Invariant 14.)
 - A runtime helper invocation that wraps a primitive operator family as an opaque call to recover
   source-level shape (e.g., `Inside(lhs, items)`, `CaseMatch(sel, labels)`). Sugar collapses to
   primitives in MIR; readability of generated backend source is not recovered by reintroducing

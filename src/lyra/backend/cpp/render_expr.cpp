@@ -170,20 +170,14 @@ auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
             // and the receiver never appears.
             return CppClosureCaptureName(t.slot);
           },
-          [&](const mir::ExternalUnitObjectFieldTarget& t) -> std::string {
-            return through_receiver(
-                ToCppName(view.Unit()
-                              .external_unit_objects.Get(t.owner)
-                              .fields.Get(t.slot)
-                              .name));
-          },
           [&](const mir::CrossUnitClassFieldTarget& t) -> std::string {
-            // The declaring unit's header pulls the property name into scope
-            // through the include, so the receiver reaches it by its source
-            // name and the target-language compiler resolves it against the
-            // receiver's static type. The slot is what the access states, so
-            // the name is read out of what that class promised rather than
-            // restated at the access.
+            // The declaring unit's header pulls the property's declaration
+            // into scope through the include, so the receiver reaches it by
+            // the identifier that unit emitted it under and the
+            // target-language compiler resolves it against the receiver's
+            // static type. The slot is what the access states; the identifier
+            // is composed from it and what that class promised, by the same
+            // composition the declaring side used.
             const mir::ExternalClass* declaring = mir::FindExternalClass(
                 view.Unit().external_classes, t.unit_name, t.class_name);
             if (declaring == nullptr ||
@@ -193,7 +187,7 @@ auto RenderFieldAccessExpr(const ScopeView& view, const mir::FieldAccessExpr& m)
                   "consumed promise describes");
             }
             return through_receiver(
-                ToCppName(declaring->fields.Get(t.slot).name));
+                CppFieldNameOf(t.slot, declaring->fields.Get(t.slot).name));
           }},
       m.field);
 }
@@ -213,7 +207,8 @@ auto RenderReferenceExpr(
           },
           [&](const mir::FunctionRef& fr) -> std::string {
             return std::format(
-                "(&{}::{})", CppClassName(view.Class(), view.ClassId()),
+                "(&{}::{})",
+                CppClassName(view.Unit().GetClass(fr.owner), fr.owner),
                 CppAbiAdapterName(fr.adapter));
           },
           [&](const mir::StaticConstantRef& r) -> std::string {

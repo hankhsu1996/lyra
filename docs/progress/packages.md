@@ -93,6 +93,11 @@ callable-bearing part of PK4 reuse; PK1 is independent of it.
         the bodies meet each other once every declaration is in scope.
   - [ ] A package variable whose type is outside the supported storage families is rejected rather
         than mis-emitted.
+  - [ ] A package variable that is a handle to a class (LRM 26.2 admits any variable, 8.3 makes a
+        handle one), which is how shared configuration and factory objects are reached in testbench
+        code. Refused today, politely and by type rather than by construct: a package declaring one
+        reports that a variable of that type is not yet supported, so every other package-scope
+        variable a design has keeps working.
   - [ ] A net declared at package scope (LRM 26.2) is rejected; a package holds variables, not nets.
   - [ ] A package or `$unit` subroutine waits on a value rather than only on time. Measured over the
         whole axis: a delay (LRM 9.4.1) works, an event control naming a named event refuses

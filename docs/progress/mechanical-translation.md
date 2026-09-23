@@ -27,6 +27,24 @@ cross-check predicts. This file owns only which instances are known and what is 
 
 ## Facts now stated once
 
+- [x] T34 -- Which carrier holds a value of a class -- one standing in the design hierarchy, or one
+      the program built and the simulator owns -- is read once and answers every entry that acts on
+      a value through its class. It had been read for reaching a member and hard-coded for reaching
+      a behavior, which was right while only one kind of value answered a behavior at all. Where the
+      class belongs to another unit the answer is one of the things that unit promised, because
+      nothing about the name tells the two apart; where it belongs to this one it is what the class
+      extends, read along the lineage rather than one step, since a unit's object is a promise
+      standing in the tree and a class realizing it.
+
+- [x] T33 -- A reference to a function a runtime callback surface takes names the class that
+      declares it, rather than leaving it to whichever declaration the reference sits inside. The
+      two were the same class for as long as one class both entered the runtime's tree and supplied
+      the bodies it is driven through; they stopped being the same when a unit's object became a
+      promise and a realization, and the render that had been reading its enclosing context emitted
+      a name no class had. Found by the emitted text failing to compile, which is the cross-check
+      working: the question "which class owns this function" had one answer stated nowhere and one
+      consumer guessing it.
+
 - [x] T1 -- A call states the object it dispatches on, so no consumer works out which of its
       operands is a receiver, and the argument list holds exactly what the source wrote.
 - [x] T2 -- A reference names a declared thing through one node whose target says which table
@@ -527,6 +545,36 @@ cross-check predicts. This file owns only which instances are known and what is 
       which is the general shape: a node stating less than the operation is checked by whichever
       backend realizes it, and a backend that refuses checks nothing.
 
+## What a declaration is
+
+- [ ] T30 -- A class states its own shape, so nothing works out what kind of class it is. Two facts
+      are carried as flags beside fields that are always there, and the source backend reads both to
+      decide something the program can tell apart. A class with no base gets one invented for it --
+      the target's own object-model root, named in an emitter, which is the one thing a value
+      emission entry may never name -- and whether it gets one at all is read off the
+      interface-class flag; the same flag decides whether a constructor is emitted, over a
+      construction protocol that is present whether or not the class has one. A class that commits
+      to a contract and declares no storage is not a class with a constructor nobody calls; it is a
+      class with none, and the way to say that is an absence rather than a flag beside a present
+      one. Target: every class names what it extends, including the root the object model puts under
+      one that extends nothing, and a class with no construction protocol carries none.
+
+- [ ] T31 -- Whether a callable is entered on an object is stated, not recovered by comparing the
+      type of its first parameter against the class's own pointer type. The source backend asks that
+      question twice, in the declaration and in the definition, and the answer drives three separate
+      pieces of the emitted text. It is the receiver the callable contract already settles
+      (`../decisions/callable-receiver.md`), so the comparison is a second answer to a question that
+      has one.
+
+- [ ] T32 -- A constructor is a callable, and what a target needs around one is that target's own
+      business. The source backend invents a second callable per class -- a static entry taking the
+      receiver, the forwarding argument list that calls it, and the literal receiver argument -- so
+      that a body-local receiver reference resolves the way it does everywhere else. None of it
+      exists in MIR, which makes it the canonical fabrication: a render composing declarations and
+      expressions rather than translating them, and a shape the execution backend neither has nor
+      needs. Either the shell is unnecessary once a constructor body states its receiver like every
+      other body, or it is a real construction step and belongs where every other one is stated.
+
 ## Naming ownership
 
 - [ ] T28 -- Every name a render emits comes from something that owns naming, and re-viewing an
@@ -549,6 +597,16 @@ cross-check predicts. This file owns only which instances are known and what is 
       makes it the same item rather than a new one is that no owner fits it either: it is not a
       type, not an access protocol, and not an operation, but a name two sides agree on by both
       reading one spelling. Whatever answers the re-view answers this.
+
+- [ ] T35 -- Which of a scope's bodies a hierarchical name may end at is stated on that body, not
+      recovered by matching identifiers across two lists. A scope carries its callables in one pool
+      and the entries a foreign or by-name caller reaches in another, and the publication sits on
+      the second while what it publishes is a body in the first; the execution lowering therefore
+      collects the published identifiers and then re-joins them to the bodies by comparing strings.
+      The pairing is known where the entry was built, so the join answers a second time a question
+      already settled once, and it holds only while no two bodies of one scope can share an
+      identifier. Found while sweeping what a unit promises, which is the compile-time half of the
+      same question and does state its pairing.
 
 ## Cross-references
 

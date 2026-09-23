@@ -240,10 +240,12 @@ already forms, that yields more per entry than a reader would name unaided.
   that would mean reading the base's promise while deriving this one, and a signature is a function
   of its own unit's declarations alone -- the property that leaves the signature stage unordered.
 
-Member placement follows one rule stated once, below the execution IR: **a published member sits in
-a fixed prefix of its object, ahead of everything the unit did not publish.** Producer and consumer
-then derive the same placement independently from the same signature, and a declaration a unit never
-published cannot move one that it did.
+Nothing here places a member. **A published member is reached by performing the behavior the promise
+states for it, in the order the signature published them**, so neither side computes a position and
+neither carries one. The declaring unit answers with the member's storage and the referrer keeps
+what came back; a declaration a unit never published therefore cannot move one that it did, and
+neither can the placement of one that it did
+([a-referrer-calls-rather-than-navigates](a-referrer-calls-rather-than-navigates.md)).
 
 ## Forbidden shapes
 
@@ -303,8 +305,8 @@ published cannot move one that it did.
 - `../architecture/reference_resolution.md` -- the route and per-segment classification D4 and D5
   refine.
 - `../architecture/emission_model.md` -- the artifact rules D6 extends.
-- `../architecture/lir.md` -- logical storage topology at the execution IR, with placement derived
-  below it, which is where the prefix rule lands.
+- `../architecture/lir.md` -- logical storage topology at the execution IR, which owns where a
+  member sits now that nothing above it counts a position.
 - `hierarchical-reference-routing.md` -- D2 there classifies segments per segment rather than per
   lexical form, which this entry keeps; only the classifier's definition widens.
 - `front-end-semantic-boundary.md` -- D3 there states the classifier operationally over slang scope

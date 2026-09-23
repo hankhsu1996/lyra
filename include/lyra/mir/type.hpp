@@ -312,8 +312,9 @@ struct ObjectType {
 
 // The cross-unit twin of ObjectType: an instance of the object another unit
 // publishes, named by this unit's record of what that unit promised about it.
-// Only the published prefix of its layout is visible here, which is what a
-// member reached through this type may name.
+// Nothing of its layout is visible here: what the promise offers is behaviors,
+// so what this type carries is reached by performing one rather than by naming
+// a member.
 struct ExternalUnitObjectType {
   ExternalUnitObjectId object;
 

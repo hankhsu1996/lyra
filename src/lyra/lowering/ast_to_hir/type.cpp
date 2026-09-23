@@ -975,25 +975,22 @@ auto UnitLowerer::MakeClassPropertyTarget(
     return hir::LocalClassPropertyTarget{
         .owner = local->class_id, .field = LookupClassPropertyFieldId(prop)};
   }
-  // A class promises what it declares and the class it extends, never what it
-  // inherited, so an inherited property is found by walking that chain -- and
-  // reading each promise on the way is what makes its unit a dependency of
-  // this one.
+  // `owner` is the class that declares the property, which the front end
+  // settled when it resolved the name -- so the promise to read is that class's
+  // and no lineage is climbed. Which storage the access reaches follows from
+  // the class the access names rather than from what the value turns out to be
+  // (LRM 8.14), and an ancestor answering to the same identifier is a different
+  // property that an access naming this class must not reach.
   const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
-  for (std::optional<hir::ExternalClassRef> at = ext; at.has_value();) {
-    const hir::ExternalClass* published =
-        ExternalClassOf(at->unit_name, at->class_name);
-    if (published == nullptr) {
-      break;
-    }
+  if (const hir::ExternalClass* published =
+          ExternalClassOf(ext.unit_name, ext.class_name)) {
     if (const std::optional<hir::PublishedMemberId> member =
             published->FindMember(prop.name)) {
       return hir::ExternalClassPropertyTarget{
-          .unit_name = at->unit_name,
-          .class_name = at->class_name,
+          .unit_name = ext.unit_name,
+          .class_name = ext.class_name,
           .property = *member};
     }
-    at = published->base;
   }
   // The class publishes on no signature, so no position could be counted here
   // and none is stated: the walk to the scope declaring it is what crosses, and
@@ -1332,6 +1329,19 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
               DeclaringScopeChain(*pending.declaring_scope),
               pending.declaring_scope)
           .WithProceduralScopeOwner(&cls, &decl.procedural_scopes);
+
+  // What this class extends and what it implements are names the declaration
+  // already carries; reading the promise behind each one is what puts the class
+  // within this unit's reach, and it happens here because a signature of
+  // another unit is in hand only once bodies lower. A body reaching an
+  // inherited member reads the same promise on its own, so without this a class
+  // that merely extends one would depend on a unit it had never read.
+  if (decl.base.has_value()) {
+    ConsumePromiseOf(*decl.base);
+  }
+  for (const hir::ClassRef& implemented : decl.implements) {
+    ConsumePromiseOf(implemented);
+  }
 
   for (const auto* method : defined_methods) {
     auto method_decl =

@@ -55,11 +55,15 @@ MAPPERS = [
     "UnitNamespaceOf",
     "CppUnitScope",
     "UnitSignatureFileOf",
+    "UnitOpeningFileOf",
+    "UnitClassFileOf",
     "UnitCodeFileOf",
     "CppClassCallableName",
+    "CppExternalBehaviorName",
+    "CppFieldNameOf",
     "CppAbiAdapterName",
     "CppStaticConstantName",
-    "CppStorageEntryName",
+    "CppMintedEntryName",
     "CppUnitCallableName",
     "CppForeignSymbolName",
 ]
@@ -114,10 +118,6 @@ LOOKUPS: dict[str, str] = {
     "FindExternalClass": (
         "resolves a consumed promise by the unit and class it names, so the "
         "name is a key rather than a spelling"
-    ),
-    "CollectUnitName": (
-        "collects which units this one includes; each is mapped again where "
-        "the include line that names it is written"
     ),
 }
 LOOKUP_CALL = re.compile(rf"\b(?:{'|'.join(LOOKUPS)})\s*\(")
