@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
@@ -493,12 +494,12 @@ struct NetJoin {
   auto operator==(const NetJoin&) const -> bool = default;
 };
 
-// Each scope stands for one instantiated block and is built once: an `if` or
-// `case` arm, a bare block, and a loop whose blocks did not lower alike. Every
-// scope is lowered from its own elaborated body -- its own selected arm, types
-// and slice widths -- and the index reaches it as a value its construction
-// supplies here too, because that is what leaves two blocks differing in
-// nothing else with nothing to differ in.
+// Each scope stands for one instantiated block and is built once: a bare
+// block, and a loop whose blocks did not lower alike. Every scope is lowered
+// from its own elaborated body -- its own types and slice widths -- and the
+// index reaches it as a value its construction supplies here too, because that
+// is what leaves two blocks differing in nothing else with nothing to differ
+// in.
 struct BlocksStandAlone {
   auto operator==(const BlocksStandAlone&) const -> bool = default;
 };
@@ -522,15 +523,180 @@ struct BlocksRepeat {
   auto operator==(const BlocksRepeat&) const -> bool = default;
 };
 
+struct SelectionChoiceId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const SelectionChoiceId&) const
+      -> std::strong_ordering = default;
+};
+
+// Nothing stands on this side: an `if` the source gave no `else`, or a `case`
+// it gave no `default`.
+struct NothingStands {
+  auto operator==(const NothingStands&) const -> bool = default;
+};
+
+// One of the construct's alternatives stands here, at the position the source
+// wrote it.
+struct AlternativeStands {
+  std::uint32_t position = 0;
+
+  auto operator==(const AlternativeStands&) const -> bool = default;
+};
+
+// What stands on one side of a choice. A conditional the source wrote inside
+// another's selected side belongs to the outer construct (LRM 27.5), which is
+// what a branch leading to a further choice is.
+using SelectionBranch =
+    std::variant<NothingStands, AlternativeStands, SelectionChoiceId>;
+
+// An `if`: the condition, and what stands on each side of it. An `else` is not
+// a condition of its own, so nothing here spells a negation and whatever tests
+// it says how.
+struct ChoiceOnCondition {
+  ExprId condition;
+  SelectionBranch holds;
+  SelectionBranch fails;
+
+  auto operator==(const ChoiceOnCondition&) const -> bool = default;
+};
+
+// One item of a `case`: the labels the source wrote for it, and what stands
+// where the selector matches one of them. A comparison against a label
+// succeeds only where every bit matches exactly, `x` and `z` included.
+struct LabeledItem {
+  std::vector<ExprId> labels;
+  SelectionBranch stands;
+
+  auto operator==(const LabeledItem&) const -> bool = default;
+};
+
+// A `case`: the expression it selects on, its items in the order the source
+// wrote them, and what stands where no item matched. The order is the whole of
+// what LRM 12.5 says about the search -- it stops at the first match, so an
+// item is reached only once every item before it has failed and the `default`
+// only once all of them have. Keeping the items in that order is what lets each
+// state its own labels and nothing else.
+struct ChoiceOnLabel {
+  ExprId selector;
+  std::vector<LabeledItem> items;
+  SelectionBranch otherwise;
+
+  auto operator==(const ChoiceOnLabel&) const -> bool = default;
+};
+
+// One conditional generate construct the source wrote, which selects at most
+// one of the branches leading out of it.
+using SelectionChoice = std::variant<ChoiceOnCondition, ChoiceOnLabel>;
+
+// A conditional generate selects at most one block from a set of alternative
+// blocks (LRM 27.5). What selects it is an expression, so where that
+// expression reads a value the construction supplies -- a loop's index -- two
+// indices select different alternatives of the same construct, and the
+// construct states every alternative the source wrote rather than the one its
+// own index selected.
+//
+// The choices are held as the source nested them, each condition stated once,
+// because that is what an alternative standing under several of them costs
+// nothing to say. `root` is the outermost, and a branch reaching a further
+// choice is a conditional the source wrote inside the selected side of the one
+// that reached it.
+struct BlocksChoose {
+  base::Arena<SelectionChoice, SelectionChoiceId> choices;
+  SelectionChoiceId root;
+  // One entry per alternative the source wrote, in that order: the scope its
+  // block compiled to, or nothing where no elaboration of the construct
+  // selected it. Such an alternative keeps its place because the positions
+  // after it are the positions the source wrote, which is what a name
+  // resolves against.
+  std::vector<std::optional<StructuralScopeId>> alternatives;
+
+  auto operator==(const BlocksChoose&) const -> bool = default;
+};
+
 // The lowered form of every generate construct (LRM 27). A block's position in
 // `child_scopes` is its identity, so nothing restates which block a scope is,
 // and how many objects a scope stands for is what `counting` says.
 struct Generate {
   base::Arena<StructuralScope, StructuralScopeId> child_scopes;
-  std::variant<BlocksStandAlone, BlocksRepeat> counting = BlocksStandAlone{};
+  std::variant<BlocksStandAlone, BlocksRepeat, BlocksChoose> counting =
+      BlocksStandAlone{};
 
   auto operator==(const Generate&) const -> bool = default;
 };
+
+// Which compiled scope a route naming one of a generate's blocks reaches.
+// Every consumer of a route asks this and nothing else about a generate, so
+// the answer is stated once here rather than re-derived at each of them.
+//
+// How a name identifies a block and how many scopes the construct compiled to
+// are settled independently, so the two are paired here: a repeated structure
+// compiles its indices to one scope, a conditional compiles each alternative
+// it holds to one, and a construct that neither repeats nor chooses compiles
+// its blocks one for one. A pairing the language does not have is a name that
+// was resolved against a different construct than the one it reached.
+[[nodiscard]] inline auto ChildScopeOf(
+    const Generate& gen, const NamedBlock& block) -> StructuralScopeId {
+  return std::visit(
+      Overloaded{
+          [&](const BlockAtIndex& at) {
+            return std::visit(
+                Overloaded{
+                    [&](const BlocksStandAlone&) {
+                      return StructuralScopeId{at.index};
+                    },
+                    [](const BlocksRepeat&) { return StructuralScopeId{0}; },
+                    [](const BlocksChoose&) -> StructuralScopeId {
+                      throw InternalError(
+                          "hir::ChildScopeOf: a conditional's block is named "
+                          "by an index");
+                    },
+                },
+                gen.counting);
+          },
+          [&](const BlockAsAlternative& as) -> StructuralScopeId {
+            const auto* chosen = std::get_if<BlocksChoose>(&gen.counting);
+            if (chosen == nullptr ||
+                as.position >= chosen->alternatives.size()) {
+              throw InternalError(
+                  "hir::ChildScopeOf: a block of a construct that chooses "
+                  "nothing is named as one of its alternatives");
+            }
+            const std::optional<StructuralScopeId> block =
+                chosen->alternatives[as.position];
+            if (!block.has_value()) {
+              throw InternalError(
+                  "hir::ChildScopeOf: a name reached an alternative no "
+                  "elaboration of the construct selected");
+            }
+            return *block;
+          },
+      },
+      block);
+}
+
+// Which object of that scope the same name reaches, where the scope stands for
+// more than one. Only a repeated structure does: its blocks are one scope built
+// at every index, so the index the name carried survives as a coordinate on it.
+// Every other form compiles a block to a scope of its own and leaves nothing to
+// coordinate.
+[[nodiscard]] inline auto ChildElementOf(
+    const Generate& gen, const NamedBlock& block)
+    -> std::optional<std::uint32_t> {
+  const auto* at = std::get_if<BlockAtIndex>(&block);
+  if (at == nullptr) return std::nullopt;
+  return std::visit(
+      Overloaded{
+          [](const BlocksStandAlone&) {
+            return std::optional<std::uint32_t>{};
+          },
+          [](const BlocksChoose&) { return std::optional<std::uint32_t>{}; },
+          [&](const BlocksRepeat&) {
+            return std::optional<std::uint32_t>{at->index};
+          },
+      },
+      gen.counting);
+}
 
 struct StructuralScope {
   // LRM source name of a generate child (label, or `genblk<n>` when unnamed,
@@ -617,9 +783,11 @@ struct StructuralScope {
   // front and the body pass fills the contents when it reaches the scope.
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
 
-  // Two scopes are equal when everything they state is equal, `index` included
-  // -- so a caller asking whether two scopes are one body clears that field
-  // first, which is the one thing a loop's blocks differ in on purpose.
+  // Two scopes are equal when everything they state is equal, `index`
+  // included -- which is why a block carries none until whether it is one body
+  // with its siblings has been settled. It is the one thing a loop's blocks
+  // differ in by definition, so stamping it before the comparison would answer
+  // "not the same" about every loop there is.
   //
   // Derived rather than written. A field added to any node below is compared
   // without anyone remembering to, and a field that cannot be compared breaks

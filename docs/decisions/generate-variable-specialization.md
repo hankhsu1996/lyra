@@ -14,7 +14,10 @@ uniform with how parameters are handled.
 Decision 4 -- the conservative default, and the consequence that follows from it that the exploded
 scopes are the only representation -- is superseded on the loop axis by
 [one-body-built-at-every-index](one-body-built-at-every-index.md), which supplies the proof decision
-2 waits for. Everything else here stands, F3's split included.
+2 waits for, and on the conditional axis by
+[a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md),
+which carries an `if`'s condition into the construction instead of its answer. Everything else here
+stands, F3's split included.
 
 ## Why this decision matters
 
@@ -102,8 +105,11 @@ correct concrete form.
 - The exploded, per-block concrete scopes were the **sole** generate lowering representation when
   this was written: every `if` / `case` / `for` construct lowered to one unconditionally-constructed
   scope per instantiated block, and the demoted shared representation was not materialized. That is
-  no longer so on the loop axis -- see the Status above. An `if` / `case` construct still lowers
-  this way, and has nothing to share, producing at most one block each.
+  no longer so on the loop axis -- see the Status above. A `case` construct still lowers this way,
+  and so does an `if` written outside a loop, which has nothing to share because it produces at most
+  one block. An `if` written inside one is elaborated at every index and selects a different
+  alternative at different indices, so it has both an iteration count and something to share; that
+  is the conditional axis the Status names.
 - The demotion proof is one classifier over elaboration-time inputs (parameters and generate
   variables together), with demote as the shared deferred optimization -- not a genvar special case.
 - Cross-unit identity stays clean: an iteration-specialized generated scope does not enter a

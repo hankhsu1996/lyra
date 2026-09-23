@@ -264,6 +264,15 @@ supplies no entry at all.
   failed; the index is the first parameter a construction reads.
 - A `generate if` and a `generate case` are untouched and need nothing here. One of them produces at
   most one block, so there is no iteration count to collapse and nothing to share it with.
+
+  **That is true of a conditional written outside a loop and false of one written inside**, which is
+  elaborated once per index and so has an iteration count like anything else there: one construct
+  selects a different alternative at different indices, and blocks alike in everything else are kept
+  apart by it. Which alternative stood was therefore a value this lowering baked in -- a position
+  the table above never listed, for the reason this sentence gives -- and it no longer is:
+  [a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
+  carries the condition the source wrote instead of its answer.
+
 - **Every entry in the table is a place a body would have to refuse, so emptying it is what makes
   refusal rare**, and each entry is removed by carrying an expression where a constant is baked
   today. Two rows have since left it. An assignment pattern's designated key was never baked at all

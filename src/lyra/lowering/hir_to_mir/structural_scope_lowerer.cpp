@@ -1395,8 +1395,9 @@ void ValidateOwnedChildConstruction(
 // `AddOwnedChild(parent, make_unique<Child>(parent, HierarchySegment{label,
 // indices}, ctor_args...))`: the child instance is built carrying
 // its complete hierarchy identity, then handed to the parent to own. The
-// runtime tree owns the child; the parent keeps no member, and a later
-// reference reaches it by name through GetChild. `runtime_label` is the
+// runtime tree owns the child and answers a by-name descent with it; what
+// comes back is a borrowed pointer, which is what a route navigates through
+// and what the caller stores. `runtime_label` is the
 // SV-visible identifier; an anonymous scope gets an empty label, which the
 // runtime treats as non-addressable so a peer by-name lookup walks past it to
 // the addressable descendants underneath. `arm_frame` must point at the block
@@ -1669,16 +1670,209 @@ auto LowerRepeatedGenerate(
   return steps.BuildStatement();
 }
 
-// The correctness baseline for every generate construct: construct each
-// instantiated block's own concrete scalar child directly (no runtime branch or
-// loop), each carrying any constant hierarchy index it has. A block whose index
-// is a value its construction supplies is handed that index here, the same
-// value its hierarchy segment carries.
+auto LowerSelectionChoiceInto(
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const hir::BlocksChoose& chosen, hir::SelectionChoiceId at,
+    const GenerateBindings& gen_bindings) -> diag::Result<void>;
+
+// What stands on one side of a choice, built into the block the side owns:
+// nothing at all, the construction of one alternative's block, or a further
+// choice the source wrote inside this side (LRM 27.5).
+auto LowerSelectionBranchInto(
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const hir::BlocksChoose& chosen, const hir::SelectionBranch& branch,
+    const GenerateBindings& gen_bindings) -> diag::Result<void> {
+  return std::visit(
+      Overloaded{
+          [](const hir::NothingStands&) -> diag::Result<void> { return {}; },
+          [&](const hir::AlternativeStands& stands) -> diag::Result<void> {
+            // An alternative no elaboration of the construct selected has no
+            // body, and the same expressions read against the same inputs
+            // cannot reach it here either.
+            const std::optional<hir::StructuralScopeId> block =
+                chosen.alternatives[stands.position];
+            if (!block.has_value()) return {};
+            const auto& binding = gen_bindings.Get(*block);
+            AppendOwnedChildConstruction(
+                lowerer.Owner(), frame, std::nullopt, binding.label,
+                binding.lowerer->ClassId(), std::nullopt,
+                binding.borrowed_handle, std::nullopt);
+            return {};
+          },
+          [&](hir::SelectionChoiceId nested) -> diag::Result<void> {
+            return LowerSelectionChoiceInto(
+                lowerer, frame, chosen, nested, gen_bindings);
+          }},
+      branch);
+}
+
+// One alternative of a `case` is reached where the selector matches one of its
+// own labels. LRM 12.5 fixes that comparison: it succeeds only where every bit
+// matches exactly, `x` and `z` included, so the selector is read against each
+// label rather than reduced to a value first.
+auto MatchesAnyLabel(
+    StructuralScopeLowerer& lowerer, WalkFrame frame, mir::ExprId selector,
+    const std::vector<hir::ExprId>& labels) -> diag::Result<mir::ExprId> {
+  mir::Block& block = *frame.current_block;
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+
+  std::optional<mir::ExprId> any;
+  for (const hir::ExprId label : labels) {
+    auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(label), frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    const mir::ExprId matched = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target = support::BuiltinFn::kCaseEqual,
+                            .receiver = selector},
+                    .arguments = {block.exprs.Add(*std::move(lowered))}},
+            .type = unit.builtins.bit1});
+    // Every operand of a logical operator here is a stated predicate, so a
+    // comparison's own 1-bit answer is reduced where it is produced.
+    const mir::ExprId here = ReduceToCondition(unit, block, matched);
+    any = any.has_value() ? block.exprs.Add(
+                                mir::Expr{
+                                    .data =
+                                        mir::BinaryExpr{
+                                            .op = mir::BinaryOp::kLogicalOr,
+                                            .lhs = *any,
+                                            .rhs = here},
+                                    .type = unit.builtins.machine_bool})
+                          : here;
+  }
+  // An item the source gave no label matches nothing of its own, which is what
+  // a `default` is; it is reached by the search running out instead.
+  if (!any.has_value()) {
+    return block.exprs.Add(
+        mir::Expr{
+            .data = mir::MachineBoolLiteral{.value = false},
+            .type = unit.builtins.machine_bool});
+  }
+  return *any;
+}
+
+// A `case` searches its items in the order the source wrote them and stops at
+// the first match, taking the `default` only once every one of them has failed
+// (LRM 12.5). That search is a chain of conditions over one selector, built
+// from what stands after every item has failed outwards, so an item states its
+// own labels and nothing about the items before it.
+auto LowerLabelledChoiceInto(
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const hir::BlocksChoose& chosen, const hir::ChoiceOnLabel& on,
+    const GenerateBindings& gen_bindings) -> diag::Result<void> {
+  mir::Block& block = *frame.current_block;
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+
+  mir::Block tail;
+  auto otherwise = LowerSelectionBranchInto(
+      lowerer, frame.WithBlock(&tail), chosen, on.otherwise, gen_bindings);
+  if (!otherwise) return std::unexpected(std::move(otherwise.error()));
+
+  for (std::size_t back = on.items.size(); back > 0; --back) {
+    const hir::LabeledItem& item = on.items[back - 1];
+    mir::Block stands;
+    auto body = LowerSelectionBranchInto(
+        lowerer, frame.WithBlock(&stands), chosen, item.stands, gen_bindings);
+    if (!body) return std::unexpected(std::move(body.error()));
+
+    mir::Block step;
+    const WalkFrame step_frame = frame.WithBlock(&step);
+    auto selector =
+        lowerer.LowerExpr(hir_scope.exprs.Get(on.selector), step_frame);
+    if (!selector) return std::unexpected(std::move(selector.error()));
+    auto test = MatchesAnyLabel(
+        lowerer, step_frame, step.exprs.Add(*std::move(selector)), item.labels);
+    if (!test) return std::unexpected(std::move(test.error()));
+    step.AppendStmt(
+        mir::IfStmt{
+            .condition = *test,
+            .then_scope = step.child_scopes.Add(std::move(stands)),
+            .else_scope = step.child_scopes.Add(std::move(tail))});
+    tail = std::move(step);
+  }
+  block.AppendStmt(
+      mir::BlockStmt{.scope = block.child_scopes.Add(std::move(tail))});
+  return {};
+}
+
+// One conditional generate construct, built as the source nested it: the
+// condition is asked once and each side holds whatever the source wrote there.
+auto LowerSelectionChoiceInto(
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const hir::BlocksChoose& chosen, hir::SelectionChoiceId at,
+    const GenerateBindings& gen_bindings) -> diag::Result<void> {
+  const hir::SelectionChoice& choice = chosen.choices.Get(at);
+  if (const auto* on = std::get_if<hir::ChoiceOnLabel>(&choice)) {
+    return LowerLabelledChoiceInto(lowerer, frame, chosen, *on, gen_bindings);
+  }
+
+  const auto& on = std::get<hir::ChoiceOnCondition>(choice);
+  mir::Block& block = *frame.current_block;
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+
+  auto condition = lowerer.LowerExpr(hir_scope.exprs.Get(on.condition), frame);
+  if (!condition) return std::unexpected(std::move(condition.error()));
+  const mir::ExprId test =
+      ReduceToCondition(unit, block, block.exprs.Add(*std::move(condition)));
+
+  mir::Block holds;
+  auto taken = LowerSelectionBranchInto(
+      lowerer, frame.WithBlock(&holds), chosen, on.holds, gen_bindings);
+  if (!taken) return std::unexpected(std::move(taken.error()));
+
+  std::optional<mir::BlockId> otherwise;
+  if (!std::holds_alternative<hir::NothingStands>(on.fails)) {
+    mir::Block fails;
+    auto untaken = LowerSelectionBranchInto(
+        lowerer, frame.WithBlock(&fails), chosen, on.fails, gen_bindings);
+    if (!untaken) return std::unexpected(std::move(untaken.error()));
+    otherwise = block.child_scopes.Add(std::move(fails));
+  }
+
+  block.AppendStmt(
+      mir::IfStmt{
+          .condition = test,
+          .then_scope = block.child_scopes.Add(std::move(holds)),
+          .else_scope = otherwise});
+  return {};
+}
+
+auto LowerChosenGenerate(
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    const hir::BlocksChoose& chosen, const GenerateBindings& gen_bindings)
+    -> diag::Result<mir::Stmt> {
+  mir::Block& block = *frame.current_block;
+  mir::Block body;
+
+  auto built = LowerSelectionChoiceInto(
+      lowerer, frame.WithBlock(&body), chosen, chosen.root, gen_bindings);
+  if (!built) return std::unexpected(std::move(built.error()));
+
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data = mir::BlockStmt{.scope = block.child_scopes.Add(std::move(body))}};
+}
+
+// A generate construct becomes the construction its compiled form calls for.
+// What is left when it repeats nothing and chooses nothing is the correctness
+// baseline every construct falls back to: each instantiated block's own
+// concrete scalar child, built directly with no runtime branch or loop, each
+// carrying any constant hierarchy index it has. A block whose index is a value
+// its construction supplies is handed that index here, the same value its
+// hierarchy segment carries.
 auto LowerGenerateAsStmt(
     StructuralScopeLowerer& lowerer, WalkFrame frame, const hir::Generate& gen,
     const GenerateBindings& gen_bindings) -> diag::Result<mir::Stmt> {
   if (const auto* repeat = std::get_if<hir::BlocksRepeat>(&gen.counting)) {
     return LowerRepeatedGenerate(lowerer, frame, *repeat, gen_bindings);
+  }
+  if (const auto* chosen = std::get_if<hir::BlocksChoose>(&gen.counting)) {
+    return LowerChosenGenerate(lowerer, frame, *chosen, gen_bindings);
   }
   mir::Block& block = *frame.current_block;
 
@@ -1938,14 +2132,21 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   generates.reserve(hir_scope.generates.size());
   for (const hir::GenerateId gen_id : hir_scope.generates.Ids()) {
     const auto& gen = hir_scope.generates.Get(gen_id);
-    // A generate whose blocks are not one body gives each block its own class
-    // and its own scalar handle, distinguished on the hierarchy by the index it
-    // carries. One that is contributes a single class the loop builds at every
-    // index, so the handle it keeps states that multiplicity the way every
-    // other declaration standing for several objects does -- a sequence of the
-    // handle -- and a route step indexes it.
-    const bool repeats =
-        std::holds_alternative<hir::BlocksRepeat>(gen.counting);
+    // Every compiled scope of a generate gets its own class and its own scalar
+    // handle: blocks that are not one body are told apart on the hierarchy by
+    // the index each carries, and alternatives of a conditional by at most one
+    // of them ever being built. A repeated structure is the one that differs.
+    // Its blocks are a single class the loop builds at every index, so the
+    // handle it keeps states that multiplicity the way every other declaration
+    // standing for several objects does -- a sequence of the handle -- and a
+    // route step indexes it.
+    const bool repeats = std::visit(
+        Overloaded{
+            [](const hir::BlocksStandAlone&) { return false; },
+            [](const hir::BlocksChoose&) { return false; },
+            [](const hir::BlocksRepeat&) { return true; },
+        },
+        gen.counting);
     std::vector<ChildStructuralScopeBinding> gen_bindings;
     gen_bindings.reserve(gen.child_scopes.size());
     for (const auto& child_scope : gen.child_scopes) {

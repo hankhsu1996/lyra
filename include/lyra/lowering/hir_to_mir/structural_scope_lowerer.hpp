@@ -224,9 +224,10 @@ class StructuralScopeLowerer {
 
   // The scope a reach lands on: `hops` enclosing edges out, then one owned
   // child per descent step. Every step is one this unit declares, so the walk
-  // is total -- a reach that leaves the layout never reaches here. Which object
-  // a step means says nothing about the scope it lands on, because a child
-  // standing for several of them stands for one body.
+  // is total -- a reach that leaves the layout never reaches here. Which scope
+  // a step lands on is the construct's own answer about the block the step
+  // names; a coordinate the step carries within that child never changes it,
+  // because a child standing for several objects stands for one body.
   [[nodiscard]] auto ScopeAt(
       hir::StructuralHops hops,
       std::span<const hir::OwnedChildStep> descent) const
@@ -366,30 +367,18 @@ class StructuralScopeLowerer {
                     .element = std::nullopt};
               },
               [&](const hir::GenerateChildRef& g) -> OwnedChildAnchor {
-                // The reference names a block; how the construct was compiled
-                // says whether that block is a scope of its own or a position
-                // in the one scope the loop builds repeatedly.
-                const GenerateBindings& scopes =
-                    generate_bindings_.Get(g.generate);
-                return std::visit(
-                    Overloaded{
-                        [&](const hir::BlocksStandAlone&) -> OwnedChildAnchor {
-                          const auto& b =
-                              scopes.Get(hir::StructuralScopeId{g.block});
-                          return OwnedChildAnchor{
-                              .borrowed_handle = b.borrowed_handle,
-                              .target_scope = b.lowerer,
-                              .element = std::nullopt};
-                        },
-                        [&](const hir::BlocksRepeat&) -> OwnedChildAnchor {
-                          const auto& b = scopes.Get(hir::StructuralScopeId{0});
-                          return OwnedChildAnchor{
-                              .borrowed_handle = b.borrowed_handle,
-                              .target_scope = b.lowerer,
-                              .element = g.block};
-                        },
-                    },
-                    HirScope().generates.Get(g.generate).counting);
+                // The reference names a block; which compiled scope that is,
+                // is the construct's own answer. Only a repeated structure
+                // leaves anything over, because the block a name meant is then
+                // a coordinate on the one scope rather than a scope of its
+                // own.
+                const hir::Generate& gen = HirScope().generates.Get(g.generate);
+                const auto& b = generate_bindings_.Get(g.generate)
+                                    .Get(hir::ChildScopeOf(gen, g.block));
+                return OwnedChildAnchor{
+                    .borrowed_handle = b.borrowed_handle,
+                    .target_scope = b.lowerer,
+                    .element = hir::ChildElementOf(gen, g.block)};
               },
           },
           child);

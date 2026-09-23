@@ -1901,6 +1901,17 @@ enough to warrant its own focused review.
       fall back on its own; and the half that widens what can be shared is still every site that
       stops folding the index.
 
+      The commonest reason blocks did not lower alike is gone: a conditional written inside the
+      loop selects a different alternative at different indices, and the construct now holds the
+      conditionals the source wrote, nested as the source nested them, so the construction runs
+      them against the index rather than being handed the answer. Each condition is stated once,
+      and the ordering the standard gives a `case` is kept as the order of its items rather than
+      restated on each of them. That reaches every conditional the language has: a two-alternative
+      `if`, an `if ... else if` chain, a `case`, a conditional that produced no block at some
+      index, and one written inside another's selected side, whose blocks belong to the outer
+      construct. What cannot come from an index that did not select an alternative is its body,
+      which is why the bodies are still read together across the indices.
+
       One position on that half is measured and has a tension worth stating before anyone moves it.
       A block declaring a class keeps the blocks apart, because a class takes an identity of the
       whole unit and one is minted per elaborated declaration, so blocks alike in everything else
@@ -1961,9 +1972,10 @@ enough to warrant its own focused review.
       parameterization already separates into its own artifact, so reading one there cannot cost a
       second artifact.
 
-      What has already moved, as the worked examples: a dimension query's index, and both of a
-      sampled value's numbers -- the depth its history runs to, and the distance a read reaches
-      back.
+      What has already moved, as the worked examples: a dimension query's index, both of a sampled
+      value's numbers -- the depth its history runs to, and the distance a read reaches back -- and
+      which alternative of a conditional generate stood, which the construction now asks rather
+      than being told.
 
 - [x] R118 -- A loop generate's blocks are one compiled body whatever form its step is written in.
       Of the seventeen operator forms LRM 27.4 admits for a step, twelve used to fall back to one

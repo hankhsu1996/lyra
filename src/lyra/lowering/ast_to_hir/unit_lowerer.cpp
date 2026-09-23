@@ -29,6 +29,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -155,9 +156,10 @@ auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
   scope_frames_.emplace(&scope, frame);
   // A generate or instance owned-child id is the source-order position of that
   // child among its own kind in this scope, matching the arena index the body
-  // pass assigns. A generate id counts instantiated generates -- an
-  // uninstantiated `if` / `case` arm carries no runtime object (LRM 27.5) and
-  // consumes no id. An instance-member id counts instances and non-empty
+  // pass assigns. A generate id counts constructs rather than blocks: a
+  // conditional is one construct however many alternatives it holds and
+  // whichever of them this elaboration selected (LRM 27.5), so it consumes one
+  // id. An instance-member id counts instances and non-empty
   // instance arrays -- a zero-element array (LRM 23.3.2) constructs nothing and
   // consumes no id. A subroutine id counts body-bearing subroutines, so a
   // bodyless DPI-C import consumes none; a process id counts procedural
@@ -168,13 +170,26 @@ auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
   for (const auto& member : scope.members()) {
     if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
       const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
-      if (block.isUninstantiated) continue;
-      MapOwnedChildBinding(
-          block, frame,
-          hir::GenerateChildRef{
-              .generate = decls.generates.Declare(), .block = 0});
-      if (auto r = DeclareStructuralIdentities(block); !r) {
-        return std::unexpected(std::move(r.error()));
+      // A conditional generate is one construct however many alternatives it
+      // holds (LRM 27.5), so the identity is minted once, where the first of
+      // them stands, and every alternative reads it back. An alternative this
+      // elaboration did not select carries no runtime object and so declares
+      // nothing of its own, but it is still one of the construct's and is
+      // named as such.
+      if (!OpensItsConstruct(block)) continue;
+      const auto arms = AlternativesOfConstruct(block);
+      const hir::GenerateId generate = decls.generates.Declare();
+      std::uint32_t position = 0;
+      for (const auto* arm : arms) {
+        MapOwnedChildBinding(
+            *arm, frame,
+            hir::GenerateChildRef{
+                .generate = generate, .block = NamedBlockOf(*arm, position)});
+        ++position;
+        if (arm->isUninstantiated) continue;
+        if (auto r = DeclareStructuralIdentities(*arm); !r) {
+          return std::unexpected(std::move(r.error()));
+        }
       }
     } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
       const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
@@ -188,7 +203,8 @@ auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
       for (const auto* entry : array.entries) {
         MapOwnedChildBinding(
             *entry, frame,
-            hir::GenerateChildRef{.generate = generate, .block = block});
+            hir::GenerateChildRef{
+                .generate = generate, .block = hir::BlockAtIndex{block}});
         ++block;
         if (auto r = DeclareStructuralIdentities(*entry); !r) {
           return std::unexpected(std::move(r.error()));
