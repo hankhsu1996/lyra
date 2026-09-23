@@ -302,6 +302,43 @@ auto BuildBufferDataCall(
                       : support::BuiltinFn::kWriteCanonicalBitVec;
 }
 
+// What one element of the actual is, under the unpacked dimensions the
+// open-array formal declares. Every leaf of the actual is a value of it, so it
+// is what fixes the image's element shape (Annex H.7.7) -- a fact of the
+// declaration, which an actual holding no elements could not have supplied
+// from a value.
+//
+// Walking to it is also where an actual this boundary cannot image is caught.
+// Annex H.7.6 reports each unsized dimension with the actual's own range, and
+// the image is built before the call from ranges this lowering states, so a
+// layer whose extent the program only fixes while it runs -- a dynamic array
+// or a queue (LRM 7.5, 7.10) -- has no range to state. The clause admits such
+// an actual, so it is refused by name rather than being a program the standard
+// forbids. A layer that is neither is an actual the front end should have
+// rejected against the formal.
+auto OpenArrayElementType(
+    const mir::CompilationUnit& unit, const support::OpenArrayCarrier& open,
+    mir::TypeId actual_type) -> diag::Result<mir::TypeId> {
+  mir::TypeId cursor = actual_type;
+  for (std::size_t d = 0; d < open.unpacked.size(); ++d) {
+    const mir::Type& layer = unit.types.Get(cursor);
+    if (layer.Is<mir::DynamicArrayType>() || layer.Is<mir::QueueType>()) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedDpi,
+          "an actual whose size is fixed while the program runs is not yet "
+          "carried across the DPI-C boundary as an open array");
+    }
+    const auto* fixed = layer.As<mir::UnpackedArrayType>();
+    if (fixed == nullptr) {
+      throw InternalError(
+          "OpenArrayElementType: the actual of an open-array formal has fewer "
+          "unpacked dimensions than the declaration");
+    }
+    cursor = fixed->element_type;
+  }
+  return cursor;
+}
+
 // The declared coordinate system each unpacked dimension of an open array
 // reports to the foreign side (LRM Annex H.7.6): the range the declaration
 // fixes, or the actual's own where the declaration left the dimension unsized.
@@ -344,12 +381,14 @@ auto BuildOpenArrayBounds(
 // current value. A scalar's object is the by-value carrier itself; a canonical
 // vector's is a buffer its constructor fills; an open array's is the canonical
 // image of the whole actual, which additionally takes the coordinate system of
-// each dimension and whether an element's canonical form is how an individual
-// value of its type crosses (LRM Annex H.12.4).
+// each dimension, the shape one element is declared with, and whether an
+// element's canonical form is how an individual value of its type crosses (LRM
+// Annex H.12.4).
 auto BuildBoundaryInit(
     mir::CompilationUnit& unit, mir::Block& block,
     const support::DpiCarrier& carrier, mir::ExprId seed_sv,
-    mir::TypeId actual_type, mir::TypeId carrier_type) -> mir::ExprId {
+    mir::TypeId actual_type, mir::TypeId carrier_type)
+    -> diag::Result<mir::ExprId> {
   const auto construct = [&](std::vector<mir::ExprId> arguments) {
     return block.exprs.Add(
         mir::Expr{
@@ -361,20 +400,29 @@ auto BuildBoundaryInit(
   };
   return std::visit(
       Overloaded{
-          [&](const support::ScalarCarrier&) {
+          [&](const support::ScalarCarrier&) -> diag::Result<mir::ExprId> {
             return MarshalSvToCarrier(unit, block, seed_sv, carrier);
           },
-          [&](const support::VectorCarrier&) { return construct({seed_sv}); },
-          [&](const support::OpenArrayCarrier& open) {
+          [&](const support::VectorCarrier&) -> diag::Result<mir::ExprId> {
+            return construct({seed_sv});
+          },
+          [&](const support::OpenArrayCarrier& open)
+              -> diag::Result<mir::ExprId> {
+            auto element_or = OpenArrayElementType(unit, open, actual_type);
+            if (!element_or) {
+              return std::unexpected(std::move(element_or.error()));
+            }
+            const mir::ExprId bounds =
+                BuildOpenArrayBounds(unit, block, open, actual_type);
+            const mir::ExprId element_type =
+                mir::BuildTypeDescriptorRef(unit, block, *element_or);
             const mir::ExprId addressable = block.exprs.Add(
                 mir::Expr{
                     .data =
                         mir::MachineBoolLiteral{
                             .value = open.element_crosses_as_canonical_vector},
                     .type = unit.builtins.machine_bool});
-            return construct(
-                {seed_sv, BuildOpenArrayBounds(unit, block, open, actual_type),
-                 addressable});
+            return construct({seed_sv, bounds, element_type, addressable});
           }},
       carrier);
 }
@@ -614,11 +662,10 @@ auto PopulateForeignImportBoundary(
     // read-back below lands the result in the actual's cell.
     const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
     const mir::LocalId temp = cframe.bindings->DeclareAnonymous(carrier_type);
-    body.AppendStmt(
-        mir::LocalDeclStmt{
-            .target = temp,
-            .init = BuildBoundaryInit(
-                unit, body, carrier, seed_sv, actual_type, carrier_type)});
+    auto init_or = BuildBoundaryInit(
+        unit, body, carrier, seed_sv, actual_type, carrier_type);
+    if (!init_or) return std::unexpected(std::move(init_or.error()));
+    body.AppendStmt(mir::LocalDeclStmt{.target = temp, .init = *init_or});
     call_args.push_back(
         BuildBoundaryArgument(unit, body, carrier, temp, carrier_type));
 

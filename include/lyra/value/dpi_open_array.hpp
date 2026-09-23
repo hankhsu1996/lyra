@@ -11,25 +11,10 @@
 
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/unpacked_array.hpp"
 
 namespace lyra::value {
 
-namespace detail {
-
-// The leftmost leaf of a nest of unpacked layers, whose declared width and
-// state domain every leaf of the nest shares. Answered by value: what a caller
-// wants of it is the shape it has, and a reference would outlive nothing a
-// temporary actual could keep alive.
-[[nodiscard]] inline auto FirstLeaf(const PackedArray& value) -> PackedArray {
-  return value;
-}
-template <typename T>
-[[nodiscard]] auto FirstLeaf(const UnpackedArray<T>& value) -> PackedArray {
-  return FirstLeaf(value.RawAt(0));
-}
-
-}  // namespace detail
+struct RuntimeValue;
 
 // A DPI-C open array as the foreign side sees it (LRM 35.5.6.1, Annex H.12): a
 // canonical image of the whole actual, plus the coordinate system of each
@@ -50,18 +35,30 @@ template <typename T>
 class DpiOpenArray {
  public:
   // `bounds` is the declared range of each unpacked dimension, outermost first
-  // -- empty where the actual is a single packed value. `addressable_elements`
+  // -- empty where the actual is a single packed value. `element_type` is what
+  // the actual's declaration says one element is, which is what fixes the
+  // image's own element shape: reading it off an element of the value instead
+  // would have no answer for an actual holding none. `addressable_elements`
   // says an individual value of the element type crosses in the same canonical
   // form the image holds it in, which is what lets the foreign side take the
   // address of the array or of one element (Annex H.12.4).
   template <typename T>
   DpiOpenArray(
       const T& sv, std::span<const UnpackedRange> bounds,
-      bool addressable_elements) {
-    Shape(bounds, detail::FirstLeaf(sv), addressable_elements);
+      const PackedType& element_type, bool addressable_elements) {
+    Shape(bounds, element_type, addressable_elements);
     std::size_t position = 0;
     Fill(sv, 0, position);
   }
+
+  // The same image built from an actual that is one type-erased value, which is
+  // how the execution backend holds every aggregate. A monomorphized walk ends
+  // at its leaf type because the type is a compile-time fact there; this one
+  // ends where the value says it holds no elements by position, which is the
+  // same question asked of the value instead of of its type.
+  DpiOpenArray(
+      const RuntimeValue& sv, std::span<const UnpackedRange> bounds,
+      const PackedType& element_type, bool addressable_elements);
 
   // The SV value the image now holds, shaped like `prototype` -- the write-back
   // of an `output` or `inout` open array. Reading through a prototype is what
@@ -72,6 +69,9 @@ class DpiOpenArray {
     std::size_t position = 0;
     return Rebuild(prototype, 0, position);
   }
+
+  [[nodiscard]] auto ToErasedValue(const RuntimeValue& prototype) const
+      -> RuntimeValue;
 
   [[nodiscard]] auto Handle() -> svOpenArrayHandle {
     return this;
@@ -112,9 +112,9 @@ class DpiOpenArray {
 
  private:
   // Fixes the coordinate system, the element shape, and the storage the image
-  // needs, all of which follow from the bounds and one leaf.
+  // needs, all of which follow from the bounds and the element type.
   void Shape(
-      std::span<const UnpackedRange> bounds, const PackedArray& leaf,
+      std::span<const UnpackedRange> bounds, const PackedType& element_type,
       bool addressable_elements);
 
   // The 32-bit groups one element occupies in canonical form (Annex H.7.7).
@@ -183,6 +183,13 @@ class DpiOpenArray {
       }
     }
   }
+
+  // The two walks above, over a value whose domain is a run-time fact.
+  void FillErased(
+      const RuntimeValue& value, std::size_t dimension, std::size_t& position);
+  [[nodiscard]] auto RebuildErased(
+      const RuntimeValue& prototype, std::size_t dimension,
+      std::size_t& position) const -> RuntimeValue;
 
   template <typename T>
   [[nodiscard]] auto Rebuild(

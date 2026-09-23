@@ -385,10 +385,11 @@ auto BuildDefaultValueExpr(
                 .type = type};
           },
 
-          // An index names an entry rather than being held in one. LRM 7.8.1
-          // gives a wildcard-indexed array no index data type at all -- an
-          // entry is named by the numerical value of the index alone -- so
-          // nothing is ever declared to hold one.
+          // LRM 7.8 forbids an index type from declaring a type, so nothing is
+          // ever declared to be one and no declaration's default can be asked
+          // for. An index still reaches the entries of such an array, carrying
+          // whatever the expression that named it carried; what it never does
+          // is give a variable its type.
           [&](const mir::WildcardIndexType&) -> mir::Expr {
             return holds_no_declared_value("an associative array's index");
           },

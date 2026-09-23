@@ -18,6 +18,11 @@ the detail lives in the entry itself.
 - [a-constant-is-stated-not-computed](a-constant-is-stated-not-computed.md) -- a unit holds the
   values it was written with and an occurrence names one, because a value fixed before the run costs
   a read rather than a construction, and no optimizer recovers that.
+- [a-container-operation-asks-the-type-or-the-values](a-container-operation-asks-the-type-or-the-values.md)
+  -- a whole-container operation takes each fact from whichever of the declaration and the values is
+  guaranteed to have it, and a type fixing no representation is still realized as what reaches its
+  position. Widening a pattern's keys to a common type, reading an element's shape off the first
+  element, and carrying a wildcard index's comparison on the keys are rejected.
 - [integral-representation](integral-representation.md) -- one fat `PackedArray` carries integral
   shape as runtime fields, not C++ template parameters.
 - [value-store-discipline](value-store-discipline.md) -- a value is pure; preserving the

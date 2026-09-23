@@ -9,3 +9,4 @@
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"
 16_assertions/procedural_concurrent_assertion_queues_where_it_runs: "a concurrent assertion embedded in a procedure is not yet lowered"
 21_output/assignment_pattern_format_of_a_wildcard_indexed_array: "an operand holding an associative array with a wildcard index type"
+35_dpi/open_array_actual_sized_at_run_time: "an actual whose size is fixed while the program runs is not yet carried across the DPI-C boundary as an open array"

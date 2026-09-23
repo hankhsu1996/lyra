@@ -23,6 +23,7 @@
 #include "lyra/value/queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
+#include "lyra/value/wildcard_index.hpp"
 
 namespace lyra::value {
 
@@ -48,13 +49,8 @@ struct StringKeyLess {
   }
 };
 
-// LRM 7.8.1 wildcard index `[*]`: the key is an integral value identified by
-// its numerical magnitude, independent of the width the index expression
-// happened to carry -- `8'd5` and `16'd5` are the same key. The index is
-// self-determined and treated as unsigned, so the source is reinterpreted as
-// unsigned on construction (same bits, same width, no sign extension) and keys
-// order by unsigned numerical value across widths. x/z in the source is
-// preserved so the invalid-key check (LRM 7.8.6) can still see it.
+// LRM 7.8.1 wildcard index `[*]`: a key this container holds normalized, so
+// that the per-comparison work is the comparison alone.
 //
 // The conversion from a plain index value is implicit so that every key-taking
 // operation (element access, `exists`, `delete`) accepts the index expression
@@ -63,9 +59,7 @@ struct StringKeyLess {
 class WildcardKey {
  public:
   WildcardKey(const PackedArray& index)  // NOLINT(google-explicit-constructor)
-      : value_(
-            PackedArray::ConvertFrom(
-                index, index.BitWidth(), false, index.IsFourState())) {
+      : value_(WildcardIndexValue(index)) {
   }
 
   [[nodiscard]] auto Value() const -> const PackedArray& {
@@ -79,19 +73,10 @@ class WildcardKey {
   PackedArray value_;
 };
 
-// Orders two wildcard keys by unsigned numerical value. The widths may differ,
-// so both are zero-extended to the wider before the unsigned comparison; the
-// reinterpret-as-unsigned at construction makes the extension zero-fill.
 struct WildcardKeyLess {
   [[nodiscard]] auto operator()(
       const WildcardKey& a, const WildcardKey& b) const -> bool {
-    const std::uint64_t width =
-        std::max(a.Value().BitWidth(), b.Value().BitWidth());
-    const PackedArray wide_a =
-        PackedArray::ConvertFrom(a.Value(), width, false, false);
-    const PackedArray wide_b =
-        PackedArray::ConvertFrom(b.Value(), width, false, false);
-    return static_cast<bool>(wide_a < wide_b);
+    return WildcardIndexBefore(a.Value(), b.Value());
   }
 };
 

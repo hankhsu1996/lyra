@@ -43,16 +43,17 @@ generate-scope, and receiver-less dispatch, DPI tasks in both directions includi
 simulation time (D5, D6, D6b, D6d), the disable protocol and the checks it puts on the foreign side
 (D6c), the `svdpi` context and disable surface (D7), and the generated ABI header with link-input
 orchestration (D9). What remains is the element types Annex H.7.3 puts in C-compatible
-representation.
+representation, and the open-array actuals under D8 whose shape the declaration does not fix -- an
+element count fixed while the program runs, and more unpacked dimensions than the indexing entries
+Annex H.12.3 publishes.
 
-On the execution backend the boundary runs in both directions too. Import (D10, D11) is in apart
-from an open array whose actual is an unpacked array, which is not blocked by anything DPI owns
-(`execution-backend.md`); export and DPI tasks (D12) are in, so a foreign object calls an exported
-subroutine under its own C name, reaches the instance the call chain established, and a task in
-either direction suspends across the boundary while simulation time advances. The disable protocol
-(D6c) is shared with the C++ backend rather than built twice: what a boundary states is the same
-MIR, and what answers it is the runtime both backends link. What remains there is the same item the
-C++ backend has left, the element types Annex H.7.3 puts in C-compatible representation.
+On the execution backend the boundary runs in both directions too. Import (D10, D11) is in; export
+and DPI tasks (D12) are in, so a foreign object calls an exported subroutine under its own C name,
+reaches the instance the call chain established, and a task in either direction suspends across the
+boundary while simulation time advances. The disable protocol (D6c) is shared with the C++ backend
+rather than built twice: what a boundary states is the same MIR, and what answers it is the runtime
+both backends link. What remains there is the same set the C++ backend has left, and for the same
+reasons: nothing on this list is a property of either backend's value realization.
 
 **One direction of the disable protocol has no conformance case and cannot have one.** A case is a
 self-checking program held to an exit status and a sentinel, so a requirement whose whole content is
@@ -241,6 +242,10 @@ protocol on top of it.
   - [ ] An open array of more than three unpacked dimensions is rejected. The foreign side reaches
         an element through the one-, two-, and three-index entries of Annex H.12.3; the
         variable-argument forms a deeper array needs are not published.
+  - [ ] An actual whose element count is fixed while the program runs -- a dynamic array or a queue
+        -- is rejected. LRM 7.6 admits one for an input formal, and Annex H.7.6 reports each unsized
+        dimension with the actual's own range; the image is built before the call from ranges the
+        lowering states, and such an actual has no range to state until it runs.
 
 ### Driver and link
 

@@ -995,6 +995,8 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_queue_value_cell_load", &lyra_rt_queue_value_cell_load);
   add("lyra_rt_assocarray_from_entries_default",
       &lyra_rt_assocarray_from_entries_default);
+  add("lyra_rt_assocarray_from_entries_default_wildcard",
+      &lyra_rt_assocarray_from_entries_default_wildcard);
   add("lyra_rt_assocarray_element", &lyra_rt_assocarray_element);
   add("lyra_rt_assocarray_with_element", &lyra_rt_assocarray_with_element);
   add("lyra_rt_assocarray_exists", &lyra_rt_assocarray_exists);

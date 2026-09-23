@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -12,11 +13,21 @@ namespace lyra::value {
 
 struct RuntimeValue;
 
-// One index and the element stored under it. Defined where `RuntimeValue` is
-// complete, for the same reason the element default below is held indirectly:
-// `RuntimeValue` closes over this container, so neither can be a by-value
-// member of the other here.
+// One index and the element stored under it, defined in `runtime_value.hpp`
+// where `RuntimeValue` is complete -- it closes over this container, so neither
+// can be a by-value member of the other here.
 struct RuntimeAssociativeEntry;
+
+// LRM 7.8: the index type is what imposes the order the entries are held in.
+// For every declared index type that order is the one the index values already
+// carry, so an erased index answers it itself. A wildcard index (LRM 7.8.1) is
+// the one it cannot: the clause makes an index self-determined and unsigned
+// and admits the same numerical value at any width, so what two indices mean
+// to each other is fixed by the declaration and is absent from both of them.
+enum class AssociativeIndexOrder : std::uint8_t {
+  kIndexValueDomain,
+  kWildcardNumeric,
+};
 
 // The runtime-owned realization of a SystemVerilog associative array (LRM 7.8),
 // MIR's `AssociativeArrayType`. A sparse lookup table allocated entry by entry
@@ -29,8 +40,9 @@ struct RuntimeAssociativeEntry;
 // instantiate a distinct C++ type per index and element type, so one
 // `RuntimeAssociativeArray` holds type-erased entries and composes the value
 // contract by visiting them. Unlike an ordinally indexed container it carries
-// no index prototype: an index reaches every operation as a value of its own,
-// and the order two indices sit in is read from the indices themselves.
+// no index prototype: an index reaches every operation as a value of its own.
+// What it does carry is the order its index type imposes, which the
+// monomorphized counterpart reads off its key type parameter.
 //
 // Value semantics are preserved by immutability: every apparent mutation is a
 // functional operation returning a new array, never an in-place write, so an
@@ -41,16 +53,19 @@ class RuntimeAssociativeArray {
   // The uninitialized sentinel form -- the empty array before its declared
   // element shape is known. It is the declared default state of a
   // `Var<RuntimeAssociativeArray>` cell; the cell's first initialization
-  // overwrites it with the real element default.
+  // overwrites it with the real element default, and with the order that
+  // initializer's own index type imposes.
   RuntimeAssociativeArray();
 
-  // `element_default` carries the element shape a caller boxes an incoming
-  // value against; `user_default` is what a read of an index with no entry
-  // answers with (LRM 7.8.6) and the value an entry a later write allocates
-  // starts from (LRM 7.8.7), which a `default:` clause names (LRM 7.9.11) and
-  // which is otherwise the element type's own default.
+  // `index_order` is what the declared index type makes of two indices (LRM
+  // 7.8); `element_default` carries the element shape a caller boxes an
+  // incoming value against; `user_default` is what a read of an index with no
+  // entry answers with (LRM 7.8.6) and the value an entry a later write
+  // allocates starts from (LRM 7.8.7), which a `default:` clause names (LRM
+  // 7.9.11) and which is otherwise the element type's own default.
   RuntimeAssociativeArray(
-      RuntimeValue element_default, RuntimeValue user_default);
+      AssociativeIndexOrder index_order, RuntimeValue element_default,
+      RuntimeValue user_default);
 
   RuntimeAssociativeArray(const RuntimeAssociativeArray&);
   RuntimeAssociativeArray(RuntimeAssociativeArray&&) noexcept;
@@ -72,6 +87,11 @@ class RuntimeAssociativeArray {
   // of the array's value rather than of its shape, so anything rebuilding an
   // array from another carries it over.
   [[nodiscard]] auto AbsentIndexValue() const -> const RuntimeValue&;
+
+  // The order the declared index type imposes. An operation that projects one
+  // array into another keyed the same way (LRM 7.12.5) carries it over, the
+  // indices being the receiver's own.
+  [[nodiscard]] auto IndexOrder() const -> AssociativeIndexOrder;
 
   // LRM 7.9.1 `exists`: whether the array holds an entry under `index`, as the
   // SV `int` the method answers with. An index carrying x or z names no entry.
@@ -96,6 +116,15 @@ class RuntimeAssociativeArray {
   // `index`, allocating the entry if there was none (LRM 7.8.7). An index
   // carrying x or z is invalid whatever it names, so the write is discarded.
   [[nodiscard]] auto WithElement(const RuntimeValue& index, RuntimeValue value)
+      const -> RuntimeAssociativeArray;
+
+  // The same writes, all of them, as one operation: `entries` applied in order,
+  // so a repeated index keeps the last write and an invalid one is discarded
+  // exactly as above. Every apparent mutation here yields a new array, so
+  // filling one from a set already in hand is linear in that set only while it
+  // is one operation. An array literal, a projection into another keyed array
+  // (LRM 7.12.5) and a memory load (LRM 21.4) are each built through it.
+  [[nodiscard]] auto WithEntries(std::vector<RuntimeAssociativeEntry> entries)
       const -> RuntimeAssociativeArray;
 
   // LRM 7.9.3 `delete`: a copy emptied, or a copy without the entry under
@@ -164,12 +193,27 @@ class RuntimeAssociativeArray {
   // what an insertion needs and a lookup narrows from.
   [[nodiscard]] auto LowerBound(const RuntimeValue& index) const -> std::size_t;
 
+  // The declared index type's order, applied to two indices. Ordering is the
+  // whole of what tells one index from another here, so this is also what
+  // makes two indices name one entry: neither ordering before the other.
+  [[nodiscard]] auto OrderBefore(
+      const RuntimeValue& a, const RuntimeValue& b) const -> bool;
+  [[nodiscard]] auto SameIndex(
+      const RuntimeValue& a, const RuntimeValue& b) const -> bool;
+
+  // Puts the entries in index order and leaves one per index -- the last of
+  // each run, which under a stable order is the most recent write to it. What
+  // holds the entries in order is otherwise every insertion doing so itself,
+  // which a whole set arriving at once cannot afford.
+  void Settle();
+
   // Indirect because `RuntimeValue` closes over this type: a by-value member
   // would need `RuntimeValue` complete here, which it is not. Neither is ever
   // null.
   std::unique_ptr<RuntimeValue> element_default_;
   std::unique_ptr<RuntimeValue> user_default_;
   std::vector<RuntimeAssociativeEntry> data_;
+  AssociativeIndexOrder index_order_ = AssociativeIndexOrder::kIndexValueDomain;
 };
 
 static_assert(LyraValue<RuntimeAssociativeArray>);

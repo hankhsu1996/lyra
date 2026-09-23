@@ -339,14 +339,19 @@ template <typename Container>
     RuntimeValue prototype) -> RuntimeAssociativeArray {
   // The projected element type answers a miss as well as naming the shape:
   // mapping produces no `default:` clause of its own, so the absent-key answer
-  // is that type's own default.
+  // is that type's own default. The indices are the receiver's own, so the
+  // order its index type imposes is the projection's too.
   RuntimeValue miss = prototype;
-  RuntimeAssociativeArray projected(std::move(prototype), std::move(miss));
+  std::vector<RuntimeAssociativeEntry> projected;
   for (const detail::ErasedEntry& entry : detail::ErasedEntriesOf(receiver)) {
-    projected =
-        projected.WithElement(entry.index, body(*entry.element, entry.index));
+    projected.push_back(
+        RuntimeAssociativeEntry{
+            .index = entry.index,
+            .element = body(*entry.element, entry.index)});
   }
-  return projected;
+  return RuntimeAssociativeArray(
+             receiver.IndexOrder(), std::move(prototype), std::move(miss))
+      .WithEntries(std::move(projected));
 }
 
 // LRM 7.12.2 ordering: a positional permutation by the body-projected key,

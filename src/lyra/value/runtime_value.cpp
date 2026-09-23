@@ -2,12 +2,15 @@
 
 #include <functional>
 #include <type_traits>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/wildcard_index.hpp"
 
 namespace lyra::value {
 
@@ -137,6 +140,21 @@ auto RuntimeValueOrderBefore(const RuntimeValue& a, const RuntimeValue& b)
       a.value);
 }
 
+auto WildcardIndexOrderBefore(const RuntimeValue& a, const RuntimeValue& b)
+    -> bool {
+  const auto* lhs = std::get_if<PackedArray>(&a.value);
+  const auto* rhs = std::get_if<PackedArray>(&b.value);
+  if (lhs == nullptr || rhs == nullptr) {
+    throw InternalError(
+        "WildcardIndexOrderBefore: a wildcard index is not an integral value");
+  }
+  // An erased index reaches every operation as the bare value the program
+  // wrote, so this normalizes per comparison where the monomorphized container
+  // normalizes once per key.
+  return WildcardIndexBefore(
+      WildcardIndexValue(*lhs), WildcardIndexValue(*rhs));
+}
+
 auto RuntimeValueHasUnknown(const RuntimeValue& value) -> bool {
   return std::visit(
       [](const auto& v) -> bool { return v.HasUnknown(); }, value.value);
@@ -257,8 +275,8 @@ auto RuntimeValueContainerSize(const RuntimeValue& value) -> std::size_t {
           return static_cast<std::size_t>(v.Size().ToInt64());
         } else {
           throw InternalError(
-              "RuntimeValue: a spread concatenation part is not an element "
-              "container (LRM 10.10)");
+              "RuntimeValue: this value's domain holds no elements by "
+              "position");
         }
       },
       value.value);
@@ -273,11 +291,34 @@ auto RuntimeValueContainerElementAt(
           return v.ElementAt(position);
         } else {
           throw InternalError(
-              "RuntimeValue: a spread concatenation part is not an element "
-              "container (LRM 10.10)");
+              "RuntimeValue: this value's domain holds no elements by "
+              "position");
         }
       },
       value.value);
+}
+
+auto RuntimeValueContainerOf(
+    const RuntimeValue& prototype, std::vector<RuntimeValue> elements)
+    -> RuntimeValue {
+  return std::visit(
+      [&elements](const auto& v) -> RuntimeValue {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (kIsElementContainer<T>) {
+          // The fixed-size array spells its construction as one replication of
+          // the whole list, the variable-size ones as the list itself.
+          if constexpr (std::is_same_v<T, RuntimeUnpackedArray>) {
+            return RuntimeValue{T{v.ElementDefault(), std::move(elements), 1}};
+          } else {
+            return RuntimeValue{T{v.ElementDefault(), std::move(elements)}};
+          }
+        } else {
+          throw InternalError(
+              "RuntimeValue: this value's domain holds no elements by "
+              "position");
+        }
+      },
+      prototype.value);
 }
 
 }  // namespace lyra::value

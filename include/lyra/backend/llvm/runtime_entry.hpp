@@ -104,6 +104,7 @@ enum class RuntimeOp : std::uint8_t {
   kFromLiteral,
   kFromLiteralBounded,
   kFromEntriesDefault,
+  kFromEntriesDefaultWildcard,
   kMakeScope,
   kMakeSegment,
   kMakeTrigger,

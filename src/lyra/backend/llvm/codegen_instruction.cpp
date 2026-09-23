@@ -1704,10 +1704,21 @@ auto CodeGenFunction::ConstructionOf(
                 q.max_bound.has_value() ? RuntimeOp::kFromLiteralBounded
                                         : RuntimeOp::kFromLiteral));
           },
-          [&](const lir::AssociativeArrayType&) -> diag::Result<Construction> {
+          // LRM 7.8: the index type imposes the order the entries are held in.
+          // Every declared index type's order is the one its own values carry,
+          // which an erased index answers itself; a wildcard index (LRM 7.8.1)
+          // is self-determined, treated as unsigned, and admits one value at
+          // any width, so its order is absent from the indices and the array
+          // is built holding it.
+          [&](const lir::AssociativeArrayType& a)
+              -> diag::Result<Construction> {
+            const bool wildcard_index = module_->Unit()
+                                            .types.Get(a.key_type)
+                                            .Is<lir::WildcardIndexType>();
             return seeded(RuntimeSymbol(
                 support::ValueDomain::kAssocArray,
-                RuntimeOp::kFromEntriesDefault));
+                wildcard_index ? RuntimeOp::kFromEntriesDefaultWildcard
+                               : RuntimeOp::kFromEntriesDefault));
           },
           // A sequence outlives the stretch that built it -- the owner keeps
           // its address, and a dimension above it keeps that address as an

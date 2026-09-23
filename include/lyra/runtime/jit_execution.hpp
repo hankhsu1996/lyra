@@ -1511,7 +1511,14 @@ auto lyra_rt_queue_value_cell_load(const void* cell) -> void*;
 // in. An element beside an index still crosses bare, since the element default
 // names its domain. Every apparent mutation yields a new array rather than
 // writing in place, so value semantics hold even when the array is shared.
+// The order the entries are held in is the one the declared index type imposes
+// (LRM 7.8), so which of these two builds an array follows from the type being
+// built. Every declared index type's order is the one its own values carry; a
+// wildcard index (LRM 7.8.1) is the one they cannot carry, so it is a
+// construction of its own rather than an operand the generated code computes.
 auto lyra_rt_assocarray_from_entries_default(
+    void* prototype, LyraSpan entries, void* user_default) -> void*;
+auto lyra_rt_assocarray_from_entries_default_wildcard(
     void* prototype, LyraSpan entries, void* user_default) -> void*;
 auto lyra_rt_assocarray_element(const void* array, const void* index) -> void*;
 auto lyra_rt_assocarray_with_element(
@@ -1887,14 +1894,16 @@ auto lyra_rt_from_sv_logic(std::uint8_t encoded, const void* type) -> void*;
 // The open-array image (LRM 35.5.6.1, Annex H.12). The value it images crosses
 // erased, because an image is element-type-independent and nothing on this side
 // could read that representation off anything else; `bounds` is the declared
-// `(left, right)` pair of each unpacked dimension, outermost first, and
+// `(left, right)` pair of each unpacked dimension, outermost first,
+// `element_type` is what the actual's declaration says one element is, and
 // `addressable_elements` says an individual value of the element type crosses
 // in the same canonical form the image holds it in (Annex H.12.4). The handle
 // is what the foreign side receives in place of the actual, and the value entry
 // rebuilds one SV value shaped like the prototype a write-back direction hands
 // it.
 auto lyra_rt_make_dpi_open_array(
-    void* sv, LyraSpan bounds, bool addressable_elements) -> void*;
+    void* sv, LyraSpan bounds, const void* element_type,
+    bool addressable_elements) -> void*;
 auto lyra_rt_dpi_open_array_handle(void* image) -> void*;
 auto lyra_rt_dpi_open_array_value(const void* image, void* prototype) -> void*;
 }

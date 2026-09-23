@@ -387,14 +387,18 @@ auto KeyedMemoryOf(const value::RuntimeAssociativeArray& memory) -> AssocMem {
 auto ErasedMemoryOf(
     const value::RuntimeAssociativeArray& shape, const AssocMem& table)
     -> value::RuntimeAssociativeArray {
-  value::RuntimeAssociativeArray memory(
-      shape.ElementDefault(), shape.AbsentIndexValue());
+  std::vector<value::RuntimeAssociativeEntry> loaded;
   table.ForEachEntry(
-      [&memory](const value::PackedArray& key, const value::PackedArray& word) {
-        memory = memory.WithElement(
-            value::RuntimeValue{key}, value::RuntimeValue{word});
+      [&loaded](const value::PackedArray& key, const value::PackedArray& word) {
+        loaded.push_back(
+            value::RuntimeAssociativeEntry{
+                .index = value::RuntimeValue{key},
+                .element = value::RuntimeValue{word}});
       });
-  return memory;
+  return value::RuntimeAssociativeArray(
+             shape.IndexOrder(), shape.ElementDefault(),
+             shape.AbsentIndexValue())
+      .WithEntries(std::move(loaded));
 }
 
 }  // namespace

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <variant>
+#include <vector>
 
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
@@ -84,6 +85,14 @@ struct RuntimeValue {
 [[nodiscard]] auto RuntimeValueOrderBefore(
     const RuntimeValue& a, const RuntimeValue& b) -> bool;
 
+// LRM 7.8.1: the order a wildcard index type imposes, which is the one case the
+// ordering above cannot answer, because what two such indices mean to each
+// other is not something either of them says. The clause admits only an
+// integral index, so a value of any other domain reaching this is an index the
+// type system should already have rejected.
+[[nodiscard]] auto WildcardIndexOrderBefore(
+    const RuntimeValue& a, const RuntimeValue& b) -> bool;
+
 // LRM 20.9: whether the value carries any unknown bit.
 [[nodiscard]] auto RuntimeValueHasUnknown(const RuntimeValue& value) -> bool;
 
@@ -113,16 +122,34 @@ struct RuntimeValue {
 [[nodiscard]] auto RuntimeValueFromBitstream(
     const PackedArray& bits, const RuntimeValue& prototype) -> RuntimeValue;
 
-// The element count of a container value, and the element at a position, over
-// any element-container domain (queue, dynamic array, unpacked array) -- the
-// erased form of the raw element access a monomorphized container exposes. A
-// spread concatenation part (LRM 10.10) crosses erased, so the entry that
-// appends its elements reads them without naming its domain. A value of any
-// other domain reaching these is a caller that spread a non-container.
+// The element count of a container value, the element at a position, and a
+// container of one's own kind and element shape holding a given element list,
+// over any element-container domain (queue, dynamic array, unpacked array) --
+// the erased form of the raw element access a monomorphized container exposes.
+// Together they are what walks a nest of containers down to its leaves and
+// builds one back up without naming a single domain: a spread concatenation
+// part (LRM 10.10) crosses erased and is read this way, and so is an actual
+// imaged across the DPI-C boundary (Annex H.7.3). The builder takes the whole
+// element list rather than one element at a time, because these values are
+// immutable and a per-element rebuild is quadratic in the element count. A
+// value of any other domain reaching these is a caller that took a
+// non-container for one.
 [[nodiscard]] auto RuntimeValueContainerSize(const RuntimeValue& value)
     -> std::size_t;
 [[nodiscard]] auto RuntimeValueContainerElementAt(
     const RuntimeValue& value, std::size_t position) -> const RuntimeValue&;
+[[nodiscard]] auto RuntimeValueContainerOf(
+    const RuntimeValue& prototype, std::vector<RuntimeValue> elements)
+    -> RuntimeValue;
+
+// One index and the element stored under it. A keyed container closes over the
+// erased value, so this is the first point at which a pair of them can be
+// spelled, and therefore the first at which a caller outside that container can
+// hand it an entry set.
+struct RuntimeAssociativeEntry {
+  RuntimeValue index;
+  RuntimeValue element;
+};
 
 // A keyed container's contract is over the pair of the container and the type
 // its indices are, and the erased container's index type is the erased value
