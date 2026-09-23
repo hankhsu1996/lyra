@@ -310,6 +310,24 @@ specializations, not with instance count.
       holds how a body qualifies, why the question deciding that is checked rather than trusted, and
       what a scope's construction receives.
 
+      **A block naming a constant worked out from its own index used to fall outside that and no
+      longer does.** It reads as a case the sentence above already covers and was not: the index
+      reached the block as a supplied value, and a constant derived from it was still folded, so
+      one level of naming put the block back to one class per index. Measured at 256 iterations of
+      a block declaring `localparam int K = i * 3 + 1` and adding it to a signal: 2,236,192 bytes of
+      design C++ before and 21,111 after, which is what four iterations emit. Such a parameter is
+      now a declaration of the block holding the expression the source wrote, so blocks that wrote
+      the same expression state the same thing. The positions where the value reaches a **type** --
+      a declared width, an unpacked extent -- are unchanged and correct: two types are two classes,
+      and that is the sentence above rather than an exception to it.
+
+      What it costs where nothing is gained, measured rather than waved at: a block that cannot
+      share either way now carries the declaration instead of the folded literal, which is **359
+      bytes per block** -- 15 blocks declaring a width through a named constant emit 154,362 bytes
+      against 148,978 writing the index straight into the width. Against 8,693 bytes an iteration
+      removed where the block does share, and the blocks paying it are the ones compiled apart for a
+      reason of their own.
+
       What this does **not** touch is the front end's own elaboration, which still produces a symbol
       per block, so the lowering phase stays linear in the iteration count and its wall clock and
       peak memory stay roughly where they were. What goes away is the emit and the host compile.

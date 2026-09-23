@@ -106,6 +106,45 @@ endmodule
       4U);
 }
 
+TEST(ArtifactCount, BlocksDerivingAConstantFromTheIndexAreCompiledOnce) {
+  // A block naming a constant it works out from its own index states that
+  // derivation, so every block states the same thing and the count does not
+  // follow the indices. The constant is a value a field holds and nothing about
+  // the block is decided by it -- which is what separates this from the width
+  // below, where the value reaches a type.
+  EXPECT_EQ(
+      CompiledBlocksOfFirstGenerate(R"(
+module Top;
+  int sink [4];
+  for (genvar i = 0; i < 4; i += 1) begin : g
+    localparam int K = i * 3 + 1;
+    localparam int M = K * 2;
+    initial sink[i] = M;
+  end
+endmodule
+)"),
+      1U);
+}
+
+TEST(
+    ArtifactCount,
+    BlocksSizingADeclarationThroughSuchAConstantAreCompiledApart) {
+  // The same constant, reaching a declared width instead of a value. A width
+  // settles a type whatever it was written through, so naming it first changes
+  // nothing: these blocks declare different things and are compiled apart.
+  EXPECT_EQ(
+      CompiledBlocksOfFirstGenerate(R"(
+module Top;
+  for (genvar i = 1; i < 5; i += 1) begin : g
+    localparam int K = i;
+    logic [K:0] wide;
+    initial wide = '0;
+  end
+endmodule
+)"),
+      4U);
+}
+
 TEST(ArtifactCount, BlocksBoundingAQueueByTheirIndexAreCompiledApart) {
   // A queue's declared bound (LRM 7.10.5) is part of what a declaration
   // settles to here and is not part of type identity in the front end, so the

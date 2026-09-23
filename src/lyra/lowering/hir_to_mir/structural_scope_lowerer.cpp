@@ -2597,6 +2597,33 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                 std::nullopt, value_type))});
   }
 
+  // A constant the scope settles for itself is settled after whatever
+  // construction supplied is in its cell, because such a constant may be
+  // written from it, and in declaration order, because one may be written from
+  // an earlier one (LRM 6.20).
+  for (const hir::StructuralDataObjectId id :
+       hir_scope.structural_data_objects.Ids()) {
+    const auto& settled_decl = hir_scope.structural_data_objects.Get(id);
+    const auto* settled =
+        std::get_if<hir::StructuralParameterDecl>(&settled_decl.kind);
+    if (settled == nullptr) {
+      continue;
+    }
+    const mir::TypeId settled_type =
+        unit_lowerer.TranslateType(settled_decl.type);
+    const mir::ExprId settled_target = install_in_constructor(id);
+    auto value_or =
+        LowerExpr(hir_scope.exprs.Get(settled->initializer), ctor_frame);
+    if (!value_or) return std::unexpected(std::move(value_or.error()));
+    ctor_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = ctor_block.exprs.Add(BuildStoreExpr(
+                unit_lowerer.Unit(), ctor_block,
+                WriteTarget{.owner = settled_target, .descent = {}},
+                ctor_block.exprs.Add(*std::move(value_or)), std::nullopt,
+                settled_type))});
+  }
+
   std::vector<mir::FieldId> data_object_fields;
   data_object_fields.reserve(hir_scope.structural_data_objects.size());
   for (const hir::StructuralDataObjectId hir_id :

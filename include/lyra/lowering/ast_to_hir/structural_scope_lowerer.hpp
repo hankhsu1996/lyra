@@ -73,6 +73,8 @@ class StructuralScopeLowerer {
       -> diag::Result<hir::Expr>;
 
  private:
+  auto DeclareBlockParameters(hir::StructuralScope& scope, WalkFrame frame)
+      -> diag::Result<void>;
   auto PopulateMember(const slang::ast::Symbol& member, WalkFrame frame)
       -> diag::Result<void>;
   auto PopulateInterfacePortMember(

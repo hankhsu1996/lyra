@@ -250,6 +250,11 @@ auto LowerUnpackedUnion(
   };
 }
 
+// A member's value varies with the enumeration it belongs to (LRM 6.19), and a
+// type is an axis an artifact's identity already has, so settling it here
+// cannot cost a second artifact. Where a repeated block declares the
+// enumeration itself, the blocks declare different types and are compiled apart
+// for that reason rather than for this one.
 auto LowerEnum(
     const slang::ast::EnumType& enum_type, diag::SourceSpan decl_span,
     UnitLowerer& unit_lowerer) -> diag::Result<hir::EnumType> {

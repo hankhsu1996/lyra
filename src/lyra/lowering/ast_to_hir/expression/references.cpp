@@ -311,6 +311,10 @@ auto MakePatternVarRefExpr(
       hir::PatternVarRef{.pattern = *pattern}, *type_id, span);
 }
 
+// An enumeration's members are part of what the type is (LRM 6.19), so this
+// value varies with the type and a type is already an artifact's axis. Where a
+// block declares the enumeration itself, the blocks declare different types and
+// are compiled apart for that reason rather than for this one.
 auto MakeEnumValueExpr(
     const slang::ast::EnumValueSymbol& sym, hir::TypeId type,
     diag::SourceSpan span) -> hir::Expr {
@@ -321,6 +325,12 @@ auto MakeEnumValueExpr(
   return MakeIntegralLiteralExpr(cv.integer(), type, span);
 }
 
+// What this value varies with is the parameterization of the unit, package or
+// class that declares it, and a parameterization is already an artifact of its
+// own -- so reading the answer here cannot cost a second one. A parameter a
+// generate block declares varies with the index instead, which is no artifact's
+// axis, and it never reaches this: it is a declaration of the block by the time
+// any name resolves to it.
 auto MakeParameterConstantExpr(
     UnitLowerer& unit_lowerer, WalkFrame frame, const slang::ast::Symbol& sym,
     const slang::ast::Type& type, diag::SourceSpan span)

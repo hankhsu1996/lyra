@@ -166,6 +166,10 @@ auto FormatStructuralDataObject(const StructuralDataObjectDecl& decl)
           [](const StructuralGenvarDecl&) { return std::string{" genvar"}; },
           [](const StructuralConstructionValueDecl&) {
             return std::string{" given at construction"};
+          },
+          [](const StructuralParameterDecl& parameter) {
+            return std::format(
+                " settled=Expr[{}]", parameter.initializer.value);
           }},
       decl.kind);
 }

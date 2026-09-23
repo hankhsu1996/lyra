@@ -122,6 +122,10 @@ auto TypeIdentity(const slang::ast::Type& type) -> std::string {
 // arrives as its concrete Symbol so this serves both spaces the frontend
 // exposes bindings through -- a module body's parameter list and a class
 // specialization's generic parameters.
+//
+// Reading the settled value is not a choice about where it enters the artifact
+// here: what the value varies with is the specialization, and the
+// specialization is what this computes.
 auto ParameterInput(const slang::ast::Symbol& symbol) -> SpecializationInput {
   if (symbol.kind == slang::ast::SymbolKind::Parameter) {
     return SpecializationInput{
