@@ -2202,6 +2202,22 @@ enough to warrant its own focused review.
       is wrong in a way no case that passes can show, because the program that would see it is one
       that must not run the operand at all.
 
+- [ ] R132 -- Where the execution session learns each runtime entry's address. One function names
+      all 808 of them, one line apiece, in no order and under no heading: nearly a thousand lines
+      whose only structure is the order someone happened to add things in. It is the third place an
+      entry is written, after its prototype and its definition, and the one that carries no
+      information -- the name and the function it binds to are the same name twice.
+
+      A policy script holds it together rather than the code doing so: it is what catches an entry
+      declared and never bound, a name bound to another entry's address, and a name bound twice.
+      That the check exists is the finding. A binding that restates its own name is derivable from
+      the two places that do carry information, and a list nobody can read is where the mistakes
+      that check looks for come from.
+
+      Not attempted here. Whatever replaces it decides how this surface is organized, which is the
+      runtime ABI's own question rather than a caller's, and grouping the list by hand first would
+      spend the same reading twice.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

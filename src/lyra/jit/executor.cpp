@@ -1599,26 +1599,6 @@ auto LoadStaticStorage(const lir::CompilationUnit& unit)
   return loaded;
 }
 
-// The class an owned-child member reaches, absent for a member that reaches
-// storage instead.
-auto OwnedChildClass(const lir::CompilationUnit& unit, lir::TypeId type)
-    -> std::optional<lir::ClassId> {
-  // A child is reached by a pointer at it, and a member standing for several
-  // children holds a sequence of that pointer -- one wrapper per dimension it
-  // covers -- so the pointer is what is left once they are opened. A handle to
-  // an object the program built is a managed reference rather than a pointer,
-  // so it is not one of these however its pointee is declared.
-  while (const auto* sequence = unit.types.Get(type).As<lir::VectorType>()) {
-    type = sequence->element;
-  }
-  const auto* pointer = unit.types.Get(type).As<lir::PointerType>();
-  if (pointer == nullptr) {
-    return std::nullopt;
-  }
-  const auto* object = unit.types.Get(pointer->pointee).As<lir::ObjectType>();
-  return object != nullptr ? std::optional{object->class_id} : std::nullopt;
-}
-
 // One behavior a class takes over from its lineage (LRM 8.20), as far as one
 // unit can state it: the declaration that introduced the behavior and which of
 // that declaration's introductions it is, with the introducer named the way
