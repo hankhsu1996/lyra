@@ -645,6 +645,18 @@ each meets the same lifetime question above.
       compile and says nothing about what it refuses to check, and the second question still has no
       instrument.
 
+- [ ] **What this backend refuses to _check_ is not measured by anything.** The refusal record is
+      the measurement of what it refuses to compile, and it works because a conformance case is a
+      program that passes: a case that starts running fails until its entry goes. A check a design
+      trips is reached only by a program that must not finish, so no case can hold one and the
+      record has no entry to shrink. The one gap found this way was found by a command-line case
+      asking how a failing design is reported, which is to say by accident.
+
+      What it needs is a way to enumerate the checks a design can fail and ask this backend for each
+      -- the checks are stated in the semantic layers rather than discovered, so the list is
+      derivable rather than guessable. Until then, the honest reading of a clean refusal record is
+      that it covers one of the two questions.
+
 - [ ] **Running a design selects this backend without being asked.** Today it selects the C++ one,
       so the ordinary way to see what a source does spawns a host compiler, waits for a project to
       build, and runs the program -- for an answer this backend gives in a fraction of the time and

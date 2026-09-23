@@ -237,9 +237,10 @@ TEST(PchCoverage, EveryInputIsCovered) {
     msg += std::format("  {}\n", u.string());
   }
   msg +=
-      "Either relocate them under include_root (so the content "
-      "fingerprint covers them) or extend tests/pch_audit_test.cpp's "
-      "IsSystemPath to recognize their root.";
+      "A header the prelude reaches is part of the surface a project is "
+      "given, so either add it to the set this build ships -- which is what "
+      "puts it under include_root and what the content fingerprint then "
+      "covers -- or teach IsSystemPath to recognize its root.";
   FAIL() << msg;
 }
 

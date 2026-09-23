@@ -51,6 +51,12 @@ optimization; the last of those was standing in for the whole command line, and 
 entries with the same name stay equivalent by construction, which is what lets a name match count as
 a content match.
 
+**The header bytes it is named by are the surface's and nothing else's**, which is what keeps an
+entry from being renamed by an edit no design can observe. A compiler is built from far more headers
+than it hands out, and those it hands out are gathered where nothing else is; without that, every
+edit to a lowering or an IR node would rename every entry and the next build of any design would
+prepare one again.
+
 Both things that build an emitted project owe this -- the build the compiler drives and the recipe a
 project ships -- and the shipped recipe names its cache entry by its own bytes, since the recipe is
 what decides the contents.

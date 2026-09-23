@@ -149,6 +149,18 @@ layer directly.
       waiting rather than the work, and reusing an object skips a unit rather than making one
       cheaper. `decisions/a-prepared-header-carries-the-work.md` settles the shape.
 
+- [ ] D15 -- A project built by a compiler other than the one that produced it gets the same
+      treatment. The recipe prepares a header for clang and for nothing else, so anyone building an
+      emitted project with GCC compiles the runtime surface from source in every unit: measured
+      2026-09-22 on one unit, 2.70 s against 1.11 s once GCC is given a prepared header of its own,
+      which is the same shape the other compiler shows.
+
+      What makes this open rather than done is that the trade inverts at this size. Preparing one
+      costs 5.43 s and takes 211 MB, so a project of three units is better off without it and the
+      break-even is around four; a real design is far past that and a conformance case never will
+      be. So the gain is a user's rather than this repository's, which is why it waits -- and the
+      figure to re-take before acting is the break-even, not the per-unit one.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

@@ -2142,6 +2142,7 @@ enough to warrant its own focused review.
       What stands at the top of that case now is making a value at all: blanking one, zeroing its
       words, masking the bits above its width. That is what tops the representative block too, so
       the two no longer disagree about where the time goes.
+
 - [x] R129 -- What an emitted project is given of the runtime is the surface a design compiles
       against, and nothing else. It used to receive every header this compiler has -- the semantic
       layers, the front end, both backends -- none of which anything in the project includes: 413
@@ -2186,6 +2187,20 @@ enough to warrant its own focused review.
       accepts is a regression in the shipped recipe reaching `main` and being found within a day --
       the same trade that path already had, and whoever could cause it is already told to run that
       schedule before committing.
+
+- [ ] R131 -- Which run-time checks belong inside the expression that carries them. A guard the
+      language requires to run as part of evaluating an access rather than ahead of it (LRM 11.3.5)
+      is stated once, as an operation over any value that yields what it was handed, so the access
+      composes onto it instead of naming its subject twice. Exactly one construct is built on it:
+      reading a tagged union's member against a tag it does not hold (LRM 11.9).
+
+      What is unasked is whether that is the only one. The clause is about short-circuiting, so it
+      reaches every check a short-circuited operand must not raise -- and the other run-time checks
+      a design can fail are today written wherever each one happened to be needed rather than
+      against that question. The answer may be that this construct really is alone, and that is
+      worth establishing rather than assuming: a check hoisted out of the expression it belongs to
+      is wrong in a way no case that passes can show, because the program that would see it is one
+      that must not run the operand at all.
 
 ## Out of Scope
 
