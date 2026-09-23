@@ -2234,6 +2234,22 @@ enough to warrant its own focused review.
       all of them caches that never wanted iteration. Not blocked. Found while settling why one
       design emitted two programs.
 
+- [ ] R134 -- Where a value operation an emitted unit calls is defined. The operations a design
+      performs on values are written in the headers a project is given, so every unit builds its own
+      copy of each one it reaches and the linker keeps one. Measured 2026-09-23, after the change
+      that stopped a unit copying the classes it derives from: 78% of the symbol bytes left in a
+      design's unit are still copies of this kind, and a unit of 14,281 bytes still produces a
+      612,288 byte object holding 12,678 bytes of code.
+
+      **This is the same shape as what that change closed and it is not the same decision**, which is
+      why it is recorded rather than swept in. Moving a class's virtual functions to the library
+      costs a call at teardown and nothing else. Moving a value operation there costs the optimizer
+      its view of that operation -- which the entry on an emitted program's speed measures at half
+      the run time of a representative block, in the other direction. So the two pull apart, and
+      what settles this is the same question as whether a design's own build lets the optimizer read
+      the runtime at all. It belongs with the flag that already chooses between iterating and
+      running, rather than to whoever next reads an object.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

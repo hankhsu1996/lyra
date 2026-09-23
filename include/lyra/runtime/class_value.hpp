@@ -40,7 +40,10 @@ class ClassValue : public GcObject {
   auto operator=(const ClassValue&) -> ClassValue& = delete;
   ClassValue(ClassValue&&) = delete;
   auto operator=(ClassValue&&) -> ClassValue& = delete;
-  ~ClassValue() override = default;
+  // Defined in this class's own source file, because a class whose virtual
+  // functions are all written in a header is emitted into every translation
+  // unit that builds one.
+  ~ClassValue() override;
 
   // Where the property `declared_by` gave `slot` to lives on this value, which
   // is what a place naming it resolves to. The pair is the whole coordinate: a

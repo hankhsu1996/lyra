@@ -37,6 +37,8 @@ Scope::Scope(
       program_(&definition->program) {
 }
 
+Scope::~Scope() = default;
+
 auto Scope::AddOwnedChild(std::unique_ptr<Scope> child) -> Scope* {
   child->parent_ = this;
   Scope* handle = child.get();

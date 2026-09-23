@@ -14,13 +14,14 @@ carry `nightly`, `.bazelrc` makes the default set their complement, and `host-cx
 what the gate runs without naming anything, and the expensive ones are asked for rather than
 avoided.
 
-Needing a host compiler is a separate question from being too expensive to gate on, and four targets
-need one: `cpp_tests`, `emitted_project_tests`, `llvm_dpi_tests`, and `pch_audit_test`. All four
-carry `no-remote-exec`, because a compiler spawned from inside a test is not a Bazel action and
-remote execution cannot provision it. The first two are excluded from the gate and the other two are
-not, and a target kept out should be kept out for its own reason -- holding the DPI cases back
-because they share a compiler with an expensive one is how foreign-boundary regressions reach `main`
-and wait a day to be found.
+Needing a host compiler is a separate question from being too expensive to gate on, and five targets
+need one: `cpp_tests`, `emitted_project_tests`, `llvm_dpi_tests`, `pch_audit_test`, and
+`runtime_surface_test`. All five carry `no-remote-exec`, because a compiler spawned from inside a
+test is not a Bazel action and remote execution cannot provision it. The first two are excluded from
+the gate and the rest are not, and a target kept out should be kept out for its own reason --
+holding the DPI cases back because they share a compiler with an expensive one is how
+foreign-boundary regressions reach `main` and wait a day to be found. The last three each compile
+one small thing and are seconds apiece.
 
 **What the CLI suite cost was once "a fraction of a minute", and by 2026-09-22 it was 117 s of
 processor time and the longest target in the gate -- about four times the corpus run beside it.**
@@ -105,7 +106,8 @@ On top of the default set, what a change touches selects what else to run:
   of the runtime, how a prepared header is named -- `--config=nightly`, which carries
   `emitted_project_tests` beside the corpus. This is the same selection as the line above it, seen
   from the build rather than from the text.
-- **The command line, or the prelude PCH** -- `cli_tests` and `pch_audit_test`, already in the gate.
+- **The command line, the prelude PCH, or what the shipped runtime headers oblige a unit to emit**
+  -- `cli_tests`, `pch_audit_test` and `runtime_surface_test`, already in the gate.
 - **Anything else** -- HIR, MIR, LIR, the execution backend, the runtime value library -- the
   default set is the whole answer.
 

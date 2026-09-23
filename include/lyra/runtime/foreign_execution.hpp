@@ -28,7 +28,10 @@ class ForeignExecution {
   auto operator=(const ForeignExecution&) -> ForeignExecution& = delete;
   ForeignExecution(ForeignExecution&&) = delete;
   auto operator=(ForeignExecution&&) -> ForeignExecution& = delete;
-  virtual ~ForeignExecution() = default;
+  // Defined in this class's own source file, because a class whose virtual
+  // functions are all written in a header is emitted into every translation
+  // unit that builds one.
+  virtual ~ForeignExecution();
 
   // Re-enter the native stack this vehicle owns and run it on until it yields
   // again or returns. Returns to the caller either way; `IsDone` distinguishes

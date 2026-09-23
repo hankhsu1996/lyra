@@ -9,4 +9,6 @@ SimulationError::SimulationError(std::string message)
     : std::runtime_error(std::move(message)) {
 }
 
+SimulationError::~SimulationError() = default;
+
 }  // namespace lyra

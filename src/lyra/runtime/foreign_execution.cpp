@@ -12,6 +12,8 @@
 
 namespace lyra::runtime {
 
+ForeignExecution::~ForeignExecution() = default;
+
 namespace {
 
 namespace ctx = boost::context;

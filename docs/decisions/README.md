@@ -646,6 +646,13 @@ the detail lives in the entry itself.
   instantiating and 37 ms reading, and 0.11 s after. The header is therefore named by how it was
   prepared as well as by what it was prepared from. Merging a design's units into one, compiling
   several at a time to hide the cost, and header modules are rejected.
+- [a-published-class-is-emitted-once](a-published-class-is-emitted-once.md) -- a class the runtime
+  publishes states at least one virtual function its own source file defines, so the library owns
+  that class's dispatch table and whatever its destruction reaches and a unit that builds or catches
+  one produces its own class and a call. Measured: a unit adding one scope class to the shipped
+  surface produced a 1,600,704 byte object with 1,503 bytes of code, and 24,016 after. Building
+  optimized by default, including less of the surface, suppressing the instantiations rather than
+  moving them, and reshaping what a published class holds are rejected.
 - [waiting-is-an-operation](waiting-is-an-operation.md) -- the declaration both backends read names
   an operation and never one target's own protocol object, so a call that may park its caller does
   the whole operation and answers whether the caller must give up control; a body then stops to wait

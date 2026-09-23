@@ -38,7 +38,10 @@ class Scope : public ClassValue {
   Scope(
       Scope* parent, HierarchySegment segment,
       const ScopeDefinition* definition);
-  ~Scope() override = default;
+  // Defined in this class's own source file, because a class whose virtual
+  // functions are all written in a header is emitted into every translation
+  // unit that builds one.
+  ~Scope() override;
   Scope(const Scope&) = delete;
   auto operator=(const Scope&) -> Scope& = delete;
   Scope(Scope&&) = delete;

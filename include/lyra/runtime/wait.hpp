@@ -33,7 +33,10 @@ class Wait {
   auto operator=(const Wait&) -> Wait& = delete;
   Wait(Wait&&) = delete;
   auto operator=(Wait&&) -> Wait& = delete;
-  virtual ~Wait() = default;
+  // Defined in this class's own source file, because a class whose virtual
+  // functions are all written in a header is emitted into every translation
+  // unit that builds one.
+  virtual ~Wait();
 
   // Arrange for `leaf` to continue when what this waits for happens, answering
   // whether it had already happened -- in which case nothing was arranged.
