@@ -758,8 +758,19 @@ the detail lives in the entry itself.
   source can never be completed. The measurement that removed speed from the argument is there too,
   as is what a scope's construction receives: one entry for every class, because the constructing
   site may hold only the definition.
-- [an-elaboration-time-value-is-an-input](an-elaboration-time-value-is-an-input.md) -- the rule the
-  entry above turned out to be one case of. The front end evaluates whatever it can, so an already
+- [a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
+  -- the entry above completed for the commonest reason a loop's blocks differ, which is a
+  conditional written inside it: the construct holds the conditionals the source wrote, nested as
+  written with each condition stated once, and the construction runs them against the index it was
+  handed. Read it for why giving every alternative its whole path instead was built, worked, and was
+  rejected for growing with the square of the alternatives, for why the bodies can only be collected
+  by reading the indices together -- an arm is often untaken precisely because it would not
+  elaborate at that index -- for why stating which indices share an alternative is a prediction
+  rather than a record, and for why a route into one names the position the source wrote it at and
+  never what it compiled to. It withdraws the entry above's consequence that a `generate if` needs
+  nothing, which is true outside a loop and false inside one.
+- [an-elaboration-time-value-is-an-input](an-elaboration-time-value-is-an-input.md) -- the rule both
+  entries above turned out to be cases of. The front end evaluates whatever it can, so an already
   computed answer sits beside nearly every expression, and taking one decides where that value
   enters the artifact rather than what the program means. No position a body states is read for its
   settled value, with no exception for one the standard fixes: a clause requiring a constant says

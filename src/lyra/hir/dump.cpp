@@ -881,13 +881,11 @@ class HirDumper {
                 if (generate == nullptr) break;
                 descent += std::format(
                     " . Generate[{}].Block[{}]{}", generate->generate.value,
-                    generate->block, FormatIndices(step.indices));
+                    FormatNamedBlock(generate->block),
+                    FormatIndices(step.indices));
                 const Generate& gen = owner->generates.Get(generate->generate);
-                owner = &gen.child_scopes.Get(
-                    StructuralScopeId{
-                        std::holds_alternative<BlocksRepeat>(gen.counting)
-                            ? 0
-                            : generate->block});
+                owner =
+                    &gen.child_scopes.Get(ChildScopeOf(gen, generate->block));
               }
               const auto& decl =
                   owner->structural_subroutines.Get(u.subroutine);
@@ -1438,6 +1436,36 @@ class HirDumper {
     return out;
   }
 
+  static auto FormatNamedBlock(const NamedBlock& block) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const BlockAtIndex& at) { return std::format("{}", at.index); },
+            [](const BlockAsAlternative& as) {
+              return std::format("alt{}", as.position);
+            },
+        },
+        block);
+  }
+
+  static auto FormatSelectionChoice(
+      const BlocksChoose& chosen, SelectionChoiceId at) -> std::string;
+
+  static auto FormatSelectionBranch(
+      const BlocksChoose& chosen, const SelectionBranch& branch)
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const NothingStands&) { return std::string{"-"}; },
+            [](const AlternativeStands& stands) {
+              return std::format("alt{}", stands.position);
+            },
+            [&](SelectionChoiceId nested) {
+              return FormatSelectionChoice(chosen, nested);
+            },
+        },
+        branch);
+  }
+
   static auto FormatRouteWalk(
       const RouteHead& head, const std::vector<PathStep>& steps)
       -> std::string {
@@ -1467,7 +1495,8 @@ class HirDumper {
                         [&](const GenerateChildRef& g) {
                           return std::format(
                               " . Generate[{}].Block[{}]{}", g.generate.value,
-                              g.block, FormatIndices(owned.indices));
+                              FormatNamedBlock(g.block),
+                              FormatIndices(owned.indices));
                         }},
                     owned.child);
               },
@@ -2540,7 +2569,31 @@ class HirDumper {
   }
 
   void DumpGenerate(const Generate& g) {
-    Line(std::format("Generate blocks={}", g.child_scopes.size()));
+    const std::string form = std::visit(
+        Overloaded{
+            [](const BlocksStandAlone&) { return std::string{"each"}; },
+            [](const BlocksRepeat& r) {
+              return std::format(
+                  "repeated var=StructuralDataObject[{}] initial=Expr[{}] "
+                  "condition=Expr[{}] step=Expr[{}] index="
+                  "StructuralDataObject[{}]",
+                  r.variable.value, r.initial.value, r.condition.value,
+                  r.step.value, r.index.value);
+            },
+            [](const BlocksChoose& c) {
+              std::string chosen =
+                  std::format("chosen {}", FormatSelectionChoice(c, c.root));
+              for (std::size_t at = 0; at < c.alternatives.size(); ++at) {
+                chosen += c.alternatives[at].has_value()
+                              ? std::format(
+                                    " alt{}:{}", at, c.alternatives[at]->value)
+                              : std::format(" alt{}:-", at);
+              }
+              return chosen;
+            },
+        },
+        g.counting);
+    Line(std::format("Generate blocks={} {}", g.child_scopes.size(), form));
     Indent();
     for (const auto& scope : g.child_scopes) {
       const std::string idx =
@@ -2559,6 +2612,39 @@ class HirDumper {
   std::map<ClassId, std::vector<const StructuralScope*>> class_scope_chains_;
   const CompilationUnit* unit_ = nullptr;
 };
+
+auto HirDumper::FormatSelectionChoice(
+    const BlocksChoose& chosen, SelectionChoiceId at) -> std::string {
+  const auto labels = [](const std::vector<ExprId>& of) {
+    std::string out;
+    for (const ExprId label : of) {
+      if (!out.empty()) out += ",";
+      out += std::format("Expr[{}]", label.value);
+    }
+    return out;
+  };
+  return std::visit(
+      Overloaded{
+          [&](const ChoiceOnCondition& on) {
+            return std::format(
+                "(if Expr[{}] {} else {})", on.condition.value,
+                FormatSelectionBranch(chosen, on.holds),
+                FormatSelectionBranch(chosen, on.fails));
+          },
+          [&](const ChoiceOnLabel& on) {
+            std::string out = std::format("(case Expr[{}]", on.selector.value);
+            for (const LabeledItem& item : on.items) {
+              out += std::format(
+                  " {}=>{}", labels(item.labels),
+                  FormatSelectionBranch(chosen, item.stands));
+            }
+            out += std::format(
+                " default=>{})", FormatSelectionBranch(chosen, on.otherwise));
+            return out;
+          },
+      },
+      chosen.choices.Get(at));
+}
 
 }  // namespace
 

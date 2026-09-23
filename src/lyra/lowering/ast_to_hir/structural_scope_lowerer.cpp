@@ -35,6 +35,7 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
@@ -785,12 +786,10 @@ auto StructuralScopeLowerer::PopulateGenerateArrayMember(
 auto StructuralScopeLowerer::PopulateGenerateBlockMember(
     const slang::ast::GenerateBlockSymbol& block, WalkFrame frame)
     -> diag::Result<void> {
-  // Every generate block is resolved at elaboration: an `if` / `case` arm not
-  // selected for this scope carries no runtime object (LRM 27.5), so only an
-  // instantiated block is lowered, as its own concrete scope.
-  if (block.isUninstantiated) {
-    return {};
-  }
+  // A conditional generate is one construct however many alternatives it holds
+  // (LRM 27.5), so it is built once, where the first of them stands; a block
+  // no conditional produced is its own construct and the same rule reaches it.
+  if (!OpensItsConstruct(block)) return {};
   auto g = BuildGenerateFromBlock(block, frame);
   if (!g) return std::unexpected(std::move(g.error()));
   frame.current_structural_scope->generates.Define(

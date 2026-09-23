@@ -29,9 +29,36 @@ struct InstanceMemberId {
       -> std::strong_ordering = default;
 };
 
+// A loop generate declares an array of blocks (LRM 27.4), so a name reaching
+// one of them carries its position among the blocks that elaborated. The
+// position is not the value the genvar stood at -- that array may be sparse,
+// and the value the source wrote is spent where the name resolves, the same
+// way a declared port range is. A construct declaring a single block is the
+// one-element case of the same thing.
+struct BlockAtIndex {
+  std::uint32_t index = 0;
+
+  auto operator==(const BlockAtIndex&) const -> bool = default;
+};
+
+// A conditional generate declares no array: it selects at most one block from
+// an ordered set of alternatives (LRM 27.5), so what identifies one is which
+// alternative the source wrote it as. That is the same number at every index
+// the construct stands at, which is what lets a name be resolved before
+// anything knows which alternative any particular index selected.
+struct BlockAsAlternative {
+  std::uint32_t position = 0;
+
+  auto operator==(const BlockAsAlternative&) const -> bool = default;
+};
+
+// Which of a generate construct's blocks a name meant. The two forms are the
+// two the language has, and they are not two spellings of one number.
+using NamedBlock = std::variant<BlockAtIndex, BlockAsAlternative>;
+
 // A generate block (LRM 27) as a child of the scope that declares it: the
 // generate construct it belongs to, plus which of that construct's elaborated
-// blocks the name meant (LRM 27.4).
+// blocks the name meant.
 //
 // The block is named and not the compiled scope, because how many scopes the
 // construct compiled to is not something a name can be resolved against: a
@@ -42,7 +69,7 @@ struct InstanceMemberId {
 // to be spelled before that choice exists.
 struct GenerateChildRef {
   GenerateId generate;
-  std::uint32_t block;
+  NamedBlock block;
 
   auto operator==(const GenerateChildRef&) const -> bool = default;
 };
