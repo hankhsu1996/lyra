@@ -5,18 +5,7 @@
 #include <cstdint>
 #include <span>
 
-#include "lyra/base/internal_error.hpp"
-
 namespace lyra::value {
-
-auto MaskUnusedTopBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
-    -> void {
-  if (bit_width == 0U) {
-    throw InternalError("MaskUnusedTopBits: zero bit_width");
-  }
-  const std::size_t top_index = WordCountForBits(bit_width) - 1U;
-  words[top_index] &= ValidBitsMask(top_index, bit_width);
-}
 
 auto SetAllValidBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
     -> void {

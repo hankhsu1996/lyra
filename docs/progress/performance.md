@@ -114,6 +114,17 @@ separately compiled runtime, the optimizer cannot see into it, and letting it se
 in half the time. What the profile adds is that the calls it cannot see into are mostly not
 arithmetic -- they are a value coming into existence.
 
+**Retaken after making a value cheaper, over three cases, and the top is no longer one family.**
+What is left sorts into three. The largest is **a fact the compiler settled reaching the run as a
+value to work out again**: a part-select whose bounds are literals is resolved while running through
+four-state value arithmetic, at about 2,100 instructions a select and 43% of the representative
+block; a conversion between two types the compiler already knows costs about 360 instructions and is
+28% of scalar arithmetic. Second is **every operation building a fresh value and every store
+comparing the old one against the new**, which is 13% and 5% of the representative block and 15% and
+12% of scalar arithmetic. Third, and only where the design waits on a clock, is **every wait
+allocating**: about 12% of the clocked pipeline is the allocator, beside building a trigger list and
+subscribing per wait. The design's own body stays under 5% in every one.
+
 - [x] An integral value's dimension stack no longer allocates for the single-dimension case. Every
       declared integral carried its stack in a growable container, so constructing or copying any
       value -- which generated code does at every operation, since the descriptor is built at the
@@ -239,6 +250,40 @@ arithmetic -- they are a value coming into existence.
       against a shape the tree no longer contains: re-deriving one needs a second toolchain built
       from before the change, while a rate can be read again any day. What a later reading of it
       answers is whether the gain held, which the ratios on their own cannot say.
+
+- [x] Making a value no longer pays for its planes twice, and the runtime no longer calls its own
+      functions as though another library might replace them. A four-state value that fits one word
+      held each plane in a sequence of its own, each with its own length and room; both planes now
+      share one run of words that holds them in place, and the value is 48 bytes rather than 64.
+      Clearing the bits above the width after an operation, one instruction of work, had been a call
+      into another file; it is now in view of every operation that ends with it.
+
+      That half bought **2.6%** of the representative block's instructions, because a value fitting
+      one word had not been reaching the allocator in the first place. Finding why it bought so
+      little found the rest: the shipped runtime is compiled position-independent, and under that
+      mode one of the two compilers treats every function the runtime exports as replaceable by a
+      same-named one loaded at run time, so it neither inlines one into another nor calls it directly
+      -- a four-instruction function in the same file was reached through the procedure linkage
+      table. The runtime ships as a static archive linked into the program, where nothing can replace
+      anything, so the assumption only costs; it is now stated off for every target.
+
+      Measured on the representative block at the same amount of work: **1,004,760,115 instructions
+      before, 978,301,527 with the value change, 659,009,314 with both** -- a third gone, with the
+      same result printed. The rate went from **1,408 to 2,976 table passes per second**, 37x off
+      Verilator, 2026-09-23.
+
+- [ ] A part-select or a conversion the compiler has already resolved reaches the run as values to
+      resolve again. The bounds of `v[2:0]` are literals, so where the selected run starts and how
+      long it is are settled before the program runs; what reaches the run is the two bounds and the
+      select's form, each as a four-state value, and the run's position is recovered from them with
+      four-state subtraction and normalization on every evaluation. A conversion between two types
+      the compiler knows goes through the general path that serves any pair. The measurements are in
+      the paragraph above: about 2,100 instructions a select and 360 a conversion, 43% and 28% of
+      the two cases they dominate.
+
+      **Target shape**: what the compiler settled reaches the run as what it is -- a run's position
+      and length, a conversion between two named shapes -- and a value is handed over only where the
+      program computes it. Not blocked.
 
 - [ ] An emitted program is optimized without the runtime library it spends its time in. The
       design's translation units and the runtime are compiled separately and linked as native

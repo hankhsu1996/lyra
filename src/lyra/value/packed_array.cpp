@@ -17,6 +17,7 @@
 #include "lyra/value/packed.hpp"
 #include "lyra/value/packed_bitwise.hpp"
 #include "lyra/value/packed_convert.hpp"
+#include "lyra/value/packed_internal.hpp"
 #include "lyra/value/packed_reduction.hpp"
 #include "lyra/value/slice_selector.hpp"
 #include "lyra/value/string.hpp"
@@ -29,6 +30,15 @@ namespace {
 // plane, or a run of words an operation works in before it has a result.
 auto ZeroedWords(std::uint64_t bit_width) -> PackedWordArray {
   return PackedWordArray{WordCountForBits(bit_width), std::uint64_t{0}};
+}
+
+// Every plane a value of this shape carries, one after the other, every
+// position clear.
+auto ZeroedPlanes(std::uint64_t bit_width, bool is_four_state)
+    -> PackedWordArray {
+  const std::size_t plane_count = is_four_state ? 2U : 1U;
+  return PackedWordArray{
+      WordCountForBits(bit_width) * plane_count, std::uint64_t{0}};
 }
 
 // The mask of a value that fits in one word, which is that value's own word
@@ -57,15 +67,8 @@ auto SignExtendToInt64(std::uint64_t bits, std::uint64_t bit_width)
 auto RequireSameStorageDomain(
     const PackedArray& lhs, const PackedArray& rhs, std::string_view op)
     -> void {
-  if (lhs.BitWidth() != rhs.BitWidth()) {
-    throw InternalError(
-        std::string{op} +
-        ": operand bit_width mismatch (left=" + std::to_string(lhs.BitWidth()) +
-        ", right=" + std::to_string(rhs.BitWidth()) + ")");
-  }
-  if (lhs.IsFourState() != rhs.IsFourState()) {
-    throw InternalError(std::string{op} + ": operand state-kind mismatch");
-  }
+  detail::RequireSameWidth(op, lhs.BitWidth(), rhs.BitWidth());
+  detail::RequireSameStateDomain(op, lhs.IsFourState(), rhs.IsFourState());
 }
 
 // What words assembled outside a packed operation must satisfy before they are
@@ -103,30 +106,33 @@ PackedArray::PackedArray(PackedType type)
 
 PackedArray::PackedArray(
     std::uint64_t bit_width, bool is_signed, bool is_four_state,
-    PackedWordArray value, PackedWordArray unknown)
+    PackedWordArray planes)
     : bit_width_(bit_width),
       is_signed_(is_signed),
       is_four_state_(is_four_state),
-      value_(std::move(value)),
-      unknown_(std::move(unknown)) {
+      planes_(std::move(planes)) {
 }
 
 auto PackedArray::Blank(
     std::uint64_t bit_width, bool is_signed, bool is_four_state)
     -> PackedArray {
-  auto value = ZeroedWords(bit_width);
-  auto unknown = is_four_state ? ZeroedWords(bit_width) : PackedWordArray{};
   return PackedArray{
-      bit_width, is_signed, is_four_state, std::move(value),
-      std::move(unknown)};
+      bit_width, is_signed, is_four_state,
+      ZeroedPlanes(bit_width, is_four_state)};
+}
+
+// Read from the run itself rather than from the width, so that a value whose
+// words were moved away reads as holding none.
+auto PackedArray::WordsPerPlane() const -> std::size_t {
+  return is_four_state_ ? planes_.size() / 2U : planes_.size();
 }
 
 auto PackedArray::MutableValueWords() -> std::span<std::uint64_t> {
-  return {value_.data(), value_.size()};
+  return std::span{planes_.data(), planes_.size()}.first(WordsPerPlane());
 }
 
 auto PackedArray::MutableUnknownWords() -> std::span<std::uint64_t> {
-  return {unknown_.data(), unknown_.size()};
+  return std::span{planes_.data(), planes_.size()}.subspan(WordsPerPlane());
 }
 
 PackedArray::PackedArray(
@@ -134,8 +140,7 @@ PackedArray::PackedArray(
     : bit_width_(bit_width),
       is_signed_(is_signed),
       is_four_state_(is_four_state),
-      value_(ZeroedWords(bit_width)),
-      unknown_(is_four_state ? ZeroedWords(bit_width) : PackedWordArray{}) {
+      planes_(ZeroedPlanes(bit_width, is_four_state)) {
   // LRM Table 6-7: a four-state declaration reads as x until something drives
   // it. A two-state one reads as the zero the planes already carry.
   if (is_four_state_) {
@@ -421,11 +426,11 @@ auto PackedArray::FilledLike(
 }
 
 auto PackedArray::ValueWords() const -> std::span<const std::uint64_t> {
-  return {value_.data(), value_.size()};
+  return std::span{planes_.data(), planes_.size()}.first(WordsPerPlane());
 }
 
 auto PackedArray::UnknownWords() const -> std::span<const std::uint64_t> {
-  return {unknown_.data(), unknown_.size()};
+  return std::span{planes_.data(), planes_.size()}.subspan(WordsPerPlane());
 }
 
 auto PackedArray::ByteString() const -> std::string {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -537,17 +538,20 @@ class PackedArray {
   [[nodiscard]] auto ReductionXnor() const -> PackedArray;
 
  private:
-  // The shape and the planes, taken as given. A constructor that names a shape
-  // installs that shape's default value over the bits; this one does not.
+  // The shape and the words of its planes, taken as given. A constructor that
+  // names a shape installs that shape's default value over the bits; this one
+  // does not.
   PackedArray(
       std::uint64_t bit_width, bool is_signed, bool is_four_state,
-      PackedWordArray value, PackedWordArray unknown);
+      PackedWordArray planes);
 
   // A value of the given shape with every bit clear, for an operation that is
   // about to write all of them.
   [[nodiscard]] static auto Blank(
       std::uint64_t bit_width, bool is_signed, bool is_four_state)
       -> PackedArray;
+
+  [[nodiscard]] auto WordsPerPlane() const -> std::size_t;
 
   // Writable planes, which is sound only while nothing else can observe this
   // value -- a result being filled, or a designated run being written through.
@@ -586,11 +590,13 @@ class PackedArray {
   bool is_signed_ = false;
   bool is_four_state_ = false;
   // Bit i of the value is bit i%64 of word i/64, in as many words as the width
-  // needs. A four-state value carries a second plane the same length whose set
-  // positions are the ones holding x or z; a two-state value carries none,
-  // which is what having no such state means.
-  PackedWordArray value_;
-  PackedWordArray unknown_;
+  // needs. A four-state value carries a second plane the same length after the
+  // first, whose set positions are the ones holding x or z; a two-state value
+  // carries none, which is what having no such state means. One run holds both
+  // so that a value fitting one word -- nearly every value a design computes --
+  // keeps both planes in place, and making, copying or discarding it never
+  // reaches the allocator.
+  PackedWordArray planes_;
 };
 
 // A writable designation into a run of a `PackedArray`, named by where the run

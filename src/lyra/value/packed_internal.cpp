@@ -20,4 +20,12 @@ void RaiseWidthMismatch(
       std::format("{}: width mismatch ({} vs {} vs {})", where, a, b, c));
 }
 
+void RaiseStateDomainMismatch(std::string_view where) {
+  throw InternalError(std::format("{}: state domain mismatch", where));
+}
+
+void RaiseZeroWidth(std::string_view where) {
+  throw InternalError(std::format("{}: zero bit_width", where));
+}
+
 }  // namespace lyra::value::detail

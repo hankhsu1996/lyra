@@ -5,10 +5,14 @@
 #include <span>
 
 #include "lyra/base/fixed_array.hpp"
+#include "lyra/value/packed_internal.hpp"
 
 namespace lyra::value {
 
-inline constexpr std::size_t kPackedWordsInlineCapacity = 1;
+// Room for both planes of a value that fits one word. A four-state value holds
+// its unknown plane from the moment it is declared, because it reads as x
+// until driven (LRM Table 6-7), so both planes are in use from the start.
+inline constexpr std::size_t kPackedWordsInlineCapacity = 2;
 
 using PackedWordArray =
     lyra::base::FixedArray<std::uint64_t, kPackedWordsInlineCapacity>;
@@ -56,8 +60,17 @@ enum class FourStateBit : std::uint8_t {
   return ((words[index] >> (position % 64U)) & 1U) != 0U;
 }
 
-auto MaskUnusedTopBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
-    -> void;
+// Clears every position of the top word that lies above `bit_width`. It runs
+// after nearly every operation writes a result, so it is defined where each of
+// them can see it; only the report of a width no value has is a call.
+inline auto MaskUnusedTopBits(
+    std::span<std::uint64_t> words, std::uint64_t bit_width) -> void {
+  if (bit_width == 0U) [[unlikely]] {
+    detail::RaiseZeroWidth("MaskUnusedTopBits");
+  }
+  const std::size_t top_index = WordCountForBits(bit_width) - 1U;
+  words[top_index] &= ValidBitsMask(top_index, bit_width);
+}
 
 // Every position below `bit_width` set, and nothing above it.
 auto SetAllValidBits(std::span<std::uint64_t> words, std::uint64_t bit_width)

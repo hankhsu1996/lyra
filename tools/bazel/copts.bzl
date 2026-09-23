@@ -16,10 +16,19 @@ its own warning policy.
 # -fsyntax-only and -c, so the driver reports -c as unused once per header.
 # The flags come from the toolchain's generated command line, not from any
 # source here, so the diagnostic can only ever be noise.
+#
+# -fno-semantic-interposition: position-independent code lets GCC assume any
+# exported function may be replaced by a same-named one loaded at run time, so
+# it neither inlines one into another nor calls it directly, even within one
+# file. Nothing here is a shared library anyone replaces a function of -- the
+# runtime ships as a static archive linked into the program -- so the
+# assumption only costs. Clang already makes the opposite one by default, so
+# stating it keeps the two compilers building the same code.
 LYRA_COPTS = [
     "-Wall",
     "-Wextra",
     "-Werror=switch",
     "-Werror=return-type",
     "-Wno-unused-command-line-argument",
+    "-fno-semantic-interposition",
 ]

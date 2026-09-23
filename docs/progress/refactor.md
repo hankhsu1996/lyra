@@ -2383,6 +2383,18 @@ enough to warrant its own focused review.
       whoever takes it rewrites the same signatures a second time -- which is the argument for
       taking it soon rather than for taking it then.
 
+- [ ] R140 -- The benchmark over the corpus is how simulation speed is tracked, and it has gone
+      unmaintained. Three defects are measured. The runner uses the compiler it finds rather than
+      building it, so a run after a pull measures a stale one -- once as twenty-one identical
+      failures that named neither a cause nor a file. A case whose emitted program does not compile
+      reports none of the host compiler's error. And the whole corpus, 21 cases at a two-second
+      target, ran past ten minutes and prints nothing until it ends: stopped on 2026-09-23 with 20
+      cases done, every one of them lost. Whether each case still measures what its own header says
+      it measures has not been checked since the cases were written.
+
+      Target: a run builds what it measures, a case that fails names why, and each result is kept as
+      it arrives. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,
