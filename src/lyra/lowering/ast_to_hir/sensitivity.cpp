@@ -20,6 +20,12 @@ namespace {
 // Flattens slang's `(symbol, bitMap)` `ReadSet` into a vector of
 // `(symbol, [lo, hi])` entries. Disjoint ranges for the same symbol stay
 // disjoint so downstream can preserve precision.
+//
+// What comes back stands for a set and carries no order of its own: it is
+// handed over in whatever order the front end's own container iterates, which
+// is where its symbols happened to be allocated. Whoever turns these into
+// something the compiled artifact carries settles an order there, against the
+// identities that step gives them.
 auto FlattenReadSet(const slang::analysis::DFAResults::ReadSet& reads)
     -> std::vector<SensitivityRead> {
   std::vector<SensitivityRead> out;

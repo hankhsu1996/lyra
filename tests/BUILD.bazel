@@ -236,6 +236,28 @@ cc_test(
     ],
 )
 
+# The corpus read as a set of designs rather than as a set of claims about
+# IEEE 1800: every one of them compiled twice, to hold the compiler to answering
+# the same way both times. It reads the emitted text in process and starts no
+# host tool, so it runs wherever the cheap targets run.
+cc_test(
+    name = "repeatable_emission_test",
+    srcs = ["repeatable_emission_test.cpp"],
+    copts = LYRA_COPTS,
+    data = CONFORMANCE_DATA,
+    shard_count = 8,
+    deps = [
+        ":framework",
+        "//:compiler",
+        "//:diag",
+        "//:driver",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@fmt",
+        "@googletest//:gtest",
+        "@slang",
+    ],
+)
+
 # The other half of the LLVM path. A case carrying foreign sources builds them
 # with the host C compiler whatever path it is on -- a path changes how the
 # design is translated, not how a foreign symbol is produced -- so these are

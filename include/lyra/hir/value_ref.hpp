@@ -25,7 +25,8 @@ namespace lyra::hir {
 struct DirectMemberRef {
   StructuralDataObjectId var;
 
-  auto operator==(const DirectMemberRef&) const -> bool = default;
+  auto operator<=>(const DirectMemberRef&) const
+      -> std::strong_ordering = default;
 };
 
 struct RoutedRefId {
@@ -46,7 +47,7 @@ struct RoutedRefId {
 struct RoutedRef {
   RoutedRefId id;
 
-  auto operator==(const RoutedRef&) const -> bool = default;
+  auto operator<=>(const RoutedRef&) const -> std::strong_ordering = default;
 };
 
 struct ProceduralVarRef {
@@ -96,7 +97,8 @@ struct StaticPropertyRef {
   // compile separately, in which case no member of this unit states it.
   TypeId value_type;
 
-  auto operator==(const StaticPropertyRef&) const -> bool = default;
+  auto operator<=>(const StaticPropertyRef&) const
+      -> std::strong_ordering = default;
 };
 
 // A reference to a `with`-clause iteration value (LRM 7.12.4), named by the
@@ -136,7 +138,8 @@ struct ExternalUnitValueRef {
   // this unit states it; it crosses as part of that unit's signature.
   TypeId value_type;
 
-  auto operator==(const ExternalUnitValueRef&) const -> bool = default;
+  auto operator<=>(const ExternalUnitValueRef&) const
+      -> std::strong_ordering = default;
 };
 
 // A reader-relative reference to a value: either a direct member of the

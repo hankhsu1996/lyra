@@ -64,7 +64,12 @@ Define what a compilation unit is, what it owns, and the rules that make it self
     nothing else. This is what makes a signature's content decidable: a fact absent from every
     signature cannot have reached a referrer, so it cannot invalidate one. A lowering that reaches a
     fact about another unit by any other path breaks that property, and the break is invisible until
-    compiled units are reused, at which point it is a stale result rather than an error.
+    compiled units are reused, at which point it is a stale result rather than an error. **"Nothing
+    else" includes the run that produced it.** Where the design's data landed in memory, and any
+    order derived from that, are not among a unit's contents, so two runs over one unchanged design
+    owe the same bytes. An emission that varies between them breaks the invariant exactly as a
+    cross-unit leak does and is invisible for the same reason -- a simulated program cannot observe
+    which of two orderings a set was written in, so nothing the design states can report it.
 12. A signature carries the storage its own identities index. It is read where the publishing unit's
     storage is not, so an identity written on one addresses storage the signature itself holds,
     never the publishing unit's. A consumer takes the structure into its own storage and answers

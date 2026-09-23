@@ -56,6 +56,15 @@ references another; ownership is which entity holds a given piece of state.
    it, and a consumer's "is this mine" is an equality against that, never a property of the target
    reconstructed from its surroundings. Where every such identity in a layer is unit-wide, this
    costs nothing and states itself._
+10. A list standing for a set is ordered by the identities in it, never by the order they were
+    enumerated in. A set arrives through whatever container produced it, and the front end's
+    containers key on where its symbols were allocated, so their enumeration order is a fact about
+    the run rather than about the design -- carried into what is compiled, it makes the same design
+    compile to two different things. The step that gives such a set its identities is therefore the
+    step that orders it: by then an order the design decides is on hand, and nothing else is needed.
+    _Consequence: a pass turning an unordered thing into an ordered one settles the order where the
+    identities are, rather than passing an enumeration on for a later pass to inherit; and a
+    container keyed on a front-end pointer is answered by lookup, never iterated._
 
 ## Boundary to Adjacent Layers
 

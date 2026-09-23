@@ -98,6 +98,12 @@ layer directly.
       record laid over that is precise rather than nominally correct. The signature workstream owned
       that half; this one owns the record.
 
+      A prerequisite nobody had seen is now settled: emitting one unchanged design twice produces
+      the same bytes. It did not, for about a quarter of a large design's units, and the difference
+      was an ordering no simulated program can observe -- so every case passed and no coverage
+      record could have listed it. Nothing derived from emitted content could have been built while
+      that held, which puts it in front of the record rather than beside it.
+
       Measured 2026-09-16 on a three-unit design: a build that changes nothing still takes the same
       two and a quarter seconds as the one before it, and every object is written again. The Ibex
       testbench figures above put the same statement at three minutes of processor time per build
