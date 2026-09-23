@@ -1,8 +1,11 @@
 #include "lyra/value/packed_array.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <span>
+#include <utility>
 
 #include "lyra/value/packed_type.hpp"
 #include "lyra/value/slice_selector.hpp"
@@ -12,8 +15,9 @@ namespace {
 
 // What an integral value carries: how many bits it has, whether they are read
 // as signed, whether a position may hold x or z, and the bits themselves in one
-// plane per state domain. Nothing about how a declaration divides those bits.
-static_assert(sizeof(PackedArray) == 64);
+// plane per state domain, the planes sharing one run of words. Nothing about
+// how a declaration divides those bits.
+static_assert(sizeof(PackedArray) == 48);
 
 auto Shape(std::initializer_list<PackedRange> dims, bool is_four_state = false)
     -> PackedType {
@@ -213,6 +217,57 @@ TEST(PackedArrayTest, AWideValueKeepsItsBitsAcrossACopy) {
   const PackedArray copy = wide;
   EXPECT_TRUE(copy.IsBitIdentical(wide));
   EXPECT_EQ(copy.ValueWords()[1], 0x5555'6666'7777'8888ULL);
+}
+
+// A value that fits one word keeps both of its planes in place and a wider one
+// keeps them elsewhere, so the positions that compose differently are the two
+// sides of that line and a value moving across it. Each value's planes hold
+// different words, so a plane read from the other's position shows.
+TEST(PackedArrayTest, BothPlanesSurviveEveryWayAValueMoves) {
+  const std::array<std::uint64_t, 1> narrow_value = {0x8000'0000'0000'0001ULL};
+  const std::array<std::uint64_t, 1> narrow_unknown = {
+      0x0000'0000'0000'0102ULL};
+  const std::array<std::uint64_t, 2> wide_value = {
+      0x1111'2222'3333'4444ULL, 0x1ULL};
+  const std::array<std::uint64_t, 2> wide_unknown = {
+      0x0F0F'0F0F'0000'0000ULL, 0x0ULL};
+
+  const PackedArray narrow =
+      PackedArray::FromWords(narrow_value, narrow_unknown, 64U, false, true);
+  const PackedArray wide =
+      PackedArray::FromWords(wide_value, wide_unknown, 65U, false, true);
+
+  auto holds = [](const PackedArray& v, std::span<const std::uint64_t> value,
+                  std::span<const std::uint64_t> unknown) {
+    return std::ranges::equal(v.ValueWords(), value) &&
+           std::ranges::equal(v.UnknownWords(), unknown);
+  };
+  EXPECT_TRUE(holds(narrow, narrow_value, narrow_unknown));
+  EXPECT_TRUE(holds(wide, wide_value, wide_unknown));
+
+  const PackedArray narrow_copy = narrow;
+  const PackedArray wide_copy = wide;
+  EXPECT_TRUE(holds(narrow_copy, narrow_value, narrow_unknown));
+  EXPECT_TRUE(holds(wide_copy, wide_value, wide_unknown));
+
+  PackedArray crossing = narrow;
+  crossing = wide;
+  EXPECT_TRUE(holds(crossing, wide_value, wide_unknown));
+  crossing = narrow;
+  EXPECT_TRUE(holds(crossing, narrow_value, narrow_unknown));
+
+  PackedArray moved_wide = wide;
+  const PackedArray taken_wide = std::move(moved_wide);
+  EXPECT_TRUE(holds(taken_wide, wide_value, wide_unknown));
+  PackedArray moved_narrow = narrow;
+  crossing = std::move(moved_narrow);
+  EXPECT_TRUE(holds(crossing, narrow_value, narrow_unknown));
+
+  // A two-state value has no second plane on either side of the line.
+  EXPECT_TRUE(
+      PackedArray::FromInt(-1, 64U, true, false).UnknownWords().empty());
+  EXPECT_TRUE(
+      PackedArray::FromInt(-1, 65U, true, false).UnknownWords().empty());
 }
 
 }  // namespace
