@@ -23,13 +23,19 @@ namespace lyra::runtime {
 // boundary, where the pointer carries no type to adjust by.
 class Observable {
  public:
-  Observable() = default;
+  // Defined in this class's own source file: every cell a unit holds constructs
+  // and destroys one, and a definition written here would be compiled again by
+  // each such unit.
+  Observable();
   Observable(const Observable&) = delete;
   auto operator=(const Observable&) -> Observable& = delete;
   Observable(Observable&&) = delete;
   auto operator=(Observable&&) -> Observable& = delete;
-  ~Observable() = default;
+  ~Observable();
 
+  // Written here, and not in the library's own source, because every store
+  // asks it and the library's own writes fold it. The price is that a unit
+  // writing a cell of a type its design shaped carries a copy of it.
   [[nodiscard]] auto HasWaiter() const noexcept -> bool {
     return !waiters_.Empty();
   }
@@ -70,8 +76,6 @@ class Observable {
 
 // The answer for a change whose parts are not bit ranges: nothing about a
 // leaf's bits can be shown untouched, so every wait on it is asked.
-inline auto MakeWholeValueProjectionTest() -> ProjectionUnchanged {
-  return [](std::uint64_t, std::uint64_t) -> bool { return false; };
-}
+auto MakeWholeValueProjectionTest() -> ProjectionUnchanged;
 
 }  // namespace lyra::runtime

@@ -21,13 +21,22 @@ class Observable;
 // any of them leads to an event. Leaves of one event expression name one
 // observation between them, because the value being watched is the
 // expression's and there is one of it.
+//
+// Every member is defined in the library: a unit stating a wait builds, copies
+// and destroys these, and a definition written here would be compiled again by
+// each such unit.
 struct Trigger {
   Observable* observable = nullptr;
   Observation observation;
   std::uint64_t lsb_bit_offset = 0;
   std::uint64_t bit_width = 0;
 
-  Trigger() = default;
+  Trigger();
+  Trigger(const Trigger&);
+  auto operator=(const Trigger&) -> Trigger&;
+  Trigger(Trigger&&) noexcept;
+  auto operator=(Trigger&&) noexcept -> Trigger&;
+  ~Trigger();
 
   // Each field beside the cell and the observation arrives as a PackedArray
   // literal -- the value model routes compile-time scalars as SV values, the

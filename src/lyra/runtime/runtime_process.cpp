@@ -1,6 +1,7 @@
 #include "lyra/runtime/runtime_process.hpp"
 
 #include <algorithm>
+#include <coroutine>
 #include <cstddef>
 #include <exception>
 #include <memory>
@@ -77,6 +78,13 @@ void EnterActivation(PromiseBase& leaf) {
 
 void LeaveActivation(PromiseBase& leaf) {
   leaf.Process().LeaveLeaf();
+}
+
+void EnterNestedActivation(
+    PromiseBase& nested, std::coroutine_handle<> continuation) {
+  nested.continuation = continuation;
+  nested.process = current_runtime().TryCurrentProcess();
+  EnterActivation(nested);
 }
 
 auto RuntimeProcess::TakeInnermostRaisedError() -> std::exception_ptr {

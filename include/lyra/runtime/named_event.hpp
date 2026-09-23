@@ -17,9 +17,13 @@ namespace lyra::runtime {
 //
 // A trigger carries no value, so nothing about it can be shown not to have
 // reached a wait: every wait registered here is asked.
+//
+// Every member is defined in this class's own source file, the constructor and
+// destructor included: a unit holding an event constructs and destroys it, and
+// a definition written here would be compiled again by each such unit.
 class NamedEvent : public Observable {
  public:
-  NamedEvent() = default;
+  NamedEvent();
 
   // Non-movable: waiting here takes pointers into the waiter set, so the
   // address must be stable once a process has waited.
@@ -27,24 +31,17 @@ class NamedEvent : public Observable {
   auto operator=(const NamedEvent&) -> NamedEvent& = delete;
   NamedEvent(NamedEvent&&) = delete;
   auto operator=(NamedEvent&&) -> NamedEvent& = delete;
-  ~NamedEvent() = default;
+  ~NamedEvent();
 
   // LRM 15.5.1: `-> e;` records the time it fired and ends the wait of every
   // process the trigger is an event for.
-  void Trigger(RuntimeEffects& runtime) {
-    last_triggered_at_ = runtime.Now();
-    runtime.WakeWaitersOf(*this, MakeWholeValueProjectionTest());
-  }
+  void Trigger(RuntimeEffects& runtime);
 
   // LRM 15.5.3: `e.triggered` is true iff the most recent trigger happened
   // in the current simulation time step. No mutation, no clearing -- the
   // answer is a timestamp comparison.
   [[nodiscard]] auto Triggered(RuntimeEffects& runtime) const
-      -> value::PackedArray {
-    const bool hit =
-        last_triggered_at_.has_value() && *last_triggered_at_ == runtime.Now();
-    return value::PackedArray::FromInt(hit ? 1 : 0, 1, false, false);
-  }
+      -> value::PackedArray;
 
  private:
   std::optional<SimTime> last_triggered_at_;

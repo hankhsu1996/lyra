@@ -2256,16 +2256,14 @@ enough to warrant its own focused review.
       `decisions/a-published-operation-is-compiled-once.md`.** The copies were not of the operations
       a design performs on values: the arithmetic a design calls is defined in the library already,
       and what a unit was copying was the library's own entries -- a wait, a delay, a fork -- and
-      the families written over the value domains. And moving those costs the optimizer nothing,
-      because a family is stated as already compiled rather than moved, so its definition stays in
-      the header a build reads. The trade this entry described, against the measured worth of
-      letting the optimizer read the runtime, was between two things that do not meet.
+      the families written over the value domains, and the constructors and destructors of what the
+      runtime defines. Moving all of it costs an optimized build under 1% by instruction count, so
+      the trade this entry described, against the measured worth of letting the optimizer read the
+      runtime, was between two things that do not meet.
 
-      What is left after that change is not this entry's subject either. A unit's object is now the
-      standard-library machinery of the scope-construction surface -- a hierarchy segment holding a
-      string, a definition holding arrays -- instantiated where the unit constructs those values.
-      No call removes it; what would is a different answer to what those types are, which is a
-      decision about the surface rather than about where a function lives.
+      What is left is a unit's own: its classes, the value operations it performs, and the families
+      over value types its design composed. A 32-unit design's objects went from 26.6 MB to 6.7 MB,
+      and a test reading the emitted objects fails on anything of the runtime's beyond that.
 
 - [ ] R135 -- The rule that a lowering states the expression rather than the answer the front end
       computed is enforced by matching two spellings of taking that answer. The property it stands

@@ -2,7 +2,7 @@
 
 #include <span>
 #include <string>
-#include <utility>
+#include <string_view>
 #include <vector>
 
 #include "lyra/value/packed_array.hpp"
@@ -15,18 +15,26 @@ namespace lyra::runtime {
 // first iteration of a generate-for, `{i, j}` for a multi-dim instance
 // array, `{}` for a scalar). Each scope owns one of these from the moment
 // its constructor returns; `%m`, debug, and by-name lookup all read it.
+//
+// Every unit that builds a child scope constructs one, hands it over, and
+// destroys what is left, so each of those is declared here and defined in the
+// library: written in this header, every such unit would compile the string
+// and vector handling behind them again.
 class HierarchySegment {
  public:
-  HierarchySegment() = default;
+  HierarchySegment();
 
   // The emit passes indices as a `std::array<PackedArray, N>` so the span
   // ctor absorbs every fixed-shape literal. The PackedArrays are copied
   // into the segment's owning vector; the source array can be a temporary.
   HierarchySegment(
-      std::string base_name, std::span<const value::PackedArray> indices)
-      : base_name_(std::move(base_name)),
-        indices_(indices.begin(), indices.end()) {
-  }
+      std::string base_name, std::span<const value::PackedArray> indices);
+
+  HierarchySegment(const HierarchySegment&);
+  auto operator=(const HierarchySegment&) -> HierarchySegment&;
+  HierarchySegment(HierarchySegment&&) noexcept;
+  auto operator=(HierarchySegment&&) noexcept -> HierarchySegment&;
+  ~HierarchySegment();
 
   [[nodiscard]] auto BaseName() const -> std::string_view {
     return base_name_;

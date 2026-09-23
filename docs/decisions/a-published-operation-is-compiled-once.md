@@ -7,7 +7,12 @@ Date: 2026-09-23 Status: accepted
 **A function the runtime publishes is compiled in the runtime's own artifact, and a unit that uses
 it emits a call.** Where the function is a template the library parameterizes over a set it
 enumerates itself, the library states that specialization once and the header says so, which leaves
-the definition where it is written.
+the definition where it is written. That covers constructing and destroying what the runtime
+defines, which is where most of a unit's copies turned out to hide.
+
+**What a unit's object may define of the runtime's is checked on the object, not on the headers.** A
+test emits a design, compiles every unit, and fails naming each runtime definition an object holds
+that no design decision explains.
 
 ## Why
 
@@ -48,21 +53,40 @@ it -- a cell, a reference, a sampled history, a resolved net, a completion -- is
 library can state in full. An explicit instantiation declaration in the header says it has, and a
 unit then refers to that copy.
 
-**The second mechanism costs no optimization, which is the reason it is not the first.** The
-template stays written in the header, so a build that asks the optimizer to read it still reads it:
-measured at `-O2`, the same call site compiles to 134 bytes of code with the declaration and 153
-without, while the unit's object goes from 22,048 to 9,400. What stops being emitted is the copy,
-not the definition.
+**Constructing and destroying what the runtime defines is the library's too.** A constructor or
+destructor defaulted where it is declared is not user-provided (C++ [dcl.fct.def.default]), so a
+unit constructing the object defines it itself and a declaration that the family is already compiled
+does not reach it; one left implicit is the same. Measured with clang and GCC on a probe under the
+declaration: an ordinary member is withheld from the unit and a defaulted constructor and destructor
+are both defined there, with everything they reach. So a family a unit holds -- a variable cell, a
+net and its driver, a sampled history, a frame's promise -- defaults its constructor and destructor
+after the class, and a class the runtime defines that a unit constructs, copies or destroys -- an
+event, a hierarchy segment, an observation, a trigger, a collected object -- defines those members
+in its own source file. Emitted code also names two value types no design shapes, a class handle and
+the empty product a body completes with when it produces nothing, so the families over those are
+declared too.
 
-| Unoptimized                     |     Before |      After |
-| ------------------------------- | ---------: | ---------: |
-| the probe above                 |    636,328 |    151,136 |
-| a leaf unit of a 32-unit design |    756,496 |    285,400 |
-| that design's objects, total    | 26,613,176 | 11,043,672 |
+**What only the library reaches stays in the header.** The engine asks an event control whether a
+change was an event on every change it reaches; moved into a source file of its own, that question
+became a call from the engine's other sources, and putting it back in the header took 2.3% off
+sparse wakeup's instruction count. No unit calls it, so no unit compiles it where it is. The line is
+who calls a function, not how small it is.
 
-**It buys build time as well as disk**, which the class rule it follows did not: the same project
-builds in 13.66 s against 17.46 s warm, 34.4 s of processor time against 45.2 s, because a unit no
-longer performs the instantiations either.
+| Unoptimized                     |     Before |     After |
+| ------------------------------- | ---------: | --------: |
+| the probe above                 |    636,328 |    35,120 |
+| a leaf unit of a 32-unit design |    756,496 |   155,232 |
+| that design's objects, total    | 26,613,176 | 6,720,864 |
+
+**It buys build time as well as disk**, which the class rule it follows did not, because a unit no
+longer performs the instantiations either. Measured side by side, the same project builds warm in
+12.5 s where moving the functions and families alone left it at 16.1 s; on an earlier reading,
+moving those had taken it from 17.46 s to 13.66 s.
+
+**It costs an optimized build a little.** Against moving the functions and families alone, a
+representative block does 0.6% more work and sparse wakeup 0.8% more, by instruction count. At that
+size the figure moves with how the compiler lays out the library, so it is recorded rather than
+attributed.
 
 ## What was rejected
 
@@ -72,8 +96,20 @@ variant's own members but the visit helpers keyed by the visitor, and the visito
 the library's header function that the unit compiled. Only moving that function moves them.
 
 **Leaving the per-domain families alone and moving functions only.** It reaches most of the bytes
-and stops at the ones a unit pays for holding a variable at all -- 56,616 of them on the probe above
--- which no call can remove because the cell is the unit's own member.
+and stops at the ones a unit pays for holding a variable at all -- 56,616 of them on the probe
+above.
+
+**Writing a family's members `inline` so that an optimized unit folds them.** A declaration that the
+family is already compiled withholds the body of a member that is not an inline function, so an
+optimized unit can only call it (C++17 [temp.explicit]/10). Writing the variable cell's write
+`inline` to undo that bought nothing measurable on sparse wakeup and cost a representative block
+0.6%, because the library's own copy of the write compiled worse.
+
+**Checking the headers for the shapes that copy.** Four mechanisms were found, each invisible in the
+header that carries it: a function defined there, a class with no virtual function defined in the
+library, a defaulted or implicit constructor or destructor, and a member template over the caller's
+type. A rule per shape is a rule per mechanism someone has already found. The object is where all of
+them show, whichever it was.
 
 **Moving the small value operations too.** A caller's own operands decide what an arithmetic step on
 a packed value compiles to, so the library publishes those definitions deliberately; they are what
@@ -82,8 +118,10 @@ the parameter.
 
 ## What is left
 
-A unit of 9,754 bytes still produces a 285,400 byte object, of which 61,945 is code. What remains is
-the standard-library machinery of the scope-construction surface itself -- a hierarchy segment holds
-a string, a definition holds arrays -- instantiated in the unit because the unit constructs those
-values rather than because it calls something. Removing it means changing what those types are,
-which is a decision about the surface rather than about where its functions live.
+What a unit's object holds of the runtime is what its design decided: families over the value types
+it composed, the templates it instantiated over its own lambdas, and a fork's branch count. Two
+single comparisons the write path asks on every store are written in the header on purpose, and the
+test names them as such.
+
+What else a unit holds is its own: its classes, and the value operations it performs, which the
+library publishes so that an optimized build folds them against the widths a design fixed.

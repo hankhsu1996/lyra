@@ -319,7 +319,7 @@ class PhysicalNet {
 template <value::NetResolvable T>
 class ResolvedNet : public Observable {
  public:
-  ResolvedNet() = default;
+  ResolvedNet();
 
   // Fixes what the net's declaration gives it -- the declared type, from a
   // value carrying it, and what its declared net type states: which truth
@@ -369,7 +369,7 @@ class ResolvedNet : public Observable {
   auto operator=(const ResolvedNet&) -> ResolvedNet& = delete;
   ResolvedNet(ResolvedNet&&) = delete;
   auto operator=(ResolvedNet&&) -> ResolvedNet& = delete;
-  ~ResolvedNet() = default;
+  ~ResolvedNet();
 
   [[nodiscard]] auto Get() const noexcept -> const T& {
     return resolved_;
@@ -577,6 +577,15 @@ class ResolvedNet : public Observable {
   std::deque<Driver<T>> drivers_;
 };
 
+// Defaulted here rather than where they are declared, for the reason a variable
+// cell's are: one defaulted on its first declaration is defined by every unit
+// that holds a net.
+template <value::NetResolvable T>
+ResolvedNet<T>::ResolvedNet() = default;
+
+template <value::NetResolvable T>
+ResolvedNet<T>::~ResolvedNet() = default;
+
 template <value::NetResolvable T>
 auto PhysicalNet<T>::Resolve() const -> T {
   OccupiedLevels occupied = LevelBit(own_.strength);
@@ -746,7 +755,7 @@ class Driver {
   using ValueType = T;
   using TransitionBase = T;
 
-  Driver() = default;
+  Driver();
   Driver(ResolvedNet<T>& net, std::size_t contribution)
       : net_(&net), contribution_(contribution) {
   }
@@ -799,6 +808,11 @@ class Driver {
   ResolvedNet<T>* net_ = nullptr;
   std::size_t contribution_ = 0;
 };
+
+// Defaulted here rather than where it is declared, for the reason a net's own
+// constructor is: a source holding a driver slot constructs one.
+template <value::NetResolvable T>
+Driver<T>::Driver() = default;
 
 template <value::NetResolvable T>
 auto ResolvedNet<T>::AttachDriver(const value::PackedArray& strength)

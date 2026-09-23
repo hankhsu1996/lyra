@@ -1,5 +1,8 @@
 #include "lyra/runtime/cancellation.hpp"
 
+#include <exception>
+#include <utility>
+
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 
@@ -72,11 +75,23 @@ auto ClassifyUnwind() -> Unwound {
   try {
     throw;
   } catch (const ControlEffect&) {
-    return Unwound{.control_effect = true, .raised = std::current_exception()};
+    return {true, std::current_exception()};
   } catch (...) {
-    return Unwound{.control_effect = false, .raised = std::current_exception()};
+    return {false, std::current_exception()};
   }
 }
+
+Unwound::Unwound(bool control_effect, std::exception_ptr raised)
+    : control_effect(control_effect), raised(std::move(raised)) {
+}
+Unwound::Unwound(const Unwound&) = default;
+auto Unwound::operator=(const Unwound&) -> Unwound& = default;
+Unwound::Unwound(Unwound&&) noexcept = default;
+auto Unwound::operator=(Unwound&&) noexcept -> Unwound& = default;
+Unwound::~Unwound() = default;
+
+CancellationTarget::CancellationTarget() = default;
+CancellationTarget::~CancellationTarget() = default;
 
 void Disable(CancellationTarget* target, RuntimeEffects& effects) {
   target->Invalidate(effects);

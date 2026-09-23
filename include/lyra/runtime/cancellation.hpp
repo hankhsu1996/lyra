@@ -42,6 +42,16 @@ class RuntimeProcess;
 // offers no partial form there would be anything to honour.
 class CancellationTarget {
  public:
+  // Defined in the library: whatever replicates a scope constructs and destroys
+  // one, and a definition written here would be compiled again by every unit
+  // that does.
+  CancellationTarget();
+  CancellationTarget(const CancellationTarget&) = delete;
+  auto operator=(const CancellationTarget&) -> CancellationTarget& = delete;
+  CancellationTarget(CancellationTarget&&) = delete;
+  auto operator=(CancellationTarget&&) -> CancellationTarget& = delete;
+  ~CancellationTarget();
+
   [[nodiscard]] auto Generation() const -> std::uint64_t {
     return generation_;
   }
@@ -113,7 +123,18 @@ struct ControlEffect {
 // What came out of a body that did not return: a control effect, or a run-time
 // error. A body left by unwinding delivers the two identically, so one shape
 // carries either.
+//
+// Its special members are the library's: a unit whose frames settle an outcome
+// copies and destroys one, and a definition written here would be compiled
+// again by each such unit.
 struct Unwound {
+  Unwound(bool control_effect, std::exception_ptr raised);
+  Unwound(const Unwound&);
+  auto operator=(const Unwound&) -> Unwound&;
+  Unwound(Unwound&&) noexcept;
+  auto operator=(Unwound&&) noexcept -> Unwound&;
+  ~Unwound();
+
   // False for a run-time error. A frame that is not the landing carries either
   // outward unchanged; only a landing acts on which it was.
   bool control_effect;

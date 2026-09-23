@@ -59,15 +59,17 @@ struct PromiseBase {
   // natively leaves it null.
   std::unique_ptr<ActivationValueStore> activation_values;
 
-  PromiseBase() = default;
+  // Defined in this struct's own source file, as is every member of it that is
+  // not parameterized: what a member of the shipped surface compiles to is the
+  // library's to decide once, and a definition written in a header is decided
+  // again in every translation unit that reaches it -- a constructor or
+  // destructor defaulted here included, since every frame a unit states
+  // constructs and destroys one.
+  PromiseBase();
   PromiseBase(const PromiseBase&) = delete;
   auto operator=(const PromiseBase&) -> PromiseBase& = delete;
   PromiseBase(PromiseBase&&) = delete;
   auto operator=(PromiseBase&&) -> PromiseBase& = delete;
-  // Defined in this struct's own source file, as is every member of it that is
-  // not parameterized: what a member of the shipped surface compiles to is the
-  // library's to decide once, and a definition written in a header is decided
-  // again in every translation unit that reaches it.
   ~PromiseBase();
 
   // Builds what this activation is about to wait for, and hands it to the
@@ -121,15 +123,38 @@ struct PromiseBase {
 void EnterActivation(PromiseBase& leaf);
 void LeaveActivation(PromiseBase& leaf);
 
+// Enters `nested` as an activation of the process running now, to return to
+// `continuation` when it completes.
+void EnterNestedActivation(
+    PromiseBase& nested, std::coroutine_handle<> continuation);
+
 // The activation was left by a control effect no region claimed, which its
 // landing reports as a forced termination (LRM 9.6.2, 9.7).
+//
+// It and the form below are held wherever an outcome is, which is in every unit
+// whose bodies complete with a value, so their special members are the
+// library's.
 struct Cancelled {
+  explicit Cancelled(std::exception_ptr effect);
+  Cancelled(const Cancelled&);
+  auto operator=(const Cancelled&) -> Cancelled&;
+  Cancelled(Cancelled&&) noexcept;
+  auto operator=(Cancelled&&) noexcept -> Cancelled&;
+  ~Cancelled();
+
   std::exception_ptr effect;
 };
 
 // The activation was left by a run-time error -- the design's (LRM 20.10) or
 // the tool's own -- which its landing reports and ends the run on.
 struct Raised {
+  explicit Raised(std::exception_ptr error);
+  Raised(const Raised&);
+  auto operator=(const Raised&) -> Raised&;
+  Raised(Raised&&) noexcept;
+  auto operator=(Raised&&) noexcept -> Raised&;
+  ~Raised();
+
   std::exception_ptr error;
 };
 
@@ -189,6 +214,13 @@ class CompletionSlot {
 template <>
 class CompletionSlot<void> {
  public:
+  CompletionSlot();
+  CompletionSlot(const CompletionSlot&) = delete;
+  auto operator=(const CompletionSlot&) -> CompletionSlot& = delete;
+  CompletionSlot(CompletionSlot&&) = delete;
+  auto operator=(CompletionSlot&&) -> CompletionSlot& = delete;
+  ~CompletionSlot();
+
   void return_void();
   void unhandled_exception() noexcept;
   // Whether the body was left by a control effect no region claimed, which its
@@ -221,6 +253,17 @@ template <class T>
 class Coroutine {
  public:
   struct promise_type : PromiseBase, CompletionSlot<T> {
+    // Defaulted after the class rather than here: left implicit, the frame's
+    // promise would be constructed and destroyed by code every unit stating a
+    // body defines itself, which no statement that the family is already
+    // compiled reaches.
+    promise_type();
+    promise_type(const promise_type&) = delete;
+    auto operator=(const promise_type&) -> promise_type& = delete;
+    promise_type(promise_type&&) = delete;
+    auto operator=(promise_type&&) -> promise_type& = delete;
+    ~promise_type();
+
     auto get_return_object() -> Coroutine {
       auto handle = std::coroutine_handle<promise_type>::from_promise(*this);
       self = handle;
@@ -250,18 +293,15 @@ class Coroutine {
 
   // Awaiter surface: `co_await task(args)` enables the task. Starting it is a
   // symmetric transfer to its handle; the task carries this enabler as its
-  // continuation and inherits its RuntimeProcess identity. The enabler may be a
-  // process or another task, so the promise type is deduced.
+  // continuation and runs as part of the process running now, which is the
+  // enabler's. Nothing about the enabler's own frame is read, so what it
+  // completes with does not shape this.
   [[nodiscard]] auto await_ready() const noexcept -> bool {
     return !handle_ || handle_.done();
   }
-  template <class P>
-  auto await_suspend(std::coroutine_handle<P> caller)
+  auto await_suspend(std::coroutine_handle<> caller)
       -> std::coroutine_handle<promise_type> {
-    promise_type& nested = handle_.promise();
-    nested.continuation = caller;
-    nested.process = caller.promise().process;
-    EnterActivation(nested);
+    EnterNestedActivation(handle_.promise(), caller);
     return handle_;
   }
   auto await_resume() -> T {
@@ -297,5 +337,11 @@ class Coroutine {
 
   std::coroutine_handle<promise_type> handle_;
 };
+
+template <class T>
+Coroutine<T>::promise_type::promise_type() = default;
+
+template <class T>
+Coroutine<T>::promise_type::~promise_type() = default;
 
 }  // namespace lyra::runtime

@@ -191,16 +191,16 @@ layer directly.
       of object, and a unit stating one scope, one variable, one write and one wait weighed 636,328
       against an empty one's 1,112.
 
-      Measured 2026-09-23 on a 32-unit design: its objects total 11,043,672 bytes against
-      26,613,176, and its leaf unit 285,400 against 756,496. **This one buys build time as well**,
-      where the entry above bought only disk: the same project builds warm in 13.66 s against
-      17.46 s, and 34.4 s of processor time against 45.2 s, because a unit no longer performs the
-      instantiations it was also writing out.
+      Measured 2026-09-23 on a 32-unit design: its objects total 6,720,864 bytes against
+      26,613,176, and its leaf unit 155,232 against 756,496. **This one buys build time as well**,
+      where the entry above bought only disk, because a unit no longer performs the instantiations
+      it was also writing out: the functions and families alone took a warm build from 17.46 s to
+      13.66 s, and constructing and destroying what the runtime defines took the same project from
+      16.1 s to 12.5 s, measured side by side.
 
-      What a unit now pays for holding a variable and stating a body is its own, and what remains
-      beyond that is the standard-library machinery of the scope-construction surface itself.
-      `decisions/a-published-operation-is-compiled-once.md` settles the shape and states what is
-      left.
+      What a unit now holds of the runtime is what its design decided, and a test reading the
+      emitted objects fails on anything else. `decisions/a-published-operation-is-compiled-once.md`
+      settles the shape.
 
 ## Out of Scope
 
