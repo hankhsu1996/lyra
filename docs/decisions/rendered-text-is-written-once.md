@@ -39,9 +39,12 @@ interior node a format call cannot survive in any case, because its arguments wo
 children's text. At a leaf, turning a number into text is real work and is done by a conversion
 writing straight into the destination.
 
-**What is genuinely a value is a name.** A name has readers besides the artifact -- the file a class
-is written into is composed from one -- so naming and type mapping answer with names, and those are
-built as values. Everything that reaches a reader only as part of the artifact is written.
+**A name and a type are written the same way.** Each is decided in one place, because every party
+spelling one has to arrive at the same answer, and that place answers with what decides the spelling
+-- a source identifier, a kind and a position, a type -- rather than with the characters. Nearly
+every reader of a name is the artifact, so it is written there like everything else. The one reader
+that needs the characters as a value, the name of the file a class is written into, writes them into
+a value of its own.
 
 **Three things belong to the destination rather than to whoever writes into it**: what column a line
 opens at, the blank line that sets one section apart from the next, and the depth a body opens at
@@ -66,10 +69,18 @@ figure a released build would show.
 beside it, so the shape that is there is the shape that spreads. The entries answer with `void`, so
 the arrangement this record replaces no longer compiles at the place it would be written.
 
-**The residual is gated rather than written down.** A format call composing the program's text
-cannot be told from one composing a name by any rule a type system can state -- both answer with a
-string -- so it is told apart by the spelling, and `tools/policy/check_architecture.py` refuses
-`std::format` where a node's text is written.
+**Names were exempt when this was first decided, and that was wrong.** The ground given was that a
+name has readers besides the artifact. That grounds deciding a name in one place; it does not ground
+building one as a value at every mention. Measured on 2026-09-23 with an optimized build over one
+emission of 256 distinct unit specializations, the format calls left in the name and type spelling
+were 30.5% of the run -- larger than the whole semantic lowering beside it -- and the type spelling
+had the very shape this record removed from expressions, one string returned per level of a
+recursive walk. Written into the destination as well, the emitted text is identical over the whole
+conformance corpus, 6,412 files.
+
+**The rule is gated rather than written down.** Nothing in the backend composes text with a format
+call, so `tools/policy/check_architecture.py` refuses `std::format` anywhere in it. A rule that sees
+only spelling cannot tell a node's text from a name, and with names written too it no longer has to.
 
 ## Rejected alternatives
 
@@ -81,7 +92,9 @@ four primitives measured above.
 flattened once at the top, is what the high-level language does for free and what LLVM's own string
 concatenation offers. It is not available to a recursive render: that type is documented as one that
 must never be stored and may only be taken as a parameter, because it holds pointers to temporaries
-that die at the end of the statement -- so a node cannot answer with one.
+that die at the end of the statement -- so a node cannot answer with one. What a name or a type
+answers with is different in kind: it holds only views of the program being emitted and of this
+target's own words, both of which outlive the writing, so it can be answered and carried.
 
 ## Cross-references
 

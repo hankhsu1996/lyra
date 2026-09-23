@@ -422,6 +422,14 @@ specializations, not with instance count.
       corpus was emitted twice to establish. [refactor.md](refactor.md) R137 holds the reading and
       the prediction it falsified.
 
+      Names and type spellings were left out of that at first, on the ground that a name has
+      readers besides the artifact, and they were the larger half: over one optimized emission of
+      256 distinct unit specializations, the format calls composing them were 30.5% of the run.
+      They are written the same way now. That emission costs 25.7% fewer instructions --
+      683,818,727 to 507,852,755 -- and the one nesting two hundred deep 17.3% fewer, with the text
+      identical over the whole conformance corpus. Measured as a rate on the same host, an
+      optimized build writes about 43 MB of design C++ a second.
+
       This is a rate rather than a count, so no coverage record holds it and the corpus cannot see
       it: every conformance case is one small design, and what it measures only shows at a scale
       none of them reach.

@@ -230,11 +230,12 @@ Rules:
         stage is the text times its depth. `std::format` composes a value, so
         where a node's text is written it may not appear at all -- and it
         cannot, because its arguments would have to be the children's text.
-        What is genuinely a value is a name: a file path is composed from one,
-        so a name has readers besides the artifact. Naming and type mapping
-        answer with names and are exempt by file; everything else writes.
+        A name and a type spelling are written the same way: each is decided
+        in one place and answers with what decides it, and the one reader
+        that needs the characters as a value -- a file path -- writes them
+        into a value of its own.
         Scope: every .cpp/.hpp under src/lyra/backend/cpp and
-        include/lyra/backend/cpp, except the two files named in the rule.
+        include/lyra/backend/cpp.
 
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
@@ -1094,28 +1095,18 @@ def check_a023(repo_root: Path) -> list[str]:
 # into a destination, which is the shape a backend's text takes, so the two are
 # told apart by what follows the name.
 COMPOSED_TEXT_PATTERN = re.compile(r"\bstd::format\s*\(")
-# Naming answers with identifiers and type mapping with type spellings. Both
-# are names -- a file path is composed from one, so they have readers besides
-# the artifact -- and a name is a value wherever it is built.
-COMPOSED_TEXT_ALLOWED = frozenset({
-    "include/lyra/backend/cpp/naming.hpp",
-    "src/lyra/backend/cpp/render_type.cpp",
-})
 
 
 def check_a024(repo_root: Path) -> list[str]:
     errors = []
     for path, rel in iter_files(
             repo_root, "src/lyra/backend/cpp", "include/lyra/backend/cpp"):
-        if rel in COMPOSED_TEXT_ALLOWED:
-            continue
         for lineno, line in enumerate(path.read_text().splitlines(), 1):
             if COMPOSED_TEXT_PATTERN.search(strip_comment(line)):
                 errors.append(
                     f"  {rel}:{lineno}: A024 composes text as a value; write "
-                    f"the pieces into the artifact instead, and where the text "
-                    f"is genuinely a name, build it with the composer that "
-                    f"names one"
+                    f"the pieces into the artifact instead, and where a reader "
+                    f"needs the characters as a value, write them into one"
                 )
     return errors
 
@@ -1521,7 +1512,7 @@ def run_self_tests() -> bool:
         "A015 free function false-pos")
     ok &= expect(
         not RUNTIME_TYPE_LITERAL_PATTERN.search(
-            "  return RenderTypeAsCpp(unit, id) + \"::Concat\";"),
+            "  Write(out, CppType(unit, id), \"::Concat\");"),
         "A015 a mapped type reached into is not a literal")
 
     # A016
