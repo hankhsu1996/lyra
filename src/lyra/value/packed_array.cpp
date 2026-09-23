@@ -673,30 +673,6 @@ auto PackedArray::CountBits(const PackedArray& control_bits) const
   return Int(static_cast<std::int32_t>(count));
 }
 
-namespace {
-
-// The caller guarantees `dst` is wide enough. What the source holds above its
-// own width is masked rather than assumed zero, because nothing states that a
-// packed value's padding bits are clear, and this ORs into a destination that
-// would keep whatever arrived.
-auto BlitBits(
-    std::span<std::uint64_t> dst, std::uint64_t dst_lsb,
-    std::span<const std::uint64_t> src, std::uint64_t src_bit_width) -> void {
-  if (src_bit_width == 0U) return;
-  const auto word_off = static_cast<std::size_t>(dst_lsb / 64U);
-  const auto bit_off = static_cast<std::uint64_t>(dst_lsb % 64U);
-  const auto src_words = WordCountForBits(src_bit_width);
-  for (std::size_t i = 0; i < src_words; ++i) {
-    const std::uint64_t w = src[i] & ValidBitsMask(i, src_bit_width);
-    dst[word_off + i] |= w << bit_off;
-    if (bit_off != 0U && (word_off + i + 1U) < dst.size()) {
-      dst[word_off + i + 1U] |= w >> (64U - bit_off);
-    }
-  }
-}
-
-}  // namespace
-
 auto PackedArray::Concat(const PackedArray& rhs) const -> PackedArray {
   const std::uint64_t total = BitWidth() + rhs.BitWidth();
   const bool any_four_state = IsFourState() || rhs.IsFourState();
@@ -708,9 +684,11 @@ auto PackedArray::Concat(const PackedArray& rhs) const -> PackedArray {
   auto dst_unknown = result.MutableUnknownWords();
   std::uint64_t cursor = 0;
   for (const PackedArray* op : {&rhs, this}) {
-    BlitBits(dst_value, cursor, op->ValueWords(), op->BitWidth());
-    if (any_four_state && op->IsFourState()) {
-      BlitBits(dst_unknown, cursor, op->UnknownWords(), op->BitWidth());
+    MoveBitRun(op->ValueWords(), 0U, dst_value, cursor, op->BitWidth());
+    // A two-state operand carries no unknown plane, and moving from an absent
+    // one leaves the result's own positions clear, which is what it holds.
+    if (any_four_state) {
+      MoveBitRun(op->UnknownWords(), 0U, dst_unknown, cursor, op->BitWidth());
     }
     cursor += op->BitWidth();
   }
@@ -730,9 +708,11 @@ auto PackedArray::Replicate(std::int64_t count) const -> PackedArray {
   auto dst_unknown = result.MutableUnknownWords();
   for (std::uint64_t i = 0; i < repeats; ++i) {
     const std::uint64_t cursor = i * BitWidth();
-    BlitBits(dst_value, cursor, ValueWords(), BitWidth());
+    MoveBitRun(ValueWords(), 0U, dst_value, cursor, BitWidth());
+    // The result is four-state exactly when this value is, so the plane the
+    // copy lands in exists on the same condition the copy has.
     if (IsFourState()) {
-      BlitBits(dst_unknown, cursor, UnknownWords(), BitWidth());
+      MoveBitRun(UnknownWords(), 0U, dst_unknown, cursor, BitWidth());
     }
   }
   return result;
@@ -1524,6 +1504,37 @@ auto PackedArray::Dominating(const PackedArray& weaker) const -> PackedArray {
   return FromWords(res_val, res_unk, bit_width_, is_signed_, is_four_state_);
 }
 
+namespace {
+
+// Where a run named at `start` meets a value `value_width` bits wide, said the
+// way a move asks for it: how far into the run the two overlap, how far into
+// the value, and how many positions they share. A run the value does not reach
+// shares nothing, which is a count of zero rather than a case of its own.
+struct RunOverlap {
+  std::uint64_t in_run;
+  std::uint64_t in_value;
+  std::uint64_t count;
+};
+
+auto OverlapOf(
+    std::int64_t start, std::int64_t run_width, std::int64_t value_width)
+    -> RunOverlap {
+  // Off either end the two share nothing, and settling that first is what
+  // keeps the arithmetic below inside its range: a start beyond a run's own
+  // width is the only way these sums overflow.
+  if (start <= -run_width || start >= value_width) {
+    return RunOverlap{};
+  }
+  const std::int64_t in_run = start < 0 ? -start : 0;
+  const std::int64_t end = std::min(run_width, value_width - start);
+  return RunOverlap{
+      .in_run = static_cast<std::uint64_t>(in_run),
+      .in_value = static_cast<std::uint64_t>(start + in_run),
+      .count = static_cast<std::uint64_t>(end - in_run)};
+}
+
+}  // namespace
+
 auto PackedArray::ExtractBits(
     const PackedArray& lsb_bit, std::uint32_t bit_width) const -> PackedArray {
   if (bit_width == 0U) {
@@ -1536,33 +1547,28 @@ auto PackedArray::ExtractBits(
   if (lsb_bit.HasUnknown() || lsb_bit.BitWidth() > 64U) {
     return PackedArray{bit_width, false, is_four_state_};
   }
-  const std::int64_t start = lsb_bit.ToInt64();
-  const auto src_value = ValueWords();
-  const auto src_unknown = UnknownWords();
-  const auto bw_signed = static_cast<std::int64_t>(bit_width_);
+  const RunOverlap overlap = OverlapOf(
+      lsb_bit.ToInt64(), bit_width, static_cast<std::int64_t>(bit_width_));
+
   PackedArray result = Blank(bit_width, false, is_four_state_);
-  auto val_buf = result.MutableValueWords();
-  auto unk_buf = result.MutableUnknownWords();
-  for (std::uint32_t i = 0; i < bit_width; ++i) {
-    const std::int64_t pos = start + static_cast<std::int64_t>(i);
-    const std::uint64_t out_mask = std::uint64_t{1} << (i % 64U);
-    if (pos < 0 || pos >= bw_signed) {
-      if (is_four_state_) {
-        val_buf[i / 64U] |= out_mask;
-        unk_buf[i / 64U] |= out_mask;
-      }
-      continue;
-    }
-    const auto w_idx = static_cast<std::size_t>(pos / 64);
-    const auto b_idx = static_cast<std::uint64_t>(pos % 64);
-    if (((src_value[w_idx] >> b_idx) & 1U) != 0U) {
-      val_buf[i / 64U] |= out_mask;
-    }
-    if (is_four_state_ && w_idx < src_unknown.size() &&
-        ((src_unknown[w_idx] >> b_idx) & 1U) != 0U) {
-      unk_buf[i / 64U] |= out_mask;
-    }
+  MoveBitRun(
+      ValueWords(), overlap.in_value, result.MutableValueWords(),
+      overlap.in_run, overlap.count);
+  if (!is_four_state_) {
+    return result;
   }
+  MoveBitRun(
+      UnknownWords(), overlap.in_value, result.MutableUnknownWords(),
+      overlap.in_run, overlap.count);
+  // Whatever the run reaches for outside the value is x (LRM 11.5.1), which is
+  // both planes set. A two-state value reads those positions as the zero the
+  // blank already carries.
+  const std::uint64_t reached = overlap.in_run + overlap.count;
+  const std::uint64_t above = bit_width - reached;
+  SetBitRun(result.MutableValueWords(), 0U, overlap.in_run);
+  SetBitRun(result.MutableUnknownWords(), 0U, overlap.in_run);
+  SetBitRun(result.MutableValueWords(), reached, above);
+  SetBitRun(result.MutableUnknownWords(), reached, above);
   return result;
 }
 
@@ -1589,36 +1595,19 @@ auto PackedArray::AssignSlice(
   if (lsb_bit.HasUnknown() || lsb_bit.BitWidth() > 64U) {
     return;
   }
-  const std::int64_t start = lsb_bit.ToInt64();
-  const auto bw_signed = static_cast<std::int64_t>(bit_width_);
-  auto dst_value = MutableValueWords();
-  auto dst_unknown = MutableUnknownWords();
-  const auto src_value = value.ValueWords();
-  const auto src_unknown = value.UnknownWords();
-  for (std::uint32_t i = 0; i < bit_width; ++i) {
-    const std::int64_t pos = start + static_cast<std::int64_t>(i);
-    if (pos < 0 || pos >= bw_signed) {
-      continue;
-    }
-    const auto dst_w = static_cast<std::size_t>(pos / 64);
-    const std::uint64_t dst_mask = std::uint64_t{1}
-                                   << (static_cast<std::uint64_t>(pos) % 64U);
-    const auto src_w = static_cast<std::size_t>(i / 64U);
-    const std::uint64_t src_mask = std::uint64_t{1} << (i % 64U);
-    if ((src_value[src_w] & src_mask) != 0U) {
-      dst_value[dst_w] |= dst_mask;
-    } else {
-      dst_value[dst_w] &= ~dst_mask;
-    }
-    if (is_four_state_) {
-      const bool src_unk_bit =
-          src_w < src_unknown.size() && (src_unknown[src_w] & src_mask) != 0U;
-      if (src_unk_bit) {
-        dst_unknown[dst_w] |= dst_mask;
-      } else {
-        dst_unknown[dst_w] &= ~dst_mask;
-      }
-    }
+  const RunOverlap overlap = OverlapOf(
+      lsb_bit.ToInt64(), bit_width, static_cast<std::int64_t>(bit_width_));
+
+  MoveBitRun(
+      value.ValueWords(), overlap.in_run, MutableValueWords(), overlap.in_value,
+      overlap.count);
+  if (is_four_state_) {
+    // A two-state value carries no unknown plane at all, so moving from it
+    // settles the positions it lands on, which is what the widening above
+    // requires.
+    MoveBitRun(
+        value.UnknownWords(), overlap.in_run, MutableUnknownWords(),
+        overlap.in_value, overlap.count);
   }
 }
 

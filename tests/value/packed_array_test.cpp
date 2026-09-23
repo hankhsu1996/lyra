@@ -88,6 +88,122 @@ TEST(PackedArrayTest, AStoreIsCheckedAgainstWhatTheCellHolds) {
       eight.SameRepresentation(PackedArray::FromInt(1, 8U, false, true)));
 }
 
+// LRM 11.5.1. The positions that compose differently are where the run sits
+// relative to a word: inside one, across a boundary, wider than one, and
+// starting where the value does not reach.
+TEST(PackedArrayTest, ARunOfBitsIsReadWhereverItStarts) {
+  // 1101_0010
+  const PackedArray byte = PackedArray::FromInt(0xD2, 8U, true, false);
+
+  const PackedArray middle = byte.ExtractBits(PackedArray::Int(2), 4U);
+  EXPECT_EQ(middle.BitWidth(), 4U);
+  EXPECT_EQ(middle.ToInt64(), 0x4);
+
+  const std::array<std::uint64_t, 3> words = {
+      0x1111'2222'3333'4444ULL, 0x5555'6666'7777'8888ULL,
+      0x0000'0000'0000'00AAULL};
+  const PackedArray wide =
+      PackedArray::FromWords(words, {}, 136U, false, false);
+
+  const PackedArray across = wide.ExtractBits(PackedArray::Int(32), 64U);
+  EXPECT_EQ(across.ValueWords()[0], 0x7777'8888'1111'2222ULL);
+
+  const PackedArray spanning = wide.ExtractBits(PackedArray::Int(60), 72U);
+  EXPECT_EQ(spanning.BitWidth(), 72U);
+  EXPECT_EQ(spanning.ValueWords()[0], 0x5556'6667'7778'8881ULL);
+  EXPECT_EQ(spanning.ValueWords()[1], 0x0000'0000'0000'00A5ULL);
+
+  // A position the value does not reach reads as zero on a two-state value.
+  EXPECT_EQ(byte.ExtractBits(PackedArray::Int(6), 4U).ToInt64(), 0x3);
+  EXPECT_EQ(byte.ExtractBits(PackedArray::Int(-2), 4U).ToInt64(), 0x8);
+  EXPECT_EQ(byte.ExtractBits(PackedArray::Int(100), 4U).ToInt64(), 0);
+}
+
+TEST(PackedArrayTest, ARunOfBitsCarriesTheUnknownItCrosses) {
+  // 1101_0010, with positions 1 and 6 holding x.
+  const std::array<std::uint64_t, 1> value = {0xD2ULL};
+  const std::array<std::uint64_t, 1> unknown = {0x42ULL};
+  const PackedArray byte =
+      PackedArray::FromWords(value, unknown, 8U, false, true);
+
+  const PackedArray run = byte.ExtractBits(PackedArray::Int(1), 6U);
+  EXPECT_EQ(run.UnknownWords()[0], 0x21ULL);
+
+  // A position the value does not reach is x on a four-state value, so a run
+  // that leaves the value comes back partly unknown.
+  const PackedArray over = byte.ExtractBits(PackedArray::Int(6), 4U);
+  EXPECT_EQ(over.ValueWords()[0], 0xFULL);
+  EXPECT_EQ(over.UnknownWords()[0], 0xDULL);
+
+  // A start that is itself unknown puts the whole run out of reach.
+  const PackedArray nowhere =
+      byte.ExtractBits(PackedArray{4U, false, true}, 4U);
+  EXPECT_EQ(nowhere.UnknownWords()[0], 0xFULL);
+
+  // Both planes cross a word boundary together, which is the shape a wide
+  // four-state value actually meets.
+  const std::array<std::uint64_t, 3> wide_value = {
+      0x1111'2222'3333'4444ULL, 0x5555'6666'7777'8888ULL,
+      0x0000'0000'0000'00AAULL};
+  const std::array<std::uint64_t, 3> wide_unknown = {
+      0x0F0F'0F0F'0000'0000ULL, 0x0000'0000'A5A5'A5A5ULL,
+      0x0000'0000'0000'0003ULL};
+  const PackedArray wide =
+      PackedArray::FromWords(wide_value, wide_unknown, 136U, false, true);
+
+  const PackedArray across = wide.ExtractBits(PackedArray::Int(32), 64U);
+  EXPECT_EQ(across.ValueWords()[0], 0x7777'8888'1111'2222ULL);
+  EXPECT_EQ(across.UnknownWords()[0], 0xA5A5'A5A5'0F0F'0F0FULL);
+}
+
+TEST(PackedArrayTest, ARunOfBitsIsWrittenWhereverItStarts) {
+  // The inverse of the read above: the same run written back at the same
+  // position reproduces the words it was taken from.
+  const std::array<std::uint64_t, 2> run_words = {
+      0x5556'6667'7778'8881ULL, 0x0000'0000'0000'00A5ULL};
+  PackedArray target{136U, false, false};
+  target.AssignSlice(
+      PackedArray::Int(60), 72U,
+      PackedArray::FromWords(run_words, {}, 72U, false, false));
+  EXPECT_EQ(target.ValueWords()[0], 0x1000'0000'0000'0000ULL);
+  EXPECT_EQ(target.ValueWords()[1], 0x5555'6666'7777'8888ULL);
+  EXPECT_EQ(target.ValueWords()[2], 0x0000'0000'0000'000AULL);
+
+  // Only the overlap lands, and what the value holds elsewhere stays.
+  PackedArray below = PackedArray::FromInt(0xFF, 8U, false, false);
+  below.AssignSlice(
+      PackedArray::Int(-2), 4U, PackedArray::FromInt(0x0, 4U, false, false));
+  EXPECT_EQ(below.ToInt64(), 0xFC);
+
+  PackedArray above = PackedArray::FromInt(0x00, 8U, false, false);
+  above.AssignSlice(
+      PackedArray::Int(6), 4U, PackedArray::FromInt(0xF, 4U, false, false));
+  EXPECT_EQ(above.ToInt64(), 0xC0);
+
+  // A start that is itself unknown writes nothing at all.
+  PackedArray untouched = PackedArray::FromInt(0xAA, 8U, false, false);
+  untouched.AssignSlice(
+      PackedArray{4U, false, true}, 4U,
+      PackedArray::FromInt(0xF, 4U, false, false));
+  EXPECT_EQ(untouched.ToInt64(), 0xAA);
+}
+
+TEST(PackedArrayTest, AWrittenRunSettlesTheUnknownItLandsOn) {
+  // A two-state value written into four-state storage clears the unknown at
+  // the positions it covers; it carries none of its own (LRM 7.2.1).
+  PackedArray cell{8U, false, true};
+  cell.AssignSlice(
+      PackedArray::Int(2), 4U, PackedArray::FromInt(0x5, 4U, false, false));
+  EXPECT_EQ(cell.ValueWords()[0], 0xD7ULL);
+  EXPECT_EQ(cell.UnknownWords()[0], 0xC3ULL);
+
+  // A four-state value carries its own unknown in.
+  PackedArray sink = PackedArray::FromInt(0, 8U, false, true);
+  sink.AssignSlice(PackedArray::Int(2), 4U, PackedArray{4U, false, true});
+  EXPECT_EQ(sink.ValueWords()[0], 0x3CULL);
+  EXPECT_EQ(sink.UnknownWords()[0], 0x3CULL);
+}
+
 TEST(PackedArrayTest, AWideValueKeepsItsBitsAcrossACopy) {
   const std::array<std::uint64_t, 3> words = {
       0x1111'2222'3333'4444ULL, 0x5555'6666'7777'8888ULL,

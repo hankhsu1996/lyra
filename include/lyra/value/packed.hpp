@@ -63,6 +63,26 @@ auto MaskUnusedTopBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
 auto SetAllValidBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
     -> void;
 
+// Moves `count` bits out of `src` beginning at `src_offset` into `dst`
+// beginning at `dst_offset`, a destination word at a time. Every bit of `dst`
+// outside the run is left as it stands, and a position `src` does not reach
+// moves as a clear bit -- which is what settles the plane a two-state value
+// does not carry when it is written into four-state storage.
+//
+// Neither offset is word-aligned, because a run of bits the design named
+// starts where the design said it did. The destination holds the whole run:
+// the caller works the overlap out before saying what to move, so checking it
+// here would compare a bound against the arithmetic that produced it.
+auto MoveBitRun(
+    std::span<const std::uint64_t> src, std::uint64_t src_offset,
+    std::span<std::uint64_t> dst, std::uint64_t dst_offset, std::uint64_t count)
+    -> void;
+
+// Every position of the run set, and nothing outside it.
+auto SetBitRun(
+    std::span<std::uint64_t> dst, std::uint64_t offset, std::uint64_t count)
+    -> void;
+
 // The word planes of one packed value, borrowed. A plane holds exactly as many
 // words as its width needs, with bit i of the value at bit i%64 of word i/64,
 // so a reader takes the words and the width together and establishes nothing
