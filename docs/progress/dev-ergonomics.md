@@ -167,6 +167,23 @@ layer directly.
       be. So the gain is a user's rather than this repository's, which is why it waits -- and the
       figure to re-take before acting is the break-even, not the per-unit one.
 
+- [x] D16 -- A translation unit of an emitted design hands the linker its own classes and a set of
+      calls, rather than a copy of what the library it links already holds. It used to hand over
+      both: a unit of 3,907 bytes produced a 1,688,384 byte object holding 1,503 bytes of code, the
+      rest being the dispatch tables and members of the runtime classes a design's scopes derive
+      from -- and, smaller, the type information of the types a run can raise -- written out by
+      every unit and then discarded by the linker down to one copy.
+
+      Measured 2026-09-23 on one emitted project: its objects total 783,048 bytes against 3,904,344,
+      and a probe unit adding a single scope class to the shipped surface goes from 1,600,704 bytes
+      to 24,016. The same probe built optimized goes from 135,664 to 4,912, so this is a separate
+      axis from how hard the host compiler is asked to work rather than a restatement of it.
+
+      **This buys disk and not time** -- the same project builds in 1.87 s against 1.77 s, which is
+      noise at that size -- and disk is what it has to buy, because an object set is held whole
+      while a build runs and a design of a thousand units holds a thousand of these at once.
+      `decisions/a-published-class-is-emitted-once.md` settles the shape and states what is left.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

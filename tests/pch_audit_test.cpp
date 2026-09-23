@@ -6,8 +6,6 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <iterator>
-#include <memory>
-#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -22,11 +20,9 @@
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 #include "lyra/support/subprocess.hpp"
-#include "tools/cpp/runfiles/runfiles.h"
+#include "tests/framework/cli_fixture.hpp"
 
 namespace {
-
-using bazel::tools::cpp::runfiles::Runfiles;
 
 // `clang -H` writes one stderr line per header it opened. Each line starts
 // with one or more `.` characters denoting include depth, then a space, then
@@ -142,18 +138,6 @@ auto IsSystemPath(
   });
 }
 
-// The compiler Lyra defaults to, when this host has a clang-based one. The
-// precompiled-header format and the flags around it are clang's, so nothing
-// here can be asked of another compiler.
-auto FindClang() -> std::optional<std::filesystem::path> {
-  auto cxx_or = lyra::support::FindOnPath("clang++");
-  if (!cxx_or) return std::nullopt;
-  if (cxx_or->filename().string().find("clang") == std::string::npos) {
-    return std::nullopt;
-  }
-  return *cxx_or;
-}
-
 auto ReadWhole(const std::filesystem::path& p) -> std::string {
   std::ifstream in(p, std::ios::binary);
   return std::string{
@@ -181,19 +165,15 @@ auto AgeByADay(const std::filesystem::path& p) -> void {
 // in from a third-party root, CI flags it here rather than letting it become
 // a silent staleness hole.
 TEST(PchCoverage, EveryInputIsCovered) {
-  std::string err;
-  std::unique_ptr<Runfiles> runfiles{Runfiles::CreateForTest(&err)};
-  ASSERT_TRUE(runfiles) << err;
-
-  const std::filesystem::path lyra_exe = runfiles->Rlocation("_main/lyra");
+  const auto lyra_exe = lyra::test::ResolveLyra();
   ASSERT_FALSE(lyra_exe.empty());
 
   auto loc_or = lyra::driver::ResolveRuntimeLocation(lyra_exe.string());
   ASSERT_TRUE(loc_or) << loc_or.error().primary.message;
 
-  // The same compiler Lyra defaults to, so the audit measures what a plain
-  // `lyra run` on this host would produce.
-  auto cxx_or = FindClang();
+  // The audit is a reading of one compiler's behaviour, so it has to be the one
+  // a plain `lyra run` on this host would use.
+  auto cxx_or = lyra::test::FindDefaultCxx();
   if (!cxx_or) {
     GTEST_SKIP() << "audit requires a clang-based compiler on PATH";
   }
@@ -253,14 +233,10 @@ TEST(PchCoverage, EveryInputIsCovered) {
 // reading of the content can catch, so the two together separate a check that
 // moved to content from one that was switched off.
 TEST(PchStaleness, CurrencyIsDecidedByContent) {
-  std::string err;
-  std::unique_ptr<Runfiles> runfiles{Runfiles::CreateForTest(&err)};
-  ASSERT_TRUE(runfiles) << err;
-
-  const std::filesystem::path lyra_exe = runfiles->Rlocation("_main/lyra");
+  const auto lyra_exe = lyra::test::ResolveLyra();
   ASSERT_FALSE(lyra_exe.empty());
 
-  auto cxx = FindClang();
+  auto cxx = lyra::test::FindDefaultCxx();
   if (!cxx) {
     GTEST_SKIP() << "precompiled headers require a clang-based compiler";
   }
@@ -270,9 +246,9 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
 
   // A project of this test's own, so the headers it ages are copies and the
   // cache it fills is not the one the developer is using.
-  const auto project = std::filesystem::temp_directory_path() / "pch-currency";
-  std::error_code ec;
-  std::filesystem::remove_all(project, ec);
+  auto project_or = lyra::test::MakeScratchDir();
+  ASSERT_TRUE(project_or) << project_or.error();
+  const auto& project = *project_or;
   auto exported = lyra::driver::ExportRuntimeTree(*loc_or, project);
   ASSERT_TRUE(exported) << exported.error().primary.message;
 

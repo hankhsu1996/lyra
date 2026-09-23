@@ -6,6 +6,8 @@
 
 namespace lyra::runtime {
 
+Wait::~Wait() = default;
+
 void ConsumeWait(CoroutineHandle activation) {
   activation->RevokeRegistrations();
   if (activation->wait_is_report_flush_point) {

@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <string>
 
 namespace lyra::test {
@@ -14,6 +15,12 @@ auto MakeScratchDir() -> std::expected<std::filesystem::path, std::string>;
 
 // Where the compiler under test is, as this run was given it.
 auto ResolveLyra() -> std::filesystem::path;
+
+// The host compiler an emitted project's own recipe defaults to, where this
+// host has one. What such a build costs is a fact about that compiler, so a
+// test measuring one asks for it by name rather than for whatever this machine
+// happens to call a C++ compiler.
+auto FindDefaultCxx() -> std::optional<std::filesystem::path>;
 
 // The smallest design that produces observable output. What the cases using it
 // are about is what surrounds a design, so the design itself carries no weight

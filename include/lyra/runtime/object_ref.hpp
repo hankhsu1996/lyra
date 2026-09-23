@@ -33,7 +33,10 @@ struct ObjectDefinition;
 class GcObject : public std::enable_shared_from_this<GcObject> {
  public:
   GcObject() = default;
-  virtual ~GcObject() = default;
+  // Defined in this class's own source file, because a class whose virtual
+  // functions are all written in a header is emitted into every translation
+  // unit that builds one.
+  virtual ~GcObject();
   GcObject(const GcObject&) = default;
   auto operator=(const GcObject&) -> GcObject& = default;
   GcObject(GcObject&&) = delete;

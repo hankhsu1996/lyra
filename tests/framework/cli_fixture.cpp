@@ -8,8 +8,10 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <memory>
+#include <optional>
 #include <string>
 
+#include "lyra/support/subprocess.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 namespace lyra::test {
@@ -37,6 +39,15 @@ auto ResolveLyra() -> std::filesystem::path {
   EXPECT_TRUE(runfiles) << err;
   return runfiles ? std::filesystem::path(runfiles->Rlocation("_main/lyra"))
                   : std::filesystem::path{};
+}
+
+auto FindDefaultCxx() -> std::optional<std::filesystem::path> {
+  auto cxx_or = lyra::support::FindOnPath("clang++");
+  if (!cxx_or) return std::nullopt;
+  if (cxx_or->filename().string().find("clang") == std::string::npos) {
+    return std::nullopt;
+  }
+  return *cxx_or;
 }
 
 auto WriteTrivialSource(const std::filesystem::path& path) -> void {

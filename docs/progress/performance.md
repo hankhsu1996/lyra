@@ -258,6 +258,13 @@ arithmetic -- they are a value coming into existence.
       files. That is the end-to-end trade `north_star.md` puts first, and it is the number to get
       before this is switched on rather than offered.
 
+      A second thing now pulls on the same question, in the opposite direction. Because those
+      definitions sit in headers, every unit builds its own copy of each operation it reaches and
+      the linker keeps one: measured 2026-09-23, three quarters of the symbol bytes left in a
+      design's unit are copies of that kind, and an object set is what a build holds whole. So the
+      shape below is asked to serve two readings that do not agree, and neither is settled by the
+      other.
+
       **Target shape**: the runtime ships in a form the optimizer can read, and a design build says
       whether to use it. It is the run-time half of the same axis `--release` already names, so it
       belongs to that flag's question rather than to a new one.

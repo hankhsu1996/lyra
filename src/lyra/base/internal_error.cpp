@@ -12,4 +12,6 @@ InternalError::InternalError(std::string message)
           "https://github.com/hankhsu1996/lyra/issues") {
 }
 
+InternalError::~InternalError() = default;
+
 }  // namespace lyra

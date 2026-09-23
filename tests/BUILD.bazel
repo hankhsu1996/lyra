@@ -42,6 +42,7 @@ cc_library(
     visibility = ["//tests:__subpackages__"],
     deps = [
         "//:base",
+        "//:support",
         "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
         "@googletest//:gtest",
@@ -165,10 +166,26 @@ cc_test(
     # while building the prelude PCH.
     tags = ["no-remote-exec"],
     deps = [
+        ":framework",
         "//:driver",
         "//:support",
-        "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "runtime_surface_test",
+    srcs = ["runtime_surface_test.cpp"],
+    copts = LYRA_COPTS,
+    data = ["//:lyra"],
+    # Compiles one small translation unit against the shipped headers and
+    # weighs the object, which needs the host C++ compiler.
+    tags = ["no-remote-exec"],
+    deps = [
+        ":framework",
+        "//:driver",
+        "//:support",
         "@googletest//:gtest_main",
     ],
 )

@@ -20,6 +20,15 @@ namespace lyra {
 class SimulationError final : public std::runtime_error {
  public:
   explicit SimulationError(std::string message);
+  SimulationError(const SimulationError&) = default;
+  auto operator=(const SimulationError&) -> SimulationError& = default;
+  SimulationError(SimulationError&&) = default;
+  auto operator=(SimulationError&&) -> SimulationError& = default;
+  // Defined in this class's own source file, because a class whose virtual
+  // functions are all written in a header is emitted into every translation
+  // unit that builds one -- and a thrown type reaches every unit that can
+  // raise it.
+  ~SimulationError() override;
 };
 
 }  // namespace lyra
