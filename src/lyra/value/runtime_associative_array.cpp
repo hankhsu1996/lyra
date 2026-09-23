@@ -14,18 +14,18 @@
 
 namespace lyra::value {
 
-struct RuntimeAssociativeEntry {
-  RuntimeValue index;
-  RuntimeValue element;
-};
-
 namespace {
 
-// Two indices name one entry when neither orders before the other, so the
-// ordering is the whole of what tells one index from another.
-auto SameIndex(const RuntimeValue& a, const RuntimeValue& b) -> bool {
-  return !RuntimeValueOrderBefore(a, b) && !RuntimeValueOrderBefore(b, a);
+// LRM 7.8.6: an index carrying x or z is invalid whatever value it carries, so
+// it names no entry to read and allocates none to write.
+[[nodiscard]] auto NamesNoEntry(const RuntimeValue& index) -> bool {
+  return RuntimeValueHasUnknown(index);
 }
+
+constexpr auto kEntryIndex =
+    [](const RuntimeAssociativeEntry& entry) -> const RuntimeValue& {
+  return entry.index;
+};
 
 }  // namespace
 
@@ -35,17 +35,20 @@ RuntimeAssociativeArray::RuntimeAssociativeArray()
 }
 
 RuntimeAssociativeArray::RuntimeAssociativeArray(
-    RuntimeValue element_default, RuntimeValue user_default)
+    AssociativeIndexOrder index_order, RuntimeValue element_default,
+    RuntimeValue user_default)
     : element_default_(
           std::make_unique<RuntimeValue>(std::move(element_default))),
-      user_default_(std::make_unique<RuntimeValue>(std::move(user_default))) {
+      user_default_(std::make_unique<RuntimeValue>(std::move(user_default))),
+      index_order_(index_order) {
 }
 
 RuntimeAssociativeArray::RuntimeAssociativeArray(
     const RuntimeAssociativeArray& other)
     : element_default_(std::make_unique<RuntimeValue>(*other.element_default_)),
       user_default_(std::make_unique<RuntimeValue>(*other.user_default_)),
-      data_(other.data_) {
+      data_(other.data_),
+      index_order_(other.index_order_) {
 }
 
 RuntimeAssociativeArray::RuntimeAssociativeArray(
@@ -57,6 +60,7 @@ auto RuntimeAssociativeArray::operator=(const RuntimeAssociativeArray& other)
     element_default_ = std::make_unique<RuntimeValue>(*other.element_default_);
     user_default_ = std::make_unique<RuntimeValue>(*other.user_default_);
     data_ = other.data_;
+    index_order_ = other.index_order_;
   }
   return *this;
 }
@@ -66,20 +70,56 @@ auto RuntimeAssociativeArray::operator=(RuntimeAssociativeArray&&) noexcept
 
 RuntimeAssociativeArray::~RuntimeAssociativeArray() = default;
 
+auto RuntimeAssociativeArray::OrderBefore(
+    const RuntimeValue& a, const RuntimeValue& b) const -> bool {
+  switch (index_order_) {
+    case AssociativeIndexOrder::kIndexValueDomain:
+      return RuntimeValueOrderBefore(a, b);
+    case AssociativeIndexOrder::kWildcardNumeric:
+      return WildcardIndexOrderBefore(a, b);
+  }
+  throw InternalError("RuntimeAssociativeArray: unknown index order");
+}
+
+auto RuntimeAssociativeArray::SameIndex(
+    const RuntimeValue& a, const RuntimeValue& b) const -> bool {
+  return !OrderBefore(a, b) && !OrderBefore(b, a);
+}
+
 auto RuntimeAssociativeArray::LowerBound(const RuntimeValue& index) const
     -> std::size_t {
   const auto position = std::ranges::lower_bound(
-      data_, index, RuntimeValueOrderBefore,
-      [](const RuntimeAssociativeEntry& entry) -> const RuntimeValue& {
-        return entry.index;
-      });
+      data_, index,
+      [this](const RuntimeValue& a, const RuntimeValue& b) -> bool {
+        return OrderBefore(a, b);
+      },
+      kEntryIndex);
   return static_cast<std::size_t>(
       std::ranges::distance(data_.begin(), position));
 }
 
+void RuntimeAssociativeArray::Settle() {
+  std::ranges::stable_sort(
+      data_,
+      [this](const RuntimeValue& a, const RuntimeValue& b) {
+        return OrderBefore(a, b);
+      },
+      kEntryIndex);
+  std::vector<RuntimeAssociativeEntry> kept;
+  kept.reserve(data_.size());
+  for (RuntimeAssociativeEntry& entry : data_) {
+    if (!kept.empty() && SameIndex(kept.back().index, entry.index)) {
+      kept.back() = std::move(entry);
+      continue;
+    }
+    kept.push_back(std::move(entry));
+  }
+  data_ = std::move(kept);
+}
+
 auto RuntimeAssociativeArray::Find(const RuntimeValue& index) const
     -> std::optional<std::size_t> {
-  if (RuntimeValueHasUnknown(index)) {
+  if (NamesNoEntry(index)) {
     return std::nullopt;
   }
   const std::size_t position = LowerBound(index);
@@ -104,6 +144,10 @@ auto RuntimeAssociativeArray::Exists(const RuntimeValue& index) const
 
 auto RuntimeAssociativeArray::AbsentIndexValue() const -> const RuntimeValue& {
   return *user_default_;
+}
+
+auto RuntimeAssociativeArray::IndexOrder() const -> AssociativeIndexOrder {
+  return index_order_;
 }
 
 auto RuntimeAssociativeArray::Element(const RuntimeValue& index) const
@@ -140,13 +184,29 @@ auto RuntimeAssociativeArray::WithElement(
     result.data_[*position].element = std::move(value);
     return result;
   }
-  if (RuntimeValueHasUnknown(index)) {
+  if (NamesNoEntry(index)) {
     return result;
   }
   result.data_.insert(
       result.data_.begin() +
           static_cast<std::ptrdiff_t>(result.LowerBound(index)),
       RuntimeAssociativeEntry{.index = index, .element = std::move(value)});
+  return result;
+}
+
+auto RuntimeAssociativeArray::WithEntries(
+    std::vector<RuntimeAssociativeEntry> entries) const
+    -> RuntimeAssociativeArray {
+  // Appending leaves the entries already held ahead of the writes, and the
+  // writes in the order they were made, which is what makes the last write to
+  // an index the one that stands once they are settled.
+  RuntimeAssociativeArray result(*this);
+  for (RuntimeAssociativeEntry& entry : entries) {
+    if (!NamesNoEntry(entry.index)) {
+      result.data_.push_back(std::move(entry));
+    }
+  }
+  result.Settle();
   return result;
 }
 

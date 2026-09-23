@@ -94,6 +94,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "from_literal_bounded";
     case RuntimeOp::kFromEntriesDefault:
       return "from_entries_default";
+    case RuntimeOp::kFromEntriesDefaultWildcard:
+      return "from_entries_default_wildcard";
     case RuntimeOp::kMakeScope:
       return "make_scope";
     case RuntimeOp::kMakeSegment:
@@ -156,6 +158,14 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
             return support::ValueDomain::kPacked;
           },
           [](const lir::PackedUnionType&) -> Domain {
+            return support::ValueDomain::kPacked;
+          },
+          // LRM 7.8.1 gives a wildcard-indexed array no index data type, so
+          // this type names where an index goes rather than what one is made
+          // of. What goes there is always integral -- the clause admits nothing
+          // else as an index -- at whatever width the expression carried, which
+          // is why the type states no width and the value does.
+          [](const lir::WildcardIndexType&) -> Domain {
             return support::ValueDomain::kPacked;
           },
           [](const lir::StringType&) -> Domain {
@@ -228,11 +238,6 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::ManagedRefType&) -> Domain {
             return support::ValueDomain::kManagedRef;
           },
-
-          // An index names an entry rather than being one: LRM 7.8.1 gives a
-          // wildcard-indexed array no index data type, so nothing of that type
-          // is ever held.
-          [](const lir::WildcardIndexType&) -> Domain { return std::nullopt; },
 
           // Machine data crosses to a target on the target's own terms, so it
           // is emitted as the target's own scalar, array, or code address and

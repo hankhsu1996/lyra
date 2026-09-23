@@ -444,14 +444,18 @@ auto ElementFrom(const value::RuntimeValue& element_default, void* value)
 // product of the two, and a product's components are already erased, so nothing
 // here converts either one (LRM 7.9.11).
 auto SeedAssociativeEntries(
-    value::RuntimeAssociativeArray array, LyraSpan entries)
+    const value::RuntimeAssociativeArray& array, LyraSpan entries)
     -> value::RuntimeAssociativeArray {
   const std::span<value::RuntimeTuple* const> handles(
       static_cast<value::RuntimeTuple* const*>(entries.data), entries.count);
+  std::vector<value::RuntimeAssociativeEntry> seeded;
+  seeded.reserve(handles.size());
   for (const value::RuntimeTuple* entry : handles) {
-    array = array.WithElement(entry->Component(0), entry->Component(1));
+    seeded.push_back(
+        value::RuntimeAssociativeEntry{
+            .index = entry->Component(0), .element = entry->Component(1)});
   }
-  return array;
+  return array.WithEntries(std::move(seeded));
 }
 
 // A literal's element handles, erased into the domain the prototype names and
@@ -719,6 +723,7 @@ using lyra::runtime::Var;
 using lyra::runtime::WaitAny;
 using lyra::runtime::WaitFork;
 using lyra::runtime::WaitUntil;
+using lyra::value::AssociativeIndexOrder;
 using lyra::value::Chandle;
 using lyra::value::DpiBitBuffer;
 using lyra::value::DpiLogicBuffer;
@@ -4385,7 +4390,21 @@ auto lyra_rt_assocarray_from_entries_default(
   RuntimeValue miss = lyra::runtime::ElementFrom(element_default, user_default);
   return Own(
       lyra::runtime::SeedAssociativeEntries(
-          RuntimeAssociativeArray(std::move(element_default), std::move(miss)),
+          RuntimeAssociativeArray(
+              AssociativeIndexOrder::kIndexValueDomain,
+              std::move(element_default), std::move(miss)),
+          entries));
+}
+
+auto lyra_rt_assocarray_from_entries_default_wildcard(
+    void* prototype, LyraSpan entries, void* user_default) -> void* {
+  RuntimeValue element_default = lyra::runtime::ErasedValue(prototype);
+  RuntimeValue miss = lyra::runtime::ElementFrom(element_default, user_default);
+  return Own(
+      lyra::runtime::SeedAssociativeEntries(
+          RuntimeAssociativeArray(
+              AssociativeIndexOrder::kWildcardNumeric,
+              std::move(element_default), std::move(miss)),
           entries));
 }
 
@@ -5357,24 +5376,17 @@ auto lyra_rt_from_sv_logic(std::uint8_t encoded, const void* type) -> void* {
   return Own(lyra::value::FromSvLogic(encoded, Read<PackedType>(type)));
 }
 
-// The image takes the actual erased, because it is element-type-independent and
-// nothing here could read that representation off anything else. Imaging one
-// walks the actual down to its leaves, which a monomorphized array does by
-// instantiating the walk at the element type and an erased one cannot: its
-// elements are type-erased values, so the walk has no leaf type to end at. A
-// single packed actual is therefore what images, and an array of them says so.
+// The image takes the actual erased, because it is element-type-independent
+// (Annex H.7.3) and nothing here could read that representation off anything
+// else. What the image does need of the actual's declaration is the shape of
+// one element, which arrives as its own operand rather than being read back
+// off an element the actual may not hold.
 auto lyra_rt_make_dpi_open_array(
-    void* sv, LyraSpan bounds, bool addressable_elements) -> void* {
-  const std::vector<UnpackedRange> declared = ValuesOf<UnpackedRange>(bounds);
-  const RuntimeValue actual = lyra::runtime::ErasedValue(sv);
-  const auto* packed = std::get_if<PackedArray>(&actual.value);
-  if (packed == nullptr) {
-    throw lyra::SimulationError(
-        "an unpacked array crossing the DPI-C boundary as an open array is "
-        "not yet imaged on this backend; please open an issue asking for "
-        "support");
-  }
-  return Own(DpiOpenArray(*packed, declared, addressable_elements));
+    void* sv, LyraSpan bounds, const void* element_type,
+    bool addressable_elements) -> void* {
+  return Own(DpiOpenArray(
+      lyra::runtime::ErasedValue(sv), ValuesOf<UnpackedRange>(bounds),
+      Read<PackedType>(element_type), addressable_elements));
 }
 
 auto lyra_rt_dpi_open_array_handle(void* image) -> void* {
@@ -5382,13 +5394,8 @@ auto lyra_rt_dpi_open_array_handle(void* image) -> void* {
 }
 
 auto lyra_rt_dpi_open_array_value(const void* image, void* prototype) -> void* {
-  const RuntimeValue shape = lyra::runtime::ErasedValue(prototype);
-  const auto* packed = std::get_if<PackedArray>(&shape.value);
-  if (packed == nullptr) {
-    throw lyra::SimulationError(
-        "an unpacked array read back from a DPI-C open array is not yet "
-        "rebuilt on this backend; please open an issue asking for support");
-  }
-  return Own(static_cast<const DpiOpenArray*>(image)->ToValue(*packed));
+  return Own(
+      static_cast<const DpiOpenArray*>(image)->ToErasedValue(
+          lyra::runtime::ErasedValue(prototype)));
 }
 }

@@ -108,11 +108,14 @@ type alone.**
    compiler's own invariant broken and not a diagnostic. The failure path every asking site used to
    carry is gone, along with the memo that decided whether to build.
 
-4. **What the clause converts is a value, and a type that is not one has no text.** An instance, a
-   scope, a `void`, and an index of no declared type are not values, so nothing holding one has a
-   text either -- the property composes outward through members and elements. The one exception is
-   the clause's own: LRM 7.3.2's `void` tagged-union member is all information in its tag, so it
-   asks nothing of a type with no text and does not deprive its union of one.
+4. **What the clause converts is a value of a declared representation, and a type fixing none has no
+   text.** An instance, a scope, a `void`, and a wildcard index type (LRM 7.8.1) each fix none --
+   the last names where an index goes rather than what one is made of -- so nothing holding one has
+   a text either, and the property composes outward through members and elements. Fixing no
+   representation is not the same as never being held: an index does reach that position, carrying
+   whatever width the expression was written at. The one exception is the clause's own: LRM 7.3.2's
+   `void` tagged-union member is all information in its tag, so it asks nothing of a type with no
+   text and does not deprive its union of one.
 
 5. **A type the standard gives no way to enumerate is refused by name at the site that asks.** An
    associative array with a wildcard index is the case: LRM 7.9.4 through 7.9.7 each withhold

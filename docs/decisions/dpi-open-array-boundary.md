@@ -111,6 +111,13 @@ forms are one type distinguished by a runtime field, because the C side spells b
 `svOpenArrayHandle` and the ABI draws no distinction; this is the same shape choice
 [integral-representation](integral-representation.md) made for packed values.
 
+**What the image does need of the element type is its shape, and that comes from the actual's
+declaration as an operand.** Annex H.7.7 sizes each element's canonical form by the element's own
+width and state domain, so the image cannot be laid out without them. They were first read back off
+the actual's leftmost leaf, which is a value the actual need not have: an actual with no elements
+answers nothing. The declaration always answers, and the call site holds it, so the width and the
+state domain cross beside the dimension ranges rather than being recovered from an element.
+
 ### 2. Whether the pointer accessors work is a property of the element, answered from its carrier
 
 The whole-array and element pointers are served when the element's canonical form is also how an
@@ -186,6 +193,11 @@ than adding a third.
   `shortreal`, `string`, `chandle`, an unpacked struct) is legal SystemVerilog that Lyra does not
   yet accept, because serving it requires C layout for that element; the diagnostic says so rather
   than implying the LRM forbids it.
+- **The actual's own shape has to be a fact of its declaration, because the image is built before
+  the call.** H.7.6 reports each unsized dimension with the actual's range, and that range is stated
+  by the lowering along with everything else the image is laid out from, so an actual whose element
+  count the program fixes while it runs -- a dynamic array or a queue, which LRM 7.6 admits for an
+  input formal -- is refused by name on both backends.
 - Both backends consume the same MIR: a boundary-object local constructed from the actual, a handle
   argument, and a reconstruct-and-store for a write-back direction. Only the realization of the
   boundary object differs.

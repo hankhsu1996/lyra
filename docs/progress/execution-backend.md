@@ -168,13 +168,17 @@ ownership, or native in-frame layout) for every value.
       and largest index it holds, lives in a member slot as a whole-cell observable signal, and
       crosses a suspension as an activation-frame value. It holds no prototype for an index -- the
       clause gives it no index bounds and no index default -- so an index crosses in the
-      representation its own type names and the order two indices sit in is read from the indices
-      themselves. A wildcard index (LRM 7.8.1) is refused, and reading the order off the indices is
-      why: the clause admits an index of any width and orders the entries by unsigned numerical
-      value with leading zeros removed, so how two of them compare is a rule the container's
-      declaration fixes rather than anything the indices carry. Whoever carries that rule also
-      settles what `item.index` is in a `with` clause over such an array (LRM 7.12.4), which is
-      typed today as the container's declared index type and so as something no value has.
+      representation its own type names. What it does carry is the order its index type imposes (LRM
+      7.8), which for every declared index type is the one the index values already carry and for a
+      wildcard index (LRM 7.8.1) is not: that clause admits an index of any width, makes it
+      self-determined and unsigned, and orders the entries by numerical value, so how two of them
+      compare is settled by the declaration and absent from both indices. A wildcard index is also
+      not a data type, so a construction cannot list its keys under the declared index type the way
+      every other index type is listed: an assignment pattern's keys are self-determined and reach
+      lowering at whatever width each was written at. They travel at the widest among them instead,
+      which carries the same set of entries because the container reads a key by its numerical value
+      across widths, and which no program can observe -- the clause withholds every way of reading a
+      key back out, `item.index` in a `with` clause included (LRM 7.12.1, 7.12.4).
 - [x] **The traversal family** (LRM 7.9.4 -- 7.9.7) -- realized on the execution backend. Each
       answers with the SV int the method reports and the index it visited, which is the probe
       unchanged where the array holds no such neighbour, and the call site stores that index into
@@ -552,11 +556,14 @@ each meets the same lifetime question above.
       value layer's erased half states the net fold its monomorphized half already had, so an
       aggregate is valid as a net's data type on both paths rather than on one.
 
-- [ ] An open array whose actual is an unpacked array (the packed one runs; see `dpi.md`). Imaging
-      one walks the actual down to its leaves, which a monomorphized array does by instantiating the
-      walk at the element type and an erased one cannot: its elements are type-erased values, so the
-      walk has no leaf type to end at. Formatting an aggregate is the same gap seen from another
-      side, which is why `%p` over a container has no entry either.
+- [x] **An open array whose actual is an unpacked array.** Imaging one walks the actual down to its
+      leaves, which a monomorphized array ends by instantiating the walk at the element type. The
+      erased walk ends where the value says it holds no elements by position, which is the same
+      question asked of the value instead of of its type, and the image's own element shape comes
+      from the actual's declaration as an operand rather than from an element the actual may not
+      hold. An actual whose extent is fixed while the program runs -- a dynamic array or a queue --
+      is refused by name on both backends: Annex H.7.6 reports each unsized dimension with the
+      actual's own range and the image is built before the call from ranges the lowering states.
 - [x] **What a loaded design knows about a scope.** The record a scope is built from carries every
       name space it answers a call in and its whole timescale, so a hierarchical name, a foreign
       name and a time query each read what that scope states rather than what the last consumer
