@@ -120,4 +120,4 @@ the optimizer its view of them. Both halves were wrong and
 [a-published-operation-is-compiled-once](a-published-operation-is-compiled-once.md) settles what
 they were: the copies were of the library's own entries and of the families written over the value
 domains, the arithmetic a design calls is defined in the library already, and a family is stated as
-compiled rather than moved, which leaves its definition where an optimized build reads it.
+compiled rather than moved.

@@ -28,6 +28,7 @@ template class ValueStorageCore<value::RuntimeUnpackedArray>;
 template class ValueStorageCore<value::RuntimeQueue>;
 template class ValueStorageCore<value::RuntimeAssociativeArray>;
 template class ValueStorageCore<value::ManagedRef>;
+template class ValueStorageCore<value::ObjectRef>;
 
 template class Var<value::PackedArray>;
 template class Var<value::String>;
@@ -41,6 +42,7 @@ template class Var<value::RuntimeUnpackedArray>;
 template class Var<value::RuntimeQueue>;
 template class Var<value::RuntimeAssociativeArray>;
 template class Var<value::ManagedRef>;
+template class Var<value::ObjectRef>;
 
 template class Ref<value::PackedArray>;
 template class Ref<value::String>;
@@ -54,6 +56,7 @@ template class Ref<value::RuntimeUnpackedArray>;
 template class Ref<value::RuntimeQueue>;
 template class Ref<value::RuntimeAssociativeArray>;
 template class Ref<value::ManagedRef>;
+template class Ref<value::ObjectRef>;
 
 template class ScopedMutation<Ref<value::PackedArray>>;
 template class ScopedMutation<Ref<value::String>>;
@@ -67,6 +70,7 @@ template class ScopedMutation<Ref<value::RuntimeUnpackedArray>>;
 template class ScopedMutation<Ref<value::RuntimeQueue>>;
 template class ScopedMutation<Ref<value::RuntimeAssociativeArray>>;
 template class ScopedMutation<Ref<value::ManagedRef>>;
+template class ScopedMutation<Ref<value::ObjectRef>>;
 
 template class Takeovers<value::PackedArray>;
 template class Takeovers<value::String>;
@@ -80,6 +84,7 @@ template class Takeovers<value::RuntimeUnpackedArray>;
 template class Takeovers<value::RuntimeQueue>;
 template class Takeovers<value::RuntimeAssociativeArray>;
 template class Takeovers<value::ManagedRef>;
+template class Takeovers<value::ObjectRef>;
 
 template class ActivationValueCell<value::PackedArray>;
 template class ActivationValueCell<value::String>;
@@ -107,11 +112,33 @@ template class SampledHistory<value::RuntimeUnpackedArray>;
 template class SampledHistory<value::RuntimeQueue>;
 template class SampledHistory<value::RuntimeAssociativeArray>;
 template class SampledHistory<value::ManagedRef>;
+template class SampledHistory<value::ObjectRef>;
 
 template class ResolvedNet<value::PackedArray>;
 template class ResolvedNet<value::RuntimeTuple>;
 template class ResolvedNet<value::RuntimeUnion>;
 template class ResolvedNet<value::RuntimeUnpackedArray>;
+
+template class Driver<value::PackedArray>;
+template class Driver<value::RuntimeTuple>;
+template class Driver<value::RuntimeUnion>;
+template class Driver<value::RuntimeUnpackedArray>;
+
+template class CompletionSlot<value::PackedArray>;
+template class CompletionSlot<value::String>;
+template class CompletionSlot<value::Real>;
+template class CompletionSlot<value::ShortReal>;
+template class CompletionSlot<value::Chandle>;
+template class CompletionSlot<value::RuntimeTuple>;
+template class CompletionSlot<value::RuntimeUnion>;
+template class CompletionSlot<value::RuntimeTaggedUnion>;
+template class CompletionSlot<value::RuntimeDynamicArray>;
+template class CompletionSlot<value::RuntimeUnpackedArray>;
+template class CompletionSlot<value::RuntimeQueue>;
+template class CompletionSlot<value::RuntimeAssociativeArray>;
+template class CompletionSlot<value::ManagedRef>;
+template class CompletionSlot<value::ObjectRef>;
+template class CompletionSlot<value::Tuple<>>;
 
 template class Coroutine<void>;
 template class Coroutine<value::PackedArray>;
@@ -127,5 +154,7 @@ template class Coroutine<value::RuntimeUnpackedArray>;
 template class Coroutine<value::RuntimeQueue>;
 template class Coroutine<value::RuntimeAssociativeArray>;
 template class Coroutine<value::ManagedRef>;
+template class Coroutine<value::ObjectRef>;
+template class Coroutine<value::Tuple<>>;
 
 }  // namespace lyra::runtime

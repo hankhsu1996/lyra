@@ -65,12 +65,12 @@ class Ref;
 template <value::LyraValue T>
 class Var : public Observable, public ValueStorageCore<T> {
  public:
-  Var() = default;
+  Var();
   Var(const Var&) = delete;
   auto operator=(const Var&) -> Var& = delete;
   Var(Var&&) = delete;
   auto operator=(Var&&) -> Var& = delete;
-  ~Var() = default;
+  ~Var();
 
   // The write a declaration makes. The first one installs the cell's
   // representation and contents from `prototype`, a value of the declared
@@ -371,6 +371,16 @@ inline auto MakePackedProjectionTest(
     return old_slice.IsBitIdentical(new_slice);
   };
 }
+
+// Defaulted here rather than where they are declared: a constructor or
+// destructor defaulted on its first declaration is not user-provided, so a unit
+// constructing a cell would define it itself with everything it reaches, and a
+// family stated as already compiled would not withhold it.
+template <value::LyraValue T>
+Var<T>::Var() = default;
+
+template <value::LyraValue T>
+Var<T>::~Var() = default;
 
 template <value::LyraValue T>
 void Var<T>::PublishTransition(const std::optional<T>& before) {

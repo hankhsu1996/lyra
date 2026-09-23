@@ -27,7 +27,7 @@ namespace lyra::runtime {
 template <value::LyraValue T>
 class SampledHistory {
  public:
-  SampledHistory() = default;
+  SampledHistory();
 
   // Non-movable for the reason every member storage is: a place resolves to
   // this address, so it has to stay put once anything has named it.
@@ -35,7 +35,7 @@ class SampledHistory {
   auto operator=(const SampledHistory&) -> SampledHistory& = delete;
   SampledHistory(SampledHistory&&) = delete;
   auto operator=(SampledHistory&&) -> SampledHistory& = delete;
-  ~SampledHistory() = default;
+  ~SampledHistory();
 
   // Fills every entry with the expression's default sampled value. Run where
   // the design is activated, which is after every declaration initializer has
@@ -92,5 +92,14 @@ class SampledHistory {
   std::vector<T> entries_;
   std::size_t newest_ = 0;
 };
+
+// Defaulted here rather than where they are declared, for the reason a variable
+// cell's are: one defaulted on its first declaration is defined by every unit
+// that holds a history.
+template <value::LyraValue T>
+SampledHistory<T>::SampledHistory() = default;
+
+template <value::LyraValue T>
+SampledHistory<T>::~SampledHistory() = default;
 
 }  // namespace lyra::runtime

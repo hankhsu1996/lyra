@@ -2,10 +2,6 @@
 
 #include <coroutine>
 
-#include "lyra/runtime/cancellation.hpp"
-#include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/runtime_process.hpp"
-
 namespace lyra::runtime {
 
 // Giving up control after a call has already arranged this execution's
@@ -24,24 +20,18 @@ namespace lyra::runtime {
 // be disabled only while the execution is away (LRM 9.6.2). An execution that
 // never left cannot have had one land under it, which is why the question is
 // asked only where control was actually given up.
+//
+// Its members are the library's: every wait a unit states suspends through one,
+// and a definition written here would be compiled again by each such unit.
 class Suspension {
  public:
-  explicit Suspension(bool parked) : parked_(parked) {
-  }
+  explicit Suspension(bool parked);
 
-  [[nodiscard]] auto await_ready() const noexcept -> bool {
-    return !parked_;
-  }
+  [[nodiscard]] auto await_ready() const noexcept -> bool;
 
-  // NOLINTNEXTLINE(readability-named-parameter)
-  static void await_suspend(std::coroutine_handle<>) noexcept {
-  }
+  static void await_suspend(std::coroutine_handle<> frame) noexcept;
 
-  void await_resume() const {
-    if (parked_) {
-      TakeDepartureIfDue(current_runtime().CurrentProcess());
-    }
-  }
+  void await_resume() const;
 
  private:
   bool parked_;

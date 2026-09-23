@@ -80,15 +80,25 @@ inline auto EdgeMatches(support::EventEdge edge, EdgeTransition transition)
 // and the pointer is how that target reaches a member rather than part of the
 // value (LRM 8.3), so what is compared is the identity and the pointer is left
 // behind. Every other domain has one realization and settles as itself.
-[[nodiscard]] inline auto Settled(const value::ObjectRef& reference)
-    -> value::RuntimeValue {
-  return value::RuntimeValue{reference.Handle()};
-}
+[[nodiscard]] auto Settled(const value::ObjectRef& reference)
+    -> value::RuntimeValue;
 
 template <typename Value>
-[[nodiscard]] auto Settled(Value value) -> value::RuntimeValue {
+[[nodiscard]] inline auto Settled(Value value) -> value::RuntimeValue {
   return value::RuntimeValue{std::move(value)};
 }
+
+// What an expression settles is usually a value no design shapes, so those are
+// compiled once, in the library.
+extern template auto Settled<value::PackedArray>(value::PackedArray)
+    -> value::RuntimeValue;
+extern template auto Settled<value::String>(value::String)
+    -> value::RuntimeValue;
+extern template auto Settled<value::Real>(value::Real) -> value::RuntimeValue;
+extern template auto Settled<value::ShortReal>(value::ShortReal)
+    -> value::RuntimeValue;
+extern template auto Settled<value::Chandle>(value::Chandle)
+    -> value::RuntimeValue;
 
 // The expression an event control is watching, and what it was worth when the
 // wait began (LRM 9.4.2).
@@ -101,19 +111,33 @@ template <typename Value>
 // consecutive observed states: watching for a posedge while the operand sits at
 // 1, a fall to 0 does not fire, and without advancing, the rise back to 1 would
 // compare 1 against 1 and miss the edge.
+//
+// What a unit stating an event control reaches -- building the watch, arming
+// it, destroying it -- is the constructor, which the expression shapes, and
+// members defined in the library. What only the engine reaches, when a change
+// asks whether it was an event, is written here so the engine's own sources
+// fold it into the wake they perform; no unit calls it, so none compiles it.
 class ValueWatch {
  public:
+  // Armed from the outset: the baseline is what the expression is worth where
+  // the wait begins.
   template <std::invocable Evaluate>
   ValueWatch(Evaluate evaluate, support::EventEdge edge)
       : evaluate_([evaluate = std::move(evaluate)]() -> value::RuntimeValue {
           return Settled(evaluate());
         }),
+        baseline_(evaluate_()),
         edge_(edge) {
-    Arm();
   }
 
+  ValueWatch(const ValueWatch&) = delete;
+  auto operator=(const ValueWatch&) -> ValueWatch& = delete;
+  ValueWatch(ValueWatch&&) = delete;
+  auto operator=(ValueWatch&&) -> ValueWatch& = delete;
+  ~ValueWatch();
+
   // Takes the expression's current value as the baseline every later comparison
-  // is against.
+  // is against, for a wait that is being established again.
   void Arm() {
     baseline_ = evaluate_();
   }
@@ -161,6 +185,10 @@ class ValueWatch {
 // event control has no observation there, so a change while it is elsewhere is
 // not detected -- which is what the standard requires of a procedure that has
 // left and re-reached the control.
+//
+// As with a single watch, what a unit reaches is the constructors the
+// expression and the qualifier shape, and members defined in the library; what
+// only the engine asks is written here.
 class ArmedObservation {
  public:
   // Built where execution reaches the event control, which is where the wait
@@ -186,6 +214,12 @@ class ArmedObservation {
       : condition_(WrapCondition(std::move(condition))) {
   }
 
+  ArmedObservation(const ArmedObservation&) = delete;
+  auto operator=(const ArmedObservation&) -> ArmedObservation& = delete;
+  ArmedObservation(ArmedObservation&&) = delete;
+  auto operator=(ArmedObservation&&) -> ArmedObservation& = delete;
+  ~ArmedObservation();
+
   // Re-takes the baseline for a wait that is being established again.
   void Arm() {
     if (watch_.has_value()) {
@@ -208,9 +242,7 @@ class ArmedObservation {
 
  private:
   [[nodiscard]] static auto EdgeOf(const value::PackedArray& edge)
-      -> support::EventEdge {
-    return static_cast<support::EventEdge>(edge.ToInt64());
-  }
+      -> support::EventEdge;
 
   // The qualifier arrives already reduced to LRM 12.4 truth as a one-bit value,
   // because that reduction is the language's and belongs where the expression
@@ -245,14 +277,21 @@ class ArmedObservation {
 // sensitive to the variables read rather than to the value of an expression
 // (LRM 9.2.2.2.1), so being reached is the whole condition -- and is equally an
 // unqualified `@e`, whose trigger is the event itself (LRM 15.5.1).
+//
+// Every member no expression shapes is defined in the library: a unit stating
+// a wait constructs, copies and destroys these, and a definition written here
+// would be compiled again by each such unit.
 class Observation {
  public:
-  Observation() = default;
+  Observation();
+  Observation(const Observation&);
+  auto operator=(const Observation&) -> Observation&;
+  Observation(Observation&&) noexcept;
+  auto operator=(Observation&&) noexcept -> Observation&;
+  ~Observation();
 
   // Being reached is the whole condition, so there is nothing armed to hold.
-  [[nodiscard]] static auto OnReaching() -> Observation {
-    return Observation{};
-  }
+  [[nodiscard]] static auto OnReaching() -> Observation;
 
   template <std::invocable Evaluate>
   [[nodiscard]] static auto OfValue(
@@ -275,14 +314,14 @@ class Observation {
         std::make_shared<ArmedObservation>(std::move(condition))};
   }
 
+  // The engine asks this of every wait a change reaches, and no unit does, so
+  // it is written here for the engine's own sources to fold.
   [[nodiscard]] auto Get() const -> ArmedObservation* {
     return held_.get();
   }
 
  private:
-  explicit Observation(std::shared_ptr<ArmedObservation> held)
-      : held_(std::move(held)) {
-  }
+  explicit Observation(std::shared_ptr<ArmedObservation> held);
 
   std::shared_ptr<ArmedObservation> held_;
 };

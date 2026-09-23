@@ -8,6 +8,13 @@
 
 namespace lyra::runtime {
 
+Trigger::Trigger() = default;
+Trigger::Trigger(const Trigger&) = default;
+auto Trigger::operator=(const Trigger&) -> Trigger& = default;
+Trigger::Trigger(Trigger&&) noexcept = default;
+auto Trigger::operator=(Trigger&&) noexcept -> Trigger& = default;
+Trigger::~Trigger() = default;
+
 Trigger::Trigger(
     Observable* observable, Observation observation,
     const value::PackedArray& lsb_bit_offset,

@@ -179,8 +179,8 @@ cc_test(
     srcs = ["runtime_surface_test.cpp"],
     copts = LYRA_COPTS,
     data = ["//:lyra"],
-    # Compiles one small translation unit against the shipped headers and
-    # weighs the object, which needs the host C++ compiler.
+    # Emits a design, compiles its units against the shipped headers and reads
+    # what each object defines, which needs the host C++ compiler.
     tags = ["no-remote-exec"],
     deps = [
         ":framework",

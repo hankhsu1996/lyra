@@ -30,26 +30,25 @@ struct ObjectDefinition;
 // introducing the table pointer itself would take offset zero for it and push
 // this off the front, and an entry taking an untyped address to be one of these
 // would then read that table pointer as the first field.
+//
+// Every member is defined in this class's own source file. The destructor has
+// to be, because a class whose virtual functions are all written in a header is
+// emitted into every translation unit that builds one; the rest are, because a
+// unit building an object of a source-language class reaches each of them, and
+// a definition written here would be compiled again by every such unit.
 class GcObject : public std::enable_shared_from_this<GcObject> {
  public:
-  GcObject() = default;
-  // Defined in this class's own source file, because a class whose virtual
-  // functions are all written in a header is emitted into every translation
-  // unit that builds one.
+  GcObject();
   virtual ~GcObject();
-  GcObject(const GcObject&) = default;
-  auto operator=(const GcObject&) -> GcObject& = default;
+  GcObject(const GcObject&);
+  auto operator=(const GcObject&) -> GcObject&;
   GcObject(GcObject&&) = delete;
   auto operator=(GcObject&&) -> GcObject& = delete;
 
   // Called once, by the allocation, with the address the allocation produced.
-  void AdoptIdentity(void* address) {
-    identity_ = address;
-  }
+  void AdoptIdentity(void* address);
 
-  [[nodiscard]] auto IdentityAddress() const -> void* {
-    return identity_;
-  }
+  [[nodiscard]] auto IdentityAddress() const -> void*;
 
   // What a class of the source language states about its own objects, which a
   // generated class redeclares with its own record. It is how an object answers
@@ -62,13 +61,9 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
 
   // Called once, as the object comes into existence, with what every object of
   // its class shares.
-  void AdoptClass(const ObjectDefinition* of) {
-    class_ = of;
-  }
+  void AdoptClass(const ObjectDefinition* of);
 
-  [[nodiscard]] auto Class() const -> const ObjectDefinition* {
-    return class_;
-  }
+  [[nodiscard]] auto Class() const -> const ObjectDefinition*;
 
  private:
   void* identity_ = nullptr;

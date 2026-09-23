@@ -11,7 +11,24 @@
 
 namespace lyra::runtime {
 
+PromiseBase::PromiseBase() = default;
 PromiseBase::~PromiseBase() = default;
+
+Cancelled::Cancelled(std::exception_ptr effect) : effect(std::move(effect)) {
+}
+Cancelled::Cancelled(const Cancelled&) = default;
+auto Cancelled::operator=(const Cancelled&) -> Cancelled& = default;
+Cancelled::Cancelled(Cancelled&&) noexcept = default;
+auto Cancelled::operator=(Cancelled&&) noexcept -> Cancelled& = default;
+Cancelled::~Cancelled() = default;
+
+Raised::Raised(std::exception_ptr error) : error(std::move(error)) {
+}
+Raised::Raised(const Raised&) = default;
+auto Raised::operator=(const Raised&) -> Raised& = default;
+Raised::Raised(Raised&&) noexcept = default;
+auto Raised::operator=(Raised&&) noexcept -> Raised& = default;
+Raised::~Raised() = default;
 
 auto PromiseBase::Park(RegistrationList& target) -> Registration& {
   Registration& reg = registrations.emplace_back();
@@ -61,6 +78,9 @@ auto PromiseBase::Process() const -> RuntimeProcess& {
   }
   return *process;
 }
+
+CompletionSlot<void>::CompletionSlot() = default;
+CompletionSlot<void>::~CompletionSlot() = default;
 
 void CompletionSlot<void>::return_void() {
   outcome_.emplace<Succeeded>();
