@@ -2142,6 +2142,40 @@ enough to warrant its own focused review.
       What stands at the top of that case now is making a value at all: blanking one, zeroing its
       words, masking the bits above its width. That is what tops the representative block too, so
       the two no longer disagree about where the time goes.
+- [ ] R129 -- What an emitted project is given of the runtime is the surface a design compiles
+      against, and nothing else. Today it is given whatever sits beside that surface: run from a
+      build tree, an emitted project receives every header this compiler has, including the semantic
+      layers, the front end and both backends, none of which anything in the project includes. An
+      installation ships only the surface, so the two disagree about what an emitted project
+      contains, and the one everybody develops against is the wrong one.
+
+      Two consequences beyond the size of the directory. A prepared header is named by the bytes of
+      the tree it was built from, so editing any header of this compiler -- a lowering, an IR node --
+      renames the entry and the next build of any design prepares one again, which during development
+      is most builds. And a project handed to someone else carries the compiler's internals.
+
+      What it needs is for the surface to be staged as a directory in its own right, so that what an
+      emitted project is given is chosen rather than inherited from where a binary happens to sit.
+
+- [x] R130 -- What the merge gate spends its time on is the corpus again. Measured 2026-09-22, the
+      CLI suite had become the longest target in the gate at 117 s of processor time, roughly four
+      times the conformance run beside it, and the only argument recorded for it being there was a
+      written claim that the host-compiling targets outside the corpus "cost a fraction of a minute
+      between them" -- off by about five times.
+
+      **The cost was not repetition, which is why the answer was not a cleanup.** Six of the sixteen
+      cases build an emitted project and were the whole of the cost, and no two of them can share a
+      prepared header: what one holds is bound to the paths of the headers it was made from, and
+      every emitted project carries its own copy. Nothing was being answered twice.
+
+      So they were split off by subject, and the subject happened to be the cost. What those six ask
+      is whether an emitted project still builds and runs, which is what the corpus through that
+      path asks, so they are answered on the same schedule and under a name that says so. What is
+      left gates and costs seconds, and the cases that only reached the host compiler because
+      running a design defaulted to it now ask for the backend that needs none. The exposure this
+      accepts is a regression in the shipped recipe reaching `main` and being found within a day --
+      the same trade that path already had, and whoever could cause it is already told to run that
+      schedule before committing.
 
 ## Out of Scope
 

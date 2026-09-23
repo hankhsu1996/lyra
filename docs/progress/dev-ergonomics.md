@@ -132,6 +132,23 @@ layer directly.
       belongs with D12 rather than before it -- both are the same question about what a build keeps
       and for how long, and answering one without the other fixes half a policy.
 
+- [x] D14 -- A translation unit of an emitted design pays for what it contains rather than for what
+      the runtime offers. It used to pay a fixed cost first, and the cost was large enough to hide
+      the design: a unit holding the runtime surface and no design code at all took 0.63 s, against
+      1.60 s for the same design's own unit. Nearly all of it was instantiating the same templates
+      again, not reading the header a build prepares in advance -- two thirds of that in one
+      standard formatting facility, half of which serves wide characters that no simulated program
+      can ask for. The work now happens once, while that header is prepared.
+
+      Measured 2026-09-22: the empty unit 0.63 s to 0.11 s, the design's own 1.60 s to 0.42 s, and
+      ten conformance cases end to end -- emit, build and run -- a mean of 3.12 s to 1.54 s each.
+      Preparing the header costs about 0.9 s more and is repaid by the second unit built against it.
+
+      This is a per-unit cost, so what it is worth to a design grows with how many units the design
+      has, and it is independent of D11 and D12: compiling several units at a time divides the
+      waiting rather than the work, and reusing an object skips a unit rather than making one
+      cheaper. `decisions/a-prepared-header-carries-the-work.md` settles the shape.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

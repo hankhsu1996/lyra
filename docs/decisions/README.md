@@ -639,6 +639,13 @@ the detail lives in the entry itself.
   currency and leaving an unchanged file alone as speed rather than correctness. Disabling the
   compiler's own validation, making the key cover what it checks, proving the header acceptable
   before every build, and recognising the compiler's complaint are rejected.
+- [a-prepared-header-carries-the-work](a-prepared-header-carries-the-work.md) -- a unit pays for
+  what it contains, not for what the library it uses could offer, so the templates the runtime
+  surface reaches are instantiated into the header prepared in advance and no unit performs them
+  again. Measured: a unit holding the umbrella header and no design code cost 0.63 s, 605 ms of it
+  instantiating and 37 ms reading, and 0.11 s after. The header is therefore named by how it was
+  prepared as well as by what it was prepared from. Merging a design's units into one, compiling
+  several at a time to hide the cost, and header modules are rejected.
 - [waiting-is-an-operation](waiting-is-an-operation.md) -- the declaration both backends read names
   an operation and never one target's own protocol object, so a call that may park its caller does
   the whole operation and answers whether the caller must give up control; a body then stops to wait

@@ -619,3 +619,35 @@ each meets the same lifetime question above.
       construct looks like -- in the same change, the way a checkbox above is flipped with the code
       that closes it. Absence of an entry is a claim the run checks, which is what makes the record
       a measurement rather than an assertion.
+
+- [ ] **A check that only a failing design reaches.** Reading a tagged union's member against a tag
+      it does not currently hold (LRM 7.3.2) is a run-time failure, and the entry that states the
+      check is not published by this backend's runtime library -- so such a design refuses to lower
+      here where the other path runs it and reports the failure. One entry is known missing by name;
+      whether it is the only one is not known, because nothing enumerates the checks a design can
+      fail against what the library publishes.
+
+      **What is worth more than the gap is that the corpus cannot see it.** Every conformance case is
+      a program that passes, and what this reaches is a program that must not, so no case can hold
+      it and the refusal record has no entry to shrink. The gap surfaced from a command-line case
+      asking how a failing design is reported. So the record measures what this backend refuses to
+      compile and says nothing about what it refuses to check, and the second question needs an
+      instrument of its own.
+
+- [ ] **Running a design selects this backend without being asked.** Today it selects the C++ one,
+      so the ordinary way to see what a source does spawns a host compiler, waits for a project to
+      build, and runs the program -- for an answer this backend gives in a fraction of the time and
+      with nothing written to disk. That is the edit loop the whole compiler is optimized for, and
+      the cheaper of the two paths is not the one it takes.
+
+      **Linking in process is what a run wants, and compiling ahead of time is what a long one
+      wants.** They are link-time choices over this one backend rather than two backends, and the
+      same trade decides between them as decides the other path's optimization level: a run that
+      exists to be watched pays no compile it cannot earn back, and a run long enough to earn one
+      asks for it. So running selects the in-process form, and the ahead-of-time form is what a
+      release run selects once it exists.
+
+      What it costs is the entries in this path's refusal record. A design that trips one gets a
+      diagnostic naming what is missing where it used to get an answer, and the other path still
+      answers it by name. That is the pressure the record is for, and it is the reason to make the
+      change while the record is short rather than after it has been short for a while.

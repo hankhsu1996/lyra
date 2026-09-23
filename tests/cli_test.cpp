@@ -1,15 +1,21 @@
+// What the command line itself decides: what a design declares about itself,
+// what an invocation adds to or replaces in that declaration, which top a
+// design element may be, what a unit publishes to whoever reads it, and how a
+// design that fails at run time is reported.
+//
+// None of it is a statement about a backend, so a case that has to run a design
+// asks for the one that spawns no host compiler, and the file costs seconds and
+// gates. What an emitted C++ project is worth once built is a different
+// question with a different price, and lives in `emitted_project_test.cpp`.
+
 #include <algorithm>
 #include <array>
-#include <cerrno>
-#include <cstddef>
-#include <cstring>
 #include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <iterator>
-#include <memory>
 #include <regex>
 #include <set>
 #include <string>
@@ -17,341 +23,17 @@
 #include <vector>
 
 #include "lyra/support/subprocess.hpp"
+#include "tests/framework/cli_fixture.hpp"
 #include "tests/framework/process.hpp"
-#include "tools/cpp/runfiles/runfiles.h"
 
 namespace {
 
-using bazel::tools::cpp::runfiles::Runfiles;
+using lyra::test::MakeScratchDir;
+using lyra::test::ResolveLyra;
 using lyra::test::RunChildProcess;
 using lyra::test::TerminationKind;
+using lyra::test::WriteTrivialSource;
 using namespace std::chrono_literals;
-
-// A directory of this test's own to emit into. The name is drawn rather than
-// derived from the test's, because a test that reruns must not inherit what a
-// previous run left behind. Returns why it failed rather than throwing, so a
-// setup failure is reported as the test failing rather than as a crash.
-auto MakeScratchDir() -> std::expected<std::filesystem::path, std::string> {
-  const auto base = std::filesystem::temp_directory_path() / "lyra-XXXXXX";
-  std::string templ = base.string();
-  if (mkdtemp(templ.data()) == nullptr) {
-    return std::unexpected(
-        std::format(
-            "mkdtemp('{}') failed: {}", base.string(), std::strerror(errno)));
-  }
-  return std::filesystem::path(templ);
-}
-
-auto ResolveLyra() -> std::filesystem::path {
-  std::string err;
-  std::unique_ptr<Runfiles> runfiles{Runfiles::CreateForTest(&err)};
-  EXPECT_TRUE(runfiles) << err;
-  return runfiles ? std::filesystem::path(runfiles->Rlocation("_main/lyra"))
-                  : std::filesystem::path{};
-}
-
-// The smallest design that produces observable output. What these tests are
-// about is the project built around a design, so the design itself carries no
-// weight beyond proving the program ran.
-auto WriteTrivialSource(const std::filesystem::path& path) -> void {
-  std::ofstream out(path);
-  out << "module Test;\n"
-      << "  initial $display(\"ran %0d\", 6 * 7);\n"
-      << "endmodule\n";
-}
-
-// A design that crosses the DPI-C boundary in both directions (LRM 35): the
-// module imports a C function, which calls back the package function the
-// package exports.
-auto WriteDpiSource(const std::filesystem::path& path) -> void {
-  std::ofstream out(path);
-  out << "package pkg;\n"
-      << "  export \"DPI-C\" function triple;\n"
-      << "  function automatic int triple(int x);\n"
-      << "    return x * 3;\n"
-      << "  endfunction\n"
-      << "endpackage\n"
-      << "module Test;\n"
-      << "  import \"DPI-C\" context function int call_pkg(input int x);\n"
-      << "  initial $display(\"dpi %0d\", call_pkg(7));\n"
-      << "endmodule\n";
-}
-
-// The foreign half, stating no prototype of its own: the generated ABI header
-// carries both the import it defines and the export it calls.
-auto WriteDpiForeignSource(const std::filesystem::path& path) -> void {
-  std::ofstream out(path);
-  out << "#include \"dpi.h\"\n"
-      << "\n"
-      << "int call_pkg(int x) {\n"
-      << "  return triple(x);\n"
-      << "}\n";
-}
-
-TEST(LyraCompile, ProducesPortableBuildableProject) {
-  const auto lyra = ResolveLyra();
-  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
-
-  auto tmp_or = MakeScratchDir();
-  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-  const auto src = *tmp_or / "test.sv";
-  WriteTrivialSource(src);
-  const auto out_dir = *tmp_or / "out";
-
-  const std::vector<std::string> args = {
-      "compile", "--top", "Test", "-o", out_dir.string(), src.string()};
-  const auto compile = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(compile.termination, TerminationKind::kExitedNormally)
-      << compile.stdout_text << compile.stderr_text;
-  ASSERT_EQ(compile.exit_code, 0) << compile.stderr_text;
-
-  const auto program = out_dir / "program";
-  ASSERT_TRUE(std::filesystem::exists(program)) << program.string();
-  ASSERT_TRUE(std::filesystem::exists(out_dir / "build.sh"));
-
-  // The directory must rebuild standalone, with no Lyra checkout: drop the
-  // built program and rebuild via the shipped build.sh from within the dir.
-  std::filesystem::remove(program);
-  auto sh_or = lyra::support::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
-  const std::vector<std::string> rebuild = {
-      "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
-  const auto built = RunChildProcess(*sh_or, rebuild, 120s);
-  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
-      << built.stdout_text << built.stderr_text;
-  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
-  ASSERT_TRUE(std::filesystem::exists(program)) << program.string();
-
-  const auto run = RunChildProcess(program, {}, 30s);
-  EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
-  EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
-      << "stdout: " << run.stdout_text;
-
-  // The recipe also takes a compiler the project was not produced with, which
-  // is the rest of what portable means: the headers satisfy a second
-  // implementation, and the program still links the runtime library the first
-  // one compiled. Skipped where no second implementation is installed.
-  auto other_or = lyra::support::FindOnPath("g++");
-  if (!other_or) return;
-  std::filesystem::remove(program);
-  const std::vector<std::string> rebuild_other = {
-      "-c", "cd '" + out_dir.string() + "' && sh build.sh --cxx '" +
-                other_or->string() + "'"};
-  const auto other_built = RunChildProcess(*sh_or, rebuild_other, 120s);
-  ASSERT_EQ(other_built.exit_code, 0) << other_built.stderr_text;
-
-  const auto other_run = RunChildProcess(program, {}, 30s);
-  EXPECT_EQ(other_run.exit_code, 0) << other_run.stderr_text;
-  EXPECT_NE(other_run.stdout_text.find("ran 42"), std::string::npos)
-      << "stdout: " << other_run.stdout_text;
-}
-
-// Re-emitting one directory at the other optimization must rebuild. The recipe
-// caches a precompiled header beside the project, and clang refuses one built
-// under different options, so the two builds need separate cache entries.
-TEST(LyraCompile, RebuildsAfterSwitchingOptimization) {
-  const auto lyra = ResolveLyra();
-  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
-
-  auto tmp_or = MakeScratchDir();
-  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-  const auto src = *tmp_or / "test.sv";
-  WriteTrivialSource(src);
-  const auto out_dir = *tmp_or / "out";
-  const auto program = out_dir / "program";
-
-  auto sh_or = lyra::support::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
-  const std::vector<std::string> rebuild = {
-      "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
-
-  for (const std::string_view mode : {"", "--release"}) {
-    std::vector<std::string> args = {"emit", "cpp", "--top",
-                                     "Test", "-o",  out_dir.string()};
-    if (!mode.empty()) args.emplace_back(mode);
-    args.push_back(src.string());
-    const auto emitted = RunChildProcess(lyra, args, 120s);
-    ASSERT_EQ(emitted.exit_code, 0) << mode << ": " << emitted.stderr_text;
-
-    const auto built = RunChildProcess(*sh_or, rebuild, 120s);
-    ASSERT_EQ(built.exit_code, 0) << mode << ": " << built.stderr_text;
-
-    const auto run = RunChildProcess(program, {}, 30s);
-    EXPECT_EQ(run.exit_code, 0) << mode << ": " << run.stderr_text;
-    EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
-        << mode << " stdout: " << run.stdout_text;
-  }
-}
-
-// Nothing compiled in advance decides whether a build succeeds. One build
-// compiles a header and caches it; the next is handed it back after every
-// header's timestamp has moved under it, which is what a checkout leaves and
-// what the compiler refuses to accept -- and that build still owes a program.
-// The timestamps are moved here by hand because Lyra no longer moves them
-// itself and a checkout is not something a test can stage.
-TEST(LyraCompile, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
-  const auto lyra = ResolveLyra();
-  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
-
-  auto tmp_or = MakeScratchDir();
-  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-  const auto src = *tmp_or / "test.sv";
-  WriteTrivialSource(src);
-  const auto out_dir = *tmp_or / "out";
-
-  // A cache of this test's own, so what the second build is handed is what the
-  // first one left rather than whatever the developer's cache happens to hold.
-  const std::vector<std::string> args = {
-      "compile",
-      "--top",
-      "Test",
-      "-o",
-      out_dir.string(),
-      "--pch-cache-dir",
-      (*tmp_or / "pch").string(),
-      src.string()};
-  const auto first = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(first.termination, TerminationKind::kExitedNormally)
-      << first.stdout_text << first.stderr_text;
-  ASSERT_EQ(first.exit_code, 0) << first.stderr_text;
-
-  const auto headers = out_dir / "runtime" / "include";
-  ASSERT_TRUE(std::filesystem::exists(headers)) << headers.string();
-  std::size_t moved = 0;
-  for (const auto& entry :
-       std::filesystem::recursive_directory_iterator(headers)) {
-    if (!entry.is_regular_file()) continue;
-    std::filesystem::last_write_time(
-        entry.path(), std::filesystem::last_write_time(entry.path()) + 24h);
-    ++moved;
-  }
-  ASSERT_GT(moved, 0U) << "no header to move under " << headers.string();
-
-  const auto second = RunChildProcess(lyra, args, 120s);
-  EXPECT_EQ(second.exit_code, 0)
-      << "a build was failed by the header it had prepared for itself:\n"
-      << second.stderr_text;
-
-  const auto run = RunChildProcess(out_dir / "program", {}, 30s);
-  EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
-  EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
-      << "stdout: " << run.stdout_text;
-}
-
-// How many units are compiled at once is the caller's to say, at both things
-// that build a design, and it changes nothing about the program produced. What
-// a width buys is measured elsewhere; asserting on it here would be asserting
-// on the machine the test happens to run on.
-TEST(LyraCompile, TakesTheWidthItIsGiven) {
-  const auto lyra = ResolveLyra();
-  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
-
-  auto tmp_or = MakeScratchDir();
-  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-  const auto src = *tmp_or / "test.sv";
-  WriteTrivialSource(src);
-  const auto out_dir = *tmp_or / "out";
-  const auto program = out_dir / "program";
-
-  const std::vector<std::string> args = {
-      "compile", "--top", "Test",           "-j",
-      "4",       "-o",    out_dir.string(), src.string()};
-  const auto compiled = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(compiled.exit_code, 0) << compiled.stderr_text;
-  const auto ran = RunChildProcess(program, {}, 30s);
-  EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
-      << "stdout: " << ran.stdout_text;
-
-  auto sh_or = lyra::support::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
-  // Zero asks the recipe for one compile per processor, which is the spelling
-  // a caller uses to say the machine is its own.
-  for (const std::string_view width : {"1", "0"}) {
-    std::filesystem::remove(program);
-    const std::vector<std::string> rebuild = {
-        "-c",
-        std::format("cd '{}' && sh build.sh -j {}", out_dir.string(), width)};
-    const auto built = RunChildProcess(*sh_or, rebuild, 120s);
-    ASSERT_EQ(built.exit_code, 0) << width << ": " << built.stderr_text;
-
-    const auto run = RunChildProcess(program, {}, 30s);
-    EXPECT_EQ(run.exit_code, 0) << width << ": " << run.stderr_text;
-    EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
-        << width << " stdout: " << run.stdout_text;
-  }
-}
-
-// Building twice into one directory, with nothing about the design changed.
-// The second run rewrites the same runtime headers, and the precompiled header
-// it was handed is validated by their modification times rather than by the
-// content its cache key is built from -- so a generator that rewrote an
-// unchanged file would make the build reject a header it had just produced.
-TEST(LyraCompile, BuildsTwiceIntoOneDirectory) {
-  const auto lyra = ResolveLyra();
-  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
-
-  auto tmp_or = MakeScratchDir();
-  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-  const auto src = *tmp_or / "test.sv";
-  WriteTrivialSource(src);
-  const auto out_dir = *tmp_or / "out";
-  const auto program = out_dir / "program";
-
-  const std::vector<std::string> args = {
-      "compile", "--top", "Test", "-o", out_dir.string(), src.string()};
-  for (const std::string_view pass : {"first", "second"}) {
-    const auto compiled = RunChildProcess(lyra, args, 120s);
-    ASSERT_EQ(compiled.exit_code, 0) << pass << ": " << compiled.stderr_text;
-
-    const auto run = RunChildProcess(program, {}, 30s);
-    EXPECT_EQ(run.exit_code, 0) << pass << ": " << run.stderr_text;
-    EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
-        << pass << " stdout: " << run.stdout_text;
-  }
-}
-
-TEST(LyraEmit, PortableProjectBuildsItsDpiSources) {
-  const auto lyra = ResolveLyra();
-  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
-
-  auto tmp_or = MakeScratchDir();
-  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-  const auto src = *tmp_or / "test.sv";
-  WriteDpiSource(src);
-  const auto foreign = *tmp_or / "foreign.c";
-  WriteDpiForeignSource(foreign);
-  const auto out_dir = *tmp_or / "out";
-
-  const std::vector<std::string> args = {
-      "emit",           "cpp",        "--top",          "Test",      "-o",
-      out_dir.string(), "--dpi-link", foreign.string(), src.string()};
-  const auto emit = RunChildProcess(lyra, args, 60s);
-  ASSERT_EQ(emit.termination, TerminationKind::kExitedNormally)
-      << emit.stdout_text << emit.stderr_text;
-  ASSERT_EQ(emit.exit_code, 0) << emit.stderr_text;
-
-  // The emitted directory carries the whole foreign boundary: the generated
-  // prototypes, the standard header they are spelled in, and a copy of the
-  // user's source, so it builds where the originals are not reachable.
-  EXPECT_TRUE(std::filesystem::exists(out_dir / "dpi.h"));
-  EXPECT_TRUE(std::filesystem::exists(out_dir / "svdpi.h"));
-  ASSERT_TRUE(std::filesystem::exists(out_dir / "dpi/foreign.c"));
-  std::filesystem::remove(foreign);
-
-  auto sh_or = lyra::support::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
-  const std::vector<std::string> build = {
-      "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
-  const auto built = RunChildProcess(*sh_or, build, 120s);
-  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
-      << built.stdout_text << built.stderr_text;
-  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
-
-  const auto run = RunChildProcess(out_dir / "program", {}, 30s);
-  EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
-  EXPECT_NE(run.stdout_text.find("dpi 21"), std::string::npos)
-      << "stdout: " << run.stdout_text;
-}
 
 TEST(LyraEmit, ReEmitIntoSameDirectorySucceeds) {
   const auto lyra = ResolveLyra();
@@ -641,7 +323,7 @@ TEST(LyraDesignManifest, DeclaresTheDesignFromAnyDirectoryWithin) {
   WriteDeclaredDesign(*tmp_or);
 
   for (const auto& from : {*tmp_or, *tmp_or / "sub"}) {
-    const auto run = RunLyraFrom(lyra, from, "run");
+    const auto run = RunLyraFrom(lyra, from, "run --backend jit");
     ASSERT_EQ(run.exit_code, 0) << from.string() << ": " << run.stderr_text;
     EXPECT_NE(run.stdout_text.find("tb trace 1"), std::string::npos)
         << from.string() << ": " << run.stdout_text;
@@ -660,7 +342,8 @@ TEST(LyraDesignManifest, CommandLineJoinsMaterialAndReplacesSelection) {
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
   WriteDeclaredDesign(*tmp_or);
 
-  const auto joined = RunLyraFrom(lyra, *tmp_or, "run -D LYRA_WIDTH=16");
+  const auto joined =
+      RunLyraFrom(lyra, *tmp_or, "run --backend jit -D LYRA_WIDTH=16");
   ASSERT_EQ(joined.exit_code, 0) << joined.stderr_text;
   // The declaration's own define survived, and the command line's won over the
   // default the header would otherwise have supplied.
@@ -669,7 +352,8 @@ TEST(LyraDesignManifest, CommandLineJoinsMaterialAndReplacesSelection) {
   EXPECT_NE(joined.stdout_text.find("alu width 16"), std::string::npos)
       << joined.stdout_text;
 
-  const auto narrowed = RunLyraFrom(lyra, *tmp_or, "run --top alu");
+  const auto narrowed =
+      RunLyraFrom(lyra, *tmp_or, "run --backend jit --top alu");
   ASSERT_EQ(narrowed.exit_code, 0) << narrowed.stderr_text;
   EXPECT_NE(narrowed.stdout_text.find("alu width 8"), std::string::npos)
       << narrowed.stdout_text;
@@ -841,7 +525,8 @@ TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
                      << "  final $display(\"reached the end\");\n"
                      << "endmodule\n";
 
-  const std::vector<std::string> args = {"run", "--top", "Test", src.string()};
+  const std::vector<std::string> args = {"run",   "--backend", "jit",
+                                         "--top", "Test",      src.string()};
   const auto run = RunChildProcess(lyra, args, 120s);
   ASSERT_EQ(run.termination, TerminationKind::kExitedNonZero)
       << run.stdout_text << run.stderr_text;
@@ -872,7 +557,14 @@ TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
                      << "  initial $display(\"v=%0d\", v);\n"
                      << "endmodule\n";
 
-  const std::vector<std::string> args = {"run", "--top", "Test", src.string()};
+  // The one case here that names the slower backend, and not because the
+  // reporting is that backend's: the check itself is a runtime entry the other
+  // one does not publish yet, so a design written to trip it refuses to lower
+  // there instead of running and failing. Nothing in the corpus says so, since
+  // a conformance case is a program that passes and this is a program that
+  // must not.
+  const std::vector<std::string> args = {"run",   "--backend", "cpp",
+                                         "--top", "Test",      src.string()};
   const auto run = RunChildProcess(lyra, args, 120s);
   EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
       << run.stdout_text << run.stderr_text;
@@ -908,7 +600,7 @@ TEST(LyraRun, ReachingThroughANullObjectHandleIsReported) {
                             << "endmodule\n";
 
   const std::vector<std::string> class_args = {
-      "run", "--top", "Test", user_class.string()};
+      "run", "--backend", "jit", "--top", "Test", user_class.string()};
   const auto through_class = RunChildProcess(lyra, class_args, 120s);
   EXPECT_EQ(through_class.termination, TerminationKind::kExitedNonZero)
       << through_class.stdout_text << through_class.stderr_text;
@@ -932,7 +624,7 @@ TEST(LyraRun, ReachingThroughANullObjectHandleIsReported) {
                                << "endmodule\n";
 
   const std::vector<std::string> process_args = {
-      "run", "--top", "Test", builtin_class.string()};
+      "run", "--backend", "jit", "--top", "Test", builtin_class.string()};
   const auto through_process = RunChildProcess(lyra, process_args, 120s);
   EXPECT_EQ(through_process.termination, TerminationKind::kExitedNonZero)
       << through_process.stdout_text << through_process.stderr_text;

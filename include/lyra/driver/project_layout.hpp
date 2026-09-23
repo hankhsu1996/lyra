@@ -42,6 +42,15 @@ inline constexpr std::string_view kCxxStandardFlag = "-std=c++23";
 // prepared and consulted when it is loaded, so both command lines carry this.
 inline constexpr std::string_view kPchContentValidationFlag =
     "-fpch-validate-input-files-content";
+// Including a header does not only parse it: a template the header uses is
+// instantiated again in every translation unit that reaches it, and for these
+// headers that work dwarfs the parse a prepared header already saves. So the
+// instantiations go into the prepared header too, and a unit including it does
+// none of them. Only the command preparing one carries this -- it decides what
+// the artifact holds, not how a unit reads it -- and it asks that every header
+// named compile on its own, which is what an umbrella header is.
+inline constexpr std::string_view kPchInstantiateTemplatesFlag =
+    "-fpch-instantiate-templates";
 // The DPI-C boundary surface a user's foreign sources compile against (LRM 35):
 // the generated prototypes plus the standard header they are spelled in. Both
 // sit at the project root so one include path reaches them.

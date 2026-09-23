@@ -18,12 +18,18 @@ package(features = ["parse_headers"])
 # compiler spawns something that is not a Bazel action, so remote execution
 # cannot provision it and the tag holds the test on a machine that has one.
 #
-# `nightly` says when its cost is paid. Only one target carries it: the C++ path
-# host-compiles the whole corpus, once per case, which no merge-time budget
-# holds. Every other test runs at merge, including the three that need the same
-# compiler and together cost a fraction of a minute -- needing a compiler and
-# being too expensive to gate on are different questions, and a test excluded
-# from the gate should be excluded for its own reason.
+# `nightly` says when its cost is paid, and what it draws is one subject rather
+# than one price: whether an emitted C++ project still builds and runs. Two
+# targets carry it -- the whole corpus through that path, and the cases that
+# assert what a project does once built. Both spend most of their time in the
+# host compiler on projects nothing can share a prepared header with, because
+# such a header is bound to the paths of the headers it was made from and every
+# project carries its own copy. Both are therefore excluded for their own reason
+# and not for a neighbour's, which is the test a removal here has to pass.
+#
+# Everything about the command line itself gates, and costs seconds, because
+# what a design declares and how a failure is reported are not statements about
+# a backend and need no compiler to answer.
 #
 # The two sides of `nightly` are complements, so every target is covered once
 # and none twice, and a new one joins whichever side its tag puts it on.
@@ -36,7 +42,9 @@ cc_library(
     visibility = ["//tests:__subpackages__"],
     deps = [
         "//:base",
+        "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
+        "@googletest//:gtest",
         "@yaml-cpp//:yaml-cpp",
     ],
 )
@@ -105,21 +113,45 @@ cc_test(
     ],
 )
 
+# Two files rather than one selected by name, because a selection by name fails
+# open: a filter matching nothing runs no tests and exits zero, so a suite
+# renamed on one side and not the other reports a green that measured nothing.
+# A file cannot be spelled wrong that way, and which file a case is written in
+# is the same decision as when its cost is paid.
 cc_test(
     name = "cli_tests",
-    # Every case builds emitted C++ with the host compiler, which costs far more
-    # than running the simulation does. Declaring that cost is what keeps a
-    # loaded machine from reporting a timeout as a test failure.
-    size = "large",
+    size = "medium",
     srcs = ["cli_test.cpp"],
     copts = LYRA_COPTS,
     data = ["//:lyra"],
-    shard_count = 4,
+    # Emitting a project names the compiler that produced it, so even a case
+    # that only emits wants one on the machine it runs on.
     tags = ["no-remote-exec"],
     deps = [
         ":framework",
         "//:support",
-        "@bazel_tools//tools/cpp/runfiles",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "emitted_project_tests",
+    # Each case builds an emitted project with the host compiler, several of
+    # them more than once, and no two can share the header one prepared.
+    # Declaring that cost is what keeps a loaded machine from reporting a
+    # timeout as a test failure.
+    size = "large",
+    srcs = ["emitted_project_test.cpp"],
+    copts = LYRA_COPTS,
+    data = ["//:lyra"],
+    shard_count = 4,
+    tags = [
+        "nightly",
+        "no-remote-exec",
+    ],
+    deps = [
+        ":framework",
+        "//:support",
         "@googletest//:gtest_main",
     ],
 )
