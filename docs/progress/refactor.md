@@ -2234,21 +2234,26 @@ enough to warrant its own focused review.
       all of them caches that never wanted iteration. Not blocked. Found while settling why one
       design emitted two programs.
 
-- [ ] R134 -- Where a value operation an emitted unit calls is defined. The operations a design
-      performs on values are written in the headers a project is given, so every unit builds its own
-      copy of each one it reaches and the linker keeps one. Measured 2026-09-23, after the change
-      that stopped a unit copying the classes it derives from: 78% of the symbol bytes left in a
-      design's unit are still copies of this kind, and a unit of 14,281 bytes still produces a
-      612,288 byte object holding 12,678 bytes of code.
+- [x] R134 -- Where a function an emitted unit calls is defined. This entry was written as "where a
+      value operation is defined", on the reading that a unit's remaining object was copies of the
+      operations a design performs on values: 78% of the symbol bytes left in a design's unit after
+      the change that stopped a unit copying the classes it derives from, with a unit of 14,281
+      bytes still producing a 612,288 byte object holding 12,678 bytes of code.
 
-      **This is the same shape as what that change closed and it is not the same decision**, which is
-      why it is recorded rather than swept in. Moving a class's virtual functions to the library
-      costs a call at teardown and nothing else. Moving a value operation there costs the optimizer
-      its view of that operation -- which the entry on an emitted program's speed measures at half
-      the run time of a representative block, in the other direction. So the two pull apart, and
-      what settles this is the same question as whether a design's own build lets the optimizer read
-      the runtime at all. It belongs with the flag that already chooses between iterating and
-      running, rather than to whoever next reads an object.
+      **Both halves of that reading were wrong, and what replaced them is settled in
+      `decisions/a-published-operation-is-compiled-once.md`.** The copies were not of the operations
+      a design performs on values: the arithmetic a design calls is defined in the library already,
+      and what a unit was copying was the library's own entries -- a wait, a delay, a fork -- and
+      the families written over the value domains. And moving those costs the optimizer nothing,
+      because a family is stated as already compiled rather than moved, so its definition stays in
+      the header a build reads. The trade this entry described, against the measured worth of
+      letting the optimizer read the runtime, was between two things that do not meet.
+
+      What is left after that change is not this entry's subject either. A unit's object is now the
+      standard-library machinery of the scope-construction surface -- a hierarchy segment holding a
+      string, a definition holding arrays -- instantiated where the unit constructs those values.
+      No call removes it; what would is a different answer to what those types are, which is a
+      decision about the surface rather than about where a function lives.
 
 - [ ] R135 -- The rule that a lowering states the expression rather than the answer the front end
       computed is enforced by matching two spellings of taking that answer. The property it stands

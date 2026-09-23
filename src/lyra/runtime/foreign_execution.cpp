@@ -133,4 +133,11 @@ auto CurrentForeignProcess() -> RuntimeProcess& {
   return *ForeignProcessSlot();
 }
 
+auto RunForeignTaskOnFiber(
+    RuntimeEffects& effects, std::function<void()> foreign_call) -> bool {
+  return !EnterForeignTask(
+      effects, effects.CurrentProcess().CurrentLeaf(),
+      MakeForeignExecution(std::move(foreign_call)));
+}
+
 }  // namespace lyra::runtime

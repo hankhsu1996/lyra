@@ -659,6 +659,13 @@ the detail lives in the entry itself.
   surface produced a 1,600,704 byte object with 1,503 bytes of code, and 24,016 after. Building
   optimized by default, including less of the surface, suppressing the instantiations rather than
   moving them, and reshaping what a published class holds are rejected.
+- [a-published-operation-is-compiled-once](a-published-operation-is-compiled-once.md) -- a function
+  the runtime publishes is compiled in the runtime's own artifact and a unit emits a call, and a
+  family the library parameterizes over the value domains is stated once there, which leaves the
+  definition where it is written so an optimized build still reads it. Measured: one wait stated in
+  a unit cost 400,064 bytes of object, and a 32-unit design's objects went from 26.6 MB to 11.0 MB
+  with its build 22% faster. Declaring the variant itself already compiled, moving functions without
+  the families, and moving the value operations a caller's operands fold are rejected.
 - [waiting-is-an-operation](waiting-is-an-operation.md) -- the declaration both backends read names
   an operation and never one target's own protocol object, so a call that may park its caller does
   the whole operation and answers whether the caller must give up control; a body then stops to wait

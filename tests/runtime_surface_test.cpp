@@ -16,10 +16,11 @@
 
 namespace {
 
-// The whole of what an emitted translation unit adds to the shipped surface:
-// one class deriving from a scope, built and released the way a unit builds the
-// scopes its design describes. It names none of the storage a scope holds, so
-// whatever its object carries of that storage, it was made to carry.
+// What an emitted translation unit adds to the shipped surface, in the four
+// things every design's unit does: derive a class from a scope, give it a
+// variable, write that variable, and wait for a change to one. Each is stated
+// once, so the object measured below is the floor a unit pays rather than
+// anything about how much a design says.
 //
 // The delimiter is not one the formatter recognizes as C++, deliberately: this
 // is data the test writes out, and a formatter reading it as code both reflows
@@ -36,6 +37,23 @@ class Probe final : public lyra::runtime::Scope {{
       const lyra::runtime::ScopeDefinition* definition)
       : lyra::runtime::Scope(parent, std::move(segment), definition) {{
   }}
+
+  lyra::runtime::Var<lyra::value::PackedArray> field{{}};
+
+  auto Body(
+      const lyra::value::PackedArray& edge,
+      const lyra::value::PackedArray& mask) -> lyra::runtime::Coroutine<void> {{
+    for (;;) {{
+      field.Set(field.Get());
+      lyra::runtime::Observation observation =
+          lyra::runtime::Observation::OnReaching();
+      co_await lyra::runtime::Suspension{{lyra::runtime::WaitAny(
+          lyra::runtime::current_runtime(),
+          std::array<lyra::runtime::Trigger, 1>{{
+              lyra::runtime::Trigger(&field, observation, edge, mask)}})}};
+    }}
+    co_return;
+  }}
 }};
 
 }}  // namespace
@@ -46,12 +64,20 @@ auto MakeProbe(
     -> std::unique_ptr<lyra::runtime::Scope> {{
   return std::make_unique<Probe>(parent, std::move(segment), definition);
 }}
+
+auto StartProbe(
+    lyra::runtime::Scope* scope, const lyra::value::PackedArray& edge,
+    const lyra::value::PackedArray& mask) -> void {{
+  auto* probe = static_cast<Probe*>(scope);
+  lyra::runtime::RegisterInitialProcess(probe, probe, probe->Body(edge, mask));
+}}
 )probe";
 
-// What such a unit's object may weigh. A ceiling with an order of magnitude of
-// room rather than a figure to defend: an object carrying the whole of what the
-// library defines weighs 1.6 MB against 1.5 KB of code, so anything near this
-// bound is that rather than drift in what a compiler chooses to emit.
+// What such a unit's object may weigh. A ceiling rather than a figure to
+// defend: one library function defined in a header instead of compiled once
+// costs a unit hundreds of kilobytes -- the wait this probe states is worth 400
+// KB on its own -- so the distance between this bound and what the probe weighs
+// is far wider than any drift in what a compiler emits.
 constexpr std::uintmax_t kObjectCeiling = std::uintmax_t{256} * 1024;
 
 }  // namespace
@@ -62,11 +88,15 @@ constexpr std::uintmax_t kObjectCeiling = std::uintmax_t{256} * 1024;
 // linker is its own class and a call into that library, never a copy of what
 // the library already holds.
 //
-// The way that stops being true is silent: a polymorphic class whose virtual
-// functions are all written in the header has no translation unit of its own to
-// be emitted in, so every unit that builds one instantiates its members and
-// copies its dispatch table. Nothing about such a header looks wrong, no
-// warning names it, and what it costs is only visible in the object.
+// The ways that stops being true are silent, and there are two. A polymorphic
+// class whose virtual functions are all written in the header has no
+// translation unit of its own to be emitted in, so every unit that builds one
+// instantiates its members and copies its dispatch table. And a function of the
+// library's written in a header is compiled again by every unit that calls it,
+// along with everything its body reaches -- which for anything touching a
+// runtime value is the whole machinery of a variant over every value domain.
+// Nothing about either header looks wrong, no warning names one, and what they
+// cost is only visible in the object.
 TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
   const auto lyra_exe = lyra::test::ResolveLyra();
   ASSERT_FALSE(lyra_exe.empty());
@@ -114,12 +144,15 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
   ASSERT_FALSE(ec) << ec.message();
 
   EXPECT_LE(size, kObjectCeiling) << std::format(
-      "a unit adding one scope class to the shipped surface produced a {} "
-      "byte object.\nEvery unit of every design pays this, and a design of a "
-      "thousand units pays it a thousand times over on disk.\nThe cause to "
-      "look for first is a class in the shipped surface whose virtual "
-      "functions are all defined in its header: give it one that is not, and "
-      "the library becomes the one place its dispatch table and its members "
-      "are emitted.",
+      "a unit stating one scope, one variable, one write and one wait produced "
+      "a {} byte object.\nEvery unit of every design pays this, and a design "
+      "of a thousand units pays it a thousand times over on disk.\nTwo causes "
+      "to look for, both of them a definition the shipped headers state "
+      "themselves:\na class whose virtual functions are all written in its "
+      "header, which has no unit of its own to be emitted in;\nand a function "
+      "of the library's written in a header, which every caller's unit "
+      "compiles again along with everything its body reaches.\nEither is "
+      "answered by defining it in the library's own source, or -- for a "
+      "template over the value domains -- by stating it once there.",
       size);
 }
