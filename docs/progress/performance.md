@@ -40,24 +40,37 @@ simulation -- 4.5x on the NBA-heavy case, so an unoptimized reading is not a slo
 same answer. And the Verilator column is **not** a like-for-like comparison: there is no two-state
 mode, so every factor carries whatever X/Z tracking costs.
 
-Read that way, and re-measured over the whole corpus on 2026-09-16, most cost families put Lyra
-between 80x and 1,900x Verilator's rate, with the narrowest a dense change subscription and the
-widest a packed-slice read. One still sits outside that band: wide bitwise work on a 256-bit value
-is **a few thousand times**, down from 16,000x but still the outlier. A factor of a few hundred is
-an engine that is slow everywhere; a factor orders of magnitude past that in one place is a defect
-rather than slowness.
+Read that way, and re-measured over the whole corpus on 2026-09-23, most cost families put Lyra
+between 21x and 706x Verilator's rate, with the narrowest a subscription scan that fires nothing and
+a dense change subscription beside it, and the widest a packed-slice read. One still sits outside
+that band: wide bitwise work on a 256-bit value, which has been the outlier at every reading and was
+**3,716x** at that one. A factor of a few hundred is an engine that is slow everywhere; a factor
+orders of magnitude past that in one place is a defect rather than slowness.
 
-One figure this paragraph used to carry is not reproduced: the subscription scan that fires nothing
-read 15x and reads 114x today. Nothing landed since can widen a ratio from Lyra's side -- its rate
-only improved -- so the movement is in the reference column or in how much work each tool was
-handed, and it belongs to whoever next opens the benchmark subject rather than to any of the entries
-below.
+The rates behind that band, so a later reader has something that can be read again rather than a
+ratio against a reference column that moves: 36,302 cycles/s on the subscription scan, 14,720 on the
+dense one, 2,568 array passes/s on the packed-slice read, 367,261 iterations/s on the wide bitwise
+case, and 1,636 table passes/s on the representative block.
+
+The wide bitwise case has moved since, to **469,661 iterations/s**, which is the entry below on
+moving a run of bits a word at a time. Its ratio read 2,683x on the same run -- but the reference
+column also moved between the two readings, so the ratio is not what says the case got faster and
+the rate is.
+
+One figure this paragraph used to carry widened and has since come back: the subscription scan that
+fires nothing read 15x, then 114x, and reads 21x today. Nothing landed in that window could widen a
+ratio from Lyra's side -- its rate only improved -- so the 114x was the reference column or the
+amount of work each tool was handed, and the reading that followed it says so rather than leaving
+the question open. **What the episode is worth keeping for is the shape of it**: a ratio moved by a
+factor of seven with nothing on this side of it having changed, and a ratio is the only figure that
+can do that. This is why an absolute rate is recorded beside one.
 
 Writing an unpacked array element by element was the other such outlier, at **three million times**,
 and read 2,345x when that fix landed -- inside the band, and no longer the thing to look at; today
-it reads 937x. It is the one entry here whose fix has been measured twice, so it is also the record
-of what such a factor is worth chasing: what it bought was a thousandfold on the operation, and the
-design that spends two thirds of its run there gains the two thirds, not a thousandfold.
+it reads 380x, at 133 array passes/s. It is the one entry here whose fix has been measured twice, so
+it is also the record of what such a factor is worth chasing: what it bought was a thousandfold on
+the operation, and the design that spends two thirds of its run there gains the two thirds, not a
+thousandfold.
 
 The unpacked-array _read_ case could not report a read rate while that defect stood, and the way it
 failed is worth keeping. It fills the array before reading it, one element at a time, so its setup
@@ -66,7 +79,7 @@ pass that followed. Separating a fixed cost from a marginal one needs the margin
 noise between two readings, and there it did not, so what the case reported was its own setup. It
 reported 1,069x, which is a read rate, and it did so with no change to the case: nothing in the
 write work touched the read path, which is what makes this the independent check that the write
-stopped moving the array. It reads 632x today.
+stopped moving the array. It reads 259x today, at 263 array passes/s.
 
 A profile of the integration design says where the time goes there, and it is not where the
 pre-reset engine spent it -- propagation does not appear at all. Two thirds of a run was a single
@@ -81,7 +94,25 @@ stopped hiding everything behind it, had building a value from its word planes a
 view tied at the top, near a tenth of the run each -- two halves of the same thing, since a value
 built from words was then read through a window that revalidated what the builder had just
 established. That is the last entry below, and it is closed; the design's profile has not been
-retaken since, so what stands at the top of it now is unmeasured.
+retaken since, because retaking it needs the design.
+
+**Retaken over the corpus instead, on 2026-09-23, and the result is that there is no single top.**
+Two cases profiled under callgrind on the compiled program, both `--release`. On the wide bitwise
+case -- the only one outside the band -- taking a run of bits out of a value was 23.3% of the run's
+instructions on its own and writing one back a further 6.6%, because both moved a run one bit at a
+time; that was [refactor.md](refactor.md) R128, now closed, and it took the case from 367,261 to
+469,661 iterations/s. On the representative block those same two are 3.4% together and the top is
+**making a value at all**: blanking one 12.4%, zeroing its words 5.7%, its constructor 4.3%,
+building one from an integer 3.9%, and masking the bits above its declared width a further 8.4%. The
+design's own body is **3.3%** of its own run.
+
+With the run-moving gone, the wide case's top is the same one: blanking a value, zeroing its words,
+masking above its width. The two profiles agreed about the rest all along and disagreed only about
+what sat on top of it, which is the reading to keep -- one case's profile is not the engine's
+answer. What both are waiting on is the open entry below: a value operation is a call into a
+separately compiled runtime, the optimizer cannot see into it, and letting it see runs the same case
+in half the time. What the profile adds is that the calls it cannot see into are mostly not
+arithmetic -- they are a value coming into existence.
 
 - [x] An integral value's dimension stack no longer allocates for the single-dimension case. Every
       declared integral carried its stack in a growable container, so constructing or copying any

@@ -1459,9 +1459,15 @@ enough to warrant its own focused review.
       all-unknown value and then overwrites every word of it, so the default-value fill is a wasted
       pass; removing it needs a way to build a value without initializing it, which is separable
       because the conversion writes every word either way. And a source or destination that does not
-      start at a word boundary still has no word-wise path -- conversions never produce one, so
-      nothing needed it, and the part-select paths that would use it do their own word arithmetic
-      already.
+      start at a word boundary got no word-wise path here -- conversions never produce one, so
+      nothing this entry did needed it; R128 built one.
+
+      **The reason this entry gave for leaving that alone was wrong, and a profile said so.** It
+      read "the part-select paths that would use it do their own word arithmetic already", which was
+      the opposite of what those paths did: both looped one bit at a time, and on 2026-09-23 they
+      measured at three tenths of the wide-bitwise case. The claim was never checked against the
+      code it described -- the two functions sat a page away from the one this entry rewrote -- and
+      being a reason to do nothing, nothing later disagreed with it.
 
 - [ ] R92 -- Composing a runtime call's engine handle is spelled at roughly twenty lowering sites
       rather than once. Each interns the handle expression itself and then builds the argument list
@@ -2100,6 +2106,42 @@ enough to warrant its own focused review.
       offers, and a design element offers none, so nothing downstream reads an entry to find it
       hollow. Not blocked. Found while a referrer's artifact asked to read a class that has no
       readable form.
+
+- [x] R128 -- A run of bits moves between two packed values a word at a time. Taking a run out of a
+      value and writing one back used to be a loop over the run's bits, each iteration dividing,
+      taking a remainder, shifting twice and writing one bit. Both now step a destination word at a
+      time, reading the source shifted by the difference between the two offsets and merging under
+      one mask, so neither end has to sit on a word boundary -- which is the word-wise path R91
+      recorded as missing and unneeded.
+
+      This was the same defect R91 removed from width and domain conversion, in the two functions a
+      page away from it that were not looked at. R91's own text asserted these paths did their word
+      arithmetic already; being a reason to do nothing, nothing ever contradicted it.
+
+      **Measured at the same work on the wide bitwise case, which is the one case outside the corpus
+      band**: 934,135,373 instructions and 367,261 iterations/s before, 713,634,459 and 469,661
+      after -- **24% fewer instructions and 28% more work per second**. Moving a run is now under a
+      tenth of that run, from three tenths.
+
+      **The order the two halves landed in is worth more than either number.** The word-wise rewrite
+      on its own took the instructions to 750,594,459 -- a fifth of them gone -- and the rate did not
+      move at all, 365,797 against a 367,261 baseline. What moved it was deleting a bounds check
+      this same change had added: 3% of instructions, and all 28% of the time. The check took a
+      `string_view` for a message only a failure would print and composed a `std::string` on the
+      throw path, which was enough to keep the mover from inlining into its two callers, so every
+      run paid a call. **A profile counts instructions and only a benchmark counts time**, and here
+      they disagreed by twenty points; the same trade is recorded on `base/fixed_array.hpp`, where a
+      refactor that changed no data structure spent an entire optimization by hiding what the
+      compiler could see.
+
+      The check could not have fired either. Both callers work out the overlap between the run and
+      the value before saying what to move, so it compared a bound against the arithmetic that had
+      just produced it -- which is the shape already recorded for the view range check that was
+      removed rather than made cheaper.
+
+      What stands at the top of that case now is making a value at all: blanking one, zeroing its
+      words, masking the bits above its width. That is what tops the representative block too, so
+      the two no longer disagree about where the time goes.
 
 ## Out of Scope
 
