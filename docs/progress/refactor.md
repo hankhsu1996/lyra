@@ -2295,6 +2295,89 @@ enough to warrant its own focused review.
       set, so that adding a kind fails to compile until its phase is named. Two regions of one long
       body, and a phase model stated once rather than inferred from where the code sits. Not blocked.
 
+- [x] R137 -- The text a backend produces is written into the artifact it will be read from. Every
+      render entry used to answer with a string, which whoever asked for it then copied into the
+      string it was building, so a byte near the bottom of an expression was copied once for every
+      level above it and the punctuation between the parts was a format string parsed while the
+      program ran, once per node. A renderer now takes the destination and writes into it, in the
+      order the text will be read, and answers with nothing.
+
+      **The emitted text is identical, which is what makes this checkable rather than argued.**
+      Emitting the whole conformance corpus before and after gives the same bytes for all but four
+      of 8,216 files, and each of those four is a case whose emitted text varies between two runs of
+      one unchanged compiler -- the same one binary produced three different answers for one of them
+      in eight runs. Two synthetic designs emit the same bytes to the byte.
+
+      **Measured as instructions, because a wall-clock reading on a shared machine says more about
+      the machine**: over one emission of 1.3 MB of C++ from many small units, 2,083,178,409
+      instructions before and 1,758,903,215 after, **15.6% fewer**; over 2.0 MB whose expressions
+      nest two hundred deep, 6,023,100,029 and 4,987,880,584, **17.2% fewer**. Interleaved wall clock
+      on the first of those at full size, five rounds on a loaded host: 2.97 s against 2.54 s for
+      10.5 MB, so about 4.1 MB/s where it read 3.5.
+
+      **A prediction written before the work came out weaker than it was written.** The cost of an
+      expression was said to be its size times its depth, which predicts the deep design gaining far
+      more than the shallow one; the gain is 17.2% against 15.6%, and what the depth actually decides
+      is the cost per byte -- 3,066 instructions per emitted byte deep against 1,578 shallow -- which
+      both shapes pay alike.
+
+      What is not measured is an optimized build of the compiler itself. Both readings are from the
+      default build, where this compiler's own code is inflated and the library primitives this
+      change removes are not, so neither figure is the one a released compiler would show.
+
+      [../decisions/rendered-text-is-written-once.md](../decisions/rendered-text-is-written-once.md)
+      holds what a destination owns and why a name stays a value. What stops the shape coming back
+      is that the entries answer with nothing, so writing it no longer compiles, and a policy rule
+      refuses a format call where a node's text is written -- the two cannot be told apart by any
+      rule a type system can state, since both answer with a string.
+
+- [ ] R138 -- The three intermediate-form dumps compose their text the way the C++ backend used to.
+      Each node answers with a string and whoever asked for it copies that string into the one it is
+      building, so a byte near the bottom of a deeply nested form is copied once per level above it.
+      It is the same shape R137 removed, one subsystem over, found by searching for the decision
+      rather than by reading the diff.
+
+      **What is not the same is the requirement.** R137 answers to the end-to-end iteration budget,
+      because what it writes is the artifact a build then compiles. A dump is written only when
+      somebody asks for one and nothing downstream reads it, so no budget names it and the rule R137
+      established -- that a backend writes into the artifact it will be read from -- does not reach
+      a subsystem with no artifact. Deciding whether the discipline extends to what a developer asks
+      for is a question of its own, and it has to be answered before the policy rule's scope can
+      move; that is why this is an entry rather than part of R137.
+
+      What says it is worth answering rather than assuming: dumping one synthetic design's middle
+      form wrote 32.9 MB in 6.7 s, against 10.5 MB of C++ in 2.7 s for the same design. Both figures
+      include lowering, which is why neither is a rate for the printing alone -- getting one is the
+      first step, and it is the step that decides whether there is anything here.
+
+- [ ] R139 -- The source backend has no way to refuse. It holds twenty-two invariant violations and
+      not one statement that a construct is beyond it, where the execution backend holds ten; and
+      the settled reading of a conversion says outright that a target "refuses a pair it does not
+      realize", with every unrealizable pair answered as unsupported. The execution backend does
+      exactly that -- it passes a value through only where the two representations are the same
+      machine type, handles two families, and refuses the rest. The source backend, after one
+      special case, writes the target language's own conversion notation for **every** other pair
+      and asks nothing, so a pair nobody implemented is not a diagnostic: it is an error in
+      generated code, arriving from a host compiler that never heard of the design.
+
+      **What makes it structural rather than an oversight is that there is no channel.** Every
+      render entry answers with nothing, and before that answered with text; neither can carry a
+      refusal, so the backend could not refuse even where it wanted to, and an unrealizable node has
+      only two exits -- write something plausible, or report a compiler bug for a program that is
+      merely unsupported, which the error policy forbids by name.
+
+      The fix is derivable to its edge. The driver already has the channel: what writes one unit
+      answers with a result, and the break is one call below it, where a unit's emission answers
+      with its artifacts and nothing else. Granularity is settled too -- a run collects the gaps of
+      one stage and produces nothing, so the units of an emission collect and a refusal ends the
+      unit it was met in, because there is no text to carry on with.
+
+      Not taken with the change that found it. Refusing is orthogonal to where rendered text goes:
+      the conversion neither created this nor made it worse, and what the channel should be is its
+      own decision rather than a consequence of that one. What it does share is the surface, so
+      whoever takes it rewrites the same signatures a second time -- which is the argument for
+      taking it soon rather than for taking it then.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

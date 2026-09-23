@@ -244,11 +244,11 @@ What invariant 8 looks like at the two sites that carry the weight. An expressio
 per node kind, each a piece of the target's syntax with the children's renders in it -- a binary
 operator is its token between two renders, a dereference is the target's dereference around one, a
 composite is the type-mapping answer around the renders of its parts. A call entry is two steps and
-no more: what the target names the callee, and how it composes an object, a name, and a list of
-rendered operands. The callee's name for a runtime operation is one lookup in the shared
-declaration, which already says whether a call site reaches the operation as a free function, as a
-method on the object it acts on, or as a factory on the type it builds -- so the entry chooses
-nothing and knows no identifier.
+no more: what the target names the callee, and how it composes an object, a name, and the renders of
+its operands. The callee's name for a runtime operation is one lookup in the shared declaration,
+which already says whether a call site reaches the operation as a free function, as a method on the
+object it acts on, or as a factory on the type it builds -- so the entry chooses nothing and knows
+no identifier.
 
 An operand is the one thing a call entry may not read past. Where a call carries something the
 target spells somewhere other than its argument list -- a position fixed where the call is written,

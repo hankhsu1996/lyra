@@ -1,8 +1,8 @@
 #pragma once
 
-#include <string>
 #include <vector>
 
+#include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
@@ -13,8 +13,8 @@ namespace lyra::backend::cpp {
 // renderer producing both answers in this one shape, so where a piece of text
 // lands is settled once rather than per kind of declaration.
 struct UnitText {
-  std::string signature;
-  std::string code;
+  TargetText signature;
+  TargetText code;
 };
 
 // Every declaration of the unit named before it is written out, in the artifact
@@ -32,7 +32,7 @@ auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
 // entered would give it nothing.
 struct PromisedClass {
   mir::ClassId id;
-  std::string text;
+  TargetText text;
 };
 
 // Every class of the unit, split by where each piece is written. A class
@@ -44,8 +44,8 @@ struct PromisedClass {
 // the parent's own body builds that scope.
 struct UnitClasses {
   std::vector<PromisedClass> promised;
-  std::string internal;
-  std::string definitions;
+  TargetText internal;
+  TargetText definitions;
 };
 
 auto RenderUnitClasses(const mir::CompilationUnit& unit) -> UnitClasses;
@@ -64,12 +64,13 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText;
 // The program-global symbol this unit writes for each foreign name it declares
 // on a scope. It belongs to no unit, so every unit declaring such a scope emits
 // the same text and the party assembling the program keeps one.
-auto RenderForeignScopeSymbols(const mir::CompilationUnit& unit) -> std::string;
+void RenderForeignScopeSymbols(
+    const mir::CompilationUnit& unit, TargetText& out);
 
 // The classes of other units whose objects this one's declarations name. Each
 // is reached through a pointer, which an incomplete type serves, so the class
 // is declared here and the file declaring it goes unnamed.
-auto RenderExternalObjectDeclarations(const mir::CompilationUnit& unit)
-    -> std::string;
+void RenderExternalObjectDeclarations(
+    const mir::CompilationUnit& unit, TargetText& out);
 
 }  // namespace lyra::backend::cpp

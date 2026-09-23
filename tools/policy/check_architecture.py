@@ -223,6 +223,19 @@ Rules:
         Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
         include/lyra/lowering/ast_to_hir.
 
+  A024  The text a backend produces is written into the artifact it will be
+        read from, never composed as a value first. A node handing its text
+        back makes that text somebody else's input, so a byte near the bottom
+        of an expression is copied once per level above it and the cost of the
+        stage is the text times its depth. `std::format` composes a value, so
+        where a node's text is written it may not appear at all -- and it
+        cannot, because its arguments would have to be the children's text.
+        What is genuinely a value is a name: a file path is composed from one,
+        so a name has readers besides the artifact. Naming and type mapping
+        answer with names and are exempt by file; everything else writes.
+        Scope: every .cpp/.hpp under src/lyra/backend/cpp and
+        include/lyra/backend/cpp, except the two files named in the rule.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -1076,6 +1089,37 @@ def check_a023(repo_root: Path) -> list[str]:
     return errors
 
 
+# Rule A024
+# `std::format` composes a value out of its arguments. `std::format_to` writes
+# into a destination, which is the shape a backend's text takes, so the two are
+# told apart by what follows the name.
+COMPOSED_TEXT_PATTERN = re.compile(r"\bstd::format\s*\(")
+# Naming answers with identifiers and type mapping with type spellings. Both
+# are names -- a file path is composed from one, so they have readers besides
+# the artifact -- and a name is a value wherever it is built.
+COMPOSED_TEXT_ALLOWED = frozenset({
+    "include/lyra/backend/cpp/naming.hpp",
+    "src/lyra/backend/cpp/render_type.cpp",
+})
+
+
+def check_a024(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_files(
+            repo_root, "src/lyra/backend/cpp", "include/lyra/backend/cpp"):
+        if rel in COMPOSED_TEXT_ALLOWED:
+            continue
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if COMPOSED_TEXT_PATTERN.search(strip_comment(line)):
+                errors.append(
+                    f"  {rel}:{lineno}: A024 composes text as a value; write "
+                    f"the pieces into the artifact instead, and where the text "
+                    f"is genuinely a name, build it with the composer that "
+                    f"names one"
+                )
+    return errors
+
+
 def check_a022(repo_root: Path) -> list[str]:
     errors = []
     seen: set[str] = set()
@@ -1607,6 +1651,23 @@ def run_self_tests() -> bool:
     ok &= expect(not overloaded_bodies(a021_helper),
                  "A021 a named generic helper is not an arm list")
 
+    # A024
+    ok &= expect(
+        COMPOSED_TEXT_PATTERN.search(
+            '  return std::format("({} {} {})", lhs, token, rhs);'),
+        "A024 a node composing its text as a value")
+    ok &= expect(
+        COMPOSED_TEXT_PATTERN.search('  out += std::format ("{}::{}", a, b);'),
+        "A024 the space before the parenthesis does not hide it")
+    ok &= expect(
+        not COMPOSED_TEXT_PATTERN.search(
+            '  std::format_to(std::back_inserter(out), "{:x}", value);'),
+        "A024 writing into a destination is the shape asked for")
+    ok &= expect(
+        not COMPOSED_TEXT_PATTERN.search(
+            strip_comment('  // std::format("{}", x) is what this replaced')),
+        "A024 a comment naming the shape is not the shape")
+
     return ok
 
 
@@ -1636,6 +1697,7 @@ CHECKS = [
     ("A021 visit arm naming no alternative", check_a021),
     ("A022 holds a sequence of compilation units", check_a022),
     ("A023 expression taken for its folded value", check_a023),
+    ("A024 backend text composed as a value", check_a024),
 ]
 
 

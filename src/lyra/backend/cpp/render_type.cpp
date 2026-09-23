@@ -392,29 +392,30 @@ auto RenderTypeAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
       });
 }
 
-auto RenderPlaceAccessAsCpp(
-    const mir::CompilationUnit& unit, mir::TypeId type_id,
-    std::string_view place) -> std::string {
-  const auto opens_no_storage = []() -> std::string {
+auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
+    -> PlaceAccess {
+  const auto opens_no_storage = []() -> PlaceAccess {
     throw InternalError(
-        "RenderPlaceAccessAsCpp: a place of this type stands for no storage, "
+        "PlaceAccessAsCpp: a place of this type stands for no storage, "
         "so there is nothing for an access to open -- please report this as a "
         "bug");
   };
   return unit.types.Get(type_id).Visit(
       Overloaded{
-          [&](const mir::PointerType&) -> std::string {
-            return std::format("(*{})", place);
+          [&](const mir::PointerType&) -> PlaceAccess {
+            return {.before = "(*", .after = ")"};
           },
           // Spelled like a pointer's and reached differently: what a reference
           // opens is the cell it was bound to, which is the target language's
           // own operator standing for the library's (LRM 23.3.3.2).
-          [&](const mir::RefType&) -> std::string {
-            return std::format("(*{})", place);
+          [&](const mir::RefType&) -> PlaceAccess {
+            return {.before = "(*", .after = ")"};
           },
-          [&](const mir::ManagedRefType& m) -> std::string {
-            return std::format(
-                "{}.Deref<{}>()", place, RenderTypeAsCpp(unit, m.pointee));
+          [&](const mir::ManagedRefType& m) -> PlaceAccess {
+            return {
+                .before = "",
+                .after = std::format(
+                    ".Deref<{}>()", RenderTypeAsCpp(unit, m.pointee))};
           },
           // Every other type is a value rather than something standing for
           // storage, so a place whose type is one of them was not built by

@@ -52,22 +52,26 @@ namespace lyra::backend::cpp {
     const mir::CompilationUnit& unit, std::span<const mir::TypeId> types)
     -> std::vector<std::string>;
 
-// The storage behind a place of this type, named as an lvalue, given the
-// place's own render. A pointer names it with the target's own dereference. A
-// reference to a lent cell opens that cell (LRM 23.3.3.2). A reference to a
-// managed object states which object it names rather than being it, so the
-// object is reached first -- which is where the class the reading point assumes
-// is written down, and where reaching through a reference that names no object
-// is caught (LRM 8.4). A type this backend states no access for is refused
-// rather than answered, so a place it was never asked about cannot be given a
-// plausible one.
+// The storage behind a place of this type, named as an lvalue: what stands
+// before the place's own render and what stands after it. A pointer names it
+// with the target's own dereference. A reference to a lent cell opens that cell
+// (LRM 23.3.3.2). A reference to a managed object states which object it names
+// rather than being it, so the object is reached first -- which is where the
+// class the reading point assumes is written down, and where reaching through a
+// reference that names no object is caught (LRM 8.4). A type this backend
+// states no access for is refused rather than answered, so a place it was never
+// asked about cannot be given a plausible one.
 //
 // This is the one entry that names a runtime library's access protocol; an
-// entry that emits a value composes punctuation around its answer and never
+// entry that emits a value writes punctuation around its answer and never
 // spells the protocol itself.
-[[nodiscard]] auto RenderPlaceAccessAsCpp(
-    const mir::CompilationUnit& unit, mir::TypeId type_id,
-    std::string_view place) -> std::string;
+struct PlaceAccess {
+  std::string before;
+  std::string after;
+};
+
+[[nodiscard]] auto PlaceAccessAsCpp(
+    const mir::CompilationUnit& unit, mir::TypeId type_id) -> PlaceAccess;
 
 // Renders what names bringing a value of this type into existence, which the
 // argument list is then applied to. It is the type's own answer and not the

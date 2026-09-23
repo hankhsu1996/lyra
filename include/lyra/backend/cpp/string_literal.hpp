@@ -1,14 +1,14 @@
 #pragma once
 
-#include <string>
 #include <string_view>
+
+#include "lyra/backend/cpp/target_text.hpp"
 
 namespace lyra::backend::cpp {
 
-// Render a string as a C string literal: `"..."` with control characters,
-// quotes, and backslashes escaped. This is how a `mir::StringLiteral`
-// renders -- a software string literal -- which a `Construct` then
-// turns into a `value::String`.
-auto RenderCStringLiteral(std::string_view s) -> std::string;
+// Write a string as a C string literal: `"..."` with control characters,
+// quotes, and backslashes escaped. This is how a software string literal
+// reaches the target, which a construction then turns into a string value.
+void WriteCStringLiteral(std::string_view s, TargetText& out);
 
 }  // namespace lyra::backend::cpp
