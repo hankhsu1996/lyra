@@ -10,7 +10,6 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/local.hpp"
 
 namespace lyra::mir {
 struct Class;
@@ -31,25 +30,30 @@ struct EnclosingClass {
 };
 
 // How a body reaches the instance of the structural scope its outward
-// references count from. A body of the scope is that instance. A body of a
-// class the scope declares belongs to one instance of it (LRM 6.22) and reaches
-// that instance through what it was handed: the member the object records it
-// in, or -- where the body has no object, a receiver-less callable of such a
-// class -- the parameter its callers supply. The three are one closed set
-// because they answer one question, and every consumer that needs the instance
-// asks it once.
+// references count from. A body of a namespace unit belongs to no instance,
+// since nothing replicates a namespace (LRM 26.2), and neither does a body of a
+// class one declares. A body of a structural scope is that instance. A body of
+// a class the scope declares belongs to one instance of it (LRM 6.22) and
+// reaches that instance through what it was handed: the member the object
+// records it in, or -- where no object records it, in a receiver-less callable
+// of such a class or in the constructor that is still building one -- the
+// parameter its callers supply, which is a binding of the body like any other
+// so a closure inside it reaches the instance by capture. Whoever declares the
+// body says which, because only it knows where the body was written; the four
+// are one closed set because they answer one question, and every consumer that
+// needs the instance asks it once.
+struct NoScope {};
+
 struct ScopeIsSelf {};
 
 struct ScopeThroughMember {
   mir::FieldId member;
 };
 
-struct ScopeThroughParameter {
-  mir::LocalId local;
-};
+struct ScopeThroughParameter {};
 
-using StructuralBase =
-    std::variant<ScopeIsSelf, ScopeThroughMember, ScopeThroughParameter>;
+using StructuralBase = std::variant<
+    NoScope, ScopeIsSelf, ScopeThroughMember, ScopeThroughParameter>;
 
 // Singly-linked node carrying a class's parent chain so a leaf reference
 // can read the declared type of a member at `hops > 0`. Each node lives on
@@ -138,6 +142,7 @@ struct WalkFrame {
   [[nodiscard]] auto StructuralBaseHops() const -> std::uint32_t {
     return std::visit(
         Overloaded{
+            [](const NoScope&) -> std::uint32_t { return 0; },
             [](const ScopeIsSelf&) -> std::uint32_t { return 0; },
             [](const ScopeThroughMember&) -> std::uint32_t { return 1; },
             [](const ScopeThroughParameter&) -> std::uint32_t { return 1; }},

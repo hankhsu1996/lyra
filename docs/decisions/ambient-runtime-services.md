@@ -227,6 +227,13 @@ incidentally coupled under the module-only design; they are semantically indepen
   one: not a child instance's construction, not the entry a host asks the design's root for, and not
   the boundary entry either backend reaches an object through.
 
+- A subroutine of a namespace unit takes nothing ahead of the formals the source wrote. The change
+  that made runtime access ambient left such a subroutine still declaring the runtime as a leading
+  parameter, renamed rather than removed; nothing in either backend read it, its callers passed
+  `current_runtime()` into it, and it survived as a second route to the one handle until it was
+  removed. What a body takes ahead of its formals follows from where it was declared -- an object,
+  the instance its class belongs to, or nothing -- and the runtime is never among them.
+
 - Callable-receiver invariant: `callable-receiver.md`'s "every SV callable's first binding is
   `self`" rule stays intact for the callables it was written for -- instance-method-shaped bodies.
   It never held for package functions or static class methods; `mir.md` invariant 11 admits that.

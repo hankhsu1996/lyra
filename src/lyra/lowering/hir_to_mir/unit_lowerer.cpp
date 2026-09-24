@@ -783,8 +783,8 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   }
 
   // Each exported package subroutine (LRM 26.3, 35.7) is receiver-less: its
-  // C entry point recovers the run's services instead of a calling instance,
-  // and enters the body this unit's namespace already holds.
+  // C entry point has no calling instance to recover, and enters the body this
+  // unit's namespace already holds.
   for (const hir::ForeignExportDecl& export_decl : scope.foreign_exports) {
     const mir::CallableId callable_id =
         subroutine_callables.Get(export_decl.subroutine);

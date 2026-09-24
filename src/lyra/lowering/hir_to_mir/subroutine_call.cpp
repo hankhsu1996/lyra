@@ -21,7 +21,6 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -54,11 +53,8 @@ struct EnclosingScopeReceiver {
 // different fact about the call, which is why it is a separate origin rather
 // than the same one read two ways.
 struct DeclaringScopeArgument {
-  mir::EnclosingHops hops;
+  ImplicitInstanceArgument instance;
 };
-
-// The runtime the calling process runs under, which every effect entry takes.
-struct AmbientRuntimeHandle {};
 
 // The object the source named a method on (LRM 8.6), in whichever receiver
 // form it wrote.
@@ -73,26 +69,26 @@ struct SealedObject {
   hir::RoutedRef reference;
 };
 using AmbientHandle = std::variant<
-    EnclosingScopeReceiver, DeclaringScopeArgument, AmbientRuntimeHandle,
-    CalledObject, SealedObject>;
+    EnclosingScopeReceiver, DeclaringScopeArgument, CalledObject, SealedObject>;
 
 // Whether the value an origin names is the object the callee dispatches on. A
-// scope, a called object, and a sealed endpoint each name one; the engine
-// handle names what every effect entry takes as a parameter.
+// scope, a called object, and a sealed endpoint each name one; the declaring
+// scope handed to a callee with no object is an ordinary first argument.
 auto BindsAsReceiver(const AmbientHandle& handle) -> bool {
   return std::visit(
       Overloaded{
           [](const EnclosingScopeReceiver&) { return true; },
           [](const CalledObject&) { return true; },
           [](const SealedObject&) { return true; },
-          [](const DeclaringScopeArgument&) { return false; },
-          [](const AmbientRuntimeHandle&) { return false; }},
+          [](const DeclaringScopeArgument&) { return false; }},
       handle);
 }
 
 // The callee is named outright, and `handle`, where the callee takes one, names
-// what its first parameter binds -- the object it dispatches on, or the engine
-// it runs under. A type-associated function (LRM 8.10) takes neither.
+// what its first parameter binds -- the object it dispatches on, or the
+// instance its class belongs to. A subroutine of a namespace unit (LRM 26.3)
+// and a type-associated function of a class one declares (LRM 8.10) take
+// neither.
 struct NamedCallee {
   mir::Direct callee;
   std::optional<AmbientHandle> handle;
@@ -199,13 +195,15 @@ struct SettledTarget {
 };
 
 // What a call reads off a class method it reaches: the interface it marshals
-// against, and what the call reaches the body by. Where these come from differs
-// by whether this unit declares the class; what a call then does with them does
-// not.
+// against, what the call reaches the body by, and the instance the class
+// belongs to, which a type-associated method is handed ahead of its formals.
+// Where these come from differs by whether this unit declares the class; what a
+// call then does with them does not.
 struct MethodCalleeFacts {
   hir::SubroutineKind kind = hir::SubroutineKind::kFunction;
   std::vector<CalleeFormal> formals;
   std::variant<NamedTarget, SettledTarget> target;
+  std::optional<DeclaringInstance> declaring_instance;
 };
 
 // Reads those facts off whichever callee the reference names. The visit is
@@ -231,16 +229,19 @@ auto ReadMethodCallee(
             return MethodCalleeFacts{
                 .kind = decl.kind,
                 .formals = CalleeFormalsOf(unit_lowerer, decl),
-                .target = NamedTarget{
-                    .direct =
-                        mir::Direct{
-                            .target =
-                                mir::CallableTarget{
-                                    .owner = owner, .slot = slot}},
-                    .slot = signature.virtual_dispatch.transform(
-                        [&](const mir::VirtualDispatchRole& role) {
-                          return CanonicalVirtualSlot(owner, slot, role);
-                        })}};
+                .target =
+                    NamedTarget{
+                        .direct =
+                            mir::Direct{
+                                .target =
+                                    mir::CallableTarget{
+                                        .owner = owner, .slot = slot}},
+                        .slot = signature.virtual_dispatch.transform(
+                            [&](const mir::VirtualDispatchRole& role) {
+                              return CanonicalVirtualSlot(owner, slot, role);
+                            })},
+                .declaring_instance = unit_lowerer.DeclaringInstanceOf(
+                    hir::LocalClassRef{.class_id = local.owner})};
           },
           [&](const hir::ExternalMethodCallee& ext) -> MethodCalleeFacts {
             using Target = std::variant<NamedTarget, SettledTarget>;
@@ -276,17 +277,24 @@ auto ReadMethodCallee(
                               }},
                           *ext.slot)
                     : named(std::nullopt);
+            // A class another unit declares belongs to no instance a call here
+            // could hand it: that unit's signature carries none.
             return MethodCalleeFacts{
                 .kind = ext.interface.kind,
                 .formals = CalleeFormalsOf(unit_lowerer, ext.interface),
-                .target = std::move(target)};
+                .target = std::move(target),
+                .declaring_instance = std::nullopt};
           },
           [&](const hir::SettledMethodCallee& settled) -> MethodCalleeFacts {
+            // Such a call reaches its body through the object it runs on, so it
+            // hands nothing else.
             return MethodCalleeFacts{
                 .kind = settled.interface.kind,
                 .formals = CalleeFormalsOf(unit_lowerer, settled.interface),
-                .target = SettledTarget{
-                    .at = settled.body, .interface = settled.interface}};
+                .target =
+                    SettledTarget{
+                        .at = settled.body, .interface = settled.interface},
+                .declaring_instance = std::nullopt};
           }},
       callee);
 }
@@ -344,11 +352,13 @@ auto PlanClassMethodCall(
                     receiver.has_value()
                         ? std::optional<AmbientHandle>{CalledObject{
                               .source = *receiver}}
-                        : declaring_scope_hops.transform(
-                              [](hir::StructuralHops hops) {
-                                return AmbientHandle{DeclaringScopeArgument{
-                                    .hops = mir::EnclosingHops{hops.value}}};
-                              })};
+                        : ImplicitInstanceArgumentOf(
+                              facts.declaring_instance, declaring_scope_hops)
+                              .transform(
+                                  [](const ImplicitInstanceArgument& instance) {
+                                    return AmbientHandle{DeclaringScopeArgument{
+                                        .instance = instance}};
+                                  })};
           }},
       facts.target);
   return plan;
@@ -402,7 +412,7 @@ auto PlanSubroutineCall(
                     mir::Direct{
                         .target =
                             unit_lowerer.MakeNamespaceCallableTarget(ref)},
-                .handle = AmbientHandle{AmbientRuntimeHandle{}}};
+                .handle = std::nullopt};
             return plan;
           },
           [&](const hir::ExternalUnitMethodRef& ref) -> Planned {
@@ -631,12 +641,8 @@ auto BuildAmbientHandle(
             return nav;
           },
           [&](const DeclaringScopeArgument& a) -> diag::Result<mir::ExprId> {
-            return BuildEnclosingScopeReceiver(
-                frame, lowerer.Owner().Unit(), a.hops);
-          },
-          [&](const AmbientRuntimeHandle&) -> diag::Result<mir::ExprId> {
-            return frame.current_block->exprs.Add(
-                BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+            return BuildImplicitInstanceArgument(
+                frame, lowerer.Owner().Unit(), a.instance);
           },
           [&](const CalledObject& o) -> diag::Result<mir::ExprId> {
             return BuildReceiverPointer(lowerer, frame, o.source);

@@ -353,6 +353,12 @@ class ProcessLowerer {
   const DeclaredScopes* scopes_;
   base::SymbolTable<hir::ProceduralVarId, ProceduralVarBinding> bindings_;
 
+  // A body local whose final value is one component of the completion payload.
+  struct PayloadLocal {
+    mir::LocalId local;
+    mir::TypeId type;
+  };
+
   // The result type of the body being lowered, set before its body walks. It
   // is the call protocol, so every return site reads what its completion
   // carries from it -- a body that completes for no caller carries nothing,
@@ -360,10 +366,8 @@ class ProcessLowerer {
   // fills that payload is the result variable, if the body has one, followed
   // by each output / inout local.
   mir::TypeId result_type_;
-  std::optional<mir::LocalId> result_var_;
-  mir::TypeId result_value_type_{};
-  std::vector<mir::LocalId> output_pack_vars_;
-  std::vector<mir::TypeId> output_pack_types_;
+  std::optional<PayloadLocal> result_var_;
+  std::vector<PayloadLocal> output_locals_;
 
   std::map<hir::ProceduralVarId, PromotedVarBinding> pending_activation_;
 };

@@ -1,8 +1,15 @@
 #pragma once
 
+#include <optional>
+#include <vector>
+
+#include "lyra/hir/structural_hops.hpp"
+#include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -11,6 +18,49 @@ struct Block;
 }  // namespace lyra::mir
 
 namespace lyra::lowering::hir_to_mir {
+
+// A body once the parameters it takes ahead of its formals are bound: the
+// parameters in order, and the frame its statements lower under.
+struct BoundImplicitParameters {
+  std::vector<mir::LocalId> params;
+  WalkFrame frame;
+};
+
+// Binds what a body of `owner` of the given form takes ahead of its formals,
+// each under its own identity so a closure inside the body reaches it by
+// capture: the object for an instance member or a constructor, then, where the
+// class belongs to an instance, that instance for a body no object records it
+// for -- a type-associated one, or a constructor, which enters its base before
+// its object records anything (LRM 8.7). A body handed the instance reaches it
+// through that parameter; any other keeps the way `frame` reaches it.
+auto BindImplicitParameters(
+    const WalkFrame& frame, const ClassShape& owner, CallableForm form)
+    -> BoundImplicitParameters;
+
+// The instance a construction or type-associated call hands a class that
+// belongs to one: how far out of the calling body's scope it sits, and the
+// type the class takes it as.
+struct ImplicitInstanceArgument {
+  mir::EnclosingHops hops;
+  mir::TypeId type;
+};
+
+// What a construction or type-associated call of a class passes ahead of the
+// actuals. Whether it passes anything is the class's to say through
+// `declaring`; the call site supplies only how far out it measured the class's
+// declaring scope to be, and not having measured one where the class takes an
+// instance is a compiler bug.
+auto ImplicitInstanceArgumentOf(
+    const std::optional<DeclaringInstance>& declaring,
+    std::optional<hir::StructuralHops> measured)
+    -> std::optional<ImplicitInstanceArgument>;
+
+// Reaches `argument`'s instance from where `frame` stands, and refuses as a
+// compiler bug if the climb lands on an instance of another type than the
+// class takes.
+auto BuildImplicitInstanceArgument(
+    const WalkFrame& frame, const mir::CompilationUnit& unit,
+    const ImplicitInstanceArgument& argument) -> mir::ExprId;
 
 // Makes a read of the current body's `self` binding: a direct `LocalRef` in a
 // directly-invoked body, or a field access over the closure receiver when

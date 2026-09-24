@@ -12,6 +12,7 @@
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/static_property_id.hpp"
+#include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type_id.hpp"
 
@@ -77,7 +78,15 @@ struct StaticPropertyInit {
 // explicit `super.new(...)`, the arguments on an extends specifier (LRM 8.17),
 // or none where the base constructor declares no formal -- so an empty list
 // means the base takes nothing rather than that nobody computed one.
+//
+// Entering the base is a construction of it, so it carries what any
+// construction of the base carries: the instance an object of it belongs to
+// (LRM 6.22). `declaring_scope_hops` is how far out of this class's own
+// declaring scope the base's sits, and a name in the base's bodies is searched
+// outward from there (LRM 23.9) whichever class extends it. Absent where a
+// namespace unit declares the base, which no instance replicates.
 struct BaseCall {
+  std::optional<StructuralHops> declaring_scope_hops;
   std::vector<ExprId> arguments;
 };
 

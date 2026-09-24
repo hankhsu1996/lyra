@@ -199,21 +199,6 @@ auto LowerStaticStorageInto(
   return {};
 }
 
-// As many of this class's own construction-prefix locals as its base declares
-// parameters for. A base in another compilation unit takes none: what crosses a
-// unit boundary is that unit's signature, which carries no instance of a scope
-// inside it, so such a base belongs to no instance of this one's.
-auto BaseCtorPrefixLocals(
-    const UnitLowerer& unit_lowerer, const hir::ClassRef& base,
-    std::span<const mir::LocalId> own_prefix) -> std::span<const mir::LocalId> {
-  const auto* local = std::get_if<hir::LocalClassRef>(&base);
-  if (local == nullptr) return {};
-  const std::size_t wanted =
-      unit_lowerer.GetClassShape(unit_lowerer.TranslateClass(local->class_id))
-          .ctor_prefix_params.size();
-  return own_prefix.first(std::min(wanted, own_prefix.size()));
-}
-
 }  // namespace
 
 auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
@@ -242,6 +227,7 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
       .base = base_ref,
       .implements = std::move(implements),
       .self_pointer_type = self_pointer_type,
+      .declaring_instance = std::nullopt,
       .time_resolution = {},
       .ctor_prefix_params = {},
       .fields = {},
@@ -260,11 +246,11 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   // every source property so a property's position never moves with it. It is
   // a borrow: the instance is built during elaboration and outlives every
   // object of the class, so nothing here owns it. Construction is where it
-  // arrives, which is why it is also the constructor's leading parameter.
+  // arrives, which is why the constructor takes it as a parameter.
   if (declaring_shape != nullptr) {
-    const mir::TypeId declaring_ptr = declaring_shape->self_pointer_type;
-    declaring_scope_field_ = shape.AddField(declaring_ptr);
-    shape.ctor_prefix_params.Add(mir::ParamDecl{.type = declaring_ptr});
+    const mir::TypeId instance_type = declaring_shape->self_pointer_type;
+    shape.declaring_instance = DeclaringInstance{
+        .type = instance_type, .member = shape.AddField(instance_type)};
   }
 
   // A property (LRM 8.4) becomes one field of the class, so where a property
@@ -402,9 +388,11 @@ auto ClassDeclLowerer::BodyFrame(
     ScopeChainNode& link) const -> WalkFrame {
   const WalkFrame frame =
       declaring_frame.WithClass(&mir_class, class_id_, link);
-  if (!declaring_scope_field_.has_value()) return frame;
+  const std::optional<DeclaringInstance>& instance =
+      owner_->GetClassShape(class_id_).declaring_instance;
+  if (!instance.has_value()) return frame.WithStructuralBase(NoScope{});
   return frame.WithStructuralBase(
-      ScopeThroughMember{.member = *declaring_scope_field_});
+      ScopeThroughMember{.member = instance->member});
 }
 
 auto ClassDeclLowerer::PopulateBodies(
@@ -418,60 +406,45 @@ auto ClassDeclLowerer::PopulateBodies(
 
   mir::CallableCode ctor_code = mir::CallableCode::Defined();
   CallableBindings ctor_bindings(unit_lowerer.Unit(), ctor_code);
-  const mir::LocalId self_id = ctor_bindings.Declare(
-      BindingOriginId::Receiver(), shape.self_pointer_type);
-  // The instance the object belongs to lands as an ordinary local after
-  // `self`, the way every construction prefix does, and is written into the
-  // member the object records it in before anything the body can observe.
-  std::vector<mir::LocalId> ctor_prefix_local_ids;
-  ctor_prefix_local_ids.reserve(shape.ctor_prefix_params.size());
-  for (const mir::ParamId param : shape.ctor_prefix_params.Ids()) {
-    const auto& p = shape.ctor_prefix_params.Get(param);
-    ctor_prefix_local_ids.push_back(ctor_bindings.DeclareAnonymous(p.type));
-  }
   mir::Block& ctor_block = ctor_code.Body();
   ScopeChainNode scope_link{};
-  const WalkFrame frame = BodyFrame(declaring_frame, mir_class, scope_link)
-                              .WithBlock(&ctor_block)
-                              .WithBindings(&ctor_bindings);
+  // The object, and then the instance it belongs to where the class belongs to
+  // one, which is written into the member the object records it in for the
+  // object's later bodies to read.
+  BoundImplicitParameters bound = BindImplicitParameters(
+      BodyFrame(declaring_frame, mir_class, scope_link)
+          .WithBlock(&ctor_block)
+          .WithBindings(&ctor_bindings),
+      shape, CallableForm::kConstructor);
+  const WalkFrame& frame = bound.frame;
+  std::vector<mir::LocalId> ctor_params = std::move(bound.params);
 
   const hir::SubroutineDecl& ctor = hir_class.constructor;
   ProcessLowerer ctor_lowerer(
       unit_lowerer, declaring_scope_, mir_class.time_resolution, ctor.body,
       ctor.root_stmt, frame, scopes_, ctor_static_bindings_);
 
-  // Register the ctor formals early so a base-constructor arg (LRM 8.7) can
-  // reference them: `super.new(a * 2)` in the derived ctor reads its own `a`
-  // formal, and that lookup resolves through the same procedural-var
-  // registry the ctor body uses. Formals land as MIR locals appended after
-  // the receiver; the base-call arg exprs and every field initializer below
-  // read them through that registry.
-  std::vector<mir::LocalId> ctor_params{self_id};
-  ctor_params.insert(
-      ctor_params.end(), ctor_prefix_local_ids.begin(),
-      ctor_prefix_local_ids.end());
-  if (declaring_scope_field_.has_value()) {
-    const mir::TypeId declaring_ptr =
-        shape.fields.Get(*declaring_scope_field_).type;
-    const mir::ExprId value = ctor_block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::ReferenceExpr{
-                    .target =
-                        mir::LocalRef{.var = ctor_prefix_local_ids.front()}},
-            .type = declaring_ptr});
+  if (const std::optional<DeclaringInstance>& instance =
+          shape.declaring_instance) {
+    const mir::ExprId value = BuildEnclosingScopeReceiver(
+        frame, unit_lowerer.Unit(), mir::EnclosingHops{});
     const mir::ExprId target = ctor_block.exprs.Add(
         mir::MakeFieldAccessExpr(
             ctor_block.exprs.Add(
                 MakeSelfRefExpr(frame, shape.self_pointer_type)),
-            mir::ClassFieldTarget{
-                .owner = class_id_, .slot = *declaring_scope_field_},
-            declaring_ptr));
+            mir::ClassFieldTarget{.owner = class_id_, .slot = instance->member},
+            instance->type));
     ctor_block.AppendStmt(
         mir::ExprStmt{
             .expr = ctor_block.exprs.Add(
-                mir::MakeAssignExpr(target, value, declaring_ptr))});
+                mir::MakeAssignExpr(target, value, instance->type))});
   }
+  // Register the ctor formals early so a base-constructor arg (LRM 8.7) can
+  // reference them: `super.new(a * 2)` in the derived ctor reads its own `a`
+  // formal, and that lookup resolves through the same procedural-var
+  // registry the ctor body uses. Formals land as MIR locals after the leading
+  // parameters; the base-call arg exprs and every field initializer below read
+  // them through that registry.
   auto formals_or =
       ctor_lowerer.RegisterConstructorFormals(ctor, frame, ctor_params);
   if (!formals_or) return std::unexpected(std::move(formals_or.error()));
@@ -482,16 +455,14 @@ auto ClassDeclLowerer::PopulateBodies(
   // convention.
   std::vector<mir::ExprId> base_args;
   if (hir_class.base.has_value()) {
-    // The base's own construction prefix leads its arguments: a base that
-    // belongs to the same instance this class does is handed that instance,
-    // which only this constructor holds.
-    for (const mir::LocalId prefix : BaseCtorPrefixLocals(
-             unit_lowerer, *hir_class.base, ctor_prefix_local_ids)) {
-      base_args.push_back(ctor_block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::ReferenceExpr{.target = mir::LocalRef{.var = prefix}},
-              .type = ctor_code.locals.Get(prefix).type}));
+    // A base belonging to an instance leads its arguments with that instance,
+    // which encloses the one this class belongs to.
+    if (const std::optional<ImplicitInstanceArgument> instance =
+            ImplicitInstanceArgumentOf(
+                unit_lowerer.DeclaringInstanceOf(*hir_class.base),
+                hir_class.base_call.declaring_scope_hops)) {
+      base_args.push_back(
+          BuildImplicitInstanceArgument(frame, unit_lowerer.Unit(), *instance));
     }
     for (const hir::ExprId arg : hir_class.base_call.arguments) {
       auto arg_or = ctor_lowerer.LowerExpr(ctor.body.exprs.Get(arg), frame);

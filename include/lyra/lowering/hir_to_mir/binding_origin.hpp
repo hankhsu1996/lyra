@@ -13,14 +13,16 @@ namespace lyra::lowering::hir_to_mir {
 // closure-record field), so the same origin matches in the declaring body and
 // in every closure that captures it. The receiver is not a distinct kind of
 // binding -- it is the receiver-role parameter, identified by `Receiver()`. The
-// runtime handle is the same shape for a receiver-less callable (a package
-// function or task, LRM 26.3): a role-tagged leading parameter that holds the
-// ambient runtime a body reaches when an instance callable would reach it
-// through `self`, identified by `Runtime()`.
+// instance of the structural scope that declares a class (LRM 6.22) is the
+// same shape, a role-tagged leading parameter, for a body of the class that
+// has no object recording it -- a static method, or the constructor, which
+// enters its base before the object records anything -- identified by
+// `DeclaringInstance()`. Each is a binding rather than a bare local so a
+// closure inside the body reaches it by capture, as it reaches any other.
 struct BindingOriginId {
   enum class Kind : std::uint8_t {
     kReceiver,
-    kRuntime,
+    kDeclaringInstance,
     kSourceProcedural,
     kIterator,
     kPattern,
@@ -44,8 +46,8 @@ struct BindingOriginId {
   static auto Receiver() -> BindingOriginId {
     return {.kind = Kind::kReceiver};
   }
-  static auto Runtime() -> BindingOriginId {
-    return {.kind = Kind::kRuntime};
+  static auto DeclaringInstance() -> BindingOriginId {
+    return {.kind = Kind::kDeclaringInstance};
   }
   static auto Procedural(hir::ProceduralVarId var) -> BindingOriginId {
     return {.kind = Kind::kSourceProcedural, .key = var.value};

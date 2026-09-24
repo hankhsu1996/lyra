@@ -2408,6 +2408,8 @@ enough to warrant its own focused review.
       Target: a run builds what it measures, a case that fails names why, and each result is kept as
       it arrives. Not blocked.
 
+<<<<<<< HEAD
+
 - [ ] R141 -- A unit-definition record is stated in MIR for the one backend that may not realize it.
       A scope's runtime definition reaches the C++ backend as a constant MIR holds, built at
       HIR-to-MIR out of runtime-library record types; it reaches the execution backend as something
@@ -2468,6 +2470,32 @@ enough to warrant its own focused review.
       limit into a temporary ahead of the statement (its V3Depth pass, limit 240 for clang). Here
       that is a statement the render would write that MIR never stated, so it belongs upstream of
       the render or not at all -- which is the question to settle first. Not blocked.
+
+- [ ] R144 -- The check of the middle form holds one rule, and the rules that would have caught a
+      lowering passing the wrong value are not among them. Every unit is checked where it is
+      produced, and what is checked is that a body which is not a coroutine never suspends. Below
+      the middle form a pointer no longer says what it points at, so the middle form is the last
+      place a value of the wrong kind is visible at all.
+
+      Two defects found together show what that costs. A class extending one declared in an
+      enclosing scope handed its base the wrong instance: the constructor declared a parameter
+      pointing at the module's instance and was given the generate block's. And a static method
+      forking a process read its instance from a local of the method, which the forked body does not
+      have. Both were wrong in the middle form, visibly, and neither was caught there: the source
+      backend failed only in the host compiler, which the default gate does not run, and the
+      execution backend ran both and read the wrong memory -- one of them a wrong answer rather than
+      a crash.
+
+      Established compilers check every intermediate form against the rules its consumers rely on:
+      LLVM's verifier requires, among other things, that a call's argument types match the callee's
+      prototype, and GHC's `-dcore-lint` type-checks its core language between passes.
+
+      Target: the check gains the rules the two defects broke -- what a call or a construction
+      passes agrees in number and type with what its callee declares, the base construction
+      included, and a local a body reads is one that body declares -- then a member access against
+      the class that declares the member, and an assignment's two sides. Not blocked. A rule should
+      state what a shape means rather than how it is spelled today, since the check reads every
+      shape the middle form has and meets whatever reshapes one.
 
 ## Out of Scope
 

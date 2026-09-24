@@ -1,7 +1,5 @@
 #pragma once
 
-#include <optional>
-
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_decl.hpp"
@@ -11,7 +9,6 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/field.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -80,9 +77,11 @@ class ClassDeclLowerer {
       -> diag::Result<void>;
 
  private:
-  // The frame a body of this class lowers under: the class as the write
-  // target, standing where the scope that declares it stands, and the member
-  // holding the instance its outward references count from.
+  // The frame a body of this class lowers under: the class as the write target,
+  // standing where the scope that declares it stands, and the member of the
+  // object holding the instance its outward references count from. A body the
+  // instance is handed to instead reaches it through that parameter, which
+  // binding its implicit parameters settles.
   [[nodiscard]] auto BodyFrame(
       const WalkFrame& declaring_frame, mir::Class& mir_class,
       ScopeChainNode& link) const -> WalkFrame;
@@ -93,9 +92,6 @@ class ClassDeclLowerer {
   mir::TypeId object_type_;
   const hir::ClassDecl* hir_class_;
   const StructuralScopeLowerer* declaring_scope_;
-  // The member holding the instance this class's objects belong to, present
-  // exactly where a structural scope declares the class.
-  std::optional<mir::FieldId> declaring_scope_field_;
 
   base::Translation<hir::MethodId, DeclaredCallable> declared_methods_;
   StaticVarBindings ctor_static_bindings_;

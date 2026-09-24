@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -31,6 +32,24 @@ struct CallableSignature {
   std::optional<mir::VirtualDispatchRole> virtual_dispatch;
 };
 
+// Which kind of callable of a class a body is, as far as what it takes ahead of
+// the formals the source wrote depends on it: an instance member runs on an
+// object (LRM 8.6), a type-associated one has none (LRM 8.10), and a
+// constructor runs on the object it is building (LRM 8.7).
+enum class CallableForm : std::uint8_t {
+  kInstanceMember,
+  kTypeAssociated,
+  kConstructor,
+};
+
+// The instance of the structural scope that declares a class (LRM 6.22): the
+// pointer type that reaches it, and the member each object records it in for
+// the object's methods to read.
+struct DeclaringInstance {
+  mir::TypeId type;
+  mir::FieldId member;
+};
+
 // The structural portion of a class declaration: the facts a peer needs to read
 // about a class while its own body is being lowered. What is carried over to
 // `mir::Class` keeps the same semantics under the same name there; the
@@ -53,6 +72,13 @@ struct ClassShape {
   // instance storage.
   std::vector<mir::ClassRef> implements;
   mir::TypeId self_pointer_type;
+  // The instance this class belongs to, present exactly where a structural
+  // scope declares the class (LRM 6.22), and the one place that is stated: what
+  // each body of the class is handed, and what each construction and
+  // type-associated call of it passes, both follow from it. Absent for a class
+  // a namespace unit declares and for a scope of the design hierarchy, neither
+  // of which is a type of any instance.
+  std::optional<DeclaringInstance> declaring_instance;
   TimeResolution time_resolution;
   base::Arena<mir::ParamDecl, mir::ParamId> ctor_prefix_params;
   base::Arena<mir::FieldDecl, mir::FieldId> fields;

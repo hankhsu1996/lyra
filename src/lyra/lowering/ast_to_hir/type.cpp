@@ -1389,10 +1389,11 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   // The class's `new` (LRM 8.7), lowered once every method identity exists so
   // its body reaches them the same way any other body does.
   std::optional<hir::SubroutineDecl> user_constructor;
-  // What entering the base's construction carries, while it is still being
-  // worked out: the constructor lowering answers it where the source wrote the
-  // call, and the block below settles every other way it arrives.
-  std::optional<hir::BaseCall> stated_base_call;
+  // The arguments the base's construction is entered with, while they are
+  // still being worked out: the constructor lowering answers them where the
+  // source wrote the call, and the block below settles every other way they
+  // arrive.
+  std::optional<std::vector<hir::ExprId>> base_arguments;
   if (constructor_sym != nullptr) {
     // LRM 8.7 gives a constructor the argument conventions of any other
     // subroutine call, but a construction yields the object it built and so
@@ -1410,7 +1411,7 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
         *this, *constructor_sym, class_frame, cls.getBaseConstructorCall());
     if (!ctor_or) return std::unexpected(std::move(ctor_or.error()));
     user_constructor = std::move(ctor_or->constructor);
-    stated_base_call = std::move(ctor_or->base_call);
+    base_arguments = std::move(ctor_or->base_arguments);
   }
 
   // Forward every interface pure virtual this class satisfies by inheritance
@@ -1446,19 +1447,18 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   // answers nothing for the third, having first established that every formal
   // of the base constructor has a default -- so an answer of nothing is the
   // third case, and how many defaults it owes is what the base declares.
-  if (decl.base.has_value()) {
-    if (!stated_base_call.has_value()) {
+  if (const auto* base_type = cls.getBaseClass(); base_type != nullptr) {
+    if (!base_arguments.has_value()) {
       if (const auto* written = cls.getBaseConstructorCall()) {
-        hir::BaseCall lowered;
+        std::vector<hir::ExprId> lowered;
         const auto actuals = BaseCallArguments(*written);
-        lowered.arguments.reserve(actuals.size());
+        lowered.reserve(actuals.size());
         for (const auto* actual : actuals) {
           auto arg_or = init_lowerer.LowerExpr(*actual, init_frame);
           if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-          lowered.arguments.push_back(
-              constructor.body.exprs.Add(*std::move(arg_or)));
+          lowered.push_back(constructor.body.exprs.Add(*std::move(arg_or)));
         }
-        stated_base_call = std::move(lowered);
+        base_arguments = std::move(lowered);
       } else if (BaseConstructorFormalCount(cls) != 0) {
         return diag::Fail(
             span, diag::DiagCode::kUnsupportedClassFeature,
@@ -1466,10 +1466,18 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
             "supported; state the argument in super.new or on the extends "
             "specifier");
       } else {
-        stated_base_call = hir::BaseCall{};
+        base_arguments.emplace();
       }
     }
-    decl.base_call = *std::move(stated_base_call);
+    // The base's instance is found from where this class is declared, the way
+    // a `new` of the base written there would find it.
+    auto base_hops = DeclaringScopeHopsFrom(
+        base_type->getCanonicalType().as<slang::ast::ClassType>(), class_frame,
+        span);
+    if (!base_hops) return std::unexpected(std::move(base_hops.error()));
+    decl.base_call = hir::BaseCall{
+        .declaring_scope_hops = *base_hops,
+        .arguments = *std::move(base_arguments)};
   }
   // A static property initializer (LRM 8.9 / 10.5) runs once for the cell
   // rather than once per instance constructed, so its expression lands in the
