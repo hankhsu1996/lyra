@@ -109,11 +109,12 @@ collapsed to one node.
 - The C++ backend renders a cast as the C++ cast notation over the rendered destination type, one
   composed expression with no branch and no type named in the renderer. That notation is C++'s own
   "convert this to that", which is the same statement the node makes.
-- That notation is the one construct in that backend which is not a primary expression, so the
-  render encloses it in parentheses. Without them a `->` or a `[` written after a cast takes the
-  cast's own operand instead, and the conversion silently applies to the wrong thing -- it compiles
-  wherever the mis-parse happens to name a real member, which is what makes it worth stating here
-  rather than only at the render.
+- That notation is a prefix form rather than a primary expression, so wherever something reaches
+  through a cast -- a `->`, a `.`, a `[` -- the cast is enclosed in parentheses, by the same rule
+  that encloses any operand holding together less than its position asks. Without them the reaching
+  step takes the cast's own operand instead, and the conversion silently applies to the wrong thing
+  -- it compiles wherever the mis-parse happens to name a real member, which is what makes it worth
+  stating here rather than only at the render.
 - The execution backend answers the pair in one entry: identical machine types convert to nothing, a
   machine boolean is what the value's own domain answers about it, and two machine integers resize.
 - Adding a conversion between two types no backend handles is no longer a build break. It is a

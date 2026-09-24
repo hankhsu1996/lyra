@@ -3,6 +3,7 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/backend/cpp/precedence.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -11,41 +12,33 @@
 
 namespace lyra::backend::cpp {
 
-// Three things MIR states as structure rather than as a value, and that this
-// target has to realize with a library type. No MIR type names any of them, so
-// none is reached through the type mapping below -- but each is a library
-// type's spelling, and this is where a library type is spelled.
+// Runtime library types for things MIR states as structure rather than as a
+// type, so no MIR type maps to them. They are spelled here because this file is
+// where every runtime library type is spelled.
 
-// A body paired with a cleanup that runs on every way out of it: an object
-// declared ahead of the body whose destruction runs the cleanup. C++ states an
-// extent's exit through a destructor and offers no construct of its own.
+// The object that runs a `finally` cleanup from its destructor. C++ has no
+// `finally`, so the cleanup is an object declared ahead of the body, and it
+// runs however the body is left, a `return` or `break` included.
 [[nodiscard]] auto BodyCleanupExtentCppType() -> std::string_view;
 
-// Giving up control where a call says it parked this execution. C++ gives up
-// control by awaiting something, so the answer the call gave has to become
-// something awaitable; a target whose suspension is an edge in its own graph
-// needs nothing here, because the edge is the same nothing.
+// What a call that may park the process is wrapped in to be awaited:
+// `co_await Suspension{call(...)}`. The call returns whether it parked, and C++
+// can only suspend by awaiting something.
 [[nodiscard]] auto SuspensionCppType() -> std::string_view;
 
-// What an SV class extending nothing (LRM 8.13) is emitted over, so an object
-// can answer with a handle to itself (LRM 8.11): realizing that handle as a
-// shared owner means the object records which owner refers to it, and this is
-// where that record lives.
+// The base of every class that extends nothing (LRM 8.13). Objects are held by
+// shared ownership, and an object that hands out a handle to itself (LRM 8.11)
+// has to know its owner, which this base records.
 [[nodiscard]] auto ManagedObjectRootCppType() -> std::string_view;
 
-// The same object under another static view. Every view of a reference is one
-// target type, so the target's own cast notation copies it unchanged where what
-// a conversion calls for is a new view over the same object; naming that is the
-// only way the pair of classes reaches the emitted text.
+// The conversion of an object reference to the same object seen as another
+// class, `ViewAs<From, To>(r)`. Every object reference is one C++ type, so a
+// C++ cast would only copy it.
 [[nodiscard]] auto ObjectViewConversionCppName() -> std::string_view;
 
-// A MIR type, as the C++ type expression that holds it. An enum is a nominal
-// type over a base integral, so its value is spelled as that base -- a packed
-// array -- with no distinct emitted enum type.
-//
-// Like a name, a type is spelled in one place and written wherever it goes, so
-// what the mapping answers with is what decides the spelling. It holds a view
-// of the unit being emitted, which outlives the writing.
+// A MIR type, written into the output as its C++ type. An enum is written as
+// its base type, a packed array; there is no C++ enum. It holds a view of the
+// unit, which outlives the writing.
 class CppType {
  public:
   CppType(const mir::CompilationUnit& unit, mir::TypeId type)
@@ -65,21 +58,19 @@ class CppType {
 
 void WriteOne(TargetText& out, const CppType& spelling);
 
-// The name a call brings a value of this type into existence through, which
-// the argument list is then applied to. It is the type's own answer and not the
-// call's: a value type is built by naming itself, a wrapper that owns what it
-// points at by the entry that allocates and constructs together, and a
-// sequence by the library entry that takes its elements, since the type it is
-// kept in takes no element list of its own.
+// What a construction call names before its argument list. Usually the type
+// itself, `T(args)`; for an owning pointer the function that allocates and
+// constructs, `std::make_unique<T>(args)`; for a sequence the library function
+// that takes the elements, since the container type takes no element list.
 struct CppConstructorName {
   CppType of;
 };
 
 void WriteOne(TargetText& out, const CppConstructorName& constructor);
 
-// The C++ type expression naming a class a reference reaches. A class of this
-// unit is named through the unit's class registry; one of another unit by its
-// qualified name.
+// A class a reference names, as C++: its own name for a class of this unit,
+// `::Unit::Name` for another unit's, and the runtime's name for a runtime
+// class.
 class CppClassRef {
  public:
   CppClassRef(const mir::CompilationUnit& unit, const mir::ClassRef& ref)
@@ -99,18 +90,14 @@ class CppClassRef {
 
 void WriteOne(TargetText& out, const CppClassRef& ref);
 
-// How the storage behind a place of this type is named as an lvalue. A pointer
-// names it with the target's own dereference. A reference to a lent cell opens
-// that cell the same way (LRM 23.3.3.2). A reference to a managed object states
-// which object it names rather than being it, so the object is reached first --
-// which is where the class the reading point assumes is written down, and where
-// reaching through a reference that names no object is caught (LRM 8.4). A type
-// this backend states no access for is refused rather than answered, so a place
-// it was never asked about cannot be given a plausible one.
+// How to reach the storage behind a place of this type as an lvalue. A pointer,
+// and a `ref` to a cell (LRM 23.3.3.2), are dereferenced: `(*p)`. A reference
+// to an object is opened as the class the code assumes, `r.Deref<T>()`, which
+// is also where a null reference is caught (LRM 8.4). Any other type stands for
+// no storage and is refused.
 //
-// This is the one entry that names a runtime library's access protocol; an
-// entry that emits a value writes punctuation around its answer and never
-// spells the protocol itself.
+// This is the only place that spells the runtime's access protocol; the rest
+// of the render writes punctuation around its answer.
 struct OpenedByDereference {};
 
 struct OpenedThroughView {
@@ -122,8 +109,10 @@ using PlaceAccess = std::variant<OpenedByDereference, OpenedThroughView>;
 [[nodiscard]] auto PlaceAccessAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId type_id) -> PlaceAccess;
 
-// The storage behind a place, with the place itself written where the access
-// puts it.
+// The storage behind a place, written as a postfix form so the caller can put a
+// member or a call right after it. `write_place` writes the place itself and is
+// told the precedence its position needs: after the `*` of a dereference, or
+// before a member call.
 template <typename WritePlace>
 void WriteStorageOf(
     TargetText& out, const mir::CompilationUnit& unit, mir::TypeId place_type,
@@ -132,11 +121,11 @@ void WriteStorageOf(
       Overloaded{
           [&](OpenedByDereference) {
             out += "(*";
-            write_place();
+            write_place(Precedence::kPrefix);
             out += ")";
           },
           [&](const OpenedThroughView& view) {
-            write_place();
+            write_place(Precedence::kPostfix);
             Write(out, ".Deref<", CppType(unit, view.pointee), ">()");
           }},
       PlaceAccessAsCpp(unit, place_type));

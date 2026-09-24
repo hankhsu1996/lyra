@@ -33,17 +33,12 @@ auto ObjectViewConversionCppName() -> std::string_view {
 
 namespace {
 
-// A type spelled out of others writes their spellings with the separator a
-// template argument list puts between them. The empty list writes nothing.
 void WriteTypeList(
     TargetText& out, const mir::CompilationUnit& unit,
     std::span<const mir::TypeId> types) {
-  bool first = true;
-  for (const mir::TypeId type : types) {
-    if (!first) out += ", ";
+  WriteSeparated(out, types, ", ", [&](mir::TypeId type) {
     Write(out, CppType(unit, type));
-    first = false;
-  }
+  });
 }
 
 auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
@@ -172,10 +167,8 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::PackedArrayType&) {
             out += "lyra::value::PackedArray";
           },
-          // An enumeration and a packed aggregate are their base integral --
-          // a `PackedArray`. What each declares beyond that is a set of names,
-          // which is not part of how a value is held and so gives it no
-          // representation of its own.
+          // An enum and a packed struct or union hold a packed array; their
+          // member names do not change how the value is stored.
           [&](const mir::EnumType&) { out += "lyra::value::PackedArray"; },
           [&](const mir::PackedStructType&) {
             out += "lyra::value::PackedArray";
@@ -194,10 +187,10 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             Write(out, "std::array<", type(m.element), ", ", m.size, ">");
           },
           [&](const mir::MachineFunctionType& m) {
-            // A C++ function pointer spells its name inside the declarator, so
-            // the pointer form below reads correctly only as a type-id -- which
-            // is all a restored prototype is ever used as. The erased form is
-            // what a declaration names, so it takes the runtime's own alias.
+            // `R (*)(Args)` is only valid where a type stands alone, since a
+            // declared function pointer's name goes inside the parentheses. A
+            // restored prototype is only ever used that way; the erased
+            // function type does get declared, so it uses the runtime's alias.
             if (mir::IsErasedFunction(unit.types, type_id)) {
               out += "lyra::runtime::ErasedScopeCallable";
               return;
@@ -237,9 +230,8 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             Write(out, CppStructName(s.struct_id));
           },
           [&](const mir::ExternalUnitObjectType& e) {
-            // The class a unit publishes its instances as is named on its
-            // signature rather than derived from the unit's own name, so the
-            // record of what it promised is what says which class this is.
+            // The class name is read from what the other unit published, not
+            // derived from that unit's name.
             const mir::ExternalUnitObject& object =
                 unit.external_unit_objects.Get(e.object);
             Write(
@@ -250,10 +242,10 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             Write(
                 out, CppUnitScope(e.unit_name), "::", ToCppName(e.class_name));
           },
-          // An object this unit has no class to name has no spelling here
-          // either, and nothing asks for one: a reference to such an object is
-          // carried and compared without naming its class, and every operation
-          // that would need the name is refused while the design elaborates.
+          // An object whose class this unit cannot name has no C++ type, and
+          // nothing asks for one: a reference to it is only carried and
+          // compared, and every use that would need the class is refused
+          // during elaboration.
           [](const mir::OpaqueObjectType&) {
             throw InternalError(
                 "backend::cpp: an object with no class to name has no "
@@ -289,11 +281,8 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                 Write(out, "std::shared_ptr<", type(p.pointee), ">");
                 return;
               case mir::PointerOwnership::kBorrowed:
-                // A borrowed pointer refers to the pointee's storage cell --
-                // a `Var<T>` if the pointee is an observable wrapper, the
-                // bare type otherwise -- so the slot mirrors what it points
-                // at by recursing. A read-only borrow grants no write
-                // capability (`const T*`), the immutable-receiver case.
+                // A borrowed pointer is a plain pointer to the pointee's
+                // type, a `Var<T>` included; a read-only one is `const T*`.
                 if (p.mutability == mir::Mutability::kReadOnly) {
                   out += "const ";
                 }
@@ -302,11 +291,10 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             }
             throw InternalError("backend::cpp: unknown PointerOwnership");
           },
-          // One spelling for every static view. Which class a program point
-          // assumes is a property of that point, so it is written where the
-          // reference is used and not where storage for it is declared -- and
-          // two units holding one cell under different views is ordinary, so a
-          // spelling that followed the view would give that cell two types.
+          // Every object reference is one type, whatever class it is seen as.
+          // The class is written where the reference is used, because two
+          // units may hold one cell as different classes, and a type per
+          // class would give that cell two types.
           [&](const mir::ManagedRefType&) { out += "lyra::value::ObjectRef"; },
           [&](const mir::VectorType& v) {
             Write(out, "std::vector<", type(v.element), ">");
@@ -316,9 +304,8 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             WriteTypeList(out, unit, t.elements);
             out += ">";
           },
-          // A declared structure realizes as the product its members make. The
-          // names it declares for them are not part of how a value is held, so
-          // they name nothing here.
+          // An unpacked struct is a tuple of its member types; the member
+          // names do not change how it is stored.
           [&](const mir::UnpackedStructType& s) {
             out += "lyra::value::Tuple<";
             WriteTypeList(out, unit, mir::MemberTypes(s.members));
@@ -350,11 +337,9 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::EvaluationAttemptsType&) {
             out += "lyra::runtime::EvaluationAttempts";
           },
-          // A closure is emitted as a lambda, and C++ lets nothing name a
-          // lambda's type -- so there is no spelling to answer with, and this
-          // is not a spelling the target is missing. A closure value reaches
-          // its uses directly, and the body reaches its captures as the
-          // lambda's own bindings, so nothing asks.
+          // A closure is emitted as a lambda, whose type C++ cannot name.
+          // Nothing asks for it: a closure is used where it is written, and
+          // its body reaches its captures as the lambda's own.
           [](const mir::ClosureType&) {
             throw InternalError(
                 "backend::cpp: a closure is emitted as a lambda, whose type "
@@ -377,18 +362,16 @@ auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::PointerType&) -> PlaceAccess {
             return OpenedByDereference{};
           },
-          // Opened like a pointer and reached differently: what a reference
-          // opens is the cell it was bound to, which is the target language's
-          // own operator standing for the library's (LRM 23.3.3.2).
+          // A `ref` is dereferenced like a pointer, which reaches the cell it
+          // is bound to (LRM 23.3.3.2).
           [&](const mir::RefType&) -> PlaceAccess {
             return OpenedByDereference{};
           },
           [&](const mir::ManagedRefType& m) -> PlaceAccess {
             return OpenedThroughView{.pointee = m.pointee};
           },
-          // Every other type is a value rather than something standing for
-          // storage, so a place whose type is one of them was not built by
-          // opening anything.
+          // Every other type is a value, not a handle to storage, so there is
+          // nothing to open.
           [&](const mir::PackedArrayType&) { return opens_no_storage(); },
           [&](const mir::EnumType&) { return opens_no_storage(); },
           [&](const mir::PackedStructType&) { return opens_no_storage(); },
@@ -444,20 +427,18 @@ auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
 void WriteOne(TargetText& out, const CppConstructorName& constructor) {
   const mir::CompilationUnit& unit = constructor.of.Unit();
   const mir::TypeId type_id = constructor.of.Type();
-  // A type that is built by naming itself, which is what C++ spells a
-  // constructor with. The spelling comes from the type mapping rather than from
-  // here, so a type this target has no name for -- a closure, emitted as a
-  // lambda -- says so once, where it is named.
+  // Most types are constructed by naming them, `T(args)`. The name comes from
+  // the type mapping, so a type with no C++ name, a closure, is refused there
+  // and only there.
   const auto by_naming_itself = [&](const auto&) {
     Write(out, constructor.of);
   };
   unit.types.Get(type_id).Visit(
       Overloaded{
-          // A wrapper that owns what it points at brings the pointee into
-          // existence along with itself, so what names its construction is the
-          // entry that allocates and constructs together rather than the
-          // wrapper's own spelling. A borrowed pointer owns nothing and is
-          // bound to storage that already exists, so nothing constructs one.
+          // An owning pointer is made by the function that allocates and
+          // constructs the pointee, `std::make_unique<T>(args)`. A borrowed
+          // pointer points at storage that already exists and is never
+          // constructed.
           [&](const mir::PointerType& p) {
             switch (p.ownership) {
               case mir::PointerOwnership::kUnique:
@@ -476,8 +457,8 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::ManagedRefType& m) {
             Write(out, "lyra::runtime::GcNew<", CppType(unit, m.pointee), ">");
           },
-          // The target type a sequence is kept in takes no element list of its
-          // own, so what names its construction is the library entry that does.
+          // A sequence is built by the library function that takes its
+          // elements, since the container type takes no element list.
           [&](const mir::VectorType& v) {
             Write(
                 out, "lyra::runtime::MakeSequence<", CppType(unit, v.element),
@@ -508,9 +489,8 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::StructType& t) { by_naming_itself(t); },
           [&](const mir::ExternalUnitObjectType& t) { by_naming_itself(t); },
           [&](const mir::CrossUnitClassType& t) { by_naming_itself(t); },
-          // Bringing an object into existence names its class, so a reference
-          // with no class to name states no construction: the source could not
-          // have written one.
+          // Constructing an object names its class, so an object whose class
+          // cannot be named is never constructed.
           [](const mir::OpaqueObjectType&) {
             throw InternalError(
                 "backend::cpp: an object with no class to name is never "

@@ -62,15 +62,9 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return LowerHirBinaryExpr(lowerer, frame, b, result_type);
           },
           [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
-            const bool declares_bindings = std::ranges::any_of(
-                c.conditions, [](const hir::ConditionClause& clause) {
-                  return clause.pattern.has_value();
-                });
-            // A predicate that declares identifiers cannot stay an rvalue:
-            // the arms become assignments under the clause chain that brings
-            // those identifiers into scope (LRM 12.6.3). Both contexts have a
-            // statement stream to put that chain in, so neither is special.
-            if (declares_bindings) {
+            // Both contexts have a statement stream to put the chain a
+            // binding predicate needs in, so neither is special.
+            if (DeclaresBindings(c)) {
               return LowerHirBindingConditionalExpr(
                   lowerer, frame, c, result_type);
             }

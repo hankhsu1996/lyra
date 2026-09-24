@@ -30,11 +30,8 @@ void WriteInclude(TargetText& out, std::string_view path) {
   Write(out, "#include \"", path, "\"\n");
 }
 
-// One value the unit settles before the program runs, written as a constant of
-// the namespace: the type it has, the name it is reached by, and the expression
-// that builds it. The build is an expression tree with no statements, so what
-// writes it is the ordinary expression render over a scope holding nothing but
-// that tree.
+// A constant of the unit's namespace, `const T name = value;`. The value is a
+// single expression, written by the ordinary expression render.
 void RenderNamespaceValue(
     const mir::CompilationUnit& unit, mir::TypeId type, const CppName& name,
     const mir::ValueBuild& build, TargetText& out) {
@@ -48,16 +45,12 @@ void RenderNamespaceValue(
           .type = CppType(unit, type),
           .name = name,
           .qualifier = {}},
-      [&](TargetText& value) {
-        RenderExpr(view, view.Expr(build.value), value);
-      });
+      [&](TargetText& value) { Write(view, value, build.value); });
 }
 
-// The descriptions the unit holds, one definition each, ahead of any code that
-// names one. These sit beside the declarations they serve: a class's own
-// constant may name one in its initializer, and two constants of one file are
-// initialized in the order the file writes them, which is a guarantee that ends
-// at the file boundary.
+// The run-time type descriptions, defined in the code file ahead of every
+// class. A class's constant may use one, and C++ initializes the constants of
+// one file in the order they are written, but gives no order across files.
 void RenderTypeDescriptions(const mir::CompilationUnit& unit, TargetText& out) {
   for (const mir::TypeDescriptorId id : unit.type_descriptors.Ids()) {
     RenderNamespaceValue(
@@ -66,10 +59,9 @@ void RenderTypeDescriptions(const mir::CompilationUnit& unit, TargetText& out) {
   }
 }
 
-// The values the unit was written with, one definition per distinct value,
-// after the descriptions because every one of them names the description of its
-// own type. A use is the name written here, so each is built once for the whole
-// artifact.
+// The constant values the unit uses, one definition per distinct value, so each
+// is built once. They come after the descriptions because each uses the
+// description of its own type.
 void RenderIntegralConstants(
     const mir::CompilationUnit& unit, TargetText& out) {
   for (const mir::IntegralConstantId id : unit.integral_constants.Ids()) {
@@ -79,24 +71,17 @@ void RenderIntegralConstants(
   }
 }
 
-// The file a class of this unit is written in. Every class a unit promised
-// takes one of its own, so the class is the whole of what says where it is --
-// and this is the one place that says it, so the file a class is written into
-// and the file an include names cannot come apart.
-//
-// Only a class the unit promised has such a file, and only such a class is ever
-// asked for: a class a referrer may name cannot rest on one it may not, because
-// then what it rests on would have to be readable where the referrer compiles
-// and would be promised after all.
+// The header of a class of this unit. The file is written and included under
+// the name computed here, so the two agree. Only a class other units may name
+// has one, and only such a class is asked about: its bases have to be
+// nameable too, since a unit compiling against it sees them.
 auto FileDeclaring(const mir::CompilationUnit& unit, mir::ClassId id)
     -> std::string {
   return UnitClassFileOf(unit.name, CppClassName(unit.GetClass(id), id));
 }
 
-// The same, for a class named as something to rest on. A class of another unit
-// is spelled from the pair naming it, which is what the referrer holds and what
-// the declaring unit wrote -- so neither has to know anything else about the
-// other's emission.
+// The header of a base class, which may belong to another unit; that unit's
+// name and the class name are all it takes to compute.
 auto FileDeclaring(
     const mir::CompilationUnit& unit, const mir::ClassRef& rests_on)
     -> std::string {
@@ -107,10 +92,9 @@ auto FileDeclaring(
   return UnitClassFileOf(cross.unit_name, ToCppName(cross.class_name));
 }
 
-// The file one consumption reads. A unit writes its namespace in one file and
-// each class it promised in one of its own, so a referrer names the part it
-// read: the rest of the unit is text it never sees, and a change confined to
-// that text moves nothing it compiles.
+// The header for one thing this unit uses from another: the opening header for
+// its namespace, or one class's header. Including only those means a change
+// elsewhere in that unit does not recompile this one.
 auto FileConsumed(const mir::ConsumedSignature& consumed) -> std::string {
   return std::visit(
       Overloaded{
@@ -124,24 +108,17 @@ auto FileConsumed(const mir::ConsumedSignature& consumed) -> std::string {
       consumed);
 }
 
-// A unit's C++ peer is a namespace holding everything the unit declares. That
-// is the unit boundary made literal: a class the unit owns is reached by the
-// one name it carries, and everything the namespace itself holds is reached
-// through the namespace -- the same forms whether the unit is rooted in a
-// design element or is a rootless package.
+// A unit becomes one C++ namespace, named after it, written across these files:
 //
-// The declarations carry what the unit promised and nothing else: a declaration
-// the unit kept to itself is written with the code, so a change confined to one
-// moves no text a referrer compiles.
+//   Top.opening.hpp   forward declarations, namespace functions and variables
+//   Top.<Class>.hpp   one per class other units may name
+//   Top.hpp           includes all of the above; what other units include
+//   Top.cpp           every other class, and every definition
 //
-// They are several files, which is what lets any two units reference each
-// other. The opening one stands on nothing of the program and every other file
-// of the unit reads it first; each class the unit promised takes one of its own
-// and reads the file declaring whatever it rests on, whichever unit that
-// belongs to. So the files are the size of the thing an order is over -- one
-// class against the class it rests on -- and a program always has such an
-// order, since a class may not rest on itself. The umbrella reads them all and
-// is the name a referrer writes.
+// The opening header includes nothing of the program, and a class header
+// includes the headers of its bases, so two units can include each other's
+// headers without a cycle. Anything other units never name goes into the
+// `.cpp`, so changing it recompiles no other unit.
 auto RenderUnitFiles(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
   const UnitText callables = RenderUnitCallables(unit);
   const UnitText variables = RenderUnitStaticVariables(unit);
@@ -216,11 +193,9 @@ auto RenderUnitFiles(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
   }
   realized += "\n";
 
-  // The runtime umbrella names everything a rendered body may call into, and
-  // naming it rather than the individual headers is what keeps the emit's
-  // include set and the precompiled header's coverage the same set. What this
-  // unit read of every other follows, each named as the part it read, so a
-  // change to a class this file never named moves nothing it compiles.
+  // The whole runtime through its one umbrella header, which is also what the
+  // precompiled header covers; then, of every other unit, only the headers
+  // this unit uses.
   TargetText code;
   WriteInclude(code, support::kRuntimePreludeHeader);
   WriteInclude(code, UnitSignatureFileOf(unit.name));
@@ -239,17 +214,10 @@ auto RenderUnitFiles(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
           .content = std::move(code).Take()}};
 }
 
-// The program entry. A design's whole contribution to it is how one makes the
-// object its `$root` is and the label that root carries, so that is all this
-// writes; every invariant host-boundary concern is behind the runtime entry it
-// hands off to, and a new one is added there rather than here. It names the
-// design root's signature and nothing else: a symbol only foreign C calls is
-// defined by the unit that declares it, and every such unit is one the program
-// already links.
-//
-// The entry it names is the one every referrer asks an object of that unit
-// through, so the object with no owner above it is that same case with nothing
-// above it.
+// `main.cpp`: hands the root unit's label and its `sv_create` entry to the
+// runtime, which does everything else about running the program -- command
+// line, errors, the simulation itself. `sv_create` is the entry any other unit
+// would use to make an object of the root unit.
 auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
   if (mir::RootedTreeOf(root) == nullptr) {
     throw InternalError("backend::cpp: the design root roots no tree");

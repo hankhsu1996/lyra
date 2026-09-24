@@ -5,6 +5,7 @@
 #include <span>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 #include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
@@ -21,19 +22,15 @@ namespace lyra::backend::cpp {
 
 namespace {
 
-// Where in the call text the object a call dispatches on goes. C++ offers two
-// positions and no third: a member call reaches the object through the callee
-// expression, and a free function takes it as an ordinary leading argument,
-// because a free function binds nothing. This says where such an object would
-// go, not that there is one -- a callee that dispatches on nothing has nothing
-// to place and answers here vacuously.
+// Where a call's receiver is written: before a method, `obj.f(args)`, or first
+// in the argument list of a free function, `f(obj, args)`. A call with no
+// receiver has nothing to place and ignores this.
 enum class ReceiverPlacement : std::uint8_t {
   kIntoCalleeName,
   kIntoArgumentList
 };
 
-// The object a call dispatches on: which expression it is, and the token C++
-// reaches a member through it with.
+// A call's receiver, and whether its members are reached with `->` or `.`.
 struct CallReceiver {
   mir::ExprId expr;
   std::string_view member_access;
@@ -52,16 +49,15 @@ auto ResolveReceiver(const ScopeView& view, const mir::Callee& callee)
           view.Unit().types.Get(expr.type).Is<mir::PointerType>() ? "->" : "."};
 }
 
-// What the name a callee spells is reached through, which is what decides
-// whether C++ can read an argument list after it: a name reached through a
-// value is dependent until the value's type is resolved, and the `template`
-// keyword is what says the angle brackets are an argument list and not a
-// comparison. A name reached on a type is resolved where it is written.
+// Whether a templated method name follows a value or a type. After a value,
+// `v.template Get<2>()` needs the `template` keyword, because C++ cannot yet
+// tell whether `<` starts an argument list or a comparison; after a type,
+// `T::Make<2>()` does not.
 enum class NameReachedThrough : std::uint8_t { kAValue, kAType };
 
-// An operation the callee names at a position writes that position where C++
-// settles types, because the part it names has a type of its own. An operation
-// that names no position is its bare identifier and needs none of this.
+// A runtime function name, with the component position as a template argument
+// where the call names one: `Get<2>`. The position is a template argument
+// because each component has a type of its own.
 struct OperationName {
   std::string_view identifier;
   std::optional<base::ComponentIndex> position;
@@ -79,11 +75,10 @@ void WriteOne(TargetText& out, const OperationName& name) {
   Write(out, name.identifier, "<", name.position->value, ">");
 }
 
-// A call, written with the object it dispatches on wherever the callee's
-// spelling puts that object. Whoever works out the spelling states where the
-// object goes and what the callee is called in one breath, so the two are never
-// carried apart, and the argument list is written by the same party that knows
-// whether the object is still owed there.
+// Writes one call. Each callee form states, in the same `Named` call, the
+// callee's name and where the receiver goes, so the two cannot disagree; the
+// writer remembers the second so the argument list can start with the receiver
+// when that is where it goes.
 class CallWriter {
  public:
   CallWriter(
@@ -96,15 +91,17 @@ class CallWriter {
     return receiver_->has_value();
   }
 
-  // A callee C++ spells with a name of its own -- an instance method, a factory
-  // on the type it builds, a free function, a type constructor.
+  // A callee with a name: a method, a factory on a type, a free function, or a
+  // constructor.
   template <typename... Pieces>
   void Named(ReceiverPlacement placement, const Pieces&... pieces) {
     if (HasReceiver()) {
       switch (placement) {
         case ReceiverPlacement::kIntoCalleeName:
           Write(
-              *view_, *out_, "(", (*receiver_)->expr, ")",
+              *view_, *out_,
+              Operand{
+                  .expr = (*receiver_)->expr, .at_least = Precedence::kPostfix},
               (*receiver_)->member_access);
           break;
         case ReceiverPlacement::kIntoArgumentList:
@@ -115,12 +112,9 @@ class CallWriter {
     Write(*view_, *out_, pieces...);
   }
 
-  // A callee the program computes rather than names: the call reaches it
-  // through the value an expression produces, which C++ spells by
-  // parenthesizing that expression so it stands wherever a name would. Such a
-  // callee is reached through no name, and MIR states no object to dispatch on
-  // for such a call, so one arriving with an object is refused rather than
-  // placed: a placement here would be one no call can ask for.
+  // A callee that is a value, such as a function pointer: `f(args)`, or
+  // `(&C::f)(args)` when the value needs parentheses. MIR gives such a call no
+  // receiver, so one arriving with a receiver is a compiler bug.
   void Computed(mir::ExprId code) {
     if (HasReceiver()) {
       throw InternalError(
@@ -128,24 +122,19 @@ class CallWriter {
           "to dispatch on, which MIR states for no such call -- please report "
           "this as a bug");
     }
-    Write(*view_, *out_, "(", code, ")");
+    Write(
+        *view_, *out_, Operand{.expr = code, .at_least = Precedence::kPostfix});
   }
 
-  // Everything after the callee is punctuation around the arguments, with the
-  // object the call dispatches on leading them where the callee's spelling put
-  // it there.
+  // The argument list, led by the receiver when the callee form puts it there.
   void Arguments(std::span<const mir::ExprId> arguments) {
-    *out_ += "(";
-    bool first = true;
+    std::vector<mir::ExprId> operands;
     if (receiver_leads_arguments_) {
-      Write(*view_, *out_, (*receiver_)->expr);
-      first = false;
+      operands.push_back((*receiver_)->expr);
     }
-    for (const mir::ExprId argument : arguments) {
-      if (!first) *out_ += ", ";
-      Write(*view_, *out_, argument);
-      first = false;
-    }
+    operands.insert(operands.end(), arguments.begin(), arguments.end());
+    *out_ += "(";
+    WriteCommaSeparated(*view_, *out_, operands);
     *out_ += ")";
   }
 
@@ -156,9 +145,9 @@ class CallWriter {
   bool receiver_leads_arguments_ = false;
 };
 
-// A runtime entry, spelled the way the library declares it. Nothing here reads
-// the call to decide that: which form the entry takes, and the identifier it is
-// written with, are the entry's own declaration.
+// A runtime library function, spelled the way its shared declaration says: a
+// free function, a method on the receiver, or a factory on the result type.
+// Nothing about the call itself is read to decide which.
 void WriteEntryCallee(
     const ScopeView& view, const support::RuntimeEntry& entry,
     const std::optional<base::ComponentIndex>& position,
@@ -169,9 +158,8 @@ void WriteEntryCallee(
             callee.Named(
                 ReceiverPlacement::kIntoArgumentList, f.qualified_name);
           },
-          // A method names nothing on its own, so a call reaching this
-          // spelling without an object to reach it through has no C++ text at
-          // all.
+          // A method is called on something, so a call with no receiver
+          // cannot be written.
           [&](const support::Method& m) {
             if (!callee.HasReceiver()) {
               throw InternalError(
@@ -186,8 +174,8 @@ void WriteEntryCallee(
                     .position = position,
                     .reached = NameReachedThrough::kAValue});
           },
-          // A factory is reached on the type it builds, which is the type of
-          // the value the call answers with.
+          // A factory is called on the type it builds, which is the call's
+          // result type: `T::Make(args)`.
           [&](const support::StaticFactory& s) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
@@ -200,25 +188,24 @@ void WriteEntryCallee(
       entry.declaration);
 }
 
-// What C++ names a `Direct` callee. Each alternative is a lookup in the table
-// that resolves its own identity space, and how a receiver rides follows from
-// what that lookup found.
+// The name of a callee fixed at compile time. Each kind of function is looked
+// up in its own table, and that kind also decides where a receiver goes.
 void WriteDirectCallee(
     const ScopeView& view, const mir::Direct& direct, mir::TypeId result_type,
     CallWriter& callee) {
   std::visit(
       Overloaded{
-          // The owner prefix is a fixed function of the target's owner: it is
-          // redundant for a non-virtual method and, for a virtual one a direct
-          // call reaches (LRM 8.15 super), is what makes C++ bypass the vtable.
+          // Qualified by the owning class, `obj.Base::f()`. For a virtual
+          // method called directly (LRM 8.15 `super`) that is what makes C++
+          // skip virtual dispatch; for any other method it changes nothing.
           [&](const mir::CallableTarget& t) {
             const auto& cls = view.Unit().GetClass(t.owner);
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName, CppClassName(cls, t.owner),
                 "::", CppClassCallableName(view.Unit(), cls, t.slot));
           },
-          // This unit's C++ peer is a namespace too, so a body of its own is
-          // named through that namespace exactly as another unit's body is.
+          // A function of this unit's namespace is qualified the same way as
+          // another unit's: `::Top::f`.
           [&](const mir::UnitCallableTarget& t) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
@@ -230,26 +217,22 @@ void WriteDirectCallee(
                 view, support::RuntimeEntryOf(id), direct.position, result_type,
                 callee);
           },
-          // Another compilation unit's C++ peer is a namespace, so a callable
-          // of it (LRM 26.3) is named through that namespace.
+          // A function of another unit (LRM 26.3): `::Pkg::f`.
           [&](const mir::ExternalUnitCallableTarget& t) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName, CppUnitScope(t.unit_name),
                 "::", ToCppName(t.callable_name));
           },
-          // A method on one of that namespace's classes is named through the
-          // class as well. Target-language name lookup resolves it once the
-          // declaring unit's header is included, and the class qualification
-          // makes C++ bypass the vtable, exactly as a direct call to a virtual
-          // method demands (LRM 8.15 super).
+          // A method of another unit's class, `obj.::Pkg::C::f()`, found once
+          // that unit's header is included. The class qualifier skips virtual
+          // dispatch, as a direct call to a virtual method requires (LRM 8.15
+          // `super`).
           [&](const mir::ExternalUnitClassMethodTarget& t) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName, CppUnitScope(t.unit_name),
                 "::", ToCppName(t.class_name), "::", ToCppName(t.method_name));
           },
-          // A body of another unit that answers to no name is named through
-          // that unit's namespace by which of them it is -- the same identifier
-          // that unit emitted it under.
+          // One of another unit's fixed entries: `::Pkg::sv_create`.
           [&](const mir::ExternalUnitMintedEntryTarget& t) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName, CppUnitScope(t.unit_name),
@@ -294,9 +277,8 @@ void WriteCallee(
                     }},
                 v.slot);
           },
-          // A type has one way to come into existence, and what names it is the
-          // type's own answer -- read through type mapping, the way every other
-          // target-language spelling of a type is.
+          // What a construction names comes from its result type, through the
+          // type mapping.
           [&](const mir::Construct&) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,

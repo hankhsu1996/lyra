@@ -2452,6 +2452,23 @@ enough to warrant its own focused review.
 
       Not blocked. Found when the C++ corpus moved to remote executors.
 
+- [ ] R143 -- An expression the source itself nests deeper than the C++ compiler accepts reaches the
+      source backend's output nested just as deep, and the unit is refused. The render now encloses
+      an operand only where its position needs it and writes an `else` holding one statement as that
+      statement, and the lowering writes each arm of an if-else-if after the one before rather than
+      inside it, so a chain written flat -- a long sum, a set membership test, the items of a case,
+      an if-else-if or a chain of conditional expressions whatever their arms test -- stays flat
+      whatever its length. What is left is nesting the program itself states: the front end accepts
+      expressions parenthesized to a depth of 1024 by default, and clang refuses brackets nested
+      past 256, so a program between the two compiles on the execution backend and not on this one.
+      Not observed in any design yet.
+
+      Target: the nesting of the emitted text is bounded whatever the source nests. Verilator's
+      answer is to count depth over each statement's expressions and hoist a subexpression past the
+      limit into a temporary ahead of the statement (its V3Depth pass, limit 240 for clang). Here
+      that is a statement the render would write that MIR never stated, so it belongs upstream of
+      the render or not at all -- which is the question to settle first. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

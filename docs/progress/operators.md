@@ -41,8 +41,9 @@ The numeric IDs (W1..W15) imply execution order; where a cut is independent the 
   - [x] The conditional operator's `&&&` multi-condition form (LRM 12.4): the `&&&`-separated
         conditions form a conjunction, taken iff every condition is true, desugared to the same
         chained logical-AND the `if`-statement predicate uses.
-  - [ ] The conditional operator's `matches` pattern form (LRM 11.4.11 / 12.6) is rejected; the
-        plain `c ? a : b` ternary and its `&&&` predicate are supported.
+  - [x] The conditional operator's `matches` pattern form (LRM 11.4.11 / 12.6): the identifiers a
+        pattern binds are in scope in the true arm, and a chain of such conditionals selects the
+        first that holds however long it is.
   - [ ] An array query (`$size` / `$left` / `$right` / `$low` / `$high`, LRM 20.7) whose dimension
         index is a run-time value over an array with a run-time dimension is rejected; a constant
         dimension index over a fixed-size operand folds at elaboration.

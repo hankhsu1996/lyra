@@ -3,6 +3,7 @@
 #include <concepts>
 #include <span>
 
+#include "lyra/backend/cpp/precedence.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/mir/expr.hpp"
@@ -11,20 +12,36 @@
 
 namespace lyra::backend::cpp {
 
-void RenderExpr(const ScopeView& view, const mir::Expr& expr, TargetText& out);
+// An expression, in a position that needs at least `at_least` precedence. The
+// arm that picks a node's C++ form is the one that knows that form's
+// precedence, so it is also the one that adds parentheses when the position
+// needs them.
+void RenderExpr(
+    const ScopeView& view, const mir::Expr& expr, Precedence at_least,
+    TargetText& out);
 
-// A type written where the program names one, which is the spelling the type
-// mapping answers with.
+// An operand and the precedence its position needs. It is parenthesized only
+// where its own form binds less tightly: `a - (b - c)` keeps them and
+// `a - b - c` needs none, which is what keeps a long chain from nesting one
+// level per link.
+struct Operand {
+  mir::ExprId expr;
+  Precedence at_least = Precedence::kAssignment;
+};
+
+// A type, as the type mapping spells it.
 void WriteType(const ScopeView& view, TargetText& out, mir::TypeId type);
 
-// One piece of a contribution. An operand's render and a type's spelling land
-// where the piece sits; everything else is target syntax and is written as it
-// stands. Listing the two together is what keeps punctuation and what it wraps
-// in one place and in the order they are read.
+// One piece of a write that lists punctuation and what it wraps in the order
+// they are read. An expression id is rendered as a whole expression, an
+// `Operand` at the precedence it states, a type through the type mapping, and
+// anything else is target text written as it stands.
 template <typename Piece>
 void WritePiece(const ScopeView& view, TargetText& out, const Piece& piece) {
   if constexpr (std::same_as<Piece, mir::ExprId>) {
-    RenderExpr(view, view.Expr(piece), out);
+    RenderExpr(view, view.Expr(piece), Precedence::kAssignment, out);
+  } else if constexpr (std::same_as<Piece, Operand>) {
+    RenderExpr(view, view.Expr(piece.expr), piece.at_least, out);
   } else if constexpr (std::same_as<Piece, mir::TypeId>) {
     WriteType(view, out, piece);
   } else {
@@ -37,8 +54,7 @@ void Write(const ScopeView& view, TargetText& out, const Pieces&... pieces) {
   (WritePiece(view, out, pieces), ...);
 }
 
-// The operands, in order, with the separator an argument list puts between
-// them. The empty list writes nothing and asks nobody whether it is empty.
+// The operands, in order, separated by commas, each as a whole expression.
 void WriteCommaSeparated(
     const ScopeView& view, TargetText& out,
     std::span<const mir::ExprId> operands);

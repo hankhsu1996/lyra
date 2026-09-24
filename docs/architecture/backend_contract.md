@@ -91,6 +91,14 @@ two ways.
    avoids a construct a reader would find redundant decides nothing, and the emitted artifact is not
    read for its looks.
 
+   What the target's own grammar or its compiler's limits require is not presentation, and it is the
+   backend's to answer. An operand is enclosed exactly where it holds together less than its
+   position asks, and a branch holding one statement is written as that statement, because a target
+   compiler bounds how deeply text may nest: a chain the program states flat -- a long sum, the
+   items of a case -- has to reach the target flat, or a program the language accepts is one the
+   target refuses. Both choices read only the node's kind and its own children, so they are
+   spellings.
+
    Different syntactic shape is therefore not the test, and reading it as one condemns the
    mechanical cases. A member reached through a pointer and one reached inline, a declaration that
    introduces a virtual slot and one that overrides it, an ordinary return and a coroutine's
@@ -195,7 +203,9 @@ two ways.
   the producer built, avoiding one a reader would call redundant, shortening a form. It decides
   nothing and states nothing, so what it costs is a branch that must be read and kept correct, and
   what it buys is not something the artifact is for. Where the collapsed form is the right one, the
-  producer is what states it.
+  producer is what states it. This fails the rule that the artifact is not read for its looks, and
+  only that rule: a form the target requires in order to accept the text at all is the backend's own
+  answer (invariant 2).
 
 - A value-emission entry that composes a target-language type literal as a string. Every
   target-language type literal a backend emits comes from the type-mapping dispatch.

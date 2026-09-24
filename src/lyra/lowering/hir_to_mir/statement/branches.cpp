@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,7 +18,6 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/inside_predicate.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/qualified_statement_check.hpp"
@@ -109,31 +109,23 @@ auto BuildCaseSelection(
       std::move(label), span);
 }
 
-// One arm of an if-else-if construct: the clause chain that decides it, the
-// statement it runs, and the arm reached when the chain does not hold.
-// `fall_through` is the source's own `else` where it wrote one, and the report
-// a totality assertion owes where it did not.
-auto LowerChainArm(
+// An if-else-if series whose arms are tested in order, the first that holds
+// ending it (LRM 12.4.1): an unqualified one, and a qualified one whose check
+// reads no arm predicate. `fall_through` is the source's own `else` where it
+// wrote one, and the report a totality assertion owes where it did not.
+// Whatever the series needs ahead of its last statement lands in the frame's
+// block first, so the label goes on that last statement.
+auto LowerOrderedIfSeries(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::IfStmt& arm, std::optional<mir::Block> fall_through)
+    const IfSeries& series, std::optional<mir::Block> fall_through)
     -> diag::Result<mir::Stmt> {
-  const mir::TypeId bit1_type = process.Owner().Unit().builtins.bit1;
-  auto& block = *frame.current_block;
-
-  // The fall-through arm runs when the chain fails, which the chain reports
-  // through a flag. Nothing observes the flag when there is no such arm, so it
-  // is only declared alongside one.
-  std::optional<mir::LocalId> taken_flag;
-  if (fall_through.has_value()) {
-    taken_flag = frame.bindings->DeclareAnonymous(bit1_type);
-    block.AppendStmt(
-        mir::LocalDeclStmt{
-            .target = *taken_flag,
-            .init = BuildBit1Literal(process.Owner().Unit(), block, false)});
-  }
-
-  auto emit_then = [&](WalkFrame body_frame) -> diag::Result<void> {
-    auto then_or = LowerStmtIntoChildScope(process, body_frame, arm.then_stmt);
+  const auto clauses_of = [&](std::size_t arm) {
+    return std::span<const hir::ConditionClause>{series.arms[arm]->conditions};
+  };
+  const auto emit_then = [&](WalkFrame body_frame,
+                             std::size_t arm) -> diag::Result<void> {
+    auto then_or = LowerStmtIntoChildScope(
+        process, body_frame, series.arms[arm]->then_stmt);
     if (!then_or) return std::unexpected(std::move(then_or.error()));
     auto& body_block = *body_frame.current_block;
     body_block.AppendStmt(
@@ -141,49 +133,11 @@ auto LowerChainArm(
             .scope = body_block.child_scopes.Add(std::move(*then_or))});
     return {};
   };
-
-  auto chain_or = BuildClauseChainIf(
-      process, frame, std::span<const hir::ConditionClause>{arm.conditions},
-      taken_flag, emit_then);
-  if (!chain_or) return std::unexpected(std::move(chain_or.error()));
-  const mir::IfStmt chain = *std::move(chain_or);
-
-  if (!fall_through.has_value()) {
-    return mir::Stmt{.label = std::move(label), .data = chain};
-  }
-
-  const mir::BlockId else_scope =
-      block.child_scopes.Add(std::move(*fall_through));
-
-  // The chain and its fall-through arm are two statements, so the label goes on
-  // the second and the first is appended ahead of it.
-  block.AppendStmt(chain);
-  return mir::Stmt{
-      .label = std::move(label),
-      .data = BuildChainElseIf(
-          process.Owner().Unit(), block, *taken_flag, bit1_type, else_scope)};
-}
-
-// A qualified series whose check reads no arm predicate. The arms are tested in
-// order and the first that holds terminates the series (LRM 12.4.1), which is
-// what the unqualified construct already does, so the series is built from its
-// innermost arm outward with the fall-through arm at the bottom.
-auto LowerOrderedIfSeries(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const QualifiedIfSeries& series, std::optional<mir::Block> fall_through)
-    -> diag::Result<mir::Stmt> {
-  std::optional<mir::Block> tail = std::move(fall_through);
-  for (std::size_t i = series.arms.size(); i-- > 1;) {
-    mir::Block level;
-    const WalkFrame level_frame = frame.WithBlock(&level);
-    auto arm_or = LowerChainArm(
-        process, level_frame, std::nullopt, *series.arms[i], std::move(tail));
-    if (!arm_or) return std::unexpected(std::move(arm_or.error()));
-    level.AppendStmt(*std::move(arm_or));
-    tail = std::move(level);
-  }
-  return LowerChainArm(
-      process, frame, std::move(label), *series.arms[0], std::move(tail));
+  auto series_or = BuildClauseSeries(
+      process, frame, series.arms.size(), clauses_of, emit_then,
+      std::move(fall_through));
+  if (!series_or) return std::unexpected(std::move(series_or.error()));
+  return mir::Stmt{.label = std::move(label), .data = *std::move(series_or)};
 }
 
 }  // namespace
@@ -191,18 +145,18 @@ auto LowerOrderedIfSeries(
 auto LowerIfStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::IfStmt& i, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
+  const IfSeries series = SeriesOf(process.HirBody(), i);
   if (!i.check.has_value()) {
     std::optional<mir::Block> else_arm;
-    if (i.else_stmt.has_value()) {
-      auto else_or = LowerStmtIntoChildScope(process, frame, *i.else_stmt);
+    if (series.else_arm.has_value()) {
+      auto else_or = LowerStmtIntoChildScope(process, frame, *series.else_arm);
       if (!else_or) return std::unexpected(std::move(else_or.error()));
       else_arm = std::move(*else_or);
     }
-    return LowerChainArm(
-        process, frame, std::move(label), i, std::move(else_arm));
+    return LowerOrderedIfSeries(
+        process, frame, std::move(label), series, std::move(else_arm));
   }
 
-  const QualifiedIfSeries series = SeriesOf(process.HirBody(), i);
   if (AssertionsOf(*i.check, series.else_arm.has_value()).uniqueness) {
     return LowerUniquenessIfSeries(
         process, frame, std::move(label), series, *i.check, span);

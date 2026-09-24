@@ -93,9 +93,18 @@ auto LowerHirIncDecExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::IncDecExpr& inc,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
+// Whether a `?:` predicate declares identifiers, which it does when any clause
+// matches a pattern (LRM 12.6.3). Such a predicate cannot stay an rvalue, and
+// is lowered by the form below.
+[[nodiscard]] auto DeclaresBindings(const hir::ConditionalExpr& c) -> bool;
+
 // The clause-chain `?:` whose predicate declares identifiers (LRM 12.6.3).
 // A binding needs storage and a statement to initialize it, so the arms
 // become assignments into a result local and the expression reads it back.
+// Such a `?:` in the else arm, of the same type, continues the chain rather
+// than nesting in it. One without bindings does not: a lone four-state
+// condition that is unknown merges both arms (LRM 11.4.11), which an `if`
+// cannot say.
 // A structural predicate cannot declare bindings -- AST-to-HIR rejects one --
 // so this form is procedural only.
 template <ExprLowerer Lowerer>

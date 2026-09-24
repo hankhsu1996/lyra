@@ -7,29 +7,17 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/local.hpp"
-#include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
-#include "lyra/mir/type_id.hpp"
 
 namespace lyra::backend::cpp {
 
-// The rendering fold's walk position. The MIR-to-C++ emit is a fold, not a
-// construction pass: it accumulates nothing and owns no output, so this
-// carries only what reading a node needs -- the unit (for type and arena
-// lookups), the class the current code belongs to, and the current callable
-// code. A local reference resolves directly against the code's `locals` arena
-// (a captured binding is a field access over the closure receiver,
-// `locals[0]`), the read-only twin of how the construction side declared them.
-// Immutable and copied on descent; it grows no member per concept, so it is not
-// the forbidden growing `*Context`.
+// Where the render is in the MIR: the unit, the class the current function
+// belongs to, the function, and the current block. It holds what an arm needs
+// to look up a child node and nothing else, and a new one is made for each
+// block or closure entered.
 //
-// The class is absent for a callable the unit's namespace owns rather than a
-// class (a receiver-less package callable): it has no object graph to navigate,
-// so the object-navigation accessors do not apply. Type-name resolution does
-// not go through the class at all -- a nominal type name resolves against the
-// unit -- so it works with or without one.
+// A function of the unit's namespace belongs to no class, and a constant's
+// value belongs to no function; asking for the missing one is a compiler bug.
 class ScopeView {
  public:
   static auto ForRoot(
@@ -38,17 +26,15 @@ class ScopeView {
     return ScopeView{unit, cls_id, &cls, &code, code.Body()};
   }
 
-  // A callable the unit's namespace owns directly, belonging to no class.
+  // A function of the unit's namespace, which belongs to no class.
   static auto ForNamespace(
       const mir::CompilationUnit& unit, const mir::CallableCode& code)
       -> ScopeView {
     return ScopeView{unit, mir::ClassId{}, nullptr, &code, code.Body()};
   }
 
-  // A constant's initializer: an expression tree with no enclosing callable,
-  // so it names no local. One a class owns still resolves names against that
-  // class, which its initializer may reach; one the unit owns reaches no
-  // class.
+  // A constant's value: one expression, in no function, so it uses no local.
+  // A class's constant may still name its class; a unit's names none.
   static auto ForClassConstant(
       const mir::CompilationUnit& unit, mir::ClassId cls_id,
       const mir::Class& cls, const mir::Block& block) -> ScopeView {
@@ -64,9 +50,8 @@ class ScopeView {
     return ScopeView{*unit_, class_id_, class_, code_, child};
   }
 
-  // Enter a closure's own code while staying in the same class context: a
-  // closure runs against the same object, so the class is unchanged; only the
-  // local / capture arenas and the body block swap.
+  // A closure's body. It stays in the same class, since a closure runs against
+  // the same object, and switches to the closure's own locals and block.
   [[nodiscard]] auto WithClosure(const mir::CallableCode& closure_code) const
       -> ScopeView {
     return ScopeView{
@@ -91,8 +76,8 @@ class ScopeView {
     return *class_;
   }
 
-  // The identity of the class above. A class the source never declared is
-  // spelled from it, so a render that names the enclosing class needs both.
+  // The id of the current class, which is what names a class the source did
+  // not declare, `sv_scope_<n>`.
   [[nodiscard]] auto ClassId() const -> mir::ClassId {
     if (class_ == nullptr) {
       throw InternalError(
@@ -111,22 +96,6 @@ class ScopeView {
 
   [[nodiscard]] auto Block() const -> const mir::Block& {
     return *block_;
-  }
-
-  // An activation local / parameter of the current callable, named directly by
-  // its id in the callable's one `locals` arena.
-  [[nodiscard]] auto Local(const mir::LocalRef& ref) const
-      -> const mir::LocalDecl& {
-    return Code().locals.Get(ref.var);
-  }
-
-  // The class a member access reaches, resolved from the receiver's object
-  // type: an object type names a local object declaration by identity, and the
-  // unit's registry maps that identity to the declaration.
-  [[nodiscard]] auto ClassByObjectType(mir::TypeId object_type) const
-      -> const mir::Class& {
-    const auto& obj = unit_->types.Get(object_type).Get<mir::ObjectType>();
-    return unit_->GetClass(obj.class_id);
   }
 
   [[nodiscard]] auto Expr(mir::ExprId id) const -> const mir::Expr& {
