@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <concepts>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -152,10 +153,12 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             // instance (LRM 6.22), so the object records which instance it
             // belongs to and construction is where that arrives -- ahead of
             // the source actuals, the way every construction prefix does.
-            if (n.declaring_scope_hops.has_value()) {
-              args.push_back(BuildEnclosingScopeReceiver(
-                  frame, lowerer.Owner().Unit(),
-                  mir::EnclosingHops{n.declaring_scope_hops->value}));
+            if (const std::optional<ImplicitInstanceArgument> instance =
+                    ImplicitInstanceArgumentOf(
+                        lowerer.Owner().DeclaringInstanceOf(n.class_ref),
+                        n.declaring_scope_hops)) {
+              args.push_back(BuildImplicitInstanceArgument(
+                  frame, lowerer.Owner().Unit(), *instance));
             }
             for (const hir::ExprId arg_hid : n.arguments) {
               auto arg_or =

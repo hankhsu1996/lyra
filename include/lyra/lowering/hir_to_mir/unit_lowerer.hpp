@@ -3,11 +3,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/symbol_table.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -320,6 +323,23 @@ class UnitLowerer {
 
   [[nodiscard]] auto GetClassShape(mir::ClassId id) const -> const ClassShape& {
     return declarations_.Get(id);
+  }
+
+  // The instance `ref`'s class belongs to, where it belongs to one. A class
+  // another unit declares is reached through that unit's signature, which
+  // carries no instance of a scope inside it, so it belongs to none that a
+  // construction or call here could hand it.
+  [[nodiscard]] auto DeclaringInstanceOf(const hir::ClassRef& ref) const
+      -> std::optional<DeclaringInstance> {
+    return std::visit(
+        Overloaded{
+            [&](const hir::LocalClassRef& local) {
+              return GetClassShape(TranslateClass(local.class_id))
+                  .declaring_instance;
+            },
+            [](const hir::ExternalClassRef&)
+                -> std::optional<DeclaringInstance> { return std::nullopt; }},
+        ref);
   }
 
   // The function answering one reading of one type. Every reading a type owns

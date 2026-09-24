@@ -207,6 +207,10 @@ under each item, and the conformance gaps at the end.
 
 - [x] P8 -- `fork` / `join` / `join_any` / `join_none` (LRM 9.3). Spawns concurrent processes; the
       parent resumes per the join condition.
+  - [ ] A `join_none` reached while no process is running -- a class constructor that forks, called
+        from a variable's declaration initializer, which runs before any process starts (LRM 6.21).
+        It is reported as a compiler bug. Whether the standard gives such a fork a parent, or makes
+        the program illegal, has not been read; either way the answer is not an internal error.
 
 ### Generate
 

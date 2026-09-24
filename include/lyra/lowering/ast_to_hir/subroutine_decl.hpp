@@ -4,9 +4,10 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -70,23 +71,23 @@ auto LowerSubroutineDecl(
 auto BaseCallArguments(const slang::ast::Expression& base_call)
     -> std::span<const slang::ast::Expression* const>;
 
-// Lowers a class constructor (LRM 8.7) into its callable and its optional
-// base-construction call as one operation. The base-call is here rather than
-// on the caller because its arguments evaluate in the constructor's own
-// binding frame -- a formal parameter reference in `super.new(a)` must resolve
-// to the same procedural var the body would read -- and only the subroutine
-// lowerer holds that frame while the body lowers. `base_call_ast`, when
-// present, is what `ClassType::getBaseConstructorCall()` answered; the caller
-// retrieves it once and hands it in here.
-struct ConstructorAndBaseCall {
+// Lowers a class constructor (LRM 8.7) into its callable and the arguments of
+// its base construction as one operation. The arguments are here rather than
+// on the caller because they evaluate in the constructor's own binding frame --
+// a formal parameter reference in `super.new(a)` must resolve to the same
+// procedural var the body would read -- and only the subroutine lowerer holds
+// that frame while the body lowers. `base_call_ast`, when present, is what
+// `ClassType::getBaseConstructorCall()` answered; the caller retrieves it once
+// and hands it in here.
+struct ConstructorAndBaseArguments {
   hir::SubroutineDecl constructor;
-  std::optional<hir::BaseCall> base_call;
+  std::optional<std::vector<hir::ExprId>> base_arguments;
 };
 
 auto LowerConstructorDecl(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
     WalkFrame frame, const slang::ast::Expression* base_call_ast)
-    -> diag::Result<ConstructorAndBaseCall>;
+    -> diag::Result<ConstructorAndBaseArguments>;
 
 // Lowers a slang `pure virtual` class method prototype (LRM 8.21) into a
 // hir::SubroutineDecl with `is_prototype = true` and `is_virtual = true`.

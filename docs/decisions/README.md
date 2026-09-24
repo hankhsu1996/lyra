@@ -477,7 +477,8 @@ the detail lives in the entry itself.
   design-wide precomputed maps and single-conflated interning are rejected.
 - [class-declared-in-a-structural-scope](class-declared-in-a-structural-scope.md) -- a class a
   module, interface, or generate block declares is a type of that scope's instance (LRM 6.22, 23.9),
-  so the object records which instance it belongs to and construction supplies it; the reference
+  so the object records which instance it belongs to and construction supplies it -- one per class
+  of its lineage, a base declared further out taking the instance that far out; the reference
   vocabulary is untouched because the hop is resolved once per body rather than once per reference.
   Putting the object in the runtime tree, reaching the scope by lexical capture, and refusing a
   construction reached through another unit's generic are rejected.

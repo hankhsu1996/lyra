@@ -43,6 +43,21 @@ for the whole simulation, so the reference carries no lifetime obligation. An ow
 would make every instance a root of everything its objects reach, which is a different lifetime
 contract, not a conservative version of this one.
 
+**Each class of a lineage records its own.** A class may extend one declared in a scope enclosing
+its own, and a name in the base's methods is searched outward from where the base was written (LRM
+23.9), whatever class extends it. So an object whose class sits in a generate block and whose base
+sits in the module holds two instances: the block's, for the derived class's bodies, and the
+module's, for the base's. The second is the first climbed as many scopes out as the base's declaring
+scope sits from the derived's, a count fixed where the two declarations are written. Java settles
+its inner classes the same way (JLS 8.8.7.1): a superclass's enclosing instance is the n-th
+lexically enclosing instance of the one being constructed, with n taken from the declarations. So do
+nested procedures in the Algol family, through static links: the caller hands the callee its link by
+following a count of links fixed at compile time by the difference in nesting depth. In both it is
+the side doing the construction or the call that climbs, since only it holds the starting point, and
+the declaration is what fixes the count. This was first written as though every class of a lineage
+shared one declaring instance, and the base was handed the derived's -- which failed to compile on
+one backend and read the wrong scope on the other.
+
 **One compiled class, not one per instance.** LRM 6.22's "unique type" is a type-identity rule the
 front end enforces -- assigning between two instances' versions is rejected where the design
 elaborates -- and Lyra never sees two of them, because it compiles the unit rather than the instance
@@ -57,8 +72,29 @@ instance a body's outward references start from is one such binding:
 - a process or subroutine of a structural scope: its receiver, as today;
 - an instance method of a class the scope declares: read from the member Decision 1 adds;
 - a receiver-less callable that needs one: an ordinary parameter its callers supply;
+- the constructor: the parameter the instance arrived in, from its first expression to its last.
+  Entering the base comes before the object records anything (LRM 8.7), so the member is not yet
+  written when the instance handed to the base and any `super.new` argument naming the declaring
+  scope are evaluated;
 - a body in a namespace unit: none, because its names resolve against the unit rather than an
   object.
+
+**The parameter is a binding of the body, not a bare local.** It is seeded under its own identity,
+as the receiver is, so a process the body forks (LRM 9.3.2) reaches the instance by capturing it the
+way it captures anything else it names. Seeded as an anonymous local instead, it was invisible to
+capture, and a static method forking a read of its declaring scope failed on both backends.
+
+**What a body takes ahead of its formals is stated once, by the class, and read by both ends.** A
+class states whether it belongs to an instance, and from that and the kind of callable follows what
+each of its callables is handed: the object for an instance method, the object and then the instance
+for the constructor, the instance alone for a type-associated method, nothing for any of them in a
+class a namespace unit declares. The body binds exactly that, and every construction and call of the
+class passes exactly that, taking from the call site only how far out the instance sits. C++ does
+the same with `this` -- one arrangement of a member function, derived from its declaration, serves
+its definition and every call of it -- and a disagreement between the two ends is a compiler bug
+that is refused where it is found. This was first answered twice, the callee reading it off how its
+body happened to be walked and each call site off its own measurement, and the two agreeing only by
+coincidence is how a base came to be handed the wrong instance.
 
 **The reference vocabulary does not change.** `../architecture/reference_resolution.md` splits a
 reference into a receiver resolved on the lexical axis and object-graph hops resolved on the other,
@@ -67,9 +103,9 @@ instance is resolved once per body, not once per reference, so it is part of see
 bindings and never a step of a route. A route still begins at a receiver and climbs typed parent
 edges from there; what changed is only which binding that receiver is.
 
-This is what keeps the decision out of every consumer. Which of the four cases above applies is
-settled once, where the body is built, by the code that already knows what kind of body it is. No
-route consumer asks whether it is inside a class.
+This is what keeps the decision out of every consumer. Which of the cases above applies is settled
+once, where the body is built, by the code that already knows what kind of body it is. No route
+consumer asks whether it is inside a class.
 
 ## Decision 3: type-associated storage is placed by what replicates the declaration
 

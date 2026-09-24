@@ -1421,7 +1421,15 @@ class HirDumper {
         if (i != 0) args += ", ";
         args += std::format("Expr[{}]", c.base_call.arguments[i].value);
       }
-      Line(std::format("BaseCall: ({})", args));
+      Line(
+          std::format(
+              "BaseCall: {} ({})",
+              c.base_call.declaring_scope_hops.has_value()
+                  ? std::format(
+                        "declaring_scope=hops:{}",
+                        c.base_call.declaring_scope_hops->value)
+                  : "declaring_scope=none",
+              args));
     }
     Dedent();
     scope_stack_ = outer;

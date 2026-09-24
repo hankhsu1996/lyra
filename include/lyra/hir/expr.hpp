@@ -272,8 +272,9 @@ struct DynamicArrayNewExpr {
 // a type of that scope's instance (LRM 6.22), so the object records which
 // instance it belongs to and construction is where that is supplied. Absent
 // where the class is declared by a namespace unit, which no instance
-// replicates. The construction site is where the answer is known, which is why
-// it travels on the expression rather than being re-derived from the class.
+// replicates. How far out that scope sits is known only where the construction
+// is written, which is why it travels on the expression; whether the class
+// takes an instance at all is the class's own to say, and the two must agree.
 struct ClassNewExpr {
   ClassRef class_ref;
   std::vector<ExprId> arguments;

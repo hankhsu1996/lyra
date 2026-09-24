@@ -2598,11 +2598,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const auto& p = shape.ctor_prefix_params.Get(param);
     ctor_prefix_local_ids.push_back(ctor_bindings.DeclareAnonymous(p.type));
   }
+  // Every body of the scope is the instance its outward references count from.
+  const WalkFrame scope_frame =
+      parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
+          .WithStructuralBase(ScopeIsSelf{});
   mir::Block& ctor_block = ctor_code.Body();
   const WalkFrame ctor_frame =
-      parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
-          .WithBlock(&ctor_block)
-          .WithBindings(&ctor_bindings);
+      scope_frame.WithBlock(&ctor_block).WithBindings(&ctor_bindings);
 
   mir::CallableCode initialize_code = mir::CallableCode::Defined();
   CallableBindings init_bindings(unit_lowerer.Unit(), initialize_code);
@@ -2616,33 +2618,25 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // source wrote and stand after every install.
   mir::Block& install_block = initialize_code.Body();
   const WalkFrame install_frame =
-      parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
-          .WithBlock(&install_block)
-          .WithBindings(&init_bindings);
+      scope_frame.WithBlock(&install_block).WithBindings(&init_bindings);
 
   mir::Block initialize_block;
   const WalkFrame init_frame =
-      parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
-          .WithBlock(&initialize_block)
-          .WithBindings(&init_bindings);
+      scope_frame.WithBlock(&initialize_block).WithBindings(&init_bindings);
 
   mir::CallableCode resolve_code = mir::CallableCode::Defined();
   CallableBindings resolve_bindings(unit_lowerer.Unit(), resolve_code);
   const mir::LocalId resolve_self_id = seed_self(resolve_bindings);
   mir::Block& resolve_block = resolve_code.Body();
   const WalkFrame resolve_frame =
-      parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
-          .WithBlock(&resolve_block)
-          .WithBindings(&resolve_bindings);
+      scope_frame.WithBlock(&resolve_block).WithBindings(&resolve_bindings);
 
   mir::CallableCode activate_code = mir::CallableCode::Defined();
   CallableBindings activate_bindings(unit_lowerer.Unit(), activate_code);
   const mir::LocalId activate_self_id = seed_self(activate_bindings);
   mir::Block& activate_block = activate_code.Body();
   const WalkFrame activate_frame =
-      parent_frame.WithClass(&mir_class, class_id_, outer_scope_link)
-          .WithBlock(&activate_block)
-          .WithBindings(&activate_bindings);
+      scope_frame.WithBlock(&activate_block).WithBindings(&activate_bindings);
   const auto self_read = [&]() -> mir::ExprId {
     return ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame, self_ptr_type));
   };

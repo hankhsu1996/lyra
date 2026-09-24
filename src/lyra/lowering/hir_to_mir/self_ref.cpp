@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <variant>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/mir/class.hpp"
@@ -27,6 +28,65 @@ auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
   return read;
 }
 
+auto BindImplicitParameters(
+    const WalkFrame& frame, const ClassShape& owner, CallableForm form)
+    -> BoundImplicitParameters {
+  struct Takes {
+    bool object;
+    bool instance;
+  };
+  const Takes takes = [&] {
+    switch (form) {
+      case CallableForm::kInstanceMember:
+        return Takes{.object = true, .instance = false};
+      case CallableForm::kTypeAssociated:
+        return Takes{.object = false, .instance = true};
+      case CallableForm::kConstructor:
+        return Takes{.object = true, .instance = true};
+    }
+    throw InternalError("BindImplicitParameters: unknown CallableForm");
+  }();
+  CallableBindings& bindings = *frame.bindings;
+  BoundImplicitParameters bound{.params = {}, .frame = frame};
+  if (takes.object) {
+    bound.params.push_back(
+        bindings.Declare(BindingOriginId::Receiver(), owner.self_pointer_type));
+  }
+  if (takes.instance && owner.declaring_instance.has_value()) {
+    bound.params.push_back(bindings.Declare(
+        BindingOriginId::DeclaringInstance(), owner.declaring_instance->type));
+    bound.frame = bound.frame.WithStructuralBase(ScopeThroughParameter{});
+  }
+  return bound;
+}
+
+auto ImplicitInstanceArgumentOf(
+    const std::optional<DeclaringInstance>& declaring,
+    std::optional<hir::StructuralHops> measured)
+    -> std::optional<ImplicitInstanceArgument> {
+  if (!declaring.has_value()) return std::nullopt;
+  if (!measured.has_value()) {
+    throw InternalError(
+        "ImplicitInstanceArgumentOf: the class belongs to an instance, and the "
+        "call measured no distance to it");
+  }
+  return ImplicitInstanceArgument{
+      .hops = mir::EnclosingHops{measured->value}, .type = declaring->type};
+}
+
+auto BuildImplicitInstanceArgument(
+    const WalkFrame& frame, const mir::CompilationUnit& unit,
+    const ImplicitInstanceArgument& argument) -> mir::ExprId {
+  const mir::ExprId reached =
+      BuildEnclosingScopeReceiver(frame, unit, argument.hops);
+  if (frame.current_block->exprs.Get(reached).type != argument.type) {
+    throw InternalError(
+        "BuildImplicitInstanceArgument: the climb from the call lands on an "
+        "instance of another scope than the one the class belongs to");
+  }
+  return reached;
+}
+
 auto BuildEnclosingScopeReceiver(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops) -> mir::ExprId {
@@ -35,6 +95,12 @@ auto BuildEnclosingScopeReceiver(
   // that scope, or it was handed the instance its class belongs to.
   mir::ExprId nav = std::visit(
       Overloaded{
+          [](const NoScope&) -> mir::ExprId {
+            throw InternalError(
+                "BuildEnclosingScopeReceiver: a body of a namespace unit "
+                "belongs to no instance, so nothing it names is reached "
+                "through one");
+          },
           [&](const ScopeIsSelf&) {
             return block.exprs.Add(
                 MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
@@ -51,14 +117,11 @@ auto BuildEnclosingScopeReceiver(
                     frame.EnclosingClassAtHops(mir::EnclosingHops{0})
                         .cls->self_pointer_type));
           },
-          [&](const ScopeThroughParameter& through) {
+          [&](const ScopeThroughParameter&) {
+            const BodyBindingRef instance = frame.bindings->EnsureCarrier(
+                BindingOriginId::DeclaringInstance());
             return block.exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::ReferenceExpr{
-                            .target = mir::LocalRef{.var = through.local}},
-                    .type = frame.EnclosingClassAtHops(mir::EnclosingHops{0})
-                                .cls->self_pointer_type});
+                frame.bindings->MakeReadExpr(instance, block));
           }},
       frame.structural_base);
   if (hops.value == 0) {

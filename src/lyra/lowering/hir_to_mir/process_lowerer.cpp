@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 
-#include <cstddef>
 #include <expected>
 #include <optional>
 #include <utility>
@@ -211,6 +210,17 @@ auto LowerForeverProcess(
   return code;
 }
 
+// Starts `local` at its type's default value (LRM Table 6-7 for a scalar, Table
+// 7-1 for an aggregate): a formal that brings no value in, or the implicit
+// result variable, both of which a body may read before writing.
+void InitializeToDefault(
+    UnitLowerer& unit_lowerer, mir::Block& body, mir::LocalId local,
+    hir::TypeId type) {
+  const mir::ExprId init =
+      body.exprs.Add(BuildDefaultValueFromHir(unit_lowerer, body, type));
+  body.AppendStmt(mir::LocalDeclStmt{.target = local, .init = init});
+}
+
 }  // namespace
 
 auto ProcessLowerer::Run(const hir::Process& src)
@@ -234,44 +244,24 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   const WalkFrame& parent = owner_ctor_frame_;
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(owner_->Unit(), code);
-  std::vector<mir::LocalId> params;
-  // A callable's leading parameter is the ambient handle its body reaches
-  // enclosing state through. An instance method (LRM 8.6) takes `self`, the
-  // pointer to its object; a package callable (LRM 26.3) has no object and
-  // instead takes the runtime handle directly -- the receiver-less peer of
-  // `self`, through which it wakes a package variable's subscribers or suspends
-  // a task. A static class method (LRM 8.10) has an owner class but no object,
-  // so it takes neither. The handle is seeded for every callable of its form,
-  // never derived from whether the body happens to use it, so no call site
-  // re-derives the signature.
-  const bool has_receiver = parent.current_class != nullptr && !src.is_static;
-  StructuralBase base = parent.structural_base;
-  if (has_receiver) {
-    params.push_back(bindings.Declare(
-        BindingOriginId::Receiver(), parent.current_class->self_pointer_type));
-  } else if (parent.current_class == nullptr) {
-    params.push_back(bindings.Declare(
-        BindingOriginId::Runtime(), owner_->Unit().builtins.effects));
-  } else if (std::holds_alternative<ScopeThroughMember>(base)) {
-    // A static method of a class a structural scope declares still reaches what
-    // that class keeps for itself, and that is the instance's (LRM 6.22). It
-    // has no object to reach the instance through, so the instance is its
-    // leading parameter -- a value the callable needs, not a receiver standing
-    // in for an object it does not have.
-    const mir::LocalId declaring = bindings.DeclareAnonymous(
-        parent.EnclosingClassAtHops(mir::EnclosingHops{})
-            .cls->self_pointer_type);
-    params.push_back(declaring);
-    base = ScopeThroughParameter{.local = declaring};
-  }
   // A task or function is a scope the source named (LRM 23.9), so the body
   // starts in that scope's own name node and `%m` inside it reports the task,
-  // not the instance around it.
-  const WalkFrame body_frame =
+  // not the instance around it. What it takes ahead of its formals is what the
+  // class declaring it states; a subroutine of a namespace unit (LRM 26.3) has
+  // no class and takes nothing.
+  const WalkFrame entry_frame =
       parent.WithBlock(&code.Body())
           .WithBindings(&bindings)
-          .WithStructuralBase(std::move(base))
           .WithScopeNameBorrowedHandle(RootScope().NameBorrowedHandle());
+  BoundImplicitParameters bound =
+      parent.current_class == nullptr
+          ? BoundImplicitParameters{.params = {}, .frame = entry_frame}
+          : BindImplicitParameters(
+                entry_frame, owner_->GetClassShape(parent.current_class_id),
+                src.is_static ? CallableForm::kTypeAssociated
+                              : CallableForm::kInstanceMember);
+  const WalkFrame& body_frame = bound.frame;
+  std::vector<mir::LocalId> params = std::move(bound.params);
 
   // Formals normalize into the signature's data flow (LRM 13.5). Every formal
   // is a binding in the callable, identified by its HIR id; one that is no
@@ -286,15 +276,12 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
         ParamTypeOf(*owner_, hir_var.type, dir);
 
     if (!param_type.has_value()) {
-      const mir::ExprId default_init = code.Body().exprs.Add(
-          BuildDefaultValueFromHir(*owner_, code.Body(), hir_var.type));
       const mir::LocalId local = bindings.DeclareProcedural(
           BindingOriginId::Procedural(param.var), hir_var.name, value_type);
-      code.Body().AppendStmt(
-          mir::LocalDeclStmt{.target = local, .init = default_init});
+      InitializeToDefault(*owner_, code.Body(), local, hir_var.type);
       MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
-      output_pack_vars_.push_back(local);
-      output_pack_types_.push_back(value_type);
+      output_locals_.push_back(
+          PayloadLocal{.local = local, .type = value_type});
       continue;
     }
 
@@ -303,8 +290,8 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     MapProceduralVar(param.var, AutomaticVarBinding{.type = *param_type});
     params.push_back(mir_var);
     if (dir == hir::ParamDirection::kInOut) {
-      output_pack_vars_.push_back(mir_var);
-      output_pack_types_.push_back(value_type);
+      output_locals_.push_back(
+          PayloadLocal{.local = mir_var, .type = value_type});
     }
   }
 
@@ -315,15 +302,11 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // `return` carries. void functions and tasks have none.
   if (src.result_var.has_value()) {
     const mir::TypeId ret_type = owner_->TranslateType(src.result_type);
-    const mir::ExprId default_init = code.Body().exprs.Add(
-        BuildDefaultValueFromHir(*owner_, code.Body(), src.result_type));
     const mir::LocalId result_local = bindings.Declare(
         BindingOriginId::Procedural(*src.result_var), ret_type);
-    code.Body().AppendStmt(
-        mir::LocalDeclStmt{.target = result_local, .init = default_init});
+    InitializeToDefault(*owner_, code.Body(), result_local, src.result_type);
     MapProceduralVar(*src.result_var, AutomaticVarBinding{.type = ret_type});
-    result_var_ = result_local;
-    result_value_type_ = ret_type;
+    result_var_ = PayloadLocal{.local = result_local, .type = ret_type};
   }
 
   // A definition produces the completion its declaration fixes, so it reads
@@ -409,11 +392,12 @@ auto ProcessLowerer::BuildReturnPayload(
         explicit_value.has_value()
             ? *explicit_value
             : block.exprs.Add(
-                  mir::MakeLocalRefExpr(*result_var_, result_value_type_)));
+                  mir::MakeLocalRefExpr(
+                      result_var_->local, result_var_->type)));
   }
-  for (std::size_t i = 0; i < output_pack_vars_.size(); ++i) {
-    components.push_back(block.exprs.Add(
-        mir::MakeLocalRefExpr(output_pack_vars_[i], output_pack_types_[i])));
+  for (const PayloadLocal& output : output_locals_) {
+    components.push_back(
+        block.exprs.Add(mir::MakeLocalRefExpr(output.local, output.type)));
   }
   return block.exprs.Add(
       mir::Expr{

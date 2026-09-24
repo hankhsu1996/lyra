@@ -59,25 +59,29 @@ struct BodyBindingRef {
 };
 
 // The per-body capture policy: how this body views each origin it captures. The
-// receiver and the runtime handle are stable design-wide handles (snapshot); a
-// synthesized activation handle is owned (refcount copy); an origin in the
-// construction-scope set -- a `fork` branch's own block-item declarations -- is
-// snapshotted; any other enclosing origin aliases the live cell. A non-fork
-// closure leaves the set empty, so every forwarded source binding aliases.
+// receiver and the declaring instance are stable design-wide handles
+// (snapshot); a synthesized activation handle is owned
+// (refcount copy); an origin in the construction-scope set -- a `fork` branch's
+// own block-item declarations -- is snapshotted; any other enclosing origin
+// aliases the live cell. A non-fork closure leaves the set empty, so every
+// forwarded source binding aliases.
 struct CapturePolicy {
   std::set<BindingOriginId> snapshot_set;
 
   [[nodiscard]] auto ViewFor(BindingOriginId origin) const -> CaptureView {
     switch (origin.kind) {
       case BindingOriginId::Kind::kReceiver:
-      case BindingOriginId::Kind::kRuntime:
+      case BindingOriginId::Kind::kDeclaringInstance:
         return CaptureView::kSnapshot;
       case BindingOriginId::Kind::kSynthesized:
         return CaptureView::kOwning;
-      default:
+      case BindingOriginId::Kind::kSourceProcedural:
+      case BindingOriginId::Kind::kIterator:
+      case BindingOriginId::Kind::kPattern:
         return snapshot_set.contains(origin) ? CaptureView::kSnapshot
                                              : CaptureView::kAlias;
     }
+    throw InternalError("CapturePolicy::ViewFor: unknown binding origin kind");
   }
 };
 
@@ -119,9 +123,9 @@ class CallableBindings {
   // Declare a binding with a cross-body identity in this callable's `locals`,
   // recording it as the origin's canonical carrier here. `DeclareNamed` is for
   // a local the source declared and carries the identifier it wrote;
-  // `Declare` is for one the lowering seeds an origin with -- a receiver, the
-  // ambient runtime, the instance a static method of a replicated class
-  // reaches -- which the source never wrote and no identifier reaches.
+  // `Declare` is for one the lowering seeds an origin with -- a receiver, or
+  // the instance a body of a replicated class reaches without an object --
+  // which the source never wrote and no identifier reaches.
   auto DeclareNamed(BindingOriginId origin, std::string name, mir::TypeId type)
       -> mir::LocalId;
   auto Declare(BindingOriginId origin, mir::TypeId type) -> mir::LocalId;

@@ -1214,35 +1214,29 @@ auto SynthesizeForeignExportEntry(
   const WalkFrame body_frame =
       context_frame.WithBlock(&body).WithBindings(&bindings);
 
-  // What the target's first parameter binds, bound as a body local first so the
-  // whole body (recovery, marshaling, call, writeback) is MIR a backend renders
-  // mechanically. A subroutine of a scope (LRM 8.6) dispatches on a `self`,
-  // narrowed from the generic scope this entry was reached on -- valid because
-  // the lookup that found the entry found it on that very scope. A
-  // receiver-less package function (LRM 26.3) takes the run's effects,
-  // recovered as the current runtime like any other package call.
-  mir::TypeId context_type{};
-  mir::LocalId context_local{};
-  mir::ExprId context_init{};
-  if (through_scope) {
-    context_type = context_frame.current_class->self_pointer_type;
-    context_local = bindings.Declare(BindingOriginId::Receiver(), context_type);
-    context_init = body.exprs.Add(
+  // A subroutine of a scope (LRM 8.6) dispatches on a `self`, narrowed from the
+  // generic scope this entry was reached on -- valid because the lookup that
+  // found the entry found it on that very scope -- and bound as a body local
+  // first so the whole body (recovery, marshaling, call, writeback) is MIR a
+  // backend renders mechanically. A package subroutine (LRM 26.3) takes nothing
+  // ahead of the formals the source wrote.
+  std::optional<mir::ExprId> receiver;
+  if (scope_param.has_value()) {
+    const mir::TypeId self_type =
+        context_frame.current_class->self_pointer_type;
+    const mir::LocalId self_local =
+        bindings.Declare(BindingOriginId::Receiver(), self_type);
+    const mir::ExprId narrowed = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::CastExpr{
                     .operand = body.exprs.Add(
                         mir::MakeLocalRefExpr(
                             *scope_param, unit.builtins.scope_ptr))},
-            .type = context_type});
-  } else {
-    context_type = unit.builtins.effects;
-    context_local = bindings.Declare(BindingOriginId::Runtime(), context_type);
-    context_init =
-        body.exprs.Add(mir::MakeCurrentRuntimeCallExpr(context_type));
+            .type = self_type});
+    body.AppendStmt(mir::LocalDeclStmt{.target = self_local, .init = narrowed});
+    receiver = body.exprs.Add(mir::MakeLocalRefExpr(self_local, self_type));
   }
-  body.AppendStmt(
-      mir::LocalDeclStmt{.target = context_local, .init = context_init});
 
   const auto param_ref = [&](std::size_t i) -> mir::ExprId {
     return body.exprs.Add(
@@ -1256,12 +1250,7 @@ auto SynthesizeForeignExportEntry(
   // method parameter -- it rides the completion payload (LRM 13.5). A vector
   // reads its SV value from the incoming canonical buffer; a scalar `input`
   // crosses by value; a scalar `inout` reads through its pointer.
-  const mir::ExprId context_ref =
-      body.exprs.Add(mir::MakeLocalRefExpr(context_local, context_type));
   std::vector<mir::ExprId> call_args;
-  if (!through_scope) {
-    call_args.push_back(context_ref);
-  }
   for (std::size_t i = 0; i < export_decl.params.size(); ++i) {
     const hir::DpiParamAbi& p = export_decl.params[i];
     if (p.direction == support::DpiDirection::kOutput) {
@@ -1309,9 +1298,7 @@ auto SynthesizeForeignExportEntry(
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = std::move(target),
-                          .receiver = through_scope ? std::optional{context_ref}
-                                                    : std::nullopt},
+                          .target = std::move(target), .receiver = receiver},
                   .arguments = std::move(call_args)},
           .type = method_result_type});
 

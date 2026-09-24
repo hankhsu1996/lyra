@@ -283,7 +283,7 @@ auto ClassifyDpiDirection(const slang::ast::FormalArgumentSymbol& formal)
 // registry the body lowering uses.
 struct SubroutineLoweringResult {
   hir::SubroutineDecl decl;
-  std::optional<hir::BaseCall> base_call;
+  std::optional<std::vector<hir::ExprId>> base_arguments;
 };
 
 auto LowerSubroutineDeclImpl(
@@ -340,17 +340,17 @@ auto LowerSubroutineDeclImpl(
   // (which the LRM requires super.new to precede), keeps them ahead of any
   // stateful body computation and ensures they see only the formals -- the
   // ordering the runtime observes when it invokes the base ctor first.
-  std::optional<hir::BaseCall> base_call;
+  std::optional<std::vector<hir::ExprId>> base_arguments;
   if (base_call_ast != nullptr) {
-    hir::BaseCall lowered;
+    std::vector<hir::ExprId> lowered;
     const auto actuals = BaseCallArguments(*base_call_ast);
-    lowered.arguments.reserve(actuals.size());
+    lowered.reserve(actuals.size());
     for (const auto* actual : actuals) {
       auto arg_or = lowerer.LowerExpr(*actual, body_frame);
       if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-      lowered.arguments.push_back(body.exprs.Add(*std::move(arg_or)));
+      lowered.push_back(body.exprs.Add(*std::move(arg_or)));
     }
-    base_call = std::move(lowered);
+    base_arguments = std::move(lowered);
   }
 
   auto body_stmt_or = lowerer.LowerStmt(sym.getBody(), body_frame);
@@ -374,7 +374,7 @@ auto LowerSubroutineDeclImpl(
               .root_stmt = root_stmt,
               .is_virtual = false,
               .overrides = std::nullopt},
-      .base_call = std::move(base_call)};
+      .base_arguments = std::move(base_arguments)};
 }
 
 }  // namespace
@@ -402,13 +402,13 @@ auto LowerSubroutineDecl(
 auto LowerConstructorDecl(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
     WalkFrame frame, const slang::ast::Expression* base_call_ast)
-    -> diag::Result<ConstructorAndBaseCall> {
+    -> diag::Result<ConstructorAndBaseArguments> {
   auto result_or =
       LowerSubroutineDeclImpl(unit_lowerer, sym, frame, base_call_ast);
   if (!result_or) return std::unexpected(std::move(result_or.error()));
-  return ConstructorAndBaseCall{
+  return ConstructorAndBaseArguments{
       .constructor = std::move(result_or->decl),
-      .base_call = std::move(result_or->base_call)};
+      .base_arguments = std::move(result_or->base_arguments)};
 }
 
 auto LowerMethodPrototypeDecl(

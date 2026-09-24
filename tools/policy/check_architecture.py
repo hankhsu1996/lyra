@@ -882,8 +882,6 @@ def check_a019(repo_root: Path) -> list[str]:
 # is coarser than one entry per switch, and it hides nothing new: a key is here
 # only because a switch under it already carried a `default:`.
 A020_STANDING = frozenset({
-    ("include/lyra/lowering/hir_to_mir/callable_bindings.hpp",
-     "BindingOriginId::Kind"),
     ("src/lyra/lowering/ast_to_hir/compilation_lowerer.cpp",
      "slang::ast::SymbolKind"),
     ("src/lyra/lowering/ast_to_hir/expression/query.cpp", "KnownSystemName"),
