@@ -250,14 +250,14 @@ auto AssertionsOf(hir::UniquePriorityCheck check, bool has_catch_all)
 }
 
 auto SeriesOf(const hir::ProceduralBody& proc, const hir::IfStmt& root)
-    -> QualifiedIfSeries {
-  QualifiedIfSeries out;
+    -> IfSeries {
+  IfSeries out;
   out.arms.push_back(&root);
   std::optional<hir::StmtId> cur_else = root.else_stmt;
   while (cur_else.has_value()) {
     const hir::Stmt& s = proc.stmts.Get(*cur_else);
     const auto* nested = std::get_if<hir::IfStmt>(&s.data);
-    if (nested == nullptr || nested->check.has_value()) {
+    if (nested == nullptr || nested->check.has_value() || s.label.has_value()) {
       out.else_arm = cur_else;
       break;
     }
@@ -355,7 +355,7 @@ auto BuildUniquenessCheckCascade(
 }
 
 auto LowerIfFallThrough(
-    ProcessLowerer& process, WalkFrame frame, const QualifiedIfSeries& series,
+    ProcessLowerer& process, WalkFrame frame, const IfSeries& series,
     hir::UniquePriorityCheck check, diag::SourceSpan span)
     -> diag::Result<std::optional<mir::Block>> {
   const bool has_catch_all = series.else_arm.has_value();
@@ -373,7 +373,7 @@ auto LowerIfFallThrough(
 
 auto LowerUniquenessIfSeries(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const QualifiedIfSeries& series, hir::UniquePriorityCheck check,
+    const IfSeries& series, hir::UniquePriorityCheck check,
     diag::SourceSpan span) -> diag::Result<mir::Stmt> {
   const mir::TypeId bit1_type = process.Owner().Unit().builtins.bit1;
 

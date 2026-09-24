@@ -11,38 +11,33 @@
 
 namespace lyra::backend::cpp {
 
-// Whose cell a declaration brings into being: one that every object of a class
-// holds, one the type itself owns (LRM 8.9), or one the unit's namespace owns
-// (LRM 26.2).
+// Who owns a declared variable: each object of a class, the class itself (a
+// static property, LRM 8.9), or the unit's namespace (a package variable, LRM
+// 26.2).
 enum class CellOwner : std::uint8_t { kObject, kType, kNamespace };
 
-// Whether this text defines the cell or announces one defined elsewhere. A unit
-// is emitted as two artifacts, so a cell a referrer may name is written twice,
-// and only the definition establishes a value.
+// Whether this text is the variable's definition or only declares one defined
+// elsewhere. A variable another unit may name is declared in the header and
+// defined in the code file.
 enum class CellText : std::uint8_t { kAnnounced, kDefined };
 
-// One declared cell, in the parts a declaration is spelled from. A site states
-// what it knows -- whose cell this is, whether this text defines it, whether
-// its value is fixed, its type and its name -- and states nothing about
-// keywords, punctuation, or where a qualifier goes. Those are this target's
-// alone, and spelling them in one place is what stops two sites writing one
-// declaration two ways.
+// A variable declaration, described by what the caller knows: owner,
+// definition or not, const or not, type and name. The keywords and punctuation
+// those imply are chosen in one place, below, so no two sites write the same
+// declaration differently.
 struct DeclaredCell {
   CellOwner owner = CellOwner::kObject;
   CellText text = CellText::kDefined;
   bool immutable = false;
   CppType type;
   CppName name;
-  // The declaration this text sits outside of, for a definition written apart
-  // from the class that declares the cell. Its absence is also what says the
-  // text sits inside that class, which is where a storage keyword is spelled
-  // and where it is spelled once.
+  // The class the name is qualified with, `C::name`, for a definition written
+  // outside its class.
   std::optional<CppName> qualifier;
 };
 
-// The keywords this target wants before the cell's type. A definition written
-// apart from its class repeats none of them, because a storage class is spelled
-// where the member is declared, so that case is answered ahead of the rest.
+// The keywords before the type. A definition outside its class takes none:
+// `static` and `extern` go only where the variable is declared.
 [[nodiscard]] inline auto CellKeywords(const DeclaredCell& cell)
     -> std::string_view {
   if (cell.qualifier.has_value()) {
@@ -52,9 +47,8 @@ struct DeclaredCell {
     case CellOwner::kObject:
       return "";
     case CellOwner::kType:
-      // A type's cell is one for the whole program however many translation
-      // units read the class, which is what the pair of keywords buys where the
-      // member is declared.
+      // `inline static` defines one cell for the whole program, however many
+      // files include the class.
       return cell.text == CellText::kAnnounced ? "static " : "inline static ";
     case CellOwner::kNamespace:
       return cell.text == CellText::kAnnounced ? "extern " : "";
@@ -76,11 +70,8 @@ inline void WriteDeclarationUpToTheValue(
   Write(out, cell.name);
 }
 
-// A declaration stating no value of its own: what the cell needs in front of
-// it, its type, its name under whatever qualifies it, and the semicolon. A
-// definition that states nothing still establishes a value -- the language's
-// own default, spelled so a scalar is zeroed rather than left holding whatever
-// the storage had.
+// A declaration with no value: `T name;`, or `T name{};` for a definition, so
+// a scalar starts at zero rather than at whatever the memory held.
 inline void WriteDeclaration(TargetText& out, const DeclaredCell& cell) {
   WriteDeclarationUpToTheValue(out, cell);
   if (cell.text == CellText::kDefined) {
@@ -89,8 +80,8 @@ inline void WriteDeclaration(TargetText& out, const DeclaredCell& cell) {
   out += ";\n";
 }
 
-// A declaration whose value is an expression of the program, written where the
-// declaration puts it rather than handed over as text.
+// A definition with a value, `T name = value;`, where `write_value` writes the
+// value.
 template <typename WriteValue>
 void WriteDeclaration(
     TargetText& out, const DeclaredCell& cell, WriteValue write_value) {
@@ -100,9 +91,7 @@ void WriteDeclaration(
   out += ";\n";
 }
 
-// A namespace enclosing what is written between the two. Opening one and
-// closing it are the same decision seen twice -- the closing comment repeats
-// the name -- so both are spelled here.
+// `namespace N {` and its closing `}  // namespace N`.
 inline void OpenNamespace(TargetText& out, SourceName name) {
   Write(out, "namespace ", name, " {\n");
 }
@@ -111,7 +100,8 @@ inline void CloseNamespace(TargetText& out, SourceName name) {
   Write(out, "}  // namespace ", name, "\n");
 }
 
-// Text already assembled elsewhere, placed as a section of this artifact.
+// Text built separately, added as a section of this file: set apart by a blank
+// line, unless it is empty.
 inline void AppendSection(TargetText& out, const TargetText& section) {
   const TargetText::Section placed(out);
   out += section.View();

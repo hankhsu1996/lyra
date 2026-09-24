@@ -712,12 +712,18 @@ auto LowerHirConditionalExpr(
       .type = result_type};
 }
 
+auto DeclaresBindings(const hir::ConditionalExpr& c) -> bool {
+  return std::ranges::any_of(
+      c.conditions, [](const hir::ConditionClause& clause) {
+        return clause.pattern.has_value();
+      });
+}
+
 template <ExprLowerer Lowerer>
 auto LowerHirBindingConditionalExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& unit = lowerer.Owner().Unit();
-  const mir::TypeId bit1_type = unit.builtins.bit1;
   auto& block = *frame.current_block;
 
   // A clause pattern declares an identifier, so this predicate cannot be an
@@ -730,13 +736,6 @@ auto LowerHirBindingConditionalExpr(
           .target = result_local,
           .init = block.exprs.Add(
               BuildDefaultValueExpr(unit, block, result_type))});
-
-  // A conditional expression always has both arms, so the else-arm is always
-  // reachable and the chain always has to report whether it held.
-  const mir::LocalId taken_flag = frame.bindings->DeclareAnonymous(bit1_type);
-  block.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = taken_flag, .init = BuildBit1Literal(unit, block, false)});
 
   auto assign_arm = [&](WalkFrame arm_frame,
                         hir::ExprId value) -> diag::Result<void> {
@@ -753,22 +752,41 @@ auto LowerHirBindingConditionalExpr(
     return {};
   };
 
-  auto chain_or = BuildClauseChainIf(
-      lowerer, frame, std::span<const hir::ConditionClause>{c.conditions},
-      taken_flag, [&](WalkFrame arm_frame) -> diag::Result<void> {
-        return assign_arm(arm_frame, c.then_value);
-      });
-  if (!chain_or) return std::unexpected(std::move(chain_or.error()));
-  block.AppendStmt(*std::move(chain_or));
+  // An else arm that is itself such a conditional of the same type continues
+  // the series rather than nesting inside it, so `a ? x : b ? y : z` is one
+  // series of two arms however far it goes. One of another type stays a value
+  // of its own, since its arms convert to its type before it converts to this
+  // one.
+  std::vector<const hir::ConditionalExpr*> links{&c};
+  hir::ExprId otherwise = c.else_value;
+  for (;;) {
+    const hir::Expr& next = lowerer.HirExprs().Get(otherwise);
+    const auto* link = std::get_if<hir::ConditionalExpr>(&next.data);
+    if (link == nullptr || !DeclaresBindings(*link) ||
+        lowerer.Owner().TranslateType(next.type) != result_type) {
+      break;
+    }
+    links.push_back(link);
+    otherwise = link->else_value;
+  }
 
+  // A conditional expression always has both arms, so the series always runs
+  // one of them.
   mir::Block else_block;
-  const WalkFrame else_frame = frame.WithBlock(&else_block);
-  auto else_or = assign_arm(else_frame, c.else_value);
+  auto else_or = assign_arm(frame.WithBlock(&else_block), otherwise);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
-  const mir::BlockId else_scope = block.child_scopes.Add(std::move(else_block));
 
-  block.AppendStmt(
-      BuildChainElseIf(unit, block, taken_flag, bit1_type, else_scope));
+  auto series_or = BuildClauseSeries(
+      lowerer, frame, links.size(),
+      [&](std::size_t link) {
+        return std::span<const hir::ConditionClause>{links[link]->conditions};
+      },
+      [&](WalkFrame arm_frame, std::size_t link) -> diag::Result<void> {
+        return assign_arm(arm_frame, links[link]->then_value);
+      },
+      std::move(else_block));
+  if (!series_or) return std::unexpected(std::move(series_or.error()));
+  block.AppendStmt(*std::move(series_or));
 
   return mir::Expr{
       .data = mir::ReferenceExpr{.target = mir::LocalRef{.var = result_local}},

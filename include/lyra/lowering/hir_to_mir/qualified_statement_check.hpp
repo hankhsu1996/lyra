@@ -40,17 +40,19 @@ auto AssertionsOf(hir::UniquePriorityCheck check, bool has_catch_all)
 // 12.5.3 over a case statement's items.
 enum class QualifiedArmKind { kCondition, kCaseItem };
 
-// The if-else-if series a qualifier applies to. LRM 12.4.2 has the keyword
-// govern the entire series rather than the one `if` that carries it, so both
-// the arms it checks and the `else` that discharges its totality assertion are
-// read off the series -- an `else if` continues it and is not that `else`.
-struct QualifiedIfSeries {
+// An if-else-if series: its arms in order, each the `else if` of the one
+// before, and the `else` that ends it. A nested `if` with a qualifier or a
+// label of its own is a statement in its own right, so it ends the series as
+// its `else`. A qualifier governs the whole series rather than the one `if`
+// that carries it (LRM 12.4.2), so both the arms it checks and the `else` that
+// discharges its totality assertion are read off the series.
+struct IfSeries {
   std::vector<const hir::IfStmt*> arms;
   std::optional<hir::StmtId> else_arm;
 };
 
 auto SeriesOf(const hir::ProceduralBody& proc, const hir::IfStmt& root)
-    -> QualifiedIfSeries;
+    -> IfSeries;
 
 // The arm a statement asserting totality runs when none of its own matched:
 // arriving there is the violation, so this reports it and carries nothing else.
@@ -66,7 +68,7 @@ auto BuildTotalityReportScope(
 // series never carries both, because an explicit `else` is what discharges that
 // assertion (LRM 12.4.2).
 auto LowerIfFallThrough(
-    ProcessLowerer& process, WalkFrame frame, const QualifiedIfSeries& series,
+    ProcessLowerer& process, WalkFrame frame, const IfSeries& series,
     hir::UniquePriorityCheck check, diag::SourceSpan span)
     -> diag::Result<std::optional<mir::Block>>;
 
@@ -91,7 +93,7 @@ auto BuildUniquenessCheckCascade(
 
 auto LowerUniquenessIfSeries(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const QualifiedIfSeries& series, hir::UniquePriorityCheck check,
+    const IfSeries& series, hir::UniquePriorityCheck check,
     diag::SourceSpan span) -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

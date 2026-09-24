@@ -1,5 +1,6 @@
 #include "lyra/backend/cpp/render_stmt.hpp"
 
+#include <string_view>
 #include <variant>
 
 #include "lyra/backend/cpp/naming.hpp"
@@ -14,15 +15,30 @@ namespace lyra::backend::cpp {
 
 namespace {
 
+void RenderStmtInPlace(
+    const ScopeView& view, const mir::Stmt& stmt, TargetText& out);
+
+// A block in braces, its statements one level in and its closing brace on a
+// line of its own, with nothing after that brace: what follows it -- a newline,
+// an `else`, a `catch`, a `while` -- is the enclosing statement's.
+void WriteBracedBlock(
+    const ScopeView& view, const mir::Block& block, TargetText& out) {
+  out += "{\n";
+  out.Indent();
+  RenderNestedBlock(view, block, out);
+  out.Outdent();
+  out.OpenLine();
+  out += "}";
+}
+
 void RenderForInit(
     const ScopeView& view, const mir::ForInit& init, TargetText& out) {
   std::visit(
       Overloaded{
           [&](const mir::ForInitDecl& d) {
-            // The induction variable's C++ type is whatever the initializer
-            // yields (every integral value is a PackedArray), so `auto` is the
-            // exact same type as spelling it out -- and reads as the idiomatic
-            // loop counter.
+            // `auto i = init`: the initializer already has the variable's
+            // type, so `auto` is exact and reads like an ordinary loop
+            // counter.
             Write(
                 view, out, "auto ",
                 CppLocalName(view.Code().named_locals, d.induction_var), " = ",
@@ -36,7 +52,6 @@ void RenderForInit(
 void RenderLocalDeclStmt(
     const ScopeView& view, const mir::LocalDeclStmt& s, TargetText& out) {
   const auto& lv = view.Code().locals.Get(s.target);
-  out.OpenLine();
   Write(
       view, out, lv.type, " ", CppLocalName(view.Code().named_locals, s.target),
       " = ", s.init, ";\n");
@@ -44,58 +59,39 @@ void RenderLocalDeclStmt(
 
 void RenderExprStmt(
     const ScopeView& view, const mir::ExprStmt& s, TargetText& out) {
-  out.OpenLine();
   Write(view, out, s.expr, ";\n");
 }
 
 void RenderBlockStmt(
     const ScopeView& view, const mir::BlockStmt& s, TargetText& out) {
-  const auto& child = view.Block().child_scopes.Get(s.scope);
-  out.OpenLine();
-  out += "{\n";
-  out.Indent();
-  RenderNestedBlock(view, child, out);
-  out.Outdent();
-  out.OpenLine();
-  out += "}\n";
+  WriteBracedBlock(view, view.Block().child_scopes.Get(s.scope), out);
+  out += "\n";
 }
 
 void RenderTryStmt(
     const ScopeView& view, const mir::TryStmt& s, TargetText& out) {
-  const auto& body = view.Block().child_scopes.Get(s.body);
   const auto& caught = view.Code().locals.Get(s.caught);
-  const auto& handler = view.Block().child_scopes.Get(s.handler);
-  out.OpenLine();
-  out += "try {\n";
-  out.Indent();
-  RenderNestedBlock(view, body, out);
-  out.Outdent();
-  out.OpenLine();
+  out += "try ";
+  WriteBracedBlock(view, view.Block().child_scopes.Get(s.body), out);
   Write(
-      view, out, "} catch (", caught.type, "& ",
-      CppLocalName(view.Code().named_locals, s.caught), ") {\n");
-  out.Indent();
-  RenderNestedBlock(view, handler, out);
-  out.Outdent();
-  out.OpenLine();
-  out += "}\n";
+      view, out, " catch (", caught.type, "& ",
+      CppLocalName(view.Code().named_locals, s.caught), ") ");
+  WriteBracedBlock(view, view.Block().child_scopes.Get(s.handler), out);
+  out += "\n";
 }
 
 void RenderRaiseStmt(
     const ScopeView& view, const mir::RaiseStmt& s, TargetText& out) {
-  out.OpenLine();
   Write(view, out, "throw ", s.effect, ";\n");
 }
 
-// C++ states an extent's exit through a destructor rather than through a
-// construct of its own, so the cleanup becomes a scope-exit object declared
-// ahead of the body: it runs however control leaves, including a `return` or a
-// `break` a trailing copy of the cleanup would miss.
+// C++ has no `finally`, so the cleanup becomes an object declared ahead of the
+// body whose destructor runs it. It runs however the body is left, a `return`
+// or `break` included, which a copy of the cleanup after the body would miss.
 void RenderFinallyStmt(
     const ScopeView& view, const mir::FinallyStmt& s, TargetText& out) {
   const auto& body = view.Block().child_scopes.Get(s.body);
   const auto& cleanup = view.Block().child_scopes.Get(s.cleanup);
-  out.OpenLine();
   out += "{\n";
   out.Indent();
   out.OpenLine();
@@ -115,56 +111,51 @@ void RenderFinallyStmt(
 
 void RenderIfStmt(
     const ScopeView& view, const mir::IfStmt& s, TargetText& out) {
-  const auto& then_scope = view.Block().child_scopes.Get(s.then_scope);
-  out.OpenLine();
-  Write(view, out, "if (", s.condition, ") {\n");
-  out.Indent();
-  RenderNestedBlock(view, then_scope, out);
-  out.Outdent();
-  out.OpenLine();
-  out += "}";
-  if (s.else_scope.has_value()) {
-    const auto& else_scope = view.Block().child_scopes.Get(*s.else_scope);
-    out += " else {\n";
-    out.Indent();
-    RenderNestedBlock(view, else_scope, out);
-    out.Outdent();
-    out.OpenLine();
-    out += "}";
+  Write(view, out, "if (", s.condition, ") ");
+  WriteBracedBlock(view, view.Block().child_scopes.Get(s.then_scope), out);
+  if (!s.else_scope.has_value()) {
+    out += "\n";
+    return;
   }
+  // An `else` holding one statement is written without braces, so an `else
+  // if` chain stays flat. With braces, an if-else-if or the items of a case
+  // would nest one level per link, and a long enough chain exceeds the nesting
+  // a C++ compiler accepts.
+  const auto& else_scope = view.Block().child_scopes.Get(*s.else_scope);
+  if (else_scope.root_stmts.size() == 1) {
+    out += " else ";
+    RenderStmtInPlace(
+        view.WithBlock(else_scope),
+        else_scope.stmts.Get(else_scope.root_stmts.front()), out);
+    return;
+  }
+  out += " else ";
+  WriteBracedBlock(view, else_scope, out);
   out += "\n";
 }
 
-// C++ has no labeled break, so a `foreach` break that must leave every nested
-// dimension lowers to a `goto` aimed at a label after the outermost loop. Both
-// the landing label and the jump derive their name from the loop's label.
+// C++ has no labeled break, so a `foreach` break that leaves every nested
+// dimension is `goto __lyra_break_<n>;`, aimed at a label after the outermost
+// loop. The label and the jump both take the name from here.
 void WriteBreakLandingLabel(mir::LoopLabelId label, TargetText& out) {
   Write(out, "__lyra_break_", label.value);
 }
 
 void RenderForStmt(
     const ScopeView& view, const mir::ForStmt& s, TargetText& out) {
-  const auto& block = view.Block().child_scopes.Get(s.scope);
-  out.OpenLine();
   out += "for (";
-  bool first_init = true;
-  for (const mir::ForInit& one : s.init) {
-    if (!first_init) out += ", ";
+  WriteSeparated(out, s.init, ", ", [&](const mir::ForInit& one) {
     RenderForInit(view, one, out);
-    first_init = false;
-  }
+  });
   out += "; ";
   if (s.condition.has_value()) {
     Write(view, out, *s.condition);
   }
   out += "; ";
   WriteCommaSeparated(view, out, s.step);
-  out += ") {\n";
-  out.Indent();
-  RenderNestedBlock(view, block, out);
-  out.Outdent();
-  out.OpenLine();
-  out += "}\n";
+  out += ") ";
+  WriteBracedBlock(view, view.Block().child_scopes.Get(s.scope), out);
+  out += "\n";
   if (s.break_label.has_value()) {
     out.OpenLine();
     WriteBreakLandingLabel(*s.break_label, out);
@@ -174,41 +165,29 @@ void RenderForStmt(
 
 void RenderWhileStmt(
     const ScopeView& view, const mir::WhileStmt& s, TargetText& out) {
-  const auto& block = view.Block().child_scopes.Get(s.scope);
-  out.OpenLine();
-  Write(view, out, "while (", s.condition, ") {\n");
-  out.Indent();
-  RenderNestedBlock(view, block, out);
-  out.Outdent();
-  out.OpenLine();
-  out += "}\n";
+  Write(view, out, "while (", s.condition, ") ");
+  WriteBracedBlock(view, view.Block().child_scopes.Get(s.scope), out);
+  out += "\n";
 }
 
 void RenderDoWhileStmt(
     const ScopeView& view, const mir::DoWhileStmt& s, TargetText& out) {
-  const auto& block = view.Block().child_scopes.Get(s.scope);
-  out.OpenLine();
-  out += "do {\n";
-  out.Indent();
-  RenderNestedBlock(view, block, out);
-  out.Outdent();
-  out.OpenLine();
-  Write(view, out, "} while (", s.condition, ");\n");
+  out += "do ";
+  WriteBracedBlock(view, view.Block().child_scopes.Get(s.scope), out);
+  Write(view, out, " while (", s.condition, ");\n");
 }
 
-}  // namespace
-
-void RenderStmt(const ScopeView& view, const mir::Stmt& stmt, TargetText& out) {
+// A statement written from the current position without starting a line:
+// after an `else`, or on a line the caller already started.
+void RenderStmtInPlace(
+    const ScopeView& view, const mir::Stmt& stmt, TargetText& out) {
   if (stmt.label.has_value()) {
-    out.OpenLine();
     Write(out, *stmt.label, ":\n");
+    out.OpenLine();
   }
   std::visit(
       Overloaded{
-          [&](const mir::EmptyStmt&) {
-            out.OpenLine();
-            out += ";\n";
-          },
+          [&](const mir::EmptyStmt&) { out += ";\n"; },
           [&](const mir::LocalDeclStmt& s) {
             RenderLocalDeclStmt(view, s, out);
           },
@@ -222,7 +201,6 @@ void RenderStmt(const ScopeView& view, const mir::Stmt& stmt, TargetText& out) {
           [&](const mir::WhileStmt& s) { RenderWhileStmt(view, s, out); },
           [&](const mir::DoWhileStmt& s) { RenderDoWhileStmt(view, s, out); },
           [&](const mir::BreakStmt& s) {
-            out.OpenLine();
             if (s.target.has_value()) {
               out += "goto ";
               WriteBreakLandingLabel(*s.target, out);
@@ -231,23 +209,16 @@ void RenderStmt(const ScopeView& view, const mir::Stmt& stmt, TargetText& out) {
             }
             out += "break;\n";
           },
-          [&](const mir::ContinueStmt&) {
-            out.OpenLine();
-            out += "continue;\n";
-          },
+          [&](const mir::ContinueStmt&) { out += "continue;\n"; },
           [&](const mir::ReturnStmt& s) {
-            // A coroutine completes through `co_return`, which the enclosing
-            // callable's result type states: coroutine-ness is the call
-            // protocol, read from the type rather than restated on the
-            // statement. A value rides the result either way (LRM 13.3 /
-            // 13.4.1).
+            // `co_return` in a coroutine, `return` otherwise; the function's
+            // result type says which it is (LRM 13.3, 13.4.1).
             const std::string_view keyword =
                 view.Unit()
                         .types.Get(view.Code().result_type)
                         .Is<mir::CoroutineType>()
                     ? "co_return"
                     : "return";
-            out.OpenLine();
             out += keyword;
             if (!s.value.has_value()) {
               out += ";\n";
@@ -257,6 +228,13 @@ void RenderStmt(const ScopeView& view, const mir::Stmt& stmt, TargetText& out) {
           },
       },
       stmt.data);
+}
+
+}  // namespace
+
+void RenderStmt(const ScopeView& view, const mir::Stmt& stmt, TargetText& out) {
+  out.OpenLine();
+  RenderStmtInPlace(view, stmt, out);
 }
 
 void RenderBlockStatements(const ScopeView& view, TargetText& out) {

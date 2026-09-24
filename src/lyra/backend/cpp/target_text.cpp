@@ -13,8 +13,8 @@ namespace lyra::backend::cpp {
 
 namespace {
 
-// Indentation comes out of a fixed run of spaces, so opening a line costs
-// nothing however deep it sits.
+// Indentation is copied from a fixed run of spaces rather than built a space at
+// a time.
 constexpr std::string_view kSpaces = "                                ";
 
 constexpr std::size_t kSpacesPerLevel = 2;
@@ -40,9 +40,8 @@ void AppendNumber(TargetText& out, Integer value, int base) {
 }  // namespace
 
 auto TargetText::operator+=(std::string_view text) -> TargetText& {
-  // Writing nothing pays nothing: what settles an owed separator is a byte
-  // actually landing, which is how a section that turns out to hold nothing
-  // costs nothing at all.
+  // An empty write is not a section's first byte, so it does not write the
+  // section's blank line.
   if (text.empty()) {
     return *this;
   }

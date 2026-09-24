@@ -106,12 +106,12 @@ auto BuildTagTest(
 
 }  // namespace
 
-auto BuildChainElseIf(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    mir::LocalId taken_flag, mir::TypeId bit1_type, mir::BlockId else_scope)
-    -> mir::IfStmt {
+auto BuildUnlessTaken(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId taken,
+    mir::BlockId scope) -> mir::IfStmt {
+  const mir::TypeId bit1_type = unit.builtins.bit1;
   const mir::ExprId flag_ref =
-      block.exprs.Add(mir::MakeLocalRefExpr(taken_flag, bit1_type));
+      block.exprs.Add(mir::MakeLocalRefExpr(taken, bit1_type));
   const mir::ExprId not_taken = block.exprs.Add(
       mir::Expr{
           .data =
@@ -120,7 +120,7 @@ auto BuildChainElseIf(
           .type = bit1_type});
   return mir::IfStmt{
       .condition = ReduceToCondition(unit, block, not_taken),
-      .then_scope = else_scope,
+      .then_scope = scope,
       .else_scope = std::nullopt};
 }
 
