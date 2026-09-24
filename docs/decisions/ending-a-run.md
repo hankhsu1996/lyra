@@ -46,7 +46,7 @@ a departure  this execution leaves, and no region may claim it. Ends one activat
 ```text
 $info / $warning / $error   report
 $fatal                      report + stop + departure
-$finish / $exit / $stop              stop
+$finish / $exit / $stop     stop + departure
 a design run-time error     report [+ stop + departure]  by its chosen severity
 an internal inconsistency   the tool stops the run; none of the three, and no ending of the design's
 ```
@@ -54,6 +54,34 @@ an internal inconsistency   the tool stops the run; none of the three, and no en
 The composition is not new. `$fatal` already lowers to a severity emit followed by a finish request,
 which is LRM 20.10's "results in an implicit call to `$finish`" written out. What this entry does is
 make everything else in the table use the same three pieces.
+
+## What any answer has to satisfy
+
+Stated without reference to any shape, so each can be checked against a candidate directly.
+
+```text
+R1. Once a task that ends the run is reached, no further statement of the design runs in the
+    execution that reached it: not the rest of its body, not the bodies it was called through
+    (LRM 20.2, "causes the simulator to exit").
+R2. Such a task may stand in any body: a procedure, a task, a function, a class method, a final
+    procedure, a variable's declaration assignment, and a subroutine foreign code called in.
+    LRM 13.4's restriction on functions is a closed list of time-controlling statements, and its
+    rule (c) admits a function that kills the current process.
+R3. Final procedures run once the simulation has ended this way (LRM 9.2.3), except that one
+    reached from inside a final procedure ends the simulation immediately, so the ones still
+    queued do not.
+R4. A frame of another language is never unwound and never skipped; it ends only by returning
+    (LRM 35.9).
+R5. A foreign frame beneath an execution the run ended under is told that its caller will not
+    continue, in the protocol's own terms. LRM 35.9 names the disabled state for a disable only,
+    because that is the one stop it lets reach a foreign call and come back to it; what the
+    foreign side can do about any stop is the same -- call in no further, and return -- so it is
+    told the same thing and held to the same protocol as under a disable.
+R6. Nothing of the design runs after the run has ended, including a subroutine foreign code calls
+    into afterwards.
+R7. One program means the same thing on every backend, so what an ending does is decided above
+    the backends, never by one of them.
+```
 
 ## The decisions
 
@@ -111,6 +139,12 @@ D9. A body is left in exactly two ways: it returns, or it departs. A departure i
     departure that reached its landing, and a condition the source language cannot express is not a
     third outcome beside them: it is a departure no region can claim, which is the shape a kill
     already takes. Such a departure is reported at that landing, and the run ends there.
+
+D10. A task that ends the run departs from the execution that called it, and never parks it. The
+     simulator exits at the call (LRM 20.2), so no statement after it runs, and the call is legal
+     in a function (LRM 13.4), which cannot suspend. Parking the caller forever answers the first
+     only where the second does not arise; a departure answers both in every body. The stop and the
+     departure are one call rather than two, because nothing may run between them.
 ```
 
 D9 completes the reversal
@@ -167,6 +201,13 @@ not whether the execution was in error.
 
 ## Consequences
 
+- A process that ends the run reports KILLED from `status()` afterwards (LRM 9.7), because its
+  execution departed rather than running out its body. Only a `final` procedure holding its handle
+  can observe that.
+- A foreign caller beneath an exported subroutine that ended the run is in the disabled state of LRM
+  35.9, as it is under a kill, and owes what the protocol asks: an imported function acknowledges,
+  an imported task returns 1, and neither calls in again. One that does call in again is reported,
+  and the call runs nothing of the design.
 - A bare `$finish` prints a line, because LRM Table 20-1's default level is 1. Every simulator does
   this; Lyra printing nothing was the level being discarded rather than a choice.
 - `activation.md` invariant 2's third alternative goes. An activation settles the value it produced

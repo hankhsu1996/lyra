@@ -554,8 +554,8 @@ TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
 
 // Variable initialization is simulation activity at time zero (LRM 4), not
 // construction, so an error raised by an initializer is a run-time error of the
-// design and is reported as one. Before the simulation's boundary followed the
-// elaboration phases it left the emitted program entirely, which aborted.
+// design: it is reported, and it ends the simulation the way $fatal does, so
+// the final procedures still execute at its end (LRM 9.2.3, 20.10).
 TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -571,6 +571,7 @@ TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
                      << "  U src;\n"
                      << "  bit [7:0] v = src.b;\n"
                      << "  initial $display(\"v=%0d\", v);\n"
+                     << "  final $display(\"reached the end\");\n"
                      << "endmodule\n";
 
   const std::vector<std::string> args = {"run",   "--backend", "llvm",
@@ -582,6 +583,10 @@ TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
       run.stderr_text.find("inconsistent with the current tag"),
       std::string::npos)
       << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("reached the end"), std::string::npos)
+      << "stdout: " << run.stdout_text;
+  EXPECT_EQ(run.stdout_text.find("v="), std::string::npos)
+      << "stdout: " << run.stdout_text;
 }
 
 // LRM 8.4 leaves the result of reaching a member through a null object handle
@@ -886,6 +891,53 @@ TEST(LyraCommandLine, LeavesBehindOnlyWhatItWasAskedFor) {
   EXPECT_EQ(CountEntries(temporary), 0U)
       << "a build left what it built in the temporary directory";
   EXPECT_TRUE(std::filesystem::is_regular_file(work / "program"));
+}
+
+// Foreign code that calls an exported subroutine once its execution thread is
+// in the disabled state breaks the protocol, and a simulator is obliged to
+// report it (LRM 35.9 item d). The run ending puts it in that state too, and
+// what the call is owed then is nothing of the design at all, since the run is
+// over. The corpus cannot state this: the report ends the run in failure, and a
+// case passes only on a zero exit status.
+TEST(LyraRun, CallingInAfterTheRunEndedIsReportedAndRunsNothing) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  import \"DPI-C\" context function int ask();\n"
+                     << "  export \"DPI-C\" function answer;\n"
+                     << "  int entered;\n"
+                     << "  function int answer();\n"
+                     << "    entered = entered + 1;\n"
+                     << "    $finish(0);\n"
+                     << "    return 2;\n"
+                     << "  endfunction\n"
+                     << "  initial begin\n"
+                     << "    entered = 0;\n"
+                     << "    void'(ask());\n"
+                     << "  end\n"
+                     << "  final $display(\"entered=%0d\", entered);\n"
+                     << "endmodule\n";
+  const auto foreign = *tmp_or / "foreign.c";
+  std::ofstream(foreign) << "#include \"dpi.h\"\n"
+                         << "int32_t ask(void) {\n"
+                         << "  return answer() + answer();\n"
+                         << "}\n";
+
+  const std::vector<std::string> args = {
+      "run",  "--backend",  "llvm",           "--top",
+      "Test", "--dpi-link", foreign.string(), src.string()};
+  const auto run = RunChildProcess(lyra, args, 120s);
+  EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
+      << run.stdout_text << run.stderr_text;
+  EXPECT_NE(
+      run.stderr_text.find("entered the disabled state"), std::string::npos)
+      << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("entered=1"), std::string::npos)
+      << "stdout: " << run.stdout_text;
 }
 
 }  // namespace

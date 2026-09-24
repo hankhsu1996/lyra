@@ -81,14 +81,14 @@ auto LowerTerminationSystemSubroutineCall(
       FormatRuntimeOriginString(span, process.Owner().SourceManager()));
   const mir::ExprId level_id =
       BuildIntLiteral(unit, block, static_cast<std::int64_t>(level));
-  // Ending the run parks the caller and never dispatches it again, so the call
-  // answers the same machine boolean every parking call answers.
+  // Ending the run departs from the calling execution rather than returning,
+  // so the call answers nothing.
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee = mir::Direct{.target = info.builtin_fn},
               .arguments = {runtime_id, origin_id, level_id}},
-      .type = unit.builtins.machine_bool};
+      .type = unit.builtins.void_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

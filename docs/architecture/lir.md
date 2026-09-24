@@ -67,9 +67,11 @@ below LIR, at LIR-to-LLVM.
   reached this way: what that unit promised of it is behaviors, and a behavior is a call.
 - Effect ordering within a block.
 - Low-level operations: arithmetic, comparisons, machine conversions, loads, stores, calls.
-- Foreign symbols: the linkage name of a callable defined outside the program, which a call may
-  target. LIR states the name and the machine types the call crosses on; how the name is resolved --
-  a link line, an execution session -- is below LIR.
+- Symbols a call reaches by name: a body of this program that another artifact holds, and a foreign
+  symbol -- the linkage name of a callable defined outside the program. LIR states the name and the
+  machine types the call crosses on; how the name is resolved -- a link line, an execution session
+  -- is below LIR. The two are kept apart because a departure can come out of the first and never
+  out of the second, which is a frame that ends only by returning.
 - The boundary protocol to the scheduling runtime (entry, suspend, resume, abandonment, completion).
 
 ## Does Not Own

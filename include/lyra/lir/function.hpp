@@ -228,13 +228,22 @@ struct IndirectTarget {
 // owner.
 struct ConstructTarget {};
 
-// A function this unit does not compile, called by its linkage name -- a body
-// another compilation unit emits, or a DPI-C import's foreign symbol (LRM
-// 35.4). The host resolves the name: a link line for an ahead-of-time image,
-// the execution session for a JIT one. The signature is the call's own, so the
-// target carries nothing but the name -- which the caller composes from what it
-// already knows the callee by, and which is therefore the whole of what the two
-// sides have to agree on.
+// A body of this program reached by the symbol it is emitted under rather than
+// as a function of this unit: one another compilation unit emits, or one of
+// this unit's own namespace that other units reach the same way. The host
+// resolves the name: a link line for an ahead-of-time image, the execution
+// session for a JIT one. The signature is the call's own, so the target carries
+// nothing but the name -- which the caller composes from what it already knows
+// the callee by, and which is therefore the whole of what the two sides have to
+// agree on. It is the design's own code, so a departure can come out of it.
+struct SymbolTarget {
+  std::string symbol;
+};
+
+// A DPI-C import's foreign symbol (LRM 35.4): a body another language's
+// compiler emits, resolved by name the way a symbol target is. What separates
+// the two is the frame the call enters, which here is one no departure crosses
+// -- it ends only by returning (LRM 35.9).
 struct ForeignTarget {
   std::string symbol;
 };
@@ -339,14 +348,14 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 
 // The target of a call: a runtime builtin, a function of this unit, a dispatch
 // slot the receiving value's own class fills, a code address the program
-// computed, a value constructor named by the call's result type, a foreign
-// symbol the host resolves, a value-cell operation, a control-effect operation,
-// or an operation of the coroutine protocol.
+// computed, a value constructor named by the call's result type, a body of this
+// program or a foreign symbol the host resolves, a value-cell operation, a
+// control-effect operation, or an operation of the coroutine protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
-    ConstructTarget, ForeignTarget, ValueCellTarget, OpenVariablesTarget,
-    VariableAddressTarget, CloseVariablesTarget, ControlEffectTarget,
-    CoroutineTarget>;
+    ConstructTarget, SymbolTarget, ForeignTarget, ValueCellTarget,
+    OpenVariablesTarget, VariableAddressTarget, CloseVariablesTarget,
+    ControlEffectTarget, CoroutineTarget>;
 
 struct CallInstr {
   CallTarget target;

@@ -8,6 +8,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
+#include "lyra/lowering/hir_to_mir/forwarding_entry.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
@@ -90,58 +91,8 @@ auto AddEntry(mir::Class& cls, Entry entry) -> mir::AbiAdapterId {
 auto BehaviorEntry(
     mir::CompilationUnit& unit, mir::Class& cls, mir::ClassId id,
     mir::CallableId method) -> mir::AbiAdapterId {
-  const mir::CallableCode& target = cls.callables.Get(method).code;
-  mir::CallableCode code = mir::CallableCode::Defined();
-  const mir::ExprId typed = TakeSelf(unit, code, cls.self_pointer_type);
-  const std::span<const mir::LocalId> formals =
-      std::span{target.params}.subspan(
-          target.HasReceiver(cls.self_pointer_type) ? 1 : 0);
-  std::vector<mir::ExprId> arguments;
-  arguments.reserve(formals.size());
-  for (const mir::LocalId formal : formals) {
-    const mir::LocalDecl& decl = target.locals.Get(formal);
-    const mir::LocalId param = code.AddLocal(decl.type);
-    code.params.push_back(param);
-    arguments.push_back(
-        code.Body().exprs.Add(mir::MakeLocalRefExpr(param, decl.type)));
-  }
-  code.result_type = target.result_type;
-
-  const mir::ExprId call = code.Body().exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target =
-                              mir::CallableTarget{.owner = id, .slot = method},
-                          .receiver = typed},
-                  .arguments = std::move(arguments)},
-          .type = target.result_type});
-  // A task suspends its caller until it completes (LRM 13.3), so the entry
-  // suspends too: it awaits the body and hands back the completion, which is
-  // what whoever entered it awaits in turn. Anything else completes where it is
-  // called and its result is the entry's.
-  const mir::Type& result = unit.types.Get(target.result_type);
-  if (const auto* coroutine = result.As<mir::CoroutineType>()) {
-    const mir::LocalId completion = code.AddLocal(coroutine->payload);
-    code.Body().AppendStmt(
-        mir::LocalDeclStmt{
-            .target = completion,
-            .init = code.Body().exprs.Add(
-                mir::Expr{
-                    .data = mir::AwaitExpr{.awaitable = call},
-                    .type = coroutine->payload})});
-    code.Body().AppendStmt(
-        mir::ReturnStmt{
-            .value = code.Body().exprs.Add(
-                mir::MakeLocalRefExpr(completion, coroutine->payload))});
-  } else if (result.Is<mir::VoidType>()) {
-    code.Body().AppendStmt(mir::ExprStmt{.expr = call});
-    code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  } else {
-    code.Body().AppendStmt(mir::ReturnStmt{.value = call});
-  }
+  mir::CallableCode code =
+      BuildForwardingEntry(unit, cls, id, method, OpaquePointer(unit));
   return cls.abi_adapters.Add(
       mir::AbiAdapter{
           .code = std::move(code), .published = mir::UnpublishedEntry{}});

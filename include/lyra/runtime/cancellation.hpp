@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <exception>
+#include <functional>
 
 #include "lyra/runtime/registration.hpp"
 
@@ -97,10 +98,11 @@ struct CapturedTarget {
 // the activation settles as cancelled -- reported as KILLED (LRM 9.7).
 //
 // `target` says which region may claim it. A `disable` names the target it
-// disabled (LRM 9.6.2). A `kill`, and a `disable` of the execution itself, name
-// nothing: no region can match `nullptr`, so the effect is unclaimable by
-// construction and the activation is the only thing it can end. One type covers
-// both because they differ only in whether anyone is allowed to catch them.
+// disabled (LRM 9.6.2). A `kill`, a `disable` of the execution itself, and a
+// task that ends the run name nothing: no region can match `nullptr`, so the
+// effect is unclaimable by construction and the activation is the only thing
+// it can end. One type covers both forms because they differ only in whether
+// anyone is allowed to catch them.
 //
 // It deliberately does not derive from `std::exception`: an effect that escapes
 // its owner is a compiler defect, and staying outside that hierarchy keeps it
@@ -110,8 +112,9 @@ struct ControlEffect {
 };
 
 // Raises the unclaimable form: the execution ends here and now, with no region
-// able to intercept it (`kill`, LRM 9.7; a self-`disable`, LRM 9.6.2). Call
-// only after the termination has been recorded.
+// able to intercept it (`kill`, LRM 9.7; a self-`disable`, LRM 9.6.2; a task
+// that ends the run, LRM 20.2). Call only after the termination has been
+// recorded.
 [[noreturn]] void RaiseUnclaimableEffect();
 
 // Raises the effect a body reported as its outcome instead of by leaving, so
@@ -161,6 +164,15 @@ struct Unwound {
 //
 // Call only while an exception is being handled, as above.
 [[nodiscard]] auto ClaimableTarget() -> CancellationTarget*;
+
+// Runs `stretch`, a run of the design's code that no activation holds, as its
+// own landing, which settles it the way an activation's landing settles a
+// body: a departure no region claimed ends it there, and a run-time error that
+// left it is reported and ends the run, and either way the caller carries on
+// to the run's end. A claimable departure never arrives here: it names a
+// region the departing execution is inside, and that region claims it first.
+void RunAsLanding(
+    RuntimeEffects& effects, const std::function<void()>& stretch);
 
 // The two ends of an execution's membership of a target (LRM 9.6.2). Entering
 // captures the target's current generation and marks the executing process as

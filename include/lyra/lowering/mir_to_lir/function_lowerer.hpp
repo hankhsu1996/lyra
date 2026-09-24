@@ -257,6 +257,12 @@ class FunctionLowerer {
       const mir::Block& block, const mir::CallExpr& call,
       std::vector<lir::Operand> args, lir::TypeId result_type)
       -> diag::Result<lir::Operand>;
+  // Emits a call to a resolved callee, followed by what its ending leaves: the
+  // statement after it for one that returns, a landing as well for one that
+  // can depart, and nothing at all for one that only departs.
+  auto EmitCallTo(
+      lir::CallTarget target, std::vector<lir::Operand> args,
+      lir::TypeId result_type) -> diag::Result<lir::Operand>;
   // Says what a call reaches. A callee named outright resolves to its identity
   // with nothing evaluated; one that is a code address the program computed
   // resolves by lowering that address, which is why this reaches the block.

@@ -170,9 +170,9 @@ the callee needs the projection spelled explicitly (a tuple-get by index), never
 
 The completion payload reaches the call site through a **typed await**: awaiting a `Coroutine<T>`
 yields a value of `T`, and the output writebacks are projections of that value. A pure suspension
-(an event control, a delay, a `$finish`, a task with no outputs) awaits a `Coroutine<Void>` and
-yields nothing; it is the zero-component case of the same one await, not a separate statement form.
-A task call with outputs awaits a `Coroutine<Tuple<...>>` and the writebacks read its components.
+(an event control, a delay, a task with no outputs) awaits a `Coroutine<Void>` and yields nothing;
+it is the zero-component case of the same one await, not a separate statement form. A task call with
+outputs awaits a `Coroutine<Tuple<...>>` and the writebacks read its components.
 
 The typed await is what makes the runtime realization a backend choice that does not touch MIR.
 Whether the payload travels through a caller-provided result slot or a value held in the coroutine

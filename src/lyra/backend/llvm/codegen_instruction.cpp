@@ -855,6 +855,12 @@ auto CodeGenFunction::ResolveCallee(
             }
             return Entry(construction->symbol, result_type, args);
           },
+          // A body another artifact defines is declared here and resolved by
+          // the host, and its operands are this program's own values.
+          [&](const lir::SymbolTarget& t)
+              -> diag::Result<llvm::FunctionCallee> {
+            return Entry(t.symbol, result_type, args);
+          },
           // A foreign symbol is declared, never defined: the host resolves it.
           // The boundary already marshaled its operands and result to the
           // carriers the foreign side declared (LRM 35.5.6), so what crosses is
@@ -2077,6 +2083,7 @@ auto CodeGenFunction::EncodingOf(
           [](const lir::FunctionTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::DispatchTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::IndirectTarget&) -> Encoded { return CallEncoding{}; },
+          [](const lir::SymbolTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ForeignTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ValueCellTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::OpenVariablesTarget&) -> Encoded {

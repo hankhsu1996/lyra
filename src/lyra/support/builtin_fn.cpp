@@ -736,13 +736,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "finish",
           .declaration = FreeFunction{"lyra::runtime::Finish"},
           .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .ending = CallEnding::kDeparts};
     case BuiltinFn::kStop:
       return {
           .name = "stop",
           .declaration = FreeFunction{"lyra::runtime::Stop"},
           .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .ending = CallEnding::kDeparts};
     case BuiltinFn::kResolveRoot:
       return {.name = "resolve_root", .declaration = Method{"ResolveRoot"}};
     case BuiltinFn::kResolveVisibleChild:
@@ -837,7 +837,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "disable",
           .declaration = FreeFunction{"lyra::runtime::Disable"},
           .takes_the_runtime_handle = true,
-          .can_depart = true};
+          .ending = CallEnding::kReturnsOrDeparts};
     case BuiltinFn::kEnterTarget:
       return {
           .name = "enter_target",
@@ -866,7 +866,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "process_kill",
           .declaration = FreeFunction{"lyra::runtime::ProcessKill"},
           .takes_the_runtime_handle = true,
-          .can_depart = true};
+          .ending = CallEnding::kReturnsOrDeparts};
     case BuiltinFn::kProcessAwait:
       return {
           .name = "process_await",
@@ -1012,7 +1012,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "run_exported_task_to_completion",
           .declaration =
               FreeFunction{"lyra::runtime::RunExportedTaskToCompletion"},
-          .can_depart = true};
+          .ending = CallEnding::kReturnsOrDeparts};
     case BuiltinFn::kCurrentExportScope:
       return {
           .name = "current_export_scope",

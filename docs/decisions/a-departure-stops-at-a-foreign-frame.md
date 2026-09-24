@@ -26,8 +26,8 @@ mechanism.
 
 ```text
 the question   whether the execution now running must stop: a disable has reached a block it is
-               inside, or its process has been terminated. One question because foreign code can
-               do only one thing about either.
+               inside, its process has been terminated, or the run has ended. One question because
+               foreign code can do only one thing about any of them.
 
 the answer     an exported task's entry returns it as the int LRM 35.8 gives that entry, and
                svIsDisabledState answers it to any foreign frame that asks.
