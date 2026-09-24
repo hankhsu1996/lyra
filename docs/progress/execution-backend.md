@@ -527,17 +527,20 @@ each meets the same lifetime question above.
 - [ ] An AOT CI job. Neither the smoke job nor the benchmark runs this path: both run against the
       C++ path, per merge and nightly respectively. The artifact they would time now exists; what is
       still missing is the job that drives it.
-- [ ] **An optimization pipeline.** The module this backend produces runs through the passes that
-      make a suspending body executable and through nothing else, so every saving an optimizer takes
-      -- a variable promoted out of its slot, a body no reachable body calls dropped, a repeated
-      load folded -- is either taken upstream of this backend or not taken at all. `--release` does
-      not reach here either: it selects the level the host compiler builds the C++ path at, so this
-      path has no setting that turns anything up and no axis to measure along. Two things follow and
-      neither announces itself. A shape defended upstream on the ground that nothing below it
-      removes the cost has been decided by this gap rather than by which layer owns the saving,
-      which is the failure `../design-process.md` names. And the executable this path links is
-      compiled unoptimized whatever the caller asked for, so timing a simulation with it measures
-      the gap rather than the path, which is the other half of what the job above waits on.
+- [x] **An optimization pipeline.** A module goes through the toolchain's standard pipeline at the
+      level the build asked for -- unoptimized by default, optimized under `--release`, as the C++
+      path's design code is -- and that pipeline is also what makes a suspending body executable, at
+      either level. A program built at one level is kept apart from the same design built at the
+      other.
+- [x] **As wide as the build was told, from lowering on.** As many units go from their semantic
+      model to a module at once as `-j` allows, and as many modules are compiled to objects; what
+      the units make is still collected in the order the design lists them, so the program is the
+      same however many ran at once. Measured on the RISC-V core at `-j 4`: 7.2 s to build by
+      default and 27.0 s under `--release`, where the C++ path takes 51.8 s and 679 s.
+- [ ] **What optimizing the design's module buys at run time.** Nothing measurable yet: a loop of
+      two million iterations runs in the same time at either level, because every operation on a
+      value is a call into the runtime library, which is compiled apart from the module and cannot
+      be inlined into it. Optimizing across that boundary is what the next saving waits on.
 - [x] **An array of owned children.** A child scope -- a module instance, a generate block, a
       procedural block scope -- is constructed, reached by name and per-axis index, and reports its
       hierarchical name, whether it stands alone or is one of an array. Each element is its own

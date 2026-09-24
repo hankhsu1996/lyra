@@ -36,8 +36,8 @@ constexpr auto kTrimInterval = std::chrono::days{1};
 constexpr std::string_view kTrimMarker = "trimmed";
 
 // The kinds of entry a trim or a clear walks.
-constexpr std::array<std::string_view, 2> kEntryKinds = {
-    kStoredHeaderDir, kStoredProgramDir};
+constexpr std::array<std::string_view, 3> kEntryKinds = {
+    kStoredHeaderDir, kStoredObjectDir, kStoredProgramDir};
 
 auto ReadWholeFile(const std::filesystem::path& path) -> std::string {
   std::ifstream in(path, std::ios::binary);

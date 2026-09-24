@@ -5,9 +5,9 @@
 
 namespace lyra::driver {
 
-// How hard the host compiler works on a design. Iterating pays the compile on
-// every edit and the run once; a long run inverts that. The runtime library is
-// prebuilt and always optimized, so it is not on this axis.
+// How hard a design is compiled, whichever backend compiles it. Iterating pays
+// the compile on every edit and the run once; a long run inverts that. The
+// runtime library is prebuilt and always optimized, so it is not on this axis.
 enum class Optimization : std::uint8_t { kIterate, kRelease };
 
 // A precompiled header and the translation unit including it must be compiled

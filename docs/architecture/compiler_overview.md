@@ -44,17 +44,20 @@ docs knowing what stands on either side.
 
 ```mermaid
 flowchart TB
-  SRC["SystemVerilog source"] --> FE["frontend elaboration<br/>one graph over the whole design"]
+  SRC["SystemVerilog source, and the build's level and width"] --> FE["frontend elaboration<br/>one graph over the whole design"]
   FE --> SP["occurrences keyed into specializations<br/>a definition plus the arguments a parent fixed"]
 
-  SP --> D["per unit: derive the signature<br/>from that unit's own declarations"]
+  SP --> D["per unit, as wide as the build allows:<br/>derive the signature from that unit's own declarations"]
   D --> BAR{{"barrier: every unit's signature exists"}}
 
-  BAR --> U["per unit, with no edge to any other:<br/>AST to HIR to MIR"]
-  U -->|"architectural target"| LIR["MIR to LIR to LLVM IR"]
-  U -->|"transitional"| CPP["MIR to C++ source"]
-  LIR --> LNK["link"]
-  CPP --> LNK
+  BAR --> U["per unit, as wide as the build allows, with no edge to any other:<br/>AST to HIR to MIR"]
+  U -->|"architectural target"| LIR["MIR to LIR to LLVM IR to an object<br/>at the build's level, kept by what built it"]
+  U -->|"transitional"| CPP["MIR to C++ source to an object"]
+  LIR --> COL["collected in the order the design lists its units"]
+  CPP --> COL
+  COL --> FGN["foreign sources, compiled against<br/>what the units state of the foreign name space"]
+  COL --> LNK["link"]
+  FGN --> LNK
   LNK --> RUN["Build, Resolve, Seal, then Initialize, Activate"]
 ```
 
@@ -72,6 +75,13 @@ rather than argued: **exactly one stage before the barrier looks at the whole de
 one after it does** -- the frontend's elaboration, and the link. Everything between is per unit with
 no edge to any other, which is what makes units compilable in isolation, in parallel, and in any
 order. A stage that needs to see another unit belongs before the barrier or it does not belong.
+
+Two things after the barrier wait on more than their own unit without reading any unit's work, and
+neither is a third look at the design. What the units produce is collected in the order the design
+lists them, whichever finished first, so the program and every name it is kept under are the same
+however many ran at once. And a foreign source includes the header composed from what every unit
+stated of the foreign name space, so it compiles once the last unit has been collected -- a
+collection of statements, as the link is a collection of objects.
 
 ## Core Invariants
 

@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <expected>
 #include <optional>
+#include <type_traits>
 #include <utility>
 
 #include "lyra/compiler/compile.hpp"
@@ -12,6 +14,7 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/support/parallel.hpp"
 
 namespace lyra::compiler {
 
@@ -29,34 +32,48 @@ struct ExecutableDesign {
 };
 
 // Models the whole design semantically, then composes the one step no unit
-// produces. Each unit is handed to `consume` and released before the next is
-// lowered, so what is resident at any moment is one unit and the design's size
-// reaches the peak only through what a consumer chooses to keep.
+// produces. A unit's lowering reads no other unit's, so as many units are
+// lowered at once as `width` allows.
 //
-// Every unit is attempted whatever the ones before it reported, so one run
-// accounts for the whole design. Nothing comes back when any of them failed:
-// what is short of the design is not the design, and holding it to the checks a
-// complete one answers would report a stated gap as a bug.
+// What a consumer does with a unit is split along the same line. `produce`
+// takes one unit to whatever the consumer wants of it and runs beside the
+// other units' lowering, so it reads nothing another unit's `produce` writes.
+// `consume` receives what `produce` returned one unit at a time, in the order
+// the design lists its units, so what a consumer assembles is the same
+// whichever unit happened to finish first. What is resident is the units in
+// flight, so the design's size reaches the peak only through what a consumer
+// chooses to hold.
 //
-// `consume` answers with a diagnostic when it cannot take a unit -- a backend
-// that has no form for it -- which is reported like any other failure inside
-// this stage and does not stop the units behind it from being attempted.
-template <typename Consume>
+// Every unit is attempted whatever the others reported, so one run accounts
+// for the whole design, and failures are reported in the order the units are
+// listed. Nothing comes back when any of them failed: what is short of the
+// design is not the design, and holding it to the checks a complete one
+// answers would report a stated gap as a bug. `produce` answering with a
+// diagnostic -- a backend that has no form for the unit -- is reported like any
+// other failure inside this stage, and that unit is not consumed.
+template <typename Produce, typename Consume>
 auto LowerToSemantic(
     ElaboratedDesign& design, const diag::SourceManager& sources,
-    diag::DiagnosticSink& sink, Consume consume)
-    -> std::optional<SemanticDesign> {
-  for (hir::CompilationUnit& slot : design.hir.units) {
-    const hir::CompilationUnit hir_unit = std::move(slot);
-    auto unit = LowerUnitToSemantic(hir_unit, sources);
-    if (!unit) {
-      sink.Report(std::move(unit.error()));
-      continue;
-    }
-    if (auto taken = consume(*std::move(unit)); !taken) {
-      sink.Report(std::move(taken.error()));
-    }
-  }
+    diag::DiagnosticSink& sink, std::size_t width, Produce produce,
+    Consume consume) -> std::optional<SemanticDesign> {
+  using Produced = std::invoke_result_t<Produce, SemanticUnit>;
+  support::ProduceInOrder(
+      design.hir.units.size(), width,
+      [&](std::size_t i) -> Produced {
+        const hir::CompilationUnit hir_unit = std::move(design.hir.units[i]);
+        auto unit = LowerUnitToSemantic(hir_unit, sources);
+        if (!unit) {
+          return std::unexpected(std::move(unit.error()));
+        }
+        return produce(*std::move(unit));
+      },
+      [&](Produced produced) {
+        if (produced) {
+          consume(*std::move(produced));
+        } else {
+          sink.Report(std::move(produced.error()));
+        }
+      });
   if (sink.HasErrors()) {
     return std::nullopt;
   }
@@ -69,22 +86,25 @@ auto LowerToSemantic(
   return SemanticDesign{.root = *std::move(root)};
 }
 
-// The same design, taken one layer further: every unit reaches `consume` as the
-// body something runs plus the metadata defining it, and the semantic model it
-// came from is released on the way.
-template <typename Consume>
+// The same design, taken one layer further: every unit reaches `produce` as
+// the body something runs plus the metadata defining it, and the semantic model
+// it came from is released on the way.
+template <typename Produce, typename Consume>
 auto LowerToExecutable(
     ElaboratedDesign& design, const diag::SourceManager& sources,
-    diag::DiagnosticSink& sink, Consume consume)
-    -> std::optional<ExecutableDesign> {
+    diag::DiagnosticSink& sink, std::size_t width, Produce produce,
+    Consume consume) -> std::optional<ExecutableDesign> {
+  using Produced = std::invoke_result_t<Produce, ExecutableUnit>;
   auto semantic = LowerToSemantic(
-      design, sources, sink, [&](SemanticUnit unit) -> diag::Result<void> {
+      design, sources, sink, width,
+      [&](SemanticUnit unit) -> Produced {
         auto executable = LowerUnitToExecutable(unit.mir);
         if (!executable) {
           return std::unexpected(std::move(executable.error()));
         }
-        return consume(*std::move(executable));
-      });
+        return produce(*std::move(executable));
+      },
+      consume);
   if (!semantic) {
     return std::nullopt;
   }

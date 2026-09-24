@@ -48,29 +48,44 @@ struct EmittedCppSources {
   std::vector<dpi::AbiFragment> dpi_fragments;
 };
 
-// Writes the emitted C++ sources of a project into a directory, one unit at a
-// time. A unit's rendered text is written and released before the next unit is
-// lowered, so what an emit holds is one unit's worth rather than the design's.
+// What writing one unit's sources left in the project: the files, the one a
+// build compiles, and the text of what the unit states of the program's
+// foreign name space where it states anything.
+struct WrittenUnit {
+  std::vector<std::string> files;
+  std::string translation_unit;
+  std::optional<std::string> dpi_fragment;
+};
+
+// Writes the emitted C++ sources of a project into a directory. A unit's
+// rendered text is written and released as soon as it is rendered, so what an
+// emit holds is the units in flight rather than the design.
 //
-// A unit this backend has no form for is refused as it arrives, and the units
-// behind it are still attempted, so one run names every gap rather than the
-// first. What the directory then holds is the units that did render: a run
-// that reported produces nothing any later step carries forward.
+// A unit this backend has no form for is refused as it arrives, and the other
+// units are still attempted, so one run names every gap rather than the first.
+// What the directory then holds is the units that did render: a run that
+// reported produces nothing any later step carries forward.
 class CppProjectSink {
  public:
   CppProjectSink(std::filesystem::path dir, SourceFormatting formatting)
       : dir_(std::move(dir)), formatting_(formatting) {
   }
 
-  // Writes the unit's declarations and the translation unit realizing them,
-  // and keeps what the unit states of the program's foreign name space.
-  auto Take(const mir::CompilationUnit& unit) -> diag::Result<void>;
+  // Writes the unit's declarations and the translation unit realizing them.
+  // Every file a unit writes is named for that unit, and this reads nothing
+  // the sink collects, so several units may be written at once.
+  [[nodiscard]] auto Write(const mir::CompilationUnit& unit) const
+      -> diag::Result<WrittenUnit>;
+
+  // Collects what writing a unit left, in the order it is called, which is the
+  // order a build compiles the units in.
+  void Collect(WrittenUnit unit);
 
   // Closes the project: the design root's own files and the program entry,
-  // none of which may be written until every unit has been taken.
+  // none of which may be written until every unit has been collected.
   auto Finish(const mir::CompilationUnit& root) -> diag::Result<void>;
 
-  // Hands over what emission produced, in the order the units were taken.
+  // Hands over what emission produced, in the order the units were collected.
   [[nodiscard]] auto TakeSources() -> EmittedCppSources {
     return EmittedCppSources{
         .translation_units = std::move(translation_units_),
@@ -78,12 +93,8 @@ class CppProjectSink {
   }
 
  private:
-  auto Write(backend::cpp::CppArtifact file) -> diag::Result<void>;
-  // Which files a build compiles is decided here, where each is produced, so no
-  // later step separates them by reading a name.
-  auto WriteTranslationUnit(backend::cpp::CppArtifact file)
+  [[nodiscard]] auto WriteArtifact(const backend::cpp::CppArtifact& file) const
       -> diag::Result<void>;
-  auto WriteUnit(const mir::CompilationUnit& unit) -> diag::Result<void>;
 
   std::filesystem::path dir_;
   SourceFormatting formatting_;

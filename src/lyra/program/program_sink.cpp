@@ -4,10 +4,9 @@
 #include <filesystem>
 #include <format>
 #include <map>
-#include <span>
+#include <optional>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -16,6 +15,7 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
+#include <llvm/Passes/OptimizationLevel.h>
 
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/object_file.hpp"
@@ -25,7 +25,8 @@
 #include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/dpi/abi_header.hpp"
-#include "lyra/driver/cpp_build.hpp"
+#include "lyra/driver/artifact_store.hpp"
+#include "lyra/driver/project_layout.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
 
@@ -1273,9 +1274,7 @@ auto MismatchedEntries(
   return mismatched;
 }
 
-}  // namespace
-
-auto ProgramSink::Keep(backend::llvm_backend::EmittedModule module)
+auto CheckAgainstRuntime(const backend::llvm_backend::EmittedModule& module)
     -> diag::Result<void> {
   // A module may name an entry the library does not publish, because the
   // naming composes a domain with an operation and not every pair is
@@ -1304,12 +1303,18 @@ auto ProgramSink::Keep(backend::llvm_backend::EmittedModule module)
             "library disagree on an entry's shape: {}",
             mismatched));
   }
-  modules_.push_back(std::move(module));
   return {};
 }
 
-auto ProgramSink::Emit(const mir::CompilationUnit& unit)
-    -> diag::Result<compiler::ExecutableUnit> {
+// A unit's module, and the form it was emitted from, which the design root's
+// entry is emitted from as well.
+struct UnitModule {
+  compiler::ExecutableUnit executable;
+  backend::llvm_backend::EmittedModule module;
+};
+
+auto EmitUnitModule(const mir::CompilationUnit& unit)
+    -> diag::Result<UnitModule> {
   auto executable = compiler::LowerUnitToExecutable(unit);
   if (!executable) {
     return std::unexpected(std::move(executable.error()));
@@ -1319,63 +1324,113 @@ auto ProgramSink::Emit(const mir::CompilationUnit& unit)
   if (!emitted) {
     return std::unexpected(std::move(emitted.error()));
   }
-  if (auto kept = Keep(*std::move(emitted)); !kept) {
-    return std::unexpected(std::move(kept.error()));
+  if (auto checked = CheckAgainstRuntime(*emitted); !checked) {
+    return std::unexpected(std::move(checked.error()));
   }
-  return executable;
+  return UnitModule{
+      .executable = *std::move(executable), .module = *std::move(emitted)};
 }
 
-auto ProgramSink::Take(const mir::CompilationUnit& unit) -> diag::Result<void> {
-  if (auto emitted = Emit(unit); !emitted) {
+// The code generator's reading of how hard a build was asked to work: the same
+// two levels the host C++ compiler is handed as `-O0` and `-O2`, so a design
+// is optimized alike whichever backend compiles it.
+auto PipelineLevel(driver::Optimization optimization)
+    -> llvm::OptimizationLevel {
+  switch (optimization) {
+    case driver::Optimization::kIterate:
+      return llvm::OptimizationLevel::O0;
+    case driver::Optimization::kRelease:
+      return llvm::OptimizationLevel::O2;
+  }
+  throw InternalError("a build names no optimization level");
+}
+
+// The object a module compiles to under this build: the kept one when there is
+// one and it may be taken, and otherwise one compiled now and kept. It is
+// written under its own name, which no other unit's object shares, since every
+// unit's module carries that unit's own symbols.
+auto CompileObject(
+    backend::llvm_backend::EmittedModule module, const ObjectBuild& build)
+    -> diag::Result<ObjectFile> {
+  const llvm::OptimizationLevel level = PipelineLevel(build.optimization);
+  driver::ContentNamer namer;
+  namer.Add("module", module.Print());
+  namer.Add("code generator", build.code_generator.hex);
+  namer.Add(
+      "pipeline level",
+      std::format(
+          "speed {} size {}", level.getSpeedupLevel(), level.getSizeLevel()));
+  driver::ContentName name = namer.Finish();
+  ObjectFile object{
+      .path = build.object_dir / (name.hex + ".o"), .name = std::move(name)};
+  if (build.store.has_value() && build.reuse_kept) {
+    auto kept = driver::CopyStored(
+        *build.store, driver::kStoredObjectDir, object.name, object.path);
+    if (!kept) {
+      return std::unexpected(std::move(kept.error()));
+    }
+    if (*kept) {
+      return object;
+    }
+  }
+  if (auto r = backend::llvm_backend::WriteObjectFile(
+          std::move(module), object.path, level);
+      !r) {
+    return std::unexpected(std::move(r.error()));
+  }
+  if (build.store.has_value()) {
+    driver::KeepStored(
+        *build.store, driver::kStoredObjectDir, object.name, object.path);
+  }
+  return object;
+}
+
+}  // namespace
+
+auto BuildUnit(const mir::CompilationUnit& unit, const ObjectBuild& build)
+    -> diag::Result<BuiltUnit> {
+  auto emitted = EmitUnitModule(unit);
+  if (!emitted) {
     return std::unexpected(std::move(emitted.error()));
   }
-  dpi::CollectAbiFragment(unit, dpi_fragments_);
-  return {};
+  auto object = CompileObject(std::move(emitted->module), build);
+  if (!object) {
+    return std::unexpected(std::move(object.error()));
+  }
+  return BuiltUnit{
+      .object = *std::move(object), .dpi_fragment = dpi::AbiFragmentOf(unit)};
+}
+
+void ProgramSink::Collect(BuiltUnit unit) {
+  program_.objects.push_back(std::move(unit.object));
+  if (unit.dpi_fragment.has_value()) {
+    dpi::AddAbiFragment(program_.dpi_fragments, *std::move(unit.dpi_fragment));
+  }
 }
 
 auto ProgramSink::Finish(
-    const mir::CompilationUnit& root) && -> diag::Result<EmittedProgram> {
-  auto executable = Emit(root);
-  if (!executable) {
-    return std::unexpected(std::move(executable.error()));
+    const mir::CompilationUnit& root,
+    const ObjectBuild& build) && -> diag::Result<ProgramObjects> {
+  auto emitted = EmitUnitModule(root);
+  if (!emitted) {
+    return std::unexpected(std::move(emitted.error()));
   }
-  if (auto kept =
-          Keep(backend::llvm_backend::EmitProgramEntry(executable->body));
-      !kept) {
-    return std::unexpected(std::move(kept.error()));
+  backend::llvm_backend::EmittedModule entry =
+      backend::llvm_backend::EmitProgramEntry(emitted->executable.body);
+  if (auto checked = CheckAgainstRuntime(entry); !checked) {
+    return std::unexpected(std::move(checked.error()));
   }
-  return EmittedProgram{
-      .modules = std::move(modules_),
-      .dpi_fragments = std::move(dpi_fragments_)};
-}
-
-auto CompileProgram(
-    std::vector<backend::llvm_backend::EmittedModule> modules,
-    std::span<const std::filesystem::path> foreign_objects,
-    const std::filesystem::path& object_dir,
-    const std::filesystem::path& runtime_lib,
-    const std::filesystem::path& program, const std::filesystem::path& cxx)
-    -> diag::Result<void> {
-  std::error_code ec;
-  std::filesystem::create_directories(object_dir, ec);
-  if (ec) {
-    return diag::Fail(
-        diag::DiagCode::kHostIoError,
-        std::format(
-            "failed to create '{}': {}", object_dir.string(), ec.message()));
+  auto root_object = CompileObject(std::move(emitted->module), build);
+  if (!root_object) {
+    return std::unexpected(std::move(root_object.error()));
   }
-  std::vector<std::filesystem::path> objects;
-  objects.reserve(modules.size() + foreign_objects.size());
-  for (backend::llvm_backend::EmittedModule& module : modules) {
-    objects.push_back(object_dir / std::format("{}.o", objects.size()));
-    if (auto written = backend::llvm_backend::WriteObjectFile(
-            std::move(module), objects.back());
-        !written) {
-      return written;
-    }
+  auto entry_object = CompileObject(std::move(entry), build);
+  if (!entry_object) {
+    return std::unexpected(std::move(entry_object.error()));
   }
-  objects.insert(objects.end(), foreign_objects.begin(), foreign_objects.end());
-  return driver::LinkProgram(objects, runtime_lib, program, cxx);
+  program_.objects.push_back(*std::move(root_object));
+  program_.objects.push_back(*std::move(entry_object));
+  return std::move(program_);
 }
 
 }  // namespace lyra::program

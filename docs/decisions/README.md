@@ -690,8 +690,9 @@ the detail lives in the entry itself.
   never from the SystemVerilog sources, so checkouts that differ never share an entry and ones that
   agree share one. A command hands back a private copy, writing is atomic, a vanished entry is a
   miss, and the store trims itself. There is no directory in the project, and running is building
-  then executing on both backends. A directory per project, keying on the sources, linking out of
-  the store, and keeping an execution session for `run` are rejected.
+  then executing on both backends. On the LLVM path each unit's object is kept the same way, so the
+  only join after the signature barrier is the link. A directory per project, keying on the sources,
+  linking out of the store, and keeping an execution session for `run` are rejected.
 - [waiting-is-an-operation](waiting-is-an-operation.md) -- the declaration both backends read names
   an operation and never one target's own protocol object, so a call that may park its caller does
   the whole operation and answers whether the caller must give up control; a body then stops to wait

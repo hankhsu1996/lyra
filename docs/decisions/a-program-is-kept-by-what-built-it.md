@@ -48,31 +48,34 @@ named by content, and a private copy of whatever a command hands back.
 
 ### D1. Compiled programs are kept in one store per user, and an entry never changes
 
-The store sits in the user's cache directory, beside the prepared headers the C++ path already keeps
-there: `lyra` under `$XDG_CACHE_HOME` when that is an absolute path, and under `$HOME/.cache`
-otherwise, which is the rule Go's `os.UserCacheDir` follows. Finding the store creates nothing; the
-directories appear when the first entry is kept, so a command that keeps nothing leaves no trace.
-When the platform names no such directory there is no store, and a build is slower and nothing else.
-An entry is written once, under a name computed from what produced it, and is never modified
-afterwards. Two checkouts that differ get different entries; two that agree share one. Nothing in
-the store is mutable, so nothing one checkout does can change what another reads.
+The store sits in the user's cache directory, and it also keeps the prepared headers the C++ path
+reads and, on the LLVM path, each unit's object (D9): `lyra` under `$XDG_CACHE_HOME` when that is an
+absolute path, and under `$HOME/.cache` otherwise, which is the rule Go's `os.UserCacheDir` follows.
+Finding the store creates nothing; the directories appear when the first entry is kept, so a command
+that keeps nothing leaves no trace. When the platform names no such directory there is no store, and
+a build is slower and nothing else. An entry is written once, under a name computed from what
+produced it, and is never modified afterwards. Two checkouts that differ get different entries; two
+that agree share one. Nothing in the store is mutable, so nothing one checkout does can change what
+another reads.
 
 ### D2. An entry is named by what the expensive step reads, never by the SystemVerilog sources
 
 For the C++ path the name is computed from the emitted project -- every file the host compile reads
 from it -- together with the runtime's headers and library, the foreign sources' objects, the host
 compiler's identity, and the settings the compile runs under. For the LLVM path it is computed from
-every module the program is composed from, the build of this compiler that turns them into objects,
-the runtime library, the foreign objects, and the host driver the link runs under. The compiler's
-own build is part of that name and not of the C++ path's, because on the LLVM path the code
-generator is Lyra itself, while on the C++ path it is the host compiler, which is named already.
+the names of the objects the program links (D9), the runtime library, the foreign objects, and the
+host driver the link runs under. How many compiles run at once is in no name, because the objects
+are the same however many there were. The compiler's own build is part of an LLVM object's name and
+not of the C++ path's, because on the LLVM path the code generator is Lyra itself, while on the C++
+path it is the host compiler, which is named already.
 
 This makes the name complete by construction. Tracking what the front end read -- every file an
 `` `include `` reached, every define in effect -- is a second authority over the same question, and
 the first input it misses is a stale program that runs without a word. A program cache has no
 fallback the way a prepared header has one: a stale header is refused and the compile runs again,
 while a stale program is simply executed. The cost is that the front half of the pipeline always
-runs; the saving is the host compile and the link, which is where the time goes.
+runs; the saving is the compile and the link, which is where the time goes. On the LLVM path a kept
+program saves the link and the kept objects save the compile.
 
 The one input no name here can see is the system the host compiler brings with it -- its standard
 library and its C runtime. The compiler's identity stands in for it, as it does for the prepared
@@ -108,7 +111,7 @@ without bound, and nobody should have to remember to clear it.
 the manifest's `name` for a declared design, the top for an anonymous one with a single top, and
 nothing for an anonymous design with several, which then has to be named. It refuses to replace a
 directory. `run` writes nothing. So there is no project directory to name, and no command to remove
-one; `cache clear` empties the store, prepared headers included.
+one; `cache clear` empties the store, prepared headers and objects included.
 
 ### D7. A run can be told not to read the store
 
@@ -139,6 +142,26 @@ and every foreign source already did. Lyra takes the one named with `--cxx`, and
 of `clang++` -- which alone can use a prepared header -- and `c++`, the name every system with a C++
 compiler answers to. So tests run wherever the machine executing them has either, which is what
 keeps them on remote executors rather than on a developer's machine.
+
+### D9. On the LLVM path each unit's object is kept on its own
+
+Added 2026-09-24. A unit's module is compiled to its object inside that unit's own pipeline, and the
+object is kept under a name computed from the module's text, the build of the code generator, and
+the level of the pipeline that compiled it -- everything the object is a function of, since a module
+is complete in itself. A kept object of that name is taken instead of compiling.
+
+Without it the program's name was the only name, and computing it needed every unit's module, so no
+object could be written until the last unit was lowered: a join the per-unit pipeline has no reason
+to have, and every module of the design held in memory until then. It is the answer every build tool
+with a content-addressed store gives -- Bazel keys each action and ccache each compilation by what
+that one step reads, and rustc's incremental build reuses each codegen unit's object -- so the only
+join left after the barrier is the link. Measured on Ibex at `-j 4`: 6.9 s from an empty store, 2.9
+s when every object is kept and the program is not, 2.5 s when the program is kept too; what is left
+in the last two is lowering the design to know the names.
+
+The C++ path does not do the same yet, because a translation unit includes other units' headers, so
+what one compile reads is not one unit's output alone; its program is named from the whole emitted
+project as before.
 
 ## Rejected alternatives
 
@@ -171,9 +194,9 @@ keeps them on remote executors rather than on a developer's machine.
 
 - `a-unit-states-what-it-declares.md` -- what makes a unit's module a whole program, and the entry
   the program starts at.
-- `a-precompiled-header-is-an-attempt.md` -- the same store's other occupant, and why it can afford
-  a fallback a program cannot.
+- `a-precompiled-header-is-an-attempt.md` -- the store's other occupant on the C++ path, and why it
+  can afford a fallback a program cannot.
 - `project-file.md` -- where `name` comes from, and why `-o` and the cache location are invocation
   and machine properties.
-- `../architecture/incremental_build.md` -- the query model this is the coarsest instance of: one
-  memoized result per program, keyed by content.
+- `../architecture/incremental_build.md` -- the query model this is an instance of: a memoized
+  result per program, and on the LLVM path per unit's object, each keyed by content.

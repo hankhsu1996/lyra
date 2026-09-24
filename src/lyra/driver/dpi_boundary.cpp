@@ -1,6 +1,7 @@
 #include "lyra/driver/dpi_boundary.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <format>
 #include <span>
@@ -86,7 +87,8 @@ auto ForeignLanguageFlags(const DpiLinkInput& input)
 
 auto CompileDpiObjects(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
-    Optimization optimization, const std::filesystem::path& header_dir,
+    Optimization optimization, std::size_t width,
+    const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
     -> diag::Result<std::vector<std::filesystem::path>> {
   std::vector<std::filesystem::path> objects;
@@ -99,33 +101,43 @@ auto CompileDpiObjects(
         std::format(
             "failed to create '{}': {}", work_dir.string(), created.message()));
   }
+  std::vector<support::ProcessRequest> requests;
+  requests.reserve(inputs.size());
   for (const DpiLinkInput& input : inputs) {
     // One compilation per input, because the language each is compiled as is
     // its own and a driver invocation carries one output path. The object's
     // name extends the input's whole file name, which is the thing two inputs
     // are already required to differ in; taking the stem instead would let one
     // source and another of a different language overwrite each other.
-    const std::filesystem::path object =
-        work_dir / (input.source.filename().string() + ".o");
+    objects.push_back(work_dir / (input.source.filename().string() + ".o"));
     std::vector<std::string> args = ForeignLanguageFlags(input);
     args.insert(
         args.end(), {std::string(OptimizationFlag(optimization)), "-c",
                      input.source.string(), "-I", header_dir.string(), "-o",
-                     object.string()});
+                     objects.back().string()});
+    requests.push_back(
+        support::ProcessRequest{.exe = cxx, .args = std::move(args)});
+  }
 
-    auto compiled = support::RunProcessCaptured(cxx, args);
-    if (!compiled) {
-      return diag::Fail(
-          diag::DiagCode::kHostIoError, std::move(compiled.error()));
+  auto compiled = support::RunProcessesCaptured(requests, width);
+  if (!compiled) {
+    return diag::Fail(
+        diag::DiagCode::kHostIoError, std::move(compiled.error()));
+  }
+  std::string failures;
+  for (std::size_t i = 0; i < inputs.size(); ++i) {
+    if ((*compiled)[i].exit_code == 0) {
+      continue;
     }
-    if (compiled->exit_code != 0) {
-      return diag::Fail(
-          diag::DiagCode::kHostBuildFailed,
-          std::format(
-              "compiling the DPI-C link input '{}' failed:\n{}",
-              input.source.string(), compiled->stderr_text));
+    if (!failures.empty()) {
+      failures += "\n";
     }
-    objects.push_back(std::move(object));
+    failures += std::format(
+        "compiling the DPI-C link input '{}' failed:\n{}",
+        inputs[i].source.string(), (*compiled)[i].stderr_text);
+  }
+  if (!failures.empty()) {
+    return diag::Fail(diag::DiagCode::kHostBuildFailed, std::move(failures));
   }
   return objects;
 }

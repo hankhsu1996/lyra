@@ -416,8 +416,9 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "compile the C++ backend's output without a precompiled header");
   cmd.add(
       "--cache-dir", opts.cache_dir,
-      "where built programs and prepared headers are kept for reuse", "<dir>",
-      slang::CommandLineFlags::FilePath);
+      "where built programs, compiled units and prepared headers are kept for "
+      "reuse",
+      "<dir>", slang::CommandLineFlags::FilePath);
   cmd.add(
       "--rebuild", opts.rebuild,
       "build as though nothing were kept, and keep what is built");
@@ -428,7 +429,7 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "<program>");
   cmd.add(
       "-j,--jobs", opts.jobs,
-      "how many of the design's translation units to compile at once; "
+      "how many of the design's units to lower and compile at once; "
       "0 asks for one per processor",
       "<count>");
   cmd.add(

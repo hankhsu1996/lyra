@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -18,10 +19,11 @@ struct AbiFragment {
   std::string text;
 };
 
-// Adds what `unit` states of the program's foreign name space (LRM 35) to
-// `fragments`, or nothing where it states none: a prototype for every
+// What `unit` states of the program's foreign name space (LRM 35), as the text
+// of its fragment, or nothing where it states none: a prototype for every
 // foreign-linkage callable the unit declares -- the imports the C side must
-// define, and the exports it may call.
+// define, and the exports it may call. It reads the unit alone, so several
+// units' fragments may be written at once.
 //
 // A foreign name is program-global and lives in its own name space rather than
 // any unit's (LRM 35.4, 35.7), so several units may each declare one name and
@@ -33,8 +35,13 @@ struct AbiFragment {
 // What a unit states is target-language-neutral: it projects the same
 // prototypes an execution backend links against, so a foreign source compiled
 // against it is correct whichever backend runs the design.
-void CollectAbiFragment(
-    const mir::CompilationUnit& unit, std::vector<AbiFragment>& fragments);
+auto AbiFragmentOf(const mir::CompilationUnit& unit)
+    -> std::optional<std::string>;
+
+// Adds a unit's fragment to those the design has, named by its position among
+// them, which is why fragments are added in the order the design lists its
+// units: that order is the same from one emission to the next.
+void AddAbiFragment(std::vector<AbiFragment>& fragments, std::string text);
 
 // The header a user includes, which is the union of those fragments: it names
 // each one and states nothing itself. Assembling it reads a list of fragments

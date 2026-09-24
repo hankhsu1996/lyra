@@ -55,8 +55,10 @@ class ContentNamer {
 auto LocateStore(const std::optional<std::filesystem::path>& override)
     -> std::optional<std::filesystem::path>;
 
-// The two kinds of entry the store keeps, each under a directory of its own.
+// The kinds of entry the store keeps, each under a directory of its own: a
+// prepared header, one unit's object, and a linked program.
 inline constexpr std::string_view kStoredHeaderDir = "pch";
+inline constexpr std::string_view kStoredObjectDir = "objects";
 inline constexpr std::string_view kStoredProgramDir = "programs";
 
 // The entry kept under `name`, marked as used just now, or nothing.

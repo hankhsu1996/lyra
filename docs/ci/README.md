@@ -115,12 +115,12 @@ A case on the LLVM path is built into a program and that program is run, which i
 `lyra run` does for a user -- so the gate measures the artifact that ships, linked against the same
 static runtime library, rather than some other way of executing the same module.
 
-The one thing this leaves for later is optimization. An optimizer is free to do anything at all with
-a module that contains undefined behaviour, so once the LLVM path has an optimization level, an
-optimized build and an unoptimized one can disagree where the emitted module is already wrong in a
-way one of them happens not to expose. That is not a statement about IEEE 1800, and it belongs in
-the same place the C++ path is heading: a small set of designs, run for the artifact rather than for
-the claim.
+The one thing this leaves out is optimization: the corpus builds at the default level, and
+`--release` optimizes. An optimizer is free to do anything at all with a module that contains
+undefined behaviour, so an optimized build and an unoptimized one can disagree where the emitted
+module is already wrong in a way one of them happens not to expose. That is not a statement about
+IEEE 1800, and it belongs in the same place the C++ path is heading: a small set of designs, run for
+the artifact rather than for the claim.
 
 The C++ path is on its way out of this table. Its subject is not what IEEE 1800 requires -- the
 execution backend answers that -- but whether an emitted project still builds and runs under a host
