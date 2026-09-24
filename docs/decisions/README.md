@@ -61,6 +61,14 @@ the detail lives in the entry itself.
   range is part of its type, not a size carried beside it; packed arrays are carved out.
 - [selector-coordinate-resolution](selector-coordinate-resolution.md) -- `a[1:7]`, `b[7:1]`, and
   `c[0:6]` are three distinct types, so resolving a subscript to a coordinate is the type's job.
+  Superseded, the last of it by [a-select-names-a-position](a-select-names-a-position.md).
+- [a-select-names-a-position](a-select-names-a-position.md) -- a select hands the value it reaches a
+  position in the value's own numbering and a count its type fixes; the declared range, direction
+  and part-select form are read where the select is lowered, as arithmetic in a position type, and
+  an integral operation over constants is folded where it is built. Measured: the representative
+  block 30.9% fewer instructions, 3,237 -> 4,711 table passes a second. Resolving in machine
+  integers in the runtime, a known-flag position, and restating a literal in a deferred write are
+  rejected.
 - [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend every
   aggregate is a runtime-owned opaque value (erasure), not structurally monomorphized; the choice is
   below LIR, and LIR's aggregate operations stay realization-agnostic.
@@ -139,7 +147,9 @@ the detail lives in the entry itself.
   target, evaluating the left-hand side exactly once (LRM 11.4.1); revised so an operator the
   library performs is applied by the entry that performs it, and superseded for value interiors by
   [value-projection-write](value-projection-write.md).
-- [conversion-folding](conversion-folding.md) -- when type conversions are folded.
+- [conversion-folding](conversion-folding.md) -- when type conversions are folded. Superseded by
+  [a-select-names-a-position](a-select-names-a-position.md), which folds an operation over constants
+  where it is built.
 - [shape-from-types-contents-from-expressions](shape-from-types-contents-from-expressions.md) -- a
   lowering reads a number it needs before run time from a type, never from an expression; an operand
   stays the expression it is and is never evaluated or matched for a literal, and a pattern key is a

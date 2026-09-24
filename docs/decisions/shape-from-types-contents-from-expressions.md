@@ -1,6 +1,8 @@
 # Shape comes from types, contents come from expressions
 
-Date: 2026-09-01. Status: accepted.
+Date: 2026-09-01. Status: accepted; S1's "nothing evaluates one" is revised by
+[a-select-names-a-position](a-select-names-a-position.md) P3, which folds an integral operation over
+constants where it is built and matches no operand for a literal. S2, S3 and S4 stand.
 
 ## Why this decision matters
 

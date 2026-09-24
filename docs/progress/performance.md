@@ -123,7 +123,8 @@ block; a conversion between two types the compiler already knows costs about 360
 comparing the old one against the new**, which is 13% and 5% of the representative block and 15% and
 12% of scalar arithmetic. Third, and only where the design waits on a clock, is **every wait
 allocating**: about 12% of the clocked pipeline is the allocator, beside building a trigger list and
-subscribing per wait. The design's own body stays under 5% in every one.
+subscribing per wait. The design's own body stays under 5% in every one. The first of the three is
+closed below.
 
 - [x] An integral value's dimension stack no longer allocates for the single-dimension case. Every
       declared integral carried its stack in a growable container, so constructing or copying any
@@ -272,18 +273,29 @@ subscribing per wait. The design's own body stays under 5% in every one.
       same result printed. The rate went from **1,408 to 2,976 table passes per second**, 37x off
       Verilator, 2026-09-23.
 
-- [ ] A part-select or a conversion the compiler has already resolved reaches the run as values to
-      resolve again. The bounds of `v[2:0]` are literals, so where the selected run starts and how
-      long it is are settled before the program runs; what reaches the run is the two bounds and the
-      select's form, each as a four-state value, and the run's position is recovered from them with
-      four-state subtraction and normalization on every evaluation. A conversion between two types
-      the compiler knows goes through the general path that serves any pair. The measurements are in
-      the paragraph above: about 2,100 instructions a select and 360 a conversion, 43% and 28% of
-      the two cases they dominate.
+- [x] A select no longer hands the run the source's coordinates to resolve again. The bounds of
+      `v[2:0]` used to reach the run as two four-state values, a form and the declaration's shape,
+      and the run recovered where the selected bits start with four-state arithmetic on every
+      evaluation -- about 2,100 instructions a select and 43% of the representative block. Every
+      select now names a position in the selected value's own numbering and a count, the declaration
+      is read where the select is written, and an index is moved by it only where the declaration
+      does not number from the index's own zero. An integral operation whose operands are all
+      constants is itself a constant, so a conversion of a literal is no longer performed each time
+      control reaches it.
 
-      **Target shape**: what the compiler settled reaches the run as what it is -- a run's position
-      and length, a conversion between two named shapes -- and a value is handed over only where the
-      program computes it. Not blocked.
+      What the entry called a conversion between two known types turned out to be two things. A
+      conversion of a constant was a fact the compiler settled, and folds away with the rest. A
+      conversion of a value the program computes -- `longint'(a)`, which scalar arithmetic does
+      three times an iteration -- has nothing left to settle; its cost was a general word loop
+      where one word suffices, and a conversion between two values of one word now takes a
+      straight-line path.
+
+      Measured 2026-09-23 against `212505b0`, by instruction count at the same work: the
+      representative block 1,200,065,357 -> 829,304,434 (-30.9%), and **3,237 -> 4,711 table
+      passes per second, 24x off Verilator** (from 35x); scalar arithmetic 7,380,008,890 ->
+      6,408,004,232 (-13.2%), and 6,684,983 -> 6,804,700 iterations per second -- the instructions
+      the one-word path removed did not move the rate by much. The model is
+      [../decisions/a-select-names-a-position.md](../decisions/a-select-names-a-position.md).
 
 - [ ] An emitted program is optimized without the runtime library it spends its time in. The
       design's translation units and the runtime are compiled separately and linked as native
@@ -303,12 +315,11 @@ subscribing per wait. The design's own body stays under 5% in every one.
       files. That is the end-to-end trade `north_star.md` puts first, and it is the number to get
       before this is switched on rather than offered.
 
-      A second thing now pulls on the same question, in the opposite direction. Because those
-      definitions sit in headers, every unit builds its own copy of each operation it reaches and
-      the linker keeps one: measured 2026-09-23, three quarters of the symbol bytes left in a
-      design's unit are copies of that kind, and an object set is what a build holds whole. So the
-      shape below is asked to serve two readings that do not agree, and neither is settled by the
-      other.
+      Nothing pulls the other way any more. The value layer's operations are compiled once, in the
+      shipped runtime, and a unit calls them; the copies a unit's object once carried, which an
+      earlier reading put at three quarters of its symbol bytes and attributed to those
+      operations, were the runtime's own entries and families, and those are compiled once too
+      now. So what decides this is the link cost above and nothing else.
 
       **Target shape**: the runtime ships in a form the optimizer can read, and a design build says
       whether to use it. It is the run-time half of the same axis `--release` already names, so it

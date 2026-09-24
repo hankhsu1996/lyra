@@ -362,13 +362,9 @@ inline auto MakePackedProjectionTest(
     const value::PackedArray& old_val, const value::PackedArray& new_val)
     -> ProjectionUnchanged {
   return [&old_val, &new_val](std::uint64_t lsb, std::uint64_t width) -> bool {
-    const auto lsb_arg = value::PackedArray::FromInt(
-        static_cast<std::int64_t>(lsb), 64U, false, false);
-    const auto old_slice =
-        old_val.ExtractBits(lsb_arg, static_cast<std::uint32_t>(width));
-    const auto new_slice =
-        new_val.ExtractBits(lsb_arg, static_cast<std::uint32_t>(width));
-    return old_slice.IsBitIdentical(new_slice);
+    const auto start = static_cast<std::int64_t>(lsb);
+    return old_val.ExtractRun(start, width)
+        .IsBitIdentical(new_val.ExtractRun(start, width));
   };
 }
 

@@ -5,12 +5,12 @@
 // the aggregate's bit plane -- MIR carries no struct-specific node.
 
 #include <cstdint>
-#include <vector>
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -25,21 +25,19 @@ namespace lyra::lowering::hir_to_mir {
 // the read side only; a write reaches a member through the member-access
 // lowering below.
 
-// What an element step of a descent is given: the coordinate, and whatever the
-// container's own kind needs beside it to resolve one. Every site that reaches
-// an element states the step the same way, whether the source wrote a select or
-// an assignment pattern named the element by key, so what a container needs is
-// answered from its type in one place.
-[[nodiscard]] auto ElementStepOperands(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId base_type,
-    mir::ExprId idx_id) -> std::vector<mir::ExprId>;
+// The step `receiver[idx]` takes (LRM 7.4.5 / 7.5 / 7.8 / 7.10 / 11.5.1), with
+// `idx` written in the coordinates the receiver was declared with. A packed
+// value is reached by the run of bits one element of its outermost dimension
+// occupies, an associative array by the key itself, and every other array by
+// the element's position. Every site that reaches an element states the step
+// the same way, whether the source wrote a select or an assignment pattern
+// named the element by key, so what a container needs is answered from its
+// type in one place.
+[[nodiscard]] auto ElementStep(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId receiver_type,
+    mir::ExprId idx_id, mir::TypeId part_type) -> DescentStep;
 
-// `arr[i]` element access (LRM 7.4.5 / 7.5 / 7.10). The container kind of what
-// the call dispatches on picks the runtime overload, and the raw source index
-// passes through, plus that value's declared range for the unpacked family --
-// every selectable value resolves the coordinate against its own range. The
-// index is the one the source would have written, so a declared range that
-// does not start at zero takes its own coordinates here too.
+// `arr[i]` read as a value: the element step's value entry on `base_id`.
 [[nodiscard]] auto BuildElementAccessCallExpr(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr;

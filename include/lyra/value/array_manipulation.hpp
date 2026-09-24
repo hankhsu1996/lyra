@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <ranges>
 #include <type_traits>
 #include <vector>
@@ -272,26 +273,23 @@ auto ArraySortByKey(Seq& data, F key, Compare cmp) -> void {
   }
 }
 
-// LRM 7.4.5 contiguous-range gather. `base` is the already-resolved zero-based
-// storage ordinal of the low element; the caller rebases the source selector
-// against its coordinate system before calling. The slice is `count` elements
-// from `base`; an out-of-range position yields `canonical`, and a selector the
-// caller could not resolve (`!anchor_known`, an x / z selector) makes the whole
-// result canonical. The flat vector is wrapped by the caller as a fixed-size
-// unpacked array.
+// LRM 7.4.5 contiguous-range gather: `count` elements from ordinal `start`. An
+// element outside the array yields `canonical`, and a start that names no
+// position (an x / z one) makes the whole result canonical. The flat vector is
+// wrapped by the caller as a fixed-size unpacked array.
 template <typename T>
 [[nodiscard]] auto ArraySliceGather(
-    const std::vector<T>& data, const T& canonical, std::int64_t base,
-    std::uint32_t count, bool anchor_known) -> std::vector<T> {
+    const std::vector<T>& data, const T& canonical,
+    std::optional<std::int64_t> start, std::size_t count) -> std::vector<T> {
   std::vector<T> result;
-  if (!anchor_known) {
+  if (!start) {
     result.assign(count, canonical);
     return result;
   }
   result.reserve(count);
   const auto size = static_cast<std::int64_t>(data.size());
-  for (std::uint32_t i = 0; i < count; ++i) {
-    const auto pos = base + static_cast<std::int64_t>(i);
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto pos = *start + static_cast<std::int64_t>(i);
     const bool in_bounds = pos >= 0 && pos < size;
     result.push_back(
         in_bounds ? data[static_cast<std::size_t>(pos)] : canonical);
@@ -299,20 +297,20 @@ template <typename T>
   return result;
 }
 
-// LRM 7.6 + 7.4.5 whole-slice scatter. Each of the `count` values lands at the
-// resolved ordinal `base + i`; an out-of-range position is skipped and an
-// unresolved selector (`!anchor_known`) performs no operation, matching the
-// invalid-index write contract.
+// LRM 7.6 + 7.4.5 whole-slice scatter. Each of the `count` values lands at
+// ordinal `start + i`; an element outside the array is skipped, and a start
+// that names no position performs no operation, matching the invalid-index
+// write contract.
 template <typename T>
 auto ArraySliceScatter(
-    std::vector<T>& data, std::int64_t base, std::uint32_t count,
-    const std::vector<T>& values, bool anchor_known) -> void {
-  if (!anchor_known) {
+    std::vector<T>& data, std::optional<std::int64_t> start, std::size_t count,
+    const std::vector<T>& values) -> void {
+  if (!start) {
     return;
   }
   const auto size = static_cast<std::int64_t>(data.size());
-  for (std::uint32_t i = 0; i < count; ++i) {
-    const auto pos = base + static_cast<std::int64_t>(i);
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto pos = *start + static_cast<std::int64_t>(i);
     if (pos < 0 || pos >= size) {
       continue;
     }

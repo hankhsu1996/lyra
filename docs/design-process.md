@@ -267,6 +267,38 @@ unrelated edit elsewhere moves it, and anything keyed on that identity moves wit
 inside it is only ever built where some program writes the construct that reaches it, so a defect in
 a form nobody has written yet cannot be found by building: it waits for a user.
 
+## An operand is what can differ between two evaluations
+
+Whatever a node hands the run as an operand, the run evaluates, and evaluating is only worth doing
+where two evaluations of the same node can disagree. So ask of each operand: **could it come out
+differently the next time control reaches this node?** Where the answer is no -- a declared range,
+the direction it runs in, which form of select the source wrote, a width a type fixes -- it is a
+fact about the node rather than an input to it, and the highest layer that still knows it states its
+consequence once. Passing it anyway is not only slow: it is the source language reaching the run,
+which then re-derives on every evaluation what the compiler had already settled. Where the answer is
+yes -- an index the program computes, a queue bound that `$` moves -- it is an operand, and
+translating it is ordinary arithmetic the next layer states, which stops being folded exactly when
+it stops being constant.
+
+The question also keeps a node's meaning honest, because the rest of the compiler treats an operand
+as a value with a moment of evaluation. A deferred write freezes its operands at the statement, so
+that it lands with what they were then; a count the result type fixed, placed among them, was frozen
+too, and needed storage that a number with no moment of evaluation does not have. The count was
+never an operand. It travels beside the operands, and nothing snapshots it.
+
+And it separates folding from guessing. A node whose operands are all constants has nothing left to
+differ, so evaluating it once, as it is built, with the library the run itself uses, is the same
+answer given earlier -- the way LLVM's `IRBuilder` asks its constant folder. What is not the same is
+a consumer noticing that an operand looks like a literal and substituting its own reading: that is a
+second evaluator keyed on a shape, and it breaks on the first operand that is constant without being
+written as a literal. **Fold by asking the operation, never by matching the operand.**
+
+Worked shape: `v[2:0]` on a `logic [7:0] v` reached the run as its two bounds, its form, and the
+declared range, and the run recovered "three bits from bit zero" on every evaluation -- 43% of a
+representative compute block. Asked the question, only `v` differs between evaluations; the start
+and the count belong to the node, and what reaches the run is a slice of `v` at position 0, three
+bits long.
+
 ## Falsifying a proposed shape
 
 Four checks, all cheap:

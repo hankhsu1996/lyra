@@ -73,6 +73,7 @@
 #include "lyra/value/runtime_value.hpp"
 #include "lyra/value/scan.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/unpacked_range.hpp"
 
 namespace lyra::runtime {
 
@@ -2567,38 +2568,22 @@ auto lyra_rt_packed_reduction_xnor(const void* value) -> void* {
   return Own(Read<PackedArray>(value).ReductionXnor());
 }
 
-auto lyra_rt_packed_element(
-    const void* value, const void* index, const void* shape) -> void* {
-  return Own(
-      Read<PackedArray>(value).Element(
-          Read<PackedArray>(index), Read<PackedType>(shape)));
-}
-
-auto lyra_rt_packed_with_element(
-    const void* value, const void* index, const void* shape,
-    const void* replacement) -> void* {
-  return Own(
-      Read<PackedArray>(value).WithElement(
-          Read<PackedArray>(index), Read<PackedType>(shape),
-          Read<PackedArray>(replacement)));
-}
-
 auto lyra_rt_packed_slice(
-    const void* value, const void* a, const void* b, const void* form,
-    const void* shape) -> void* {
+    const void* value, const void* position, std::int64_t width) -> void* {
   return Own(
-      Read<PackedArray>(value).Slice(
-          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
-          Read<PackedType>(shape)));
+      Read<PackedArray>(value).Slice(Read<PackedArray>(position), width));
 }
 
 auto lyra_rt_packed_with_slice(
-    const void* value, const void* a, const void* b, const void* form,
-    const void* shape, const void* replacement) -> void* {
+    const void* value, const void* position, std::int64_t width,
+    const void* replacement) -> void* {
   return Own(
       Read<PackedArray>(value).WithSlice(
-          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
-          Read<PackedType>(shape), Read<PackedArray>(replacement)));
+          Read<PackedArray>(position), width, Read<PackedArray>(replacement)));
+}
+
+auto lyra_rt_packed_to_position(const void* index) -> void* {
+  return Own(PackedArray::ToPosition(Read<PackedArray>(index)));
 }
 
 // Materializes a borrowed packed view (a container element or slice read) into
@@ -3652,19 +3637,17 @@ auto lyra_rt_dynarray_delete(const void* array) -> void* {
 }
 
 auto lyra_rt_dynarray_slice(
-    const void* array, const void* a, const void* b, const void* form)
-    -> void* {
+    const void* array, const void* start, std::int64_t count) -> void* {
   return Own(
-      Read<RuntimeDynamicArray>(array).Slice(
-          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form)));
+      Read<RuntimeDynamicArray>(array).Slice(Read<PackedArray>(start), count));
 }
 
 auto lyra_rt_dynarray_with_slice(
-    const void* array, const void* a, const void* b, const void* form,
+    const void* array, const void* start, std::int64_t count,
     const void* replacement) -> void* {
   return Own(
       Read<RuntimeDynamicArray>(array).WithSlice(
-          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
+          Read<PackedArray>(start), count,
           Read<RuntimeUnpackedArray>(replacement)));
 }
 
@@ -3782,24 +3765,21 @@ auto lyra_rt_unpackedarray_merge_conditional(const void* lhs, const void* rhs)
           Read<RuntimeUnpackedArray>(rhs)));
 }
 
-// Reads the element the source index names, resolved against the declared range
-// the receiver's static type supplies. An index the range does not name reads
+// Reads the element a position names. A position that names no element reads
 // the element default (LRM 7.4.5).
-auto lyra_rt_unpackedarray_element(
-    const void* array, const void* index, const void* declared) -> void* {
+auto lyra_rt_unpackedarray_element(const void* array, const void* position)
+    -> void* {
   return lyra::runtime::ElementHandle(
-      Read<RuntimeUnpackedArray>(array).Element(
-          Read<PackedArray>(index), Read<UnpackedRange>(declared)));
+      Read<RuntimeUnpackedArray>(array).Element(Read<PackedArray>(position)));
 }
 
 // The functional element write (LRM 7.4.5): yields a new array with the named
-// element replaced, and the original unchanged when the range does not name it.
+// element replaced, and the original unchanged when the position names none.
 auto lyra_rt_unpackedarray_with_element(
-    const void* array, const void* index, const void* declared, void* value)
-    -> void* {
+    const void* array, const void* position, void* value) -> void* {
   const auto& source = Read<RuntimeUnpackedArray>(array);
   return Own(source.WithElement(
-      Read<PackedArray>(index), Read<UnpackedRange>(declared),
+      Read<PackedArray>(position),
       lyra::runtime::ElementFrom(source.ElementDefault(), value)));
 }
 
@@ -3910,21 +3890,17 @@ auto lyra_rt_unpackedarray_size(const void* array) -> void* {
 }
 
 auto lyra_rt_unpackedarray_slice(
-    const void* array, const void* a, const void* b, const void* form,
-    const void* declared) -> void* {
+    const void* array, const void* start, std::int64_t count) -> void* {
   return Own(
-      Read<RuntimeUnpackedArray>(array).Slice(
-          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
-          Read<UnpackedRange>(declared)));
+      Read<RuntimeUnpackedArray>(array).Slice(Read<PackedArray>(start), count));
 }
 
 auto lyra_rt_unpackedarray_with_slice(
-    const void* array, const void* a, const void* b, const void* form,
-    const void* declared, const void* replacement) -> void* {
+    const void* array, const void* start, std::int64_t count,
+    const void* replacement) -> void* {
   return Own(
       Read<RuntimeUnpackedArray>(array).WithSlice(
-          Read<PackedArray>(a), Read<PackedArray>(b), Read<PackedArray>(form),
-          Read<UnpackedRange>(declared),
+          Read<PackedArray>(start), count,
           Read<RuntimeUnpackedArray>(replacement)));
 }
 
@@ -4268,13 +4244,11 @@ auto lyra_rt_queue_with_element(
       lyra::runtime::ElementFrom(source.ElementDefault(), value)));
 }
 
-auto lyra_rt_queue_slice(
-    const void* queue, const void* anchor, const void* extent, const void* form)
+auto lyra_rt_queue_slice(const void* queue, const void* lo, const void* hi)
     -> void* {
   return Own(
       Read<RuntimeQueue>(queue).Slice(
-          Read<PackedArray>(anchor), Read<PackedArray>(extent),
-          Read<PackedArray>(form)));
+          Read<PackedArray>(lo), Read<PackedArray>(hi)));
 }
 
 auto lyra_rt_queue_size(const void* queue) -> void* {

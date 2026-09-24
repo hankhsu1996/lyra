@@ -1,8 +1,9 @@
 // An index into a dynamic array is invalid when it falls outside the elements
 // the array currently has or when any bit of it is x or z, and an array of
-// size zero makes every index invalid. Reading through an invalid index
-// yields the value Table 7-1 gives for the element type, all x for a 4-state
-// element and zero for a 2-state one. Writing through one performs no
+// size zero makes every index invalid. An index wider than a machine word names
+// the element its value names, so its high bits decide whether it is valid.
+// Reading through an invalid index yields the value Table 7-1 gives for the
+// element type, all x for a 4-state element and zero for a 2-state one. Writing through one performs no
 // operation at all: unlike a queue, a dynamic array has no index at which a
 // write appends, so neither the size nor any element changes. A valid index
 // reads and writes the stored element, and a compound assignment reaches that
@@ -14,6 +15,7 @@ module Top;
   bit [7:0] bits [] = '{8'h00, 8'hFF, 8'hAA};
   int empty [];
   integer idx;
+  logic [95:0] wide_idx;
 
   int read_past_end = 77;
   int read_negative = 77;
@@ -23,6 +25,8 @@ module Top;
   logic [7:0] read_at_z_index = 8'h5A;
 
   int in_range = 77;
+  int read_wide_in_range = 77;
+  int read_wide_past_end = 77;
   int size_after_invalid_writes;
   int empty_size_after_invalid_write;
 
@@ -42,6 +46,10 @@ module Top;
 
     idx = 1;
     in_range = values[idx];
+    wide_idx = 96'd2;
+    read_wide_in_range = values[wide_idx];
+    wide_idx = {32'd1, 64'd1};
+    read_wide_past_end = values[wide_idx];
 
     values[0] += 5;
     values[1] -= 5;
@@ -55,6 +63,7 @@ module Top;
     values[idx] = 999;
     idx = -5;
     values[idx] = 888;
+    values[wide_idx] = 777;
     size_after_invalid_writes = values.size();
 
     idx = 'x;
@@ -82,6 +91,10 @@ module Top;
       $fatal(1, "read_at_z_index was %0h, expected all x", read_at_z_index);
 
     if (in_range !== 20) $fatal(1, "in_range was %0d, expected 20", in_range);
+    if (read_wide_in_range !== 30)
+      $fatal(1, "read_wide_in_range was %0d, expected 30", read_wide_in_range);
+    if (read_wide_past_end !== 0)
+      $fatal(1, "read_wide_past_end was %0d, expected 0", read_wide_past_end);
 
     if (values[0] !== 15)
       $fatal(1, "values[0] was %0d, expected 15", values[0]);

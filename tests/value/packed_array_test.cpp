@@ -7,8 +7,7 @@
 #include <span>
 #include <utility>
 
-#include "lyra/value/packed_type.hpp"
-#include "lyra/value/slice_selector.hpp"
+#include "lyra/value/position.hpp"
 
 namespace lyra::value {
 namespace {
@@ -19,52 +18,75 @@ namespace {
 // how a declaration divides those bits.
 static_assert(sizeof(PackedArray) == 48);
 
-auto Shape(std::initializer_list<PackedRange> dims, bool is_four_state = false)
-    -> PackedType {
-  return PackedType{
-      std::span<const PackedRange>{dims.begin(), dims.size()}, false,
-      is_four_state};
+// A position is the one integer a select's operand stands for, or nothing: an
+// x or z bit names no position (LRM 11.5.1), and neither does a magnitude past
+// every value, whatever width and signedness carried it there.
+TEST(PackedArrayTest, APositionIsReadTheSameWayWhateverCarriesIt) {
+  EXPECT_EQ(ReadPosition(PackedArray::Int(5)), 5);
+  EXPECT_EQ(ReadPosition(PackedArray::Int(-3)), -3);
+  EXPECT_EQ(
+      ReadPosition(PackedArray::FromInt(0xFF, 8U, false, false)).value_or(0),
+      255);
+  EXPECT_EQ(ReadPosition(PackedArray::FromInt(-1, 8U, true, true)), -1);
+
+  EXPECT_FALSE(ReadPosition(PackedArray{8U, false, true}).has_value());
+  EXPECT_FALSE(
+      ReadPosition(PackedArray::FromInt(kPositionLimit + 1, 64U, true, false))
+          .has_value());
+  // An unsigned 64-bit value past the signed range is huge, not negative.
+  EXPECT_FALSE(
+      ReadPosition(PackedArray::FromInt(-1, 64U, false, false)).has_value());
+
+  // Past 64 bits, the words above the first decide whether the value fits.
+  const std::array<std::uint64_t, 2> small = {7ULL, 0ULL};
+  const std::array<std::uint64_t, 2> large = {7ULL, 1ULL};
+  const std::array<std::uint64_t, 2> minus_two = {~1ULL, 0x1ULL};
+  EXPECT_EQ(
+      ReadPosition(PackedArray::FromWords(small, {}, 65U, false, false)), 7);
+  EXPECT_FALSE(
+      ReadPosition(PackedArray::FromWords(large, {}, 65U, false, false))
+          .has_value());
+  EXPECT_EQ(
+      ReadPosition(PackedArray::FromWords(minus_two, {}, 65U, true, false)),
+      -2);
+
+  // The position type an index is brought to for arithmetic says the same.
+  EXPECT_EQ(PackedArray::ToPosition(PackedArray::Int(9)).ToInt64(), 9);
+  EXPECT_TRUE(
+      PackedArray::ToPosition(PackedArray{8U, false, true}).HasUnknown());
 }
 
-TEST(PackedArrayTest, AValueOfOneDeclarationReadsAsAnother) {
-  // `bit [7:0]` and `bit [3:0][1:0]` are the same eight bits, and the two
-  // declarations divide them differently. The value holds the bits; which
-  // division applies is stated where the position is named, so one value
-  // answers both -- which is the whole of what leaving the stack out means.
-  const PackedArray bits = PackedArray::FromInt(0xD2, 8U, false, false);
-  const PackedType flat = Shape({PackedRange{.left = 7, .right = 0}});
-  const PackedType nested = Shape(
-      {PackedRange{.left = 3, .right = 0}, PackedRange{.left = 1, .right = 0}});
+// LRM 6.11.2 / 6.11.3 / 6.12.1: what a conversion between two values of one
+// word keeps. The positions that behave differently are a signed source
+// widening, an unsigned one widening, a sign bit that is unknown, a four-state
+// value reaching two states, and a narrowing.
+TEST(PackedArrayTest, AOneWordConversionKeepsWhatTheRulesKeep) {
+  const PackedArray minus_128 = PackedArray::FromInt(-128, 8U, true, false);
+  EXPECT_EQ(
+      PackedArray::ConvertFrom(minus_128, 16U, true, false).ValueWords()[0],
+      0xFF80ULL);
+  const PackedArray unsigned_128 = PackedArray::FromInt(0x80, 8U, false, false);
+  EXPECT_EQ(
+      PackedArray::ConvertFrom(unsigned_128, 16U, false, false).ValueWords()[0],
+      0x0080ULL);
 
-  const PackedArray one_bit = bits.Element(PackedArray::Int(6), flat);
-  EXPECT_EQ(one_bit.BitWidth(), 1U);
-  EXPECT_EQ(one_bit.ToInt64(), 1);
+  // 4'bx010, signed: an x sign fills with x into four states and with the 0 it
+  // becomes into two.
+  const std::array<std::uint64_t, 1> value = {0xAULL};
+  const std::array<std::uint64_t, 1> unknown = {0x8ULL};
+  const PackedArray x_sign =
+      PackedArray::FromWords(value, unknown, 4U, true, true);
+  const PackedArray four = PackedArray::ConvertFrom(x_sign, 8U, true, true);
+  EXPECT_EQ(four.ValueWords()[0], 0xFAULL);
+  EXPECT_EQ(four.UnknownWords()[0], 0xF8ULL);
+  const PackedArray two = PackedArray::ConvertFrom(x_sign, 8U, true, false);
+  EXPECT_EQ(two.ValueWords()[0], 0x02ULL);
+  EXPECT_TRUE(two.UnknownWords().empty());
 
-  const PackedArray one_pair = bits.Element(PackedArray::Int(3), nested);
-  EXPECT_EQ(one_pair.BitWidth(), 2U);
-  EXPECT_EQ(one_pair.ToInt64(), 3);
-}
-
-TEST(PackedArrayTest, ASliceTakesItsCoordinatesFromTheReceiversShape) {
-  const PackedArray bits = PackedArray::FromInt(0xD2, 8U, false, false);
-  const PackedType flat = Shape({PackedRange{.left = 7, .right = 0}});
-  const PackedType nested = Shape(
-      {PackedRange{.left = 3, .right = 0}, PackedRange{.left = 1, .right = 0}});
-
-  // Bits 5 down to 2 of 1101_0010.
-  const PackedArray four_bits = bits.Slice(
-      PackedArray::Int(5), PackedArray::Int(2),
-      PackedArray::Int(static_cast<std::int32_t>(SliceForm::kConstant)), flat);
-  EXPECT_EQ(four_bits.BitWidth(), 4U);
-  EXPECT_EQ(four_bits.ToInt64(), 0x4);
-
-  // The same bounds over the nested declaration name pairs, not bits.
-  const PackedArray two_pairs = bits.Slice(
-      PackedArray::Int(2), PackedArray::Int(1),
-      PackedArray::Int(static_cast<std::int32_t>(SliceForm::kConstant)),
-      nested);
-  EXPECT_EQ(two_pairs.BitWidth(), 4U);
-  EXPECT_EQ(two_pairs.ToInt64(), 0x4);
+  const PackedArray wide = PackedArray::FromInt(0x1234, 16U, false, false);
+  EXPECT_EQ(
+      PackedArray::ConvertFrom(wide, 8U, false, false).ValueWords()[0],
+      0x34ULL);
 }
 
 TEST(PackedArrayTest, AFourStateDeclarationReadsAsUnknownUntilDriven) {
@@ -99,7 +121,7 @@ TEST(PackedArrayTest, ARunOfBitsIsReadWhereverItStarts) {
   // 1101_0010
   const PackedArray byte = PackedArray::FromInt(0xD2, 8U, true, false);
 
-  const PackedArray middle = byte.ExtractBits(PackedArray::Int(2), 4U);
+  const PackedArray middle = byte.Slice(PackedArray::Int(2), 4U);
   EXPECT_EQ(middle.BitWidth(), 4U);
   EXPECT_EQ(middle.ToInt64(), 0x4);
 
@@ -109,18 +131,18 @@ TEST(PackedArrayTest, ARunOfBitsIsReadWhereverItStarts) {
   const PackedArray wide =
       PackedArray::FromWords(words, {}, 136U, false, false);
 
-  const PackedArray across = wide.ExtractBits(PackedArray::Int(32), 64U);
+  const PackedArray across = wide.Slice(PackedArray::Int(32), 64U);
   EXPECT_EQ(across.ValueWords()[0], 0x7777'8888'1111'2222ULL);
 
-  const PackedArray spanning = wide.ExtractBits(PackedArray::Int(60), 72U);
+  const PackedArray spanning = wide.Slice(PackedArray::Int(60), 72U);
   EXPECT_EQ(spanning.BitWidth(), 72U);
   EXPECT_EQ(spanning.ValueWords()[0], 0x5556'6667'7778'8881ULL);
   EXPECT_EQ(spanning.ValueWords()[1], 0x0000'0000'0000'00A5ULL);
 
   // A position the value does not reach reads as zero on a two-state value.
-  EXPECT_EQ(byte.ExtractBits(PackedArray::Int(6), 4U).ToInt64(), 0x3);
-  EXPECT_EQ(byte.ExtractBits(PackedArray::Int(-2), 4U).ToInt64(), 0x8);
-  EXPECT_EQ(byte.ExtractBits(PackedArray::Int(100), 4U).ToInt64(), 0);
+  EXPECT_EQ(byte.Slice(PackedArray::Int(6), 4U).ToInt64(), 0x3);
+  EXPECT_EQ(byte.Slice(PackedArray::Int(-2), 4U).ToInt64(), 0x8);
+  EXPECT_EQ(byte.Slice(PackedArray::Int(100), 4U).ToInt64(), 0);
 }
 
 TEST(PackedArrayTest, ARunOfBitsCarriesTheUnknownItCrosses) {
@@ -130,18 +152,17 @@ TEST(PackedArrayTest, ARunOfBitsCarriesTheUnknownItCrosses) {
   const PackedArray byte =
       PackedArray::FromWords(value, unknown, 8U, false, true);
 
-  const PackedArray run = byte.ExtractBits(PackedArray::Int(1), 6U);
+  const PackedArray run = byte.Slice(PackedArray::Int(1), 6U);
   EXPECT_EQ(run.UnknownWords()[0], 0x21ULL);
 
   // A position the value does not reach is x on a four-state value, so a run
   // that leaves the value comes back partly unknown.
-  const PackedArray over = byte.ExtractBits(PackedArray::Int(6), 4U);
+  const PackedArray over = byte.Slice(PackedArray::Int(6), 4U);
   EXPECT_EQ(over.ValueWords()[0], 0xFULL);
   EXPECT_EQ(over.UnknownWords()[0], 0xDULL);
 
   // A start that is itself unknown puts the whole run out of reach.
-  const PackedArray nowhere =
-      byte.ExtractBits(PackedArray{4U, false, true}, 4U);
+  const PackedArray nowhere = byte.Slice(PackedArray{4U, false, true}, 4U);
   EXPECT_EQ(nowhere.UnknownWords()[0], 0xFULL);
 
   // Both planes cross a word boundary together, which is the shape a wide
@@ -155,7 +176,7 @@ TEST(PackedArrayTest, ARunOfBitsCarriesTheUnknownItCrosses) {
   const PackedArray wide =
       PackedArray::FromWords(wide_value, wide_unknown, 136U, false, true);
 
-  const PackedArray across = wide.ExtractBits(PackedArray::Int(32), 64U);
+  const PackedArray across = wide.Slice(PackedArray::Int(32), 64U);
   EXPECT_EQ(across.ValueWords()[0], 0x7777'8888'1111'2222ULL);
   EXPECT_EQ(across.UnknownWords()[0], 0xA5A5'A5A5'0F0F'0F0FULL);
 }
@@ -166,29 +187,27 @@ TEST(PackedArrayTest, ARunOfBitsIsWrittenWhereverItStarts) {
   const std::array<std::uint64_t, 2> run_words = {
       0x5556'6667'7778'8881ULL, 0x0000'0000'0000'00A5ULL};
   PackedArray target{136U, false, false};
-  target.AssignSlice(
-      PackedArray::Int(60), 72U,
-      PackedArray::FromWords(run_words, {}, 72U, false, false));
+  target.SliceRef(PackedArray::Int(60), 72) =
+      PackedArray::FromWords(run_words, {}, 72U, false, false);
   EXPECT_EQ(target.ValueWords()[0], 0x1000'0000'0000'0000ULL);
   EXPECT_EQ(target.ValueWords()[1], 0x5555'6666'7777'8888ULL);
   EXPECT_EQ(target.ValueWords()[2], 0x0000'0000'0000'000AULL);
 
   // Only the overlap lands, and what the value holds elsewhere stays.
   PackedArray below = PackedArray::FromInt(0xFF, 8U, false, false);
-  below.AssignSlice(
-      PackedArray::Int(-2), 4U, PackedArray::FromInt(0x0, 4U, false, false));
+  below.SliceRef(PackedArray::Int(-2), 4) =
+      PackedArray::FromInt(0x0, 4U, false, false);
   EXPECT_EQ(below.ToInt64(), 0xFC);
 
   PackedArray above = PackedArray::FromInt(0x00, 8U, false, false);
-  above.AssignSlice(
-      PackedArray::Int(6), 4U, PackedArray::FromInt(0xF, 4U, false, false));
+  above.SliceRef(PackedArray::Int(6), 4) =
+      PackedArray::FromInt(0xF, 4U, false, false);
   EXPECT_EQ(above.ToInt64(), 0xC0);
 
   // A start that is itself unknown writes nothing at all.
   PackedArray untouched = PackedArray::FromInt(0xAA, 8U, false, false);
-  untouched.AssignSlice(
-      PackedArray{4U, false, true}, 4U,
-      PackedArray::FromInt(0xF, 4U, false, false));
+  untouched.SliceRef(PackedArray{4U, false, true}, 4) =
+      PackedArray::FromInt(0xF, 4U, false, false);
   EXPECT_EQ(untouched.ToInt64(), 0xAA);
 }
 
@@ -196,14 +215,14 @@ TEST(PackedArrayTest, AWrittenRunSettlesTheUnknownItLandsOn) {
   // A two-state value written into four-state storage clears the unknown at
   // the positions it covers; it carries none of its own (LRM 7.2.1).
   PackedArray cell{8U, false, true};
-  cell.AssignSlice(
-      PackedArray::Int(2), 4U, PackedArray::FromInt(0x5, 4U, false, false));
+  cell.SliceRef(PackedArray::Int(2), 4) =
+      PackedArray::FromInt(0x5, 4U, false, false);
   EXPECT_EQ(cell.ValueWords()[0], 0xD7ULL);
   EXPECT_EQ(cell.UnknownWords()[0], 0xC3ULL);
 
   // A four-state value carries its own unknown in.
   PackedArray sink = PackedArray::FromInt(0, 8U, false, true);
-  sink.AssignSlice(PackedArray::Int(2), 4U, PackedArray{4U, false, true});
+  sink.SliceRef(PackedArray::Int(2), 4) = PackedArray{4U, false, true};
   EXPECT_EQ(sink.ValueWords()[0], 0x3CULL);
   EXPECT_EQ(sink.UnknownWords()[0], 0x3CULL);
 }

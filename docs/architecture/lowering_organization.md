@@ -590,9 +590,9 @@ handle:
 
 - **Transform** -- keyed on an input `mir::ExprId`: it reads `scope.GetExpr(id)` to decide what to
   build, or may return the input unchanged (pass-through). A transform returns a `mir::ExprId`,
-  because it operates on already-interned arena nodes. Examples: `WrapUnpackedIndex` (returns its
-  index input unchanged when the declared range needs no rebase), `CloneLhsExprForNbaBody` (rebuilds
-  an lvalue node's structure into a closure body).
+  because it operates on already-interned arena nodes. Examples: `WrapIndexAsPosition` (returns its
+  index input unchanged where the declaration numbers from the index's own zero), `ConvertToType`
+  (returns its operand unchanged where it already has the type asked for).
 
 The rule follows from the dispatcher contract, and it is the same contract on both node kinds:
 `LowerExpr` returns a detached `mir::Expr` whose children are already interned, and `LowerStmt`

@@ -629,8 +629,9 @@ auto FileTable::ReadMemory(
       *this, fd, dest.RawAt(0), declared, sv_start.ToInt64(), count.ToInt64(),
       [&dest, &declared](std::int64_t sv_index, value::PackedArray word) {
         dest.ElementRef(
-            value::PackedArray::Int(static_cast<std::int32_t>(sv_index)),
-            declared) = std::move(word);
+            value::PackedArray::FromInt(
+                declared.ToOrdinal(sv_index), 64U, true, false)) =
+            std::move(word);
       });
   return MemoryRead{MakeInt(read), std::move(dest)};
 }

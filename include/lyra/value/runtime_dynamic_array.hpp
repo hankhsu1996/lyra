@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -69,10 +70,11 @@ class RuntimeDynamicArray {
   // representation reads the target domain from here.
   [[nodiscard]] auto ElementDefault() const -> const RuntimeValue&;
 
-  // LRM 7.4.5 / 7.4.6: reads element `index` by reference. An out-of-range or
-  // x / z index reads the element default. The caller copies the result out
-  // across the opaque-handle boundary rather than aliasing it.
-  [[nodiscard]] auto Element(const PackedArray& index) const
+  // LRM 7.4.5 / 7.4.6: reads the element `position` names by reference. A
+  // position that names no element here reads the element default. The caller
+  // copies the result out across the opaque-handle boundary rather than
+  // aliasing it.
+  [[nodiscard]] auto Element(const PackedArray& position) const
       -> const RuntimeValue&;
 
   // The element at storage position `position`, counted from the first in the
@@ -81,31 +83,30 @@ class RuntimeDynamicArray {
   [[nodiscard]] auto ElementAt(std::size_t position) const
       -> const RuntimeValue&;
 
-  // A functional element write: yields a new array equal to this one with
-  // element `index` replaced by `value`. LRM 7.4.6: an out-of-range or x / z
-  // index leaves the array unchanged (the write is discarded).
-  [[nodiscard]] auto WithElement(const PackedArray& index, RuntimeValue value)
-      const -> RuntimeDynamicArray;
+  // A functional element write: yields a new array equal to this one with the
+  // element `position` names replaced by `value`. LRM 7.4.6: a position that
+  // names no element here leaves the array unchanged (the write is discarded).
+  [[nodiscard]] auto WithElement(
+      const PackedArray& position, RuntimeValue value) const
+      -> RuntimeDynamicArray;
 
   // LRM 7.5.3 `delete`: a functional clear -- yields the empty array with the
   // same element default.
   [[nodiscard]] auto Delete() const -> RuntimeDynamicArray;
 
-  // LRM 7.4.6 contiguous-range read: the `count` elements the selector names,
-  // as a fixed-size unpacked array. A dynamic array is zero-based, so the
-  // source index is the storage ordinal; a partial-out-of-range position or an
-  // x / z base reads the element default.
-  [[nodiscard]] auto Slice(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form) const
+  // LRM 7.4.6 contiguous-range read: `count` elements from `start`, as a
+  // fixed-size unpacked array. An element outside the array, and every element
+  // of a start that names no position, reads the element default.
+  [[nodiscard]] auto Slice(const PackedArray& start, std::int64_t count) const
       -> RuntimeUnpackedArray;
 
   // A functional whole-slice write (LRM 7.6): yields a new array with the
-  // window the selector names replaced, element for element, by `replacement`.
-  // A position past the end is skipped and an x / z base performs no operation,
-  // matching the invalid-index write contract; assignment compatibility gives
-  // the replacement the window's element count.
+  // window replaced, element for element, by `replacement`. An element outside
+  // the array is skipped and a start that names no position performs no
+  // operation, matching the invalid-index write contract; assignment
+  // compatibility gives the replacement the window's element count.
   [[nodiscard]] auto WithSlice(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form,
+      const PackedArray& start, std::int64_t count,
       const RuntimeUnpackedArray& replacement) const -> RuntimeDynamicArray;
 
   // LRM 10.10 unpacked concatenation, as the two-operand steps a join folds to:
@@ -156,10 +157,6 @@ class RuntimeDynamicArray {
       -> PackedArray;
 
  private:
-  // A negative, out-of-range, or x / z index (LRM 7.4.5). A valid index is
-  // returned as its storage ordinal.
-  [[nodiscard]] auto IsInvalidIndex(const PackedArray& index) const -> bool;
-
   // Indirect because `RuntimeValue` closes over this type: a by-value member
   // would need `RuntimeValue` complete here, which it is not.
   std::unique_ptr<RuntimeValue> element_default_;
@@ -171,5 +168,6 @@ static_assert(CaseEqualComparable<RuntimeDynamicArray>);
 static_assert(Sized<RuntimeDynamicArray>);
 static_assert(BitstreamSizable<RuntimeDynamicArray>);
 static_assert(EntryWalkable<RuntimeDynamicArray>);
+static_assert(Sliceable<RuntimeDynamicArray>);
 
 }  // namespace lyra::value

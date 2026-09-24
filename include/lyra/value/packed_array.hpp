@@ -450,52 +450,41 @@ class PackedArray {
   // combining with it.
   [[nodiscard]] auto Dominating(const PackedArray& weaker) const -> PackedArray;
 
-  // Reading and writing a run of bits named in the flat address space, which
-  // is where every coordinate-facing access below lands once its position is
-  // resolved. `ExtractBits` materializes the run as an owned value, unsigned
-  // as a run taken out of a value is (LRM 11.5.1). `AssignSlice` writes it
-  // with that clause's corner cases: an x/z position, a fully out-of-range
-  // one, and one whose magnitude exceeds the 64-bit position carrier are each
-  // a silent no-op, while a partially out-of-range one affects the in-range
-  // bits alone.
-  [[nodiscard]] auto ExtractBits(
-      const PackedArray& lsb_bit, std::uint32_t bit_width) const -> PackedArray;
-  auto AssignSlice(
-      const PackedArray& lsb_bit, std::uint32_t bit_width,
-      const PackedArray& value) -> void;
-
-  // Coordinate-facing access. A position is in the units `shape`'s outermost
-  // dimension counts, and `shape` is what decides how wide one of those is:
-  // over a one-dimensional shape a position names a bit and the chain realises
-  // LRM 11.5.1 bit-select and part-select directly, while over a deeper one it
-  // names an inner subtype. The reference forms compose, so a position at one
-  // layer is named against that layer's own shape, and the final assignment
-  // writes the resolved run.
-  [[nodiscard]] auto ElementRef(const PackedArray& idx, const PackedType& shape)
-      -> PackedArrayRef;
-  [[nodiscard]] auto Element(
-      const PackedArray& idx, const PackedType& shape) const -> PackedArray;
-  // The functional counterpart of the in-place element write, for a value
-  // reached by an opaque handle that cannot be mutated in place: a new value
-  // equal to the receiver with the element at `idx` replaced, under the same
-  // LRM 11.5.1 out-of-range / X-Z index no-op as the in-place write.
-  [[nodiscard]] auto WithElement(
-      const PackedArray& idx, const PackedType& shape,
-      const PackedArray& value) const -> PackedArray;
-  [[nodiscard]] auto SliceRef(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedType& shape) -> PackedArrayRef;
+  // LRM 11.5.1 bit-select and part-select, and a packed aggregate's member
+  // (LRM 7.2.1), which are one operation: a run of `width` bits starting at
+  // `position`, counted from this value's least significant bit. What the
+  // source wrote to name that run has been read before it gets here, so the
+  // start arrives as a position and the width as a count.
+  //
+  // A read materializes the run as an owned value, unsigned as a run taken out
+  // of a value is. Bits the run reaches for outside this value read x, or 0 in
+  // a two-state value, and a start that names no position reads all of them
+  // that way. A write lands on the bits inside this value and leaves the rest
+  // alone, so a start that names no position writes nothing. The functional
+  // form is that write applied to a copy, for a value reached by an opaque
+  // handle that cannot be written in place.
   [[nodiscard]] auto Slice(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedType& shape) const -> PackedArray;
-  // The functional counterpart of the in-place part-select write, for a value
-  // reached by an opaque handle that cannot be mutated in place: a new value
-  // equal to the receiver with the range selected by `a` / `b` / `form`
-  // replaced, under the same LRM 11.5.1 out-of-range no-op as the in-place
-  // write.
+      const PackedArray& position, std::int64_t width) const -> PackedArray;
+  [[nodiscard]] auto SliceRef(const PackedArray& position, std::int64_t width)
+      -> PackedArrayRef;
   [[nodiscard]] auto WithSlice(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedType& shape, const PackedArray& value) const -> PackedArray;
+      const PackedArray& position, std::int64_t width,
+      const PackedArray& value) const -> PackedArray;
+
+  // The same run where the caller holds its start as a machine offset rather
+  // than as a value the program computed, so there is no unknown start to
+  // answer for.
+  [[nodiscard]] auto ExtractRun(std::int64_t start, std::uint64_t width) const
+      -> PackedArray;
+  auto AssignRun(
+      std::int64_t start, std::uint64_t width, const PackedArray& value)
+      -> void;
+
+  // The position an index names once arithmetic has to be done on it: the same
+  // integer as a 64-bit signed four-state value, which no shift of a declared
+  // range can wrap, and all x where the index names no position at all. A
+  // select that reads an index as it stands takes the index itself.
+  [[nodiscard]] static auto ToPosition(const PackedArray& index) -> PackedArray;
   [[nodiscard]] auto operator<(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator<=(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator>(const PackedArray& other) const -> PackedArray;
@@ -600,17 +589,16 @@ class PackedArray {
 };
 
 // A writable designation into a run of a `PackedArray`, named by where the run
-// starts and how long it is. Further steps compose onto it, each naming its
-// position against the shape the site that wrote it states, and assigning
-// triggers the LRM 11.5.1 partial-write rules on the root; reading materializes
-// a fresh value. The offset is kept in a canonical 64-bit signed 4-state shape
-// so composing positions between layers cannot collide on shape, and an x or z
-// at any layer propagates to the final write, which that clause makes a no-op.
+// starts in the root and how long it is. A further step composes onto it by
+// naming a run inside this one, and assigning writes the root under the LRM
+// 11.5.1 partial-write rules; reading materializes a fresh value. A start that
+// names no position at any step names none for the whole chain, which makes the
+// final write a no-op and the read all x.
 class PackedArrayRef {
  public:
   PackedArrayRef(
-      PackedArray& root, const PackedArray& bit_offset,
-      std::uint32_t bit_width);
+      PackedArray& root, std::optional<std::int64_t> start,
+      std::uint64_t bit_width);
 
   // Move-only: a ref aliases its root by raw pointer, so duplicating the
   // handle and outliving the source would dangle. Moves are fine because the
@@ -628,15 +616,14 @@ class PackedArrayRef {
   // visible at the call site.
   [[nodiscard]] auto ToOwned() const -> PackedArray;
 
-  // Write-side: route through AssignSlice on root.
   auto operator=(const PackedArray& value) -> PackedArrayRef&;
 
-  // LRM 11.4 compound assignments. Read the current sub-slice once, combine
-  // with `rhs` (frontend converts rhs to lhs.type), write back through
-  // `AssignSlice`. The fixed `bit_offset_` / `bit_width_` on the proxy are
-  // the eval-once mechanism: the lvalue chain is constructed once by the
-  // caller, the proxy captures the position, and both the read and write
-  // here use that same position with no re-evaluation of indices.
+  // LRM 11.4 compound assignments. Read the current run once, combine with
+  // `rhs` (the front end converts rhs to the target's type), write it back.
+  // The start and width this designation holds are the eval-once mechanism:
+  // the chain is built once by the caller, the designation captures where it
+  // lands, and both the read and the write here use that same place with no
+  // re-evaluation of indices.
   auto operator+=(const PackedArray& rhs) -> PackedArrayRef& {
     return *this = ToOwned() + rhs;
   }
@@ -704,20 +691,16 @@ class PackedArrayRef {
     return prior;
   }
 
-  // Chain composition. Every chained step stays in the reference form so the
-  // assignment at the tail writes through to the root, and a position is in
-  // the units `shape`'s outermost dimension counts -- the shape of what this
-  // step designates, stated by the site that wrote the step.
-  [[nodiscard]] auto ElementRef(
-      const PackedArray& idx, const PackedType& shape) const -> PackedArrayRef;
+  // Chain composition: a run of this run, its start counted from this run's
+  // least significant bit. The step stays a designation, so the assignment at
+  // the tail writes through to the root.
   [[nodiscard]] auto SliceRef(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const PackedType& shape) const -> PackedArrayRef;
+      const PackedArray& position, std::int64_t width) const -> PackedArrayRef;
 
  private:
   PackedArray* root_;
-  PackedArray bit_offset_;
-  std::uint32_t bit_width_;
+  std::optional<std::int64_t> start_;
+  std::uint64_t bit_width_;
 };
 
 // The `width` bits sitting `consumed` bits in from the most significant end of
@@ -735,9 +718,8 @@ static_assert(WildcardComparable<PackedArray>);
 static_assert(Ordered<PackedArray>);
 static_assert(BitstreamSizable<PackedArray>);
 static_assert(BitstreamConvertible<PackedArray>);
-static_assert(ShapedIndexable<PackedArray>);
-static_assert(ShapedSliceable<PackedArray>);
-static_assert(ShapedSliceableRef<PackedArray>);
+static_assert(Sliceable<PackedArray>);
+static_assert(SliceableRef<PackedArray>);
 static_assert(Ownable<PackedArray>);
 static_assert(Defaultable<PackedArray>);
 static_assert(NetResolvable<PackedArray>);

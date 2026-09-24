@@ -406,13 +406,8 @@ auto LowerHirAssignmentPatternKeyedExpr(
         body.exprs.Add(mir::MakeLocalRefExpr(built, result_type));
     const WriteTarget target = DescendInto(
         WriteTarget{.owner = owner, .descent = {}},
-        DescentStep{
-            .value_entry = support::BuiltinFn::kElement,
-            .part_entry = support::BuiltinFn::kElementRef,
-            .position = std::nullopt,
-            .operands = ElementStepOperands(
-                lowerer.Owner(), body, result_type, index_id),
-            .part_type = element_type});
+        ElementStep(
+            lowerer.Owner(), body, result_type, index_id, element_type));
     body.AppendStmt(
         mir::ExprStmt{
             .expr = body.exprs.Add(BuildStoreExpr(

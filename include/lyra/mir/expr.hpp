@@ -575,8 +575,9 @@ struct ObjectRecordRef {
 // A runtime description, named by the entry holding it: what an operation on a
 // value needs from that value's declaration rather than from the value. An
 // integral type says its dimension stack, its signedness and its state domain;
-// an unpacked array says the declared range a select resolves a coordinate
-// against. A description is settled at compile time and shared by every use
+// an unpacked array says its declared range, for an operation that walks it in
+// the coordinates it was declared with. A description is settled at compile
+// time and shared by every use
 // that needs the same thing of a declaration, so the unit states it once and a
 // use names which one. `Expr::type` is the description's own runtime type,
 // which is also what says which of the descriptions this is.

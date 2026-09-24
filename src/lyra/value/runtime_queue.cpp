@@ -10,9 +10,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/position.hpp"
 #include "lyra/value/queue_bound.hpp"
 #include "lyra/value/runtime_value.hpp"
-#include "lyra/value/slice_selector.hpp"
 
 namespace lyra::value {
 
@@ -118,21 +118,14 @@ auto RuntimeQueue::ElementDefault() const -> const RuntimeValue& {
   return *element_default_;
 }
 
-auto RuntimeQueue::IsInvalidIndex(const PackedArray& index) const -> bool {
-  if (index.HasUnknown()) {
-    return true;
-  }
-  const std::int64_t value = index.ToInt64();
-  return value < 0 || static_cast<std::uint64_t>(value) >=
-                          static_cast<std::uint64_t>(data_.size());
-}
-
-auto RuntimeQueue::Element(const PackedArray& index) const
+auto RuntimeQueue::Element(const PackedArray& position) const
     -> const RuntimeValue& {
-  if (IsInvalidIndex(index)) {
+  const std::optional<std::size_t> ordinal =
+      ElementOrdinal(position, data_.size());
+  if (!ordinal) {
     return *element_default_;
   }
-  return data_[static_cast<std::size_t>(index.ToInt64())];
+  return data_[*ordinal];
 }
 
 auto RuntimeQueue::ElementAt(std::size_t position) const
@@ -145,16 +138,13 @@ auto RuntimeQueue::ElementAt(std::size_t position) const
 }
 
 auto RuntimeQueue::WithElement(
-    const PackedArray& index, RuntimeValue value) const -> RuntimeQueue {
+    const PackedArray& position, RuntimeValue value) const -> RuntimeQueue {
   RuntimeQueue result(*this);
-  if (index.HasUnknown()) {
+  const std::optional<std::int64_t> at = ReadPosition(position);
+  if (!at || *at < 0) {
     return result;
   }
-  const std::int64_t position = index.ToInt64();
-  if (position < 0) {
-    return result;
-  }
-  const auto slot = static_cast<std::uint64_t>(position);
+  const auto slot = static_cast<std::uint64_t>(*at);
   if (slot == result.data_.size()) {
     result.data_.push_back(std::move(value));
     result.EnforceBound();
@@ -166,31 +156,17 @@ auto RuntimeQueue::WithElement(
   return result;
 }
 
-auto RuntimeQueue::Slice(
-    const PackedArray& anchor, const PackedArray& extent,
-    const PackedArray& form) const -> RuntimeQueue {
+auto RuntimeQueue::Slice(const PackedArray& lo, const PackedArray& hi) const
+    -> RuntimeQueue {
   RuntimeQueue result(*element_default_);
-  if (anchor.HasUnknown() || extent.HasUnknown() || data_.empty()) {
+  const std::optional<std::int64_t> low = ReadPosition(lo);
+  const std::optional<std::int64_t> high = ReadPosition(hi);
+  if (!low || !high) {
     return result;
   }
-  const std::int64_t anchor_value = anchor.ToInt64();
-  const std::int64_t extent_value = extent.ToInt64();
-  std::int64_t low = anchor_value;
-  std::int64_t high = extent_value;
-  switch (static_cast<SliceForm>(form.ToInt64())) {
-    case SliceForm::kIndexedUp:
-      high = anchor_value + extent_value - 1;
-      break;
-    case SliceForm::kIndexedDown:
-      low = anchor_value - extent_value + 1;
-      high = anchor_value;
-      break;
-    case SliceForm::kConstant:
-      break;
-  }
-  const std::int64_t first = std::max<std::int64_t>(low, 0);
-  const auto last =
-      std::min<std::int64_t>(high, static_cast<std::int64_t>(data_.size()) - 1);
+  const std::int64_t first = std::max<std::int64_t>(*low, 0);
+  const auto last = std::min<std::int64_t>(
+      *high, static_cast<std::int64_t>(data_.size()) - 1);
   for (std::int64_t i = first; i <= last; ++i) {
     result.data_.push_back(data_[static_cast<std::size_t>(i)]);
   }
@@ -287,11 +263,13 @@ auto RuntimeQueue::Delete() const -> RuntimeQueue {
 
 auto RuntimeQueue::DeleteIndex(const PackedArray& index) const -> RuntimeQueue {
   RuntimeQueue result(*this);
-  if (IsInvalidIndex(index)) {
+  const std::optional<std::size_t> ordinal =
+      ElementOrdinal(index, data_.size());
+  if (!ordinal) {
     return result;
   }
   result.data_.erase(
-      result.data_.begin() + static_cast<std::ptrdiff_t>(index.ToInt64()));
+      result.data_.begin() + static_cast<std::ptrdiff_t>(*ordinal));
   return result;
 }
 

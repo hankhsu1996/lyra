@@ -2,10 +2,10 @@
 
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 
 #include "lyra/value/net_resolution.hpp"
-#include "lyra/value/unpacked_range.hpp"
 
 // Runtime value-layer concept catalogue. Each concept names a contract that a
 // `lyra::value::*` type claims via `static_assert(<Concept><T>)` in its own
@@ -191,7 +191,7 @@ concept BitstreamConvertible =
       { T::FromBitstream(bits, t) } -> std::same_as<T>;
     };
 
-// Indexable: single-element access by integer position. The container
+// Indexable: single-element access by position. The container
 // exposes a value-form (`Element`) returning a snapshot or const view, and
 // a reference-form (`ElementRef`) returning a write-through reference. The
 // pair models the bare-vs-`Ref`-suffix naming convention: the bare method
@@ -216,94 +216,31 @@ concept AssocIndexable = requires(T& t, const K& key) {
   { t.ElementRef(key) };
 };
 
-// Sliceable: extract a fixed-width sub-window (LRM 7.4.5 / 11.5.2). Conforming
-// container: DynamicArray. The shape is `Slice(anchor, count, shift)`:
+// Sliceable: a run of `count` parts starting at a position (LRM 11.5.1 for the
+// bits of a packed value, 7.4.5 for the elements of an unpacked one). The
+// count is fixed by the type the select produces, so it arrives as a number;
+// the start arrives as a position, an integral value that may also name no
+// position at all, and a start that names none reads every part at its
+// default. Bare `Slice` returns the value form
+// (an owned snapshot); `SliceableRef` covers the reference form.
 //
-// - `anchor` is the SV-declared endpoint the slice hangs from; the container
-//   rebases it against its own declared range.
-// - `count` is the type-fixed result width (LRM 7.4.5). It flows separately
-//   because SV canonical-fills at the type-determined width even when the
-//   anchor carries X/Z, and that width is not otherwise recoverable.
-// - `shift` is how far below the rebased anchor the low end sits: zero for a
-//   constant range or an indexed part-select growing toward the MSB, `count-1`
-//   for one growing toward the LSB (LRM 11.5.1).
-//
-// An X/Z anchor canonical-fills the count-wide window. Bare `Slice` returns the
-// value form (an owned snapshot); `SliceableRef` covers the reference form.
-// A queue's slice is dynamic-width, derived from its bounds (LRM 7.10.1), and a
-// string slices by `Substr(i, j)` (LRM 6.16.8); neither is this fixed-width
-// contract, so neither claims Sliceable.
+// A queue's slice is bounded by two positions that the running program can
+// move (LRM 7.10.1), and a string slices by `Substr(i, j)` (LRM 6.16.8);
+// neither is a run of a fixed count, so neither claims this.
 template <typename T>
-concept Sliceable = requires(
-    const T& t, const PackedArray& p1, const PackedArray& p2,
-    const PackedArray& p3) {
-  { t.Slice(p1, p2, p3) };
-};
+concept Sliceable =
+    requires(const T& t, const PackedArray& start, std::int64_t count) {
+      { t.Slice(start, count) };
+    };
 
 // SliceableRef: the reference-form counterpart of `Sliceable`. `SliceRef`
-// returns a write-through proxy that, on `operator=`, scatters the value
-// back into the receiver's storage. Queue does not satisfy this protocol
-// because LRM 7.10 does not define a write-side queue slice.
+// returns a write-through proxy that, on `operator=`, writes the value back
+// into the receiver's storage at the positions that exist.
 template <typename T>
-concept SliceableRef = requires(
-    T& t, const PackedArray& p1, const PackedArray& p2, const PackedArray& p3) {
-  { t.SliceRef(p1, p2, p3) };
-};
-
-// The unpacked family supplies its declared coordinate range at the select, as
-// one operand sourced from the receiver's static type rather than carried in
-// the value. It arrives as the range it is: what a select does with it is map a
-// source coordinate onto a storage ordinal, which the range answers, so taking
-// it apart into endpoints would only oblige every access to put it back
-// together. A dynamic array is zero-based and needs no operand at all; the
-// packed family takes a whole declared shape instead, because one packed select
-// consumes a dimension out of a stack rather than a single range.
-template <typename T>
-concept RangedIndexable =
-    requires(T& t, const PackedArray& pos, const UnpackedRange& range) {
-      { t.Element(pos, range) };
-      { t.ElementRef(pos, range) };
+concept SliceableRef =
+    requires(T& t, const PackedArray& start, std::int64_t count) {
+      { t.SliceRef(start, count) };
     };
-
-template <typename T>
-concept RangedSliceable = requires(
-    const T& t, const PackedArray& a, const PackedArray& b,
-    const PackedArray& form, const UnpackedRange& range) {
-  { t.Slice(a, b, form, range) };
-};
-
-template <typename T>
-concept RangedSliceableRef = requires(
-    T& t, const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const UnpackedRange& range) {
-  { t.SliceRef(a, b, form, range) };
-};
-
-// The packed family states the receiver's declared shape as a trailing operand
-// sourced from the receiver's static type. The bounds name a coordinate, and
-// which bits that coordinate reaches is decided by how the declaration divides
-// the value's bits -- one fact per declaration, not one per value, so the value
-// does not carry it.
-template <typename T>
-concept ShapedIndexable =
-    requires(T& t, const PackedArray& pos, const PackedType& shape) {
-      { t.Element(pos, shape) };
-      { t.ElementRef(pos, shape) };
-    };
-
-template <typename T>
-concept ShapedSliceable = requires(
-    const T& t, const PackedArray& a, const PackedArray& b,
-    const PackedArray& form, const PackedType& shape) {
-  { t.Slice(a, b, form, shape) };
-};
-
-template <typename T>
-concept ShapedSliceableRef = requires(
-    T& t, const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedType& shape) {
-  { t.SliceRef(a, b, form, shape) };
-};
 
 // Ownable: materialise a borrowed view into an owning value. Models Rust's
 // `ToOwned` trait -- the result is the owning sibling type (a ref view

@@ -821,6 +821,12 @@ enum class BuiltinFn : std::uint16_t {
   kFromInt,
   kFromWords,
   kConvertFrom,
+  // The position an index names, as a value position arithmetic can be done in
+  // without wrapping, and unknown where the index names none: a select whose
+  // declared range does not start at the index's own zero reaches it through
+  // this, and one whose range does takes the index as it stands. A static
+  // factory on the integral type, answering with the position type.
+  kToPosition,
   kFromPackedArray,
   kFromByteArray,
   // The opposite direction, under the LRM 5.9 string-literal assignment rules:

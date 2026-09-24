@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <span>
 #include <utility>
 #include <variant>
@@ -12,7 +11,7 @@
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/runtime_value.hpp"
-#include "lyra/value/unpacked_array.hpp"
+#include "lyra/value/unpacked_range.hpp"
 
 namespace lyra::value {
 
@@ -24,14 +23,13 @@ namespace {
 auto PositionOf(
     const RuntimeUnpackedArray& level, std::int64_t address,
     const UnpackedRange& range) -> std::size_t {
-  const auto size = static_cast<std::size_t>(level.Size().ToInt64());
-  const std::optional<std::size_t> position = ResolveUnpackedOrdinal(
-      PackedArray::Int(static_cast<std::int32_t>(address)), range, size);
-  if (!position) {
+  const auto size = static_cast<std::int64_t>(level.Size().ToInt64());
+  const std::int64_t ordinal = range.ToOrdinal(address);
+  if (ordinal < 0 || ordinal >= size) {
     throw InternalError(
         "memory walk: the bounds name an address the memory does not hold");
   }
-  return *position;
+  return static_cast<std::size_t>(ordinal);
 }
 
 // The level below the one an address named, where the bounds say the nesting

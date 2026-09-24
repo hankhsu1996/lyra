@@ -8,6 +8,7 @@
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/integral_constant_folding.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_descriptor.hpp"
@@ -100,10 +101,13 @@ auto BuildPackedArrayFromInt(
 
 // `PackedArray::ConvertFrom(src, shape)` -- reshape `src` into the
 // destination's declared representation (width / signedness / state domain /
-// dimension stack).
+// dimension stack). A constant converts to a constant, which the unit states.
 auto BuildPackedArrayConvertFrom(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId src_id,
     mir::TypeId dst_type) -> mir::Expr {
+  if (auto folded = mir::FoldConversion(unit, block, src_id, dst_type)) {
+    return MakeIntegralLiteral(unit, dst_type, *folded);
+  }
   const mir::ExprId packed_type =
       mir::BuildTypeDescriptorRef(unit, block, dst_type);
   return mir::Expr{
@@ -210,8 +214,10 @@ auto BuildValueConversion(
     if (src_type == dst_type) {
       return operand_expr;
     }
-    return mir::Expr{
-        .data = mir::CastExpr{.operand = operand_id}, .type = dst_type};
+    return FoldedOr(
+        unit, mir::FoldConversion(unit, block, operand_id, dst_type),
+        mir::Expr{
+            .data = mir::CastExpr{.operand = operand_id}, .type = dst_type});
   }
 
   // Unpacked-array-of-byte -> string (LRM 21.3.4.3 $sscanf source lift).

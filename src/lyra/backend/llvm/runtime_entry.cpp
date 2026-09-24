@@ -728,6 +728,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFromBits:
     case support::BuiltinFn::kFromInt:
     case support::BuiltinFn::kFromWords:
+    case support::BuiltinFn::kToPosition:
     case support::BuiltinFn::kFromPackedArray:
     case support::BuiltinFn::kFromByteArray:
     case support::BuiltinFn::kFromString:

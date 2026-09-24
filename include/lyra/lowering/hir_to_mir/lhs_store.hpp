@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <variant>
 #include <vector>
@@ -30,9 +31,22 @@ struct DescentStep {
   // a value it is handed. It travels with the entries for the same reason it
   // travels with a callee: the part has a type of its own.
   std::optional<base::ComponentIndex> position;
+  // Where the part is, as values the program computes: an index, a start
+  // position, a key. A deferred write freezes these where the statement is
+  // reached (LRM 10.4.2).
   std::vector<mir::ExprId> operands;
+  // How many parts a run takes, where the step reaches a run. The part's type
+  // fixes it, so it is a number rather than a value the program computes, and
+  // nothing freezes it.
+  std::optional<std::uint64_t> count;
   mir::TypeId part_type;
 };
+
+// What a call realizing `step` is handed beside its receiver: the step's
+// operands, then its count as a machine count where it has one.
+[[nodiscard]] auto StepArguments(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const DescentStep& step) -> std::vector<mir::ExprId>;
 
 // Where a write lands: the place that owns the whole value, and the descent
 // that reaches the part written. A target that designates no part descends
