@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <span>
 #include <string>
@@ -57,10 +58,14 @@ auto ForeignLanguageFlags(const DpiLinkInput& input)
 // design's own objects, which is what makes both directions of the boundary
 // resolve in one place: the design's call out to a symbol an object defines,
 // and the foreign side's call back to one only the design defines (LRM 35.4).
-// `header_dir` holds the generated ABI header the sources may include.
+// `header_dir` holds the generated ABI header the sources may include, which is
+// why these compiles wait for every unit: that header is what the units state
+// of the foreign name space. As many compile at once as `width` allows, and
+// every one that fails is reported.
 auto CompileDpiObjects(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
-    Optimization optimization, const std::filesystem::path& header_dir,
+    Optimization optimization, std::size_t width,
+    const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
     -> diag::Result<std::vector<std::filesystem::path>>;
 

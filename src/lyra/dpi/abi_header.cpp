@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -258,11 +259,11 @@ auto SurfaceOf(const mir::CompilationUnit& unit) -> ForeignSurface {
 
 }  // namespace
 
-void CollectAbiFragment(
-    const mir::CompilationUnit& unit, std::vector<AbiFragment>& fragments) {
+auto AbiFragmentOf(const mir::CompilationUnit& unit)
+    -> std::optional<std::string> {
   const ForeignSurface surface = SurfaceOf(unit);
   if (surface.imports.empty() && surface.exports.empty()) {
-    return;
+    return std::nullopt;
   }
   std::string text;
   text += std::format(
@@ -275,6 +276,10 @@ void CollectAbiFragment(
   text += RenderSection(
       "Exported by the design; call these from your C sources.",
       surface.exports);
+  return text;
+}
+
+void AddAbiFragment(std::vector<AbiFragment>& fragments, std::string text) {
   fragments.push_back(
       AbiFragment{
           .relpath = std::format("dpi_{}.h", fragments.size()),

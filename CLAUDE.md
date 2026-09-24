@@ -53,16 +53,21 @@ lyra dump hir|mir|lir|llvm [files...] # Dump the named intermediate form
 lyra emit cpp -o <dir> [files...]     # Write a self-contained C++ project
 lyra build [-o <file>] [files...]     # Build the program; ./<design name or top> by default
 lyra run [files...]                   # Build the program and execute it; writes nothing here
-lyra cache clear                      # Empty the store of kept programs and prepared headers
+lyra cache clear                      # Empty the store of kept programs, units and headers
 ```
 
 `--backend cpp|llvm` picks which backend builds the program; either way it is one program, linked
 with the host C++ compiler (`--cxx`, else `clang++`, else `c++`). **A built program is kept in a
 store in the user's cache directory under a name computed from what the build read**, so building or
 running an unchanged design again copies the kept program instead of compiling, several checkouts
-share what they have in common, and nothing is written into the project. `--rebuild` builds as
-though nothing were kept; `--cache-dir` names the store.
+share what they have in common, and nothing is written into the project. On the LLVM backend each
+unit's object is kept the same way, so a build after an edit compiles only the units whose generated
+code changed. `--rebuild` builds as though nothing were kept; `--cache-dir` names the store.
 `docs/decisions/a-program-is-kept-by-what-built-it.md` holds why.
+
+`-j` says how many of the design's units are lowered and compiled at once, on either backend, and
+one is the default. What a build produces is the same however many ran at once.
+`docs/decisions/a-build-is-told-how-wide-to-run.md` holds why.
 
 Command words are positional, and everything after them is one command line shared with the slang
 driver: every front-end option slang accepts -- `--top`, `-I`, `-D`, `-G`, `--single-unit`, `-y`,
@@ -79,10 +84,10 @@ machine -- `-o`, `--release`, `--backend`, `--cxx`, `--cache-dir` -- is refused 
 file is committed and shared. `docs/decisions/project-file.md` holds the schema and the precedence
 rule: material accumulates, selection is replaced.
 
-**`--release` trades build time for simulation speed.** By default the design's translation units
-are compiled unoptimized, because iterating pays that compile on every edit; `--release` optimizes
-them for a run long enough to earn the compile back. The runtime library the program links is
-prebuilt and always optimized, so it is not on this axis and costs nothing either way.
+**`--release` trades build time for simulation speed.** By default the design's own code is compiled
+unoptimized on either backend, because iterating pays that compile on every edit; `--release`
+optimizes it for a run long enough to earn the compile back. The runtime library the program links
+is prebuilt and always optimized, so it is not on this axis and costs nothing either way.
 
 ## SystemVerilog version
 

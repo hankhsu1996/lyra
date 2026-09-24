@@ -18,9 +18,9 @@ writing state once the object graph is built.
 
 How hard a program is compiled is settled and is not a tracked gap. The runtime library an emitted
 program links is optimized as shipped, independent of how the compiler that ships it was built,
-because a user recompiles none of it. The design's own translation unit is compiled unoptimized by
-default and optimized under `--release`, which is the one place the build-time / run-time trade is a
-choice: iterating pays the compile on every edit, while a long run earns it back.
+because a user recompiles none of it. The design's own code is compiled unoptimized by default and
+optimized under `--release`, on either backend, which is the one place the build-time / run-time
+trade is a choice: iterating pays the compile on every edit, while a long run earns it back.
 
 Runtime performance is tracked by the benchmark over the corpus under `tests/benchmark/`, which
 builds every case under both Lyra and Verilator and puts the two rates side by side. It runs nightly

@@ -58,9 +58,10 @@ which needs no channel at all: absent a statement, one.
 
 ### D1. The width is stated by the invoker and never chosen by the build
 
-How many of a design's translation units the host compiler works on at once is a property of this
-invocation on this machine. A compiler sees one design and cannot see what else holds the machine,
-so a width it picked for itself would be a claim it has no basis for.
+How many of a design's units are compiled at once is a property of this invocation on this machine,
+whichever compiler does the compiling -- the host C++ compiler on one path, Lyra's own code
+generator on the other. A compiler sees one design and cannot see what else holds the machine, so a
+width it picked for itself would be a claim it has no basis for.
 
 Both things that build a design take it as an argument: the command line for the build Lyra drives,
 and the recipe's own argument for a build somebody runs by hand. Zero is how a caller says "this
@@ -94,9 +95,11 @@ Several compiles running at once and one link reading them all needs somewhere f
 compile to leave its result. That is an object file, and it follows from D1 rather than being chosen
 beside it.
 
-Objects on disk are also what a build that recompiles less than everything would need. Nothing here
-takes that: no step asks whether an object is still current, because answering it needs a record of
-what a change invalidated, which no artifact carries.
+Objects on disk are also what a build that recompiles less than everything would need. This entry
+does not take that. The LLVM path has since, by keeping each unit's object under a name computed
+from what it was compiled from (`a-program-is-kept-by-what-built-it.md` D9); on the C++ path no step
+asks whether an object is still current, because a translation unit reads other units' headers and
+answering it needs a record of what a change invalidated, which no artifact carries.
 
 ### D5. Every compile is attempted and every failure reported
 
@@ -127,13 +130,17 @@ every unit is what saves the run each remaining one would otherwise cost -- the 
 
 - **Replacing each finished compile as it exits, rather than waiting for a batch.** It is the better
   schedule, and it is what the in-process build does. The recipe waits for a batch instead, because
-  `wait -n` is not POSIX and the recipe may not assume a shell richer than `/bin/sh`. With units of
-  roughly even size the difference is the tail of one batch.
+  `wait -n` is not POSIX and the recipe may not assume a shell richer than `/bin/sh`. The reason
+  offered for accepting it -- that units are of roughly even size, so the difference is the tail of
+  one batch -- does not hold: on Ibex at `-O2` the recipe takes 679 s where a pool reaches 226 s.
+  The batches stay because nobody builds through the recipe at scale except the project's own
+  measurement, while `build` and `run` go through the in-process pool.
 
 - **Compiling a foreign source through a path of its own.** A DPI-C source compiled for C linkage is
   a compile like any other; giving it its own sequential step would leave two schedules to reason
-  about and buy nothing. It joins the same bounded run, and a design with no foreign sources
-  contributes none.
+  about and buy nothing. It compiles as wide as the units do, and a design with no foreign sources
+  contributes none. What it cannot do is start with them: it includes the header composed from what
+  every unit stated of the foreign name space, so it waits for the last unit to be collected.
 
 ## Consequences
 
@@ -147,7 +154,11 @@ every unit is what saves the run each remaining one would otherwise cost -- the 
   modification time rather than by the content its cache key is built from, so it rejected the
   header it had just been handed. Writing a file now leaves an unchanged one alone, which is the
   general rule a generator owes anything that watches timestamps.
-- Nothing recompiles less than everything, and this entry does not change that.
+- This entry recompiles nothing less than everything; the LLVM path's kept objects are a later
+  decision's (D4).
+- The width reaches every stage that takes one unit at a time, not only the host compile: lowering a
+  unit and compiling its module run as wide as the build was told, and what they produce is
+  collected in the order the design lists its units, so the program is the same however many ran.
 
 ## Cross-references
 

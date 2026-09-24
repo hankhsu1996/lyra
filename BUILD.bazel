@@ -320,6 +320,7 @@ cc_library(
         ":runtime",
         ":unit_metadata",
         "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Passes",
     ],
 )
 

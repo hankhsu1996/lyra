@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <iterator>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -527,53 +529,63 @@ auto LinkProgram(
   return {};
 }
 
-auto CppProjectSink::Take(const mir::CompilationUnit& unit)
-    -> diag::Result<void> {
-  if (auto r = WriteUnit(unit); !r) {
-    return r;
+auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
+    -> diag::Result<WrittenUnit> {
+  const backend::cpp::CppUnitArtifacts artifacts =
+      backend::cpp::EmitCppUnit(unit);
+  WrittenUnit written{
+      .files = {},
+      .translation_unit = artifacts.code.relpath,
+      .dpi_fragment = dpi::AbiFragmentOf(unit)};
+  for (const backend::cpp::CppArtifact& declarations : artifacts.declarations) {
+    if (auto r = WriteArtifact(declarations); !r) {
+      return std::unexpected(std::move(r.error()));
+    }
+    written.files.push_back(declarations.relpath);
   }
-  dpi::CollectAbiFragment(unit, dpi_fragments_);
-  return {};
+  if (auto r = WriteArtifact(artifacts.code); !r) {
+    return std::unexpected(std::move(r.error()));
+  }
+  written.files.push_back(artifacts.code.relpath);
+  return written;
+}
+
+void CppProjectSink::Collect(WrittenUnit unit) {
+  written_.insert(
+      written_.end(), std::make_move_iterator(unit.files.begin()),
+      std::make_move_iterator(unit.files.end()));
+  translation_units_.push_back(std::move(unit.translation_unit));
+  if (unit.dpi_fragment.has_value()) {
+    dpi::AddAbiFragment(dpi_fragments_, *std::move(unit.dpi_fragment));
+  }
 }
 
 auto CppProjectSink::Finish(const mir::CompilationUnit& root)
     -> diag::Result<void> {
-  if (auto r = WriteUnit(root); !r) {
+  auto written = Write(root);
+  if (!written) {
+    return std::unexpected(std::move(written.error()));
+  }
+  Collect(*std::move(written));
+  const backend::cpp::CppArtifact host_main =
+      backend::cpp::EmitCppHostMain(root);
+  if (auto r = WriteArtifact(host_main); !r) {
     return r;
   }
-  if (auto r = WriteTranslationUnit(backend::cpp::EmitCppHostMain(root)); !r) {
-    return r;
-  }
+  Collect(
+      WrittenUnit{
+          .files = {host_main.relpath},
+          .translation_unit = host_main.relpath,
+          .dpi_fragment = std::nullopt});
   if (formatting_ == SourceFormatting::kOn) {
     return FormatSources(written_, dir_);
   }
   return {};
 }
 
-auto CppProjectSink::WriteUnit(const mir::CompilationUnit& unit)
+auto CppProjectSink::WriteArtifact(const backend::cpp::CppArtifact& file) const
     -> diag::Result<void> {
-  backend::cpp::CppUnitArtifacts files = backend::cpp::EmitCppUnit(unit);
-  for (backend::cpp::CppArtifact& declarations : files.declarations) {
-    if (auto r = Write(std::move(declarations)); !r) {
-      return r;
-    }
-  }
-  return WriteTranslationUnit(std::move(files.code));
-}
-
-auto CppProjectSink::WriteTranslationUnit(backend::cpp::CppArtifact file)
-    -> diag::Result<void> {
-  translation_units_.push_back(file.relpath);
-  return Write(std::move(file));
-}
-
-auto CppProjectSink::Write(backend::cpp::CppArtifact file)
-    -> diag::Result<void> {
-  if (auto r = WriteFile(dir_ / file.relpath, file.content); !r) {
-    return r;
-  }
-  written_.push_back(std::move(file.relpath));
-  return {};
+  return WriteFile(dir_ / file.relpath, file.content);
 }
 
 auto AssembleProject(

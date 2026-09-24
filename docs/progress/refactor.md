@@ -2512,6 +2512,34 @@ enough to warrant its own focused review.
       what clang's own argument lowering does (a struct that does not fit is passed in memory, by
       value, as the callee expects), and the policy rule goes with the limit. Not blocked.
 
+- [ ] R146 -- A unit's bodies are lowered to their first semantic form on one thread, for every
+      unit, before any unit goes further, so the barrier sits after every body rather than after
+      every declaration and the whole design's first form is resident at once. After the barrier the
+      rest of a unit's pipeline already runs as wide as the build was told, one unit end to end per
+      worker; this stage and declaring each unit are the ones left on one thread.
+
+      Target: a unit's bodies are the first step of its own pipeline, declared and lowered as wide
+      as the build was told, all reading the front end's elaborated design, which is frozen after
+      elaboration and read-only from then on -- the way slang's own analysis reads it from a thread
+      pool. Three things have to hold and be shown to hold, since a data race here answers wrongly
+      rather than failing: only the instance bodies the front end actually visited are lowered (it
+      reuses a cached body for an identical instance without visiting it, and reading one allocates);
+      the caches the front end fills on first read are filled before it is frozen; and the analysis
+      state a lowering keeps is one per worker rather than shared. Shown by a debug build, where the
+      front end asserts on any allocation after freezing, and by the corpus under a thread
+      sanitizer, for which no build configuration exists yet.
+
+      Measured on the RISC-V core at `-j 4`: this stage is about 0.7 s of a 7.2 s build. On a loop
+      generate whose blocks lower alike it was 49% of the run, so it is what is left on one thread
+      once the rest is wide. Memory, measured on the same core: the elaborated design is about 29 MB
+      and the whole first form about 22 MB, so keeping the former to the end instead of holding the
+      latter at once adds a few percent to a 471 MB peak there, and may lower the peak of a design
+      large enough that holding every unit's first form at once is what sets it.
+
+      Parsing the sources is on one thread too. The front end can parse in parallel, but the build of
+      it this project uses has that switched off, and its own `-j` would collide with this command
+      line's; turning it on is a change to that fork. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

@@ -170,10 +170,9 @@ auto WriteCppSources(
   }
   driver::CppProjectSink sources(dir, ctx.args->formatting);
   auto lowered = compiler::LowerToSemantic(
-      *design, ctx.elaborated->diag_sources, *ctx.sink,
-      [&](compiler::SemanticUnit unit) -> diag::Result<void> {
-        return sources.Take(unit.mir);
-      });
+      *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
+      [&](compiler::SemanticUnit unit) { return sources.Write(unit.mir); },
+      [&](driver::WrittenUnit unit) { sources.Collect(std::move(unit)); });
   if (!lowered) {
     return std::nullopt;
   }
@@ -202,11 +201,11 @@ auto RunDumpMir(const CommandContext& ctx) -> int {
     return 1;
   }
   auto lowered = compiler::LowerToSemantic(
-      *design, ctx.elaborated->diag_sources, *ctx.sink,
-      [](compiler::SemanticUnit unit) -> diag::Result<void> {
-        fmt::print("{}", mir::DumpMir(unit.mir));
-        return {};
-      });
+      *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
+      [](compiler::SemanticUnit unit) -> diag::Result<std::string> {
+        return mir::DumpMir(unit.mir);
+      },
+      [](const std::string& text) { fmt::print("{}", text); });
   if (!lowered) {
     return 1;
   }
@@ -220,11 +219,11 @@ auto RunDumpLir(const CommandContext& ctx) -> int {
     return 1;
   }
   auto lowered = compiler::LowerToExecutable(
-      *design, ctx.elaborated->diag_sources, *ctx.sink,
-      [](compiler::ExecutableUnit unit) -> diag::Result<void> {
-        fmt::print("{}", lir::DumpLir(unit.body));
-        return {};
-      });
+      *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
+      [](compiler::ExecutableUnit unit) -> diag::Result<std::string> {
+        return lir::DumpLir(unit.body);
+      },
+      [](const std::string& text) { fmt::print("{}", text); });
   if (!lowered) {
     return 1;
   }
@@ -233,32 +232,34 @@ auto RunDumpLir(const CommandContext& ctx) -> int {
 }
 
 auto RunDumpLlvm(const CommandContext& ctx) -> int {
-  const auto print =
-      [](const compiler::ExecutableUnit& unit) -> diag::Result<void> {
+  const auto text =
+      [](const compiler::ExecutableUnit& unit) -> diag::Result<std::string> {
     auto emitted = backend::llvm_backend::EmitModule(
         unit.body, unit.definition.time_resolution);
     if (!emitted) {
       return std::unexpected(std::move(emitted.error()));
     }
-    fmt::print("{}", emitted->Print());
-    return {};
+    return emitted->Print();
+  };
+  const auto print = [](const std::string& module) {
+    fmt::print("{}", module);
   };
   auto design = DesignOf(ctx);
   if (!design) {
     return 1;
   }
   auto lowered = compiler::LowerToExecutable(
-      *design, ctx.elaborated->diag_sources, *ctx.sink,
-      [&](compiler::ExecutableUnit unit) -> diag::Result<void> {
-        return print(unit);
-      });
+      *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
+      text, print);
   if (!lowered) {
     return 1;
   }
-  if (auto printed = print(lowered->root); !printed) {
-    ctx.sink->Report(std::move(printed.error()));
+  auto root = text(lowered->root);
+  if (!root) {
+    ctx.sink->Report(std::move(root.error()));
     return 1;
   }
+  print(*root);
   fmt::print(
       "{}",
       backend::llvm_backend::EmitProgramEntry(lowered->root.body).Print());
@@ -319,7 +320,7 @@ auto BuildDpiObjects(
     return std::nullopt;
   }
   auto built = driver::CompileDpiObjects(
-      ctx.dpi_inputs, host.cxx, host.optimization, dir,
+      ctx.dpi_inputs, host.cxx, host.optimization, host.compile_width, dir,
       dir / driver::kObjectDir / driver::kDpiSourceDir);
   if (!built) {
     ctx.sink->Report(std::move(built.error()));
@@ -379,12 +380,15 @@ auto ThisCompiler(const CommandContext& ctx) -> std::filesystem::path {
   return ec ? std::filesystem::path(ctx.program_path) : self;
 }
 
-// The LLVM backend's program. Each unit is taken to its module as it is
-// lowered, and every form it passed through is released as it goes.
+// The LLVM backend's program. Each unit is taken all the way to its object as
+// it is lowered -- a kept object taken in place of compiling one -- so no unit
+// waits on another's, and every form a unit passed through is released as it
+// goes.
 //
-// The name is read off every module the program is composed from, the code
-// generator that turns them into objects, the runtime they link against, the
-// driver that links them, and the foreign objects beside them.
+// The program is named by the names of the objects it links, the runtime they
+// link against, the driver that links them, and the foreign objects beside
+// them, so what is kept at this level saves the link. How many units are built
+// at once changes none of the objects, so it is in no name.
 auto LlvmProgramRecipe(
     const CommandContext& ctx, const driver::HostBuild& host,
     const driver::RuntimeLocation& runtime,
@@ -393,44 +397,63 @@ auto LlvmProgramRecipe(
   if (!design) {
     return std::nullopt;
   }
+  driver::ContentNamer generator;
+  generator.AddExecutable("code generator", ThisCompiler(ctx));
+  const program::ObjectBuild objects{
+      .optimization = host.optimization,
+      .code_generator = generator.Finish(),
+      .store = host.store,
+      .reuse_kept = !ctx.args->rebuild,
+      .object_dir = scratch / driver::kObjectDir};
+  std::error_code created;
+  std::filesystem::create_directories(objects.object_dir, created);
+  if (created) {
+    ctx.sink->Report(
+        diag::Make(
+            diag::DiagCode::kHostIoError,
+            std::format(
+                "failed to create '{}': {}", objects.object_dir.string(),
+                created.message())));
+    return std::nullopt;
+  }
   program::ProgramSink sink;
   auto lowered = compiler::LowerToSemantic(
-      *design, ctx.elaborated->diag_sources, *ctx.sink,
-      [&](compiler::SemanticUnit unit) -> diag::Result<void> {
-        return sink.Take(unit.mir);
-      });
+      *design, ctx.elaborated->diag_sources, *ctx.sink, host.compile_width,
+      [&objects](compiler::SemanticUnit unit) {
+        return program::BuildUnit(unit.mir, objects);
+      },
+      [&sink](program::BuiltUnit unit) { sink.Collect(std::move(unit)); });
   if (!lowered) {
     return std::nullopt;
   }
-  auto emitted = std::move(sink).Finish(lowered->root);
-  if (!emitted) {
-    ctx.sink->Report(std::move(emitted.error()));
+  auto built = std::move(sink).Finish(lowered->root, objects);
+  if (!built) {
+    ctx.sink->Report(std::move(built.error()));
     return std::nullopt;
   }
   auto foreign =
-      BuildDpiObjects(ctx, emitted->dpi_fragments, runtime, host, scratch);
+      BuildDpiObjects(ctx, built->dpi_fragments, runtime, host, scratch);
   if (!foreign) {
     return std::nullopt;
   }
   driver::ContentNamer namer;
-  for (const backend::llvm_backend::EmittedModule& module : emitted->modules) {
-    namer.Add("module", module.Print());
+  std::vector<std::filesystem::path> linked;
+  linked.reserve(built->objects.size() + foreign->size());
+  for (const program::ObjectFile& object : built->objects) {
+    namer.Add("object", object.name.hex);
+    linked.push_back(object.path);
   }
-  namer.AddExecutable("code generator", ThisCompiler(ctx));
   namer.AddFile("runtime library", runtime.lib);
   namer.AddExecutable("linker", host.cxx);
   for (const std::filesystem::path& object : *foreign) {
     namer.AddFile("foreign object", object);
+    linked.push_back(object);
   }
   return ProgramRecipe{
       .name = namer.Finish(),
-      .build = [modules = std::move(emitted->modules),
-                foreign = *std::move(foreign),
-                object_dir = scratch / driver::kObjectDir,
-                runtime_lib = runtime.lib,
-                cxx = host.cxx](const std::filesystem::path& built) mutable {
-        return program::CompileProgram(
-            std::move(modules), foreign, object_dir, runtime_lib, built, cxx);
+      .build = [linked = std::move(linked), runtime_lib = runtime.lib,
+                cxx = host.cxx](const std::filesystem::path& program) {
+        return driver::LinkProgram(linked, runtime_lib, program, cxx);
       }};
 }
 

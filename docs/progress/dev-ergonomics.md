@@ -63,9 +63,9 @@ layer directly.
       which is abandoned at its first refusal. `decisions/reporting-every-gap-in-one-run.md` settles
       the shape.
 
-- [x] D11 -- A design's translation units can be compiled several at a time, and how many is stated
-      by whoever asked for the build rather than chosen by the build. Both things that build a
-      design take it: the command line for the build the compiler drives, and its own argument for
+- [x] D11 -- A design's units can be compiled several at a time, on either backend, and how many is
+      stated by whoever asked for the build rather than chosen by the build. Both things that build
+      a design take it: the command line for the build the compiler drives, and its own argument for
       the recipe an emitted project ships. Asked for nothing, a build compiles one unit at a time,
       because a build told nothing cannot know what else holds the machine -- a conformance run
       drives sixteen of them at once, and a width each picked for itself would multiply rather than
@@ -86,11 +86,15 @@ layer directly.
       counts at 337 uncalled bodies for this very design. That is a candidate rather than a
       finding -- attributing it needs a build of the older compiler, which nothing here has done.
 
-- [ ] D12 -- A build recompiles only what a change reached. Every build compiles every unit, however
-      many at a time, because nothing records which artifact a change invalidated. A unit's
-      declarations and its bodies are already separate files and each unit already compiles to its
-      own object, so what is missing is the record rather than the shape: what a referrer compiled
-      against, and whether it still holds.
+- [ ] D12 -- A build recompiles only what a change reached. **Done on the LLVM backend**: a unit's
+      module is complete in itself, so its object is kept under a name computed from the module's
+      text, the code generator's build and the level, and an edit recompiles only the units whose
+      module changed. Measured on Ibex at `-j 4`: 6.9 s from nothing, 2.9 s when every object is
+      kept. **What is left is the C++ backend**, where every build compiles every unit, however many
+      at a time, because nothing records which artifact a change invalidated. A unit's declarations
+      and its bodies are already separate files and each unit already compiles to its own object, so
+      what is missing is the record rather than the shape: what a referrer compiled against, and
+      whether it still holds.
 
       The second question behind it is now answered, which is what makes the record worth building.
       What a referrer compiles against is the part the declaring unit published and nothing else, so
@@ -104,7 +108,7 @@ layer directly.
       record could have listed it. Nothing derived from emitted content could have been built while
       that held, which puts it in front of the record rather than beside it.
 
-      Measured 2026-09-16 on a three-unit design: a build that changes nothing still takes the same
+      Measured 2026-09-16 on the C++ backend, a three-unit design: a build that changes nothing still takes the same
       two and a quarter seconds as the one before it, and every object is written again. The Ibex
       testbench figures above put the same statement at three minutes of processor time per build
       whatever was edited, because nothing is reused between one build and the next except the

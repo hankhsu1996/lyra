@@ -655,7 +655,8 @@ TEST(LyraRun, ReachingThroughANullObjectHandleIsReported) {
 // own right: moved away from where it was built and run after the compiler has
 // exited, it builds a hierarchy spanning units, reads the simulation's
 // arguments off its own argv (LRM 21.6), leaves a task through a departure the
-// caller lands (LRM 9.6.2), and answers with the design's exit status.
+// caller lands (LRM 9.6.2), and answers with the design's exit status. It does
+// all of that however hard and however wide it was compiled.
 TEST(LyraBuild, TheLlvmProgramRunsOnItsOwn) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -686,30 +687,36 @@ TEST(LyraBuild, TheLlvmProgramRunsOnItsOwn) {
       << "endmodule\n";
 
   const auto program = *tmp_or / "program";
-  const std::vector<std::string> args = {
-      "build",          "--backend",   "llvm",
-      "--top",          "Test",        "-o",
-      program.string(), "--cache-dir", (*tmp_or / "cache").string(),
-      src.string()};
-  const auto built = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
-      << built.stdout_text << built.stderr_text;
-
   const auto moved = *tmp_or / "moved";
-  std::filesystem::rename(program, moved);
+  for (const std::vector<std::string>& how :
+       {std::vector<std::string>{},
+        std::vector<std::string>{"--release", "-j", "4"}}) {
+    std::vector<std::string> args = {
+        "build",          "--backend",   "llvm",
+        "--top",          "Test",        "-o",
+        program.string(), "--cache-dir", (*tmp_or / "cache").string()};
+    args.insert(args.end(), how.begin(), how.end());
+    args.push_back(src.string());
+    const std::string label = how.empty() ? "default" : "--release -j 4";
+    const auto built = RunChildProcess(lyra, args, 120s);
+    ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+        << label << ": " << built.stdout_text << built.stderr_text;
 
-  const auto passed = RunChildProcess(moved, {}, 60s);
-  EXPECT_EQ(passed.termination, TerminationKind::kExitedNormally)
-      << passed.stdout_text << passed.stderr_text;
-  EXPECT_NE(passed.stdout_text.find("y=42 after=0"), std::string::npos)
-      << "stdout: " << passed.stdout_text;
+    std::filesystem::rename(program, moved);
 
-  const std::vector<std::string> failing = {"+fail"};
-  const auto failed = RunChildProcess(moved, failing, 60s);
-  EXPECT_EQ(failed.termination, TerminationKind::kExitedNonZero)
-      << failed.stdout_text << failed.stderr_text;
-  EXPECT_NE(failed.stderr_text.find("asked"), std::string::npos)
-      << failed.stderr_text;
+    const auto passed = RunChildProcess(moved, {}, 60s);
+    EXPECT_EQ(passed.termination, TerminationKind::kExitedNormally)
+        << label << ": " << passed.stdout_text << passed.stderr_text;
+    EXPECT_NE(passed.stdout_text.find("y=42 after=0"), std::string::npos)
+        << label << " stdout: " << passed.stdout_text;
+
+    const std::vector<std::string> failing = {"+fail"};
+    const auto failed = RunChildProcess(moved, failing, 60s);
+    EXPECT_EQ(failed.termination, TerminationKind::kExitedNonZero)
+        << label << ": " << failed.stdout_text << failed.stderr_text;
+    EXPECT_NE(failed.stderr_text.find("asked"), std::string::npos)
+        << label << ": " << failed.stderr_text;
+  }
 }
 
 // An option means something to a command or it is refused by name, and the
@@ -778,7 +785,9 @@ auto KeptPrograms(const std::filesystem::path& store) -> std::size_t {
 }
 
 // A program is kept under what built it, so building a design again reuses
-// the one kept and building a changed design keeps a second. `build` writes the
+// the one kept, and building a changed design, or the same one compiled at
+// another level, keeps a second; how wide it was built changes nothing it
+// holds, so that keeps none. `build` writes the
 // one file it was asked for and `run` writes nothing, and nothing kept can be
 // reached through what a command handed back: clearing the store leaves both
 // the built program and a later run whole.
@@ -811,13 +820,25 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   EXPECT_EQ(KeptPrograms(store), 1U)
       << "an unchanged design built again keeps no second program";
 
+  auto wider = RunLyraFrom(lyra, work, "build -j 4 " + common + " design.sv");
+  ASSERT_EQ(wider.exit_code, 0) << wider.stderr_text;
+  EXPECT_EQ(KeptPrograms(store), 1U)
+      << "a design built wider is the same program, and keeps no second";
+
+  auto released =
+      RunLyraFrom(lyra, work, "build --release " + common + " design.sv");
+  ASSERT_EQ(released.exit_code, 0) << released.stderr_text;
+  EXPECT_EQ(KeptPrograms(store), 2U)
+      << "a design compiled at another level was handed the program kept for "
+         "the first";
+
   write_design(2);
   auto changed = RunLyraFrom(lyra, work, "run " + common + " design.sv");
   ASSERT_EQ(changed.exit_code, 0) << changed.stderr_text;
   EXPECT_NE(changed.stdout_text.find("value=2"), std::string::npos)
       << "a changed design ran the program kept for the old one: "
       << changed.stdout_text;
-  EXPECT_EQ(KeptPrograms(store), 2U);
+  EXPECT_EQ(KeptPrograms(store), 3U);
 
   EXPECT_EQ(CountEntries(work), 2U)
       << "the working directory holds the design and the one program built, "

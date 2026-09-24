@@ -15,6 +15,10 @@
 // recipe, the bundled runtime -- carries the output directory's own path and is
 // assembled around the text rather than lowered from the design.
 //
+// The first compilation lowers one unit at a time and the second several at
+// once, so units finish in a different order, and a program that depended on
+// which unit finished first would come out as a difference.
+//
 // The two compilations of a case are deliberately alive at the same time. Each
 // owns its arena, so the symbols of one cannot occupy the addresses of the
 // other, and an order taken from an address rather than from the design comes
@@ -47,7 +51,6 @@
 
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/driver/cpp_build.hpp"
 #include "tests/framework/conformance_case.hpp"
@@ -58,6 +61,9 @@ namespace {
 using bazel::tools::cpp::runfiles::Runfiles;
 using lyra::test::ConformanceCase;
 using lyra::test::LoadConformanceCases;
+
+// How many units the second compilation lowers at once.
+constexpr std::size_t kWide = 4;
 
 // One compilation's inputs, held together because the driver owns the text
 // every span points into and the elaboration points into it.
@@ -114,11 +120,12 @@ auto ReadEveryFileUnder(const std::filesystem::path& dir)
   return files;
 }
 
-// Every file this compilation's design is written as. Empty where the design
-// did not reach a written form, which is what a design this path refuses comes
-// to and is not this test's subject.
-auto Emit(Compilation& compilation, const std::filesystem::path& dir)
-    -> std::map<std::string, std::string> {
+// Every file this compilation's design is written as, lowering `width` units at
+// once. Empty where the design did not reach a written form, which is what a
+// design this path refuses comes to and is not this test's subject.
+auto Emit(
+    Compilation& compilation, const std::filesystem::path& dir,
+    std::size_t width) -> std::map<std::string, std::string> {
   if (!compilation.front.elaborated.has_value()) {
     return {};
   }
@@ -136,9 +143,13 @@ auto Emit(Compilation& compilation, const std::filesystem::path& dir)
   lyra::driver::CppProjectSink project(
       dir, lyra::driver::SourceFormatting::kOff);
   auto semantic = lyra::compiler::LowerToSemantic(
-      *design, compilation.front.elaborated->diag_sources, sink,
-      [&project](lyra::compiler::SemanticUnit unit)
-          -> lyra::diag::Result<void> { return project.Take(unit.mir); });
+      *design, compilation.front.elaborated->diag_sources, sink, width,
+      [&project](lyra::compiler::SemanticUnit unit) {
+        return project.Write(unit.mir);
+      },
+      [&project](lyra::driver::WrittenUnit unit) {
+        project.Collect(std::move(unit));
+      });
   if (!semantic.has_value()) {
     return {};
   }
@@ -308,9 +319,9 @@ class RepeatableEmissionTest : public testing::Test {
     Compilation second = Elaborate(*case_);
 
     const std::map<std::string, std::string> first_files =
-        Emit(first, scratch.Under("first"));
+        Emit(first, scratch.Under("first"), 1);
     const std::map<std::string, std::string> second_files =
-        Emit(second, scratch.Under("second"));
+        Emit(second, scratch.Under("second"), kWide);
     if (first_files.empty() && second_files.empty()) {
       GTEST_SKIP() << "this path writes no program for '" << case_->id << "'";
     }
@@ -338,9 +349,9 @@ TEST(RepeatableEmission, ADesignWrittenToShowAnOrderingWritesOneProgram) {
   Compilation second = Elaborate(design);
 
   const std::map<std::string, std::string> first_files =
-      Emit(first, scratch.Under("first"));
+      Emit(first, scratch.Under("first"), 1);
   const std::map<std::string, std::string> second_files =
-      Emit(second, scratch.Under("second"));
+      Emit(second, scratch.Under("second"), kWide);
   ASSERT_FALSE(first_files.empty())
       << "the design written to exercise this check no longer compiles";
 
