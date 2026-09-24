@@ -6,9 +6,10 @@ backend's, not a single SystemVerilog feature. Per-feature backend status lives 
 infrastructure: how a runtime value lives, what the backend can and cannot lower yet, and its
 coverage.
 
-JIT and AOT are link-time choices over this one backend, not separate surfaces. Design elaboration
-runs here as it does on the C++ backend: the backend lowers cross-unit construction and realizes
-members as runtime-owned storage, so it elaborates a hierarchy of modules through the design root.
+What this backend produces is a program: each unit's module compiled to an object and linked with
+the runtime library, which `build` hands back and `run` executes. Design elaboration runs here as it
+does on the C++ backend: the backend lowers cross-unit construction and realizes members as
+runtime-owned storage, so it elaborates a hierarchy of modules through the design root.
 
 Done when a design compiles and runs through this backend end to end, matching the C++ backend's
 answers wherever both accept the source.
@@ -432,7 +433,7 @@ each meets the same lifetime question above.
       runs rather than a second family beside them.
 - [x] **Storage reached by name rather than through a receiver.** A cell the whole program shares is
       named by its linkage symbol, a place opens at that symbol and dereferences it, and the
-      execution session resolves the name to the address the design's own storage sits at. A cell a
+      program's link resolves the name to the address the design's own storage sits at. A cell a
       class owns rather than an object of it is that same storage under a name qualified one step
       further, so it reaches this backend the way a namespace variable does and nothing about the
       class survives the lowering. What brings it up is whatever brings up the thing that replicates
@@ -507,18 +508,25 @@ each meets the same lifetime question above.
       realization needs and a traced one does not, since there the handle is that pointer. So this
       waits on the reclamation model rather than on an entry: what it costs to add now is the record
       the tracing would make unnecessary.
-- [ ] **An artifact this path produces, rather than only a session it runs in.** `dump llvm` and
-      `run` reach this backend and neither leaves anything behind. `run` names two modes that would
-      -- one compiling and linking the module ahead of the run, one handing it to an external
-      interpreter -- and both refuse as unimplemented, while `compile` writes a C++ project and does
-      not reach this backend at all. So a design cannot yet become a program that outlives the
-      session here, which is what the CI job below waits on as well. Ahead-of-time and just-in-time
-      are link-time choices over this one backend, so what is missing is the link step and what
-      drives it, never a second backend.
-- [ ] An AOT CI job, waiting on a design that survives this path. Neither the smoke job nor the
-      benchmark waits on it any longer: both run against the C++ path, per merge and nightly
-      respectively. Measuring this path beside them needs an artifact that can be timed on its own,
-      which the run modes do not produce.
+- [x] **A compiled unit carries what it declares.** The definition a scope is driven through, the
+      one every value of a class carries, a closure's, the description one body's variables need,
+      and the storage a unit shares program-wide are all stated by the unit's own module, in a body
+      whoever composes the program runs before the program starts. Nothing builds them from a
+      lowered unit after compiling, and a class another unit declares is named by the cell holding
+      its definition rather than matched to it by comparing linkage names across the program.
+      Settled in `../decisions/a-unit-states-what-it-declares.md`.
+
+- [x] **An artifact this path produces, rather than only a session it runs in.** `build` on this
+      backend links the design into an executable that runs after the compiler has exited and
+      wherever the kind of machine it was linked for does, reading its plusargs off its own argv and
+      answering with the design's exit status, and `run` builds the same program and executes it.
+      The program starts at one entry the backend emits from the design root. The session that used
+      to compose a design inside the compiler is gone: measured, it was not faster on a first run,
+      and a second run of the kept program pays no compile at all
+      (`../decisions/a-program-is-kept-by-what-built-it.md`).
+- [ ] An AOT CI job. Neither the smoke job nor the benchmark runs this path: both run against the
+      C++ path, per merge and nightly respectively. The artifact they would time now exists; what is
+      still missing is the job that drives it.
 - [ ] **An optimization pipeline.** The module this backend produces runs through the passes that
       make a suspending body executable and through nothing else, so every saving an optimizer takes
       -- a variable promoted out of its slot, a body no reachable body calls dropped, a repeated
@@ -527,9 +535,9 @@ each meets the same lifetime question above.
       path has no setting that turns anything up and no axis to measure along. Two things follow and
       neither announces itself. A shape defended upstream on the ground that nothing below it
       removes the cost has been decided by this gap rather than by which layer owns the saving,
-      which is the failure `../design-process.md` names. And an artifact this path produces is not
-      yet something a simulation can be timed with, which is the other half of what the job above
-      waits on.
+      which is the failure `../design-process.md` names. And the executable this path links is
+      compiled unoptimized whatever the caller asked for, so timing a simulation with it measures
+      the gap rather than the path, which is the other half of what the job above waits on.
 - [x] **An array of owned children.** A child scope -- a module instance, a generate block, a
       procedural block scope -- is constructed, reached by name and per-axis index, and reports its
       hierarchical name, whether it stands alone or is one of an array. Each element is its own
@@ -573,10 +581,9 @@ each meets the same lifetime question above.
       (LRM 3.14.2.3, Annex H.13).
 - [x] **Foreign code calling in.** An exported subroutine is reachable under the C name the standard
       fixes (LRM 35.4, 35.7), and a DPI task crosses in either direction. What this needed is that a
-      program have one linker: the design's foreign sources are linked into the execution session
-      rather than loaded beside it, so the session resolves names across everything it holds instead
-      of the outward direction resolving in one place and the inward direction in another that
-      cannot see it.
+      program have one linker: the design's foreign sources are linked into the program rather than
+      loaded beside it, so the link resolves names across everything it holds instead of the outward
+      direction resolving in one place and the inward direction in another that cannot see it.
 - [x] **A region that consumes a control effect** -- what a named block, a named fork, and a task
       need so that `disable` of one resumes execution after it (LRM 9.6.2). A named procedural block
       runs here whether or not anything disables it, a self-`disable` leaves its own region, and an
@@ -611,8 +618,7 @@ each meets the same lifetime question above.
       by the load first. So the gap is narrower -- which entry a builtin resolves to is stated per
       builtin, and a prototype, a definition, and a binding are held to each other -- while a name
       minted for an entry nobody ever wrote is still checked only by the corpus reaching it. Closing
-      it means admitting a module against what the runtime realizes before the session materializes
-      it.
+      it means admitting a module against what the runtime realizes before it is linked.
 - [x] **End-to-end coverage is the corpus, not a handful of cases.** What this path refuses is
       recorded once for the path rather than on any case, and a case that starts running fails until
       its entry is dropped. So the record only ever shrinks, and dropping entries is what landing a
@@ -658,17 +664,10 @@ each meets the same lifetime question above.
       that it covers one of the two questions.
 
 - [ ] **Running a design selects this backend without being asked.** Today it selects the C++ one,
-      so the ordinary way to see what a source does spawns a host compiler, waits for a project to
-      build, and runs the program -- for an answer this backend gives in a fraction of the time and
-      with nothing written to disk. That is the edit loop the whole compiler is optimized for, and
-      the cheaper of the two paths is not the one it takes.
-
-      **Linking in process is what a run wants, and compiling ahead of time is what a long one
-      wants.** They are link-time choices over this one backend rather than two backends, and the
-      same trade decides between them as decides the other path's optimization level: a run that
-      exists to be watched pays no compile it cannot earn back, and a run long enough to earn one
-      asks for it. So running selects the in-process form, and the ahead-of-time form is what a
-      release run selects once it exists.
+      so the ordinary way to see what a source does compiles emitted C++ with a host compiler and
+      runs the program -- for an answer this backend gives from its own code generator in a fraction
+      of the time. That is the edit loop the whole compiler is optimized for, and the cheaper of the
+      two paths is not the one it takes.
 
       What it costs is the entries in this path's refusal record. A design that trips one gets a
       diagnostic naming what is missing where it used to get an answer, and the other path still

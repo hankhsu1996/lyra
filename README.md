@@ -36,12 +36,15 @@ bazel build //:lyra
 ```
 
 Alongside `run` there is `check` for diagnostics alone, `dump` for reading any stage of the
-pipeline, and `emit` and `compile` for producing a standalone C++ project. Everything after the
-command word is one command line shared with the slang driver, so slang's front-end options reach
-Lyra unchanged, and `lyra --help` is authoritative on all of it.
+pipeline, `build` for a program you keep, and `emit cpp` for a standalone C++ project. Everything
+after the command word is one command line shared with the slang driver, so slang's front-end
+options reach Lyra unchanged, and `lyra --help` is authoritative on all of it.
 
-A design is named by its sources on the command line. Naming one by a manifest instead is not
-implemented.
+A program Lyra builds is kept in your cache directory under a name computed from what built it, so
+running an unchanged design again skips the compile, and nothing is written into your project.
+
+A design is named by its sources on the command line, or declares itself once in a `lyra.toml`
+beside it, which Lyra finds by walking up from where it is run.
 
 ## Architecture
 
@@ -61,10 +64,7 @@ flowchart LR
 - **LIR** is execution-oriented, carrying control-flow graphs, basic blocks, and storage.
 
 A design takes one of the two paths out of MIR, not both, and they are not equals. The LLVM path is
-the product: it produces machine code itself, so it asks nothing of the machine it runs on. Once a
-design is LLVM IR, executing it in process and compiling it ahead of time are two link-time choices
-over that one backend rather than two pipelines, which is most of the reason the pipeline aims
-there.
+the product: it produces machine code itself, and asks the machine it runs on only for a linker.
 
 The C++ path is there to make MIR legible, because a person can read emitted C++ and judge whether a
 design was modeled correctly in a way that reading LLVM IR does not allow. Its output is source, so

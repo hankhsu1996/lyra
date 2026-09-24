@@ -4,9 +4,9 @@
 // design that fails at run time is reported.
 //
 // None of it is a statement about a backend, so a case that has to run a design
-// asks for the one that spawns no host compiler, and the file costs seconds and
-// gates. What an emitted C++ project is worth once built is a different
-// question with a different price, and lives in `emitted_project_test.cpp`.
+// asks for the one that compiles no C++, and the file costs seconds and gates.
+// What an emitted C++ project is worth once built is a different question with
+// a different price, and lives in `emitted_project_test.cpp`.
 
 #include <algorithm>
 #include <array>
@@ -323,7 +323,7 @@ TEST(LyraDesignManifest, DeclaresTheDesignFromAnyDirectoryWithin) {
   WriteDeclaredDesign(*tmp_or);
 
   for (const auto& from : {*tmp_or, *tmp_or / "sub"}) {
-    const auto run = RunLyraFrom(lyra, from, "run --backend jit");
+    const auto run = RunLyraFrom(lyra, from, "run --backend llvm");
     ASSERT_EQ(run.exit_code, 0) << from.string() << ": " << run.stderr_text;
     EXPECT_NE(run.stdout_text.find("tb trace 1"), std::string::npos)
         << from.string() << ": " << run.stdout_text;
@@ -343,7 +343,7 @@ TEST(LyraDesignManifest, CommandLineJoinsMaterialAndReplacesSelection) {
   WriteDeclaredDesign(*tmp_or);
 
   const auto joined =
-      RunLyraFrom(lyra, *tmp_or, "run --backend jit -D LYRA_WIDTH=16");
+      RunLyraFrom(lyra, *tmp_or, "run --backend llvm -D LYRA_WIDTH=16");
   ASSERT_EQ(joined.exit_code, 0) << joined.stderr_text;
   // The declaration's own define survived, and the command line's won over the
   // default the header would otherwise have supplied.
@@ -353,7 +353,7 @@ TEST(LyraDesignManifest, CommandLineJoinsMaterialAndReplacesSelection) {
       << joined.stdout_text;
 
   const auto narrowed =
-      RunLyraFrom(lyra, *tmp_or, "run --backend jit --top alu");
+      RunLyraFrom(lyra, *tmp_or, "run --backend llvm --top alu");
   ASSERT_EQ(narrowed.exit_code, 0) << narrowed.stderr_text;
   EXPECT_NE(narrowed.stdout_text.find("alu width 8"), std::string::npos)
       << narrowed.stdout_text;
@@ -509,6 +509,10 @@ TEST(LyraDesignManifest, ReportsNoInputAndWhyThereIsNone) {
 // 20.10), so the run reaches the end of simulation time and its final
 // procedures execute there (LRM 9.2.3). The corpus cannot state this: a case
 // passes on a zero exit status, and this run has to fail.
+//
+// The error is raised inside a task and a block that a `disable` names (LRM
+// 9.6.2), so it leaves through the landing of each. Neither may claim it: a
+// run-time error is a departure no region lands.
 TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -518,14 +522,23 @@ TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
   const auto src = *tmp_or / "test.sv";
   std::ofstream(src) << "module Test;\n"
                      << "  int dyn[];\n"
-                     << "  initial begin\n"
+                     << "  task automatic grows();\n"
                      << "    #5;\n"
                      << "    dyn = new[-1];\n"
+                     << "  endtask\n"
+                     << "  initial begin : outer\n"
+                     << "    grows();\n"
+                     << "    $display(\"continued past the region\");\n"
+                     << "  end\n"
+                     << "  initial begin\n"
+                     << "    #100;\n"
+                     << "    disable outer;\n"
+                     << "    disable grows;\n"
                      << "  end\n"
                      << "  final $display(\"reached the end\");\n"
                      << "endmodule\n";
 
-  const std::vector<std::string> args = {"run",   "--backend", "jit",
+  const std::vector<std::string> args = {"run",   "--backend", "llvm",
                                          "--top", "Test",      src.string()};
   const auto run = RunChildProcess(lyra, args, 120s);
   ASSERT_EQ(run.termination, TerminationKind::kExitedNonZero)
@@ -533,6 +546,9 @@ TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
   EXPECT_NE(run.stderr_text.find("size operand is negative"), std::string::npos)
       << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("reached the end"), std::string::npos)
+      << "stdout: " << run.stdout_text;
+  EXPECT_EQ(
+      run.stdout_text.find("continued past the region"), std::string::npos)
       << "stdout: " << run.stdout_text;
 }
 
@@ -557,7 +573,7 @@ TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
                      << "  initial $display(\"v=%0d\", v);\n"
                      << "endmodule\n";
 
-  const std::vector<std::string> args = {"run",   "--backend", "jit",
+  const std::vector<std::string> args = {"run",   "--backend", "llvm",
                                          "--top", "Test",      src.string()};
   const auto run = RunChildProcess(lyra, args, 120s);
   EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
@@ -594,7 +610,7 @@ TEST(LyraRun, ReachingThroughANullObjectHandleIsReported) {
                             << "endmodule\n";
 
   const std::vector<std::string> class_args = {
-      "run", "--backend", "jit", "--top", "Test", user_class.string()};
+      "run", "--backend", "llvm", "--top", "Test", user_class.string()};
   const auto through_class = RunChildProcess(lyra, class_args, 120s);
   EXPECT_EQ(through_class.termination, TerminationKind::kExitedNonZero)
       << through_class.stdout_text << through_class.stderr_text;
@@ -618,7 +634,7 @@ TEST(LyraRun, ReachingThroughANullObjectHandleIsReported) {
                                << "endmodule\n";
 
   const std::vector<std::string> process_args = {
-      "run", "--backend", "jit", "--top", "Test", builtin_class.string()};
+      "run", "--backend", "llvm", "--top", "Test", builtin_class.string()};
   const auto through_process = RunChildProcess(lyra, process_args, 120s);
   EXPECT_EQ(through_process.termination, TerminationKind::kExitedNonZero)
       << through_process.stdout_text << through_process.stderr_text;
@@ -628,6 +644,248 @@ TEST(LyraRun, ReachingThroughANullObjectHandleIsReported) {
   EXPECT_NE(
       through_process.stdout_text.find("reached the access"), std::string::npos)
       << "stdout: " << through_process.stdout_text;
+}
+
+// What `build` produces on the backend that writes no C++ is a program in its
+// own right: moved away from where it was built and run after the compiler has
+// exited, it builds a hierarchy spanning units, reads the simulation's
+// arguments off its own argv (LRM 21.6), leaves a task through a departure the
+// caller lands (LRM 9.6.2), and answers with the design's exit status.
+TEST(LyraBuild, TheLlvmProgramRunsOnItsOwn) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src)
+      << "module Leaf(input int a, output int y);\n"
+      << "  assign y = a + 1;\n"
+      << "endmodule\n"
+      << "module Test;\n"
+      << "  int src;\n"
+      << "  int dst;\n"
+      << "  int after_disable;\n"
+      << "  Leaf u(.a(src), .y(dst));\n"
+      << "  task automatic leaves();\n"
+      << "    disable leaves;\n"
+      << "    after_disable = 1;\n"
+      << "  endtask\n"
+      << "  initial begin\n"
+      << "    src = 41;\n"
+      << "    leaves();\n"
+      << "    #1;\n"
+      << "    if ($test$plusargs(\"fail\")) $fatal(1, \"asked\");\n"
+      << "    $display(\"y=%0d after=%0d\", dst, after_disable);\n"
+      << "  end\n"
+      << "endmodule\n";
+
+  const auto program = *tmp_or / "program";
+  const std::vector<std::string> args = {
+      "build",          "--backend",   "llvm",
+      "--top",          "Test",        "-o",
+      program.string(), "--cache-dir", (*tmp_or / "cache").string(),
+      src.string()};
+  const auto built = RunChildProcess(lyra, args, 120s);
+  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+      << built.stdout_text << built.stderr_text;
+
+  const auto moved = *tmp_or / "moved";
+  std::filesystem::rename(program, moved);
+
+  const auto passed = RunChildProcess(moved, {}, 60s);
+  EXPECT_EQ(passed.termination, TerminationKind::kExitedNormally)
+      << passed.stdout_text << passed.stderr_text;
+  EXPECT_NE(passed.stdout_text.find("y=42 after=0"), std::string::npos)
+      << "stdout: " << passed.stdout_text;
+
+  const std::vector<std::string> failing = {"+fail"};
+  const auto failed = RunChildProcess(moved, failing, 60s);
+  EXPECT_EQ(failed.termination, TerminationKind::kExitedNonZero)
+      << failed.stdout_text << failed.stderr_text;
+  EXPECT_NE(failed.stderr_text.find("asked"), std::string::npos)
+      << failed.stderr_text;
+}
+
+// An option means something to a command or it is refused by name, and the
+// refusal says which commands do take it. What is refused is a function of the
+// command alone: an option the command acts on stands even where this time it
+// changes nothing, as a precompiled header does for the backend that compiles
+// no C++.
+TEST(LyraCommandLine, RefusesAnOptionTheCommandDoesNotActOn) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteTrivialSource(src);
+
+  struct Refusal {
+    std::vector<std::string> args;
+    std::string expected;
+  };
+  const std::vector<Refusal> refusals = {
+      {.args = {"dump", "ast", "--release", src.string()},
+       .expected = "--release means nothing to `dump ast`"},
+      {.args = {"check", "--backend", "llvm", src.string()},
+       .expected = "--backend means nothing to `check`"},
+      {.args =
+           {"emit", "cpp", "--backend", "llvm", "-o",
+            (*tmp_or / "out").string(), src.string()},
+       .expected = "--backend means nothing to `emit cpp`"},
+      {.args =
+           {"build", "-o", (*tmp_or / "p").string(), src.string(), "--",
+            "+trace"},
+       .expected = "arguments after `--` means nothing to `build`"},
+      {.args = {"cache", "clear", "--rebuild"},
+       .expected = "--rebuild means nothing to `cache clear`"}};
+  for (const Refusal& refusal : refusals) {
+    const auto refused = RunChildProcess(lyra, refusal.args, 60s);
+    EXPECT_NE(refused.exit_code, 0) << refusal.expected << ": accepted";
+    EXPECT_NE(refused.stderr_text.find(refusal.expected), std::string::npos)
+        << refused.stderr_text;
+    EXPECT_NE(refused.stderr_text.find("it is taken by"), std::string::npos)
+        << refused.stderr_text;
+  }
+
+  const std::vector<std::string> acted_on = {
+      "build",       "--backend",
+      "llvm",        "--no-pch",
+      "--cache-dir", (*tmp_or / "store").string(),
+      "-o",          (*tmp_or / "program").string(),
+      src.string()};
+  const auto built = RunChildProcess(lyra, acted_on, 120s);
+  EXPECT_EQ(built.exit_code, 0) << built.stderr_text;
+}
+
+// How many entries a directory holds, none where there is no directory.
+auto CountEntries(const std::filesystem::path& dir) -> std::size_t {
+  std::error_code ec;
+  const std::filesystem::directory_iterator entries(dir, ec);
+  return ec ? 0
+            : static_cast<std::size_t>(std::ranges::distance(
+                  entries, std::filesystem::directory_iterator{}));
+}
+
+// How many programs a store keeps.
+auto KeptPrograms(const std::filesystem::path& store) -> std::size_t {
+  return CountEntries(store / "programs");
+}
+
+// A program is kept under what built it, so building a design again reuses
+// the one kept and building a changed design keeps a second. `build` writes the
+// one file it was asked for and `run` writes nothing, and nothing kept can be
+// reached through what a command handed back: clearing the store leaves both
+// the built program and a later run whole.
+TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto work = *tmp_or / "work";
+  const auto store = *tmp_or / "store";
+  std::filesystem::create_directories(work);
+  const auto write_design = [&](int value) {
+    std::ofstream(work / "design.sv")
+        << "module Test;\n"
+        << std::format("  initial $display(\"value=%0d\", {});\n", value)
+        << "endmodule\n";
+  };
+  const std::string common =
+      std::format("--backend llvm --cache-dir '{}'", store.string());
+
+  write_design(1);
+  auto first = RunLyraFrom(lyra, work, "build " + common + " design.sv");
+  ASSERT_EQ(first.exit_code, 0) << first.stderr_text;
+  EXPECT_TRUE(std::filesystem::is_regular_file(work / "Test"))
+      << "an anonymous design with one top names its program after the top";
+  EXPECT_EQ(KeptPrograms(store), 1U);
+
+  auto again = RunLyraFrom(lyra, work, "build " + common + " design.sv");
+  ASSERT_EQ(again.exit_code, 0) << again.stderr_text;
+  EXPECT_EQ(KeptPrograms(store), 1U)
+      << "an unchanged design built again keeps no second program";
+
+  write_design(2);
+  auto changed = RunLyraFrom(lyra, work, "run " + common + " design.sv");
+  ASSERT_EQ(changed.exit_code, 0) << changed.stderr_text;
+  EXPECT_NE(changed.stdout_text.find("value=2"), std::string::npos)
+      << "a changed design ran the program kept for the old one: "
+      << changed.stdout_text;
+  EXPECT_EQ(KeptPrograms(store), 2U);
+
+  EXPECT_EQ(CountEntries(work), 2U)
+      << "the working directory holds the design and the one program built, "
+         "and nothing a run wrote";
+
+  auto cleared = RunLyraFrom(
+      lyra, work, std::format("cache clear --cache-dir '{}'", store.string()));
+  ASSERT_EQ(cleared.exit_code, 0) << cleared.stderr_text;
+  EXPECT_EQ(KeptPrograms(store), 0U);
+  const auto held = RunChildProcess(work / "Test", {}, 30s);
+  EXPECT_EQ(held.exit_code, 0) << held.stderr_text;
+  EXPECT_NE(held.stdout_text.find("value=1"), std::string::npos)
+      << "stdout: " << held.stdout_text;
+
+  auto after_clear = RunLyraFrom(lyra, work, "run " + common + " design.sv");
+  ASSERT_EQ(after_clear.exit_code, 0) << after_clear.stderr_text;
+  EXPECT_NE(after_clear.stdout_text.find("value=2"), std::string::npos)
+      << "stdout: " << after_clear.stdout_text;
+
+  const auto into_directory = RunLyraFrom(
+      lyra, work,
+      std::format("build {} -o '{}' design.sv", common, store.string()));
+  EXPECT_NE(into_directory.exit_code, 0);
+  EXPECT_NE(
+      into_directory.stderr_text.find("is a directory"), std::string::npos)
+      << into_directory.stderr_text;
+}
+
+// A command leaves behind what it was asked for and nothing else. What a build
+// makes on the way to the program goes when the command does, and the store in
+// the platform's cache directory appears only once something is kept in it.
+TEST(LyraCommandLine, LeavesBehindOnlyWhatItWasAskedFor) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto work = *tmp_or / "work";
+  const auto temporary = *tmp_or / "temporary";
+  const auto cache_home = *tmp_or / "cache";
+  std::filesystem::create_directories(work);
+  std::filesystem::create_directories(temporary);
+  std::filesystem::create_directories(cache_home);
+  WriteTrivialSource(work / "design.sv");
+
+  auto sh_or = lyra::support::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  const auto run = [&](std::string_view args) {
+    const std::vector<std::string> argv = {
+        "-c",
+        std::format(
+            "cd '{}' && TMPDIR='{}' XDG_CACHE_HOME='{}' '{}' {}", work.string(),
+            temporary.string(), cache_home.string(), lyra.string(), args)};
+    return RunChildProcess(*sh_or, argv, 120s);
+  };
+  const auto store = cache_home / "lyra";
+
+  const auto checked = run("check design.sv");
+  ASSERT_EQ(checked.exit_code, 0) << checked.stderr_text;
+  EXPECT_FALSE(std::filesystem::exists(store))
+      << "a command that keeps nothing created the store";
+
+  const auto ran = run("run --backend llvm design.sv");
+  ASSERT_EQ(ran.exit_code, 0) << ran.stderr_text;
+  EXPECT_EQ(CountEntries(temporary), 0U)
+      << "a run left what it built in the temporary directory";
+  EXPECT_EQ(KeptPrograms(store), 1U)
+      << "the program is kept in the platform's cache directory";
+
+  const auto built = run("build --backend llvm -o program design.sv");
+  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+  EXPECT_EQ(CountEntries(temporary), 0U)
+      << "a build left what it built in the temporary directory";
+  EXPECT_TRUE(std::filesystem::is_regular_file(work / "program"));
 }
 
 }  // namespace

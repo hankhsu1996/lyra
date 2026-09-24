@@ -1029,18 +1029,6 @@ A022_PATTERN = re.compile(
     r"(?:(?:hir|mir|lir)::CompilationUnit|compiler::ExecutableUnit)\s*>")
 
 A022_ADMITTED: dict[str, str] = {
-    "include/lyra/jit/executor.hpp": (
-        "an in-process execution session is the linker -- it resolves "
-        "symbols across modules as it loads them -- so it holds every one by "
-        "the right a system linker holds every object file"
-    ),
-    "src/lyra/jit/executor.cpp": (
-        "that session, on the other side of its own entry point"
-    ),
-    "src/lyra/cli/commands.cpp": (
-        "the units handed to that session, gathered as each is lowered so the "
-        "form it was lowered from is released on the way"
-    ),
     "include/lyra/lowering/ast_to_hir/lower.hpp": (
         "the whole design's HIR, built in one pass before any of it is "
         "lowered further -- the shape this rule is named for, standing "

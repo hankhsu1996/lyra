@@ -527,6 +527,12 @@ the detail lives in the entry itself.
   subclass / vtable and a per-backend adapter are rejected as the boundary. Lifecycle and SV-virtual
   dispatch share a representation but are separate concepts; the definition holds the schema, never
   instance values.
+- [a-unit-states-what-it-declares](a-unit-states-what-it-declares.md) -- a unit says what it
+  declares in a body its own artifact carries, run before the program starts by whoever composed it,
+  so a compiled unit is a whole program rather than one whose other half lives in the process that
+  compiled it. A class of another artifact is named by the cell holding its definition, which is
+  what replaces a whole-program join by name with the composer resolving a symbol. The program
+  starts at one entry emitted from the design root.
 - [jit-value-realization](jit-value-realization.md) -- the JIT represents every runtime value as an
   opaque handle into the runtime library (the baseline realization), and a `GeneratedCallScope` owns
   the transient values one generated entry creates -- the JIT counterpart of C++ stack/RAII.
@@ -678,6 +684,13 @@ the detail lives in the entry itself.
   went from 26.6 MB to 6.7 MB. Declaring the variant itself already compiled, moving functions
   without the families, writing family members `inline`, checking headers by shape, and moving the
   value operations a caller's operands fold are rejected.
+- [a-program-is-kept-by-what-built-it](a-program-is-kept-by-what-built-it.md) -- a built program is
+  kept in one store per user under a name computed from what the expensive half of the build reads,
+  never from the SystemVerilog sources, so checkouts that differ never share an entry and ones that
+  agree share one. A command hands back a private copy, writing is atomic, a vanished entry is a
+  miss, and the store trims itself. There is no directory in the project, and running is building
+  then executing on both backends. A directory per project, keying on the sources, linking out of
+  the store, and keeping an execution session for `run` are rejected.
 - [waiting-is-an-operation](waiting-is-an-operation.md) -- the declaration both backends read names
   an operation and never one target's own protocol object, so a call that may park its caller does
   the whole operation and answers whether the caller must give up control; a body then stops to wait

@@ -2,12 +2,13 @@
 """Runtime ABI policy.
 
 An entry the generated module calls exists in three places: a prototype in the
-ABI header, a definition beside the runtime it wraps, and a binding that gives
-the execution session its address. The host compiler holds a definition to its
-prototype and nothing else -- so an entry can be defined and unreachable, or
-bound under a name nothing defines, and either way the failure lands at run
-time as an unresolved symbol rather than as a build error. These rules are the
-sides the compiler does not hold.
+ABI header, a definition beside the runtime it wraps, and a line in the list of
+what the library publishes, which every generated module is checked against
+before anything links it. The host compiler holds a definition to its
+prototype and nothing else -- so an entry can be defined and left off the list,
+or listed under a name nothing defines, and either way the failure lands as a
+design refused, or as a link that cannot resolve a name, rather than as a build
+error. These rules are the sides the compiler does not hold.
 
 Rules:
 
@@ -16,16 +17,14 @@ Rules:
         definition nothing can reach or a prototype for code that does not
         exist.
 
-  R002  Every declared entry is bound into the execution session. An unbound
-        entry still resolves while the module runs inside this process,
-        because the session falls back to the host process's own exported
-        symbols, so the omission stays invisible until a module runs
-        somewhere else.
+  R002  Every declared entry is listed as published. An entry left off the
+        list is refused by name in every design that calls it, although the
+        library defines it and the program would link.
 
-  R003  Every binding names a declared entry, binds it to the function of that
-        same name, and binds it once. A name bound to another entry's address
-        resolves and runs the wrong code, and a name bound twice keeps
-        whichever binding ran last without saying so.
+  R003  Every listing names a declared entry, reads its shape off the function
+        of that same name, and lists it once. A name listed against another
+        entry's function checks every call against the wrong shape, and a name
+        listed twice keeps whichever listing ran last without saying so.
 
   R004  Whether an entry takes the engine handle is stated once. Its runtime
         entry declaration says so, and its ABI prototype takes the handle as a
@@ -67,9 +66,9 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-HEADER = "include/lyra/runtime/jit_execution.hpp"
-SOURCE = "src/lyra/runtime/jit_execution.cpp"
-BINDINGS = "src/lyra/jit/executor.cpp"
+HEADER = "include/lyra/runtime/runtime_abi.hpp"
+SOURCE = "src/lyra/runtime/runtime_abi.cpp"
+BINDINGS = "src/lyra/program/program_sink.cpp"
 ENTRIES = "src/lyra/support/builtin_fn.cpp"
 CONSTRUCT_ENTRY = "include/lyra/runtime/scope_program.hpp"
 CONSTRUCT_PROTOTYPE = "include/lyra/backend/llvm/runtime_entry.hpp"
@@ -109,9 +108,9 @@ PARK_PROPERTY = ".parks_the_caller = true"
 
 VIOLATION_HINT = (
     "An entry is one contract written in three places. Add the side that is "
-    "missing rather than deleting the side that has no partner: an entry the "
-    "session reaches under one spelling and the runtime defines under another "
-    "is what these rules exist to make unspellable."
+    "missing rather than deleting the side that has no partner: an entry a "
+    "module is checked against under one spelling and the runtime defines "
+    "under another is what these rules exist to make unspellable."
 )
 
 
@@ -211,7 +210,7 @@ def check_r002(abi: Abi) -> list[str]:
     bound = {binding.name for binding in abi.bound}
     return [
         f"  {HEADER}:{entry.line}: R002 '{entry.name}' is declared but never "
-        f"bound, so it resolves only while the module runs in this process"
+        f"listed as published, so every design that calls it is refused"
         for entry in by_name(abi.declared)
         if entry.name not in bound
     ]
@@ -224,16 +223,17 @@ def check_r003(abi: Abi) -> list[str]:
     for binding in abi.bound:
         if binding.name != binding.target:
             errors.append(
-                f"  {BINDINGS}:{binding.line}: R003 '{binding.name}' is bound "
-                f"to '{binding.target}', so calling it runs another entry")
+                f"  {BINDINGS}:{binding.line}: R003 '{binding.name}' is listed "
+                f"against '{binding.target}', so its calls are checked against "
+                f"another entry's shape")
         elif binding.name not in declared:
             errors.append(
-                f"  {BINDINGS}:{binding.line}: R003 '{binding.name}' is bound "
+                f"  {BINDINGS}:{binding.line}: R003 '{binding.name}' is listed "
                 f"but the ABI header declares no such entry")
         if binding.name in first_bound_at:
             errors.append(
-                f"  {BINDINGS}:{binding.line}: R003 '{binding.name}' is bound "
-                f"again, having been bound at line "
+                f"  {BINDINGS}:{binding.line}: R003 '{binding.name}' is listed "
+                f"again, having been listed at line "
                 f"{first_bound_at[binding.name]}")
         else:
             first_bound_at[binding.name] = binding.line
@@ -391,17 +391,17 @@ def run_self_tests() -> bool:
         "R001 is silent when both sides carry the entry")
     ok &= expect(
         len(check_r002(abi(header="auto lyra_rt_a() -> void*;"))) == 1,
-        "R002 reports a declared entry nothing binds")
+        "R002 reports a declared entry nothing lists")
     ok &= expect(
         len(check_r003(abi(bindings='add("lyra_rt_a", &lyra_rt_b);'))) == 1,
-        "R003 reports a binding pointed at another entry")
+        "R003 reports a listing pointed at another entry")
     ok &= expect(
         len(
             check_r003(
                 abi(header="auto lyra_rt_a() -> void*;",
                     bindings='add("lyra_rt_a", &lyra_rt_a);\n'
                              'add("lyra_rt_a", &lyra_rt_a);'))) == 1,
-        "R003 reports the same entry bound twice")
+        "R003 reports the same entry listed twice")
 
     row = 'case BuiltinFn::kA:\n      return {{.name = "a"{}}};'
     takes = "auto lyra_rt_a(void* runtime) -> void*;"
@@ -494,7 +494,7 @@ def main() -> int:
 
     print(
         f"Runtime ABI check passed: {len(abi.declared)} entries, each "
-        f"declared, defined, and bound to itself once")
+        f"declared, defined, and listed as itself once")
     return 0
 
 

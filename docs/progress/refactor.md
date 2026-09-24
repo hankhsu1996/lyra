@@ -1703,22 +1703,16 @@ enough to warrant its own focused review.
       necessary was a property that turned out to be two: passing through a generated frame, which
       already worked, and catching in one, which nobody had emitted. Only the second was missing.
 
-- [ ] R106 -- A command accepts every option the command line declares and uses the ones that mean
-      something to it, so an option that means nothing to the command a caller typed is taken and
-      ignored. `dump ast --release --cxx clang++ --no-pch -j8` runs, having acted on none of the
-      four; `compile --backend jit` runs and compiles with the only backend that makes a program.
-      Each reads to the caller as a choice they made, and the run gives them no reason to think
-      otherwise.
-
-      Target: a command states which options it consumes, and one check refuses the rest by name.
-      **What this entry is written against is the half-fix**, which is worse than the whole gap: one
-      option refused while four are ignored teaches a caller that the compiler checks, so the four
-      it does not check become harder to notice rather than easier. It was written and reverted in
-      the branch that found this, for exactly that reason -- a bool per option on the command table
-      is also the wrong shape, since each option added brings another.
-
-      Not blocked. Found while removing a whole-unit refusal from the C++ backend, when `--backend`
-      turned out to be one of several options the commands that do not execute a design still take.
+- [x] R106 -- A command acts on every option it is given, or refuses it by name. Each row of the
+      command table states the options that command acts on, so a command added later has to say
+      what it takes, and one check refuses every option given outside that set, naming the commands
+      that do take it -- `dump ast --release` and `emit cpp --backend llvm` are refused where they
+      used to run and act on nothing. What is refused is a function of the command alone: an option
+      a command acts on stands where this time it changes nothing, as `--no-pch` does on the backend
+      that compiles no C++, because a refusal that depends on the combination is one a caller cannot
+      predict. The half-fix this entry was written against -- one option refused while four are
+      ignored -- is what the per-command set rules out, since every option is judged by the same
+      row.
 
 - [x] R107 -- A class handle read after its process parks survives on the execution backend. A
       variable of class type is now storage its execution owns, like a variable of every other type
@@ -2214,14 +2208,16 @@ enough to warrant its own focused review.
       is wrong in a way no case that passes can show, because the program that would see it is one
       that must not run the operand at all.
 
-- [ ] R132 -- Where the execution session learns each runtime entry's address. One function names
-      all 808 of them, one line apiece, in no order and under no heading: nearly a thousand lines
-      whose only structure is the order someone happened to add things in. It is the third place an
-      entry is written, after its prototype and its definition, and the one that carries no
-      information -- the name and the function it binds to are the same name twice.
+- [ ] R132 -- The list of what the runtime library publishes, which every generated module is
+      checked against before it is linked. Every entry is named there, one line apiece, split only
+      into what the engine publishes and what a value does: a thousand lines whose structure inside
+      each half is the order someone happened to add things in. It is the third place an entry is
+      written, after its prototype and its definition, and the one that carries no information --
+      the name and the function it reads a shape off are the same name twice.
 
       A policy script holds it together rather than the code doing so: it is what catches an entry
-      declared and never bound, a name bound to another entry's address, and a name bound twice.
+      declared and never listed, a name listed against another entry's function, and a name listed
+      twice.
       That the check exists is the finding. A binding that restates its own name is derivable from
       the two places that do carry information, and a list nobody can read is where the mistakes
       that check looks for come from.
@@ -2411,6 +2407,50 @@ enough to warrant its own focused review.
 
       Target: a run builds what it measures, a case that fails names why, and each result is kept as
       it arrives. Not blocked.
+
+- [ ] R141 -- A unit-definition record is stated in MIR for the one backend that may not realize it.
+      A scope's runtime definition reaches the C++ backend as a constant MIR holds, built at
+      HIR-to-MIR out of runtime-library record types; it reaches the execution backend as something
+      composed from the declarations a LIR class carries, because MIR-to-LIR refuses those types
+      outright. Every fact the record holds -- the timescale, the entries, the callables and classes
+      a scope answers for -- is already a declaration at every layer; what the record adds is only
+      the runtime struct's shape they are bundled into, and bundling into a runtime struct is
+      realization rather than language.
+
+      So the record is the C++ backend's realization, living in MIR, and the test that shows it is
+      whether the shape would still be right with the other backend alone: with only the execution
+      backend, nothing reads it. It is there because that backend sits at MIR, where the backend
+      contract forbids a render entry to compose what it emits, so what it emits has to be stated
+      upstream -- a concession the architecture makes to the transitional backend on purpose.
+
+      Target: not routing the record through MIR-to-LIR. That would put a runtime struct's shape
+      into the target-neutral layer, which is the violation rather than the cure. The record leaves
+      MIR together with the backend it exists for: when the C++ backend retires, HIR-to-MIR stops
+      building it and the record types go with it, and every backend realizes the definition from
+      the declarations the way the execution backend already does.
+
+      What costs meanwhile is drift. A field added to the runtime's definition has two derivations
+      to reach, and they fail differently when one is missed: the C++ side changes a constructor's
+      arity, which no emitted program then compiles past; the execution side gains a declaration
+      entry, and a missing one leaves the field at its default without any failure at all.
+
+      Not blocked. Found while reading which layer each piece of this record lives at, and what
+      each layer is for.
+
+- [ ] R142 -- A prepared header is prepared only for clang, so a build under any other compiler pays
+      the runtime headers in full in every unit. That was a cost on a developer's machine and is now
+      the main cost of the C++ corpus, which runs on remote executors whose compiler is the
+      platform's own GCC: a case there took 20 to 30 seconds where the same case with a prepared
+      header takes 2 to 5, and the whole corpus took 280 seconds across 48 shards where it took
+      about 135 across 16 locally.
+
+      Target: prepare the header in the form the compiler in hand reads -- GCC reads its own,
+      found beside the header it stands for -- under the same rule that a prepared header is
+      offered and never required. What decides the shape is that the two compilers look the header
+      up differently, so the name it is kept under and how a compile is pointed at it both belong
+      to the compiler, not to the store.
+
+      Not blocked. Found when the C++ corpus moved to remote executors.
 
 ## Out of Scope
 

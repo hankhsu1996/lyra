@@ -44,6 +44,46 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "variable_addr";
     case RuntimeOp::kVariablesClose:
       return "variables_close";
+    case RuntimeOp::kVariableSchemaDeclare:
+      return "variable_schema_declare";
+    case RuntimeOp::kSharedStorageDeclare:
+      return "shared_storage_declare";
+    case RuntimeOp::kClosureDeclareSynchronous:
+      return "closure_declare_synchronous";
+    case RuntimeOp::kClosureDeclareCoroutine:
+      return "closure_declare_coroutine";
+    case RuntimeOp::kClosureDeclarePerElement:
+      return "closure_declare_per_element";
+    case RuntimeOp::kClosureDeclareValue:
+      return "closure_declare_value";
+    case RuntimeOp::kClassDeclare:
+      return "class_declare";
+    case RuntimeOp::kScopeClassDeclare:
+      return "scope_class_declare";
+    case RuntimeOp::kClassDeclareBase:
+      return "class_declare_base";
+    case RuntimeOp::kClassDeclareMembers:
+      return "class_declare_members";
+    case RuntimeOp::kClassDeclareIntroduction:
+      return "class_declare_introduction";
+    case RuntimeOp::kClassDeclareTakeover:
+      return "class_declare_takeover";
+    case RuntimeOp::kClassDeclarePropertyName:
+      return "class_declare_property_name";
+    case RuntimeOp::kClassDeclareBehaviorName:
+      return "class_declare_behavior_name";
+    case RuntimeOp::kClassDeclareBodyName:
+      return "class_declare_body_name";
+    case RuntimeOp::kScopeDeclareProgram:
+      return "scope_declare_program";
+    case RuntimeOp::kScopeDeclareSubroutine:
+      return "scope_declare_subroutine";
+    case RuntimeOp::kScopeDeclareExport:
+      return "scope_declare_export";
+    case RuntimeOp::kScopeDeclareClass:
+      return "scope_declare_class";
+    case RuntimeOp::kRunProgram:
+      return "run_program";
     case RuntimeOp::kMemberAddress:
       return "member_addr";
     case RuntimeOp::kSequenceMake:
@@ -325,16 +365,17 @@ auto RuntimeSymbol(lir::CoroutineTarget::Op op) -> std::string {
 
 auto MemberStorageKindOf(
     const lir::CompilationUnit& unit, lir::TypeId type, MemberSlotRole role)
-    -> std::optional<MemberStorageKind> {
+    -> std::optional<support::MemberStorageKind> {
   // A value the owner holds, in the slot its role asks for. It is a kind of
   // storage only where the runtime realizes values of that type at all.
   const auto held_value =
-      [&](lir::TypeId value) -> std::optional<MemberStorageKind> {
+      [&](lir::TypeId value) -> std::optional<support::MemberStorageKind> {
     if (!ValueDomainOf(unit, value)) {
       return std::nullopt;
     }
-    return role == MemberSlotRole::kVariable ? MemberStorageKind::kValueCell
-                                             : MemberStorageKind::kInlineValue;
+    return role == MemberSlotRole::kVariable
+               ? support::MemberStorageKind::kValueCell
+               : support::MemberStorageKind::kInlineValue;
   };
   const auto value_of = [&](const auto&) { return held_value(type); };
   // Storage the owner holds over values of one domain -- a cell, a net's
@@ -342,32 +383,35 @@ auto MemberStorageKindOf(
   // realizes values of the domain it holds, for the same reason a value member
   // is: the storage is built from the domain and there is nothing to build it
   // from otherwise.
-  const auto over_values =
-      [&](lir::TypeId value,
-          MemberStorageKind kind) -> std::optional<MemberStorageKind> {
+  const auto over_values = [&](lir::TypeId value,
+                               support::MemberStorageKind kind)
+      -> std::optional<support::MemberStorageKind> {
     if (!ValueDomainOf(unit, value)) {
       return std::nullopt;
     }
     return kind;
   };
-  const auto borrowed = [](const auto&) -> std::optional<MemberStorageKind> {
-    return MemberStorageKind::kBorrowedHandle;
+  const auto borrowed =
+      [](const auto&) -> std::optional<support::MemberStorageKind> {
+    return support::MemberStorageKind::kBorrowedHandle;
   };
-  const auto none = [](const auto&) -> std::optional<MemberStorageKind> {
+  const auto none =
+      [](const auto&) -> std::optional<support::MemberStorageKind> {
     return std::nullopt;
   };
   return unit.types.Get(type).Visit(
       Overloaded{
           [&](const lir::ObservableType& observable) {
             return over_values(
-                observable.value, MemberStorageKind::kObservableCell);
+                observable.value, support::MemberStorageKind::kObservableCell);
           },
           [&](const lir::SampledHistoryType& history) {
             return over_values(
-                history.value, MemberStorageKind::kSampledHistory);
+                history.value, support::MemberStorageKind::kSampledHistory);
           },
           [&](const lir::ResolvedType& net) {
-            return over_values(net.value, MemberStorageKind::kResolvedNet);
+            return over_values(
+                net.value, support::MemberStorageKind::kResolvedNet);
           },
           // A driver is a handle on a contribution the net owns and issues (LRM
           // 6.5); a reference names storage living elsewhere; a declaration
@@ -385,23 +429,23 @@ auto MemberStorageKindOf(
           // storage ends once no holder is left, which is how a scope outlives
           // the control flow that left it (LRM 6.21).
           [&](const lir::PointerType& pointer)
-              -> std::optional<MemberStorageKind> {
+              -> std::optional<support::MemberStorageKind> {
             switch (pointer.ownership) {
               case lir::PointerOwnership::kUnique:
               case lir::PointerOwnership::kBorrowed:
-                return MemberStorageKind::kBorrowedHandle;
+                return support::MemberStorageKind::kBorrowedHandle;
               case lir::PointerOwnership::kShared:
-                return MemberStorageKind::kPromotedScope;
+                return support::MemberStorageKind::kPromotedScope;
             }
             throw InternalError("llvm codegen: unknown pointer ownership");
           },
           [&](const lir::RuntimeLibraryType& library)
-              -> std::optional<MemberStorageKind> {
+              -> std::optional<support::MemberStorageKind> {
             switch (library.kind) {
               case lir::RuntimeLibraryKind::kCancellationTarget:
-                return MemberStorageKind::kCancellationTarget;
+                return support::MemberStorageKind::kCancellationTarget;
               case lir::RuntimeLibraryKind::kChannelCancellation:
-                return MemberStorageKind::kChannelCancellation;
+                return support::MemberStorageKind::kChannelCancellation;
               // A type's description, held once per description for the whole
               // run, so a member that names one points at storage outliving
               // every closure that reads it rather than owning a copy. A
@@ -418,7 +462,7 @@ auto MemberStorageKindOf(
               // object of it shares it, so a member naming one points at
               // storage outliving it for the same reason.
               case lir::RuntimeLibraryKind::kObjectDefinition:
-                return MemberStorageKind::kBorrowedHandle;
+                return support::MemberStorageKind::kBorrowedHandle;
               // The rest are transients of one call -- one dimension a
               // description is assembled from, what a print or a format is
               // assembled from, what a boundary object images an argument in,
@@ -445,12 +489,13 @@ auto MemberStorageKindOf(
             }
             throw InternalError("llvm codegen: unknown runtime library kind");
           },
-          [](const lir::EventType&) -> std::optional<MemberStorageKind> {
-            return MemberStorageKind::kNamedEvent;
+          [](const lir::EventType&)
+              -> std::optional<support::MemberStorageKind> {
+            return support::MemberStorageKind::kNamedEvent;
           },
           [](const lir::EvaluationAttemptsType&)
-              -> std::optional<MemberStorageKind> {
-            return MemberStorageKind::kEvaluationAttempts;
+              -> std::optional<support::MemberStorageKind> {
+            return support::MemberStorageKind::kEvaluationAttempts;
           },
           // A class handle is a value the member holds rather than a pointer it
           // merely points with: the object stays alive because the member
@@ -501,6 +546,52 @@ auto MemberStorageKindOf(
           [&](const lir::FilesType& t) { return none(t); },
           [&](const lir::DiagnosticType& t) { return none(t); },
           [&](const lir::CoroutineType& t) { return none(t); }});
+}
+
+auto DeclaredStorageOf(
+    const lir::CompilationUnit& unit, lir::TypeId type, MemberSlotRole role)
+    -> std::optional<support::DeclaredMemberStorage> {
+  const std::optional<support::MemberStorageKind> kind =
+      MemberStorageKindOf(unit, type, role);
+  if (!kind) {
+    return std::nullopt;
+  }
+  // Which type the domain is read from follows from the kind: the storage
+  // forms that wrap a value name the type they wrap, and the ones that are the
+  // value name the member's own type. A kind that holds no value reads none.
+  const lir::Type& data = unit.types.Get(type);
+  const auto domain_of = [&](lir::TypeId value) -> support::ValueDomain {
+    const std::optional<support::ValueDomain> domain =
+        ValueDomainOf(unit, value);
+    if (!domain) {
+      throw InternalError(
+          "runtime abi: a storage kind naming a value domain was read from a "
+          "type that has none");
+    }
+    return *domain;
+  };
+  const auto declared = [&](support::ValueDomain domain) {
+    return support::DeclaredMemberStorage{.kind = *kind, .domain = domain};
+  };
+  switch (*kind) {
+    case support::MemberStorageKind::kObservableCell:
+      return declared(domain_of(data.Get<lir::ObservableType>().value));
+    case support::MemberStorageKind::kResolvedNet:
+      return declared(domain_of(data.Get<lir::ResolvedType>().value));
+    case support::MemberStorageKind::kSampledHistory:
+      return declared(domain_of(data.Get<lir::SampledHistoryType>().value));
+    case support::MemberStorageKind::kValueCell:
+    case support::MemberStorageKind::kInlineValue:
+      return declared(domain_of(type));
+    case support::MemberStorageKind::kBorrowedHandle:
+    case support::MemberStorageKind::kPromotedScope:
+    case support::MemberStorageKind::kNamedEvent:
+    case support::MemberStorageKind::kCancellationTarget:
+    case support::MemberStorageKind::kChannelCancellation:
+    case support::MemberStorageKind::kEvaluationAttempts:
+      return declared(support::ValueDomain::kEmpty);
+  }
+  throw InternalError("runtime abi: unknown member storage kind");
 }
 
 auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)

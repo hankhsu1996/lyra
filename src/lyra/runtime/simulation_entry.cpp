@@ -10,10 +10,15 @@
 #include <vector>
 
 #include "lyra/runtime/ambient_run_context.hpp"
+#include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/design.hpp"
+#include "lyra/runtime/generated_call_scope.hpp"
+#include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/plusargs.hpp"
+#include "lyra/runtime/program_declarations.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/scope.hpp"
 
 namespace lyra::runtime {
 
@@ -45,6 +50,23 @@ auto RunDesignRoot(
   }
 
   return RunSimulation(runtime);
+}
+
+auto RunDeclaredProgram(
+    int argc, char** argv, std::string_view root_name,
+    const ScopeDefinition& root) -> int {
+  RealizeDeclarations();
+  return RunDesignRoot(
+      argc, argv, root_name,
+      [&root](
+          Scope* parent, HierarchySegment segment) -> std::unique_ptr<Scope> {
+        auto scope = std::make_unique<Scope>(parent, segment, &root);
+        // The construction is generated code, entered the way the runtime
+        // enters any construct entry.
+        GeneratedCallScope construct_scope;
+        root.construct(scope.get(), parent, &segment, {});
+        return scope;
+      });
 }
 
 auto RunSimulation(Runtime& runtime) -> int {

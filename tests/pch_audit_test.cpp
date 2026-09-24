@@ -264,11 +264,11 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
       prelude,
       ReadWhole(prelude) + "#include \"lyra/pch_currency_probe.hpp\"\n");
 
-  const lyra::driver::pch::Options options{
-      .disabled = false, .cache_dir_override = project / "cache"};
+  const auto policy = lyra::driver::pch::Policy::kAttempt;
+  const std::optional<std::filesystem::path> store = project / "cache";
   const auto optimization = lyra::driver::Optimization::kIterate;
   auto built = lyra::driver::pch::EnsureCached(
-      *cxx, include_root, options, optimization);
+      *cxx, include_root, policy, store, optimization);
   ASSERT_TRUE(built.has_value()) << "no precompiled header was produced";
 
   const auto unit = project / "unit.cpp";
@@ -300,7 +300,7 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
   WriteWhole(probe, ReadWhole(probe));
   AgeByADay(probe);
   auto after_rewrite = lyra::driver::pch::EnsureCached(
-      *cxx, include_root, options, optimization);
+      *cxx, include_root, policy, store, optimization);
   ASSERT_TRUE(after_rewrite.has_value());
   EXPECT_EQ(*after_rewrite, *built)
       << "the same bytes were given a different cache entry";

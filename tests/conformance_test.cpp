@@ -1,11 +1,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -50,36 +48,6 @@ struct Corpus {
   std::filesystem::path cases_root;
   std::filesystem::path paths_root;
 };
-
-// Which of the corpus a target runs. The corpus divides here on what a case
-// needs to run rather than on what it claims, because a case carrying foreign
-// sources builds them with the host C compiler whatever path it is on -- the
-// design's own translation is what a path changes, not how a foreign symbol is
-// produced. Splitting on that keeps a handful of such cases from holding the
-// whole corpus to a machine that has a C compiler.
-enum class Foreign : std::uint8_t { kEither, kOnly, kExclude };
-
-auto Selects(Foreign selection, const ConformanceCase& c) -> bool {
-  switch (selection) {
-    case Foreign::kEither:
-      return true;
-    case Foreign::kOnly:
-      return !c.link_sources.empty();
-    case Foreign::kExclude:
-      return c.link_sources.empty();
-  }
-  return true;
-}
-
-auto FindForeign(std::string_view name) -> std::optional<Foreign> {
-  if (name == "only") {
-    return Foreign::kOnly;
-  }
-  if (name == "exclude") {
-    return Foreign::kExclude;
-  }
-  return std::nullopt;
-}
 
 // The two names a test filter takes, which a case id already is: the clause it
 // tests, and the subject within that clause. A target runs one path, so the
@@ -161,21 +129,9 @@ auto main(int argc, char** argv) -> int {
 
   const std::span<char* const> args{argv, static_cast<std::size_t>(argc)};
   std::string requested;
-  Foreign foreign = Foreign::kEither;
   for (std::size_t i = 1; i + 1 < args.size(); ++i) {
-    const std::string_view flag(args[i]);
-    if (flag == "--path") {
+    if (std::string_view(args[i]) == "--path") {
       requested = args[i + 1];
-    }
-    if (flag == "--foreign") {
-      const auto selection = FindForeign(args[i + 1]);
-      if (!selection) {
-        fmt::print(
-            stderr, "--foreign takes 'only' or 'exclude', not '{}'\n",
-            args[i + 1]);
-        return 1;
-      }
-      foreign = *selection;
     }
   }
   if (requested.empty()) {
@@ -227,30 +183,12 @@ auto main(int argc, char** argv) -> int {
     return 1;
   }
 
-  // The record is checked against the whole corpus rather than against the
-  // selection, so a refusal recorded for a case this target does not run is
-  // still held to naming a case that exists.
-  std::vector<const ConformanceCase*> selected;
-  for (const ConformanceCase& c : kCases) {
-    if (Selects(foreign, c)) {
-      selected.push_back(&c);
-    }
-  }
-  if (selected.empty()) {
-    fmt::print(
-        stderr,
-        "the selection holds no cases, so passing would report coverage that "
-        "was never measured\n");
-    return 1;
-  }
-
   fmt::print(
-      "{} of {} cases on the {} path, built with {}\n", selected.size(),
-      kCases.size(), kPath.name, HostCompiler());
+      "{} cases on the {} path, built with {}\n", kCases.size(), kPath.name,
+      HostCompiler());
 
   // NOLINTBEGIN(cppcoreguidelines-owning-memory)
-  for (const ConformanceCase* selected_case : selected) {
-    const ConformanceCase& c = *selected_case;
+  for (const ConformanceCase& c : kCases) {
     const FilterName filter = SplitCaseId(c.id);
     testing::RegisterTest(
         filter.group.c_str(), filter.name.c_str(), nullptr, nullptr, __FILE__,

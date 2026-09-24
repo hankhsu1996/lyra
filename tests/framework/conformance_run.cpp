@@ -26,6 +26,13 @@ namespace {
 // library to learn it.
 constexpr std::string_view kInternalErrorReport = "lyra: internal error:";
 
+// How long one case may take before it is called stuck. It is a guard against a
+// run that never ends, not a budget for how fast a case builds: a case builds
+// its program with whatever compiler the executing machine has, and one with no
+// prepared header takes several times as long as one with, so the guard sits
+// well above the slowest honest build.
+constexpr std::chrono::seconds kStuckAfter{300};
+
 auto TerminationName(TerminationKind kind) -> std::string_view {
   switch (kind) {
     case TerminationKind::kExitedNormally:
@@ -103,15 +110,13 @@ auto BuildArgv(const ConformancePath& path, const ConformanceCase& test_case)
   // failed for. Both want the diagnostic as it was written rather than wrapped
   // in the escape sequences that colour it for a terminal.
   argv.emplace_back("--no-color");
-  if (path.caches_prelude) {
-    if (const char* scratch = std::getenv("TEST_TMPDIR");
-        scratch != nullptr && *scratch != '\0') {
-      // Landing the prelude beside the shard's other scratch keeps one build of
-      // it serving every case the shard runs, without reaching into a cache
-      // shared with whatever else is running on the machine.
-      argv.emplace_back("--pch-cache-dir");
-      argv.push_back(std::string(scratch) + "/lyra-pch");
-    }
+  if (const char* scratch = std::getenv("TEST_TMPDIR");
+      scratch != nullptr && *scratch != '\0') {
+    // Keeping what a run builds beside the shard's other scratch lets one
+    // prepared header serve every case the shard runs, without reaching into
+    // a store shared with whatever else is running on the machine.
+    argv.emplace_back("--cache-dir");
+    argv.push_back(std::string(scratch) + "/lyra-cache");
   }
   for (const std::string& top : test_case.tops) {
     argv.emplace_back("--top");
@@ -147,14 +152,10 @@ auto BuildArgv(const ConformancePath& path, const ConformanceCase& test_case)
 auto FindConformancePath(std::string_view name)
     -> std::optional<ConformancePath> {
   if (name == "cpp") {
-    return ConformancePath{
-        .name = "cpp", .selector = {}, .caches_prelude = true};
+    return ConformancePath{.name = "cpp", .selector = {}};
   }
   if (name == "llvm") {
-    return ConformancePath{
-        .name = "llvm",
-        .selector = {"--backend", "jit"},
-        .caches_prelude = false};
+    return ConformancePath{.name = "llvm", .selector = {"--backend", "llvm"}};
   }
   return std::nullopt;
 }
@@ -236,8 +237,7 @@ auto CheckParkedCase(
   }
   argv.push_back(test_case.entry.string());
 
-  const ProcessOutcome outcome =
-      RunChildProcess(lyra_exe, argv, std::chrono::seconds{60});
+  const ProcessOutcome outcome = RunChildProcess(lyra_exe, argv, kStuckAfter);
   const auto report = [&](std::string_view what) {
     return Render(what, test_case, "elaboration only", argv, outcome);
   };
@@ -266,8 +266,7 @@ auto RunConformanceCase(
     const ConformanceCase& test_case, const PathRecords& records)
     -> std::optional<std::string> {
   const std::vector<std::string> argv = BuildArgv(path, test_case);
-  const ProcessOutcome outcome =
-      RunChildProcess(lyra_exe, argv, std::chrono::seconds{60});
+  const ProcessOutcome outcome = RunChildProcess(lyra_exe, argv, kStuckAfter);
   const auto report = [&](std::string_view what) {
     return Render(what, test_case, path.name, argv, outcome);
   };

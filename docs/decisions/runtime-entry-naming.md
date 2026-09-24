@@ -68,10 +68,11 @@ Neither fact is written down a second time.**
   separately.
 
 - **The three lists are held together by a check.** An entry exists as a prototype in the ABI
-  header, a definition beside the runtime it wraps, and a binding that gives the session its
-  address. The host compiler holds the definition to the prototype; a policy check holds the binding
-  to both, every prototype to a binding, and every binding to a single occurrence -- a name bound
-  twice keeps whichever binding ran last without saying so.
+  header, a definition beside the runtime it wraps, and a line in the list of what the library
+  publishes, which every generated module is checked against before it is linked. The host compiler
+  holds the definition to the prototype; a policy check holds the listing to both, every prototype
+  to a listing, and every listing to a single occurrence -- a name listed twice keeps whichever
+  listing ran last without saying so.
 
   The same check holds the entry's own declaration to that prototype wherever the two state one
   fact. Whether the call carries the engine handle is a parameter on one side and a property on the

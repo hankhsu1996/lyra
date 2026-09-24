@@ -1,14 +1,13 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "lyra/backend/cpp/api.hpp"
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
@@ -19,25 +18,25 @@
 
 namespace lyra::driver {
 
-// Whether to run the emitted C++ through a formatter before writing it. Named
-// rather than a bare bool so a call site says which it means.
-enum class SourceFormatting : std::uint8_t { kOff, kOn };
-
 // How this host turns emitted C++ into a program: which compiler to invoke,
-// what to do about the precompiled header, how hard to optimize, and how much
-// of the machine to take while doing it. Resolved once at the CLI boundary and
-// passed unchanged down every path, so the recipe an emitted project carries
-// and the compile Lyra performs cannot disagree about the toolchain.
+// what to do about the precompiled header, how hard to optimize, how much of
+// the machine to take while doing it, and where what it builds is kept for the
+// next build. Resolved once at the CLI boundary and passed unchanged down every
+// path, so the recipe an emitted project carries and the compile Lyra performs
+// cannot disagree about the toolchain.
 //
 // What a build produces, and whether it works at all, is baked into that
-// recipe. How much of a machine to take is not: it is true of one machine at
-// one moment, so the recipe asks its own caller.
+// recipe. How much of a machine to take, and where to keep things, are not:
+// both are true of one machine at one moment, so the recipe asks its own
+// caller and keeps what it prepares beside itself.
 struct HostBuild {
   std::filesystem::path cxx;
-  pch::Options pch;
+  pch::Policy pch = pch::Policy::kAttempt;
   Optimization optimization = Optimization::kIterate;
   // How many host compiles may run at once, already a positive count.
   std::size_t compile_width = 1;
+  // Absent when no store could be located, and then nothing is kept.
+  std::optional<std::filesystem::path> store;
 };
 
 // What the steps after emission need, carried rather than recovered by reading
@@ -110,32 +109,32 @@ auto AssembleProject(
     const std::filesystem::path& dir, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void>;
 
-// Build the assembled project in `dir`, returning the produced executable's
-// path; a non-zero compiler exit surfaces its stderr as a diagnostic.
+// Compiles the emitted sources in `dir` and links them, with the foreign
+// sources' objects, into the program at `program`; a non-zero compiler exit
+// surfaces its stderr as a diagnostic.
 //
-// The compiler is invoked directly rather than through the project's own
-// recipe. The two are not interchangeable: the recipe compiles against the copy
-// of the runtime bundled beside it, which is what makes the project portable,
-// while the ephemeral path below has no such copy and must reach the installed
-// runtime instead. Sharing `HostBuild` is what keeps them agreeing on the
-// toolchain regardless.
-auto BuildProject(
+// The compiler is invoked directly rather than through the recipe an emitted
+// project ships. The two are not interchangeable: the recipe compiles against
+// the copy of the runtime bundled beside it, which is what makes the project
+// portable, while this compiles against the installed runtime and copies
+// nothing. Sharing `HostBuild` is what keeps them agreeing on the toolchain
+// regardless.
+auto CompileProgram(
     const std::filesystem::path& dir,
-    std::span<const std::string> translation_units, const HostBuild& host,
-    std::span<const DpiLinkInput> dpi_inputs)
-    -> diag::Result<std::filesystem::path>;
+    std::span<const std::string> translation_units,
+    const RuntimeLocation& runtime,
+    std::span<const std::filesystem::path> foreign_objects,
+    const std::filesystem::path& program, const HostBuild& host)
+    -> diag::Result<void>;
 
-// Emit, build, and run the design in `work_dir`, returning the program's exit
-// code. `child_args` are forwarded verbatim as argv to the built program (LRM
-// 21.6 plusargs land here). `dpi_inputs` are the foreign sources compiled and
-// linked into the program (LRM 35). This is the ephemeral path behind `run`: it
-// compiles against the installed runtime and never materializes a portable
-// project, which is why copying a runtime tree per invocation is not on its
-// critical path.
-auto RunInPlace(
-    const RuntimeLocation& runtime, const EmittedCppSources& sources,
-    const std::filesystem::path& work_dir, const HostBuild& host,
-    std::span<const std::string> child_args,
-    std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<int>;
+// Links a program's objects -- whatever produced them -- with the runtime
+// library into the executable at `program`; a non-zero linker exit surfaces its
+// stderr as a diagnostic. The host C++ compiler drives the link, because the
+// runtime library is C++ and that driver is what names the libraries it needs.
+auto LinkProgram(
+    std::span<const std::filesystem::path> objects,
+    const std::filesystem::path& runtime_lib,
+    const std::filesystem::path& program, const std::filesystem::path& cxx)
+    -> diag::Result<void>;
 
 }  // namespace lyra::driver

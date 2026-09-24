@@ -1,4 +1,4 @@
-#include "lyra/runtime/jit_execution.hpp"
+#include "lyra/runtime/runtime_abi.hpp"
 
 #include <algorithm>
 #include <array>
@@ -13,6 +13,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -23,6 +24,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
+#include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
@@ -41,6 +43,7 @@
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/process_control.hpp"
+#include "lyra/runtime/program_declarations.hpp"
 #include "lyra/runtime/promoted_scope.hpp"
 #include "lyra/runtime/random.hpp"
 #include "lyra/runtime/runtime.hpp"
@@ -50,6 +53,7 @@
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/runtime/sim_time.hpp"
+#include "lyra/runtime/simulation_entry.hpp"
 #include "lyra/runtime/storage_block.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
@@ -639,11 +643,13 @@ auto TriggersOf(LyraSpan triggers) -> std::vector<Trigger> {
 
 }  // namespace lyra::runtime
 
+using lyra::runtime::AbiStringRef;
 using lyra::runtime::ActivationValueCell;
 using lyra::runtime::BehaviorAt;
 using lyra::runtime::BehaviorCoordinate;
 using lyra::runtime::CancellationTarget;
 using lyra::runtime::ChannelCancellation;
+using lyra::runtime::ClaimableTarget;
 using lyra::runtime::ClassValue;
 using lyra::runtime::ClosureDefinition;
 using lyra::runtime::ClosureValue;
@@ -652,6 +658,22 @@ using lyra::runtime::CoroutineHandle;
 using lyra::runtime::current_runtime;
 using lyra::runtime::CurrentExportScope;
 using lyra::runtime::CurrentForeignProcess;
+using lyra::runtime::DeclareBase;
+using lyra::runtime::DeclareBehaviorName;
+using lyra::runtime::DeclareBodyName;
+using lyra::runtime::DeclareClass;
+using lyra::runtime::DeclareClassName;
+using lyra::runtime::DeclareClosure;
+using lyra::runtime::DeclareExportName;
+using lyra::runtime::DeclareIntroduction;
+using lyra::runtime::DeclareMembers;
+using lyra::runtime::DeclarePropertyName;
+using lyra::runtime::DeclareScopeClass;
+using lyra::runtime::DeclareScopeProgram;
+using lyra::runtime::DeclareSharedStorage;
+using lyra::runtime::DeclareSubroutineName;
+using lyra::runtime::DeclareTakeover;
+using lyra::runtime::DeclareVariableSchema;
 using lyra::runtime::Delay;
 using lyra::runtime::DelayReal;
 using lyra::runtime::DiagnosticDispatcher;
@@ -703,6 +725,7 @@ using lyra::runtime::RefSampledLoad;
 using lyra::runtime::RefSet;
 using lyra::runtime::Region;
 using lyra::runtime::ResumeInNbaRegion;
+using lyra::runtime::RunDeclaredProgram;
 using lyra::runtime::RunHostCommand;
 using lyra::runtime::RunNullHostCommand;
 using lyra::runtime::RuntimeEffects;
@@ -1243,9 +1266,8 @@ auto lyra_rt_claim_departure(void* exception) -> void* {
   // The landing is handed what the unwinder carries, not the effect itself;
   // claiming is what turns one into the other, and it is the point after which
   // this departure is this landing's to finish or to decline.
-  const auto* effect = static_cast<const lyra::runtime::ControlEffect*>(
-      abi::__cxa_begin_catch(exception));
-  return effect->target;
+  abi::__cxa_begin_catch(exception);
+  return ClaimableTarget();
 }
 
 void lyra_rt_finish_departure() {
@@ -1705,6 +1727,165 @@ void lyra_rt_variables_close(void* variables) {
   // variable in it.
   const std::unique_ptr<StorageBlock> ending(
       static_cast<StorageBlock*>(variables));
+}
+
+auto lyra_rt_variable_schema_declare(const void* described, std::uint64_t count)
+    -> const void* {
+  return DeclareVariableSchema(
+      {static_cast<const lyra::support::DeclaredMemberStorage*>(described),
+       count});
+}
+
+auto lyra_rt_shared_storage_declare(std::uint8_t kind, std::uint8_t domain)
+    -> void* {
+  return DeclareSharedStorage(
+      lyra::support::DeclaredMemberStorage{
+          .kind = static_cast<lyra::support::MemberStorageKind>(kind),
+          .domain = static_cast<lyra::support::ValueDomain>(domain)});
+}
+
+auto lyra_rt_closure_declare_synchronous(
+    const void* captures, std::uint64_t count, void (*body)(void* self))
+    -> const void* {
+  return DeclareClosure(
+      {static_cast<const lyra::support::DeclaredMemberStorage*>(captures),
+       count},
+      lyra::runtime::SynchronousBody{.run = body});
+}
+
+auto lyra_rt_closure_declare_coroutine(
+    const void* captures, std::uint64_t count, void* (*body)(void* self))
+    -> const void* {
+  return DeclareClosure(
+      {static_cast<const lyra::support::DeclaredMemberStorage*>(captures),
+       count},
+      lyra::runtime::CoroutineBody{.start = body});
+}
+
+auto lyra_rt_closure_declare_per_element(
+    const void* captures, std::uint64_t count,
+    void* (*body)(void* self, const void* item, const void* index),
+    std::uint8_t result_domain) -> const void* {
+  return DeclareClosure(
+      {static_cast<const lyra::support::DeclaredMemberStorage*>(captures),
+       count},
+      lyra::runtime::PerElementBody{
+          .run = body,
+          .result_domain =
+              static_cast<lyra::support::ValueDomain>(result_domain)});
+}
+
+auto lyra_rt_closure_declare_value(
+    const void* captures, std::uint64_t count, void* (*body)(void* self),
+    std::uint8_t result_domain) -> const void* {
+  return DeclareClosure(
+      {static_cast<const lyra::support::DeclaredMemberStorage*>(captures),
+       count},
+      lyra::runtime::ValueBody{
+          .run = body,
+          .result_domain =
+              static_cast<lyra::support::ValueDomain>(result_domain)});
+}
+
+auto lyra_rt_class_declare() -> void* {
+  return DeclareClass();
+}
+
+auto lyra_rt_scope_class_declare(
+    std::int8_t time_unit_power, std::int8_t time_precision_power) -> void* {
+  return DeclareScopeClass(time_unit_power, time_precision_power);
+}
+
+void lyra_rt_class_declare_base(void* cls, const void* base) {
+  DeclareBase(
+      static_cast<ObjectDefinition*>(cls),
+      static_cast<const ObjectDefinition* const*>(base));
+}
+
+void lyra_rt_class_declare_members(
+    void* cls, const void* described, std::uint64_t count) {
+  DeclareMembers(
+      static_cast<ObjectDefinition*>(cls),
+      {static_cast<const lyra::support::DeclaredMemberStorage*>(described),
+       count});
+}
+
+void lyra_rt_class_declare_introduction(void* cls, LyraMethodEntry body) {
+  DeclareIntroduction(static_cast<ObjectDefinition*>(cls), body);
+}
+
+void lyra_rt_class_declare_takeover(
+    void* cls, const void* introduced_by, std::uint32_t ordinal,
+    LyraMethodEntry body) {
+  DeclareTakeover(
+      static_cast<ObjectDefinition*>(cls),
+      static_cast<const ObjectDefinition* const*>(introduced_by), ordinal,
+      body);
+}
+
+void lyra_rt_class_declare_property_name(
+    void* cls, const void* name, std::uint32_t length, std::uint32_t position) {
+  DeclarePropertyName(
+      static_cast<ObjectDefinition*>(cls),
+      AbiStringRef{static_cast<const char*>(name), length}, position);
+}
+
+void lyra_rt_class_declare_behavior_name(
+    void* cls, const void* name, std::uint32_t length, std::uint32_t position) {
+  DeclareBehaviorName(
+      static_cast<ObjectDefinition*>(cls),
+      AbiStringRef{static_cast<const char*>(name), length}, position);
+}
+
+void lyra_rt_class_declare_body_name(
+    void* cls, const void* name, std::uint32_t length, LyraMethodEntry body) {
+  DeclareBodyName(
+      static_cast<ObjectDefinition*>(cls),
+      AbiStringRef{static_cast<const char*>(name), length}, body);
+}
+
+void lyra_rt_scope_declare_program(
+    void* scope, LyraMethodEntry resolve_state,
+    LyraMethodEntry initialize_state, LyraMethodEntry create_processes,
+    LyraMethodEntry construct) {
+  DeclareScopeProgram(
+      static_cast<ScopeDefinition*>(scope),
+      std::bit_cast<lyra::runtime::ScopeEntry>(resolve_state),
+      std::bit_cast<lyra::runtime::ScopeEntry>(initialize_state),
+      std::bit_cast<lyra::runtime::ScopeEntry>(create_processes),
+      std::bit_cast<lyra::runtime::ScopeConstructEntry>(construct));
+}
+
+void lyra_rt_scope_declare_subroutine(
+    void* scope, const void* name, std::uint32_t length,
+    LyraMethodEntry entry) {
+  DeclareSubroutineName(
+      static_cast<ScopeDefinition*>(scope),
+      AbiStringRef{static_cast<const char*>(name), length}, entry);
+}
+
+void lyra_rt_scope_declare_export(
+    void* scope, const void* name, std::uint32_t length,
+    LyraMethodEntry entry) {
+  DeclareExportName(
+      static_cast<ScopeDefinition*>(scope),
+      AbiStringRef{static_cast<const char*>(name), length}, entry);
+}
+
+void lyra_rt_scope_declare_class(
+    void* scope, const void* name, std::uint32_t length, const void* declared) {
+  DeclareClassName(
+      static_cast<ScopeDefinition*>(scope),
+      AbiStringRef{static_cast<const char*>(name), length},
+      static_cast<const ObjectDefinition* const*>(declared));
+}
+
+auto lyra_rt_run_program(
+    std::int32_t argc, char** argv, const void* root, const void* name,
+    std::uint32_t length) -> std::int32_t {
+  return RunDeclaredProgram(
+      argc, argv, std::string_view{static_cast<const char*>(name), length},
+      **static_cast<const ScopeDefinition* const*>(root));
 }
 
 auto lyra_rt_packed_cell_get(void* cell) -> void* {

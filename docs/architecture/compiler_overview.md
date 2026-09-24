@@ -101,8 +101,8 @@ order. A stage that needs to see another unit belongs before the barrier or it d
 
 - Upstream: the slang frontend produces elaborated-unit shape from SystemVerilog source. The
   compiler consumes slang's output and begins at HIR.
-- Downstream: LLVM IR is emitted for execution backends (AOT, JIT). The runtime owns object
-  construction and scheduling once LLVM IR is linked.
+- Downstream: LLVM IR is compiled to objects and linked with the runtime into a program. The runtime
+  owns object construction and scheduling once the program starts.
 
 ## Forbidden Shapes
 

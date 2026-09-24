@@ -29,10 +29,10 @@ CRASH_ARTIFACT_DIR = REPO_ROOT / "crash-artifacts"
 
 PROJECT_FILE = "lyra.toml"
 
-# `lyra compile` writes this beside the emitted sources and the script that
-# builds them, so the output directory holds more than one executable file and
-# the simulation binary is named rather than searched for.
+# What a crashed design's program is built as, beside the project it was built
+# from, so a post-mortem finds both under names it already knows.
 BINARY_NAME = "program"
+PROJECT_DIR = "project"
 
 # What a project file may say that this runner knows how to put on a command
 # line. A design naming anything else -- include paths, macro definitions, a
@@ -181,40 +181,39 @@ def format_failure(result: subprocess.CompletedProcess[str]) -> str:
     return "\n".join(parts)
 
 
-def diagnose_aot_failure(
+def diagnose_crash(
     lyra: Path,
     project: Project,
     design_rel: str,
     timeout_secs: int,
 ) -> None:
-    """Rebuild the design and run its binary directly, to see the raw signal.
+    """Build the design's program and run it directly, to see the raw signal.
 
     Running through the driver reports the child's failure in the driver's own
     terms, so a signal death arrives as an exit code with the signal already
-    interpreted. Executing the binary itself is what puts the signal back. The
-    emitted project is left in place beside the output, which is everything a
-    post-mortem needs to reproduce the build.
+    interpreted. Executing the program itself is what puts the signal back. The
+    emitted project is written beside it, which is everything a post-mortem
+    needs to reproduce the build.
     """
     artifact_dir = CRASH_ARTIFACT_DIR / design_rel.replace("/", "_")
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    binary = artifact_dir / BINARY_NAME
 
-    output_dir = artifact_dir / "aot_out"
-    output_dir.mkdir(exist_ok=True)
+    for step, extra in (
+        ("build", ["-o", str(binary)]),
+        ("emit", ["cpp", "-o", str(artifact_dir / PROJECT_DIR)]),
+    ):
+        cmd = lyra_argv(lyra, step, project, extra)
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout_secs,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return
+        if result.returncode != 0:
+            (artifact_dir / f"{step}_stderr.txt").write_text(result.stderr)
+            return
 
-    compile_cmd = lyra_argv(
-        lyra, "compile", project, ["-o", str(output_dir)])
-    try:
-        compile_result = subprocess.run(
-            compile_cmd, capture_output=True, text=True, timeout=timeout_secs,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return
-
-    if compile_result.returncode != 0:
-        (artifact_dir / "compile_stderr.txt").write_text(compile_result.stderr)
-        return
-
-    binary = output_dir / BINARY_NAME
     if not binary.is_file():
         return
 
@@ -271,14 +270,14 @@ def run_design(
 
     if result.returncode != 0:
         cmd_str = " ".join(cmd)
-        # Only do the expensive AOT diagnostic rerun for crash-like failures
+        # Only do the expensive diagnostic rebuild for crash-like failures
         # (signal death or empty stderr suggesting sudden termination).
         looks_like_crash = (
             result.returncode < 0
             or (result.returncode != 0 and len(result.stderr.strip()) == 0)
         )
         if looks_like_crash:
-            diagnose_aot_failure(lyra, project, design_rel, timeout_secs)
+            diagnose_crash(lyra, project, design_rel, timeout_secs)
         return False, f"{format_failure(result)}\n  command: {cmd_str}"
 
     return True, "ok"

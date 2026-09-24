@@ -14,9 +14,10 @@ namespace lyra::compiler {
 // (its LIR / lowered code) and this definition metadata -- the facts a unit has
 // before it runs, independent of any execution. LIR is the executable body
 // only; it carries no source-language concept, so a unit's timescale (LRM
-// Table 20-2) lives here, beside the code, never inside it. A host builds the
-// runtime's definition from the executable body plus this metadata; it never
-// reaches back into the earlier IR to recover these facts.
+// Table 20-2) lives here, beside the code, never inside it. A unit's artifact
+// is a function of both halves and of nothing earlier: what it states about
+// itself is read from here and from the body, never recovered from the IR they
+// were lowered from.
 struct ElaboratedUnitMetadata {
   TimeResolution time_resolution;
 };

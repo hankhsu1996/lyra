@@ -1,36 +1,52 @@
 #include "lyra/cli/commands.hpp"
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
 #include <filesystem>
+#include <format>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <fmt/core.h>
 #include <slang/ast/ASTSerializer.h>
 #include <slang/ast/Compilation.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
+#include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/driver/Driver.h>
 #include <slang/text/Json.h>
 
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/cli/command_line.hpp"
+#include "lyra/cli/design_manifest.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/sink.hpp"
+#include "lyra/driver/artifact_store.hpp"
 #include "lyra/driver/cpp_build.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
+#include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/hir/dump.hpp"
-#include "lyra/jit/executor.hpp"
 #include "lyra/lir/dump.hpp"
 #include "lyra/mir/dump.hpp"
+#include "lyra/program/program_sink.hpp"
 #include "lyra/support/subprocess.hpp"
+#include "lyra/support/temporary_directory.hpp"
 
 namespace lyra::cli {
 
@@ -48,22 +64,52 @@ auto ResolveRuntime(const CommandContext& ctx)
   return *std::move(loc_or);
 }
 
+// The compilers looked for when none was named, in order: clang first, because
+// only it can use a precompiled header, and then the platform's own C++
+// compiler, which is the name every system with one answers to.
+constexpr std::array<std::string_view, 2> kUsualCompilers = {"clang++", "c++"};
+
+// The compiler named with `--cxx`, or the first of the usual ones found on
+// PATH.
+auto ResolveCompiler(const CommandContext& ctx)
+    -> std::optional<std::filesystem::path> {
+  if (ctx.args->cxx) {
+    auto named = support::FindOnPath(*ctx.args->cxx);
+    if (!named) {
+      ctx.sink->Report(
+          diag::Make(diag::DiagCode::kHostIoError, std::move(named.error())));
+      return std::nullopt;
+    }
+    return *std::move(named);
+  }
+  for (const std::string_view usual : kUsualCompilers) {
+    if (auto found = support::FindOnPath(usual)) {
+      return *std::move(found);
+    }
+  }
+  ctx.sink->Report(
+      diag::Make(
+          diag::DiagCode::kHostIoError,
+          "no C++ compiler found: neither clang++ nor c++ is on PATH; name "
+          "one with --cxx"));
+  return std::nullopt;
+}
+
 // Resolved here rather than up front because `dump` must keep working on a
 // machine with no C++ compiler installed: a missing compiler is fatal only to
 // the commands that would invoke one.
 auto ResolveHostBuild(const CommandContext& ctx)
     -> std::optional<driver::HostBuild> {
-  auto cxx_or = support::FindOnPath(ctx.args->cxx);
-  if (!cxx_or) {
-    ctx.sink->Report(
-        diag::Make(diag::DiagCode::kHostIoError, std::move(cxx_or.error())));
+  auto cxx = ResolveCompiler(ctx);
+  if (!cxx) {
     return std::nullopt;
   }
   return driver::HostBuild{
-      .cxx = *std::move(cxx_or),
+      .cxx = *std::move(cxx),
       .pch = ctx.args->pch,
       .optimization = ctx.args->optimization,
-      .compile_width = ctx.args->compile_width};
+      .compile_width = ctx.args->compile_width,
+      .store = ctx.args->store};
 }
 
 // The front end's own account of the design, upstream of every form Lyra
@@ -114,7 +160,7 @@ auto DesignOf(const CommandContext& ctx)
 // Writes the design's emitted C++ sources into `dir` and answers with what
 // assembling and building the program around them still needs. Every command
 // that produces a C++ project does exactly this first, whether the project is
-// the one the user asked for or a temporary one about to be built and run.
+// the one the user asked for or one a build compiles and then drops.
 auto WriteCppSources(
     const CommandContext& ctx, const std::filesystem::path& dir)
     -> std::optional<driver::EmittedCppSources> {
@@ -122,7 +168,7 @@ auto WriteCppSources(
   if (!design) {
     return std::nullopt;
   }
-  driver::CppProjectSink sources(dir, ctx.formatting);
+  driver::CppProjectSink sources(dir, ctx.args->formatting);
   auto lowered = compiler::LowerToSemantic(
       *design, ctx.elaborated->diag_sources, *ctx.sink,
       [&](compiler::SemanticUnit unit) -> diag::Result<void> {
@@ -188,8 +234,9 @@ auto RunDumpLir(const CommandContext& ctx) -> int {
 
 auto RunDumpLlvm(const CommandContext& ctx) -> int {
   const auto print =
-      [](const lir::CompilationUnit& unit) -> diag::Result<void> {
-    auto emitted = backend::llvm_backend::EmitModule(unit);
+      [](const compiler::ExecutableUnit& unit) -> diag::Result<void> {
+    auto emitted = backend::llvm_backend::EmitModule(
+        unit.body, unit.definition.time_resolution);
     if (!emitted) {
       return std::unexpected(std::move(emitted.error()));
     }
@@ -203,128 +250,77 @@ auto RunDumpLlvm(const CommandContext& ctx) -> int {
   auto lowered = compiler::LowerToExecutable(
       *design, ctx.elaborated->diag_sources, *ctx.sink,
       [&](compiler::ExecutableUnit unit) -> diag::Result<void> {
-        return print(unit.body);
+        return print(unit);
       });
   if (!lowered) {
     return 1;
   }
-  if (auto printed = print(lowered->root.body); !printed) {
+  if (auto printed = print(lowered->root); !printed) {
     ctx.sink->Report(std::move(printed.error()));
     return 1;
   }
+  fmt::print(
+      "{}",
+      backend::llvm_backend::EmitProgramEntry(lowered->root.body).Print());
   return 0;
 }
 
-// Writes the portable project `emit cpp` produces and `compile` then builds,
-// so neither of them restates the assembly. The compiler is baked into the
-// project's own build recipe, which is why a command that never builds
+// Writes the portable project `emit cpp` produces. The compiler is baked into
+// the project's own build recipe, which is why a command that never builds
 // anything still has to name one.
-auto AssemblePortableProject(
-    const CommandContext& ctx, const driver::HostBuild& host)
-    -> std::optional<driver::EmittedCppSources> {
-  auto runtime = ResolveRuntime(ctx);
-  if (!runtime) {
-    return std::nullopt;
-  }
-  auto sources = WriteCppSources(ctx, ctx.args->out_dir);
-  if (!sources) {
-    return std::nullopt;
-  }
-  if (auto assembled = driver::AssembleProject(
-          *runtime, *sources, ctx.args->out_dir, host, ctx.dpi_inputs);
-      !assembled) {
-    ctx.sink->Report(std::move(assembled.error()));
-    return std::nullopt;
-  }
-  return sources;
-}
-
 auto RunEmitCpp(const CommandContext& ctx) -> int {
   auto host = ResolveHostBuild(ctx);
   if (!host) {
     return 1;
   }
-  if (!AssemblePortableProject(ctx, *host)) {
-    return 1;
-  }
-  fmt::print("emitted: {}\n", ctx.args->out_dir);
-  return 0;
-}
-
-auto RunCompile(const CommandContext& ctx) -> int {
-  auto host = ResolveHostBuild(ctx);
-  if (!host) {
-    return 1;
-  }
-  auto sources = AssemblePortableProject(ctx, *host);
-  if (!sources) {
-    return 1;
-  }
-  auto built = driver::BuildProject(
-      ctx.args->out_dir, sources->translation_units, *host, ctx.dpi_inputs);
-  if (!built) {
-    ctx.sink->Report(std::move(built.error()));
-    return 1;
-  }
-  fmt::print("compiled: {}\n", built->string());
-  return 0;
-}
-
-auto RunCppBackend(const CommandContext& ctx) -> int {
   auto runtime = ResolveRuntime(ctx);
   if (!runtime) {
     return 1;
   }
-  auto work_dir = support::MakeTempDir();
-  if (!work_dir) {
-    ctx.sink->Report(
-        diag::Make(diag::DiagCode::kHostIoError, std::move(work_dir.error())));
-    return 1;
-  }
-  auto host = ResolveHostBuild(ctx);
-  if (!host) {
-    return 1;
-  }
-  auto sources = WriteCppSources(ctx, *work_dir);
+  const std::filesystem::path& dir = *ctx.args->out;
+  auto sources = WriteCppSources(ctx, dir);
   if (!sources) {
     return 1;
   }
-  auto exit_code = driver::RunInPlace(
-      *runtime, *sources, *work_dir, *host, ctx.args->child_args,
-      ctx.dpi_inputs);
-  if (!exit_code) {
-    ctx.sink->Report(std::move(exit_code.error()));
+  if (auto assembled = driver::AssembleProject(
+          *runtime, *sources, dir, *host, ctx.dpi_inputs);
+      !assembled) {
+    ctx.sink->Report(std::move(assembled.error()));
     return 1;
   }
-  return *exit_code;
+  fmt::print("emitted: {}\n", dir.string());
+  return 0;
 }
 
-// The design's DPI-C sources, compiled to the objects its execution session
-// links. The temp directory holds those objects and the ABI header the sources
-// compile against. Reached only for a design that has foreign sources.
-auto BuildJitDpiObjects(
-    const CommandContext& ctx, std::span<const dpi::AbiFragment> fragments)
-    -> std::optional<std::vector<std::filesystem::path>> {
-  auto runtime = ResolveRuntime(ctx);
-  if (!runtime) {
-    return std::nullopt;
-  }
-  auto dir = support::MakeTempDir();
+// A directory of this invocation's own, which a program is built in and which
+// goes when the command is done with it.
+auto ScratchDir(const CommandContext& ctx)
+    -> std::optional<support::TemporaryDirectory> {
+  auto dir = support::TemporaryDirectory::Create();
   if (!dir) {
     ctx.sink->Report(
         diag::Make(diag::DiagCode::kHostIoError, std::move(dir.error())));
     return std::nullopt;
   }
-  if (auto surface = driver::WriteDpiSurface(*runtime, fragments, *dir);
+  return *std::move(dir);
+}
+
+// The design's DPI-C sources, compiled beside the ABI header they compile
+// against into `dir`, as the objects the program links. A design declaring no
+// foreign source writes the header and compiles nothing.
+auto BuildDpiObjects(
+    const CommandContext& ctx, std::span<const dpi::AbiFragment> fragments,
+    const driver::RuntimeLocation& runtime, const driver::HostBuild& host,
+    const std::filesystem::path& dir)
+    -> std::optional<std::vector<std::filesystem::path>> {
+  if (auto surface = driver::WriteDpiSurface(runtime, fragments, dir);
       !surface) {
     ctx.sink->Report(std::move(surface.error()));
     return std::nullopt;
   }
-  auto host = ResolveHostBuild(ctx);
-  if (!host) {
-    return std::nullopt;
-  }
-  auto built = driver::CompileDpiObjects(ctx.dpi_inputs, host->cxx, *dir, *dir);
+  auto built = driver::CompileDpiObjects(
+      ctx.dpi_inputs, host.cxx, host.optimization, dir,
+      dir / driver::kObjectDir / driver::kDpiSourceDir);
   if (!built) {
     ctx.sink->Report(std::move(built.error()));
     return std::nullopt;
@@ -332,107 +328,420 @@ auto BuildJitDpiObjects(
   return *std::move(built);
 }
 
-auto RunJitBackend(const CommandContext& ctx) -> int {
-  // Every unit's body is loaded into one execution session before the design
-  // runs, and that session is where the names they hold in common resolve. This
-  // is the one path here that holds the design: what it holds is the executable
-  // bodies, and the MIR each was lowered from is released as it goes.
-  //
-  // It reads each unit at both depths rather than only the executable one: the
-  // session loads the body, and what the unit states of the foreign name space
-  // is a fact of its semantic model, taken while that model is still here.
+// How one backend makes the design's program: the name it is kept under,
+// computed from everything the expensive half of the build reads, and that half
+// itself, which runs only when nothing is kept under the name.
+struct ProgramRecipe {
+  driver::ContentName name;
+  std::move_only_function<diag::Result<void>(const std::filesystem::path&)>
+      build;
+};
+
+// The C++ backend's program. The name is read off the emitted project as the
+// host compiler will read it -- every file in it, the foreign objects included
+// -- and off the runtime, the compiler, and the level it compiles at.
+auto CppProgramRecipe(
+    const CommandContext& ctx, const driver::HostBuild& host,
+    const driver::RuntimeLocation& runtime,
+    const std::filesystem::path& scratch) -> std::optional<ProgramRecipe> {
+  const std::filesystem::path project = scratch / "project";
+  auto sources = WriteCppSources(ctx, project);
+  if (!sources) {
+    return std::nullopt;
+  }
+  auto foreign =
+      BuildDpiObjects(ctx, sources->dpi_fragments, runtime, host, project);
+  if (!foreign) {
+    return std::nullopt;
+  }
+  driver::ContentNamer namer;
+  namer.AddTree("project", project);
+  namer.AddTree("runtime headers", runtime.include_root);
+  namer.AddFile("runtime library", runtime.lib);
+  namer.AddExecutable("compiler", host.cxx);
+  namer.Add("optimization", driver::OptimizationFlag(host.optimization));
+  return ProgramRecipe{
+      .name = namer.Finish(),
+      .build = [project, units = std::move(sources->translation_units), runtime,
+                foreign = *std::move(foreign),
+                host](const std::filesystem::path& built) {
+        return driver::CompileProgram(
+            project, units, runtime, foreign, built, host);
+      }};
+}
+
+// This compiler's own executable. The LLVM backend's code generator is part of
+// it, so the objects that backend writes are a function of which build of it
+// is running.
+auto ThisCompiler(const CommandContext& ctx) -> std::filesystem::path {
+  std::error_code ec;
+  auto self = std::filesystem::read_symlink("/proc/self/exe", ec);
+  return ec ? std::filesystem::path(ctx.program_path) : self;
+}
+
+// The LLVM backend's program. Each unit is taken to its module as it is
+// lowered, and every form it passed through is released as it goes.
+//
+// The name is read off every module the program is composed from, the code
+// generator that turns them into objects, the runtime they link against, the
+// driver that links them, and the foreign objects beside them.
+auto LlvmProgramRecipe(
+    const CommandContext& ctx, const driver::HostBuild& host,
+    const driver::RuntimeLocation& runtime,
+    const std::filesystem::path& scratch) -> std::optional<ProgramRecipe> {
   auto design = DesignOf(ctx);
   if (!design) {
-    return 1;
+    return std::nullopt;
   }
-  std::vector<compiler::ExecutableUnit> units;
-  std::vector<dpi::AbiFragment> fragments;
+  program::ProgramSink sink;
   auto lowered = compiler::LowerToSemantic(
       *design, ctx.elaborated->diag_sources, *ctx.sink,
       [&](compiler::SemanticUnit unit) -> diag::Result<void> {
-        dpi::CollectAbiFragment(unit.mir, fragments);
-        auto executable = compiler::LowerUnitToExecutable(unit.mir);
-        if (!executable) {
-          return std::unexpected(std::move(executable.error()));
-        }
-        units.push_back(*std::move(executable));
-        return {};
+        return sink.Take(unit.mir);
       });
   if (!lowered) {
-    return 1;
+    return std::nullopt;
   }
-  auto root = compiler::LowerUnitToExecutable(lowered->root);
-  if (!root) {
-    ctx.sink->Report(std::move(root.error()));
-    return 1;
+  auto emitted = std::move(sink).Finish(lowered->root);
+  if (!emitted) {
+    ctx.sink->Report(std::move(emitted.error()));
+    return std::nullopt;
   }
-  // A design that declares no foreign source compiles nothing here and links
-  // nothing there.
-  std::vector<std::filesystem::path> dpi_objects;
-  if (!ctx.dpi_inputs.empty()) {
-    auto built = BuildJitDpiObjects(ctx, fragments);
-    if (!built) {
-      return 1;
+  auto foreign =
+      BuildDpiObjects(ctx, emitted->dpi_fragments, runtime, host, scratch);
+  if (!foreign) {
+    return std::nullopt;
+  }
+  driver::ContentNamer namer;
+  for (const backend::llvm_backend::EmittedModule& module : emitted->modules) {
+    namer.Add("module", module.Print());
+  }
+  namer.AddExecutable("code generator", ThisCompiler(ctx));
+  namer.AddFile("runtime library", runtime.lib);
+  namer.AddExecutable("linker", host.cxx);
+  for (const std::filesystem::path& object : *foreign) {
+    namer.AddFile("foreign object", object);
+  }
+  return ProgramRecipe{
+      .name = namer.Finish(),
+      .build = [modules = std::move(emitted->modules),
+                foreign = *std::move(foreign),
+                object_dir = scratch / driver::kObjectDir,
+                runtime_lib = runtime.lib,
+                cxx = host.cxx](const std::filesystem::path& built) mutable {
+        return program::CompileProgram(
+            std::move(modules), foreign, object_dir, runtime_lib, built, cxx);
+      }};
+}
+
+auto RecipeFor(
+    const CommandContext& ctx, const driver::HostBuild& host,
+    const driver::RuntimeLocation& runtime,
+    const std::filesystem::path& scratch) -> std::optional<ProgramRecipe> {
+  switch (ctx.args->backend) {
+    case Backend::kCpp:
+      return CppProgramRecipe(ctx, host, runtime, scratch);
+    case Backend::kLlvm:
+      return LlvmProgramRecipe(ctx, host, runtime, scratch);
+  }
+  throw InternalError("the request names no backend");
+}
+
+// Places the design's program at `destination`: a copy of the one kept under
+// its name when there is one and a rebuild was not asked for, and otherwise
+// one built now, kept, and copied from what was built.
+auto PlaceProgram(
+    const CommandContext& ctx, const std::filesystem::path& scratch,
+    const std::filesystem::path& destination) -> bool {
+  auto host = ResolveHostBuild(ctx);
+  if (!host) {
+    return false;
+  }
+  auto runtime = ResolveRuntime(ctx);
+  if (!runtime) {
+    return false;
+  }
+  auto recipe = RecipeFor(ctx, *host, *runtime, scratch);
+  if (!recipe) {
+    return false;
+  }
+  const auto& store = host->store;
+  if (store && !ctx.args->rebuild) {
+    auto kept = driver::CopyStored(
+        *store, driver::kStoredProgramDir, recipe->name, destination);
+    if (!kept) {
+      ctx.sink->Report(std::move(kept.error()));
+      return false;
     }
-    dpi_objects = *std::move(built);
+    if (*kept) {
+      return true;
+    }
   }
-  // The design-root unit's construct elaborates the whole design, building the
-  // top-level units as its owned children, so the JIT runs the design once from
-  // that one entry rather than per top.
+  const std::filesystem::path built = scratch / driver::kProgramName;
+  if (auto made = recipe->build(built); !made) {
+    ctx.sink->Report(std::move(made.error()));
+    return false;
+  }
+  if (store) {
+    driver::KeepStored(*store, driver::kStoredProgramDir, recipe->name, built);
+  }
+  auto copied = driver::CopyOut(built, destination);
+  if (!copied) {
+    ctx.sink->Report(std::move(copied.error()));
+    return false;
+  }
+  return true;
+}
+
+// Where `build` writes the program when it was not told: the working
+// directory, under the design's own name -- the name its declaration gives it,
+// or its top when it is anonymous and has one. An anonymous design with several
+// tops has no name to take, so it has to be given one.
+auto DefaultProgramPath(const CommandContext& ctx)
+    -> std::optional<std::filesystem::path> {
+  if (ctx.args->design_name) {
+    return std::filesystem::path(*ctx.args->design_name);
+  }
+  const auto tops = ctx.elaborated->compilation->getRoot().topInstances;
+  if (tops.size() == 1) {
+    return std::filesystem::path(std::string(tops.front()->name));
+  }
+  ctx.sink->Report(
+      diag::Make(
+          diag::DiagCode::kHostInvalidCliArgs,
+          std::format(
+              "this design has {} tops and no name, so the program has none "
+              "to take; name it with -o",
+              tops.size())));
+  return std::nullopt;
+}
+
+auto RunBuild(const CommandContext& ctx) -> int {
+  const auto destination =
+      ctx.args->out.or_else([&] { return DefaultProgramPath(ctx); });
+  if (!destination) {
+    return 1;
+  }
+  std::error_code ec;
+  if (std::filesystem::is_directory(*destination, ec)) {
+    ctx.sink->Report(
+        diag::Make(
+            diag::DiagCode::kHostInvalidCliArgs,
+            std::format(
+                "'{}' is a directory, and a program is one file; name the "
+                "program with -o",
+                destination->string())));
+    return 1;
+  }
+  auto scratch = ScratchDir(ctx);
+  if (!scratch || !PlaceProgram(ctx, scratch->Path(), *destination)) {
+    return 1;
+  }
+  fmt::print("built: {}\n", destination->string());
+  return 0;
+}
+
+// Runs a copy of the design's program that belongs to this run alone, so
+// nothing another process does to what is kept can reach it.
+auto RunProgram(const CommandContext& ctx) -> int {
+  auto scratch = ScratchDir(ctx);
+  if (!scratch) {
+    return 1;
+  }
+  const std::filesystem::path program = scratch->Path() / "run";
+  if (!PlaceProgram(ctx, scratch->Path(), program)) {
+    return 1;
+  }
   auto exit_code =
-      jit::Execute(units, *root, dpi_objects, ctx.args->child_args);
+      support::RunProcessStreaming(program, ctx.args->simulation_args);
   if (!exit_code) {
-    ctx.sink->Report(std::move(exit_code.error()));
+    ctx.sink->Report(
+        diag::Make(diag::DiagCode::kHostIoError, std::move(exit_code.error())));
     return 1;
   }
   return *exit_code;
 }
 
-auto RunBackend(const CommandContext& ctx) -> int {
-  switch (ctx.args->backend) {
-    case Backend::kCpp:
-      return RunCppBackend(ctx);
-    case Backend::kJit:
-      return RunJitBackend(ctx);
-    case Backend::kAot:
-    case Backend::kLli:
-      ctx.sink->Report(
-          diag::Make(
-              diag::DiagCode::kHostBackendUnimplemented,
-              "this execution backend is not yet implemented"));
-      return 1;
+// Whether the front end's warnings reach the terminal. A program that is run
+// owns its streams, so what the compiler had to say about the source stays out
+// of them unless it refused the source outright.
+enum class FrontEndWarnings : std::uint8_t { kShown, kWithheld };
+
+// A design found and elaborated, with the request resolved against its
+// declaration.
+struct LoadedDesign {
+  ParsedArgs args;
+  std::vector<driver::DpiLinkInput> dpi_inputs;
+  frontend::ParseResult elaborated;
+};
+
+// Finds the design the command line and its declaration describe and
+// elaborates it, reporting whatever stops that. Arriving at a design is the
+// whole of what `check` asks.
+auto LoadDesign(const Invocation& invocation, FrontEndWarnings warnings)
+    -> std::optional<LoadedDesign> {
+  const Reporter& report = *invocation.report;
+  slang::driver::Driver& driver = *invocation.driver;
+
+  auto declaration_or = ResolveDesignDeclaration(*invocation.options, driver);
+  if (!declaration_or) {
+    report(std::move(declaration_or.error()));
+    return std::nullopt;
   }
-  throw InternalError("run: the request names no execution backend");
+  // The declaration is flattened once into the two things the rest of the run
+  // reads: the manifest to apply and re-read, and an absent search kept for the
+  // no-input-files note below. That note is the only place absence still speaks
+  // -- a named source means there are files, so no search reaches that branch.
+  const DesignManifest* manifest = nullptr;
+  std::optional<ManifestAbsent> absent;
+  std::visit(
+      Overloaded{
+          [&](const DesignManifest& m) { manifest = &m; },
+          [&](const ManifestAbsent& a) { absent = a; }, [&](NoSearchNeeded) {}},
+      *declaration_or);
+  if (manifest != nullptr) {
+    if (auto applied = ApplyDesignManifest(*manifest, driver); !applied) {
+      report(std::move(applied.error()));
+      return std::nullopt;
+    }
+  }
+
+  auto parsed = ResolveCliOptions(
+      *invocation.options, manifest, invocation.command,
+      invocation.simulation_args);
+  if (!parsed) {
+    report(diag::Make(diag::DiagCode::kHostInvalidCliArgs, parsed.error()));
+    return std::nullopt;
+  }
+
+  if (!driver.sourceLoader.hasFiles()) {
+    auto diagnostic =
+        diag::Make(diag::DiagCode::kHostNoInputFiles, "no input files");
+    if (absent) {
+      diagnostic =
+          std::move(diagnostic)
+              .WithNote(
+                  std::format(
+                      "searched for lyra.toml from {} up to {}",
+                      absent->started.string(), absent->stopped.string()));
+    }
+    // A declaration was in effect and still named nothing, which reads as no
+    // declaration at all unless the message says which one applied -- and the
+    // one that applied may be several directories above the caller.
+    if (manifest != nullptr) {
+      diagnostic = std::move(diagnostic)
+                       .WithNote(
+                           std::format(
+                               "design '{}' at {} declares no source files",
+                               manifest->name, manifest->path.string()));
+    }
+    report(std::move(diagnostic));
+    return std::nullopt;
+  }
+
+  // Classified before compiling anything, so a mistyped path is reported
+  // against the command line rather than after a full front end and lowering
+  // pass.
+  auto dpi_inputs = driver::ValidateDpiLinkInputs(parsed->dpi_link_sources);
+  if (!dpi_inputs) {
+    report(std::move(dpi_inputs.error()));
+    return std::nullopt;
+  }
+
+  auto front_end = compiler::RunFrontEnd(driver);
+  // An account that refuses the source is printed whatever the command is,
+  // because then there is no program whose streams need protecting.
+  const bool shows_warnings =
+      warnings == FrontEndWarnings::kShown || !front_end.elaborated;
+  if (shows_warnings && !front_end.diagnostics.empty()) {
+    fmt::print(stderr, "{}", front_end.diagnostics);
+  }
+  if (!front_end.elaborated) {
+    return std::nullopt;
+  }
+  return LoadedDesign{
+      .args = *std::move(parsed),
+      .dpi_inputs = *std::move(dpi_inputs),
+      .elaborated = *std::move(front_end.elaborated)};
+}
+
+using DesignCommand = auto (*)(const CommandContext&) -> int;
+
+// Loads the design and hands it to `command`. Everything the command reports
+// goes into one sink, which is rendered here once the command is done.
+auto RunOnDesign(
+    const Invocation& invocation, FrontEndWarnings warnings,
+    DesignCommand command) -> int {
+  auto design = LoadDesign(invocation, warnings);
+  if (!design) {
+    return 1;
+  }
+  diag::DiagnosticSink sink;
+  const int exit_code = command(
+      CommandContext{
+          .args = &design->args,
+          .elaborated = &design->elaborated,
+          .sink = &sink,
+          .dpi_inputs = design->dpi_inputs,
+          .program_path = invocation.program_path});
+  if (sink.HasErrors()) {
+    (*invocation.report)(sink, &design->elaborated.diag_sources);
+  }
+  return exit_code;
+}
+
+// Empties the store. It consults no design and never reaches the compiler, so
+// no declaration anywhere on the machine can be read by it or stop it.
+auto RunCacheClear(const Invocation& invocation) -> int {
+  const Reporter& report = *invocation.report;
+  auto parsed = ResolveCliOptions(
+      *invocation.options, nullptr, invocation.command,
+      invocation.simulation_args);
+  if (!parsed) {
+    report(diag::Make(diag::DiagCode::kHostInvalidCliArgs, parsed.error()));
+    return 1;
+  }
+  if (!parsed->store) {
+    report(
+        diag::Make(
+            diag::DiagCode::kHostIoError,
+            "no cache directory is known: neither XDG_CACHE_HOME nor HOME "
+            "names an absolute path; name one with --cache-dir"));
+    return 1;
+  }
+  const std::size_t cleared = driver::ClearStore(*parsed->store);
+  fmt::print(
+      "cleared {} kept file{} from {}\n", cleared, cleared == 1 ? "" : "s",
+      parsed->store->string());
+  return 0;
 }
 
 }  // namespace
 
-auto RunCommand(const CommandContext& ctx) -> int {
-  switch (ctx.args->cmd) {
+auto RunCommand(const Invocation& invocation) -> int {
+  switch (invocation.command) {
     case CommandKind::kCheck:
-      // The front end has already run and everything it had to say has already
-      // been reported, so arriving here is the whole answer `check` gives.
-      return 0;
+      return LoadDesign(invocation, FrontEndWarnings::kShown) ? 0 : 1;
     case CommandKind::kDumpAst:
-      return RunDumpAst(ctx);
+      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunDumpAst);
     case CommandKind::kDumpHir:
-      return RunDumpHir(ctx);
+      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunDumpHir);
     case CommandKind::kDumpMir:
-      return RunDumpMir(ctx);
+      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunDumpMir);
     case CommandKind::kDumpLir:
-      return RunDumpLir(ctx);
+      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunDumpLir);
     case CommandKind::kDumpLlvm:
-      return RunDumpLlvm(ctx);
+      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunDumpLlvm);
     case CommandKind::kEmitCpp:
-      return RunEmitCpp(ctx);
-    case CommandKind::kCompile:
-      return RunCompile(ctx);
+      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunEmitCpp);
+    case CommandKind::kBuild:
+      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunBuild);
     case CommandKind::kRun:
-      return RunBackend(ctx);
+      return RunOnDesign(invocation, FrontEndWarnings::kWithheld, RunProgram);
     case CommandKind::kCacheClear:
-      break;
+      return RunCacheClear(invocation);
   }
-  throw InternalError("cache clear reached the compiling dispatch");
+  throw InternalError("a command has no handler");
 }
 
 }  // namespace lyra::cli

@@ -95,8 +95,8 @@ prepared afresh on the next build.
 ## Where it has to hold
 
 Two things build an emitted project and they are separate implementations: the in-process build
-behind `compile` and `run`, and the `build.sh` a project ships, which may assume nothing beyond
-POSIX sh. Both prepare a header, both cache it, and both therefore owe this. The shipped recipe
-compiles everything again rather than only what failed, because tracking which jobs failed costs
-more shell than the rare path is worth; it also holds back what the compiler said until the build is
-known to have failed, so a retried build that succeeded says nothing.
+behind `build` and `run`, and the `build.sh` a project ships, which may assume nothing beyond POSIX
+sh. Both prepare a header, both cache it, and both therefore owe this. The shipped recipe compiles
+everything again rather than only what failed, because tracking which jobs failed costs more shell
+than the rare path is worth; it also holds back what the compiler said until the build is known to
+have failed, so a retried build that succeeded says nothing.

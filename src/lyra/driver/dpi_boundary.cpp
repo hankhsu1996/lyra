@@ -76,13 +76,29 @@ auto WriteDpiSurface(
   return CopyFile(runtime.svdpi_header, dir / kSvdpiHeader);
 }
 
+auto ForeignLanguageFlags(const DpiLinkInput& input)
+    -> std::vector<std::string> {
+  if (input.compile_as_c) {
+    return {"-x", "c"};
+  }
+  return {std::string(kCxxStandardFlag), "-x", "c++"};
+}
+
 auto CompileDpiObjects(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
-    const std::filesystem::path& header_dir,
+    Optimization optimization, const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
     -> diag::Result<std::vector<std::filesystem::path>> {
   std::vector<std::filesystem::path> objects;
   objects.reserve(inputs.size());
+  std::error_code created;
+  std::filesystem::create_directories(work_dir, created);
+  if (created) {
+    return diag::Fail(
+        diag::DiagCode::kHostIoError,
+        std::format(
+            "failed to create '{}': {}", work_dir.string(), created.message()));
+  }
   for (const DpiLinkInput& input : inputs) {
     // One compilation per input, because the language each is compiled as is
     // its own and a driver invocation carries one output path. The object's
@@ -91,16 +107,11 @@ auto CompileDpiObjects(
     // source and another of a different language overwrite each other.
     const std::filesystem::path object =
         work_dir / (input.source.filename().string() + ".o");
-    const std::vector<std::string> args = {
-        "-c",
-        "-fPIC",
-        "-I",
-        header_dir.string(),
-        "-x",
-        input.compile_as_c ? "c" : "c++",
-        input.source.string(),
-        "-o",
-        object.string()};
+    std::vector<std::string> args = ForeignLanguageFlags(input);
+    args.insert(
+        args.end(), {std::string(OptimizationFlag(optimization)), "-c",
+                     input.source.string(), "-I", header_dir.string(), "-o",
+                     object.string()});
 
     auto compiled = support::RunProcessCaptured(cxx, args);
     if (!compiled) {

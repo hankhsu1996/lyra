@@ -4,10 +4,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <initializer_list>
 #include <iterator>
 #include <optional>
 #include <ranges>
@@ -25,6 +25,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/cli/design_manifest.hpp"
+#include "lyra/driver/artifact_store.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/support/assertion_policy.hpp"
@@ -33,16 +34,85 @@ namespace lyra::cli {
 
 namespace {
 
-// Every command in one place: how it is spelled, and the one fact a command
-// decides rather than inherits. A command is named by a verb and an object,
-// with an empty object for a verb that stands alone. The usage text, the parse,
-// and the output-directory check all read this table, so adding a command is
-// one row rather than four lists that drift apart.
+// Each option Lyra adds to the command line, as one thing a command either
+// acts on or does not. The simulation's own arguments count as one: a command
+// that runs no simulation has nobody to hand them to.
+enum class LyraOption : std::uint8_t {
+  kColor,
+  kNoColor,
+  kFormat,
+  kAssertions,
+  kConfig,
+  kRelease,
+  kNoPch,
+  kCacheDir,
+  kRebuild,
+  kCxx,
+  kJobs,
+  kOut,
+  kBackend,
+  kDpiLink,
+  kSimulationArgs,
+};
+
+constexpr std::size_t kLyraOptionCount =
+    static_cast<std::size_t>(LyraOption::kSimulationArgs) + 1;
+
+// Which options a command acts on.
+class OptionSet {
+ public:
+  constexpr OptionSet(std::initializer_list<LyraOption> options) {
+    for (const LyraOption option : options) {
+      bits_ |= Bit(option);
+    }
+  }
+
+  [[nodiscard]] constexpr auto operator|(OptionSet other) const -> OptionSet {
+    OptionSet joined = *this;
+    joined.bits_ |= other.bits_;
+    return joined;
+  }
+
+  [[nodiscard]] constexpr auto Contains(LyraOption option) const -> bool {
+    return (bits_ & Bit(option)) != 0;
+  }
+
+ private:
+  static constexpr auto Bit(LyraOption option) -> std::uint32_t {
+    return std::uint32_t{1} << static_cast<unsigned>(option);
+  }
+
+  std::uint32_t bits_ = 0;
+};
+
+// What every command reading a design acts on: how its report is coloured, and
+// where the design's declaration is.
+constexpr OptionSet kReadsADesign = {
+    LyraOption::kColor, LyraOption::kNoColor, LyraOption::kConfig};
+// What every command lowering the design acts on besides: the policy lowering
+// follows.
+constexpr OptionSet kLowersADesign =
+    kReadsADesign | OptionSet{LyraOption::kAssertions};
+// What building the design's program acts on besides.
+constexpr OptionSet kBuildsAProgram =
+    kLowersADesign | OptionSet{LyraOption::kRelease,  LyraOption::kNoPch,
+                               LyraOption::kCacheDir, LyraOption::kRebuild,
+                               LyraOption::kCxx,      LyraOption::kJobs,
+                               LyraOption::kBackend,  LyraOption::kDpiLink};
+
+// Every command in one place: how it is spelled, and the facts a command
+// decides rather than inherits -- whether it needs somewhere to write, and
+// which options it acts on. A command is named by a verb and an object, with an
+// empty object for a verb that stands alone. The usage text, the parse, the
+// output check, and the check that refuses an option a command does not act on
+// all read this table, so adding a command is one row that has to say all of
+// it, rather than several lists that drift apart.
 struct CommandSpec {
   std::string_view verb;
   std::string_view object;
   CommandKind kind;
-  bool requires_out_dir;
+  bool requires_out;
+  OptionSet takes;
 };
 
 // Entries sharing a verb stay adjacent: the usage line groups them by that
@@ -51,53 +121,143 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
     {{.verb = "check",
       .object = "",
       .kind = CommandKind::kCheck,
-      .requires_out_dir = false},
+      .requires_out = false,
+      .takes = kReadsADesign},
      {.verb = "dump",
       .object = "ast",
       .kind = CommandKind::kDumpAst,
-      .requires_out_dir = false},
+      .requires_out = false,
+      .takes = kReadsADesign},
      {.verb = "dump",
       .object = "hir",
       .kind = CommandKind::kDumpHir,
-      .requires_out_dir = false},
+      .requires_out = false,
+      .takes = kLowersADesign},
      {.verb = "dump",
       .object = "mir",
       .kind = CommandKind::kDumpMir,
-      .requires_out_dir = false},
+      .requires_out = false,
+      .takes = kLowersADesign},
      {.verb = "dump",
       .object = "lir",
       .kind = CommandKind::kDumpLir,
-      .requires_out_dir = false},
+      .requires_out = false,
+      .takes = kLowersADesign},
      {.verb = "dump",
       .object = "llvm",
       .kind = CommandKind::kDumpLlvm,
-      .requires_out_dir = false},
+      .requires_out = false,
+      .takes = kLowersADesign},
+     // The project's recipe is written with the compiler and the level it
+     // compiles at baked in, and takes its own width and precompiled header
+     // when it is run.
      {.verb = "emit",
       .object = "cpp",
       .kind = CommandKind::kEmitCpp,
-      .requires_out_dir = true},
-     {.verb = "compile",
+      .requires_out = true,
+      .takes = kLowersADesign |
+               OptionSet{
+                   LyraOption::kFormat, LyraOption::kRelease, LyraOption::kCxx,
+                   LyraOption::kOut, LyraOption::kDpiLink}},
+     {.verb = "build",
       .object = "",
-      .kind = CommandKind::kCompile,
-      .requires_out_dir = true},
+      .kind = CommandKind::kBuild,
+      .requires_out = false,
+      .takes = kBuildsAProgram | OptionSet{LyraOption::kOut}},
      {.verb = "run",
       .object = "",
       .kind = CommandKind::kRun,
-      .requires_out_dir = false},
+      .requires_out = false,
+      .takes = kBuildsAProgram | OptionSet{LyraOption::kSimulationArgs}},
      {.verb = "cache",
       .object = "clear",
       .kind = CommandKind::kCacheClear,
-      .requires_out_dir = false}});
+      .requires_out = false,
+      .takes = {
+          LyraOption::kColor, LyraOption::kNoColor, LyraOption::kCacheDir}}});
 
-// The spelling of each execution backend on the command line. Returns nullopt
+// How an option is spelled on the command line.
+auto Spelling(LyraOption option) -> std::string_view {
+  switch (option) {
+    case LyraOption::kColor:
+      return "--color";
+    case LyraOption::kNoColor:
+      return "--no-color";
+    case LyraOption::kFormat:
+      return "--format";
+    case LyraOption::kAssertions:
+      return "--assertions";
+    case LyraOption::kConfig:
+      return "--config";
+    case LyraOption::kRelease:
+      return "--release";
+    case LyraOption::kNoPch:
+      return "--no-pch";
+    case LyraOption::kCacheDir:
+      return "--cache-dir";
+    case LyraOption::kRebuild:
+      return "--rebuild";
+    case LyraOption::kCxx:
+      return "--cxx";
+    case LyraOption::kJobs:
+      return "--jobs";
+    case LyraOption::kOut:
+      return "--out";
+    case LyraOption::kBackend:
+      return "--backend";
+    case LyraOption::kDpiLink:
+      return "--dpi-link";
+    case LyraOption::kSimulationArgs:
+      return "arguments after `--`";
+  }
+  throw InternalError("an option has no spelling");
+}
+
+// Whether the caller gave the option.
+auto IsGiven(
+    LyraOption option, const CliOptions& opts, bool has_simulation_args)
+    -> bool {
+  switch (option) {
+    case LyraOption::kColor:
+      return opts.color.has_value();
+    case LyraOption::kNoColor:
+      return opts.no_color.has_value();
+    case LyraOption::kFormat:
+      return opts.format.has_value();
+    case LyraOption::kAssertions:
+      return opts.assertions.has_value();
+    case LyraOption::kConfig:
+      return opts.config.has_value();
+    case LyraOption::kRelease:
+      return opts.release.has_value();
+    case LyraOption::kNoPch:
+      return opts.no_pch.has_value();
+    case LyraOption::kCacheDir:
+      return opts.cache_dir.has_value();
+    case LyraOption::kRebuild:
+      return opts.rebuild.has_value();
+    case LyraOption::kCxx:
+      return opts.cxx.has_value();
+    case LyraOption::kJobs:
+      return opts.jobs.has_value();
+    case LyraOption::kOut:
+      return opts.out.has_value();
+    case LyraOption::kBackend:
+      return opts.backend.has_value();
+    case LyraOption::kDpiLink:
+      return !opts.dpi_link.empty();
+    case LyraOption::kSimulationArgs:
+      return has_simulation_args;
+  }
+  throw InternalError("an option has no reading");
+}
+
+// The spelling of each backend on the command line. Returns nullopt
 // for a name outside the table, which is a user typing a value the command
 // line cannot restrict rather than a drift between two internal lists.
 auto ParseBackend(std::string_view name) -> std::optional<Backend> {
-  static constexpr std::array<std::pair<std::string_view, Backend>, 4> kNames =
-      {{{"cpp", Backend::kCpp},
-        {"jit", Backend::kJit},
-        {"aot", Backend::kAot},
-        {"lli", Backend::kLli}}};
+  static constexpr std::array<std::pair<std::string_view, Backend>, 2> kNames =
+      {{{"cpp", Backend::kCpp}, {"llvm", Backend::kLlvm}}};
   const auto* const it =
       std::ranges::find(kNames, name, &decltype(kNames)::value_type::first);
   if (it == kNames.end()) {
@@ -153,8 +313,8 @@ auto CommandSpelling(CommandKind cmd) -> std::string {
 }
 
 // Which commands write their output somewhere the caller has to name.
-auto RequiresOutDir(CommandKind cmd) -> bool {
-  return FindCommand(cmd).requires_out_dir;
+auto RequiresOut(CommandKind cmd) -> bool {
+  return FindCommand(cmd).requires_out;
 }
 
 auto CommandList() -> std::string {
@@ -253,13 +413,18 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "optimize the simulation rather than the time to build it");
   cmd.add(
       "--no-pch", opts.no_pch,
-      "disable the precompiled-header cache for this invocation");
+      "compile the C++ backend's output without a precompiled header");
   cmd.add(
-      "--pch-cache-dir", opts.pch_cache_dir, "override the PCH cache directory",
-      "<dir>", slang::CommandLineFlags::FilePath);
+      "--cache-dir", opts.cache_dir,
+      "where built programs and prepared headers are kept for reuse", "<dir>",
+      slang::CommandLineFlags::FilePath);
+  cmd.add(
+      "--rebuild", opts.rebuild,
+      "build as though nothing were kept, and keep what is built");
   cmd.add(
       "--cxx", opts.cxx,
-      "host C++ compiler for the C++ backend: a path, or a name found on PATH",
+      "host C++ compiler a program is compiled and linked with: a path, or a "
+      "name found on PATH; clang++, then c++, when not given",
       "<program>");
   cmd.add(
       "-j,--jobs", opts.jobs,
@@ -267,11 +432,13 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "0 asks for one per processor",
       "<count>");
   cmd.add(
-      "-o,--out-dir", opts.out_dir, "write output to this directory", "<dir>",
-      slang::CommandLineFlags::FilePath);
+      "-o,--out", opts.out,
+      "where to write the output: the program for `build`, the project "
+      "directory for `emit cpp`",
+      "<path>", slang::CommandLineFlags::FilePath);
   cmd.add(
-      "--backend", opts.backend, "how `run` executes the design",
-      "cpp|jit|aot|lli");
+      "--backend", opts.backend,
+      "which backend turns the design into a program", "cpp|llvm");
   cmd.add(
       "--dpi-link", opts.dpi_link,
       "native source (.c/.cpp) providing DPI-C foreign symbols to link",
@@ -330,6 +497,34 @@ auto ParseCommandWords(slang::driver::Driver& driver, std::vector<char*>& words)
   return command->first;
 }
 
+auto RefuseOptionsNotTaken(
+    const CliOptions& opts, CommandKind cmd, bool has_simulation_args)
+    -> std::expected<void, std::string> {
+  std::string refused;
+  for (std::size_t i = 0; i < kLyraOptionCount; ++i) {
+    const auto option = static_cast<LyraOption>(i);
+    if (!IsGiven(option, opts, has_simulation_args) ||
+        FindCommand(cmd).takes.Contains(option)) {
+      continue;
+    }
+    std::string takers;
+    for (const CommandSpec& spec : kCommands) {
+      if (spec.takes.Contains(option)) {
+        takers += std::format(
+            "{}`{}`", takers.empty() ? "" : ", ", CommandSpelling(spec.kind));
+      }
+    }
+    refused += std::format(
+        "{}{} means nothing to `{}`; it is taken by {}",
+        refused.empty() ? "" : "\n", Spelling(option), CommandSpelling(cmd),
+        takers);
+  }
+  if (refused.empty()) {
+    return {};
+  }
+  return std::unexpected(std::move(refused));
+}
+
 auto UseColor(const CliOptions& opts) -> bool {
   switch (ColorPreferenceOf(opts)) {
     case ColorPreference::kNever:
@@ -340,19 +535,6 @@ auto UseColor(const CliOptions& opts) -> bool {
       return ::isatty(STDERR_FILENO) != 0;
   }
   return false;
-}
-
-auto MakePchOptions(const CliOptions& cli) -> driver::pch::Options {
-  driver::pch::Options opts;
-  opts.disabled = cli.no_pch.value_or(false);
-  if (const char* v = std::getenv("LYRA_NO_PCH");
-      v != nullptr && *v != '\0' && std::string_view(v) != "0") {
-    opts.disabled = true;
-  }
-  if (cli.pch_cache_dir && !cli.pch_cache_dir->empty()) {
-    opts.cache_dir_override = std::filesystem::path(*cli.pch_cache_dir);
-  }
-  return opts;
 }
 
 // How many host compiles this invocation may run at once, resolved to a
@@ -461,27 +643,36 @@ auto ApplyDesignManifest(
 
 auto ResolveCliOptions(
     const CliOptions& opts, const DesignManifest* manifest, CommandKind cmd,
-    std::vector<std::string> child_args)
+    std::span<const std::string> simulation_args)
     -> std::expected<ParsedArgs, std::string> {
   ParsedArgs out;
-  out.cmd = cmd;
-  out.child_args = std::move(child_args);
-  out.format = opts.format.value_or(false);
+  out.simulation_args.assign(simulation_args.begin(), simulation_args.end());
+  out.formatting = opts.format.value_or(false) ? driver::SourceFormatting::kOn
+                                               : driver::SourceFormatting::kOff;
   out.optimization = opts.release.value_or(false)
                          ? driver::Optimization::kRelease
                          : driver::Optimization::kIterate;
-  out.pch = MakePchOptions(opts);
-  out.cxx = opts.cxx.value_or("clang++");
+  out.pch = opts.no_pch.value_or(false) ? driver::pch::Policy::kSkip
+                                        : driver::pch::Policy::kAttempt;
+  out.cxx = opts.cxx;
   auto width = ResolveCompileWidth(opts.jobs);
   if (!width) {
     return std::unexpected(std::move(width.error()));
   }
   out.compile_width = *width;
-  out.out_dir = opts.out_dir.value_or("");
+  if (opts.out && !opts.out->empty()) {
+    out.out = std::filesystem::path(*opts.out);
+  }
+  out.store = driver::LocateStore(
+      opts.cache_dir && !opts.cache_dir->empty()
+          ? std::optional<std::filesystem::path>{*opts.cache_dir}
+          : std::nullopt);
+  out.rebuild = opts.rebuild.value_or(false);
 
   // The design's own foreign sources are the base; the command line's are
   // extras this invocation adds, so they follow.
   if (manifest != nullptr) {
+    out.design_name = manifest->name;
     out.dpi_link_sources = manifest->dpi_sources;
     if (manifest->assertions) {
       out.assertions = *manifest->assertions;
@@ -506,16 +697,14 @@ auto ResolveCliOptions(
     if (!backend) {
       return std::unexpected(
           std::format(
-              "--backend: '{}' is not one of cpp, jit, aot, lli",
-              *opts.backend));
+              "--backend: '{}' is not one of cpp, llvm", *opts.backend));
     }
     out.backend = *backend;
   }
 
-  if (RequiresOutDir(cmd) && out.out_dir.empty()) {
+  if (RequiresOut(cmd) && !out.out) {
     return std::unexpected(
-        std::format(
-            "{} requires --out-dir\n{}", CommandSpelling(cmd), Usage()));
+        std::format("{} requires --out\n{}", CommandSpelling(cmd), Usage()));
   }
   return out;
 }

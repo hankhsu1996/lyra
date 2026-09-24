@@ -2,6 +2,11 @@
 
 Date: 2026-09-14 Status: accepted
 
+The execution session this names is gone: the execution backend now links every design into a
+program with the system linker (`a-program-is-kept-by-what-built-it.md`), and a foreign source's
+object is one more input to that link. The decision holds unchanged -- the program still has one
+linker, and it is now the one Verilator's comparison below describes.
+
 ## Context
 
 A DPI-C export defines a global symbol the foreign side calls by name: "every subroutine exported
