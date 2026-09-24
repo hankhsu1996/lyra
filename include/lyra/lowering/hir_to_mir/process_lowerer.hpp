@@ -238,14 +238,10 @@ class ProcessLowerer {
       -> const StructuralScopeLowerer& {
     return EnclosingScopeLowerer().ScopeAt(hops, descent);
   }
-  template <typename Ref>
-  [[nodiscard]] auto RoutedRefPointer(const WalkFrame& frame, Ref ref) const
-      -> mir::ExprId {
-    return EnclosingScopeLowerer().RoutedRefPointer(frame, ref);
-  }
   template <typename Id>
-  [[nodiscard]] auto SlotOf(Id hir_id) const -> mir::FieldId {
-    return EnclosingScopeLowerer().SlotOf(hir_id);
+  [[nodiscard]] auto RouteEnd(const WalkFrame& frame, Id id) const
+      -> mir::ExprId {
+    return EnclosingScopeLowerer().RouteEnd(frame, id);
   }
 
   [[nodiscard]] auto Resolution() const -> TimeResolution {

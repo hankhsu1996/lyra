@@ -123,22 +123,23 @@ auto MapOrGetRoute(base::Arena<Walk, Id>& table, Walk walk) -> Id {
 }  // namespace
 
 auto UnitLowerer::MapOrGetPropertyCoordinate(
-    ScopeFrameId owner_frame, hir::ClassNameDecl decl)
+    ScopeFrameId owner_frame, hir::PropertyCoordinateRoute route)
     -> hir::PropertyCoordinateId {
   return MapOrGetRoute(
-      RoutesOf(owner_frame).property_coordinates, std::move(decl));
+      RoutesOf(owner_frame).property_coordinates, std::move(route));
 }
 
 auto UnitLowerer::MapOrGetBehaviorCoordinate(
-    ScopeFrameId owner_frame, hir::ClassNameDecl decl)
+    ScopeFrameId owner_frame, hir::BehaviorCoordinateRoute route)
     -> hir::BehaviorCoordinateId {
   return MapOrGetRoute(
-      RoutesOf(owner_frame).behavior_coordinates, std::move(decl));
+      RoutesOf(owner_frame).behavior_coordinates, std::move(route));
 }
 
 auto UnitLowerer::MapOrGetBehaviorBody(
-    ScopeFrameId owner_frame, hir::ClassNameDecl decl) -> hir::BehaviorBodyId {
-  return MapOrGetRoute(RoutesOf(owner_frame).behavior_bodies, std::move(decl));
+    ScopeFrameId owner_frame, hir::BehaviorBodyRoute route)
+    -> hir::BehaviorBodyId {
+  return MapOrGetRoute(RoutesOf(owner_frame).behavior_bodies, std::move(route));
 }
 
 auto UnitLowerer::MakeRoutedMemberRef(

@@ -286,7 +286,7 @@ auto LowerDisableStmt(
             return CancellationTarget(process, frame, *home);
           },
           [&](const hir::RoutedDisableTarget& t) {
-            return process.RoutedRefPointer(frame, t.target);
+            return process.RouteEnd(frame, t.target.id);
           }},
       d.target);
   const mir::ExprId services =

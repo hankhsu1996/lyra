@@ -282,42 +282,62 @@ using ObjectRoute = Route<ScopeLeaf>;
 using CallableRoute = Route<OpaqueCallableLeaf>;
 using DisableTargetRoute = Route<DisableLeaf>;
 
-// A name on a class this artifact cannot name, and where that name lands on it.
-// Such a class is nameable only inside the scope declaring it (LRM 23.9) and is
-// a distinct type per instance of the element declaring it (LRM 6.22), so which
-// class an access reaches is a fact of the instance and never of this artifact:
-// one body serves every instance, and two of them may land on classes with
-// different layouts.
-//
+// A member name on a class this artifact cannot name. Such a class is nameable
+// only inside the scope declaring it (LRM 23.9) and is a distinct type per
+// instance of the element declaring it (LRM 6.22), so which class an access
+// reaches is a fact of the instance and never of this artifact: one body serves
+// every instance, and two of them may land on classes with different layouts.
 // So the class is reached the way everything else past a signature is reached
-// -- by walking to the scope and asking it by name -- and the answer, the
-// position the member name lands on, is what the slot holds. `head` and `steps`
-// are that walk; it ends at the scope rather than at anything the scope holds,
-// which is why it carries no leaf.
-struct ClassNameDecl {
-  RouteHead head;
-  std::vector<PathStep> steps;
+// -- the steps land on the declaring scope, which answers `class_name` with its
+// class, and the class answers where `name` lands.
+struct ClassMemberName {
   std::string class_name;
   std::string name;
 
-  auto operator==(const ClassNameDecl&) const -> bool = default;
+  auto operator==(const ClassMemberName&) const -> bool = default;
 };
 
+// The route ends at where a property name lands: storage among the declaring
+// class's own properties.
+struct PropertyCoordinateLeaf {
+  ClassMemberName member;
+
+  auto operator==(const PropertyCoordinateLeaf&) const -> bool = default;
+};
+
+// The route ends at where a virtual method's name lands: an ordinal among the
+// introducing class's own behaviors, which the object answers at the call.
+struct BehaviorCoordinateLeaf {
+  ClassMemberName member;
+
+  auto operator==(const BehaviorCoordinateLeaf&) const -> bool = default;
+};
+
+// The route ends at the body a non-virtual method's name reaches: what such a
+// call runs is fixed by the class the access names (LRM 8.14), so the body
+// itself is the answer rather than a position something else answers.
+struct BehaviorBodyLeaf {
+  ClassMemberName member;
+
+  auto operator==(const BehaviorBodyLeaf&) const -> bool = default;
+};
+
+using PropertyCoordinateRoute = Route<PropertyCoordinateLeaf>;
+using BehaviorCoordinateRoute = Route<BehaviorCoordinateLeaf>;
+using BehaviorBodyRoute = Route<BehaviorBodyLeaf>;
+
 // Every walk one scope's names take, gathered while its bodies are lowered and
-// handed to the scope whole: a table per use a name is put to, then the names
-// asked of classes this artifact cannot name. Which position a class name's
-// answer counts is the table it sits in: storage among the declaring class's
-// own properties, an ordinal among the introducing class's own behaviors, or
-// -- for a method that answers no dispatch position -- the body itself, since
-// what such a call runs is fixed by the class the access names (LRM 8.14).
+// handed to the scope whole, a table per use a name is put to.
 struct ScopeRoutes {
   base::Arena<ValueRoute, RoutedValueRefId> values;
   base::Arena<ObjectRoute, RoutedObjectRefId> objects;
   base::Arena<CallableRoute, RoutedCallableRefId> callables;
   base::Arena<DisableTargetRoute, RoutedDisableTargetRefId> disable_targets;
-  base::Arena<ClassNameDecl, PropertyCoordinateId> property_coordinates;
-  base::Arena<ClassNameDecl, BehaviorCoordinateId> behavior_coordinates;
-  base::Arena<ClassNameDecl, BehaviorBodyId> behavior_bodies;
+  base::Arena<PropertyCoordinateRoute, PropertyCoordinateId>
+      property_coordinates;
+  base::Arena<BehaviorCoordinateRoute, BehaviorCoordinateId>
+      behavior_coordinates;
+  base::Arena<BehaviorBodyRoute, BehaviorBodyId> behavior_bodies;
 
   auto operator==(const ScopeRoutes&) const -> bool = default;
 };

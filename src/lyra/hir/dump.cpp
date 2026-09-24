@@ -1567,15 +1567,27 @@ class HirDumper {
         leaf);
   }
 
+  static auto FormatMember(const ClassMemberName& m, std::string_view answers)
+      -> std::string {
+    return std::format(
+        R"( . class "{}" . "{}" : {})", m.class_name, m.name, answers);
+  }
+
+  static auto FormatLeaf(const PropertyCoordinateLeaf& leaf) -> std::string {
+    return FormatMember(leaf.member, "property coordinate");
+  }
+
+  static auto FormatLeaf(const BehaviorCoordinateLeaf& leaf) -> std::string {
+    return FormatMember(leaf.member, "behavior coordinate");
+  }
+
+  static auto FormatLeaf(const BehaviorBodyLeaf& leaf) -> std::string {
+    return FormatMember(leaf.member, "behavior body");
+  }
+
   template <typename Leaf>
   static auto FormatRoute(const Route<Leaf>& r) -> std::string {
     return FormatRouteWalk(r.head, r.steps) + FormatLeaf(r.leaf);
-  }
-
-  static auto FormatRoute(const ClassNameDecl& c) -> std::string {
-    return std::format(
-        R"({} class "{}" name "{}")", FormatRouteWalk(c.head, c.steps),
-        c.class_name, c.name);
   }
 
   template <typename Walk, typename Id>

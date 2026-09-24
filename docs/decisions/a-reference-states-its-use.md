@@ -26,6 +26,10 @@ path -- how many scopes out, then which scopes down -- is one shape for every us
 - The object a call is made on ends at the object the steps land on.
 - A subroutine reached by name ends at the entry the scope it reached answers with.
 - A `disable` ends at a block this unit lays out, or at what the scope reached answers for.
+- A member name on a class this unit cannot name ends at where the name lands, and there are three
+  uses by what that answer counts: a property's storage, a virtual method's dispatch position, and a
+  non-virtual method's body (LRM 8.14). Each is a route like the others, walked and kept by the same
+  rule.
 
 A scope holds one table of routes per use, and a port connection holds its routes typed the same
 way: a `ref` port's binding and an interface port's member end at data, and an interface port's

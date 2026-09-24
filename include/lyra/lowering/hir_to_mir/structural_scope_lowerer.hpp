@@ -128,8 +128,8 @@ struct StoredRoute {
   mir::FieldId slot;
 };
 
-// How a HIR routed ref is reached from its reader.
-using RoutedRefReach = std::variant<ClimbedRoute, StoredRoute>;
+// How a route is reached from its reader.
+using RouteReach = std::variant<ClimbedRoute, StoredRoute>;
 
 // Lowers one HIR structural scope into one MIR class, in two passes over the
 // scope tree: the first settles what every scope declares, the second lowers
@@ -266,50 +266,56 @@ class StructuralScopeLowerer {
     return *scope;
   }
 
-  // How each use's routed refs are reached from this scope.
+  // How each of this scope's routes, of every use, is reached from it.
   [[nodiscard]] auto ReachOf(hir::RoutedValueRefId hir_id) const
-      -> const RoutedRefReach& {
+      -> const RouteReach& {
     return value_reaches_.Get(hir_id);
   }
   [[nodiscard]] auto ReachOf(hir::RoutedObjectRefId hir_id) const
-      -> const RoutedRefReach& {
+      -> const RouteReach& {
     return object_reaches_.Get(hir_id);
   }
   [[nodiscard]] auto ReachOf(hir::RoutedCallableRefId hir_id) const
-      -> const RoutedRefReach& {
+      -> const RouteReach& {
     return callable_reaches_.Get(hir_id);
   }
   [[nodiscard]] auto ReachOf(hir::RoutedDisableTargetRefId hir_id) const
-      -> const RoutedRefReach& {
+      -> const RouteReach& {
     return disable_target_reaches_.Get(hir_id);
   }
+  [[nodiscard]] auto ReachOf(hir::PropertyCoordinateId hir_id) const
+      -> const RouteReach& {
+    return property_coordinate_reaches_.Get(hir_id);
+  }
+  [[nodiscard]] auto ReachOf(hir::BehaviorCoordinateId hir_id) const
+      -> const RouteReach& {
+    return behavior_coordinate_reaches_.Get(hir_id);
+  }
+  [[nodiscard]] auto ReachOf(hir::BehaviorBodyId hir_id) const
+      -> const RouteReach& {
+    return behavior_body_reaches_.Get(hir_id);
+  }
 
-  // A borrowed pointer to what a routed ref ends at, as the reader at `frame`
-  // reaches it: the route walked there, or the slot it was kept in. Appends to
-  // `frame.current_block`. A value is read through an endpoint instead, which
-  // also knows what kind of member the route ends at.
-  [[nodiscard]] auto RoutedRefPointer(
-      const WalkFrame& frame, hir::RoutedObjectRef ref) const -> mir::ExprId;
-  [[nodiscard]] auto RoutedRefPointer(
-      const WalkFrame& frame, hir::RoutedCallableRef ref) const -> mir::ExprId;
-  [[nodiscard]] auto RoutedRefPointer(
-      const WalkFrame& frame, hir::RoutedDisableTargetRef ref) const
+  // What a route ends at, as the reader at `frame` reaches it -- a borrowed
+  // pointer to it, or a code address where it ends at an entry: the route
+  // walked there, or the slot it was kept in. Appends to `frame.current_block`.
+  // A value is read through an endpoint instead, which also knows what kind of
+  // member the route ends at.
+  [[nodiscard]] auto RouteEnd(
+      const WalkFrame& frame, hir::RoutedObjectRefId id) const -> mir::ExprId;
+  [[nodiscard]] auto RouteEnd(
+      const WalkFrame& frame, hir::RoutedCallableRefId id) const -> mir::ExprId;
+  [[nodiscard]] auto RouteEnd(
+      const WalkFrame& frame, hir::RoutedDisableTargetRefId id) const
       -> mir::ExprId;
-
-  // Where the answer to one class name lives on this scope. It is filled in the
-  // resolve phase like a stored route and read directly afterwards, so no
-  // access asks a name on the simulation path.
-  [[nodiscard]] auto SlotOf(hir::PropertyCoordinateId hir_id) const
-      -> mir::FieldId {
-    return property_coordinate_targets_.Get(hir_id);
-  }
-  [[nodiscard]] auto SlotOf(hir::BehaviorCoordinateId hir_id) const
-      -> mir::FieldId {
-    return behavior_coordinate_targets_.Get(hir_id);
-  }
-  [[nodiscard]] auto SlotOf(hir::BehaviorBodyId hir_id) const -> mir::FieldId {
-    return behavior_body_targets_.Get(hir_id);
-  }
+  [[nodiscard]] auto RouteEnd(
+      const WalkFrame& frame, hir::PropertyCoordinateId id) const
+      -> mir::ExprId;
+  [[nodiscard]] auto RouteEnd(
+      const WalkFrame& frame, hir::BehaviorCoordinateId id) const
+      -> mir::ExprId;
+  [[nodiscard]] auto RouteEnd(
+      const WalkFrame& frame, hir::BehaviorBodyId id) const -> mir::ExprId;
 
   // The scope `hops` enclosing edges out from this one, in the same
   // compilation unit. A route anchored there resolves each identity it names
@@ -514,16 +520,16 @@ class StructuralScopeLowerer {
   base::Translation<hir::ConcurrentAssertionId, mir::FieldId>
       concurrent_assertion_fields_;
   base::Translation<hir::InterfacePortId, mir::FieldId> interface_port_fields_;
-  base::Translation<hir::RoutedValueRefId, RoutedRefReach> value_reaches_;
-  base::Translation<hir::RoutedObjectRefId, RoutedRefReach> object_reaches_;
-  base::Translation<hir::RoutedCallableRefId, RoutedRefReach> callable_reaches_;
-  base::Translation<hir::RoutedDisableTargetRefId, RoutedRefReach>
+  base::Translation<hir::RoutedValueRefId, RouteReach> value_reaches_;
+  base::Translation<hir::RoutedObjectRefId, RouteReach> object_reaches_;
+  base::Translation<hir::RoutedCallableRefId, RouteReach> callable_reaches_;
+  base::Translation<hir::RoutedDisableTargetRefId, RouteReach>
       disable_target_reaches_;
-  base::Translation<hir::PropertyCoordinateId, mir::FieldId>
-      property_coordinate_targets_;
-  base::Translation<hir::BehaviorCoordinateId, mir::FieldId>
-      behavior_coordinate_targets_;
-  base::Translation<hir::BehaviorBodyId, mir::FieldId> behavior_body_targets_;
+  base::Translation<hir::PropertyCoordinateId, RouteReach>
+      property_coordinate_reaches_;
+  base::Translation<hir::BehaviorCoordinateId, RouteReach>
+      behavior_coordinate_reaches_;
+  base::Translation<hir::BehaviorBodyId, RouteReach> behavior_body_reaches_;
   base::Translation<hir::GenerateId, GenerateBindings> generate_bindings_;
   base::Translation<hir::InstanceMemberId, mir::FieldId>
       instance_member_fields_;
@@ -583,8 +589,7 @@ auto BuildClassPropertyAccess(
   }
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Block& block = *frame.current_block;
-  const mir::ExprId coordinate = block.exprs.Add(BuildStructuralFieldAccessExpr(
-      frame, unit, mir::EnclosingHops{0}, lowerer.SlotOf(settled->coordinate)));
+  const mir::ExprId coordinate = lowerer.RouteEnd(frame, settled->coordinate);
   const mir::ExprId address = block.exprs.Add(
       mir::Expr{
           .data =

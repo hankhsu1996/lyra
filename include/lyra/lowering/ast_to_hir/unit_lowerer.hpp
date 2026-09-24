@@ -793,17 +793,18 @@ class UnitLowerer {
   auto RoutesOf(ScopeFrameId owner_frame) -> hir::ScopeRoutes&;
   auto TakeRoutesForFrame(ScopeFrameId owner_frame) -> hir::ScopeRoutes;
 
-  // The same, for where a name lands on a class this unit cannot name. Two
-  // accesses that walk to the same scope and ask it for the same name on the
-  // same class are one slot, for the reason two references over one route are
-  // one endpoint.
+  // The id of a route to a member name on a class this unit cannot name, in
+  // the table of the use it is put to. Two accesses that walk to the same scope
+  // and ask it for the same name on the same class are one slot, for the reason
+  // two references over one route are one endpoint.
   auto MapOrGetPropertyCoordinate(
-      ScopeFrameId owner_frame, hir::ClassNameDecl decl)
+      ScopeFrameId owner_frame, hir::PropertyCoordinateRoute route)
       -> hir::PropertyCoordinateId;
   auto MapOrGetBehaviorCoordinate(
-      ScopeFrameId owner_frame, hir::ClassNameDecl decl)
+      ScopeFrameId owner_frame, hir::BehaviorCoordinateRoute route)
       -> hir::BehaviorCoordinateId;
-  auto MapOrGetBehaviorBody(ScopeFrameId owner_frame, hir::ClassNameDecl decl)
+  auto MapOrGetBehaviorBody(
+      ScopeFrameId owner_frame, hir::BehaviorBodyRoute route)
       -> hir::BehaviorBodyId;
 
   // The compilation-unit declaration pass (LRM 23.6 / 23.9 / 27): before any
