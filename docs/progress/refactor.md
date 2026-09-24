@@ -328,9 +328,9 @@ enough to warrant its own focused review.
 - [x] R25 -- **Closed: both carve-outs resolved.** The two value-query families this entry set aside
       as not fitting the generic `(receiver).name(args)` member-call rule are both settled. An
       enumerated type's methods (`first` / `last` / `num`, no receiver) are answered from the
-      enumeration's own declared members rather than by a runtime entry, so the call the source
-      wrote reaches a body the lowering synthesizes for that enumeration. `$isunknown` needs no
-      special type-associated or constant-fold path: it is the generic instance built-in call
+      enumeration's own declared members, so the call the source wrote reaches a question put to the
+      member list the unit states for that enumeration. `$isunknown` needs no special
+      type-associated or constant-fold path: it is the generic instance built-in call
       `(x).IsUnknown()` returning the SV `bit` type (1-bit `PackedArray`, LRM 20.9), now wired end
       to end -- recognized at AST-to-HIR by `KnownSystemName::IsUnknown`, lowered through the
       context-free call family in both procedural and continuous-assign positions
@@ -1529,7 +1529,10 @@ enough to warrant its own focused review.
       value of it, so a design that prints nothing still carries one per aggregate, container and
       enumeration it declares. Measured on a 47-unit RISC-V core: 337 such bodies, and the sites ask
       for none of them, because that design writes no assignment-pattern conversion and no
-      enumeration method anywhere.
+      enumeration method anywhere. That count includes three bodies per enumeration that no longer
+      exist -- an enumeration's methods are now questions put to a member list the unit states as
+      data -- so what is left per enumeration is its assignment-pattern text; re-count before
+      quoting a number.
 
       What makes this decidable where a general dead-code pass is not: a unit callable that no
       identifier answers to is exactly one no other unit can name, so reachability from the unit's
@@ -2408,8 +2411,6 @@ enough to warrant its own focused review.
       Target: a run builds what it measures, a case that fails names why, and each result is kept as
       it arrives. Not blocked.
 
-<<<<<<< HEAD
-
 - [ ] R141 -- A unit-definition record is stated in MIR for the one backend that may not realize it.
       A scope's runtime definition reaches the C++ backend as a constant MIR holds, built at
       HIR-to-MIR out of runtime-library record types; it reaches the execution backend as something
@@ -2496,6 +2497,20 @@ enough to warrant its own focused review.
       the class that declares the member, and an assignment's two sides. Not blocked. A rule should
       state what a shape means rather than how it is spelled today, since the check reads every
       shape the middle form has and meets whatever reshapes one.
+
+- [ ] R145 -- The execution backend passes a runtime entry's span by value as two words placed one
+      at a time, which agrees with the host's C ABI only while two integer argument registers are
+      free for it: the ABI places a struct that no longer fits the remaining registers wholly on the
+      stack, and the generated call puts its first word in the last register and its second on the
+      stack. An entry that took a pointer and three spans read its third span's length from nowhere
+      and failed its first allocation. The policy check on the runtime ABI now refuses any prototype
+      whose span lands past the sixth integer register, so the mistake cannot be written, but the
+      limit it enforces is this backend's and not the library's: an entry that genuinely wants more
+      spans is reshaped to fit.
+
+      Target: the generated call passes an aggregate the way the host ABI classifies it, which is
+      what clang's own argument lowering does (a struct that does not fit is passed in memory, by
+      value, as the callee expects), and the policy rule goes with the limit. Not blocked.
 
 ## Out of Scope
 

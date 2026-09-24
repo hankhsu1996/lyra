@@ -86,8 +86,9 @@ LRM defines for it.
 An enum has no row: an enum value is not a distinct runtime type but a `PackedArray` at its base
 integral shape (`enum-representation.md`; `integral-representation.md` invariant 1 -- one C++ class
 for every integral, and slang models `EnumType` as an `IntegralType`). Its nominal content (member
-table, base) is consumed at HIR-to-MIR -- `first/last/num` fold to constants and `name/next/prev` to
-synthesized per-enum callables -- so nothing in the value-concept lattice is enum-specific.
+list, base) is consumed at HIR-to-MIR -- `first/last/num` fold to constants and `name/next/prev`
+become questions put to the member list the unit states -- so nothing in the value-concept lattice
+is enum-specific.
 
 `Real`'s row is the load-bearing case: LRM Table 11-1 excludes `real` / `shortreal` from `===` /
 `!==`, and the backend follows that strictly -- `Real` does not satisfy `CaseEqualComparable` and

@@ -72,6 +72,8 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "packed range";
     case RuntimeLibraryKind::kUnpackedRange:
       return "unpacked range";
+    case RuntimeLibraryKind::kEnumeration:
+      return "enumeration";
     case RuntimeLibraryKind::kPrintItem:
       return "print item";
     case RuntimeLibraryKind::kPrintLiteralItem:
@@ -147,13 +149,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             CombineMembers(seed, t.members);
           },
           [&](const PackedArrayType& t) { Combine(seed, t); },
-          [&](const EnumType& t) {
-            Combine(seed, t.base);
-            for (const EnumMember& member : t.members) {
-              Combine(seed, member.name);
-              Combine(seed, static_cast<std::uint64_t>(member.value));
-            }
-          },
           [&](const UnpackedArrayType& t) {
             Combine(seed, t.element_type);
             Combine(seed, t.size);
@@ -238,7 +233,6 @@ auto Type::KindName() const -> std::string_view {
   return Visit(
       Overloaded{
           [](const PackedArrayType&) { return "packed array"; },
-          [](const EnumType&) { return "enumeration"; },
           [](const PackedStructType&) { return "packed structure"; },
           [](const PackedUnionType&) { return "packed union"; },
           [](const UnpackedArrayType&) { return "unpacked array"; },
@@ -307,7 +301,6 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           // What a declaration gave it is a name for the type, which is not a
           // declaration anything is reached through.
           [&](const PackedArrayType&) { return names_none(); },
-          [&](const EnumType&) { return names_none(); },
           [&](const PackedStructType&) { return names_none(); },
           [&](const PackedUnionType&) { return names_none(); },
           [&](const UnpackedArrayType&) { return names_none(); },
@@ -416,7 +409,7 @@ auto MemberTypes(const std::vector<AggregateMember>& members)
 }
 
 auto Type::IsIntegralPacked() const -> bool {
-  return Is<PackedArrayType>() || Is<EnumType>() || Is<PackedStructType>() ||
+  return Is<PackedArrayType>() || Is<PackedStructType>() ||
          Is<PackedUnionType>();
 }
 
@@ -461,9 +454,6 @@ auto Type::MachineIntegerSignedness() const -> std::optional<Signedness> {
 auto Type::PackedShape() const -> const PackedArrayType& {
   if (const auto* packed = As<PackedArrayType>()) {
     return *packed;
-  }
-  if (const auto* enumeration = As<EnumType>()) {
-    return enumeration->base;
   }
   if (const auto* packed_struct = As<PackedStructType>()) {
     return packed_struct->base;

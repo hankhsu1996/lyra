@@ -34,14 +34,17 @@ integral -> enum requires an explicit cast.
 
 - [x] E1 -- Declarations, member references, comparisons, arithmetic, and conversions, including the
       explicit base type form and the `first` / `last` / `num` / `num_auto_values` methods.
-- [x] E2 -- `next` / `prev` methods with optional step argument (LRM 6.19.5.3 / 6.19.5.4).
-      Non-member receivers fall back to a zero default; the LRM Table 6-7 4-state `'x` behaviour
-      belongs to default initialization.
+- [x] E2 -- `next` / `prev` methods with optional step argument (LRM 6.19.5.3 / 6.19.5.4), any step
+      an `int unsigned` holds. A non-member receiver gets the base type's default (LRM Table 6-7):
+      zero over a 2-state base, all x over a 4-state one.
 - [x] E3 -- `name()` method (LRM 6.19.5.6); empty string for non-member values.
 - [x] E4 -- `name` / `next` / `prev` answer wherever the language lets them be written, including
       where nothing encloses the code that asks: a package subroutine's body and the
-      compilation-unit scope. What a type's own declaration decides is computed by a function taking
-      the value and no object, so a namespace has nothing to supply and nothing to refuse.
+      compilation-unit scope. They are asked of the member list the enumeration declares, which
+      takes no object, so a namespace has nothing to supply and nothing to refuse.
+- [x] E5 -- A member is its whole value (LRM 6.19): every method, and whether `$cast` may assign a
+      value, answers correctly for a member holding x or z bits and for a base wider than 64 bits.
+      What an enumeration costs to build does not grow with its member count beyond the list itself.
 
 ### Cross-references
 

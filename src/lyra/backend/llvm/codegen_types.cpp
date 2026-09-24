@@ -66,7 +66,6 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           // so generated code never holds the object's shape and would have
           // nothing to do with it if it did.
           [&](const lir::PackedArrayType& t) { return address(t); },
-          [&](const lir::EnumType& t) { return address(t); },
           [&](const lir::PackedStructType& t) { return address(t); },
           [&](const lir::PackedUnionType& t) { return address(t); },
           [&](const lir::UnpackedArrayType& t) { return address(t); },

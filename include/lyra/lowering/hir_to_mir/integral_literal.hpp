@@ -20,6 +20,14 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, std::int64_t value)
     -> mir::ExprId;
 
+// The bits of `value` in the form a value of `shape` holds them: one word per
+// 64 bits of its width with the bits above it cleared, and no unknown plane
+// unless the shape has one. Two spellings of one value come out as the same
+// words, and a consumer never reads bits the type does not have.
+[[nodiscard]] auto CanonicalIntegralConstant(
+    const mir::PackedArrayType& shape, const mir::IntegralConstant& value)
+    -> mir::IntegralConstant;
+
 // An integral constant at `type`: the unit holds it once, among the constants
 // it was written with, and an occurrence names that entry. The bits are brought
 // to the canonical form the pool keys on first, so two spellings of one value

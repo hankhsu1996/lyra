@@ -148,6 +148,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_unpacked_range";
     case RuntimeOp::kMakePackedType:
       return "make_packed_type";
+    case RuntimeOp::kMakeEnumeration:
+      return "make_enumeration";
     case RuntimeOp::kMakePrintLiteralItem:
       return "make_print_literal_item";
     case RuntimeOp::kMakePrintValueItem:
@@ -187,13 +189,9 @@ auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
           [](const lir::PackedArrayType&) -> Domain {
             return support::ValueDomain::kPacked;
           },
-          // An enumeration and a packed aggregate are packed values at
-          // runtime: each is one vector under a set of names, and a name is
-          // not something a value carries, so neither takes a domain of its
-          // own.
-          [](const lir::EnumType&) -> Domain {
-            return support::ValueDomain::kPacked;
-          },
+          // A packed aggregate is a packed value at runtime: one vector under a
+          // set of names, and a name is not something a value carries, so it
+          // takes no domain of its own.
           [](const lir::PackedStructType&) -> Domain {
             return support::ValueDomain::kPacked;
           },
@@ -453,6 +451,7 @@ auto MemberStorageKindOf(
               // nothing here names a part of it.
               case lir::RuntimeLibraryKind::kPackedType:
               case lir::RuntimeLibraryKind::kUnpackedRange:
+              case lir::RuntimeLibraryKind::kEnumeration:
               // A coordinate is settled once for the whole run and read by
               // every access afterwards, so a member naming one points at
               // storage that outlives it rather than owning a copy.
@@ -506,7 +505,6 @@ auto MemberStorageKindOf(
           [&](const lir::ManagedRefType& t) { return value_of(t); },
           [&](const lir::ChandleType& t) { return value_of(t); },
           [&](const lir::PackedArrayType& t) { return value_of(t); },
-          [&](const lir::EnumType& t) { return value_of(t); },
           [&](const lir::PackedStructType& t) { return value_of(t); },
           [&](const lir::PackedUnionType& t) { return value_of(t); },
           [&](const lir::UnpackedArrayType& t) { return value_of(t); },
@@ -992,6 +990,13 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kBehaviorAt:
     case support::BuiltinFn::kObjectOf:
     case support::BuiltinFn::kObjectIsOfClass:
+    // What an enumeration's member list answers about a value. One routine
+    // serves every enumeration, because the list is the receiver and every
+    // member is a packed value.
+    case support::BuiltinFn::kEnumerationHas:
+    case support::BuiltinFn::kEnumerationName:
+    case support::BuiltinFn::kEnumerationNext:
+    case support::BuiltinFn::kEnumerationPrev:
     case support::BuiltinFn::kForkWaitAll:
     case support::BuiltinFn::kForkWaitFirst:
     case support::BuiltinFn::kSpawnAll:

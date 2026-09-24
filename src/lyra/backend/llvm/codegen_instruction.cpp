@@ -1757,6 +1757,8 @@ auto CodeGenFunction::ConstructionOf(
                 return entry(RuntimeSymbol(RuntimeOp::kMakeUnpackedRange));
               case lir::RuntimeLibraryKind::kPackedType:
                 return entry(RuntimeSymbol(RuntimeOp::kMakePackedType));
+              case lir::RuntimeLibraryKind::kEnumeration:
+                return entry(RuntimeSymbol(RuntimeOp::kMakeEnumeration));
               // What a value formats as is the value's own answer, so both of
               // these are named by the representation of what they are built
               // over. Each borrows that value rather than copying it, which
@@ -1881,9 +1883,6 @@ auto CodeGenFunction::ConstructionOf(
           // A value that is a vector of bits, or a host scalar standing beside
           // one.
           [&](const lir::PackedArrayType&) -> diag::Result<Construction> {
-            return no_construct();
-          },
-          [&](const lir::EnumType&) -> diag::Result<Construction> {
             return no_construct();
           },
           [&](const lir::PackedStructType&) -> diag::Result<Construction> {

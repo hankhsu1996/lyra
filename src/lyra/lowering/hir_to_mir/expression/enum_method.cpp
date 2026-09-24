@@ -1,9 +1,7 @@
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -11,286 +9,41 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
-#include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
-#include "lyra/mir/binary_op.hpp"
-#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/local.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// LRM 6.19.5.3 / 6.19.5.4: `next` and `prev` are one traversal of the member
-// order taken in either direction, so they share one callable and differ only
-// in the sign of the step it is given.
-enum class StepDirection : std::uint8_t { kForward, kBackward };
-
-// An enum member value, materialized as a 2-state-known constant at the enum's
-// base packed shape. Enum member values are compile-time constants (LRM 6.19),
-// so a 4-state base still carries an all-known (zero) state plane.
-auto MemberValueConstant(const mir::PackedArrayType& base, std::int64_t v)
-    -> mir::IntegralConstant {
-  const auto width = static_cast<std::uint32_t>(base.BitWidth());
-  const bool four_state = base.state_kind == mir::IntegralStateKind::kFourState;
-  const std::size_t word_count = (width + 63U) / 64U;
-  mir::IntegralConstant c{
-      .value_words = std::vector<std::uint64_t>(word_count, 0U),
-      .state_words = four_state ? std::vector<std::uint64_t>(word_count, 0U)
-                                : std::vector<std::uint64_t>{},
-  };
-  const std::uint64_t high_word =
-      (base.signedness == mir::Signedness::kSigned && v < 0) ? ~std::uint64_t{0}
-                                                             : 0U;
-  for (std::size_t i = 0; i < word_count; ++i) {
-    c.value_words[i] = (i == 0) ? static_cast<std::uint64_t>(v) : high_word;
-  }
-  const std::uint32_t top_bits = width % 64U;
-  if (top_bits != 0U && !c.value_words.empty()) {
-    const std::uint64_t mask = (std::uint64_t{1} << top_bits) - 1U;
-    c.value_words.back() &= mask;
-  }
-  return c;
+// A question put to an enumeration's member list about a value, and any
+// operand the question takes after it.
+auto AskMembers(
+    UnitLowerer& unit_lowerer, mir::Block& block, support::BuiltinFn question,
+    hir::TypeId enum_type, std::vector<mir::ExprId> operands,
+    mir::TypeId answer_type) -> mir::Expr {
+  const mir::ExprId members = mir::BuildEnumerationDescriptorRef(
+      unit_lowerer.Unit(), block, unit_lowerer.TranslateType(enum_type));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = question, .receiver = members},
+              .arguments = std::move(operands)},
+      .type = answer_type};
 }
 
-// A member-value literal typed as the enum itself (the value's runtime carrier
-// is the base packed shape).
-auto MemberLiteral(
-    const mir::CompilationUnit& unit, mir::Block& body, mir::TypeId enum_ty,
-    const mir::PackedArrayType& base, std::int64_t v) -> mir::ExprId {
-  return BuildIntegralLiteral(
-      unit, body, enum_ty, MemberValueConstant(base, v));
-}
-
-// The enum's default value (LRM Table 6-7) typed as the enum: all-X for a
-// 4-state base, 0 for 2-state.
-auto DefaultLiteral(
-    const mir::CompilationUnit& unit, mir::Block& body, mir::TypeId enum_ty,
-    const mir::PackedArrayType& base) -> mir::ExprId {
-  return BuildIntegralLiteral(
-      unit, body, enum_ty, DefaultIntegralConstant(base));
-}
-
-auto Binary(
-    mir::Block& body, mir::BinaryOp op, mir::ExprId lhs, mir::ExprId rhs,
-    mir::TypeId type) -> mir::ExprId {
-  return body.exprs.Add(
-      mir::Expr{
-          .data = mir::BinaryExpr{.op = op, .lhs = lhs, .rhs = rhs},
-          .type = type});
-}
-
-// A conditional expression whose condition is reduced to the predicate a branch
-// tests. Every condition below is an ordinary value expression, so the
-// reduction belongs to building the conditional rather than to each condition
-// in turn.
-auto Cond(
-    const mir::CompilationUnit& unit, mir::Block& body, mir::ExprId c,
-    mir::ExprId t, mir::ExprId e, mir::TypeId type) -> mir::ExprId {
-  return body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::ConditionalExpr{
-                  .condition = ReduceToCondition(unit, body, c),
-                  .then_value = t,
-                  .else_value = e},
-          .type = type});
-}
-
-// LRM 11.4.5 `===`: a method-style operator, so it is a `CaseEqual` builtin
-// call (a bit-exact match yielding a definite 0/1 even for an X/Z operand),
-// never a native binary token.
-auto CaseEq(
-    mir::Block& body, mir::ExprId lhs, mir::ExprId rhs, mir::TypeId bit_ty)
-    -> mir::ExprId {
-  return body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kCaseEqual,
-                          .receiver = lhs},
-                  .arguments = {rhs}},
-          .type = bit_ty});
-}
-
-// A `value::String` value from a software literal (LRM 6.16). A bare
-// `StringLiteral` renders as a C string; the `value::String` constructor call
-// wrapping it is what yields a `String` value in an expression position.
-auto StringValue(mir::Block& body, mir::TypeId str_ty, std::string text)
-    -> mir::ExprId {
-  const mir::ExprId raw = body.exprs.Add(
-      mir::Expr{
-          .data = mir::StringLiteral{.value = std::move(text)},
-          .type = str_ty});
-  return body.exprs.Add(
-      mir::Expr{
-          .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {raw}},
-          .type = str_ty});
-}
-
-// LRM 6.19.5.5 `name`: a static function `(value) -> String` whose body is a
-// case-equality chain over the member table, returning "" for a non-member (or
-// X/Z) value.
-auto SynthesizeEnumNameCallable(
-    mir::CompilationUnit& unit, mir::TypeId enum_ty,
-    const mir::PackedArrayType& base,
-    const std::vector<mir::EnumMember>& members) -> mir::CallableCode {
-  const mir::TypeId str_ty = unit.builtins.string;
-  const mir::TypeId bit_ty = unit.builtins.bit1;
-
-  mir::CallableCode code = mir::CallableCode::Defined();
-  const mir::LocalId value_id = code.AddLocal(enum_ty);
-  code.params = {value_id};
-  code.result_type = str_ty;
-
-  mir::Block& body = code.Body();
-  mir::ExprId acc = StringValue(body, str_ty, std::string{});
-  for (std::size_t i = members.size(); i-- > 0;) {
-    const mir::ExprId val_ref =
-        body.exprs.Add(mir::MakeLocalRefExpr(value_id, enum_ty));
-    const mir::ExprId member_lit =
-        MemberLiteral(unit, body, enum_ty, base, members[i].value);
-    const mir::ExprId cond = CaseEq(body, val_ref, member_lit, bit_ty);
-    const mir::ExprId name_lit = StringValue(body, str_ty, members[i].name);
-    acc = Cond(unit, body, cond, name_lit, acc, str_ty);
-  }
-  body.AppendStmt(mir::ReturnStmt{.value = acc});
-  return code;
-}
-
-// LRM 6.24.2: a static function `(value) -> bit` whose body is a case-equality
-// chain over the member table, answering 1 for a value the enumeration declares
-// and 0 for every other (X/Z included). LRM 6.19.5.6 requires the empty string
-// where a value is not a member, so this is the walk the name reading already
-// has to make, over the same set, answered as the question it is.
-auto SynthesizeEnumMembershipCallable(
-    mir::CompilationUnit& unit, mir::TypeId enum_ty,
-    const mir::PackedArrayType& base,
-    const std::vector<mir::EnumMember>& members) -> mir::CallableCode {
-  const mir::TypeId bit_ty = unit.builtins.bit1;
-
-  mir::CallableCode code = mir::CallableCode::Defined();
-  const mir::LocalId value_id = code.AddLocal(enum_ty);
-  code.params = {value_id};
-  code.result_type = bit_ty;
-
-  mir::Block& body = code.Body();
-  mir::ExprId acc = BuildBit1Literal(unit, body, false);
-  for (std::size_t i = members.size(); i-- > 0;) {
-    const mir::ExprId val_ref =
-        body.exprs.Add(mir::MakeLocalRefExpr(value_id, enum_ty));
-    const mir::ExprId member_lit =
-        MemberLiteral(unit, body, enum_ty, base, members[i].value);
-    const mir::ExprId cond = CaseEq(body, val_ref, member_lit, bit_ty);
-    acc =
-        Cond(unit, body, cond, BuildBit1Literal(unit, body, true), acc, bit_ty);
-  }
-  body.AppendStmt(mir::ReturnStmt{.value = acc});
-  return code;
-}
-
-// LRM 6.19.5.3/4 `next` / `prev`: a static function `(value, step) -> enum`
-// that steps `step` members from `value` (negative `step` is `prev`), wrapping
-// over the member order; a non-member (or X/Z) value returns the enum default
-// (Table 6-7). `next(k)` calls this with `+k`, `prev(k)` with `-k`.
-auto SynthesizeEnumStepCallable(
-    mir::CompilationUnit& unit, mir::TypeId enum_ty,
-    const mir::PackedArrayType& base,
-    const std::vector<mir::EnumMember>& members) -> mir::CallableCode {
-  const mir::TypeId int_ty = unit.builtins.int_type;
-  const mir::TypeId bit_ty = unit.builtins.bit1;
-  const auto n = static_cast<std::int64_t>(members.size());
-
-  mir::CallableCode code = mir::CallableCode::Defined();
-  const mir::LocalId value_id = code.AddLocal(enum_ty);
-  const mir::LocalId step_id = code.AddLocal(int_ty);
-  code.params = {value_id, step_id};
-  code.result_type = enum_ty;
-  const mir::LocalId idx_id = code.AddLocal(int_ty);
-  const mir::LocalId newidx_id = code.AddLocal(int_ty);
-
-  mir::Block& body = code.Body();
-
-  // idx = index-of(value): (value === v_i) ? i : ... : -1
-  mir::ExprId idx_chain = BuildIntLiteral(unit, body, -1);
-  for (std::size_t i = members.size(); i-- > 0;) {
-    const mir::ExprId val_ref =
-        body.exprs.Add(mir::MakeLocalRefExpr(value_id, enum_ty));
-    const mir::ExprId member_lit =
-        MemberLiteral(unit, body, enum_ty, base, members[i].value);
-    const mir::ExprId cond = CaseEq(body, val_ref, member_lit, bit_ty);
-    idx_chain = Cond(
-        unit, body, cond,
-        BuildIntLiteral(unit, body, static_cast<std::int64_t>(i)), idx_chain,
-        int_ty);
-  }
-  body.AppendStmt(mir::LocalDeclStmt{.target = idx_id, .init = idx_chain});
-
-  // newidx = ((idx + step) % n + n) % n
-  const mir::ExprId idx_ref =
-      body.exprs.Add(mir::MakeLocalRefExpr(idx_id, int_ty));
-  const mir::ExprId step_ref =
-      body.exprs.Add(mir::MakeLocalRefExpr(step_id, int_ty));
-  const mir::ExprId sum =
-      Binary(body, mir::BinaryOp::kAdd, idx_ref, step_ref, int_ty);
-  const mir::ExprId mod1 = Binary(
-      body, mir::BinaryOp::kMod, sum, BuildIntLiteral(unit, body, n), int_ty);
-  const mir::ExprId biased = Binary(
-      body, mir::BinaryOp::kAdd, mod1, BuildIntLiteral(unit, body, n), int_ty);
-  const mir::ExprId newidx = Binary(
-      body, mir::BinaryOp::kMod, biased, BuildIntLiteral(unit, body, n),
-      int_ty);
-  body.AppendStmt(mir::LocalDeclStmt{.target = newidx_id, .init = newidx});
-
-  // member-at(newidx): (newidx == i) ? v_i : ... : default
-  mir::ExprId member_chain = DefaultLiteral(unit, body, enum_ty, base);
-  for (std::size_t i = members.size(); i-- > 0;) {
-    const mir::ExprId newidx_ref =
-        body.exprs.Add(mir::MakeLocalRefExpr(newidx_id, int_ty));
-    const mir::ExprId cond = Binary(
-        body, mir::BinaryOp::kEquality, newidx_ref,
-        BuildIntLiteral(unit, body, static_cast<std::int64_t>(i)), bit_ty);
-    member_chain = Cond(
-        unit, body, cond,
-        MemberLiteral(unit, body, enum_ty, base, members[i].value),
-        member_chain, enum_ty);
-  }
-
-  // return (idx < 0) ? default : member-at(newidx)
-  const mir::ExprId idx_ref2 =
-      body.exprs.Add(mir::MakeLocalRefExpr(idx_id, int_ty));
-  const mir::ExprId not_member = Binary(
-      body, mir::BinaryOp::kLessThan, idx_ref2, BuildIntLiteral(unit, body, 0),
-      bit_ty);
-  const mir::ExprId default_val = DefaultLiteral(unit, body, enum_ty, base);
-  const mir::ExprId result =
-      Cond(unit, body, not_member, default_val, member_chain, enum_ty);
-  body.AppendStmt(mir::ReturnStmt{.value = result});
-  return code;
-}
-
-// The projection and member table an enumeration's readings are built over.
-// Both are copied out because lowering any expression afterwards may intern a
-// type and invalidate a reference into the pool.
-struct EnumerationShape {
-  mir::TypeId type;
-  mir::PackedArrayType base;
-  std::vector<mir::EnumMember> members;
-};
-
-auto ShapeOf(UnitLowerer& unit_lowerer, hir::TypeId enum_type)
-    -> EnumerationShape {
+// The member list an enumeration declares. It lives in the type pool, which
+// interning a type grows, so a caller takes what it needs out of it before
+// building anything.
+auto MembersOf(UnitLowerer& unit_lowerer, hir::TypeId enum_type)
+    -> const std::vector<mir::EnumMember>& {
   const mir::TypeId type = unit_lowerer.TranslateType(enum_type);
   const auto& enumeration =
       unit_lowerer.Unit().types.Get(type).Get<mir::EnumType>();
@@ -299,140 +52,64 @@ auto ShapeOf(UnitLowerer& unit_lowerer, hir::TypeId enum_type)
         "an enumeration reached lowering with no members -- please report this "
         "as a bug");
   }
-  return EnumerationShape{
-      .type = type, .base = enumeration.base, .members = enumeration.members};
+  return enumeration.members;
 }
 
-// The enumeration the called method belongs to, and the operand that bore it:
-// for an instance call that operand is the value the method is applied to, for
-// a type-static one a bearer the source names the enumeration through.
-struct OwningEnum {
-  hir::ExprId bearer;
-  // The enumeration as the source declared it, which is what decides the
-  // answer -- a lowering below the front end has already folded away the
-  // distinctions the clause is stated over.
-  hir::TypeId declared_type;
-  EnumerationShape shape;
-};
-
-template <ExprLowerer Lowerer>
-auto ResolveOwningEnum(Lowerer& lowerer, const hir::CallExpr& c) -> OwningEnum {
+// The operand bearing the enumeration the called method belongs to: for an
+// instance call it is the value the method is applied to, for a type-static one
+// a bearer the source names the enumeration through.
+auto BearerOf(const hir::CallExpr& c) -> hir::ExprId {
   if (c.arguments.empty() || !c.arguments.front().has_value()) {
     throw InternalError(
         "an enumerated type method reached lowering without the argument "
         "bearing its enumeration -- please report this as a bug");
   }
-  const hir::ExprId bearer = *c.arguments.front();
-  const hir::TypeId declared_type = lowerer.HirExprs().Get(bearer).type;
-  return OwningEnum{
-      .bearer = bearer,
-      .declared_type = declared_type,
-      .shape = ShapeOf(lowerer.Owner(), declared_type)};
+  return *c.arguments.front();
 }
 
-// LRM 6.19.5.3 `next` and 6.19.5.4 `prev`, whose step count the source may
-// omit and which then moves by one.
+// LRM 6.19.5.3 `next` and 6.19.5.4 `prev`: the value, and how many members to
+// step, which the source may omit and which then moves by one.
 template <ExprLowerer Lowerer>
 auto LowerStepCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
-    const OwningEnum& enumeration, StepDirection direction,
+    hir::ExprId bearer, hir::TypeId enum_type, support::BuiltinFn question,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto value_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(enumeration.bearer), frame);
+  auto value_or = lowerer.LowerExpr(lowerer.HirExprs().Get(bearer), frame);
   if (!value_or) return std::unexpected(std::move(value_or.error()));
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId value = block.exprs.Add(*std::move(value_or));
 
-  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  auto& block = *frame.current_block;
-  const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
-  const mir::UnitCallableTarget target = lowerer.Owner().TypeOwnedReadingOf(
-      TypeOwnedReadingKey{
-          .reading = TypeOwnedReading::kEnumerationStep,
-          .type = enumeration.declared_type});
-
-  const mir::TypeId int_ty = unit.builtins.int_type;
-  const bool backward = direction == StepDirection::kBackward;
-  mir::ExprId step_id{};
+  mir::ExprId count{};
   if (const std::optional<hir::ExprId> step = OptionalOperand(c, 1)) {
-    auto step_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*step), frame);
-    if (!step_or) return std::unexpected(std::move(step_or.error()));
-    const mir::ExprId raw = block.exprs.Add(*std::move(step_or));
-    if (backward) {
-      const mir::ExprId zero = BuildIntLiteral(unit, block, 0);
-      step_id = block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::BinaryExpr{
-                      .op = mir::BinaryOp::kSub, .lhs = zero, .rhs = raw},
-              .type = int_ty});
-    } else {
-      step_id = raw;
-    }
+    auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*step), frame);
+    if (!count_or) return std::unexpected(std::move(count_or.error()));
+    count = block.exprs.Add(*std::move(count_or));
   } else {
-    step_id = BuildIntLiteral(unit, block, backward ? -1 : 1);
+    const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+    count = BuildIntegralLiteral(
+        unit, block, unit.builtins.int_unsigned,
+        mir::IntegralConstant{.value_words = {1U}, .state_words = {}});
   }
-
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = target},
-              .arguments = {value_id, step_id}},
-      .type = result_type};
+  return AskMembers(
+      lowerer.Owner(), block, question, enum_type, {value, count}, result_type);
 }
 
 }  // namespace
 
 auto BuildEnumNameCallExpr(
-    UnitLowerer& unit_lowerer, mir::ExprId value_id, hir::TypeId enum_type)
-    -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = unit_lowerer.TypeOwnedReadingOf(
-                          TypeOwnedReadingKey{
-                              .reading = TypeOwnedReading::kEnumerationName,
-                              .type = enum_type})},
-              .arguments = {value_id}},
-      .type = unit_lowerer.Unit().builtins.string};
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId value_id,
+    hir::TypeId enum_type) -> mir::Expr {
+  return AskMembers(
+      unit_lowerer, block, support::BuiltinFn::kEnumerationName, enum_type,
+      {value_id}, unit_lowerer.Unit().builtins.string);
 }
 
 auto BuildEnumMembershipCallExpr(
-    UnitLowerer& unit_lowerer, mir::ExprId value_id, hir::TypeId enum_type)
-    -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = unit_lowerer.TypeOwnedReadingOf(
-                          TypeOwnedReadingKey{
-                              .reading =
-                                  TypeOwnedReading::kEnumerationMembership,
-                              .type = enum_type})},
-              .arguments = {value_id}},
-      .type = unit_lowerer.Unit().builtins.bit1};
-}
-
-auto BuildEnumerationNameCode(UnitLowerer& unit_lowerer, hir::TypeId enum_type)
-    -> mir::CallableCode {
-  const EnumerationShape shape = ShapeOf(unit_lowerer, enum_type);
-  return SynthesizeEnumNameCallable(
-      unit_lowerer.Unit(), shape.type, shape.base, shape.members);
-}
-
-auto BuildEnumerationStepCode(UnitLowerer& unit_lowerer, hir::TypeId enum_type)
-    -> mir::CallableCode {
-  const EnumerationShape shape = ShapeOf(unit_lowerer, enum_type);
-  return SynthesizeEnumStepCallable(
-      unit_lowerer.Unit(), shape.type, shape.base, shape.members);
-}
-
-auto BuildEnumerationMembershipCode(
-    UnitLowerer& unit_lowerer, hir::TypeId enum_type) -> mir::CallableCode {
-  const EnumerationShape shape = ShapeOf(unit_lowerer, enum_type);
-  return SynthesizeEnumMembershipCallable(
-      unit_lowerer.Unit(), shape.type, shape.base, shape.members);
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId value_id,
+    hir::TypeId enum_type) -> mir::Expr {
+  return AskMembers(
+      unit_lowerer, block, support::BuiltinFn::kEnumerationHas, enum_type,
+      {value_id}, unit_lowerer.Unit().builtins.machine_int64);
 }
 
 template <ExprLowerer Lowerer>
@@ -440,40 +117,42 @@ auto LowerEnumMethod(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
     hir::EnumMethodRef ref, mir::TypeId result_type)
     -> diag::Result<mir::Expr> {
-  const OwningEnum enumeration = ResolveOwningEnum(lowerer, c);
+  const hir::ExprId bearer = BearerOf(c);
+  const hir::TypeId enum_type = lowerer.HirExprs().Get(bearer).type;
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Block& block = *frame.current_block;
   switch (ref.method) {
     case hir::EnumMethod::kNum:
       return block.exprs.Get(BuildIntLiteral(
           unit, block,
-          static_cast<std::int64_t>(enumeration.shape.members.size())));
-    case hir::EnumMethod::kFirst:
-      return block.exprs.Get(BuildIntegralLiteral(
-          unit, block, result_type,
-          MemberValueConstant(
-              enumeration.shape.base,
-              enumeration.shape.members.front().value)));
-    case hir::EnumMethod::kLast:
-      return block.exprs.Get(BuildIntegralLiteral(
-          unit, block, result_type,
-          MemberValueConstant(
-              enumeration.shape.base, enumeration.shape.members.back().value)));
+          static_cast<std::int64_t>(
+              MembersOf(lowerer.Owner(), enum_type).size())));
+    case hir::EnumMethod::kFirst: {
+      const mir::IntegralConstant first =
+          MembersOf(lowerer.Owner(), enum_type).front().value;
+      return block.exprs.Get(
+          BuildIntegralLiteral(unit, block, result_type, first));
+    }
+    case hir::EnumMethod::kLast: {
+      const mir::IntegralConstant last =
+          MembersOf(lowerer.Owner(), enum_type).back().value;
+      return block.exprs.Get(
+          BuildIntegralLiteral(unit, block, result_type, last));
+    }
     case hir::EnumMethod::kName: {
-      auto value_or =
-          lowerer.LowerExpr(lowerer.HirExprs().Get(enumeration.bearer), frame);
+      auto value_or = lowerer.LowerExpr(lowerer.HirExprs().Get(bearer), frame);
       if (!value_or) return std::unexpected(std::move(value_or.error()));
       const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
-      return BuildEnumNameCallExpr(
-          lowerer.Owner(), value_id, enumeration.declared_type);
+      return BuildEnumNameCallExpr(lowerer.Owner(), block, value_id, enum_type);
     }
     case hir::EnumMethod::kNext:
       return LowerStepCall(
-          lowerer, frame, c, enumeration, StepDirection::kForward, result_type);
+          lowerer, frame, c, bearer, enum_type,
+          support::BuiltinFn::kEnumerationNext, result_type);
     case hir::EnumMethod::kPrev:
       return LowerStepCall(
-          lowerer, frame, c, enumeration, StepDirection::kBackward,
-          result_type);
+          lowerer, frame, c, bearer, enum_type,
+          support::BuiltinFn::kEnumerationPrev, result_type);
   }
   throw InternalError("LowerEnumMethod: unknown enumerated type method");
 }

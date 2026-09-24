@@ -1,5 +1,6 @@
 #include "lyra/mir/type_descriptor.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -20,13 +21,11 @@ namespace {
 // is a one-element stack rather than a scalar special case, because the runtime
 // dispatches element access on the outer dimension's width at any rank.
 //
-// The shape arrives by value because naming its dimension stack interns
-// that stack's type, which grows the pool the descriptions are read out of, and
-// a reference into that pool does not survive the growth.
-auto BuildIntegralDescriptor(const CompilationUnit& unit, PackedArrayType pa)
-    -> ValueBuild {
-  ValueBuild description;
-  RuntimeRecordBuilder record(unit, description.body.exprs);
+// Naming the dimension stack interns that stack's type, which grows the pool
+// the descriptions are read out of, and a reference into that pool does not
+// survive the growth -- so every caller hands over a shape it holds a copy of.
+auto IntegralRecord(RuntimeRecordBuilder& record, const PackedArrayType& pa)
+    -> ExprId {
   std::vector<ExprId> dims;
   dims.reserve(pa.dims.size());
   for (const PackedRange& dim : pa.dims) {
@@ -34,12 +33,55 @@ auto BuildIntegralDescriptor(const CompilationUnit& unit, PackedArrayType pa)
         RuntimeLibraryKind::kPackedRange,
         {record.MachineInt(dim.left), record.MachineInt(dim.right)}));
   }
-  description.value = record.Construct(
+  return record.Construct(
       RuntimeLibraryKind::kPackedType,
       {record.MachineArray(
            record.Type(RuntimeLibraryKind::kPackedRange), std::move(dims)),
        record.Bool(pa.signedness == Signedness::kSigned),
        record.Bool(pa.state_kind == IntegralStateKind::kFourState)});
+}
+
+auto BuildIntegralDescriptor(const CompilationUnit& unit, PackedArrayType pa)
+    -> ValueBuild {
+  ValueBuild description;
+  RuntimeRecordBuilder record(unit, description.body.exprs);
+  description.value = IntegralRecord(record, pa);
+  return description;
+}
+
+// The record describing one enumeration: its base's description, then every
+// member's planes in declared order -- its value plane and, over a 4-state
+// base, its unknown plane -- and the members' names in the same order. A member
+// is already in the canonical form of its base, so each contributes the same
+// number of words, and a 2-state base contributes no unknown plane at all.
+auto BuildEnumerationDescriptor(const CompilationUnit& unit, EnumType e)
+    -> ValueBuild {
+  ValueBuild description;
+  RuntimeRecordBuilder record(unit, description.body.exprs);
+  const TypeId word = unit.builtins.machine_word;
+  const TypeId text = unit.types.Intern(mir::Type{MachineCStringType{}});
+  std::vector<ExprId> planes;
+  std::vector<ExprId> names;
+  const auto add_words = [&](const std::vector<std::uint64_t>& words) {
+    for (const std::uint64_t bits : words) {
+      planes.push_back(record.Add(
+          Expr{
+              .data =
+                  MachineIntLiteral{.value = static_cast<std::int64_t>(bits)},
+              .type = word}));
+    }
+  };
+  for (const EnumMember& member : e.members) {
+    add_words(member.value.value_words);
+    add_words(member.value.state_words);
+    names.push_back(record.Add(
+        Expr{.data = StringLiteral{.value = member.name}, .type = text}));
+  }
+  description.value = record.Construct(
+      RuntimeLibraryKind::kEnumeration,
+      {IntegralRecord(record, e.base),
+       record.MachineArray(word, std::move(planes)),
+       record.MachineArray(text, std::move(names))});
   return description;
 }
 
@@ -54,6 +96,21 @@ auto BuildUnpackedDescriptor(const CompilationUnit& unit, UnpackedRange dim)
       RuntimeLibraryKind::kUnpackedRange,
       {record.MachineInt(dim.left), record.MachineInt(dim.right)});
   return description;
+}
+
+// A reference to the description the unit holds for `description`, which
+// naming it is what puts it in the unit.
+auto BuildDescriptorRef(
+    const CompilationUnit& unit, Block& block, TypeDescription description)
+    -> ExprId {
+  const TypeDescriptorId descriptor =
+      unit.type_descriptors.Intern(std::move(description));
+  return block.exprs.Add(
+      Expr{
+          .data =
+              ReferenceExpr{
+                  .target = TypeDescriptorRef{.descriptor = descriptor}},
+          .type = TypeDescriptorTypeOf(unit, descriptor)});
 }
 
 }  // namespace
@@ -94,7 +151,8 @@ auto TypeDescriptorTypeOf(
           [&unit](const PackedArrayType&) { return unit.builtins.packed_type; },
           [&unit](const UnpackedRange&) {
             return unit.builtins.unpacked_range;
-          }},
+          },
+          [&unit](const EnumType&) { return unit.builtins.enumeration; }},
       unit.type_descriptors.Get(descriptor));
 }
 
@@ -106,14 +164,16 @@ auto BuildTypeDescriptorRef(
         "mir: this type's declaration says nothing an operation on a value of "
         "it needs");
   }
-  const TypeDescriptorId descriptor =
-      unit.type_descriptors.Intern(*std::move(description));
-  return block.exprs.Add(
-      Expr{
-          .data =
-              ReferenceExpr{
-                  .target = TypeDescriptorRef{.descriptor = descriptor}},
-          .type = TypeDescriptorTypeOf(unit, descriptor)});
+  return BuildDescriptorRef(unit, block, *std::move(description));
+}
+
+auto BuildEnumerationDescriptorRef(
+    const CompilationUnit& unit, Block& block, TypeId enumeration) -> ExprId {
+  const auto* declared = unit.types.Get(enumeration).As<EnumType>();
+  if (declared == nullptr) {
+    throw InternalError("mir: only an enumeration declares members");
+  }
+  return BuildDescriptorRef(unit, block, TypeDescription{*declared});
 }
 
 auto DescribeType(const CompilationUnit& unit, TypeDescriptorId descriptor)
@@ -125,6 +185,9 @@ auto DescribeType(const CompilationUnit& unit, TypeDescriptorId descriptor)
           },
           [&unit](const UnpackedRange& range) {
             return BuildUnpackedDescriptor(unit, range);
+          },
+          [&unit](const EnumType& enumeration) {
+            return BuildEnumerationDescriptor(unit, enumeration);
           }},
       unit.type_descriptors.Get(descriptor));
 }

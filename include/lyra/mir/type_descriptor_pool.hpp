@@ -14,13 +14,14 @@ namespace lyra::mir {
 // signedness, the state domain; an unpacked array says its declared range, for
 // an operation that walks the array in the coordinates it was declared with --
 // a memory file's addresses (LRM 21.4), a foreign caller's bounds (LRM
-// 35.5.6.1). Each family says a different thing, so each is its own
-// alternative and a consumer answers for every one of them.
+// 35.5.6.1); an enumeration says its members, for the questions LRM 6.19.5 and
+// 6.24.2 ask about a value against them. Each says a different thing, so each
+// is its own alternative and a consumer answers for every one of them.
 //
 // A type is where a description is found and not what it is: no consumer of
 // one can tell which declaration it came from, so two declarations saying the
 // same thing say one description.
-using TypeDescription = std::variant<PackedArrayType, UnpackedRange>;
+using TypeDescription = std::variant<PackedArrayType, UnpackedRange, EnumType>;
 
 struct TypeDescriptionHash {
   auto operator()(const TypeDescription& description) const -> std::size_t;

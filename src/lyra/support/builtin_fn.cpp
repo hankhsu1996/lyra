@@ -1142,6 +1142,14 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "reduction_xnor", .declaration = Method{"ReductionXnor"}};
     case BuiltinFn::kFromBool:
       return {.name = "from_bool", .declaration = StaticFactory{"FromBool"}};
+    case BuiltinFn::kEnumerationHas:
+      return {.name = "enumeration_has", .declaration = Method{"Has"}};
+    case BuiltinFn::kEnumerationName:
+      return {.name = "enumeration_name", .declaration = Method{"Name"}};
+    case BuiltinFn::kEnumerationNext:
+      return {.name = "enumeration_next", .declaration = Method{"Next"}};
+    case BuiltinFn::kEnumerationPrev:
+      return {.name = "enumeration_prev", .declaration = Method{"Prev"}};
     case BuiltinFn::kParent:
       return {.name = "parent", .declaration = Method{"Parent"}};
     case BuiltinFn::kSelfHandle:

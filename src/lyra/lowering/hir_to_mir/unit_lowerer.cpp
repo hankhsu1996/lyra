@@ -29,7 +29,6 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
-#include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -549,7 +548,7 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     unit_.callables.Add(MakeForeignImportDecl(unit_, import));
   }
 
-  PublishTypeOwnedReadings();
+  PublishAssignmentPatternTexts();
 
   // Every class this unit declares is declared by one of its structural scopes
   // (LRM 23.9), which settles that class's shape and lowers its bodies -- so a
@@ -559,58 +558,27 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   return {};
 }
 
-void UnitLowerer::PublishTypeOwnedReadings() {
+void UnitLowerer::PublishAssignmentPatternTexts() {
   const auto names_its_text = [&](hir::TypeId type) {
     return TypeOwnsItsText(PatternReadingOf(*hir_, type));
   };
-  const auto is_enumeration = [&](hir::TypeId type) {
-    return hir_->types.Get(type).Is<hir::EnumType>();
-  };
-  const auto declare = [&](TypeOwnedReading reading, hir::TypeId type) {
-    type_owned_readings_.emplace(
-        TypeOwnedReadingKey{.reading = reading, .type = type},
-        unit_.callables.Declare());
-  };
-  const auto define = [&](TypeOwnedReading reading, hir::TypeId type,
-                          mir::CallableCode code) {
-    unit_.callables.Define(
-        type_owned_readings_.at(
-            TypeOwnedReadingKey{.reading = reading, .type = type}),
-        mir::CallableDecl{
-            .code = std::move(code),
-            .foreign = std::nullopt,
-            .virtual_dispatch = std::nullopt});
-  };
 
-  // Every identity first, because one reading's body reaches the readings of
-  // the types it names and a type is free to name one interned after it.
+  // Every identity first, because one text's body reaches the texts of the
+  // types it names and a type is free to name one interned after it.
   for (const hir::TypeId type : hir_->types.Ids()) {
     if (names_its_text(type)) {
-      declare(TypeOwnedReading::kAssignmentPatternText, type);
-    }
-    if (is_enumeration(type)) {
-      declare(TypeOwnedReading::kEnumerationName, type);
-      declare(TypeOwnedReading::kEnumerationStep, type);
-      declare(TypeOwnedReading::kEnumerationMembership, type);
+      assignment_pattern_texts_.emplace(type, unit_.callables.Declare());
     }
   }
 
   for (const hir::TypeId type : hir_->types.Ids()) {
     if (names_its_text(type)) {
-      define(
-          TypeOwnedReading::kAssignmentPatternText, type,
-          BuildAssignmentPatternTextCode(*this, type));
-    }
-    if (is_enumeration(type)) {
-      define(
-          TypeOwnedReading::kEnumerationName, type,
-          BuildEnumerationNameCode(*this, type));
-      define(
-          TypeOwnedReading::kEnumerationStep, type,
-          BuildEnumerationStepCode(*this, type));
-      define(
-          TypeOwnedReading::kEnumerationMembership, type,
-          BuildEnumerationMembershipCode(*this, type));
+      unit_.callables.Define(
+          assignment_pattern_texts_.at(type),
+          mir::CallableDecl{
+              .code = BuildAssignmentPatternTextCode(*this, type),
+              .foreign = std::nullopt,
+              .virtual_dispatch = std::nullopt});
     }
   }
 }

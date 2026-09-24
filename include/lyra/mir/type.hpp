@@ -12,6 +12,7 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/external_unit_object_id.hpp"
+#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -51,9 +52,12 @@ struct PackedArrayType {
   auto operator==(const PackedArrayType&) const -> bool = default;
 };
 
+// A member is its whole value at the enumeration's base type: over a 4-state
+// base it may hold x or z bits, and the base may be wider than a machine word
+// (LRM 6.19).
 struct EnumMember {
   std::string name;
-  std::int64_t value;
+  IntegralConstant value;
 
   auto operator==(const EnumMember&) const -> bool = default;
 };
@@ -64,6 +68,13 @@ struct EnumType {
 
   auto operator==(const EnumType&) const -> bool = default;
 };
+
+// Folds into `seed` what decides a packed array's meaning -- four-stateness,
+// signedness, and the dimensions its width comes from -- and, for an
+// enumeration, that plus every member's name and whole value. Shared by every
+// pool keyed on one of these, so equal keys cannot hash apart.
+void HashPackedShape(std::size_t& seed, const PackedArrayType& packed);
+void HashEnumeration(std::size_t& seed, const EnumType& enumeration);
 
 // A named member of an aggregate the source declared (LRM 7.2 / 7.2.1 / 7.3 /
 // 7.3.1). The position it sits at is what an access names it by; the name is
@@ -397,6 +408,11 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // where an integral type's is a stack of dimensions plus its signedness and
   // state domain -- one description each, of the shape each family needs.
   kUnpackedRange,
+  // The members an enumeration declares, each its whole value at the base type
+  // and its name, in declared order. It is that type's description for the
+  // questions asked of a value against its members, where the base's own
+  // description is what every other operation on the value takes.
+  kEnumeration,
   kPrintItem,
   kPrintLiteralItem,
   kPrintValueItem,

@@ -84,17 +84,6 @@ void HashEnum(std::size_t& seed, E value) {
   HashField(seed, static_cast<std::uint64_t>(value));
 }
 
-// Hashes a packed array by the three attributes that decide what it means --
-// four-stateness, signedness, and the dimensions its width comes from.
-void HashPackedShape(std::size_t& seed, const PackedArrayType& packed) {
-  HashEnum(seed, packed.state_kind);
-  HashEnum(seed, packed.signedness);
-  for (const PackedRange& dim : packed.dims) {
-    HashField(seed, dim.left);
-    HashField(seed, dim.right);
-  }
-}
-
 void HashMembers(
     std::size_t& seed, const std::vector<AggregateMember>& members) {
   for (const AggregateMember& member : members) {
@@ -105,18 +94,29 @@ void HashMembers(
 
 }  // namespace
 
+void HashPackedShape(std::size_t& seed, const PackedArrayType& packed) {
+  HashEnum(seed, packed.state_kind);
+  HashEnum(seed, packed.signedness);
+  for (const PackedRange& dim : packed.dims) {
+    HashField(seed, dim.left);
+    HashField(seed, dim.right);
+  }
+}
+
+void HashEnumeration(std::size_t& seed, const EnumType& enumeration) {
+  HashPackedShape(seed, enumeration.base);
+  for (const EnumMember& member : enumeration.members) {
+    HashField(seed, member.name);
+    HashIntegralConstant(seed, member.value);
+  }
+}
+
 auto Type::Hash::operator()(const Type& type) const -> std::size_t {
   std::size_t seed = std::hash<std::size_t>{}(type.data_.index());
   type.Visit(
       Overloaded{
           [&](const PackedArrayType& t) { HashPackedShape(seed, t); },
-          [&](const EnumType& t) {
-            HashPackedShape(seed, t.base);
-            for (const EnumMember& member : t.members) {
-              HashField(seed, member.name);
-              HashField(seed, member.value);
-            }
-          },
+          [&](const EnumType& t) { HashEnumeration(seed, t); },
           [&](const PackedStructType& t) {
             HashPackedShape(seed, t.base);
             HashMembers(seed, t.members);

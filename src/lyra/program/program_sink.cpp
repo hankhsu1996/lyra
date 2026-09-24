@@ -251,6 +251,10 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_behavior_at", &lyra_rt_behavior_at);
   add("lyra_rt_object_of", &lyra_rt_object_of);
   add("lyra_rt_object_is_of_class", &lyra_rt_object_is_of_class);
+  add("lyra_rt_enumeration_has", &lyra_rt_enumeration_has);
+  add("lyra_rt_enumeration_name", &lyra_rt_enumeration_name);
+  add("lyra_rt_enumeration_next", &lyra_rt_enumeration_next);
+  add("lyra_rt_enumeration_prev", &lyra_rt_enumeration_prev);
   add("lyra_rt_closure_capture", &lyra_rt_closure_capture);
   add("lyra_rt_submit_nba", &lyra_rt_submit_nba);
   add("lyra_rt_submit_nba_after", &lyra_rt_submit_nba_after);
@@ -568,6 +572,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_make_packed_range", &lyra_rt_make_packed_range);
   add("lyra_rt_make_unpacked_range", &lyra_rt_make_unpacked_range);
   add("lyra_rt_make_packed_type", &lyra_rt_make_packed_type);
+  add("lyra_rt_make_enumeration", &lyra_rt_make_enumeration);
   add("lyra_rt_packed_from_words", &lyra_rt_packed_from_words);
   add("lyra_rt_packed_from_string", &lyra_rt_packed_from_string);
   add("lyra_rt_packed_clog2", &lyra_rt_packed_clog2);

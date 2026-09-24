@@ -58,13 +58,16 @@ auto FormatWords(std::span<const std::uint64_t> words) -> std::string {
   return text.empty() ? "0" : text;
 }
 
-auto FormatIntegralConstant(const IntegralConstantDecl& decl) -> std::string {
-  std::string text = std::format(
-      "Type[{}] 'h{}", decl.type.value, FormatWords(decl.value.value_words));
-  if (!decl.value.state_words.empty()) {
-    text += std::format(" x/z'h{}", FormatWords(decl.value.state_words));
+auto FormatBits(const IntegralConstant& value) -> std::string {
+  std::string text = std::format("'h{}", FormatWords(value.value_words));
+  if (!value.state_words.empty()) {
+    text += std::format(" x/z'h{}", FormatWords(value.state_words));
   }
   return text;
+}
+
+auto FormatIntegralConstant(const IntegralConstantDecl& decl) -> std::string {
+  return std::format("Type[{}] {}", decl.type.value, FormatBits(decl.value));
 }
 
 auto FormatExprList(std::span<const ExprId> ids) -> std::string {
@@ -279,8 +282,8 @@ class MirDumper {
               std::string members;
               for (std::size_t i = 0; i < e.members.size(); ++i) {
                 if (i > 0) members += ", ";
-                members +=
-                    std::format("{}={}", e.members[i].name, e.members[i].value);
+                members += std::format(
+                    "{}={}", e.members[i].name, FormatBits(e.members[i].value));
               }
               return std::format(
                   "Enum(base=PackedArray(state={}, signed={}, dims={}), "
@@ -394,6 +397,8 @@ class MirDumper {
                   return "RuntimeLibrary(PackedRange)";
                 case RuntimeLibraryKind::kUnpackedRange:
                   return "RuntimeLibrary(UnpackedRange)";
+                case RuntimeLibraryKind::kEnumeration:
+                  return "RuntimeLibrary(Enumeration)";
                 case RuntimeLibraryKind::kPrintItem:
                   return "RuntimeLibrary(PrintItem)";
                 case RuntimeLibraryKind::kPrintLiteralItem:

@@ -928,6 +928,15 @@ enum class BuiltinFn : std::uint16_t {
   kReductionNor,
   kReductionXnor,
   kFromBool,
+  // LRM 6.19.5 / 6.24.2: what an enumeration's member list answers about a
+  // value -- whether it is a member, its name, and the member a step away from
+  // it. The receiver is the member list the unit states once for the
+  // enumeration, and each question is one library routine serving every
+  // enumeration.
+  kEnumerationHas,
+  kEnumerationName,
+  kEnumerationNext,
+  kEnumerationPrev,
   // Typed parent navigation: `scope->Parent()` returns the enclosing scope as
   // the runtime `Scope` base pointer. An intra-unit upward member access casts
   // the result to the enclosing class and reads the member directly (the unit

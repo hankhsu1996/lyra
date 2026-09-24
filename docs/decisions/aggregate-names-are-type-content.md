@@ -72,8 +72,8 @@ The consistent shape is: **the type's identity is nominal, and reaching a member
 > value representation.** This is a general compiler principle; the enum is the current important
 > example.
 
-An enumeration keeps a MIR type carrying its member table while every value operation runs on its
-base integral, and the table is read by the LRM 6.19.5 methods and by `%p`. A declared aggregate is
+An enumeration keeps a MIR type carrying its member list while every value operation runs on its
+base integral, and the list is read by the LRM 6.19.5 methods and by `%p`. A declared aggregate is
 the same shape with a different projection.
 
 ## Decision

@@ -42,11 +42,10 @@ mechanism built for either one alone is a MIR primitive specialized for one back
 neither: state the rendering where the SystemVerilog type is still in hand, as ordinary program
 computation, before any realization exists.
 
-**And the data shape is forbidden here for an independent reason.**
-[enum-representation](enum-representation.md) bans "an opaque runtime-library helper as the semantic
-implementation of an enum method (`EnumName(value, table)`)". Printing the name of an enumeration
-reached inside a container is exactly that lookup, so a descriptor carrying the member table would
-be the banned shape arriving by another route.
+An enumeration inside the value is the one place a lookup does happen, and it is not this decision's
+to make: the text asks the enumeration for its name, and how the enumeration answers is
+[enum-representation](enum-representation.md)'s -- today a question put to the member list the unit
+states for it, in the library.
 
 ## Decision
 
@@ -97,8 +96,10 @@ returns.**
 
 - **A per-type description as data, walked by the runtime formatter.** The shape Go and Swift take.
   It needs a compiler-to-runtime data contract that does not exist here, an erased-side formatter
-  family that does not exist either, and it puts an enumeration's member table into the library,
-  which [enum-representation](enum-representation.md) forbids by name.
+  family that does not exist either. (A third reason stood here -- that it puts an enumeration's
+  member list into the library, which [enum-representation](enum-representation.md) then forbade.
+  That entry has since put the member list there on purpose, for the enumeration's own methods, so
+  the reason is withdrawn; the first two stand on their own.)
 
 - **A closure per element, handed to the runtime's container walk.** Keeps the container walk where
   it is, but a product's elements have different types, so one erased element renderer cannot serve

@@ -61,6 +61,7 @@
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
 #include "lyra/value/empty.hpp"
+#include "lyra/value/enumeration.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/managed_ref.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -755,6 +756,7 @@ using lyra::value::Chandle;
 using lyra::value::DpiBitBuffer;
 using lyra::value::DpiLogicBuffer;
 using lyra::value::DpiOpenArray;
+using lyra::value::Enumeration;
 using lyra::value::Format;
 using lyra::value::FormatArg;
 using lyra::value::FormatSpec;
@@ -973,6 +975,17 @@ auto lyra_rt_make_packed_type(LyraSpan dims, bool is_signed, bool is_four_state)
     return *static_cast<const PackedRange*>(entry);
   });
   return ProgramLifetime(PackedType{ranges, is_signed, is_four_state});
+}
+
+auto lyra_rt_make_enumeration(const void* base, LyraSpan planes, LyraSpan names)
+    -> const void* {
+  return ProgramLifetime(
+      Enumeration{
+          Read<PackedType>(base),
+          std::span<const std::uint64_t>{
+              static_cast<const std::uint64_t*>(planes.data), planes.count},
+          std::span<const char* const>{
+              static_cast<const char* const*>(names.data), names.count}});
 }
 
 void lyra_rt_writeln(void* files, void* descriptor, void* text) {
@@ -1669,6 +1682,30 @@ auto lyra_rt_object_is_of_class(const void* handle, const void* definition)
   return ObjectIsOfClass(
       Read<ManagedRef>(handle),
       static_cast<const ObjectDefinition*>(definition));
+}
+
+auto lyra_rt_enumeration_has(const void* enumeration, const void* value)
+    -> std::int64_t {
+  return Read<Enumeration>(enumeration).Has(Read<PackedArray>(value)) ? 1 : 0;
+}
+
+auto lyra_rt_enumeration_name(const void* enumeration, const void* value)
+    -> void* {
+  return Own(Read<Enumeration>(enumeration).Name(Read<PackedArray>(value)));
+}
+
+auto lyra_rt_enumeration_next(
+    const void* enumeration, const void* value, const void* count) -> void* {
+  return Own(
+      Read<Enumeration>(enumeration)
+          .Next(Read<PackedArray>(value), Read<PackedArray>(count)));
+}
+
+auto lyra_rt_enumeration_prev(
+    const void* enumeration, const void* value, const void* count) -> void* {
+  return Own(
+      Read<Enumeration>(enumeration)
+          .Prev(Read<PackedArray>(value), Read<PackedArray>(count)));
 }
 
 auto lyra_rt_property_at(const void* handle, const void* coordinate) -> void* {

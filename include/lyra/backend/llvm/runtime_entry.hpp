@@ -125,6 +125,7 @@ enum class RuntimeOp : std::uint8_t {
   kMakePackedRange,
   kMakeUnpackedRange,
   kMakePackedType,
+  kMakeEnumeration,
   kMakePrintLiteralItem,
   kMakePrintValueItem,
   kMakeFormatSpec,

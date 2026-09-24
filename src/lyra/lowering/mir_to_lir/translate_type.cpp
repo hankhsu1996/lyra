@@ -116,16 +116,11 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [&](const mir::PackedArrayType& pa) -> lir::Type {
             return lir::Type{TranslatePackedArray(pa)};
           },
+          // What an enumeration answers about a value is asked of the member
+          // list the unit states for it, so below MIR nothing distinguishes an
+          // enumeration from its base.
           [&](const mir::EnumType& e) -> lir::Type {
-            std::vector<lir::EnumMember> members;
-            members.reserve(e.members.size());
-            for (const mir::EnumMember& m : e.members) {
-              members.push_back(
-                  lir::EnumMember{.name = m.name, .value = m.value});
-            }
-            return lir::Type{lir::EnumType{
-                .base = TranslatePackedArray(e.base),
-                .members = std::move(members)}};
+            return lir::Type{TranslatePackedArray(e.base)};
           },
           [&](const mir::PackedStructType& s) -> lir::Type {
             return lir::Type{lir::PackedStructType{
@@ -337,6 +332,8 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kPackedRange);
     case mir::RuntimeLibraryKind::kUnpackedRange:
       return mirror(lir::RuntimeLibraryKind::kUnpackedRange);
+    case mir::RuntimeLibraryKind::kEnumeration:
+      return mirror(lir::RuntimeLibraryKind::kEnumeration);
     case mir::RuntimeLibraryKind::kPrintLiteralItem:
       return mirror(lir::RuntimeLibraryKind::kPrintLiteralItem);
     case mir::RuntimeLibraryKind::kPrintValueItem:

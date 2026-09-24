@@ -37,6 +37,13 @@ namespace lyra::mir {
 [[nodiscard]] auto BuildTypeDescriptorRef(
     const CompilationUnit& unit, Block& block, TypeId described) -> ExprId;
 
+// The members `enumeration` declares, stated as an operand in the same way.
+// This is a second description of the same type: what a value operation takes
+// is the base's, and what the questions LRM 6.19.5 and 6.24.2 ask of a value
+// are answered against is this one.
+[[nodiscard]] auto BuildEnumerationDescriptorRef(
+    const CompilationUnit& unit, Block& block, TypeId enumeration) -> ExprId;
+
 // The value type behind `type`, with the indirections a place reaches storage
 // through -- a capability wrapper, a pointer -- unwrapped. A declared fact
 // belongs to the value type, and a caller asking for one has a place as often
