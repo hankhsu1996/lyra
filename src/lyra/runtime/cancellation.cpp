@@ -81,6 +81,16 @@ auto ClassifyUnwind() -> Unwound {
   }
 }
 
+auto ClaimableTarget() -> CancellationTarget* {
+  // Asked the same way as above, and for the same reason. Anything else leaves
+  // by the same raise that asked, which carries it on unchanged.
+  try {
+    throw;
+  } catch (const ControlEffect& effect) {
+    return effect.target;
+  }
+}
+
 Unwound::Unwound(bool control_effect, std::exception_ptr raised)
     : control_effect(control_effect), raised(std::move(raised)) {
 }

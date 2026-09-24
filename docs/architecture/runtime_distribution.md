@@ -1,18 +1,20 @@
 # Runtime Distribution
 
-The C++ backend emits a program that links the **Lyra C++ runtime**: a standard-library-only static
-library and its headers. The emitted code depends on nothing else from the Lyra toolchain -- no
-third-party libraries. The runtime is, in effect, a small library that ships with the compiler and
-that emitted programs link against.
+Every program a backend produces links the **Lyra C++ runtime**: a static library and, for the C++
+backend's sources, its headers. The emitted code depends on nothing else from the Lyra toolchain --
+no third-party libraries. The runtime is, in effect, a small library that ships with the compiler
+and that emitted programs link against. The LLVM backend's modules reach it through the C ABI the
+library publishes rather than through its headers.
 
 ## Two consumers of the runtime
 
-- **Bundled (portable artifact).** `emit cpp` and `compile` copy the runtime -- headers and static
-  library -- into the output directory alongside the generated sources and a build recipe. The
-  directory is then self-contained: it builds on another machine of the same platform with no Lyra
-  toolchain present.
-- **In place (ephemeral).** `run` builds the generated sources directly against the runtime where it
-  already lives and executes the result. It copies nothing.
+- **Bundled (portable artifact).** `emit cpp` copies the runtime -- headers and static library --
+  into the output directory alongside the generated sources and a build recipe. The directory is
+  then self-contained: it builds on another machine of the same platform with no Lyra toolchain
+  present.
+- **In place.** `build` and `run`, on either backend, compile and link the design against the
+  runtime where it already lives, and copy nothing. What they produce is an executable, which
+  carries the library inside it and runs wherever the machine it was linked for does.
 
 Both reduce to one question: _where does the Lyra runtime live for this binary?_
 
@@ -21,7 +23,7 @@ Both reduce to one question: _where does the Lyra runtime live for this binary?_
 There is a single answer point: a resolver that, given the running binary's own path, returns the
 runtime's include root and static library. Every consumer depends on the resolved location, never on
 how it was found. The resolution strategy is therefore free to change without touching the emit,
-compile, or run paths.
+build, or run paths.
 
 Resolution strategies:
 
@@ -31,12 +33,12 @@ Resolution strategies:
   its runtime relative to its own executable path -- the convention clang, gcc, and rustc use for
   their resource and sysroot directories. A distribution ships the binary alongside its runtime, and
   the binary finds it from `argv0` / the executable path. This strategy drops into the same
-  resolver; the emit, compile, and run paths are unaffected.
+  resolver; the emit, build, and run paths are unaffected.
 
-Until the install-relative strategy exists, `run`, `emit cpp`, and `compile` work only where
-runfiles are present (the Bazel build tree and the tests). This is a property of how `lyra` locates
-_its own_ runtime, not of the emitted output: an emitted project, once produced, carries its own
-runtime copy and build recipe and is independent of how `lyra` itself was distributed.
+Until the install-relative strategy exists, `run`, `emit cpp`, and `build` work only where runfiles
+are present (the Bazel build tree and the tests). This is a property of how `lyra` locates _its own_
+runtime, not of the emitted output: an emitted project, once produced, carries its own runtime copy
+and build recipe and is independent of how `lyra` itself was distributed.
 
 ## The foreign-language boundary surface
 
@@ -72,9 +74,9 @@ the name and the prototype alone, so they are the same text wherever they arise.
 
 The surface is target-language-neutral: it projects the same prototypes any backend links against,
 so a foreign source compiled against it stays correct whichever backend runs the design. What
-differs per backend is only which party does the keeping -- for a backend that links object files or
-loads modules into a session, its linkage rule for a definition emitted more than once; for one that
-assembles the program by textual inclusion, the preprocessor.
+differs per backend is only which party does the keeping -- for a backend that links object files,
+its linkage rule for a definition emitted more than once; for one that assembles the program by
+textual inclusion, the preprocessor.
 
 Whichever party it is, the rule it applies has to keep a definition nothing in the emitting language
 references. A foreign entry point is reached only from outside that language, so a rule free to drop
@@ -83,13 +85,13 @@ is where the analogy to an inline function stops: the approach is the same, the 
 
 A bundled project carries this surface, and a copy of every foreign source it was given, so it
 builds where neither Lyra nor the original foreign sources are reachable. The in-place path produces
-the same surface in its work directory; it copies nothing else, as before.
+the same surface in its work directory, and copies nothing else.
 
 ## Command output contract
 
 `run` executes the simulation; its stdout and stderr are the simulation's own. Compile-phase
 diagnostics do not bleed into them -- warnings are not shown during `run` (use `dump`, `emit cpp`,
-or `compile` to see them), and compile errors are reported and abort before any simulation begins.
+or `build` to see them), and compile errors are reported and abort before any simulation begins.
 This keeps `run` faithfully pipeable and testable as "the simulation's output".
 
 ## Out of scope

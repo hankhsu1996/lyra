@@ -18,9 +18,13 @@ enum class Optimization : std::uint8_t { kIterate, kRelease };
   return optimization == Optimization::kRelease ? "-O2" : "-O0";
 }
 
+// Whether to run the emitted C++ through a formatter before writing it. Named
+// rather than a bare bool so a call site says which it means.
+enum class SourceFormatting : std::uint8_t { kOff, kOn };
+
 // Relative layout and build recipe of a self-contained emitted C++ project.
-// Shared by the `build.sh` the project ships and the in-process build that
-// `compile`/`run` drive, so the two never drift.
+// Shared by the `build.sh` the project ships and the build `build` and `run`
+// drive themselves, so the two never drift.
 inline constexpr std::string_view kRuntimeIncludeDir = "runtime/include";
 inline constexpr std::string_view kRuntimeLibDir = "runtime/lib";
 inline constexpr std::string_view kRuntimeLibFile = "libcpp_runtime.a";

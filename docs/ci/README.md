@@ -14,14 +14,16 @@ carry `nightly`, `.bazelrc` makes the default set their complement, and `host-cx
 what the gate runs without naming anything, and the expensive ones are asked for rather than
 avoided.
 
-Needing a host compiler is a separate question from being too expensive to gate on, and five targets
-need one: `cpp_tests`, `emitted_project_tests`, `llvm_dpi_tests`, `pch_audit_test`, and
-`runtime_surface_test`. All five carry `no-remote-exec`, because a compiler spawned from inside a
-test is not a Bazel action and remote execution cannot provision it. The first two are excluded from
-the gate and the rest are not, and a target kept out should be kept out for its own reason --
-holding the DPI cases back because they share a compiler with an expensive one is how
-foreign-boundary regressions reach `main` and wait a day to be found. The last three each compile
-one small thing and are seconds apiece.
+Needing a host compiler is a separate question from being too expensive to gate on, and from where a
+test can run. Every program either backend builds is linked by the host C++ compiler, so every
+target that runs a design needs one, and a compiler spawned from inside a test is not a Bazel
+action: it is whatever the executing machine has on its PATH. The remote image has the platform's
+own C++ compiler and no clang, and Lyra takes whichever of the two it finds, so a test runs remotely
+unless what it asserts is about clang itself. Three are: `emitted_project_tests` and
+`pch_audit_test` both check the precompiled header, which only clang makes, and
+`runtime_surface_test` measures the objects clang produces from an emitted unit and skips where
+there is no clang. They carry `no-remote-exec`. A target kept out of the gate should be kept out for
+its own reason, never for a neighbour's.
 
 **What the CLI suite cost was once "a fraction of a minute", and by 2026-09-22 it was 117 s of
 processor time and the longest target in the gate -- about four times the corpus run beside it.**
@@ -35,8 +37,8 @@ So they are not in the gate, and the reason is their subject rather than their p
 the headers and still links the runtime the first one compiled, that a build whose prepared header
 is refused still produces a program -- is the same question `cpp_tests` asks, so they are answered
 on the same schedule, as `emitted_project_tests`. A change that could break any of it already owes
-that schedule before it commits. What remains in `cli_tests` is the command line itself, it needs no
-compiler to answer, and it costs seconds.
+that schedule before it commits. What remains in `cli_tests` is the command line itself; the designs
+it runs are built on the backend that compiles no C++, so it costs seconds, and remotely.
 
 The two sides of `nightly` are complements, so every test target is covered once and none twice.
 That is the property to preserve: a new target joins whichever side its tag puts it on, and neither
@@ -44,30 +46,23 @@ list is maintained by hand.
 
 ## How the corpus divides into targets
 
-The conformance corpus is one set of cases, and a target is a pair: which path runs the case, and
-what the case needs to run at all. The second half is a property of the case rather than of the path
--- a case carrying foreign sources builds them with the host C compiler wherever it runs, because a
-path changes how the design is translated and not how a foreign symbol is produced. Keeping the two
-apart is what stops a handful of DPI cases holding the whole corpus to a machine that has a C
-compiler.
+The conformance corpus is one set of cases, and a target is the path that runs it. A case carrying
+foreign sources needs nothing a path does not already need -- the compiler that links the program
+compiles them too -- so the corpus is not divided any further.
 
-| Target           | Runs                           | Where  | At merge time |
-| ---------------- | ------------------------------ | ------ | ------------- |
-| `llvm_tests`     | the corpus minus foreign cases | remote | yes           |
-| `llvm_dpi_tests` | the foreign cases              | local  | yes           |
-| `cpp_tests`      | the whole corpus               | local  | no            |
+| Target       | Runs             | Where  | At merge time |
+| ------------ | ---------------- | ------ | ------------- |
+| `llvm_tests` | the whole corpus | remote | yes           |
+| `cpp_tests`  | the whole corpus | remote | no            |
 
 `llvm_tests` is therefore the gate, and it grows on its own: `tests/paths/llvm.yaml` records what
 that path still refuses, only ever shrinks, and is the measure of how much of the corpus the merge
 gate actually covers.
 
-Which column a target sits in has a direction. Remote execution scales out, so what `llvm_tests`
-covers costs the gate almost nothing however far it grows -- every case the LLVM path gains is
-coverage the gate gets for free. `cpp_tests` is local and its cost grows with the corpus. Needing a
-host compiler for the C++ _path_ is therefore transitional and shrinks as that path stops being the
-one under test; needing one for a _case_ that carries foreign sources is permanent, because nothing
-about a path changes how a foreign symbol is produced. The two look alike today and have opposite
-futures, which is why they are not one tag.
+Both run remotely, and remote execution scales out, so what a target covers costs the machine that
+asked for it nothing however far it grows. What it costs is how long the slowest shard takes, so a
+remote target is cut into as many shards as keep that short: another shard is one more slot in the
+remote queue, never another core here.
 
 ## When to run what
 
@@ -101,7 +96,7 @@ On top of the default set, what a change touches selects what else to run:
   and LIR node shapes, so changing one of those shapes changes the emit without touching the
   backend, and a green default run says nothing about whether the result compiles. Emitting one case
   and reading the file catches most of that class in seconds.
-- **The foreign boundary** -- `llvm_dpi_tests`, which the gate already runs.
+- **The foreign boundary** -- the cases carrying foreign sources, which `llvm_tests` already runs.
 - **What an emitted project is or how it is built** -- the shipped recipe, what the project is given
   of the runtime, how a prepared header is named -- `--config=nightly`, which carries
   `emitted_project_tests` beside the corpus. This is the same selection as the line above it, seen
@@ -112,24 +107,20 @@ On top of the default set, what a change touches selects what else to run:
   default set is the whole answer.
 
 As the LLVM path fills in, this shortens rather than grows: `cpp_tests` stops being the backend
-under test, and what remains is one permanent local target for the cases that carry foreign sources.
+under test.
 
-## Why one way of running the module is enough
+## The corpus runs the program a user builds
 
-The LLVM module can be run by the JIT, compiled ahead of time, or interpreted. One module has one
-meaning, so running it three ways and comparing measures LLVM's execution engines rather than
-anything Lyra decided, and the corpus runs it once.
+A case on the LLVM path is built into a program and that program is run, which is exactly what
+`lyra run` does for a user -- so the gate measures the artifact that ships, linked against the same
+static runtime library, rather than some other way of executing the same module.
 
-The exception is not a conformance question. Compiling ahead of time optimizes, and an optimizer is
-free to do anything at all with a module that contains undefined behaviour -- so the one way the two
-can disagree is when the emitted module is already wrong in a way the JIT happens not to expose.
-That, plus linking the runtime as a static library rather than resolving it in process, is what an
-ahead-of-time run is worth testing for, and neither is a statement about IEEE 1800. It belongs in
+The one thing this leaves for later is optimization. An optimizer is free to do anything at all with
+a module that contains undefined behaviour, so once the LLVM path has an optimization level, an
+optimized build and an unoptimized one can disagree where the emitted module is already wrong in a
+way one of them happens not to expose. That is not a statement about IEEE 1800, and it belongs in
 the same place the C++ path is heading: a small set of designs, run for the artifact rather than for
 the claim.
-
-Interpreting is not worth running at all while it is not a shipping mode. Where it diverges, it
-diverges because the interpreter is incomplete, which is a fact about that interpreter.
 
 The C++ path is on its way out of this table. Its subject is not what IEEE 1800 requires -- the
 execution backend answers that -- but whether an emitted project still builds and runs under a host

@@ -311,10 +311,19 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
   return address;
 }
 
+auto CodeGenFunction::DefinitionOf(lir::TypeId type)
+    -> diag::Result<llvm::Value*> {
+  auto cell = module_->DefinitionRef(type);
+  if (!cell) {
+    return std::unexpected(std::move(cell.error()));
+  }
+  return builder_.CreateLoad(module_->Types().Ptr(), *cell);
+}
+
 auto CodeGenFunction::MemberStorage(
     llvm::Value* owner, const lir::StatedMemberRef& member)
     -> diag::Result<llvm::Value*> {
-  auto declared_by = module_->DefinitionRef(member.declared_by);
+  auto declared_by = DefinitionOf(member.declared_by);
   if (!declared_by) {
     return std::unexpected(std::move(declared_by.error()));
   }
@@ -610,15 +619,13 @@ auto CodeGenFunction::LowerReceiveDeparture() -> diag::Result<llvm::Value*> {
   // It says so with a clause, which is what makes this frame one the platform
   // stops at while it works out where a raise is going -- and a landing has to
   // be such a frame, because a landing that is only reached afterwards is
-  // reached only when somewhere else already stopped it. The clause names the
-  // raised type, because a run-time failure of the design travels the same way
-  // and belongs to no landing.
+  // reached only when somewhere else already stopped it. The clause matches
+  // anything, so it names no raised type; what is not a departure, claiming
+  // carries on before the body sees it.
   llvm::Type* const pad_type =
       llvm::StructType::get(module_->Types().Ptr(), builder_.getInt32Ty());
   llvm::LandingPadInst* const pad = builder_.CreateLandingPad(pad_type, 1);
-  pad->addClause(
-      llvm::cast<llvm::Constant>(module_->Module().getOrInsertGlobal(
-          kDepartureTypeSymbol, module_->Types().Ptr())));
+  pad->addClause(llvm::ConstantPointerNull::get(module_->Types().Ptr()));
   const std::array<llvm::Value*, 1> carried{
       builder_.CreateExtractValue(pad, 0)};
   return builder_.CreateCall(
@@ -743,7 +750,7 @@ auto CodeGenFunction::ArgsInForm(
               -> diag::Result<std::vector<llvm::Value*>> { return operands; },
           [&](const OperandsAfterDefinition& f)
               -> diag::Result<std::vector<llvm::Value*>> {
-            auto definition = module_->DefinitionRef(f.defined);
+            auto definition = DefinitionOf(f.defined);
             if (!definition) {
               return std::unexpected(std::move(definition.error()));
             }
@@ -753,7 +760,7 @@ auto CodeGenFunction::ArgsInForm(
           },
           [&](const OperandsAsSpanAfterDefinition& f)
               -> diag::Result<std::vector<llvm::Value*>> {
-            auto definition = module_->DefinitionRef(f.defined);
+            auto definition = DefinitionOf(f.defined);
             if (!definition) {
               return std::unexpected(std::move(definition.error()));
             }
@@ -762,7 +769,7 @@ auto CodeGenFunction::ArgsInForm(
           },
           [&](const ScopeOperandsAfterDefinition& f)
               -> diag::Result<std::vector<llvm::Value*>> {
-            auto definition = module_->DefinitionRef(f.defined);
+            auto definition = DefinitionOf(f.defined);
             if (!definition) {
               return std::unexpected(std::move(definition.error()));
             }
@@ -778,7 +785,8 @@ auto CodeGenFunction::ArgsInForm(
           },
           [&](const OperandsAfterVariableSchema&)
               -> diag::Result<std::vector<llvm::Value*>> {
-            std::vector<llvm::Value*> args{module_->VariableSchemaRef(*fn_)};
+            std::vector<llvm::Value*> args{builder_.CreateLoad(
+                module_->Types().Ptr(), module_->VariableSchemaCell(id_))};
             args.insert(args.end(), operands.begin(), operands.end());
             return args;
           }},
@@ -822,7 +830,7 @@ auto CodeGenFunction::ResolveCallee(
                   "llvm codegen: a dispatched call states no value to dispatch "
                   "on");
             }
-            auto introduced_by = module_->DefinitionRef(t.method.introduced_by);
+            auto introduced_by = DefinitionOf(t.method.introduced_by);
             if (!introduced_by) {
               return std::unexpected(std::move(introduced_by.error()));
             }
@@ -1307,20 +1315,20 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
             return module_->UnitFunction(f.function);
           },
           // The storage behind the symbol is opaque to generated code, which
-          // only forwards its address; an i8 placeholder gives the reference a
-          // type without encoding what the runtime laid out there. The unit
-          // that declares the storage is the one that publishes it, so every
-          // reference is a declaration and the host resolves them all.
+          // only forwards its address. The unit that declares the storage is
+          // the one that builds it, where it states everything else it
+          // declares, and the symbol is the cell holding where it landed -- so
+          // a reference of any unit loads the same address.
           [&](const lir::StaticRef& s) -> diag::Result<llvm::Value*> {
-            return module_->Module().getOrInsertGlobal(
-                s.symbol, llvm::Type::getInt8Ty(module_->Context()));
+            return builder_.CreateLoad(
+                module_->Types().Ptr(), module_->DeclaredCell(s.symbol));
           },
           // The record a class's objects carry, named by the class rather than
           // by a symbol, because what this target calls one is this target's
           // own to know -- the same answer a member projection and a dispatch
           // target already read off a class.
           [&](const lir::ObjectRecordRef& r) -> diag::Result<llvm::Value*> {
-            return module_->DefinitionRef(r.object);
+            return DefinitionOf(r.object);
           }},
       operand);
 }
@@ -1615,7 +1623,7 @@ auto CodeGenFunction::PlaceValueCellDomain(
     return std::nullopt;
   }
   if (MemberStorageKindOf(module_->Unit(), value, MemberSlotRole::kVariable) !=
-      MemberStorageKind::kValueCell) {
+      support::MemberStorageKind::kValueCell) {
     return std::nullopt;
   }
   return ValueDomainOf(module_->Unit(), value);

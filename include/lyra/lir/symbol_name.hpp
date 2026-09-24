@@ -34,7 +34,6 @@ enum class SymbolCategory : std::uint8_t {
   kStruct,
   kTypeDescription,
   kIntegralConstant,
-  kVariableSchema,
 };
 
 // One component of a symbol: a name the source wrote, or an ordinal the
@@ -98,12 +97,6 @@ auto StructDefinitionSymbol(std::string_view unit_name, SymbolPart record)
     -> std::string;
 auto ClosureDefinitionSymbol(std::string_view unit_name, SymbolPart closure)
     -> std::string;
-
-// The symbol the description of one body's variables is linked under. The
-// description is the compiler's own and stands beside the body, so it is a
-// category over the symbol that body is already linked under -- which is the
-// one thing that names the body program-wide.
-auto VariableSchemaSymbol(std::string_view body_symbol) -> std::string;
 
 // The symbols of what a unit's namespace owns directly. A body the source
 // declared answers to the identifier it declared it under, which is what

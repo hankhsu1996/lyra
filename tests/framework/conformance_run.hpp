@@ -20,10 +20,6 @@ struct ConformancePath {
   // The arguments that select this path, which is the only place a path is
   // named -- no case states one.
   std::vector<std::string> selector;
-  // Whether a run on this path builds a precompiled prelude. One is worth
-  // caching across the many cases a shard runs, and a path that builds none has
-  // nothing to cache.
-  bool caches_prelude = false;
 };
 
 // The path of that name, or nothing. Only a path this returns can be run, so a

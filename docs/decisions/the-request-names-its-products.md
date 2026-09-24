@@ -80,9 +80,9 @@ tests.
 - The design root stops being a third kind of artifact. It is synthesized as a unit and taken the
   rest of the way by the same entry every other unit uses.
 - A compiled unit's two halves -- the body and the metadata defining it -- travel as one value, so
-  the execution session takes a sequence of units rather than two sequences it has to index in step.
-  That coupling had been stated in prose on the entry it crossed, which is where a type belongs
-  instead.
+  whatever composes a program takes a sequence of units rather than two sequences it has to index in
+  step. That coupling had been stated in prose on the entry it crossed, which is where a type
+  belongs instead.
 
 ## Rejected
 

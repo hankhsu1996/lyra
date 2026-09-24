@@ -264,9 +264,8 @@ usage inflate the scope.
 
 - Both backends consume the same MIR for a foreign call and a marshal conversion; only the
   type-mapping of the ABI carrier and the realization of the foreign-linkage symbol differ.
-- Foreign-symbol linkage is a per-backend concern: the C++ backend resolves it through a
-  user-link-input seam in its build recipe; the LLVM/JIT backend resolves it through external-symbol
-  resolution in its execution session.
+- Foreign-symbol linkage is resolved where every other name is, by the link that makes the program:
+  a foreign source's object is one more input to it, on either backend.
 - The export-context install composes into the one shared run entry, so it serves both backends from
   a single place.
 

@@ -247,7 +247,7 @@ model has to reach on both.
   garbage is reclaimed as the last handle drops. Sufficient to unblock class surface work whose
   semantics do not depend on cyclic reclamation, which covers every SV class feature planned in this
   workstream.
-- LLVM / JIT backend: the handle is one representation for every object a handle can name, with the
+- LLVM backend: the handle is one representation for every object a handle can name, with the
   object's own type erased and its class carried by the object rather than by the reference. This is
   sound because SystemVerilog classes are singly inherited (LRM 8.13), so a handle to a base and a
   handle to the derived object are the same address. Constructing an object, reaching a property,
@@ -262,8 +262,8 @@ from it; under tracing the handle is what the body already holds, so the operati
 the interim rather than being ported to it.
 
 Precise-tracing storage discipline and collector are deferred until a driver appears (a workload
-that hits cycle leaks in practice, or LLVM / JIT SV-class execution becoming a priority). The design
-space explored while scoping this deferral surfaced:
+that hits cycle leaks in practice, or LLVM-backend SV-class execution becoming a priority). The
+design space explored while scoping this deferral surfaced:
 
 - Runtime `Traceable` inheritance protocol is rejected: it would force every managed-carrying
   emitted type into a runtime vtable shape and violates the mechanical-translation contract.

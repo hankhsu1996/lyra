@@ -151,6 +151,17 @@ struct Unwound {
 // place it settles without having returned.
 [[nodiscard]] auto ClassifyUnwind() -> Unwound;
 
+// The target the control effect being handled names, which is what a region
+// tests before claiming it. A landing asks this of whatever reached it, and
+// what reaches one is not always a control effect: a run-time error travels the
+// same way, and so does the release of a suspended stack, which has to pass
+// through every frame untouched. Anything that is not a control effect is
+// raised again from here, unchanged, so it carries on as though no landing had
+// stopped it, and a landing names no type to tell them apart.
+//
+// Call only while an exception is being handled, as above.
+[[nodiscard]] auto ClaimableTarget() -> CancellationTarget*;
+
 // The two ends of an execution's membership of a target (LRM 9.6.2). Entering
 // captures the target's current generation and marks the executing process as
 // inside it, so a `disable` of the target reaches this execution and a check

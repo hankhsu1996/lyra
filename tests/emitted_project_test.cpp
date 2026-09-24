@@ -72,19 +72,16 @@ TEST(LyraEmittedProject, ProducesPortableBuildableProject) {
   const auto out_dir = *tmp_or / "out";
 
   const std::vector<std::string> args = {
-      "compile", "--top", "Test", "-o", out_dir.string(), src.string()};
-  const auto compile = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(compile.termination, TerminationKind::kExitedNormally)
-      << compile.stdout_text << compile.stderr_text;
-  ASSERT_EQ(compile.exit_code, 0) << compile.stderr_text;
-
-  const auto program = out_dir / "program";
-  ASSERT_TRUE(std::filesystem::exists(program)) << program.string();
+      "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
+  const auto emitted = RunChildProcess(lyra, args, 120s);
+  ASSERT_EQ(emitted.termination, TerminationKind::kExitedNormally)
+      << emitted.stdout_text << emitted.stderr_text;
+  ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
   ASSERT_TRUE(std::filesystem::exists(out_dir / "build.sh"));
 
-  // The directory must rebuild standalone, with no Lyra checkout: drop the
-  // built program and rebuild via the shipped build.sh from within the dir.
-  std::filesystem::remove(program);
+  // The directory builds standalone, with no Lyra checkout, through the
+  // build.sh it ships.
+  const auto program = out_dir / "program";
   auto sh_or = lyra::support::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
   const std::vector<std::string> rebuild = {
@@ -156,12 +153,13 @@ TEST(LyraEmittedProject, RebuildsAfterSwitchingOptimization) {
   }
 }
 
-// Nothing compiled in advance decides whether a build succeeds. One build
-// compiles a header and caches it; the next is handed it back after every
-// header's timestamp has moved under it, which is what a checkout leaves and
-// what the compiler refuses to accept -- and that build still owes a program.
-// The timestamps are moved here by hand because Lyra no longer moves them
-// itself and a checkout is not something a test can stage.
+// Nothing compiled in advance decides whether a build succeeds, at either thing
+// that builds a design. The project's recipe prepares a header, and is handed
+// it back after every header's timestamp has moved under it, which is what a
+// checkout leaves and what the compiler refuses to accept. The in-process build
+// is handed back a prepared header that is not one at all. Both still owe a
+// program. The timestamps are moved here by hand because Lyra no longer moves
+// them itself and a checkout is not something a test can stage.
 TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -172,20 +170,15 @@ TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
   WriteTrivialSource(src);
   const auto out_dir = *tmp_or / "out";
 
-  // A cache of this test's own, so what the second build is handed is what the
-  // first one left rather than whatever the developer's cache happens to hold.
-  const std::vector<std::string> args = {
-      "compile",
-      "--top",
-      "Test",
-      "-o",
-      out_dir.string(),
-      "--pch-cache-dir",
-      (*tmp_or / "pch").string(),
-      src.string()};
-  const auto first = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(first.termination, TerminationKind::kExitedNormally)
-      << first.stdout_text << first.stderr_text;
+  const std::vector<std::string> emit = {
+      "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
+  const auto emitted = RunChildProcess(lyra, emit, 120s);
+  ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
+  auto sh_or = lyra::support::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  const std::vector<std::string> recipe = {
+      "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
+  const auto first = RunChildProcess(*sh_or, recipe, 120s);
   ASSERT_EQ(first.exit_code, 0) << first.stderr_text;
 
   const auto headers = out_dir / "runtime" / "include";
@@ -200,12 +193,37 @@ TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
   }
   ASSERT_GT(moved, 0U) << "no header to move under " << headers.string();
 
-  const auto second = RunChildProcess(lyra, args, 120s);
+  const auto second = RunChildProcess(*sh_or, recipe, 120s);
   EXPECT_EQ(second.exit_code, 0)
-      << "a build was failed by the header it had prepared for itself:\n"
+      << "the recipe was failed by the header it had prepared for itself:\n"
       << second.stderr_text;
+  const auto ran = RunChildProcess(out_dir / "program", {}, 30s);
+  EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
+      << "stdout: " << ran.stdout_text;
 
-  const auto run = RunChildProcess(out_dir / "program", {}, 30s);
+  // A store of this test's own, so what the second build is handed is what the
+  // first one left rather than whatever the developer's store happens to hold,
+  // and a rebuild, so the second build compiles rather than reusing the program
+  // the first one kept.
+  const auto store = *tmp_or / "store";
+  const auto program = *tmp_or / "program";
+  const std::vector<std::string> build = {
+      "build",       "--top",        "Test",      "-o",        program.string(),
+      "--cache-dir", store.string(), "--rebuild", src.string()};
+  const auto prepared = RunChildProcess(lyra, build, 120s);
+  ASSERT_EQ(prepared.exit_code, 0) << prepared.stderr_text;
+  std::size_t spoiled = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(store / "pch")) {
+    std::ofstream(entry.path(), std::ios::trunc) << "not a prepared header";
+    ++spoiled;
+  }
+  ASSERT_GT(spoiled, 0U) << "the build prepared no header to spoil";
+
+  const auto rebuilt = RunChildProcess(lyra, build, 120s);
+  EXPECT_EQ(rebuilt.exit_code, 0)
+      << "a build was failed by the header it was handed:\n"
+      << rebuilt.stderr_text;
+  const auto run = RunChildProcess(program, {}, 30s);
   EXPECT_EQ(run.exit_code, 0) << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("ran 42"), std::string::npos)
       << "stdout: " << run.stdout_text;
@@ -226,15 +244,28 @@ TEST(LyraEmittedProject, TakesTheWidthItIsGiven) {
   const auto out_dir = *tmp_or / "out";
   const auto program = out_dir / "program";
 
-  const std::vector<std::string> args = {
-      "compile", "--top", "Test",           "-j",
-      "4",       "-o",    out_dir.string(), src.string()};
-  const auto compiled = RunChildProcess(lyra, args, 120s);
-  ASSERT_EQ(compiled.exit_code, 0) << compiled.stderr_text;
-  const auto ran = RunChildProcess(program, {}, 30s);
+  const auto built_program = *tmp_or / "built";
+  const std::vector<std::string> build = {
+      "build",
+      "--top",
+      "Test",
+      "-j",
+      "4",
+      "-o",
+      built_program.string(),
+      "--cache-dir",
+      (*tmp_or / "store").string(),
+      src.string()};
+  const auto built = RunChildProcess(lyra, build, 120s);
+  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+  const auto ran = RunChildProcess(built_program, {}, 30s);
   EXPECT_NE(ran.stdout_text.find("ran 42"), std::string::npos)
       << "stdout: " << ran.stdout_text;
 
+  const std::vector<std::string> emit = {
+      "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
+  const auto emitted = RunChildProcess(lyra, emit, 120s);
+  ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
   auto sh_or = lyra::support::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
   // Zero asks the recipe for one compile per processor, which is the spelling
@@ -254,11 +285,12 @@ TEST(LyraEmittedProject, TakesTheWidthItIsGiven) {
   }
 }
 
-// Building twice into one directory, with nothing about the design changed.
-// The second run rewrites the same runtime headers, and the precompiled header
-// it was handed is validated by their modification times rather than by the
-// content its cache key is built from -- so a generator that rewrote an
-// unchanged file would make the build reject a header it had just produced.
+// Emitting and building twice into one directory, with nothing about the design
+// changed. The second emit rewrites the same runtime headers, and the
+// precompiled header the recipe kept is validated by their modification times
+// rather than by the content its cache key is built from -- so a generator that
+// rewrote an unchanged file would make the build reject a header it had just
+// produced.
 TEST(LyraEmittedProject, BuildsTwiceIntoOneDirectory) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -270,11 +302,17 @@ TEST(LyraEmittedProject, BuildsTwiceIntoOneDirectory) {
   const auto out_dir = *tmp_or / "out";
   const auto program = out_dir / "program";
 
-  const std::vector<std::string> args = {
-      "compile", "--top", "Test", "-o", out_dir.string(), src.string()};
+  auto sh_or = lyra::support::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  const std::vector<std::string> emit = {
+      "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
+  const std::vector<std::string> recipe = {
+      "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
   for (const std::string_view pass : {"first", "second"}) {
-    const auto compiled = RunChildProcess(lyra, args, 120s);
-    ASSERT_EQ(compiled.exit_code, 0) << pass << ": " << compiled.stderr_text;
+    const auto emitted = RunChildProcess(lyra, emit, 120s);
+    ASSERT_EQ(emitted.exit_code, 0) << pass << ": " << emitted.stderr_text;
+    const auto built = RunChildProcess(*sh_or, recipe, 120s);
+    ASSERT_EQ(built.exit_code, 0) << pass << ": " << built.stderr_text;
 
     const auto run = RunChildProcess(program, {}, 30s);
     EXPECT_EQ(run.exit_code, 0) << pass << ": " << run.stderr_text;

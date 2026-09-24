@@ -65,9 +65,9 @@ D7. What a path cannot do is recorded once per path, not once per case, as a lis
     unexpected refusal does, so the list can only shrink as a path fills in, and it is the coverage
     report.
 
-D8. A path is defined by the artifact it produces, not by how that artifact is executed. `jit`,
-    `aot`, and `lli` share one emitted LLVM module and therefore one acceptance surface; they can
-    never disagree about which programs are accepted, so they share one list.
+D8. A path is defined by the artifact it produces, not by how that artifact is executed. Every way
+    of running one path's artifact shares that artifact and therefore one acceptance surface; they
+    can never disagree about which programs are accepted, so they share one list.
 
 D8a. Where a path answers wrongly is recorded too, in a second list beside the first, holding text
     the failing run produces. The case keeps every check it makes, so the day the answer becomes

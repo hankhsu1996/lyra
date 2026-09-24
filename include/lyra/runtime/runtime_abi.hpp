@@ -435,6 +435,15 @@ auto lyra_rt_wait_until(void* runtime, LyraSpan triggers) -> bool;
 void lyra_rt_trigger(void* event, void* runtime);
 auto lyra_rt_triggered(const void* event, void* runtime) -> void*;
 
+// Takes over a value the run holds by address from here on. Every value
+// crossing this boundary belongs to the arena of the stretch that built it and
+// goes when that stretch returns; a constant is built once and read for the
+// rest of the run, so generated code hands the built value here before keeping
+// its address. It is an entry of this target's own ABI rather than an operation
+// any layer above states: the lifetime it answers exists because values cross
+// here as handles, and a target whose values are its own has no such question.
+auto lyra_rt_retain_constant(const void* value) -> const void*;
+
 // LRM 9.6.2 `disable`. A target crosses as its address, and a control effect as
 // the target it names, since that is all one carries.
 //
@@ -449,31 +458,25 @@ auto lyra_rt_triggered(const void* event, void* runtime) -> void*;
 // is one no region may claim. A body asks them where it regains control,
 // because a simulated process cannot be made to run code partway through a
 // statement.
-// A departure that arrived at a landing, in the three steps the platform's
-// unwinding protocol takes. Claiming answers the target the effect names, which
-// is what the landing tests; finishing releases it, which a landing does when
-// it continues past its own region; declining hands it back to carry on
-// outward. They are entries of this ABI rather than calls a body makes for
-// itself, so generated code names no unwinding symbol and each target's own
-// protocol stays inside the runtime.
-// Takes over a value the run holds by address from here on. Every value
-// crossing this boundary belongs to the arena of the stretch that built it and
-// goes when that stretch returns; a constant is built once and read for the
-// rest of the run, so generated code hands the built value here before keeping
-// its address. It is an entry of this target's own ABI rather than an operation
-// any layer above states: the lifetime it answers exists because values cross
-// here as handles, and a target whose values are its own has no such question.
-auto lyra_rt_retain_constant(const void* value) -> const void*;
-
-auto lyra_rt_claim_departure(void* exception) -> void*;
-void lyra_rt_finish_departure();
-[[noreturn]] void lyra_rt_decline_departure();
-
 void lyra_rt_enter_target(void* runtime, void* target);
 void lyra_rt_leave_target(void* runtime, void* target);
 void lyra_rt_disable(void* target, void* runtime);
 auto lyra_rt_effect_names_target(void* effect, void* target) -> void*;
 void lyra_rt_take_departure_if_due(void* runtime);
+
+// A departure that arrived at a landing, in the three steps the platform's
+// unwinding protocol takes. A landing stops whatever the platform is carrying,
+// and claiming answers the target the control effect it holds names, which is
+// what the landing tests; anything else is carried on from inside the claim,
+// unchanged, so the landing only ever acts on a control effect. Finishing
+// releases one, which a landing does when it continues past its own region;
+// declining hands it back to carry on outward. They are entries of this ABI
+// rather than calls a body makes for itself, so generated code names no
+// unwinding symbol and no raised type, and each target's own protocol stays
+// inside the runtime.
+auto lyra_rt_claim_departure(void* exception) -> void*;
+void lyra_rt_finish_departure();
+[[noreturn]] void lyra_rt_decline_departure();
 
 // Reads the current simulation time, scaled to the time unit of the design
 // element the call sits in (LRM 20.3). That unit is the caller's property
@@ -638,6 +641,95 @@ auto lyra_rt_find_disable_target(void* self) -> void*;
 auto lyra_rt_variables_open(const void* schema) -> void*;
 auto lyra_rt_variable_addr(void* variables, std::uint32_t index) -> void*;
 void lyra_rt_variables_close(void* variables);
+
+// The description opening that storage reads, built from what one body's own
+// artifact states: a pair of bytes per variable, naming the storage kind its
+// declaration asks for and the value domain that kind holds. What a body needs
+// is settled before anything runs, so an artifact states it once where it is
+// composed rather than where control first reaches the body, and the address
+// this answers with is what every later entry into the body opens against.
+auto lyra_rt_variable_schema_declare(const void* described, std::uint64_t count)
+    -> const void*;
+
+// The storage a unit shares program-wide, built from the same pair of bytes and
+// kept the same way. What it answers with is the storage itself rather than a
+// description of it, because every reference to shared storage names where it
+// is rather than what it needs.
+auto lyra_rt_shared_storage_declare(std::uint8_t kind, std::uint8_t domain)
+    -> void*;
+
+// One closure a unit declares, in the call protocol its body answers to: a body
+// that runs to completion, one that yields the handle whoever entered it drives
+// from there, one run once per entry of a container, and one taking nothing and
+// answering with a value. The two that answer a value state which
+// representation the answer comes back in, because a result crosses as a handle
+// and a handle carries no type. `captures` describes what the closure's
+// captures need, exactly as a body's variables are described.
+auto lyra_rt_closure_declare_synchronous(
+    const void* captures, std::uint64_t count, void (*body)(void* self))
+    -> const void*;
+auto lyra_rt_closure_declare_coroutine(
+    const void* captures, std::uint64_t count, void* (*body)(void* self))
+    -> const void*;
+auto lyra_rt_closure_declare_per_element(
+    const void* captures, std::uint64_t count,
+    void* (*body)(void* self, const void* item, const void* index),
+    std::uint8_t result_domain) -> const void*;
+auto lyra_rt_closure_declare_value(
+    const void* captures, std::uint64_t count, void* (*body)(void* self),
+    std::uint8_t result_domain) -> const void*;
+
+// One class a unit declares, and one whose values stand in the design
+// hierarchy. Each answers with the definition every value of it carries, which
+// is what the declaring unit leaves in the cell every reference to the class
+// loads.
+//
+// What the class adds to its lineage is stated by the entries below, in
+// whatever order its artifact states them. A class this one reaches is named by
+// the **cell** holding its definition rather than by the definition, because
+// the artifacts are stated in whatever order the program was composed in and a
+// class of another may not have spoken yet; a cell has an address from the
+// moment the program is composed.
+auto lyra_rt_class_declare() -> void*;
+auto lyra_rt_scope_class_declare(
+    std::int8_t time_unit_power, std::int8_t time_precision_power) -> void*;
+void lyra_rt_class_declare_base(void* cls, const void* base);
+void lyra_rt_class_declare_members(
+    void* cls, const void* described, std::uint64_t count);
+void lyra_rt_class_declare_introduction(void* cls, LyraMethodEntry body);
+void lyra_rt_class_declare_takeover(
+    void* cls, const void* introduced_by, std::uint32_t ordinal,
+    LyraMethodEntry body);
+void lyra_rt_class_declare_property_name(
+    void* cls, const void* name, std::uint32_t length, std::uint32_t position);
+void lyra_rt_class_declare_behavior_name(
+    void* cls, const void* name, std::uint32_t length, std::uint32_t position);
+void lyra_rt_class_declare_body_name(
+    void* cls, const void* name, std::uint32_t length, LyraMethodEntry body);
+
+// What a scope class states beyond that: the entries the runtime drives an
+// instance through and the one that builds it, and the names it answers from.
+// Each entry crosses erased and is restored to the type its definition was
+// generated with, exactly as a body the runtime looks up by name does.
+void lyra_rt_scope_declare_program(
+    void* scope, LyraMethodEntry resolve_state,
+    LyraMethodEntry initialize_state, LyraMethodEntry create_processes,
+    LyraMethodEntry construct);
+void lyra_rt_scope_declare_subroutine(
+    void* scope, const void* name, std::uint32_t length, LyraMethodEntry entry);
+void lyra_rt_scope_declare_export(
+    void* scope, const void* name, std::uint32_t length, LyraMethodEntry entry);
+void lyra_rt_scope_declare_class(
+    void* scope, const void* name, std::uint32_t length, const void* declared);
+
+// Where a program starts, answering its exit status: the arguments it was
+// started with, the cell its design root's unit leaves that root's definition
+// in, and the label the root carries. Whoever composed the program has run
+// every declaration body by now, so this is where what they all declared is
+// read at once.
+auto lyra_rt_run_program(
+    std::int32_t argc, char** argv, const void* root, const void* name,
+    std::uint32_t length) -> std::int32_t;
 
 // Which form of storage an address names, recorded in the address itself so it
 // travels with every reference built over it. A body holding a reference is

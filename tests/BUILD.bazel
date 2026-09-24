@@ -15,17 +15,22 @@ package(features = ["parse_headers"])
 # Two facts about a test are marked here, and they are independent.
 #
 # `no-remote-exec` says where it can run. A test that shells out to the host C++
-# compiler spawns something that is not a Bazel action, so remote execution
-# cannot provision it and the tag holds the test on a machine that has one.
+# compiler spawns something that is not a Bazel action, so it runs on whatever
+# machine executes it and finds that machine's compiler on PATH. The remote
+# image has the platform's own C++ compiler and no clang, so a test runs
+# remotely unless what it asserts is about clang itself -- a precompiled header
+# is clang's alone -- and the tag holds that one on a machine that has clang.
 #
 # `nightly` says when its cost is paid, and what it draws is one subject rather
 # than one price: whether an emitted C++ project still builds and runs. Two
 # targets carry it -- the whole corpus through that path, and the cases that
 # assert what a project does once built. Both spend most of their time in the
-# host compiler on projects nothing can share a prepared header with, because
-# such a header is bound to the paths of the headers it was made from and every
-# project carries its own copy. Both are therefore excluded for their own reason
-# and not for a neighbour's, which is the test a removal here has to pass.
+# host compiler with no prepared header to lean on: an emitted project carries
+# its own copy of the runtime headers, which a prepared header cannot be shared
+# across because it is bound to the paths it was made from, and the corpus runs
+# where the compiler is not clang, which is the only one that reads one. Both
+# are therefore excluded for their own reason and not for a neighbour's, which
+# is the test a removal here has to pass.
 #
 # Everything about the command line itself gates, and costs seconds, because
 # what a design declares and how a failure is reported are not statements about
@@ -125,9 +130,6 @@ cc_test(
     srcs = ["cli_test.cpp"],
     copts = LYRA_COPTS,
     data = ["//:lyra"],
-    # Emitting a project names the compiler that produced it, so even a case
-    # that only emits wants one on the machine it runs on.
-    tags = ["no-remote-exec"],
     deps = [
         ":framework",
         "//:support",
@@ -140,7 +142,8 @@ cc_test(
     # Each case builds an emitted project with the host compiler, several of
     # them more than once, and no two can share the header one prepared.
     # Declaring that cost is what keeps a loaded machine from reporting a
-    # timeout as a test failure.
+    # timeout as a test failure. Several of them are about the prepared header,
+    # which only clang makes, so they stay where clang is.
     size = "large",
     srcs = ["emitted_project_test.cpp"],
     copts = LYRA_COPTS,
@@ -212,6 +215,8 @@ cc_test(
     # Each case builds emitted C++ with the host compiler, so a shard's cost is
     # dominated by compilation rather than by simulation. Declaring that cost is
     # what keeps a loaded machine from reporting a timeout as a test failure.
+    # Remotely the compiler has no prepared header, so the corpus is cut into
+    # enough shards that the slowest stays well inside that declared cost.
     size = "large",
     srcs = ["conformance_test.cpp"],
     args = [
@@ -220,11 +225,8 @@ cc_test(
     ],
     copts = LYRA_COPTS,
     data = CONFORMANCE_DATA,
-    shard_count = 16,
-    tags = [
-        "nightly",
-        "no-remote-exec",
-    ],
+    shard_count = 48,
+    tags = ["nightly"],
     deps = [
         ":framework",
         "@bazel_tools//tools/cpp/runfiles",
@@ -233,18 +235,20 @@ cc_test(
     ],
 )
 
+# Each case links a program with the host C++ compiler, and a case carrying
+# foreign sources compiles them with it too. A shard runs remotely, where
+# another one costs a slot in the remote queue rather than a core here, so the
+# corpus is cut finely enough that the slowest shard is what a wait is made of.
 cc_test(
     name = "llvm_tests",
     srcs = ["conformance_test.cpp"],
     args = [
         "--path",
         "llvm",
-        "--foreign",
-        "exclude",
     ],
     copts = LYRA_COPTS,
     data = CONFORMANCE_DATA,
-    shard_count = 8,
+    shard_count = 48,
     deps = [
         ":framework",
         "@bazel_tools//tools/cpp/runfiles",
@@ -272,29 +276,5 @@ cc_test(
         "@fmt",
         "@googletest//:gtest",
         "@slang",
-    ],
-)
-
-# The other half of the LLVM path. A case carrying foreign sources builds them
-# with the host C compiler whatever path it is on -- a path changes how the
-# design is translated, not how a foreign symbol is produced -- so these are
-# split out rather than holding the whole corpus to a machine that has one.
-cc_test(
-    name = "llvm_dpi_tests",
-    srcs = ["conformance_test.cpp"],
-    args = [
-        "--path",
-        "llvm",
-        "--foreign",
-        "only",
-    ],
-    copts = LYRA_COPTS,
-    data = CONFORMANCE_DATA,
-    tags = ["no-remote-exec"],
-    deps = [
-        ":framework",
-        "@bazel_tools//tools/cpp/runfiles",
-        "@fmt",
-        "@googletest//:gtest",
     ],
 )

@@ -123,8 +123,8 @@ the whole body -- the same shape as the pass this removes.
   different things, and only then writing the program. Both a clean upstream tree and the cut before
   this one fail that program identically, so the omission is older than any of this work.
 - The storage a body's variables live in is stated the way a declaration's members already are: a
-  described list the host builds, and one block per execution realizing it. A target whose own
-  language gives a declaration storage states no variables and builds nothing.
+  described list the body's own artifact carries, and one block per execution realizing it. A target
+  whose own language gives a declaration storage states no variables and builds nothing.
 - Every variable now costs storage the runtime owns, including one nothing ever lends. That saving
   is available in full to whoever lays values out natively or removes what nothing reads; nothing
   measures this path today, so the cost is stated rather than measured -- which is the second cut in

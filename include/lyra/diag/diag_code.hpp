@@ -50,7 +50,6 @@ enum class DiagCode : std::uint32_t {
   kHostNoInputFiles,
   kHostIoError,
   kHostBuildFailed,
-  kHostBackendUnimplemented,
 
   kWarningPedantic,
 };

@@ -261,8 +261,15 @@ cc_library(
     deps = [
         ":lir",
         ":support",
+        "@llvm-project//llvm:CodeGen",
         "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:MC",
+        "@llvm-project//llvm:Passes",
         "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
+        "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//llvm:X86CodeGen",
     ],
 )
 
@@ -292,25 +299,27 @@ cc_library(
     ],
 )
 
+# The LLVM backend's program for one design: each unit's module, checked
+# against the runtime library a program links, and the objects linked from
+# them. It links that library in to read what it publishes, which is why it is
+# apart from the backend itself.
 cc_library(
-    name = "jit",
-    srcs = glob(["src/lyra/jit/*.cpp"]),
-    hdrs = glob(["include/lyra/jit/*.hpp"]),
+    name = "program",
+    srcs = glob(["src/lyra/program/*.cpp"]),
+    hdrs = glob(["include/lyra/program/*.hpp"]),
     copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
     deps = [
         ":backend_llvm",
-        ":lir",
+        ":compiler",
+        ":diag",
+        ":dpi",
+        ":driver",
+        ":mir",
         ":runtime",
         ":unit_metadata",
         "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:OrcJIT",
-        "@llvm-project//llvm:OrcTargetProcess",
-        "@llvm-project//llvm:Passes",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:X86AsmParser",
-        "@llvm-project//llvm:X86CodeGen",
     ],
 )
 
@@ -353,6 +362,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":backend_cpp",
+        ":base",
         ":diag",
         ":dpi",
         ":mir",
@@ -384,9 +394,9 @@ cc_library(
         ":diag",
         ":driver",
         ":hir",
-        ":jit",
         ":lir",
         ":mir",
+        ":program",
         ":support",
         "@fmt",
         "@slang",
@@ -403,7 +413,6 @@ cc_binary(
         ":runtime_surface",
         "//third_party/systemverilog:svdpi.h",
     ],
-    linkopts = ["-rdynamic"],
     visibility = ["//visibility:public"],
     deps = [
         ":cli",

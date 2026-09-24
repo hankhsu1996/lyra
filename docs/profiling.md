@@ -30,7 +30,7 @@ Ubuntu's `linux-tools-*` packages, so it is not part of the standard workflow he
 
 ```bash
 bazel build //:lyra
-./bazel-bin/lyra compile --top Top --release -o out design.sv
+./bazel-bin/lyra build --top Top --release -o out/program design.sv
 ```
 
 The cases under `tests/benchmark/` are the designs to measure, each isolating one cost family:

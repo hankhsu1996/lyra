@@ -314,7 +314,9 @@ def marginal_rate(history: list[tuple[int, float]]) -> float:
 def lyra_build_command(
     lyra: str, case: Case, out_dir: str, amount: int | None,
 ) -> list[str]:
-    cmd = [lyra, "compile"]
+    # Every build is a build: a program kept from an earlier probe of the same
+    # amount would be copied rather than compiled, and time the copy.
+    cmd = [lyra, "build", "--rebuild"]
     # A simulation is timed on the code a user would ship, so its translation
     # unit is optimized. A build is timed the way an edit loop builds, since
     # that is the cost it exists to protect and optimizing it would measure the
@@ -322,7 +324,7 @@ def lyra_build_command(
     if case.measure == MEASURE_RUN:
         cmd.append("--release")
     cmd.extend(["--top", CASE_TOP])
-    cmd.extend(["-o", out_dir])
+    cmd.extend(["-o", str(Path(out_dir) / BINARY_NAME)])
     if amount is not None:
         cmd.extend(["-G", f"{WORK_PARAM}={amount}"])
     cmd.extend(str(s) for s in case.sources)

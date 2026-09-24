@@ -1,122 +1,37 @@
-#include "lyra/jit/executor.hpp"
+#include "lyra/program/program_sink.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <format>
 #include <map>
-#include <memory>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
-#include <variant>
 #include <vector>
 
-#include <llvm/Analysis/CGSCCPassManager.h>
-#include <llvm/Analysis/LoopAnalysisManager.h>
-#include <llvm/ExecutionEngine/JITSymbol.h>
-#include <llvm/ExecutionEngine/Orc/Core.h>
-#include <llvm/ExecutionEngine/Orc/IRTransformLayer.h>
-#include <llvm/ExecutionEngine/Orc/LLJIT.h>
-#include <llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h>
-#include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Function.h>
 #include <llvm/IR/Module.h>
-#include <llvm/IR/PassManager.h>
-#include <llvm/Passes/PassBuilder.h>
-#include <llvm/Support/Error.h>
-#include <llvm/Support/MemoryBuffer.h>
-#include <llvm/Support/TargetSelect.h>
-#include <llvm/Transforms/Coroutines/CoroCleanup.h>
-#include <llvm/Transforms/Coroutines/CoroEarly.h>
-#include <llvm/Transforms/Coroutines/CoroSplit.h>
+#include <llvm/IR/Type.h>
 
 #include "lyra/backend/llvm/emit.hpp"
+#include "lyra/backend/llvm/object_file.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/compiler/unit_metadata.hpp"
+#include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/lir/compilation_unit.hpp"
-#include "lyra/lir/symbol_name.hpp"
-#include "lyra/lir/type.hpp"
-#include "lyra/lir/type_id.hpp"
-#include "lyra/runtime/class_definition.hpp"
-#include "lyra/runtime/closure.hpp"
-#include "lyra/runtime/design.hpp"
-#include "lyra/runtime/generated_call_scope.hpp"
-#include "lyra/runtime/hierarchy_segment.hpp"
-#include "lyra/runtime/jit_execution.hpp"
-#include "lyra/runtime/member_storage.hpp"
-#include "lyra/runtime/plusargs.hpp"
-#include "lyra/runtime/runtime.hpp"
-#include "lyra/runtime/scope.hpp"
-#include "lyra/runtime/scope_program.hpp"
-#include "lyra/runtime/simulation_entry.hpp"
-#include "lyra/support/value_domain.hpp"
+#include "lyra/dpi/abi_header.hpp"
+#include "lyra/driver/cpp_build.hpp"
+#include "lyra/mir/compilation_unit.hpp"
+#include "lyra/runtime/runtime_abi.hpp"
 
-namespace lyra::jit {
+namespace lyra::program {
 
 namespace {
-
-template <typename T>
-auto Unwrap(llvm::Expected<T> value, std::string_view what) -> T {
-  if (!value) {
-    throw InternalError(
-        "jit executor: " + std::string(what) + ": " +
-        llvm::toString(value.takeError()));
-  }
-  return std::move(*value);
-}
-
-void Check(llvm::Error error, std::string_view what) {
-  if (error) {
-    throw InternalError(
-        "jit executor: " + std::string(what) + ": " +
-        llvm::toString(std::move(error)));
-  }
-}
-
-// Splits every generated coroutine body into its resumable form before the
-// module is compiled. A process body reaches the JIT as an ordinary function
-// carrying coroutine intrinsics; the coroutine passes derive its frame, its
-// resume state, and the values that must survive a suspension. That derivation
-// is theirs -- the compiler states where a body suspends, never how it resumes.
-void LowerCoroutines(llvm::orc::LLJIT& jit) {
-  jit.getIRTransformLayer().setTransform(
-      [](llvm::orc::ThreadSafeModule module,
-         const llvm::orc::MaterializationResponsibility&)
-          -> llvm::Expected<llvm::orc::ThreadSafeModule> {
-        module.withModuleDo([](llvm::Module& ir) {
-          llvm::PassBuilder builder;
-          llvm::LoopAnalysisManager loops;
-          llvm::FunctionAnalysisManager functions;
-          llvm::CGSCCAnalysisManager call_graph;
-          llvm::ModuleAnalysisManager modules;
-          builder.registerModuleAnalyses(modules);
-          builder.registerCGSCCAnalyses(call_graph);
-          builder.registerFunctionAnalyses(functions);
-          builder.registerLoopAnalyses(loops);
-          builder.crossRegisterProxies(loops, functions, call_graph, modules);
-
-          // Only the coroutine lowering runs: it is what makes a suspending
-          // body executable, so it is a translation step, not an optimization
-          // the module could also be correct without.
-          llvm::ModulePassManager passes;
-          passes.addPass(llvm::CoroEarlyPass());
-          llvm::CGSCCPassManager split;
-          split.addPass(llvm::CoroSplitPass());
-          passes.addPass(
-              llvm::createModuleToPostOrderCGSCCPassAdaptor(std::move(split)));
-          passes.addPass(llvm::CoroCleanupPass());
-          passes.run(ir, modules);
-        });
-        return module;
-      });
-}
 
 // What one value crossing the runtime ABI is, coarsely enough that two sides
 // disagreeing is a defect rather than a spelling difference.
@@ -250,26 +165,11 @@ auto AbiKindName(AbiKind kind) -> std::string_view {
   throw InternalError("runtime abi: unknown value kind");
 }
 
-// Binds the runtime ABI the generated module calls to the definitions linked
-// into this process. Absolute addresses resolve every generated call without
-// relying on the host's exported dynamic symbol table.
-//
-// The names bound are also the answer to what this backend can carry out, so
-// they are returned rather than only defined: an entry's name composes a value
-// domain with an operation, and the pairs the library implements are a subset
-// of the pairs that compose.
-auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
-    -> std::map<std::string, AbiSignature> {
-  llvm::orc::SymbolMap symbols;
-  std::map<std::string, AbiSignature> published;
-  auto add = [&](std::string_view name, auto* fn) {
-    published.emplace(
-        name, AbiSignatureOf<std::remove_pointer_t<decltype(fn)>>::Get());
-    symbols[jit.getExecutionSession().intern(name)] =
-        llvm::orc::ExecutorSymbolDef(
-            llvm::orc::ExecutorAddr::fromPtr(fn),
-            llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable);
-  };
+// What the engine publishes: the services a design runs against rather than
+// operations on a value of any one domain -- the host it runs in, its files and
+// its output, its processes and their scheduling, the object tree and the names
+// resolved through it.
+void BindEngineEntries(const auto& add) {
   add("lyra_rt_current_runtime", &lyra_rt_current_runtime);
   add("lyra_rt_files", &lyra_rt_files);
   add("lyra_rt_time_format", &lyra_rt_time_format);
@@ -423,6 +323,38 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
   add("lyra_rt_variables_open", &lyra_rt_variables_open);
   add("lyra_rt_variable_addr", &lyra_rt_variable_addr);
   add("lyra_rt_variables_close", &lyra_rt_variables_close);
+  add("lyra_rt_variable_schema_declare", &lyra_rt_variable_schema_declare);
+  add("lyra_rt_shared_storage_declare", &lyra_rt_shared_storage_declare);
+  add("lyra_rt_closure_declare_synchronous",
+      &lyra_rt_closure_declare_synchronous);
+  add("lyra_rt_closure_declare_coroutine", &lyra_rt_closure_declare_coroutine);
+  add("lyra_rt_closure_declare_per_element",
+      &lyra_rt_closure_declare_per_element);
+  add("lyra_rt_closure_declare_value", &lyra_rt_closure_declare_value);
+  add("lyra_rt_class_declare", &lyra_rt_class_declare);
+  add("lyra_rt_scope_class_declare", &lyra_rt_scope_class_declare);
+  add("lyra_rt_class_declare_base", &lyra_rt_class_declare_base);
+  add("lyra_rt_class_declare_members", &lyra_rt_class_declare_members);
+  add("lyra_rt_class_declare_introduction",
+      &lyra_rt_class_declare_introduction);
+  add("lyra_rt_class_declare_takeover", &lyra_rt_class_declare_takeover);
+  add("lyra_rt_class_declare_property_name",
+      &lyra_rt_class_declare_property_name);
+  add("lyra_rt_class_declare_behavior_name",
+      &lyra_rt_class_declare_behavior_name);
+  add("lyra_rt_class_declare_body_name", &lyra_rt_class_declare_body_name);
+  add("lyra_rt_scope_declare_program", &lyra_rt_scope_declare_program);
+  add("lyra_rt_scope_declare_subroutine", &lyra_rt_scope_declare_subroutine);
+  add("lyra_rt_scope_declare_export", &lyra_rt_scope_declare_export);
+  add("lyra_rt_scope_declare_class", &lyra_rt_scope_declare_class);
+  add("lyra_rt_run_program", &lyra_rt_run_program);
+}
+
+// What a value publishes: every entry named for a value domain, which is the
+// storage a value of it lives in and the operations the language defines over
+// it. An entry here names its domain, so gaining a domain adds entries rather
+// than changing any.
+void BindValueEntries(const auto& add) {
   add("lyra_rt_packed_cell_get", &lyra_rt_packed_cell_get);
   add("lyra_rt_packed_cell_initialize", &lyra_rt_packed_cell_initialize);
   add("lyra_rt_packed_cell_set", &lyra_rt_packed_cell_set);
@@ -1229,20 +1161,27 @@ auto DefineRuntimeAbi(llvm::orc::LLJIT& jit)
       &lyra_rt_unpackedarray_merge_conditional);
   add("lyra_rt_unpackedarray_from_packed_array",
       &lyra_rt_unpackedarray_from_packed_array);
-  // The address behind that name is the target language's own type identity,
-  // whose spelling belongs to whoever mangles it: reaching it by that spelling
-  // instead would put a C++ class name in the code generator, which a rename
-  // changes and nothing rereads.
-  symbols[jit.getExecutionSession().intern(
-      backend::llvm_backend::kDepartureTypeSymbol)] =
-      llvm::orc::ExecutorSymbolDef(
-          llvm::orc::ExecutorAddr::fromPtr(
-              &typeid(lyra::runtime::ControlEffect)),
-          llvm::JITSymbolFlags::Exported);
-  Check(
-      jit.getMainJITDylib().define(
-          llvm::orc::absoluteSymbols(std::move(symbols))),
-      "define runtime abi");
+}
+
+// What the runtime library publishes, each entry at the shape its own
+// definition states. The entries are also the answer to what this backend can
+// carry out: an entry's name composes a value domain with an operation, and the
+// pairs the library implements are a subset of the pairs that compose.
+//
+// Read off the functions the library defines, which are linked into this
+// compiler from the same sources the shipped library is built from, so the
+// list cannot describe a library other than the one a program links.
+auto PublishedEntries() -> const std::map<std::string, AbiSignature>& {
+  static const std::map<std::string, AbiSignature> published = [] {
+    std::map<std::string, AbiSignature> listed;
+    auto add = [&](std::string_view name, auto* fn) {
+      listed.emplace(
+          name, AbiSignatureOf<std::remove_pointer_t<decltype(fn)>>::Get());
+    };
+    BindEngineEntries(add);
+    BindValueEntries(add);
+    return listed;
+  }();
   return published;
 }
 
@@ -1329,1054 +1268,109 @@ auto MismatchedEntries(
   return mismatched;
 }
 
-// Links the design's compiled DPI-C inputs into the execution session, which is
-// this design's linker: the session resolves names across everything it holds,
-// so the foreign side's calls out and the design's exported entry points
-// resolve in one place rather than in two that cannot see each other (LRM
-// 35.4).
-void LinkForeignObjects(
-    llvm::orc::LLJIT& jit, std::span<const std::filesystem::path> objects) {
-  for (const std::filesystem::path& object : objects) {
-    auto buffer = llvm::MemoryBuffer::getFile(object.string());
-    if (!buffer) {
-      throw InternalError(
-          "jit executor: reading the DPI-C object '" + object.string() +
-          "': " + buffer.getError().message());
-    }
-    Check(
-        jit.addObjectFile(std::move(*buffer)),
-        "link a DPI-C object into the session");
-  }
-}
-
-using SlotRole = backend::llvm_backend::MemberSlotRole;
-
-// The storage a generic value realizes for one member its declaration holds:
-// the kind comes from the backend's classification of the member's type, and
-// this builds what that kind needs.
-auto DescribeMember(
-    const lir::CompilationUnit& unit, lir::TypeId type, SlotRole role)
-    -> diag::Result<runtime::MemberStorageDescriptor> {
-  const std::optional<backend::llvm_backend::MemberStorageKind> kind =
-      backend::llvm_backend::MemberStorageKindOf(unit, type, role);
-  if (!kind) {
-    return diag::Fail(
-        diag::DiagCode::kUnsupportedTypeKind,
-        std::format(
-            "jit executor: a member of type {} has no storage realization on "
-            "this backend",
-            unit.types.Get(type).KindName()));
-  }
-  // What each kind needs beside itself comes from the same type it was read
-  // from: the domain a value is realized in.
-  const auto domain_of = [&](lir::TypeId value) -> support::ValueDomain {
-    const std::optional<support::ValueDomain> domain =
-        backend::llvm_backend::ValueDomainOf(unit, value);
-    if (!domain) {
-      throw InternalError(
-          "jit executor: a storage kind naming a value domain was read from a "
-          "type that has none");
-    }
-    return *domain;
-  };
-  const lir::Type& data = unit.types.Get(type);
-  switch (*kind) {
-    case backend::llvm_backend::MemberStorageKind::kObservableCell:
-      return runtime::ObservableCellStorage{
-          .domain = domain_of(data.Get<lir::ObservableType>().value)};
-    case backend::llvm_backend::MemberStorageKind::kResolvedNet:
-      return runtime::ResolvedNetStorage{
-          .domain = domain_of(data.Get<lir::ResolvedType>().value)};
-    case backend::llvm_backend::MemberStorageKind::kSampledHistory:
-      return runtime::SampledHistoryStorage{
-          .domain = domain_of(data.Get<lir::SampledHistoryType>().value)};
-    case backend::llvm_backend::MemberStorageKind::kValueCell:
-      return runtime::ValueCellStorage{.domain = domain_of(type)};
-    case backend::llvm_backend::MemberStorageKind::kInlineValue:
-      return runtime::InlineValueStorage{.domain = domain_of(type)};
-    case backend::llvm_backend::MemberStorageKind::kBorrowedHandle:
-      return runtime::BorrowedHandleStorage{};
-    case backend::llvm_backend::MemberStorageKind::kPromotedScope:
-      return runtime::PromotedScopeStorage{};
-    case backend::llvm_backend::MemberStorageKind::kNamedEvent:
-      return runtime::NamedEventStorage{};
-    case backend::llvm_backend::MemberStorageKind::kCancellationTarget:
-      return runtime::CancellationTargetStorage{};
-    case backend::llvm_backend::MemberStorageKind::kChannelCancellation:
-      return runtime::ChannelCancellationStorage{};
-    case backend::llvm_backend::MemberStorageKind::kEvaluationAttempts:
-      return runtime::EvaluationAttemptsStorage{};
-  }
-  throw InternalError("jit executor: unknown member storage kind");
-}
-
-// One body's variables, described and kept alive for the run. The description
-// points into the vector beside it, so the two travel together and neither
-// outlives the other.
-struct LoadedVariableSchema {
-  std::string symbol;
-  std::unique_ptr<std::vector<runtime::MemberStorageDescriptor>> descriptors;
-  std::unique_ptr<runtime::MemberStorageSchema> schema;
-};
-
-auto DescribeVariables(
-    const lir::CompilationUnit& unit, const lir::Function& fn)
-    -> diag::Result<LoadedVariableSchema> {
-  auto descriptors =
-      std::make_unique<std::vector<runtime::MemberStorageDescriptor>>();
-  descriptors->reserve(fn.variables.size());
-  for (const lir::TypeId type : fn.variables) {
-    auto described = DescribeMember(unit, type, SlotRole::kVariable);
-    if (!described) {
-      return std::unexpected(std::move(described.error()));
-    }
-    descriptors->push_back(*described);
-  }
-  auto schema = std::make_unique<runtime::MemberStorageSchema>(
-      runtime::MemberStorageSchema{
-          .data = descriptors->data(),
-          .size = static_cast<std::uint32_t>(descriptors->size())});
-  return LoadedVariableSchema{
-      .symbol = lir::VariableSchemaSymbol(fn.name),
-      .descriptors = std::move(descriptors),
-      .schema = std::move(schema)};
-}
-
-auto DescribeMembers(
-    const lir::CompilationUnit& unit, std::span<const lir::Member> members,
-    SlotRole role)
-    -> diag::Result<std::vector<runtime::MemberStorageDescriptor>> {
-  std::vector<runtime::MemberStorageDescriptor> descriptors;
-  descriptors.reserve(members.size());
-  for (const lir::Member& member : members) {
-    auto described = DescribeMember(unit, member.type, role);
-    if (!described) {
-      return std::unexpected(std::move(described.error()));
-    }
-    descriptors.push_back(*described);
-  }
-  return descriptors;
-}
-
-// One name a scope answers a call under: the identifier a caller spells, and
-// the symbol the entry it reaches was emitted under.
-struct LoadedSubroutine {
-  std::string name;
-  std::string symbol;
-};
-
-// One name space of a scope's by-name callable surface: what it declares, and
-// the table the runtime scans. It sits behind its own allocation for the reason
-// the definition beside it does -- the table names the identifiers rather than
-// copying them, so both must keep their addresses for as long as anything holds
-// the definition.
-struct PublishedCallables {
-  std::vector<LoadedSubroutine> declared;
-  std::vector<runtime::ScopeCallable> table;
-};
-
-// The classes one scope answers a name with (LRM 23.9), held here so the table
-// the definition names outlives every reference settled against it. Each is
-// named the way the class is linked, which is how the entry finds the
-// definition among the program's classes.
-struct DeclaredClasses {
-  std::vector<LoadedSubroutine> declared;
-  std::vector<runtime::ScopeClass> table;
-};
-
-// The symbols of the four entries the runtime reaches one scope through: the
-// three phases it drives an instance through, and the one that builds it. Each
-// is read off the function the compiled class names rather than composed a
-// second time here -- a symbol is what the linker matches, so a consumer that
-// recomposed one would be agreeing with the emitter by coincidence.
-struct LoadedScopeEntries {
-  std::string resolve_state;
-  std::string initialize_state;
-  std::string create_processes;
-  std::string construct;
-};
-
-// The scope half of one class whose values stand in the object tree: the
-// entries the runtime drives an instance through, the surfaces a hierarchical
-// name is answered from, and the definition record every instance shares. That
-// record sits behind its own allocation because generated code holds its
-// address, so it has to outlive this list and stay where it was.
-struct LoadedScopeClass {
-  // The symbol the class links under. What its bodies link under are further
-  // symbols over the same parts rather than words appended to this one, so
-  // nothing is derived from it.
-  std::string name;
-  std::string definition_symbol;
-  // Absent on a class that stands in the tree and supplies no way to run --
-  // what a unit promised of its instances, which nothing constructs.
-  std::optional<LoadedScopeEntries> entries;
-  TimeResolution time_resolution;
-  std::unique_ptr<PublishedCallables> subroutines;
-  std::unique_ptr<PublishedCallables> exports;
-  std::unique_ptr<DeclaredClasses> classes;
-  std::unique_ptr<runtime::ScopeDefinition> definition;
-};
-
-// Fills one scope class's runtime definition from its JIT-compiled entries. The
-// entries are ABI-compatible native functions over the generic scope receiver.
-// A subroutine answers a hierarchical name instead, so it is named where it is
-// asked for rather than by which entry it is. Looking a symbol up here
-// materializes its module, which resolves that module's definition references
-// -- every definition symbol is injected before any is filled, so those
-// references find their address regardless of fill order.
-void FillDefinition(llvm::orc::LLJIT& jit, LoadedScopeClass& cls) {
-  // A symbol named here is one the compiled unit states it emitted, so failing
-  // to resolve it is never an entry the scope simply has no work for -- it is
-  // typically a runtime symbol the body calls that nothing defines.
-  auto lookup = [&](const std::string& symbol) -> llvm::orc::ExecutorAddr {
-    auto found = jit.lookup(symbol);
-    if (found) {
-      return *found;
-    }
-    throw InternalError(
-        "jit executor: the scope entry '" + symbol +
-        "' did not resolve: " + llvm::toString(found.takeError()));
-  };
-  runtime::ScopeDefinition& definition = *cls.definition;
-  definition.program.metadata = runtime::ScopeMetadata{
-      cls.time_resolution.unit_power, cls.time_resolution.precision_power};
-  // A class that supplies no way to run keeps the entries a class with none
-  // starts with, which do nothing: nothing constructs one, so nothing enters
-  // them, and the name tables below are equally empty.
-  if (cls.entries.has_value()) {
-    definition.program.resolve_state =
-        lookup(cls.entries->resolve_state).toPtr<runtime::ScopeEntry>();
-    definition.program.initialize_state =
-        lookup(cls.entries->initialize_state).toPtr<runtime::ScopeEntry>();
-    definition.program.create_processes =
-        lookup(cls.entries->create_processes).toPtr<runtime::ScopeEntry>();
-    definition.construct =
-        lookup(cls.entries->construct).toPtr<runtime::ScopeConstructEntry>();
-  }
-
-  const auto resolve_table =
-      [&](PublishedCallables& published) -> runtime::ScopeCallableTable {
-    published.table.reserve(published.declared.size());
-    for (const LoadedSubroutine& entry : published.declared) {
-      published.table.emplace_back(
-          runtime::AbiStringRef{
-              entry.name.data(), static_cast<std::uint32_t>(entry.name.size())},
-          lookup(entry.symbol).toPtr<runtime::ErasedScopeCallable>());
-    }
-    return runtime::ScopeCallableTable{
-        published.table.data(),
-        static_cast<std::uint32_t>(published.table.size())};
-  };
-  definition.program.subroutines = resolve_table(*cls.subroutines);
-  definition.program.exports = resolve_table(*cls.exports);
-}
-
-// One cell a unit shares with the whole program, built here because the
-// runtime owns storage and generated code only ever holds its address.
-struct LoadedStaticStorage {
-  std::string symbol;
-  std::unique_ptr<runtime::MemberStorage> storage;
-};
-
-// The cells a unit declares outside any instance. What each needs is read from
-// its type the same way a member's is, since the difference between the two is
-// what reaches the storage and not what the storage is.
-auto LoadStaticStorage(const lir::CompilationUnit& unit)
-    -> diag::Result<std::vector<LoadedStaticStorage>> {
-  std::vector<LoadedStaticStorage> loaded;
-  loaded.reserve(unit.static_storage.size());
-  for (const lir::StaticStorage& entry : unit.static_storage) {
-    auto described = DescribeMember(unit, entry.type, SlotRole::kVariable);
-    if (!described) {
-      return std::unexpected(std::move(described.error()));
-    }
-    loaded.push_back(
-        LoadedStaticStorage{
-            .symbol = entry.symbol,
-            .storage = std::make_unique<runtime::MemberStorage>(*described)});
-  }
-  return loaded;
-}
-
-// One behavior a class takes over from its lineage (LRM 8.20), as far as one
-// unit can state it: the declaration that introduced the behavior and which of
-// that declaration's introductions it is, with the introducer named the way
-// every reference across an artifact boundary is, and the symbol the body
-// answering it is emitted under.
-struct LoadedTakeover {
-  std::string introduced_by;
-  std::uint32_t ordinal = 0;
-  std::string body;
-};
-
-// One name a class declares, and the position it gave that declaration among
-// its own.
-struct LoadedDeclaredName {
-  std::string name;
-  std::uint32_t position = 0;
-};
-
-// One name a class answers with a body outright rather than with a position
-// (LRM 8.14), and the symbol that body is emitted under.
-struct LoadedDeclaredBody {
-  std::string name;
-  std::string symbol;
-};
-
-// The names one class answers while a reference to it resolves, kept apart from
-// the positional schema the realization builds from them: one is the resolution
-// aid, the other is what an access reads. It sits behind its own allocation for
-// the reason a scope's callable surface does -- what the definition ends up
-// holding names these identifiers rather than copying them, so they keep their
-// addresses however the list of classes grows.
-struct DeclaredNames {
-  std::vector<LoadedDeclaredName> properties;
-  std::vector<LoadedDeclaredName> behaviors;
-  std::vector<LoadedDeclaredBody> bodies;
-};
-
-// What one class adds to its lineage, the flat forms realizing it produced, and
-// the definition every value of it shares. The realization is held here because
-// the definition names it as plain data it does not own, so it has to outlive
-// the definition and stay where it was.
-struct LoadedClass {
-  std::string name;
-  std::string definition_symbol;
-  std::optional<std::string> base;
-  std::vector<runtime::MemberStorageDescriptor> members;
-  std::unique_ptr<DeclaredNames> declared;
-  // The symbol the body of each behavior this class introduces is emitted
-  // under, in the order the class introduces them. A behavior declared with no
-  // implementation names none (LRM 8.21 pure virtual).
-  std::vector<std::optional<std::string>> introductions;
-  std::vector<LoadedTakeover> takeovers;
-  runtime::RealizedClass realization;
-  // Owned where nothing else holds a definition for the class; borrowed where
-  // the class's values stand in the design hierarchy, because there the class
-  // half is part of the record those instances already carry. Realizing one is
-  // the same step either way, which is why both arrive here rather than each
-  // kind of value getting a realization of its own.
-  std::unique_ptr<runtime::ObjectDefinition> owned;
-  runtime::ObjectDefinition* definition = nullptr;
-};
-
-// The declaration a class extends, under the name it is linked by, or nothing
-// where it extends nothing.
-auto ExtendedClassName(const lir::CompilationUnit& unit, const lir::Class& cls)
-    -> std::optional<std::string> {
-  if (!cls.base.has_value()) {
-    return std::nullopt;
-  }
-  const std::optional<lir::TypeId> base = lir::BaseType(unit, *cls.base);
-  return base.has_value() ? lir::DeclarationSymbol(unit, *base) : std::nullopt;
-}
-
-// The symbol answering each behavior the class introduces, in the order it
-// introduces them, and nothing where it declared one without an implementation
-// (LRM 8.21).
-auto LoadIntroductions(const lir::CompilationUnit& unit, const lir::Class& cls)
-    -> std::vector<std::optional<std::string>> {
-  std::vector<std::optional<std::string>> introductions;
-  introductions.reserve(cls.introduces.size());
-  for (const lir::Introduction& introduced : cls.introduces) {
-    introductions.push_back(
-        introduced.body.has_value()
-            ? std::optional{unit.functions.Get(*introduced.body).name}
-            : std::nullopt);
-  }
-  return introductions;
-}
-
-auto LoadTakeovers(const lir::CompilationUnit& unit, const lir::Class& cls)
-    -> diag::Result<std::vector<LoadedTakeover>> {
-  std::vector<LoadedTakeover> takeovers;
-  takeovers.reserve(cls.takeovers.size());
-  for (const lir::DispatchTakeover& taken : cls.takeovers) {
-    const std::optional<std::string> introduced_by =
-        lir::DeclarationSymbol(unit, taken.method.introduced_by);
-    if (!introduced_by.has_value()) {
-      throw InternalError(
-          "jit executor: a class takes over a behavior of a declaration that "
-          "is linked under no name");
-    }
-    takeovers.push_back(
-        LoadedTakeover{
-            .introduced_by = *introduced_by,
-            .ordinal = taken.method.ordinal.value,
-            .body = unit.functions.Get(taken.body).name});
-  }
-  return takeovers;
-}
-
-// Every class of the unit whose values stand in the object tree, with the class
-// half of each beside the scope half: the two are one class, held in two
-// records because what the runtime drives a value through is the tree's own and
-// what a value answers a behavior with is every class's. A class outside the
-// tree is one the program allocates as an ordinary object and is loaded with
-// those.
-struct LoadedScopeClasses {
-  std::vector<LoadedScopeClass> scopes;
-  std::vector<LoadedClass> classes;
-};
-
-auto LoadScopeClasses(
-    const lir::CompilationUnit& unit,
-    const compiler::ElaboratedUnitMetadata& metadata)
-    -> diag::Result<LoadedScopeClasses> {
-  LoadedScopeClasses loaded;
-  for (const lir::ClassId id : unit.classes.Ids()) {
-    const lir::Class& cls = unit.classes.Get(id);
-    if (!lir::StandsInObjectTree(unit, cls.base)) {
-      continue;
-    }
-    const lir::ObjectTreeProgram* driven_by = lir::TreeProgramOf(cls);
-    auto members = DescribeMembers(unit, cls.members, SlotRole::kVariable);
-    if (!members) {
-      return std::unexpected(std::move(members.error()));
-    }
-    const auto load_table =
-        [&](const std::vector<lir::PublishedCallable>& published) {
-          auto loaded = std::make_unique<PublishedCallables>();
-          loaded->declared.reserve(published.size());
-          for (const lir::PublishedCallable& entry : published) {
-            loaded->declared.push_back(
-                LoadedSubroutine{
-                    .name = entry.name,
-                    .symbol = unit.functions.Get(entry.entry).name});
-          }
-          return loaded;
-        };
-    // A class is named here by what it is linked under, which is what the
-    // program's own class list is keyed by -- so the join costs no second
-    // naming rule.
-    auto declares = std::make_unique<DeclaredClasses>();
-    declares->declared.reserve(cls.declares.size());
-    for (const lir::DeclaredClass& declared : cls.declares) {
-      declares->declared.push_back(
-          LoadedSubroutine{
-              .name = declared.name,
-              .symbol = lir::ClassSymbol(
-                  unit.name, lir::SymbolPartOf(
-                                 unit.classes.Get(declared.declaration).name,
-                                 declared.declaration.value))});
-    }
-    const std::string symbol =
-        lir::ClassSymbol(unit.name, lir::SymbolPartOf(cls.name, id.value));
-    std::optional<LoadedScopeEntries> entries;
-    if (driven_by != nullptr) {
-      entries = LoadedScopeEntries{
-          .resolve_state = unit.functions.Get(driven_by->resolve_state).name,
-          .initialize_state =
-              unit.functions.Get(driven_by->initialize_state).name,
-          .create_processes =
-              unit.functions.Get(driven_by->create_processes).name,
-          .construct = unit.functions.Get(cls.constructor).name};
-    }
-    loaded.scopes.push_back(
-        LoadedScopeClass{
-            .name = symbol,
-            .definition_symbol = lir::ClassDefinitionSymbol(
-                unit.name, lir::SymbolPartOf(cls.name, id.value)),
-            .entries = std::move(entries),
-            .time_resolution = metadata.time_resolution,
-            .subroutines = load_table(cls.subroutines),
-            .exports = load_table(cls.exports),
-            .classes = std::move(declares),
-            .definition = std::make_unique<runtime::ScopeDefinition>()});
-
-    // The class half, pointed at the record the scope half owns. A scope's
-    // by-name surface is its program's, so the tables a class answers a name
-    // from stay empty here; what this half carries is what a value of the class
-    // holds and what it answers a behavior with.
-    auto introductions = LoadIntroductions(unit, cls);
-    auto takeovers = LoadTakeovers(unit, cls);
-    if (!takeovers) {
-      return std::unexpected(std::move(takeovers.error()));
-    }
-    loaded.classes.push_back(
-        LoadedClass{
-            .name = symbol,
-            .definition_symbol = loaded.scopes.back().definition_symbol,
-            .base = ExtendedClassName(unit, cls),
-            .members = *std::move(members),
-            .declared = std::make_unique<DeclaredNames>(),
-            .introductions = std::move(introductions),
-            .takeovers = *std::move(takeovers),
-            .realization = {},
-            .owned = nullptr});
-    loaded.classes.back().definition = loaded.scopes.back().definition.get();
-  }
-  return loaded;
-}
-
-auto LoadObjectClasses(const lir::CompilationUnit& unit)
-    -> diag::Result<std::vector<LoadedClass>> {
-  std::vector<LoadedClass> loaded;
-  for (const lir::ClassId id : unit.classes.Ids()) {
-    const lir::Class& cls = unit.classes.Get(id);
-    if (lir::StandsInObjectTree(unit, cls.base)) {
-      continue;
-    }
-    auto members = DescribeMembers(unit, cls.members, SlotRole::kVariable);
-    if (!members) {
-      return std::unexpected(std::move(members.error()));
-    }
-    std::vector<std::optional<std::string>> introductions =
-        LoadIntroductions(unit, cls);
-    auto declared = std::make_unique<DeclaredNames>();
-    declared->behaviors.reserve(cls.introduces.size());
-    for (const lir::Introduction& introduced : cls.introduces) {
-      declared->behaviors.push_back(
-          LoadedDeclaredName{
-              .name = introduced.name,
-              .position =
-                  static_cast<std::uint32_t>(declared->behaviors.size())});
-    }
-    declared->properties.reserve(cls.named_members.size());
-    for (const lir::NamedMember& named : cls.named_members) {
-      declared->properties.push_back(
-          LoadedDeclaredName{.name = named.name, .position = named.position});
-    }
-    declared->bodies.reserve(cls.bodies.size());
-    for (const lir::DeclaredBody& declares : cls.bodies) {
-      declared->bodies.push_back(
-          LoadedDeclaredBody{
-              .name = declares.name,
-              .symbol = unit.functions.Get(declares.body).name});
-    }
-    auto takeovers = LoadTakeovers(unit, cls);
-    if (!takeovers) {
-      return std::unexpected(std::move(takeovers.error()));
-    }
-    loaded.push_back(
-        LoadedClass{
-            .name = lir::ClassSymbol(
-                unit.name, lir::SymbolPartOf(cls.name, id.value)),
-            .definition_symbol = lir::ClassDefinitionSymbol(
-                unit.name, lir::SymbolPartOf(cls.name, id.value)),
-            .base = ExtendedClassName(unit, cls),
-            .members = *std::move(members),
-            .declared = std::move(declared),
-            .introductions = std::move(introductions),
-            .takeovers = *std::move(takeovers),
-            .realization = {},
-            .owned = std::make_unique<runtime::ObjectDefinition>()});
-    loaded.back().definition = loaded.back().owned.get();
-  }
-  return loaded;
-}
-
-auto LoadStructs(const lir::CompilationUnit& unit)
-    -> diag::Result<std::vector<LoadedClass>> {
-  std::vector<LoadedClass> loaded;
-  for (const lir::StructId id : unit.structs.Ids()) {
-    const lir::Struct& record = unit.structs.Get(id);
-    auto members = DescribeMembers(unit, record.fields, SlotRole::kVariable);
-    if (!members) {
-      return std::unexpected(std::move(members.error()));
-    }
-    loaded.push_back(
-        LoadedClass{
-            .name = lir::StructSymbol(
-                unit.name, lir::SymbolPart::Ordinal(id.value)),
-            .definition_symbol = lir::StructDefinitionSymbol(
-                unit.name, lir::SymbolPart::Ordinal(id.value)),
-            .base = std::nullopt,
-            .members = *std::move(members),
-            // A compiler-generated record answers no name: nothing of the
-            // source reaches one, so nothing asks it for a member by name.
-            .declared = std::make_unique<DeclaredNames>(),
-            .introductions = {},
-            .takeovers = {},
-            .realization = {},
-            .owned = std::make_unique<runtime::ObjectDefinition>()});
-    loaded.back().definition = loaded.back().owned.get();
-  }
-  return loaded;
-}
-
-// The address a body is linked at. A body a class states is one this program
-// compiled, so a symbol that does not resolve means the class was compiled to
-// answer something no unit supplied.
-auto MethodEntry(llvm::orc::LLJIT& jit, const std::string& symbol)
-    -> runtime::ErasedMethodEntry {
-  auto found = jit.lookup(symbol);
-  if (!found) {
-    throw InternalError(
-        "jit executor: the method body '" + symbol +
-        "' did not resolve: " + llvm::toString(found.takeError()));
-  }
-  return found->toPtr<runtime::ErasedMethodEntry>();
-}
-
-// Joins the names one scope answers for to the classes they name. A class is
-// named here by what it is linked under, which is what this list is keyed by,
-// so the two sides agree with no naming rule of their own. Every definition
-// exists before any is filled, so this runs whichever order the classes were
-// loaded in.
-void FillDeclaredClasses(
-    LoadedScopeClass& scope, const std::vector<LoadedClass>& classes) {
-  DeclaredClasses& declares = *scope.classes;
-  declares.table.reserve(declares.declared.size());
-  for (const LoadedSubroutine& declared : declares.declared) {
-    const auto found =
-        std::ranges::find(classes, declared.symbol, &LoadedClass::name);
-    if (found == classes.end()) {
-      throw InternalError(
-          "jit executor: the class '" + declared.symbol +
-          "' a scope answers for is defined by no unit of this program");
-    }
-    declares.table.emplace_back(
-        runtime::AbiStringRef{
-            declared.name.data(),
-            static_cast<std::uint32_t>(declared.name.size())},
-        found->definition);
-  }
-  scope.definition->program.classes = runtime::ScopeClassTable{
-      declares.table.data(), static_cast<std::uint32_t>(declares.table.size())};
-}
-
-// Completes every class definition, each after the one it extends. What a class
-// adds is stated by the unit declaring it, and where that lands in a value is
-// settled only with the whole lineage in hand -- which is here, once every unit
-// is loaded and every body is linked, and never in a unit's own lowering.
-void RealizeClasses(llvm::orc::LLJIT& jit, std::vector<LoadedClass>& classes) {
-  std::unordered_map<std::string_view, std::size_t> by_name;
-  for (std::size_t index = 0; index < classes.size(); ++index) {
-    by_name.emplace(classes[index].name, index);
-  }
-  // A lineage never returns to a class it passed, since a class cannot extend
-  // itself or anything extending it (LRM 8.13), so marking a class before its
-  // base is realized records that this pass has reached it and nothing more.
-  std::vector<bool> reached(classes.size(), false);
-  const auto realize = [&](const auto& self_ref, std::size_t index) -> void {
-    if (reached[index]) {
-      return;
-    }
-    reached[index] = true;
-    LoadedClass& entry = classes[index];
-    const runtime::ObjectDefinition* base = nullptr;
-    if (entry.base.has_value()) {
-      const auto found = by_name.find(*entry.base);
-      if (found == by_name.end()) {
-        throw InternalError(
-            "jit executor: the class '" + *entry.base +
-            "' a class extends is defined by no unit of this program");
-      }
-      self_ref(self_ref, found->second);
-      base = classes[found->second].definition;
-    }
-    // A behavior declared with no implementation is answered by nothing, which
-    // no object of a constructible class ever reaches (LRM 8.21).
-    std::vector<runtime::ErasedMethodEntry> introductions;
-    introductions.reserve(entry.introductions.size());
-    for (const std::optional<std::string>& symbol : entry.introductions) {
-      introductions.push_back(
-          symbol.has_value() ? MethodEntry(jit, *symbol) : nullptr);
-    }
-    std::vector<runtime::DispatchTakeover> takeovers;
-    takeovers.reserve(entry.takeovers.size());
-    for (const LoadedTakeover& taken : entry.takeovers) {
-      const auto found = by_name.find(taken.introduced_by);
-      if (found == by_name.end()) {
-        throw InternalError(
-            "jit executor: the class '" + taken.introduced_by +
-            "' whose behavior a class takes over is defined by no unit of this "
-            "program");
-      }
-      takeovers.emplace_back(
-          classes[found->second].definition, taken.ordinal,
-          MethodEntry(jit, taken.body));
-    }
-    // The realization copies these entries, and each keeps naming the string it
-    // was built from rather than a copy of it -- so the table is a transient of
-    // this call while the strings behind it are not.
-    const auto describe = [](const std::vector<LoadedDeclaredName>& names) {
-      std::vector<runtime::DeclaredName> table;
-      table.reserve(names.size());
-      for (const LoadedDeclaredName& at : names) {
-        table.push_back(
-            runtime::DeclaredName{
-                .name =
-                    runtime::AbiStringRef{
-                        at.name.data(),
-                        static_cast<std::uint32_t>(at.name.size())},
-                .position = at.position});
-      }
-      return table;
-    };
-    const std::vector<runtime::DeclaredName> properties =
-        describe(entry.declared->properties);
-    const std::vector<runtime::DeclaredName> behaviors =
-        describe(entry.declared->behaviors);
-    std::vector<runtime::DeclaredBody> bodies;
-    bodies.reserve(entry.declared->bodies.size());
-    for (const LoadedDeclaredBody& at : entry.declared->bodies) {
-      bodies.emplace_back(
-          runtime::AbiStringRef{
-              at.name.data(), static_cast<std::uint32_t>(at.name.size())},
-          MethodEntry(jit, at.symbol));
-    }
-    runtime::RealizeClass(
-        runtime::ClassContribution{
-            .base = base,
-            .members = entry.members,
-            .introductions = introductions,
-            .takeovers = takeovers,
-            .property_names = properties,
-            .behavior_names = behaviors,
-            .body_names = bodies},
-        entry.realization, *entry.definition);
-  };
-  for (std::size_t index = 0; index < classes.size(); ++index) {
-    realize(realize, index);
-  }
-}
-
-// The definition of one closure a unit declares, kept alive for the session
-// beside the schema it names as plain data it does not own. `protocol` carries
-// which alternative the body is, selected before the symbol it holds is known.
-struct LoadedClosure {
-  // A closure is reached by neither of these through the other: the record
-  // describing it and the body that runs it are two declarations of the
-  // program, each linked under a symbol of its own.
-  std::string definition_symbol;
-  std::string invoke_symbol;
-  std::vector<runtime::MemberStorageDescriptor> captures;
-  runtime::ClosureBody protocol;
-  std::unique_ptr<runtime::ClosureDefinition> definition;
-};
-
-// Which alternative a body is, read from its signature: a coroutine result is
-// the coroutine protocol, no result at all is a body run to completion, and a
-// value result is a body that answers one -- once per entry of a container it
-// is handed, or on its own where it is handed nothing. Either of those carries
-// the representation its result comes back in, since a handle carries none.
-auto ProtocolOf(const lir::CompilationUnit& unit, const lir::Function& invoke)
-    -> runtime::ClosureBody {
-  if (unit.types.Get(invoke.result_type).Is<lir::CoroutineType>()) {
-    return runtime::CoroutineBody{};
-  }
-  if (unit.types.Get(invoke.result_type).Is<lir::VoidType>()) {
-    return runtime::SynchronousBody{};
-  }
-  const std::optional<support::ValueDomain> domain =
-      backend::llvm_backend::ValueDomainOf(unit, invoke.result_type);
-  if (!domain) {
-    throw InternalError(
-        "jit executor: a body that answers a value settles a runtime value");
-  }
-  // The receiver is every closure body's first parameter, so what it is handed
-  // beyond that is what separates the two.
-  if (invoke.params.size() > 1) {
-    return runtime::PerElementBody{.result_domain = *domain};
-  }
-  return runtime::ValueBody{.result_domain = *domain};
-}
-
-auto LoadClosures(const lir::CompilationUnit& unit)
-    -> diag::Result<std::vector<LoadedClosure>> {
-  std::vector<LoadedClosure> loaded;
-  loaded.reserve(unit.closures.size());
-  for (const lir::ClosureId id : unit.closures.Ids()) {
-    const lir::Closure& closure = unit.closures.Get(id);
-    auto captures =
-        DescribeMembers(unit, closure.captures, SlotRole::kSnapshot);
-    if (!captures) {
-      return std::unexpected(std::move(captures.error()));
-    }
-    loaded.push_back(
-        LoadedClosure{
-            .definition_symbol = lir::ClosureDefinitionSymbol(
-                unit.name, lir::SymbolPart::Ordinal(id.value)),
-            .invoke_symbol = unit.functions.Get(closure.invoke).name,
-            .captures = *std::move(captures),
-            .protocol = ProtocolOf(unit, unit.functions.Get(closure.invoke)),
-            .definition = std::make_unique<runtime::ClosureDefinition>()});
-  }
-  return loaded;
-}
-
 }  // namespace
 
-auto Execute(
-    std::span<const compiler::ExecutableUnit> units,
-    const compiler::ExecutableUnit& root_unit,
-    std::span<const std::filesystem::path> dpi_objects,
-    std::span<const std::string> simulation_arguments) -> diag::Result<int> {
-  llvm::InitializeNativeTarget();
-  llvm::InitializeNativeTargetAsmPrinter();
-
-  auto jit = Unwrap(llvm::orc::LLJITBuilder().create(), "create jit");
-  LowerCoroutines(*jit);
-  const std::map<std::string, AbiSignature> published = DefineRuntimeAbi(*jit);
-  LinkForeignObjects(*jit, dpi_objects);
-
-  // Every unit -- the source units and the design-root -- becomes one module in
-  // the shared JIT, so a construct reaches the entries and the definition of
-  // the class it builds by symbol. The root is loaded and driven like any other
-  // unit, distinguished only as the bootstrap entry below.
-  std::vector<const lir::CompilationUnit*> loaded_units;
-  loaded_units.reserve(units.size() + 1);
-  for (const compiler::ExecutableUnit& unit : units) {
-    loaded_units.push_back(&unit.body);
+auto ProgramSink::Keep(backend::llvm_backend::EmittedModule module)
+    -> diag::Result<void> {
+  // A module may name an entry the library does not publish, because the
+  // naming composes a domain with an operation and not every pair is
+  // implemented. Said here it names the entry and refuses the design; left to
+  // the link the same absence arrives as a symbol nothing defines, which reads
+  // as a compiler bug rather than as an operation nobody wrote.
+  const std::string unpublished =
+      UnpublishedEntries(module.Module(), PublishedEntries());
+  if (!unpublished.empty()) {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedExpressionForm,
+        std::format(
+            "llvm codegen: the runtime library publishes no entry named {}",
+            unpublished));
   }
-  loaded_units.push_back(&root_unit.body);
-
-  // Generation runs ahead of any state the run needs, so a unit this backend
-  // cannot lower is refused with none of the design yet standing.
-  for (const lir::CompilationUnit* unit : loaded_units) {
-    auto emitted = backend::llvm_backend::EmitModule(*unit);
-    if (!emitted) {
-      return std::unexpected(std::move(emitted.error()));
-    }
-    auto owned = std::move(*emitted).Release();
-    // A module may name an entry the library does not publish, because the
-    // naming composes a domain with an operation and not every pair is
-    // implemented. Said here it names the entry and refuses the run; left to
-    // symbol resolution the same absence arrives as a module that could not be
-    // brought up, which reads as a compiler bug rather than as an operation
-    // nobody wrote.
-    const std::string unpublished =
-        UnpublishedEntries(*owned.module, published);
-    if (!unpublished.empty()) {
-      return diag::Fail(
-          diag::DiagCode::kUnsupportedExpressionForm,
-          std::format(
-              "llvm codegen: the runtime library publishes no entry named {}",
-              unpublished));
-    }
-    // Two sides of the ABI disagreeing is this compiler's own defect, and it is
-    // caught here because it is the one place both are visible. Left to run, a
-    // call reads whatever the machine left in the register the other side used
-    // for something else -- a plausible value, not a failure.
-    const std::string mismatched = MismatchedEntries(*owned.module, published);
-    if (!mismatched.empty()) {
-      throw InternalError(
-          std::format(
-              "runtime abi: the generated module and the runtime "
-              "library disagree on an entry's shape: {}",
-              mismatched));
-    }
-    Check(
-        jit->addIRModule(
-            llvm::orc::ThreadSafeModule(
-                std::move(owned.module), std::move(owned.context))),
-        "add module");
+  // Two sides of the ABI disagreeing is this compiler's own defect, and it is
+  // caught here because it is the one place both are visible. Left to run, a
+  // call reads whatever the machine left in the register the other side used
+  // for something else -- a plausible value, not a failure.
+  const std::string mismatched =
+      MismatchedEntries(module.Module(), PublishedEntries());
+  if (!mismatched.empty()) {
+    throw InternalError(
+        std::format(
+            "runtime abi: the generated module and the runtime "
+            "library disagree on an entry's shape: {}",
+            mismatched));
   }
-
-  // Each definition owns a stable address for the whole run; the runtime holds
-  // pointers into it.
-  std::vector<LoadedScopeClass> loaded;
-  std::vector<LoadedClass> objects;
-  const auto take = [&](LoadedScopeClasses from) {
-    loaded.insert(
-        loaded.end(), std::make_move_iterator(from.scopes.begin()),
-        std::make_move_iterator(from.scopes.end()));
-    objects.insert(
-        objects.end(), std::make_move_iterator(from.classes.begin()),
-        std::make_move_iterator(from.classes.end()));
-  };
-  for (const compiler::ExecutableUnit& unit : units) {
-    auto unit_classes = LoadScopeClasses(unit.body, unit.definition);
-    if (!unit_classes) {
-      return std::unexpected(std::move(unit_classes.error()));
-    }
-    take(*std::move(unit_classes));
-  }
-  const lir::CompilationUnit& root_body = root_unit.body;
-  if (!root_body.root.has_value()) {
-    throw InternalError("jit executor: the design root roots no object tree");
-  }
-  const std::string root_class_symbol = lir::ClassSymbol(
-      root_body.name,
-      lir::SymbolPartOf(
-          root_body.classes.Get(*root_body.root).name, root_body.root->value));
-  auto root_classes = LoadScopeClasses(root_body, root_unit.definition);
-  if (!root_classes) {
-    return std::unexpected(std::move(root_classes.error()));
-  }
-  take(*std::move(root_classes));
-
-  for (const lir::CompilationUnit* unit : loaded_units) {
-    auto unit_objects = LoadObjectClasses(*unit);
-    if (!unit_objects) {
-      return std::unexpected(std::move(unit_objects.error()));
-    }
-    objects.insert(
-        objects.end(), std::make_move_iterator(unit_objects->begin()),
-        std::make_move_iterator(unit_objects->end()));
-    // A struct declares the same member storage a class does, so it publishes
-    // the same kind of definition.
-    auto unit_structs = LoadStructs(*unit);
-    if (!unit_structs) {
-      return std::unexpected(std::move(unit_structs.error()));
-    }
-    objects.insert(
-        objects.end(), std::make_move_iterator(unit_structs->begin()),
-        std::make_move_iterator(unit_structs->end()));
-  }
-
-  std::vector<LoadedClosure> closures;
-  for (const lir::CompilationUnit* unit : loaded_units) {
-    auto unit_closures = LoadClosures(*unit);
-    if (!unit_closures) {
-      return std::unexpected(std::move(unit_closures.error()));
-    }
-    closures.insert(
-        closures.end(), std::make_move_iterator(unit_closures->begin()),
-        std::make_move_iterator(unit_closures->end()));
-  }
-
-  // The schema is named only once every declaration is in place, so no
-  // descriptor vector is reallocated out from under a definition that points at
-  // it. A scope's is named where every other class's is, by realizing it.
-  for (LoadedClosure& entry : closures) {
-    entry.definition->captures = runtime::MemberStorageSchema{
-        .data = entry.captures.data(),
-        .size = static_cast<std::uint32_t>(entry.captures.size())};
-  }
-
-  // Each declaration the runtime builds values of publishes its definition as
-  // an injected data symbol the construct references. Every definition is
-  // filled from its JIT-compiled entries after every address is injected, so a
-  // reference resolves regardless of the order the definitions are filled.
-  llvm::orc::SymbolMap definition_symbols;
-  const auto publish = [&](const std::string& symbol, void* definition) {
-    definition_symbols[jit->getExecutionSession().intern(symbol)] =
-        llvm::orc::ExecutorSymbolDef(
-            llvm::orc::ExecutorAddr::fromPtr(definition),
-            llvm::JITSymbolFlags::Exported);
-  };
-  for (const LoadedScopeClass& entry : loaded) {
-    publish(entry.definition_symbol, entry.definition.get());
-  }
-  for (const LoadedClosure& entry : closures) {
-    publish(entry.definition_symbol, entry.definition.get());
-  }
-  for (const LoadedClass& entry : objects) {
-    // A class whose values stand in the design hierarchy publishes nothing
-    // here: the record its instances carry is one the scope half already
-    // published, and one symbol names one record.
-    if (entry.owned != nullptr) {
-      publish(entry.definition_symbol, entry.definition);
-    }
-  }
-  // A body's variables are described exactly as a declaration's members are:
-  // the host builds one description from what the body states, and the body
-  // reaches it through a symbol of its own. A body that states none publishes
-  // nothing, and never asks.
-  std::vector<LoadedVariableSchema> variable_schemas;
-  for (const lir::CompilationUnit* unit : loaded_units) {
-    for (const lir::Function& fn : unit->functions) {
-      if (fn.variables.empty()) {
-        continue;
-      }
-      auto described = DescribeVariables(*unit, fn);
-      if (!described) {
-        return std::unexpected(std::move(described.error()));
-      }
-      variable_schemas.push_back(*std::move(described));
-    }
-  }
-  for (const LoadedVariableSchema& entry : variable_schemas) {
-    publish(entry.symbol, entry.schema.get());
-  }
-  Check(
-      jit->getMainJITDylib().define(
-          llvm::orc::absoluteSymbols(std::move(definition_symbols))),
-      "define runtime definitions");
-
-  // A unit's namespace-level storage is published the same way: the unit that
-  // declares a cell is the only one that lists it, so building from every
-  // unit's list yields each cell exactly once, and every reader -- the
-  // declaring unit included -- reaches it through the symbol.
-  std::vector<LoadedStaticStorage> static_storage;
-  for (const lir::CompilationUnit* unit : loaded_units) {
-    auto unit_storage = LoadStaticStorage(*unit);
-    if (!unit_storage) {
-      return std::unexpected(std::move(unit_storage.error()));
-    }
-    static_storage.insert(
-        static_storage.end(), std::make_move_iterator(unit_storage->begin()),
-        std::make_move_iterator(unit_storage->end()));
-  }
-  llvm::orc::SymbolMap storage_symbols;
-  for (const LoadedStaticStorage& entry : static_storage) {
-    storage_symbols[jit->getExecutionSession().intern(entry.symbol)] =
-        llvm::orc::ExecutorSymbolDef(
-            llvm::orc::ExecutorAddr::fromPtr(entry.storage->Address()),
-            llvm::JITSymbolFlags::Exported);
-  }
-  Check(
-      jit->getMainJITDylib().define(
-          llvm::orc::absoluteSymbols(std::move(storage_symbols))),
-      "define shared storage");
-
-  for (LoadedScopeClass& entry : loaded) {
-    FillDefinition(*jit, entry);
-    FillDeclaredClasses(entry, objects);
-  }
-  RealizeClasses(*jit, objects);
-  // Every closure has a body, so a name that does not resolve is not an absent
-  // entry but one that could not be brought up.
-  for (const LoadedClosure& entry : closures) {
-    auto found = jit->lookup(entry.invoke_symbol);
-    if (!found) {
-      throw InternalError(
-          "jit executor: the closure body '" + entry.invoke_symbol +
-          "' did not resolve: " + llvm::toString(found.takeError()));
-    }
-    // The signature the address is held under is the one the invoke's result
-    // type states, decided where the unit was loaded and carried here.
-    entry.definition->body = std::visit(
-        Overloaded{
-            [&](const runtime::SynchronousBody&) -> runtime::ClosureBody {
-              return runtime::SynchronousBody{
-                  .run = found->toPtr<void(void*)>()};
-            },
-            [&](const runtime::CoroutineBody&) -> runtime::ClosureBody {
-              return runtime::CoroutineBody{
-                  .start = found->toPtr<void*(void*)>()};
-            },
-            [&](const runtime::PerElementBody& body) -> runtime::ClosureBody {
-              return runtime::PerElementBody{
-                  .run = found->toPtr<void*(void*, const void*, const void*)>(),
-                  .result_domain = body.result_domain};
-            },
-            [&](const runtime::ValueBody& body) -> runtime::ClosureBody {
-              return runtime::ValueBody{
-                  .run = found->toPtr<void*(void*)>(),
-                  .result_domain = body.result_domain};
-            }},
-        entry.protocol);
-  }
-
-  auto runtime_options = runtime::DefaultRuntimeOptions();
-  runtime_options.plusargs = runtime::PlusargsFrom(simulation_arguments);
-  runtime::Runtime runtime_instance{std::move(runtime_options)};
-
-  // The design-root unit's construct elaborates the design: it builds the
-  // top-level units through the cross-unit construct ABI, which recurses into
-  // their subtrees. The bootstrap allocates the root instance and runs that
-  // construct in a generated-call scope, exactly as the runtime enters any
-  // construct entry; the runtime then walks the built tree.
-  const auto root_entry =
-      std::ranges::find(loaded, root_class_symbol, &LoadedScopeClass::name);
-  if (root_entry == loaded.end()) {
-    throw InternalError("jit executor: the design root has no scope class");
-  }
-  const runtime::ScopeDefinition& root_definition = *root_entry->definition;
-  runtime::HierarchySegment root_segment{"$root", {}};
-  auto root =
-      std::make_unique<runtime::Scope>(nullptr, root_segment, &root_definition);
-  {
-    runtime::GeneratedCallScope construct_scope;
-    root_definition.construct(root.get(), nullptr, &root_segment, {});
-  }
-  auto design = std::make_unique<runtime::Design>(std::move(root));
-  runtime_instance.BindDesign(std::move(design));
-  return runtime::RunSimulation(runtime_instance);
+  modules_.push_back(std::move(module));
+  return {};
 }
 
-}  // namespace lyra::jit
+auto ProgramSink::Emit(const mir::CompilationUnit& unit)
+    -> diag::Result<compiler::ExecutableUnit> {
+  auto executable = compiler::LowerUnitToExecutable(unit);
+  if (!executable) {
+    return std::unexpected(std::move(executable.error()));
+  }
+  auto emitted = backend::llvm_backend::EmitModule(
+      executable->body, executable->definition.time_resolution);
+  if (!emitted) {
+    return std::unexpected(std::move(emitted.error()));
+  }
+  if (auto kept = Keep(*std::move(emitted)); !kept) {
+    return std::unexpected(std::move(kept.error()));
+  }
+  return executable;
+}
+
+auto ProgramSink::Take(const mir::CompilationUnit& unit) -> diag::Result<void> {
+  if (auto emitted = Emit(unit); !emitted) {
+    return std::unexpected(std::move(emitted.error()));
+  }
+  dpi::CollectAbiFragment(unit, dpi_fragments_);
+  return {};
+}
+
+auto ProgramSink::Finish(
+    const mir::CompilationUnit& root) && -> diag::Result<EmittedProgram> {
+  auto executable = Emit(root);
+  if (!executable) {
+    return std::unexpected(std::move(executable.error()));
+  }
+  if (auto kept =
+          Keep(backend::llvm_backend::EmitProgramEntry(executable->body));
+      !kept) {
+    return std::unexpected(std::move(kept.error()));
+  }
+  return EmittedProgram{
+      .modules = std::move(modules_),
+      .dpi_fragments = std::move(dpi_fragments_)};
+}
+
+auto CompileProgram(
+    std::vector<backend::llvm_backend::EmittedModule> modules,
+    std::span<const std::filesystem::path> foreign_objects,
+    const std::filesystem::path& object_dir,
+    const std::filesystem::path& runtime_lib,
+    const std::filesystem::path& program, const std::filesystem::path& cxx)
+    -> diag::Result<void> {
+  std::error_code ec;
+  std::filesystem::create_directories(object_dir, ec);
+  if (ec) {
+    return diag::Fail(
+        diag::DiagCode::kHostIoError,
+        std::format(
+            "failed to create '{}': {}", object_dir.string(), ec.message()));
+  }
+  std::vector<std::filesystem::path> objects;
+  objects.reserve(modules.size() + foreign_objects.size());
+  for (backend::llvm_backend::EmittedModule& module : modules) {
+    objects.push_back(object_dir / std::format("{}.o", objects.size()));
+    if (auto written = backend::llvm_backend::WriteObjectFile(
+            std::move(module), objects.back());
+        !written) {
+      return written;
+    }
+  }
+  objects.insert(objects.end(), foreign_objects.begin(), foreign_objects.end());
+  return driver::LinkProgram(objects, runtime_lib, program, cxx);
+}
+
+}  // namespace lyra::program

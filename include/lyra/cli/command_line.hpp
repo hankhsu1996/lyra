@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -28,39 +29,48 @@ enum class CommandKind : std::uint8_t {
   kDumpLir,
   kDumpLlvm,
   kEmitCpp,
-  kCompile,
+  kBuild,
   kRun,
   kCacheClear,
 };
 
-// How `run` executes the design. The C++ backend emits a C++ project and builds
-// it; the LLVM backends share one emitted module and differ only in how they
-// run it (in-process ORC JIT, ahead-of-time native compile, or the `lli` tool).
-enum class Backend : std::uint8_t { kCpp, kJit, kAot, kLli };
+// Which backend turns the design into a program. The C++ backend emits a C++
+// project and builds it with the host compiler; the LLVM backend compiles each
+// unit to a module itself and links them with the host's driver. Either way
+// the product is one program, which `build` hands back and `run` executes.
+enum class Backend : std::uint8_t { kCpp, kLlvm };
 
 struct ParsedArgs {
-  CommandKind cmd = CommandKind::kEmitCpp;
   Backend backend = Backend::kCpp;
   support::AssertionPolicy assertions = support::AssertionPolicy::kCheck;
-  bool format = false;
+  driver::SourceFormatting formatting = driver::SourceFormatting::kOff;
   driver::Optimization optimization = driver::Optimization::kIterate;
-  driver::pch::Options pch;
-  // The host C++ compiler the C++ backend builds emitted code with: a program
-  // name or path, never flags.
-  std::string cxx;
+  driver::pch::Policy pch = driver::pch::Policy::kAttempt;
+  // The host C++ compiler a program is compiled or linked with, when the caller
+  // named one: a program name or path, never flags.
+  std::optional<std::string> cxx;
   // How many of the design's translation units the host compiler may work on
   // at once. Already resolved to a positive count here, so nothing downstream
   // reads a zero as a request for the processor count.
   std::size_t compile_width = 1;
-  std::string out_dir;
-  // The simulation's own arguments, which is where LRM 21.6 plusargs land: a
-  // built program takes them as its argv and a run in this process reads them
-  // from here. Everything after a standalone `--`, so a simulation argument
-  // never has to be told apart from a compiler one by its spelling.
-  std::vector<std::string> child_args;
+  // Where the command writes what it produces, when the caller named a place:
+  // the program for `build`, the project directory for `emit cpp`.
+  std::optional<std::filesystem::path> out;
+  // Where programs and prepared headers are kept for reuse. Absent when no
+  // cache directory is known, and then nothing is kept.
+  std::optional<std::filesystem::path> store;
+  // Build as though the store held nothing, and keep what was built.
+  bool rebuild = false;
+  // The name the design declares itself under, for a design that has one.
+  std::optional<std::string> design_name;
+  // The simulation's own arguments, which is where LRM 21.6 plusargs land: the
+  // program takes them as its argv. Everything after a standalone `--`, so a
+  // simulation argument never has to be told apart from a compiler one by its
+  // spelling.
+  std::vector<std::string> simulation_args;
   // LRM 35 DPI-C link inputs: native source files (`.c` / `.cpp`) providing the
   // foreign symbols an `import "DPI-C"` calls. Compiled and linked into the
-  // built program alongside the emitted C++.
+  // program alongside the design's own objects.
   std::vector<std::string> dpi_link_sources;
 };
 
@@ -75,10 +85,11 @@ struct CliOptions {
   std::optional<bool> no_pch;
   std::optional<bool> release;
   std::optional<std::string> config;
-  std::optional<std::string> pch_cache_dir;
+  std::optional<std::string> cache_dir;
+  std::optional<bool> rebuild;
   std::optional<std::string> cxx;
   std::optional<int32_t> jobs;
-  std::optional<std::string> out_dir;
+  std::optional<std::string> out;
   std::optional<std::string> backend;
   std::vector<std::string> dpi_link;
 };
@@ -111,14 +122,19 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts);
 auto ParseCommandWords(slang::driver::Driver& driver, std::vector<char*>& words)
     -> std::expected<CommandKind, std::string>;
 
+// Refuses, by name, every one of Lyra's options the caller gave that the
+// command acts on none of, naming the commands that do. An option a command
+// acts on is never refused for having no effect this time -- `--no-pch` given
+// to a build on the backend that compiles no C++ -- because what is refused has
+// to be a function of the command alone for a caller to predict it.
+// `has_simulation_args` says whether anything followed a standalone `--`.
+auto RefuseOptionsNotTaken(
+    const CliOptions& opts, CommandKind cmd, bool has_simulation_args)
+    -> std::expected<void, std::string>;
+
 // Answered from what the parser recorded, so a command line that fails to
 // resolve can still report why in the colour the caller asked for.
 auto UseColor(const CliOptions& opts) -> bool;
-
-// PCH policy condensed into one explicit value. The `--no-pch` flag is
-// authoritative; the `LYRA_NO_PCH` environment hint is honored at this
-// boundary only and disappears from every layer below.
-auto MakePchOptions(const CliOptions& cli) -> driver::pch::Options;
 
 // Nothing was searched for, because the command line named its own sources.
 // This is not the absence of a search: there is nowhere to report having
@@ -153,7 +169,7 @@ auto ApplyDesignManifest(
 // whole of the precedence rule: material accumulates, selection replaces.
 auto ResolveCliOptions(
     const CliOptions& opts, const DesignManifest* manifest, CommandKind cmd,
-    std::vector<std::string> child_args)
+    std::span<const std::string> simulation_args)
     -> std::expected<ParsedArgs, std::string>;
 
 }  // namespace lyra::cli

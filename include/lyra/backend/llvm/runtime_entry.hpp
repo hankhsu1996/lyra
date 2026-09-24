@@ -11,6 +11,7 @@
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::lir {
@@ -25,13 +26,6 @@ namespace lyra::backend::llvm_backend {
 // allocator -- so a reader of a module can say which absences the library is
 // answerable for.
 inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
-
-// The raised type a landing's clause names, which the execution session binds
-// to the target language's own type identity. Not an operation and not an
-// entry: nothing calls it, so it has no prototype and no signature, and it is
-// named here because the clause and the binding are the two halves of one name.
-inline constexpr std::string_view kDepartureTypeSymbol =
-    "lyra_rt_departure_type_info";
 
 // How a scope of the design hierarchy is built: one prototype for every class,
 // because what reaches a construction holds the class's definition and not its
@@ -79,6 +73,26 @@ enum class RuntimeOp : std::uint8_t {
   kVariablesOpen,
   kVariableAddress,
   kVariablesClose,
+  kVariableSchemaDeclare,
+  kSharedStorageDeclare,
+  kClosureDeclareSynchronous,
+  kClosureDeclareCoroutine,
+  kClosureDeclarePerElement,
+  kClosureDeclareValue,
+  kClassDeclare,
+  kScopeClassDeclare,
+  kClassDeclareBase,
+  kClassDeclareMembers,
+  kClassDeclareIntroduction,
+  kClassDeclareTakeover,
+  kClassDeclarePropertyName,
+  kClassDeclareBehaviorName,
+  kClassDeclareBodyName,
+  kScopeDeclareProgram,
+  kScopeDeclareSubroutine,
+  kScopeDeclareExport,
+  kScopeDeclareClass,
+  kRunProgram,
   kMemberAddress,
   kSequenceMake,
   kSequenceElement,
@@ -129,54 +143,21 @@ enum class RuntimeOp : std::uint8_t {
 // built and only read afterwards.
 enum class MemberSlotRole : std::uint8_t { kVariable, kSnapshot };
 
-// How a member's storage is held. Everything that acts on a member reads it
-// from here: the runtime side builds the storage the kind names, and code
-// generation realizes a read and a write through it, so the storage a member
-// gets and the access emitted for it are one statement rather than two.
-enum class MemberStorageKind : std::uint8_t {
-  // A subscribable variable: reached only through its own address, and a write
-  // through it wakes whoever waited on it.
-  kObservableCell,
-  // A net's resolution node, likewise reached only through its address; a value
-  // reaches it through a driver rather than by being written (LRM 6.5).
-  kResolvedNet,
-  // What the ticks of one clocking event settled for one expression (LRM
-  // 16.9.3), also reached only through its address. It holds values of one
-  // domain and answers with the one a read names, so unlike a cell there is no
-  // single current value to read out of it.
-  kSampledHistory,
-  // A variable the owner holds that nothing subscribes to: written and read
-  // through its own storage, so a write keeps the representation the
-  // declaration gave it and a read copies out rather than aliasing.
-  kValueCell,
-  // A value filled once where the owner is built and only read afterwards, so
-  // the storage itself is what a read hands back.
-  kInlineValue,
-  // A box holding a handle the owner does not own, so a read reads the box
-  // rather than what it names.
-  kBorrowedHandle,
-  // A hold on the storage a block promoted out of its frame (LRM 6.21), which
-  // the owner does keep alive: a read hands back the hold, and the hold ending
-  // with its owner is what ends the storage once no owner is left.
-  kPromotedScope,
-  // A named event (LRM 15.5), a scope's cancellation target (LRM 9.6.2), the
-  // joint cancel state of the channels a deferred write targets (LRM 21.3.2),
-  // and what one concurrent assertion has in flight (LRM 16.14.1). Each is a
-  // runtime record the owner holds and reaches only through its address; none
-  // is read out as a value, and none names a value domain.
-  kNamedEvent,
-  kCancellationTarget,
-  kChannelCancellation,
-  kEvaluationAttempts,
-};
-
 // The storage kind a member of `type` needs, or nothing where this backend has
 // no realization for such a member. One arm per LIR type and no catch-all,
 // because the kinds differ in what a write has to do: a type gained later fails
 // to compile here until someone says which storage it needs.
 auto MemberStorageKindOf(
     const lir::CompilationUnit& unit, lir::TypeId type, MemberSlotRole role)
-    -> std::optional<MemberStorageKind>;
+    -> std::optional<support::MemberStorageKind>;
+
+// What an artifact states about one member's storage: the kind above, and the
+// value domain that kind holds. Which type the domain is read from follows from
+// the kind, so this is the one place a declaration's type becomes the pair the
+// runtime builds storage from.
+auto DeclaredStorageOf(
+    const lir::CompilationUnit& unit, lir::TypeId type, MemberSlotRole role)
+    -> std::optional<support::DeclaredMemberStorage>;
 
 // Which capability wrapper storage is reached through. The wrappers share one
 // access vocabulary -- a load, a store, the install that fixes the storage's

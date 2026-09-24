@@ -343,6 +343,10 @@ class CodeGenFunction {
   // that knows sequences rather than through the value model.
   [[nodiscard]] auto IsHandleSequence(lir::TypeId type) const -> bool;
 
+  // The runtime definition a reference names, loaded from the cell the unit
+  // that declares it filled. A body forwards the address without inspecting it.
+  auto DefinitionOf(lir::TypeId type) -> diag::Result<llvm::Value*>;
+
   // The address of the storage a member step reaches. A class's storage extends
   // its base's, so the step names the class that declares the member beside the
   // slot that class gave it and the runtime adds where that class's own storage

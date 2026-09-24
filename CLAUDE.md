@@ -35,7 +35,8 @@ none of what it produces; `dev` is `rbe` for the edit loop, where top-level outp
 binary just built can be run. Under either remote-execution config the concurrency of several
 sessions at once needs no local setting, because the remote scheduler is one queue across every
 invocation -- the coordination that separate Bazel servers on one machine cannot have. A test that
-drives the host C++ compiler cannot run remotely at all and is tagged to stay local.
+drives the host C++ compiler finds whichever one the machine executing it has; the remote image has
+the platform's own and no clang, so only a test about clang itself is tagged to stay local.
 
 **The compiler differs between configs.** `--action_env=CC=clang` names the local compiler by
 environment, but a config setting `--platforms` resolves a registered toolchain instead, so
@@ -50,10 +51,18 @@ lyra check [files...]                 # Elaborate and report diagnostics; no low
 lyra dump ast [files...]              # Dump slang's elaborated AST as JSON
 lyra dump hir|mir|lir|llvm [files...] # Dump the named intermediate form
 lyra emit cpp -o <dir> [files...]     # Write a self-contained C++ project
-lyra compile -o <dir> [files...]      # Emit that project and build it -> <dir>/program
-lyra run [files...]                   # Emit, build, and execute
-lyra cache clear                      # Drop the precompiled-header cache
+lyra build [-o <file>] [files...]     # Build the program; ./<design name or top> by default
+lyra run [files...]                   # Build the program and execute it; writes nothing here
+lyra cache clear                      # Empty the store of kept programs and prepared headers
 ```
+
+`--backend cpp|llvm` picks which backend builds the program; either way it is one program, linked
+with the host C++ compiler (`--cxx`, else `clang++`, else `c++`). **A built program is kept in a
+store in the user's cache directory under a name computed from what the build read**, so building or
+running an unchanged design again copies the kept program instead of compiling, several checkouts
+share what they have in common, and nothing is written into the project. `--rebuild` builds as
+though nothing were kept; `--cache-dir` names the store.
+`docs/decisions/a-program-is-kept-by-what-built-it.md` holds why.
 
 Command words are positional, and everything after them is one command line shared with the slang
 driver: every front-end option slang accepts -- `--top`, `-I`, `-D`, `-G`, `--single-unit`, `-y`,
@@ -66,9 +75,9 @@ The file names the design's sources, search paths, defines, parameter overrides,
 native sources DPI-C resolves against; it is found by walking up from the working directory, and
 every path in it resolves against the file's own directory. A command line naming sources uses no
 declaration at all, and `--config <file>` names one outright. What is true of one invocation or one
-machine -- `-o`, `--release`, `--backend`, `--cxx` -- is refused by name, because the file is
-committed and shared. `docs/decisions/project-file.md` holds the schema and the precedence rule:
-material accumulates, selection is replaced.
+machine -- `-o`, `--release`, `--backend`, `--cxx`, `--cache-dir` -- is refused by name, because the
+file is committed and shared. `docs/decisions/project-file.md` holds the schema and the precedence
+rule: material accumulates, selection is replaced.
 
 **`--release` trades build time for simulation speed.** By default the design's translation units
 are compiled unoptimized, because iterating pays that compile on every edit; `--release` optimizes

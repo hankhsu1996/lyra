@@ -50,7 +50,4 @@ auto RunProcessStreaming(
     const std::filesystem::path& exe, std::span<const std::string> args)
     -> std::expected<int, std::string>;
 
-// Create a unique temporary directory and return its absolute path.
-auto MakeTempDir() -> std::expected<std::filesystem::path, std::string>;
-
 }  // namespace lyra::support

@@ -227,18 +227,6 @@ auto DpiSourceRelPath(const DpiLinkInput& input) -> std::string {
   return std::format("{}/{}", kDpiSourceDir, input.source.filename().string());
 }
 
-// Which language a foreign source is compiled as, and the standard where its
-// language has one to name (LRM 35). A C source is compiled as C so its symbols
-// keep C linkage, which is what the emitted declaration expects and what a C++
-// compilation would mangle away.
-auto ForeignLanguageFlags(const DpiLinkInput& input)
-    -> std::vector<std::string> {
-  if (input.compile_as_c) {
-    return {"-x", "c"};
-  }
-  return {std::string(kCxxStandardFlag), "-x", "c++"};
-}
-
 // Where a foreign source's object lands, relative to the project.
 auto DpiObjectRelPath(const DpiLinkInput& input) -> std::string {
   return std::format(
@@ -354,14 +342,13 @@ auto CopyDpiSources(
 }
 
 // One compile the build has to run, what the link takes from it, and what to
-// name if it fails. A unit's compile and a foreign source's are both this, so
-// one bounded run covers every compile a build does.
+// name if it fails.
 //
 // `plain` needs nothing prepared in advance and therefore always works. `fast`
 // is the same compile handed a precompiled header, which the compiler may
-// refuse for reasons about the header rather than about the source. Not every
-// compile has one -- a foreign source includes none of what such a header holds
-// -- so the two are separate rather than one command line with a flag.
+// refuse for reasons about the header rather than about the source. A build
+// that could prepare no header has no fast form, so the two are separate
+// rather than one command line with a flag.
 struct CompileStep {
   support::ProcessRequest plain;
   std::optional<support::ProcessRequest> fast;
@@ -399,29 +386,6 @@ auto UnitCompileStep(
       .fast = prelude.has_value()
                   ? std::optional<support::ProcessRequest>{command(prelude)}
                   : std::nullopt,
-      .subject = source,
-      .object = object};
-}
-
-// What compiling one DPI-C link input costs (LRM 35). The project's own
-// directory is the one include path it publishes its foreign boundary on, which
-// is the whole of what such a source compiles against.
-auto DpiCompileStep(
-    const std::filesystem::path& dir, const DpiLinkInput& input,
-    const HostBuild& host) -> CompileStep {
-  const std::string source = input.source.string();
-  const std::string object = (dir / DpiObjectRelPath(input)).string();
-  std::vector<std::string> args = ForeignLanguageFlags(input);
-  args.emplace_back(OptimizationFlag(host.optimization));
-  args.emplace_back("-c");
-  args.push_back(source);
-  args.emplace_back("-I");
-  args.push_back(dir.string());
-  args.emplace_back("-o");
-  args.push_back(object);
-  return CompileStep{
-      .plain = {.exe = host.cxx, .args = std::move(args)},
-      .fast = std::nullopt,
       .subject = source,
       .object = object};
 }
@@ -505,38 +469,53 @@ auto RunCompileSteps(
   return {};
 }
 
+}  // namespace
+
 auto CompileProgram(
     const std::filesystem::path& dir,
     std::span<const std::string> translation_units,
-    const std::filesystem::path& include_root, const std::filesystem::path& lib,
-    const std::filesystem::path& program, const HostBuild& host,
-    std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void> {
+    const RuntimeLocation& runtime,
+    std::span<const std::filesystem::path> foreign_objects,
+    const std::filesystem::path& program, const HostBuild& host)
+    -> diag::Result<void> {
   // The prelude is compiled before anything reads it, so several compiles
   // cannot each find it missing and race to build the same file.
-  const std::optional<std::filesystem::path> prelude =
-      pch::EnsureCached(host.cxx, include_root, host.pch, host.optimization);
+  const std::optional<std::filesystem::path> prelude = pch::EnsureCached(
+      host.cxx, runtime.include_root, host.pch, host.store, host.optimization);
 
   std::vector<CompileStep> steps;
+  steps.reserve(translation_units.size());
   for (const std::string& source : translation_units) {
-    steps.push_back(UnitCompileStep(dir, source, include_root, host, prelude));
+    steps.push_back(
+        UnitCompileStep(dir, source, runtime.include_root, host, prelude));
   }
-  for (const DpiLinkInput& input : dpi_inputs) {
-    steps.push_back(DpiCompileStep(dir, input, host));
-  }
-
   if (auto r = RunCompileSteps(steps, host, prelude); !r) {
     return r;
   }
 
-  std::vector<std::string> args;
-  args.reserve(steps.size() + 3);
+  std::vector<std::filesystem::path> objects;
+  objects.reserve(steps.size() + foreign_objects.size());
   for (const CompileStep& step : steps) {
-    args.push_back(step.object);
+    objects.emplace_back(step.object);
   }
-  args.push_back(lib.string());
+  objects.insert(objects.end(), foreign_objects.begin(), foreign_objects.end());
+  return LinkProgram(objects, runtime.lib, program, host.cxx);
+}
+
+auto LinkProgram(
+    std::span<const std::filesystem::path> objects,
+    const std::filesystem::path& runtime_lib,
+    const std::filesystem::path& program, const std::filesystem::path& cxx)
+    -> diag::Result<void> {
+  std::vector<std::string> args;
+  args.reserve(objects.size() + 3);
+  for (const std::filesystem::path& object : objects) {
+    args.push_back(object.string());
+  }
+  args.push_back(runtime_lib.string());
   args.emplace_back("-o");
   args.push_back(program.string());
-  auto result_or = support::RunProcessCaptured(host.cxx, args);
+  auto result_or = support::RunProcessCaptured(cxx, args);
   if (!result_or) {
     return IoError(std::move(result_or.error()));
   }
@@ -547,8 +526,6 @@ auto CompileProgram(
   }
   return {};
 }
-
-}  // namespace
 
 auto CppProjectSink::Take(const mir::CompilationUnit& unit)
     -> diag::Result<void> {
@@ -632,43 +609,6 @@ auto AssembleProject(
   }
 
   return ExportRuntimeTree(runtime, dir);
-}
-
-auto BuildProject(
-    const std::filesystem::path& dir,
-    std::span<const std::string> translation_units, const HostBuild& host,
-    std::span<const DpiLinkInput> dpi_inputs)
-    -> diag::Result<std::filesystem::path> {
-  const auto program = dir / kProgramName;
-  if (auto r = CompileProgram(
-          dir, translation_units, dir / kRuntimeIncludeDir,
-          dir / kRuntimeLibDir / kRuntimeLibFile, program, host, dpi_inputs);
-      !r) {
-    return std::unexpected(std::move(r.error()));
-  }
-  return program;
-}
-
-auto RunInPlace(
-    const RuntimeLocation& runtime, const EmittedCppSources& sources,
-    const std::filesystem::path& work_dir, const HostBuild& host,
-    std::span<const std::string> child_args,
-    std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<int> {
-  if (auto r = WriteDpiSurface(runtime, sources.dpi_fragments, work_dir); !r) {
-    return std::unexpected(std::move(r.error()));
-  }
-  const auto program = work_dir / kProgramName;
-  if (auto r = CompileProgram(
-          work_dir, sources.translation_units, runtime.include_root,
-          runtime.lib, program, host, dpi_inputs);
-      !r) {
-    return std::unexpected(std::move(r.error()));
-  }
-  auto exit_or = support::RunProcessStreaming(program, child_args);
-  if (!exit_or) {
-    return IoError(std::move(exit_or.error()));
-  }
-  return *exit_or;
 }
 
 }  // namespace lyra::driver

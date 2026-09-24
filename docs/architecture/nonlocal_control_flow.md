@@ -171,6 +171,17 @@ rather than through a construct of its own. The execution backend has neither, s
 cleanup on each way out of the body and asks the runtime, at the points inside a region where an
 execution regains control, whether a target it is inside has been invalidated.
 
+The execution backend's landing stops whatever the platform's unwinder carries and asks the runtime
+which target the control effect it holds names. What is not a control effect -- a run-time error,
+and the release of a suspended stack, which must pass every frame untouched -- the runtime raises
+again from inside that question, unchanged, so the landing only ever acts on a control effect and
+its code names no raised type. Which exception is a control effect is a question only the language
+the runtime is written in can answer, and naming that language's type identity from generated code
+would make a fact of the runtime's own spelling -- its mangling, and which translation unit holds
+the one definition of the identity -- something every artifact links against. Rust's `catch_unwind`
+has the same shape for the same reason: its landing matches anything, and the runtime then decides
+from the exception it was handed whether the raise was its own.
+
 Enumerating a body's ways out is what every compiler targeting a control-flow graph or a stack
 machine does with a cleanup construct. JVM bytecode has no `finally`; the compiler copies the
 cleanup onto each exit path. An earlier design jumped to one shared copy and returned, which was

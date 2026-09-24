@@ -230,8 +230,8 @@ capabilities are a distinct optional field or a feature bit, not an overloaded n
   -- become three lifecycle entries on the program and two constant fields on the program's metadata
   (read as data, not called). The C++ backend keeps its subclass **as a backend-private state
   holder, allocated by the backend's own allocator** so a body's downcast to that type is valid; the
-  runtime no longer reaches it through `Scope*` virtual dispatch. The LLVM/JIT backend supplies its
-  entries, reads the metadata off the lowered unit, and allocates a generic instance with
+  runtime no longer reaches it through `Scope*` virtual dispatch. The execution backend states its
+  entries and its metadata in what the unit emits, and allocates a generic instance with
   runtime-owned storage; the adapter is deleted. Each runtime-to-generated call is wrapped in a
   generated-call scope at the runtime's per-call boundary. `construct` is a unit-level entry that
   stays backend-specific (the C++ constructor; a JIT bootstrap-called entry), tied to allocation,
@@ -278,8 +278,11 @@ capabilities are a distinct optional field or a feature bit, not an overloaded n
   its own internal polymorphism is independent of the generated boundary.
 - The C++ backend emits native-entry bodies, a `ScopeProgram` / `UnitDefinition`, and an allocator;
   in Phase 1 the allocator constructs the subclass as a private state holder.
-- The LLVM/JIT backend supplies its entries by symbol lookup keyed on the specialization identity
-  and an allocator for a generic instance; the adapter is removed.
+- The execution backend supplies its entries in what the unit itself emits, and an allocator for a
+  generic instance; the adapter is removed. It supplied them by symbol lookup when this was written,
+  which made a definition something a host built after compiling rather than something the artifact
+  carried; `a-unit-states-what-it-declares.md` moves that statement into the unit and leaves the
+  boundary this decision fixes untouched.
 - Member storage for the generic-instance end state is the LIR place model realized by physical
   layout -- the layout work already required for the LLVM backend, not new work introduced here.
 - This revisits `callable-receiver`'s rejected "free functions, no class membership" alternative:

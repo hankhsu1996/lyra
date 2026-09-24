@@ -7,6 +7,7 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/dpi/abi_header.hpp"
+#include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
 
 namespace lyra::driver {
@@ -25,9 +26,9 @@ struct DpiLinkInput {
 // Classifies and checks every DPI-C link input once, before any backend runs,
 // so an unreadable, unsupported, or ambiguously named input is reported against
 // the command line rather than surfacing much later as a compiler error or a
-// silently overwritten intermediate. Every consumer -- the ahead-of-time link,
-// the in-process one, the emitted build recipe -- reads the classification from
-// here rather than re-deriving it.
+// silently overwritten intermediate. Every consumer -- a build of either
+// backend, and the recipe an emitted project ships -- reads the classification
+// from here rather than re-deriving it.
 auto ValidateDpiLinkInputs(std::span<const std::string> sources)
     -> diag::Result<std::vector<DpiLinkInput>>;
 
@@ -43,17 +44,23 @@ auto WriteDpiSurface(
     const RuntimeLocation& runtime, std::span<const dpi::AbiFragment> fragments,
     const std::filesystem::path& dir) -> diag::Result<void>;
 
-// Compiles each DPI-C link input to a relocatable object and returns their
-// paths, in input order. An ahead-of-time image hands these sources to the
-// program's own link; an in-process design is linked by its execution session
-// instead, and an object is what a linker takes -- which is what makes both
-// directions of the boundary resolve in one place: the design's call out to a
-// symbol the object defines, and the foreign side's call back to one only the
-// session does (LRM 35.4). `header_dir` holds the generated ABI header the
-// sources may include.
+// Which language a foreign source is compiled as, and the standard where its
+// language has one to name (LRM 35). A C source is compiled as C so its symbols
+// keep C linkage, which is what the emitted declaration expects and what a C++
+// compilation would mangle away. The in-process build and the recipe an emitted
+// project ships both read it here, so the two compile a source alike.
+auto ForeignLanguageFlags(const DpiLinkInput& input)
+    -> std::vector<std::string>;
+
+// Compiles each DPI-C link input to a relocatable object in `work_dir` and
+// returns their paths, in input order. Every program links these beside the
+// design's own objects, which is what makes both directions of the boundary
+// resolve in one place: the design's call out to a symbol an object defines,
+// and the foreign side's call back to one only the design defines (LRM 35.4).
+// `header_dir` holds the generated ABI header the sources may include.
 auto CompileDpiObjects(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
-    const std::filesystem::path& header_dir,
+    Optimization optimization, const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
     -> diag::Result<std::vector<std::filesystem::path>>;
 

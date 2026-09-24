@@ -17,11 +17,11 @@ as the driver; the distinct execution model where an external C program drives a
 linked library is a separate roadmap capability, out of scope here. The DPI type mapping between an
 SV type and its C ABI type (LRM 35.5.6) is a backend type-mapping concern, so the MIR representation
 is backend-agnostic: the same MIR is materialized by the C++ backend as an `extern "C"` entry linked
-by the emitted build recipe, and by the LLVM / JIT backend as a symbol its execution session
-resolves. A name several scopes may export belongs to no one unit, so every unit declaring such a
-scope defines it and each backend uses its own target's rule for keeping one definition. Lyra never
-compiles the user's C; it provides the ABI surface (a generated header, resolved symbol names) and
-orchestrates linkage.
+by the emitted build recipe, and by the LLVM backend as a symbol the program's link resolves. A name
+several scopes may export belongs to no one unit, so every unit declaring such a scope defines it
+and each backend uses its own target's rule for keeping one definition. Lyra never compiles the
+user's C; it provides the ABI surface (a generated header, resolved symbol names) and orchestrates
+linkage.
 
 The settled IR, value, and boundary model -- import as the external arm of the one callable,
 marshaling as a cross-ABI carrier conversion through runtime primitives, the export context, and the
@@ -266,18 +266,18 @@ protocol on top of it.
 
 ### Execution backend
 
-The execution backend (MIR lowered to LIR to LLVM, run as JIT or AOT) elaborates module hierarchies
-and runs procedural code, so a foreign call has a body to sit inside. The DPI-specific gap is the
-two points the MIR-to-LIR lowering names: the import-call target and the ABI carrier type. These
-items bring the same backend-agnostic MIR the C++ backend consumes up on the execution backend, one
-surface at a time.
+The execution backend (MIR lowered to LIR to LLVM, linked into a program) elaborates module
+hierarchies and runs procedural code, so a foreign call has a body to sit inside. The DPI-specific
+gap is the two points the MIR-to-LIR lowering names: the import-call target and the ABI carrier
+type. These items bring the same backend-agnostic MIR the C++ backend consumes up on the execution
+backend, one surface at a time.
 
 - [x] D10 -- Scalar import on the execution backend: 2-state integral and `string`, `input`-only
-      functions. The import-call target lowers to an external-linkage symbol the execution session
-      resolves, the by-value carriers marshal, and a JIT run cross-checks the result against the C++
-      backend. A `real` import is excluded, but not by anything DPI owns: the execution backend has
-      no real value domain at all, so it cannot read a real out of an SV value in the first place
-      (`execution-backend.md`).
+      functions. The import-call target lowers to an external-linkage symbol the program's link
+      resolves, the by-value carriers marshal, and a run on this backend cross-checks the result
+      against the C++ backend. A `real` import is excluded, but not by anything DPI owns: the
+      execution backend has no real value domain at all, so it cannot read a real out of an SV value
+      in the first place (`execution-backend.md`).
 - [ ] D11 -- General and 4-state / wide import marshaling on the execution backend: the D2 and D3
       surface -- `output` / `inout` copy-back, `chandle`, and canonical `svBitVecVal*` /
       `svLogicVecVal*` buffers. The marshaling itself is in: a canonical buffer images the actual
@@ -292,14 +292,13 @@ surface at a time.
       subroutine's entry point is a function of the design's own link-level unit, emitted under the
       linkage name the standard fixes (LRM 35.4), and each scope publishes what it answers a foreign
       name with beside what it answers a hierarchical one with, so one symbol reaches whichever
-      instance the call chain established. A design's foreign sources are linked into its execution
-      session rather than loaded beside it, which is what makes both directions of the boundary
-      resolve in one place: the session resolves names across everything it holds, and two resolvers
-      that cannot see each other served only the outward direction. A DPI task crosses in either
-      direction -- an import task's foreign call is carried on a stack of the runtime's own and its
-      suspension is the ordinary one, and an exported task reached from foreign code is driven to
-      completion on that stack, suspending and continuing across the boundary while simulation time
-      advances.
+      instance the call chain established. A design's foreign sources are linked into its program
+      rather than loaded beside it, which is what makes both directions of the boundary resolve in
+      one place: the link resolves names across everything it holds, and two resolvers that cannot
+      see each other served only the outward direction. A DPI task crosses in either direction -- an
+      import task's foreign call is carried on a stack of the runtime's own and its suspension is
+      the ordinary one, and an exported task reached from foreign code is driven to completion on
+      that stack, suspending and continuing across the boundary while simulation time advances.
 
 ## Design record
 

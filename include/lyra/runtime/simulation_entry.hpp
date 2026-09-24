@@ -10,6 +10,7 @@
 namespace lyra::runtime {
 
 class Runtime;
+struct ScopeDefinition;
 
 // The entry a design's root unit publishes for making its object, as a host
 // reaches it: the owner every object takes -- none, for this one -- and the
@@ -40,6 +41,16 @@ using RootFactory =
 auto RunDesignRoot(
     int argc, char** argv, std::string_view root_name, const RootFactory& make)
     -> int;
+
+// The entry for a program whose units state what they declare, called once
+// every unit's declaration body has run -- which is what composing such a
+// program means, whether a linker or an execution session composed it. What
+// those bodies declared is laid out here, and the design then runs exactly as
+// the entry above runs it, its `$root` built through the definition the root's
+// own unit declared.
+auto RunDeclaredProgram(
+    int argc, char** argv, std::string_view root_name,
+    const ScopeDefinition& root) -> int;
 
 // Boundary between a host program and the simulation Runtime. Drives a bound
 // Runtime to completion and reports whatever the run could not itself account

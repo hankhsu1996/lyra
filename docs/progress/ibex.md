@@ -62,8 +62,8 @@ property.
 
 1. **Feature-lowering gaps** -- the unsupported SystemVerilog forms below. This wall is down. What
    the list below now tracks is any further form a deeper pass turns up, not a standing blocker.
-2. **Execution backend** -- also down for the C++ path, which carries the run above. The LLVM / JIT
-   path is a separate backend tracked in `execution-backend.md`; it is not required for the C++ run.
+2. **Execution backend** -- also down for the C++ path, which carries the run above. The LLVM path
+   is a separate backend tracked in `execution-backend.md`; it is not required for the C++ run.
 
 ## Feature gaps
 
