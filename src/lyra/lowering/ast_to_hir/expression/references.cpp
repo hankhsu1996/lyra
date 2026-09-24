@@ -420,9 +420,9 @@ auto FailOnCurrentInstanceHandle(diag::SourceSpan span)
 }
 
 // Wraps a resolved value target as a reference Expr. Every way of reaching a
-// cell -- a direct member of the reader's own scope, a routed reference sealed
-// to a per-instance endpoint, a namespace unit's cell named across the boundary
-// -- is a reference primary, so one wrap serves them all.
+// cell -- a route through the design hierarchy, a namespace unit's cell named
+// across the boundary, a static property's cell -- is a reference primary, so
+// one wrap serves them all.
 auto ValueTargetRefExpr(
     const hir::ValueTarget& target, hir::TypeId type, diag::SourceSpan span)
     -> hir::Expr {
@@ -431,8 +431,8 @@ auto ValueTargetRefExpr(
   };
   return std::visit(
       Overloaded{
-          [&](const hir::ReferenceRoute& route) -> hir::Expr {
-            return std::visit(wrap, route);
+          [&](const hir::RoutedValueRef& route) -> hir::Expr {
+            return wrap(route);
           },
           [&](const hir::ExternalUnitValueRef& external) -> hir::Expr {
             return wrap(external);
@@ -478,7 +478,7 @@ auto LowerInterfacePortValue(
   }
   auto type_id = unit_lowerer.InternType(*hve.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto route = unit_lowerer.MakeRoutedRef(
+  auto route = unit_lowerer.MakeRoutedValueRef(
       declaration, frame.Current(), *std::move(through));
   if (!route) return std::unexpected(std::move(route.error()));
   return ValueTargetRefExpr(hir::ValueTarget{*route}, *type_id, span);
@@ -560,17 +560,15 @@ auto ViewDefinedPlaceExpr(
             .members.Get(part.member);
     hir::Expr base = unit_lowerer.MakeRoutedMemberRef(
         frame.Current(),
-        hir::RoutedRefDecl{
-            .recipe =
-                hir::RoutedPathRecipe{
-                    .head = offered.route.head,
-                    .steps = offered.route.steps,
-                    .leaf =
-                        hir::SignatureMemberLeaf{
-                            .object = offered.object,
-                            .member = part.member,
-                            .storage = member.storage,
-                            .type = member.type}}},
+        hir::ValueRoute{
+            .head = offered.route.head,
+            .steps = offered.route.steps,
+            .leaf =
+                hir::SignatureMemberLeaf{
+                    .object = offered.object,
+                    .member = part.member,
+                    .storage = member.storage,
+                    .type = member.type}},
         span);
     parts.push_back(frame.Exprs().Add(ProjectPublishedPath(
         unit_lowerer, frame, part.path, std::move(base), span)));

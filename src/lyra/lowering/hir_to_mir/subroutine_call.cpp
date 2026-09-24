@@ -66,7 +66,7 @@ struct CalledObject {
 // elaboration. The endpoint holds the pointer, so the value is read straight
 // off it and reaching the object traverses nothing.
 struct SealedObject {
-  hir::RoutedRef reference;
+  hir::RoutedObjectRef reference;
 };
 using AmbientHandle = std::variant<
     EnclosingScopeReceiver, DeclaringScopeArgument, CalledObject, SealedObject>;
@@ -112,7 +112,7 @@ struct DispatchedCallee {
 // the object, which leads the arguments as a receiver always does -- here as an
 // ordinary first parameter, an entry being a free function.
 struct EntryCallee {
-  hir::RoutedRef entry;
+  hir::RoutedCallableRef entry;
   hir::ExternalCalleeInterface interface;
   AmbientHandle handle;
 };
@@ -648,11 +648,7 @@ auto BuildAmbientHandle(
             return BuildReceiverPointer(lowerer, frame, o.source);
           },
           [&](const SealedObject& s) -> diag::Result<mir::ExprId> {
-            const RoutedRefMeta& meta = lowerer.RoutedRefTarget(s.reference.id);
-            return frame.current_block->exprs.Add(
-                BuildStructuralFieldAccessExpr(
-                    frame, lowerer.Owner().Unit(), mir::EnclosingHops{0},
-                    meta.target));
+            return lowerer.RouteEnd(frame, s.reference.id);
           }},
       handle);
 }
@@ -733,10 +729,7 @@ auto EmitSubroutineCall(
                     [&](const hir::UnpublishedBehaviorSlot& coordinate)
                         -> mir::ExprId {
                       const mir::ExprId at =
-                          block.exprs.Add(BuildStructuralFieldAccessExpr(
-                              frame, unit, mir::EnclosingHops{0},
-                              lowerer.BehaviorCoordinateTarget(
-                                  coordinate.coordinate)));
+                          lowerer.RouteEnd(frame, coordinate.coordinate);
                       return block.exprs.Add(
                           mir::Expr{
                               .data =
@@ -748,13 +741,11 @@ auto EmitSubroutineCall(
                                       .arguments = {read_handle(), at}},
                               .type = mir::ErasedFunction(unit.types)});
                     },
-                    // Nothing was left for the object to answer, so the slot
-                    // holds the address itself (LRM 8.14).
+                    // Nothing was left for the object to answer, so the route
+                    // ends at the address itself (LRM 8.14).
                     [&](const hir::UnpublishedBehaviorBody& body)
                         -> mir::ExprId {
-                      return block.exprs.Add(BuildStructuralFieldAccessExpr(
-                          frame, unit, mir::EnclosingHops{0},
-                          lowerer.BehaviorBodyTarget(body.body)));
+                      return lowerer.RouteEnd(frame, body.body);
                     }},
                 settled.at);
             // What class the object is of is exactly what the call could not
@@ -785,10 +776,7 @@ auto EmitSubroutineCall(
             }
             // The entry is the code address the route sealed; restoring it to
             // the prototype the call was shaped from is what makes it callable.
-            const RoutedRefMeta& meta = lowerer.RoutedRefTarget(entry.entry.id);
-            const mir::ExprId erased =
-                block.exprs.Add(BuildStructuralFieldAccessExpr(
-                    frame, unit, mir::EnclosingHops{0}, meta.target));
+            const mir::ExprId erased = lowerer.RouteEnd(frame, entry.entry.id);
             return ResolvedCallee{
                 .callee =
                     mir::Indirect{

@@ -125,20 +125,22 @@ struct VisibleChildHead {
 
 using RouteHead = std::variant<InUnitHead, RootHead, VisibleChildHead>;
 
-// What a route ends at. A data object declared by the scope the steps land on,
+// What a route ends at, grouped by the use the name is put to, since the use
+// decides what the name may reach. Within a use, the end is named in as many
+// of three ways as that use has: by this unit's own declaration, by the
+// position another unit's signature gave it, or by a name the runtime answers.
+//
+// A value ends at data: a data object declared by the scope the steps land on,
 // or a static-lifetime local of one of that scope's bodies, which a named block
 // or a subroutine puts on the hierarchical path (LRM 23.9) -- every such scope
 // between is part of where the storage sits, not a step of its own, so the leaf
 // identity fixes the whole procedural descent. A leaf in another unit takes one
 // of the forms below instead: against that unit's signature when it published
-// the name, and against the runtime when it did not.
-//
-// Each leaf states everything the endpoint reaching it needs and nothing more.
-// A leaf that ends at data states the storage its target holds and the data
-// type behind it, because no consumer below can recover either: the declaration
-// is in a scope the route walks to rather than one the reader can index, and
-// past a signature there is no declaration at all. A leaf that ends at
-// something other than data states neither.
+// the name, and against the runtime when it did not. Each states the storage
+// its target holds and the data type behind it, because no consumer below can
+// recover either: the declaration is in a scope the route walks to rather than
+// one the reader can index, and past a signature there is no declaration at
+// all.
 struct StructuralDataObjectLeaf {
   StructuralDataObjectId object;
   PublishedStorage storage;
@@ -172,15 +174,6 @@ struct SignatureMemberLeaf {
   auto operator==(const SignatureMemberLeaf&) const -> bool = default;
 };
 
-// The route ends at the object the steps land on rather than at storage inside
-// it. An interface port names a scope and not a value (LRM 25.3), so what a
-// connection to one reaches is the instance itself.
-struct ScopeLeaf {
-  TypeId type;
-
-  auto operator==(const ScopeLeaf&) const -> bool = default;
-};
-
 // The route ends past a signature, at a declaration no unit promised. Nothing
 // was published to compile against, so the name is all that crosses and the
 // runtime answers it while the design elaborates (LRM 23.6).
@@ -190,6 +183,46 @@ struct OpaqueLeaf {
   TypeId type;
 
   auto operator==(const OpaqueLeaf&) const -> bool = default;
+};
+
+using DataLeaf = std::variant<
+    StructuralDataObjectLeaf, ProceduralStaticLeaf, SignatureMemberLeaf,
+    OpaqueLeaf>;
+
+// A cell of the storage the declaring unit says a data end is, holding a value
+// of `type`.
+struct DataCell {
+  PublishedStorage storage;
+  TypeId type;
+};
+
+[[nodiscard]] inline auto CellOf(const DataLeaf& leaf) -> DataCell {
+  return std::visit(
+      Overloaded{
+          [](const StructuralDataObjectLeaf& l) {
+            return DataCell{.storage = l.storage, .type = l.type};
+          },
+          // A static-lifetime local is a variable wherever it sits (LRM 6.21),
+          // so it needs no field to say so.
+          [](const ProceduralStaticLeaf& l) {
+            return DataCell{.storage = VariableStorage{}, .type = l.type};
+          },
+          [](const SignatureMemberLeaf& l) {
+            return DataCell{.storage = l.storage, .type = l.type};
+          },
+          [](const OpaqueLeaf& l) {
+            return DataCell{.storage = l.storage, .type = l.type};
+          }},
+      leaf);
+}
+
+// The object a call is made on ends at the object the steps land on rather
+// than at storage inside it, and so does a connection to an interface port,
+// which names a scope and not a value (LRM 25.3).
+struct ScopeLeaf {
+  TypeId type;
+
+  auto operator==(const ScopeLeaf&) const -> bool = default;
 };
 
 // The route ends past a signature too, at a subroutine no unit promised: a
@@ -227,118 +260,86 @@ struct OpaqueDisableTargetLeaf {
   auto operator==(const OpaqueDisableTargetLeaf&) const -> bool = default;
 };
 
-using RouteLeaf = std::variant<
-    StructuralDataObjectLeaf, ProceduralStaticLeaf, SignatureMemberLeaf,
-    ScopeLeaf, OpaqueLeaf, OpaqueCallableLeaf, DisableTargetLeaf,
-    OpaqueDisableTargetLeaf>;
+using DisableLeaf = std::variant<DisableTargetLeaf, OpaqueDisableTargetLeaf>;
 
-// A cell of the storage the declaring unit says its target is, holding a value
-// of `type`.
-struct EndpointCell {
-  PublishedStorage storage;
-  TypeId type;
-};
-
-// The object the route landed on, which is reached by a pointer to it with no
-// cell in between.
-struct EndpointObject {
-  TypeId type;
-};
-
-// The entry a scope answered a callable's name with, which is a code address
-// and so is already what a caller holds.
-struct EndpointEntry {};
-
-// What a `disable` naming the scope the route reached terminates (LRM 9.6.2).
-// It is neither data nor an object of the design, so it has no data type: what
-// a route ending here holds follows from the leaf alone.
-struct EndpointDisableTarget {};
-
-// What an endpoint reaching this leaf holds. Every consumer of a route asks
-// this and nothing else about where it ends, so the answers are stated once
-// here rather than re-derived from the leaf at each of them.
-using Endpoint = std::variant<
-    EndpointCell, EndpointObject, EndpointEntry, EndpointDisableTarget>;
-
-[[nodiscard]] inline auto EndpointOf(const RouteLeaf& leaf) -> Endpoint {
-  return std::visit(
-      Overloaded{
-          [](const StructuralDataObjectLeaf& l) -> Endpoint {
-            return EndpointCell{.storage = l.storage, .type = l.type};
-          },
-          [](const SignatureMemberLeaf& l) -> Endpoint {
-            return EndpointCell{.storage = l.storage, .type = l.type};
-          },
-          [](const OpaqueLeaf& l) -> Endpoint {
-            return EndpointCell{.storage = l.storage, .type = l.type};
-          },
-          // A static-lifetime local is a variable wherever it sits (LRM 6.21),
-          // so it needs no field to say so.
-          [](const ProceduralStaticLeaf& l) -> Endpoint {
-            return EndpointCell{.storage = VariableStorage{}, .type = l.type};
-          },
-          [](const ScopeLeaf& l) -> Endpoint {
-            return EndpointObject{.type = l.type};
-          },
-          [](const OpaqueCallableLeaf&) -> Endpoint { return EndpointEntry{}; },
-          [](const DisableTargetLeaf&) -> Endpoint {
-            return EndpointDisableTarget{};
-          },
-          [](const OpaqueDisableTargetLeaf&) -> Endpoint {
-            return EndpointDisableTarget{};
-          }},
-      leaf);
-}
-
-// How to navigate from a scope to a target elsewhere on the object tree:
-// `head` is where navigation starts, `steps` carries the descent from there,
-// and `leaf` is what it ends at. This is the route alone. Whether the route
-// materializes a persistent endpoint slot (a value reference read on the hot
-// path) or is resolved once for a one-shot bind (a `ref` port alias) is the
-// consumer's endpoint-capability decision, not a property of the route.
-struct RoutedPathRecipe {
+// How to navigate from a scope to what a name reaches: `head` is where
+// navigation starts, `steps` carries the descent from there, and `leaf` is
+// what it ends at, of the kinds the name's use allows. The path is one shape
+// for every use; only the end differs. Whether the route is kept in a slot of
+// its reader or walked where it is used, and when, is the lowering's decision
+// and not a property of the route.
+template <typename Leaf>
+struct Route {
   RouteHead head;
   std::vector<PathStep> steps;
-  RouteLeaf leaf;
+  Leaf leaf;
 
-  auto operator==(const RoutedPathRecipe&) const -> bool = default;
+  auto operator==(const Route&) const -> bool = default;
 };
 
-// A routed reference that materializes a persistent endpoint slot, resolved
-// once in the resolve phase after the object tree is fully built.
-// The target's storage is stated by the unit declaring it, and with the
-// recipe's leaf type it fixes the producer's actual cell, which the realized
-// endpoint must match so a read reaches the right access protocol. The endpoint
-// is read / written / observed through one stored direct reference.
-struct RoutedRefDecl {
-  RoutedPathRecipe recipe;
+using ValueRoute = Route<DataLeaf>;
+using ObjectRoute = Route<ScopeLeaf>;
+using CallableRoute = Route<OpaqueCallableLeaf>;
+using DisableTargetRoute = Route<DisableLeaf>;
 
-  auto operator==(const RoutedRefDecl&) const -> bool = default;
-};
-
-// A name on a class this artifact cannot name, and where that name lands on it.
-// Such a class is nameable only inside the scope declaring it (LRM 23.9) and is
-// a distinct type per instance of the element declaring it (LRM 6.22), so which
-// class an access reaches is a fact of the instance and never of this artifact:
-// one body serves every instance, and two of them may land on classes with
-// different layouts.
-//
+// A member name on a class this artifact cannot name. Such a class is nameable
+// only inside the scope declaring it (LRM 23.9) and is a distinct type per
+// instance of the element declaring it (LRM 6.22), so which class an access
+// reaches is a fact of the instance and never of this artifact: one body serves
+// every instance, and two of them may land on classes with different layouts.
 // So the class is reached the way everything else past a signature is reached
-// -- by walking to the scope and asking it by name -- and the answer, the
-// position the member name lands on, is what the slot holds. `head` and `steps`
-// are that walk; it ends at the scope rather than at anything the scope holds,
-// which is why it carries no leaf.
-//
-// Which position the answer counts is the arena this sits in: storage among the
-// declaring class's own properties, or an ordinal among the introducing class's
-// own behaviors.
-struct ClassNameDecl {
-  RouteHead head;
-  std::vector<PathStep> steps;
+// -- the steps land on the declaring scope, which answers `class_name` with its
+// class, and the class answers where `name` lands.
+struct ClassMemberName {
   std::string class_name;
   std::string name;
 
-  auto operator==(const ClassNameDecl&) const -> bool = default;
+  auto operator==(const ClassMemberName&) const -> bool = default;
+};
+
+// The route ends at where a property name lands: storage among the declaring
+// class's own properties.
+struct PropertyCoordinateLeaf {
+  ClassMemberName member;
+
+  auto operator==(const PropertyCoordinateLeaf&) const -> bool = default;
+};
+
+// The route ends at where a virtual method's name lands: an ordinal among the
+// introducing class's own behaviors, which the object answers at the call.
+struct BehaviorCoordinateLeaf {
+  ClassMemberName member;
+
+  auto operator==(const BehaviorCoordinateLeaf&) const -> bool = default;
+};
+
+// The route ends at the body a non-virtual method's name reaches: what such a
+// call runs is fixed by the class the access names (LRM 8.14), so the body
+// itself is the answer rather than a position something else answers.
+struct BehaviorBodyLeaf {
+  ClassMemberName member;
+
+  auto operator==(const BehaviorBodyLeaf&) const -> bool = default;
+};
+
+using PropertyCoordinateRoute = Route<PropertyCoordinateLeaf>;
+using BehaviorCoordinateRoute = Route<BehaviorCoordinateLeaf>;
+using BehaviorBodyRoute = Route<BehaviorBodyLeaf>;
+
+// Every walk one scope's names take, gathered while its bodies are lowered and
+// handed to the scope whole, a table per use a name is put to.
+struct ScopeRoutes {
+  base::Arena<ValueRoute, RoutedValueRefId> values;
+  base::Arena<ObjectRoute, RoutedObjectRefId> objects;
+  base::Arena<CallableRoute, RoutedCallableRefId> callables;
+  base::Arena<DisableTargetRoute, RoutedDisableTargetRefId> disable_targets;
+  base::Arena<PropertyCoordinateRoute, PropertyCoordinateId>
+      property_coordinates;
+  base::Arena<BehaviorCoordinateRoute, BehaviorCoordinateId>
+      behavior_coordinates;
+  base::Arena<BehaviorBodyRoute, BehaviorBodyId> behavior_bodies;
+
+  auto operator==(const ScopeRoutes&) const -> bool = default;
 };
 
 struct ConcurrentAssertionId {
@@ -404,18 +405,17 @@ struct InterfacePortDecl {
 
 // How the child port is reached, by endpoint capability. An input or output
 // port has its own cell, realized as a reactive edge over it (a variable cell
-// written / read, a net cell driven / read), so it holds a persistent routed
-// reference (`cell`, a `RoutedRef`) whose target capability (net versus
-// variable) the reference itself carries. A `ref` port owns no cell: it is
-// bound once in the resolve phase to the peer's cell, so it holds only the
-// route to the child's reference member (a `RoutedPathRecipe`) -- no persistent
-// slot, since a `ref` needs no simulation-time reach (LRM 23.3.3.2).
+// written / read, a net cell driven / read), so it holds a value reference
+// (`cell`) whose target capability (net versus variable) the reference itself
+// carries. A `ref` port owns no cell: it is bound once to the peer's cell, so
+// it holds only the route to the child's reference member -- no reference of
+// its own, since a `ref` needs no simulation-time reach (LRM 23.3.3.2).
 struct PortCellEndpoint {
   ExprId cell;
 
   auto operator==(const PortCellEndpoint&) const -> bool = default;
 };
-using PortEndpoint = std::variant<PortCellEndpoint, RoutedPathRecipe>;
+using PortEndpoint = std::variant<PortCellEndpoint, ValueRoute>;
 
 struct PortConnectionId {
   std::uint32_t value = base::kUnassignedId;
@@ -431,7 +431,7 @@ struct PortConnectionId {
 // port; empty for a `ref` port). HIR holds it verbatim and HIR-to-MIR realizes
 // it: an input or output port as the implied continuous assignment between the
 // two cells, a `ref` port as an alias bind of the child's reference member to
-// the peer's cell, performed in the resolve phase (LRM 23.3.3.2).
+// the peer's cell, bound once (LRM 23.3.3.2).
 //
 // A bidirectional port is not one of these. Nothing crosses it in either
 // direction, so it has no source, no sink and nothing to wait on; what it
@@ -448,14 +448,14 @@ struct DataPortConnection {
 // A connection binding a child's interface port to the interface instances it
 // names (LRM 25.3). No value crosses in either direction, so there is nothing
 // to drive and nothing to wait on: `endpoint` reaches the child's port member
-// and each of `peers` reaches one instance bound there, all resolved once in
-// the resolve phase, the way a `ref` port's alias is. A port carrying a range
-// is bound to as many instances as it stands for, in the order its coordinates
-// count them (LRM 23.3.3.5); a port standing for one has one peer, which is the
-// no-dimension case of the same list rather than a shape of its own.
+// and each of `peers` reaches one instance bound there, each bound once, the
+// way a `ref` port's alias is. A port carrying a range is bound to as many
+// instances as it stands for, in the order its coordinates count them (LRM
+// 23.3.3.5); a port standing for one has one peer, which is the no-dimension
+// case of the same list rather than a shape of its own.
 struct InterfacePortConnection {
-  RoutedPathRecipe endpoint;
-  std::vector<RoutedPathRecipe> peers;
+  ValueRoute endpoint;
+  std::vector<ObjectRoute> peers;
 
   auto operator==(const InterfacePortConnection&) const -> bool = default;
 };
@@ -737,14 +737,7 @@ struct StructuralScope {
   // list rather than an arena because nothing names one: no reference reaches a
   // join, and what it states is already complete when it is recorded.
   std::vector<NetJoin> net_joins;
-  base::Arena<RoutedRefDecl, RoutedRefId> routed_refs;
-  base::Arena<ClassNameDecl, PropertyCoordinateId> property_coordinates;
-  base::Arena<ClassNameDecl, BehaviorCoordinateId> behavior_coordinates;
-  // The bodies a name reaches on a class this scope's walk lands on, for a
-  // method that answers no dispatch position -- what such a call runs is fixed
-  // by the class the access names (LRM 8.14), so what is settled is the body
-  // itself rather than a position something else answers.
-  base::Arena<ClassNameDecl, BehaviorBodyId> behavior_bodies;
+  ScopeRoutes routes;
   // The cells something in this scope reads a sampled value of (LRM 16.5.1),
   // each named the way an event control names what it watches -- so one reached
   // across an instance boundary is carried by its route like any other. A cell

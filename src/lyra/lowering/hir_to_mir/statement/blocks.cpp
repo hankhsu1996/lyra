@@ -271,8 +271,7 @@ auto LowerDisableStmt(
 
   // Both forms hand the statement the one thing it acts on: the target's
   // address. A scope of this body's own declaration scope is a cell reached
-  // where it sits; one anywhere else was sealed by a route in the resolve
-  // phase, so the statement reads the slot and walks nothing.
+  // where it sits; one anywhere else is reached through the route to it.
   const mir::ExprId member = std::visit(
       Overloaded{
           [&](const hir::DirectDisableTarget& t) {
@@ -287,9 +286,7 @@ auto LowerDisableStmt(
             return CancellationTarget(process, frame, *home);
           },
           [&](const hir::RoutedDisableTarget& t) {
-            return block.exprs.Add(BuildStructuralFieldAccessExpr(
-                frame, unit, mir::EnclosingHops{0},
-                process.RoutedRefTarget(t.target.id).target));
+            return process.RouteEnd(frame, t.target.id);
           }},
       d.target);
   const mir::ExprId services =

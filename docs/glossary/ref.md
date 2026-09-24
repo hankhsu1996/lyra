@@ -5,7 +5,7 @@ subroutine formal (LRM 13.5.2) or a module port (LRM 23.3.3.2), denoting that en
 expression that found it.
 
 **Contrast.** Not a reference route (`architecture/reference_resolution.md`), which is a path from a
-referrer to a target across the object graph, classified per segment and sealed once. Not an
+referrer to a target across the object graph, classified per segment. Not an
 [owning pointer](owning-pointer.md) or a [borrowed handle](borrowed-handle.md), which name an object
 rather than storage holding a value. Not an `output` or `inout` formal, which copies at the call
 boundary instead of aliasing.

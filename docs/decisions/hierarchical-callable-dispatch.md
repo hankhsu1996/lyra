@@ -41,8 +41,8 @@ made decides only what the name resolves against.
 
 A call to a subroutine another scope declares carries the same walk a value reference carries: where
 navigation starts, the descent from there, and what it ends at. A subroutine the reader's own scope
-declares is the zero-length walk -- the degenerate case, as a direct member is for a value -- and
-stays a direct call; it is not a special form, it is the empty route.
+declares is the zero-length walk, as a variable of the reader's own scope is for a value, and stays
+a direct call; it is not a special form, it is the empty route.
 
 The hop-only shape is deleted rather than kept beside the routed one. It is not a fast path: a
 zero-hop route is already the fast path, and keeping both would restore the per-form species the
@@ -105,9 +105,9 @@ entries a scope carries -- plain native functions over the receiver -- are not t
 ### D5. A cancellation target is another leaf, not a second mechanism
 
 `disable` naming a block or task elsewhere on the hierarchy (LRM 9.6.2) reaches the same route to a
-scope and ends at that scope's cancellation target, sharing the head, the steps and the sealing with
-every other route. What a `disable` invalidates and what leaving a target does are settled by
-`disable-scope-invalidation.md` and do not move.
+scope and ends at that scope's cancellation target, sharing the head, the steps and the way the
+route is reached with every other route. What a `disable` invalidates and what leaving a target does
+are settled by `disable-scope-invalidation.md` and do not move.
 
 What ends the route is classified by D2's question, which for this family has two answers rather
 than three, so it is two leaves and not one. Where this artifact lays out the scope that declares

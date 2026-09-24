@@ -10,44 +10,79 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/procedural_var.hpp"
-#include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 
 namespace lyra::hir {
 
-// A reference to a structural data object (variable or net) that sits directly
-// on the reader's own scope: an empty route, reached as a plain member of
-// `self`. Any target that needs a route to reach -- an enclosing ancestor
-// member, a sibling or child scope, another compilation unit -- is a RoutedRef
-// instead.
-struct DirectMemberRef {
-  StructuralDataObjectId var;
+// A name that reaches something in the design hierarchy: a declaration of the
+// reader's own scope, of one enclosing it (LRM 23.9), or of any other scope on
+// the tree, in this unit or another (LRM 23.6, 23.8). Where the target stands
+// is the route -- how many scopes out, then which scopes down -- and the
+// reader's own scope is the route that goes nowhere. The route lives in the
+// owning scope's table for the use the name is put to, keyed by the id here;
+// intra-unit and cross-unit routes differ only in how each segment is
+// navigated (typed member access vs by-name runtime lookup).
+//
+// What a name is used for decides what it may reach, and the source's position
+// decides the use (LRM 23.6, 9.6.2), so each use is a reference of its own:
+// a value read, written or waited on, which ends at data; the object a call is
+// made on; a subroutine reached by name; and what a `disable` ends.
+struct RoutedValueRefId {
+  std::uint32_t value = base::kUnassignedId;
 
-  auto operator<=>(const DirectMemberRef&) const
+  auto operator<=>(const RoutedValueRefId&) const
       -> std::strong_ordering = default;
 };
 
-struct RoutedRefId {
-  std::uint32_t value = base::kUnassignedId;
+struct RoutedValueRef {
+  RoutedValueRefId id;
 
-  auto operator<=>(const RoutedRefId&) const -> std::strong_ordering = default;
+  auto operator<=>(const RoutedValueRef&) const
+      -> std::strong_ordering = default;
 };
 
-// A reference reached through a non-empty route: an enclosing ancestor member,
-// a sibling or child scope, or another compilation unit. The route resolves
-// once in the resolve phase into a stored per-instance endpoint -- a borrowed
-// pointer to the target's cell -- and every read, write, and observation
-// dereferences that one sealed endpoint. The navigation recipe lives in the
-// owning scope's routed-reference table keyed by this id. Intra-unit and
-// cross-unit references differ only in each segment's classification during
-// resolve (typed member access vs by-name runtime lookup), not in the
-// endpoint representation.
-struct RoutedRef {
-  RoutedRefId id;
+struct RoutedObjectRefId {
+  std::uint32_t value = base::kUnassignedId;
 
-  auto operator<=>(const RoutedRef&) const -> std::strong_ordering = default;
+  auto operator<=>(const RoutedObjectRefId&) const
+      -> std::strong_ordering = default;
+};
+
+struct RoutedObjectRef {
+  RoutedObjectRefId id;
+
+  auto operator<=>(const RoutedObjectRef&) const
+      -> std::strong_ordering = default;
+};
+
+struct RoutedCallableRefId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const RoutedCallableRefId&) const
+      -> std::strong_ordering = default;
+};
+
+struct RoutedCallableRef {
+  RoutedCallableRefId id;
+
+  auto operator<=>(const RoutedCallableRef&) const
+      -> std::strong_ordering = default;
+};
+
+struct RoutedDisableTargetRefId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const RoutedDisableTargetRefId&) const
+      -> std::strong_ordering = default;
+};
+
+struct RoutedDisableTargetRef {
+  RoutedDisableTargetRefId id;
+
+  auto operator<=>(const RoutedDisableTargetRef&) const
+      -> std::strong_ordering = default;
 };
 
 struct ProceduralVarRef {
@@ -142,13 +177,8 @@ struct ExternalUnitValueRef {
       -> std::strong_ordering = default;
 };
 
-// A reader-relative reference to a value: either a direct member of the
-// reader's own scope, or a routed reference sealed to a per-instance endpoint
-// in the resolve phase.
-using ReferenceRoute = std::variant<DirectMemberRef, RoutedRef>;
-
 // Where a value's cell is, as the reader reaches it: through a reader-relative
-// route to a cell in the reader's own unit, by name across the boundary to a
+// route to a cell on the design hierarchy, by name across the boundary to a
 // namespace unit's one program-global cell (LRM 26.2, 3.12.1), which has no
 // per-instance storage to route to, or on whatever replicates a class
 // declaration, for a cell the type owns rather than any object of it (LRM 8.9).
@@ -158,6 +188,6 @@ using ReferenceRoute = std::variant<DirectMemberRef, RoutedRef>;
 // constant folds where it is used, leaving nothing to read through and nothing
 // to observe.
 using ValueTarget =
-    std::variant<ReferenceRoute, ExternalUnitValueRef, StaticPropertyRef>;
+    std::variant<RoutedValueRef, ExternalUnitValueRef, StaticPropertyRef>;
 
 }  // namespace lyra::hir

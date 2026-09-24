@@ -110,16 +110,13 @@ auto LowerSignalEventTrigger(
 // rather than reading a value out of one -- a wait registering on it, a trigger
 // occurring at it. Nothing but a bare name reaches storage that way.
 auto AsWatchedStorage(const hir::Expr& expr)
-    -> std::optional<hir::ReferenceRoute> {
+    -> std::optional<hir::RoutedValueRef> {
   const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
   if (primary == nullptr) {
     return std::nullopt;
   }
-  if (const auto* direct = std::get_if<hir::DirectMemberRef>(&primary->data)) {
-    return hir::ReferenceRoute{*direct};
-  }
-  if (const auto* routed = std::get_if<hir::RoutedRef>(&primary->data)) {
-    return hir::ReferenceRoute{*routed};
+  if (const auto* routed = std::get_if<hir::RoutedValueRef>(&primary->data)) {
+    return *routed;
   }
   return std::nullopt;
 }
@@ -141,7 +138,7 @@ auto LowerNamedEventControl(
   // legal event control the route does not carry yet. What the front end
   // accepted is the measure, so this says what is missing rather than what the
   // source may write.
-  const std::optional<hir::ReferenceRoute> route = AsWatchedStorage(*expr_or);
+  const std::optional<hir::RoutedValueRef> route = AsWatchedStorage(*expr_or);
   if (!route.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,

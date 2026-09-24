@@ -237,7 +237,7 @@ struct ExternalUnitSubroutineRef {
 // passes and what it awaits come from the promise rather than from the
 // declaration behind it.
 struct ExternalUnitMethodRef {
-  RoutedRef receiver;
+  RoutedObjectRef receiver;
   ExternalUnitObjectId object;
   PublishedCallableId callable;
 
@@ -252,14 +252,14 @@ struct ExternalUnitMethodRef {
 // own entry.
 //
 // Two routes, one walk: `receiver` reaches the object and `entry` reaches the
-// callable on it, so both seal in the resolve phase and the call itself walks
-// nothing. `interface` is what the call passes and awaits, recomputed from the
+// callable on it, so both are reached once and the call itself walks nothing.
+// `interface` is what the call passes and awaits, recomputed from the
 // callee's declaration -- the same declaration the entry is generated from,
 // which is what lets a prototype be erased between them without either side
 // being able to disagree about it.
 struct OpaqueUnitMethodRef {
-  RoutedRef receiver;
-  RoutedRef entry;
+  RoutedObjectRef receiver;
+  RoutedCallableRef entry;
   ExternalCalleeInterface interface;
 
   auto operator==(const OpaqueUnitMethodRef&) const -> bool = default;

@@ -589,9 +589,6 @@ class HirDumper {
             },
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
             [](const ThisHandle&) -> std::string { return "ThisHandle"; },
-            [](const DirectMemberRef& r) -> std::string {
-              return std::format("DirectMember[{}]", r.var.value);
-            },
             [](const ProceduralVarRef& r) -> std::string {
               return std::format("ProceduralVar[{}]", r.var.value);
             },
@@ -603,8 +600,8 @@ class HirDumper {
               return std::format(
                   "StaticProperty[{}]", FormatStaticPropertyTarget(r.target));
             },
-            [](const RoutedRef& r) -> std::string {
-              return std::format("RoutedRef[{}]", r.id.value);
+            [](const RoutedValueRef& r) -> std::string {
+              return std::format("RoutedValueRef[{}]", r.id.value);
             },
             [](const IterationBindingRef& r) -> std::string {
               const char* role = r.role == IterationBindingRole::kElement
@@ -623,24 +620,11 @@ class HirDumper {
         p);
   }
 
-  static auto FormatReferenceRoute(const ReferenceRoute& ref) -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const DirectMemberRef& r) -> std::string {
-              return std::format("var=DirectMember[{}]", r.var.value);
-            },
-            [](const RoutedRef& r) -> std::string {
-              return std::format("routed_ref={}", r.id.value);
-            },
-        },
-        ref);
-  }
-
   static auto FormatValueTarget(const ValueTarget& target) -> std::string {
     return std::visit(
         Overloaded{
-            [](const ReferenceRoute& route) -> std::string {
-              return FormatReferenceRoute(route);
+            [](const RoutedValueRef& r) -> std::string {
+              return std::format("routed_ref={}", r.id.value);
             },
             [](const ExternalUnitValueRef& r) -> std::string {
               return std::format("var={}::{}", r.unit_name, r.variable_name);
@@ -959,14 +943,14 @@ class HirDumper {
               const PublishedCallable& callable =
                   promised.callables.Get(e.callable);
               return std::format(
-                  "ExternalUnitMethod {} \"{}::{}\" recv=RoutedRef[{}]",
+                  "ExternalUnitMethod {} \"{}::{}\" recv=RoutedObjectRef[{}]",
                   callable.kind == SubroutineKind::kTask ? "task" : "function",
                   promised.class_name, callable.name, e.receiver.id.value);
             },
             [](const OpaqueUnitMethodRef& e) -> std::string {
               return std::format(
-                  "OpaqueUnitMethod {} recv=RoutedRef[{}] "
-                  "entry=RoutedRef[{}]",
+                  "OpaqueUnitMethod {} recv=RoutedObjectRef[{}] "
+                  "entry=RoutedCallableRef[{}]",
                   e.interface.kind == SubroutineKind::kTask ? "task"
                                                             : "function",
                   e.receiver.id.value, e.entry.id.value);
@@ -1528,9 +1512,8 @@ class HirDumper {
     return out;
   }
 
-  static auto FormatRoutedPathRecipe(const RoutedPathRecipe& r) -> std::string {
-    std::string out = FormatRouteWalk(r.head, r.steps);
-    out += std::visit(
+  static auto FormatLeaf(const DataLeaf& leaf) -> std::string {
+    const std::string at = std::visit(
         Overloaded{
             [](const StructuralDataObjectLeaf& l) {
               return std::format(" . StructuralDataObject[{}]", l.object.value);
@@ -1553,34 +1536,67 @@ class HirDumper {
                   " . ExternalUnitObject[{}].member[{}]", l.object.value,
                   l.member.value);
             },
-            [](const ScopeLeaf&) { return std::string{}; },
             [](const OpaqueLeaf& l) {
               return std::format(" . \"{}\"", l.name);
-            },
-            [](const OpaqueCallableLeaf& l) {
-              return std::format(" . \"{}\"()", l.name);
-            },
-            [](const DisableTargetLeaf& l) {
-              return std::format(" . ProceduralScope[{}]", l.scope.value);
-            },
-            [](const OpaqueDisableTargetLeaf&) { return std::string{}; }},
-        r.leaf);
-    const std::string holds = std::visit(
+            }},
+        leaf);
+    const DataCell cell = CellOf(leaf);
+    return std::format(
+        "{} : Type[{}]{}", at, cell.type.value,
+        FormatPublishedStorage(cell.storage));
+  }
+
+  static auto FormatLeaf(const ScopeLeaf& leaf) -> std::string {
+    return std::format(" : Type[{}] object", leaf.type.value);
+  }
+
+  static auto FormatLeaf(const OpaqueCallableLeaf& leaf) -> std::string {
+    return std::format(" . \"{}\"() : entry", leaf.name);
+  }
+
+  static auto FormatLeaf(const DisableLeaf& leaf) -> std::string {
+    return std::visit(
         Overloaded{
-            [](const EndpointCell& c) {
+            [](const DisableTargetLeaf& l) {
               return std::format(
-                  " : Type[{}]{}", c.type.value,
-                  FormatPublishedStorage(c.storage));
+                  " . ProceduralScope[{}] : disable target", l.scope.value);
             },
-            [](const EndpointObject& o) {
-              return std::format(" : Type[{}] object", o.type.value);
-            },
-            [](const EndpointEntry&) { return std::string{" : entry"}; },
-            [](const EndpointDisableTarget&) {
+            [](const OpaqueDisableTargetLeaf&) {
               return std::string{" : disable target"};
             }},
-        EndpointOf(r.leaf));
-    return out + holds;
+        leaf);
+  }
+
+  static auto FormatMember(const ClassMemberName& m, std::string_view answers)
+      -> std::string {
+    return std::format(
+        R"( . class "{}" . "{}" : {})", m.class_name, m.name, answers);
+  }
+
+  static auto FormatLeaf(const PropertyCoordinateLeaf& leaf) -> std::string {
+    return FormatMember(leaf.member, "property coordinate");
+  }
+
+  static auto FormatLeaf(const BehaviorCoordinateLeaf& leaf) -> std::string {
+    return FormatMember(leaf.member, "behavior coordinate");
+  }
+
+  static auto FormatLeaf(const BehaviorBodyLeaf& leaf) -> std::string {
+    return FormatMember(leaf.member, "behavior body");
+  }
+
+  template <typename Leaf>
+  static auto FormatRoute(const Route<Leaf>& r) -> std::string {
+    return FormatRouteWalk(r.head, r.steps) + FormatLeaf(r.leaf);
+  }
+
+  template <typename Walk, typename Id>
+  void DumpTable(std::string_view label, const base::Arena<Walk, Id>& table) {
+    for (const Id id : table.Ids()) {
+      Line(
+          std::format(
+              "{}[{}] {}", label, id.value, FormatRoute(table.Get(id))));
+    }
   }
 
   void DumpScope(const StructuralScope& s) {
@@ -1668,33 +1684,13 @@ class HirDumper {
               "InstanceMember[{}] \"{}\"{} : ExternalUnitObject[{}]", id.value,
               im.instance_name, array_suffix, im.object.value));
     }
-    for (const RoutedRefId id : s.routed_refs.Ids()) {
-      const auto& r = s.routed_refs.Get(id);
-      Line(
-          std::format(
-              "RoutedRef[{}] {}", id.value, FormatRoutedPathRecipe(r.recipe)));
-    }
-    for (const PropertyCoordinateId id : s.property_coordinates.Ids()) {
-      const auto& c = s.property_coordinates.Get(id);
-      Line(
-          std::format(
-              R"(PropertyCoordinate[{}] {} class "{}" property "{}")", id.value,
-              FormatRouteWalk(c.head, c.steps), c.class_name, c.name));
-    }
-    for (const BehaviorCoordinateId id : s.behavior_coordinates.Ids()) {
-      const auto& c = s.behavior_coordinates.Get(id);
-      Line(
-          std::format(
-              R"(BehaviorCoordinate[{}] {} class "{}" behavior "{}")", id.value,
-              FormatRouteWalk(c.head, c.steps), c.class_name, c.name));
-    }
-    for (const BehaviorBodyId id : s.behavior_bodies.Ids()) {
-      const auto& c = s.behavior_bodies.Get(id);
-      Line(
-          std::format(
-              R"(BehaviorBody[{}] {} class "{}" behavior "{}")", id.value,
-              FormatRouteWalk(c.head, c.steps), c.class_name, c.name));
-    }
+    DumpTable("RoutedValueRef", s.routes.values);
+    DumpTable("RoutedObjectRef", s.routes.objects);
+    DumpTable("RoutedCallableRef", s.routes.callables);
+    DumpTable("RoutedDisableTargetRef", s.routes.disable_targets);
+    DumpTable("PropertyCoordinate", s.routes.property_coordinates);
+    DumpTable("BehaviorCoordinate", s.routes.behavior_coordinates);
+    DumpTable("BehaviorBody", s.routes.behavior_bodies);
     for (const PortConnectionId id : s.port_connections.Ids()) {
       const auto& pc = s.port_connections.Get(id);
       const std::string body = std::visit(
@@ -1723,9 +1719,8 @@ class HirDumper {
                         [](const PortCellEndpoint& c) -> std::string {
                           return std::format("cell=Expr[{}]", c.cell.value);
                         },
-                        [](const RoutedPathRecipe& r) -> std::string {
-                          return std::format(
-                              "alias_to:{}", FormatRoutedPathRecipe(r));
+                        [](const ValueRoute& r) -> std::string {
+                          return std::format("alias_to:{}", FormatRoute(r));
                         }},
                     d.endpoint);
                 return std::format(
@@ -1733,13 +1728,13 @@ class HirDumper {
               },
               [](const InterfacePortConnection& i) -> std::string {
                 std::string peers;
-                for (const RoutedPathRecipe& peer : i.peers) {
+                for (const ObjectRoute& peer : i.peers) {
                   if (!peers.empty()) peers += ", ";
-                  peers += FormatRoutedPathRecipe(peer);
+                  peers += FormatRoute(peer);
                 }
                 return std::format(
-                    "interface bind_to:{} peers:[{}]",
-                    FormatRoutedPathRecipe(i.endpoint), peers);
+                    "interface bind_to:{} peers:[{}]", FormatRoute(i.endpoint),
+                    peers);
               }},
           pc.kind);
       Line(std::format("PortConnection[{}] {}", id.value, body));
@@ -2540,7 +2535,8 @@ class HirDumper {
                             "ProceduralScope[{}]", t.scope.value);
                       },
                       [](const RoutedDisableTarget& t) {
-                        return std::format("RoutedRef[{}]", t.target.id.value);
+                        return std::format(
+                            "RoutedDisableTargetRef[{}]", t.target.id.value);
                       }},
                   d.target);
               Line(

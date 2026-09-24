@@ -880,22 +880,26 @@ auto UnitLowerer::MakeMethodCallee(
   if (DeclaredByADesignElement(ext)) {
     auto route = RouteToDeclaringScope(frame, *owner.getParentScope(), span);
     if (!route) return std::unexpected(std::move(route.error()));
-    hir::ClassNameDecl decl{
-        .head = std::move(route->head),
-        .steps = std::move(route->steps),
-        .class_name = ext.class_name,
-        .name = std::string{method.name}};
+    hir::ClassMemberName member{
+        .class_name = ext.class_name, .name = std::string{method.name}};
     if (!method.isVirtual()) {
       return hir::SettledMethodCallee{
           .body =
               hir::UnpublishedBehaviorBody{
-                  .body =
-                      MapOrGetBehaviorBody(frame.Current(), std::move(decl))},
+                  .body = MapOrGetBehaviorBody(
+                      frame.Current(),
+                      hir::BehaviorBodyRoute{
+                          .head = std::move(route->head),
+                          .steps = std::move(route->steps),
+                          .leaf = {.member = std::move(member)}})},
           .interface = *std::move(interface)};
     }
     slot = hir::UnpublishedBehaviorSlot{
-        .coordinate =
-            MapOrGetBehaviorCoordinate(frame.Current(), std::move(decl))};
+        .coordinate = MapOrGetBehaviorCoordinate(
+            frame.Current(), hir::BehaviorCoordinateRoute{
+                                 .head = std::move(route->head),
+                                 .steps = std::move(route->steps),
+                                 .leaf = {.member = std::move(member)}})};
   } else if (method.isVirtual()) {
     auto resolved = MakeExternalDispatchSlot(ext, method.name, span);
     if (!resolved) return std::unexpected(std::move(resolved.error()));
@@ -1005,11 +1009,13 @@ auto UnitLowerer::MakeClassPropertyTarget(
     if (!route) return std::unexpected(std::move(route.error()));
     return hir::UnpublishedClassPropertyTarget{
         .coordinate = MapOrGetPropertyCoordinate(
-            frame.Current(), hir::ClassNameDecl{
+            frame.Current(), hir::PropertyCoordinateRoute{
                                  .head = std::move(route->head),
                                  .steps = std::move(route->steps),
-                                 .class_name = ext.class_name,
-                                 .name = std::string{prop.name}})};
+                                 .leaf = {
+                                     .member = {
+                                         .class_name = ext.class_name,
+                                         .name = std::string{prop.name}}}})};
   }
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -1294,9 +1300,9 @@ auto UnitLowerer::InternLocalClass(
 auto UnitLowerer::PopulateClassBodiesDeclaredIn(const slang::ast::Scope& scope)
     -> diag::Result<void> {
   // A class body reaches the declarations of the scope that declares it and
-  // records its routed references against that scope's frame, so it lowers
-  // while that scope is being lowered -- with the same reach a process of the
-  // scope has, and before the scope takes the references recorded against it.
+  // records its routes against that scope's frame, so it lowers while that
+  // scope is being lowered -- with the same reach a process of the scope has,
+  // and before the scope takes the routes recorded against it.
   const auto pending = pending_class_bodies_.find(&scope);
   if (pending == pending_class_bodies_.end()) return {};
   std::vector<PendingClassBody> batch = std::move(pending->second);

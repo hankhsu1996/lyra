@@ -172,8 +172,8 @@ carries exactly one and reaching the scope is the whole of naming what a `disabl
 ### D4. The lexical owner is the naming owner
 
 A static's cell is a field of the class enclosing the body -- the same arena that holds the scope's
-own variables, an instance member, or a routed-reference slot. A body reads it off `self` in one
-step, and nothing has to know which blocks stand between the declaration and the body.
+own variables, an instance member, or the slot a stored route fills. A body reads it off `self` in
+one step, and nothing has to know which blocks stand between the declaration and the body.
 
 What the declaring scope owns is the name. A static declared in a scope the source named is
 registered under its source spelling on that scope's name node, so a descent reaches the node by

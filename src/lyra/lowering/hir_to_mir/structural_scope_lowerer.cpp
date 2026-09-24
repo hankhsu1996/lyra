@@ -455,94 +455,77 @@ void EmitInstanceMemberConstruction(
   }
 }
 
-// One slot per name this scope asks a class for, typed by what the answer is.
-// The walk that asks runs in the resolve phase beside every route, so an access
-// reads the answer and asks nothing.
-template <typename Id, typename Answer>
-auto DeclareClassNameSlots(
-    StructuralScopeLowerer& lowerer, ClassShape& shape,
-    const base::Arena<hir::ClassNameDecl, Id>& decls, Answer answer)
-    -> base::Translation<Id, mir::FieldId> {
-  mir::TypePool& types = lowerer.Owner().Unit().types;
-  std::vector<mir::FieldId> slots;
-  slots.reserve(decls.size());
-  for (std::size_t at = 0; at < decls.size(); ++at) {
-    // Interned per slot rather than once for the pass, so a unit that asked no
-    // name carries none of the types an answer is stated in -- which is what
-    // lets a backend read off its own types whether it meets the form at all.
-    slots.push_back(shape.AddField(answer(types)));
+// What a route of each use is reached by: a pointer to the cell or the object
+// it ends at, which depends on where it ends; a pointer to a disable target,
+// and an entry's code address, which is one already, each the same for every
+// route of their use.
+auto PointerTypeOf(UnitLowerer& unit_lowerer, const hir::DataLeaf& leaf)
+    -> mir::TypeId {
+  const hir::DataCell cell = hir::CellOf(leaf);
+  return unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit_lowerer.MemberCellType(
+              unit_lowerer.TranslateType(cell.type), cell.storage),
+          .ownership = mir::PointerOwnership::kBorrowed}});
+}
+
+auto PointerTypeOf(UnitLowerer& unit_lowerer, const hir::ScopeLeaf& leaf)
+    -> mir::TypeId {
+  return unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit_lowerer.TranslateType(leaf.type),
+          .ownership = mir::PointerOwnership::kBorrowed}});
+}
+
+auto DisableTargetPointerType(mir::TypePool& types) -> mir::TypeId {
+  return types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = types.Intern(
+              mir::Type{mir::RuntimeLibraryType{
+                  .kind = mir::RuntimeLibraryKind::kCancellationTarget}}),
+          .ownership = mir::PointerOwnership::kBorrowed}});
+}
+
+// A member name answered with where it lands rather than with what runs: a
+// borrowed pointer to the record stating the position. That record lives as
+// long as the class does, which is as long as any reference settled against
+// it, so nothing is copied anywhere to outlive the lookup. A name answered with
+// the body itself is a code address instead, the same shape an entry reached
+// by name holds, and the call restores the prototype it was generated with.
+auto CoordinateType(mir::TypePool& types, mir::RuntimeLibraryKind kind)
+    -> mir::TypeId {
+  return types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee =
+              types.Intern(mir::Type{mir::RuntimeLibraryType{.kind = kind}}),
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kReadOnly}});
+}
+
+// Settles how each route of one use is reached. A route made only of parent
+// edges within this unit is walked where it is used and takes no member. Any
+// other -- downward, sideways, `$root`-anchored or named -- takes one slot,
+// typed by `slot_type` from what the route ends at, so a body reaching through
+// it meets the target's own access protocol and no other. The type is interned
+// per slot rather than once per use, so a unit that keeps no route of a use
+// carries none of the types it would be kept in -- which is what lets a backend
+// read off its own types whether it meets the form at all.
+template <typename Leaf, typename Id, typename SlotType>
+auto DeclareReaches(
+    ClassShape& shape, const base::Arena<hir::Route<Leaf>, Id>& routes,
+    SlotType slot_type) -> base::Translation<Id, RouteReach> {
+  std::vector<RouteReach> reaches;
+  reaches.reserve(routes.size());
+  for (const hir::Route<Leaf>& route : routes) {
+    const auto* in_unit = std::get_if<hir::InUnitHead>(&route.head);
+    if (in_unit != nullptr && route.steps.empty()) {
+      reaches.emplace_back(ClimbedRoute{.hops = in_unit->hops});
+    } else {
+      reaches.emplace_back(
+          StoredRoute{.slot = shape.AddField(slot_type(route.leaf))});
+    }
   }
-  return {decls.size(), std::move(slots)};
-}
-
-// A name answered with where it lands rather than with what runs: a borrowed
-// pointer to the record stating the position. That record lives as long as the
-// class does, which is as long as any reference settled against it, so nothing
-// is copied anywhere to outlive the lookup.
-auto CoordinateAnswer(mir::RuntimeLibraryKind kind) {
-  return [kind](mir::TypePool& types) {
-    return types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee =
-                types.Intern(mir::Type{mir::RuntimeLibraryType{.kind = kind}}),
-            .ownership = mir::PointerOwnership::kBorrowed,
-            .mutability = mir::Mutability::kReadOnly}});
-  };
-}
-
-// A name answered with the body itself, for a call the object gets no say in
-// (LRM 8.14). It is a code address with its prototype erased, the same shape a
-// sealed entry across an instance boundary holds, and the call restores the
-// prototype it was generated with.
-auto BodyAnswer() {
-  return [](mir::TypePool& types) { return mir::ErasedFunction(types); };
-}
-
-// Allocates one MIR member per cross-unit reference. Every reference -- upward
-// or downward, `$root`-anchored or named -- takes one slot, typed by what the
-// route it seals ends at, so a body reaching through it meets the target's own
-// access protocol and no other. The route that fills each slot runs in the
-// resolve phase, after the whole object tree exists.
-auto DeclareRoutedRefSlots(StructuralScopeLowerer& lowerer, ClassShape& shape)
-    -> base::Translation<hir::RoutedRefId, RoutedRefMeta> {
-  UnitLowerer& unit_lowerer = lowerer.Owner();
-  const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  std::vector<RoutedRefMeta> slots;
-  slots.reserve(hir_scope.routed_refs.size());
-  for (const auto& cu : hir_scope.routed_refs) {
-    // What the slot is typed by is what the endpoint holds. A cell, an object,
-    // and a disable target are each reached by a pointer to them; an entry is a
-    // code address, which is one already.
-    mir::TypePool& types = unit_lowerer.Unit().types;
-    const auto borrowed = [&](mir::TypeId pointee) {
-      return types.Intern(
-          mir::Type{mir::PointerType{
-              .pointee = pointee,
-              .ownership = mir::PointerOwnership::kBorrowed}});
-    };
-    const mir::TypeId slot_type = std::visit(
-        Overloaded{
-            [&](const hir::EndpointCell& cell) {
-              return borrowed(unit_lowerer.MemberCellType(
-                  unit_lowerer.TranslateType(cell.type), cell.storage));
-            },
-            [&](const hir::EndpointObject& object) {
-              return borrowed(unit_lowerer.TranslateType(object.type));
-            },
-            [&](const hir::EndpointEntry&) {
-              return mir::ErasedFunction(types);
-            },
-            [&](const hir::EndpointDisableTarget&) {
-              return borrowed(types.Intern(
-                  mir::Type{mir::RuntimeLibraryType{
-                      .kind = mir::RuntimeLibraryKind::kCancellationTarget}}));
-            }},
-        hir::EndpointOf(cu.recipe.leaf));
-    slots.push_back(
-        RoutedRefMeta{
-            .target = shape.AddField(slot_type), .slot_type = slot_type});
-  }
-  return {hir_scope.routed_refs.size(), std::move(slots)};
+  return {routes.size(), std::move(reaches)};
 }
 
 // Builds one `PackedArray[]` value carrying every per-axis index for a
@@ -636,7 +619,7 @@ auto StepToChildByName(
 // keeps the receiver typed. `$root` and the visible-child climb name a scope
 // this unit does not declare, so both are opaque runtime-SDK reaches.
 auto BuildRouteAnchor(
-    StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::RouteHead& head) -> RouteReceiver {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   auto& unit = unit_lowerer.Unit();
@@ -833,113 +816,197 @@ auto AddressTypedLeaf(
           .data = mir::AddressOfExpr{.operand = access}, .type = slot_type});
 }
 
-// Materializes the leaf reach as the borrowed-pointer value the slot takes:
-// the addressed member access when the leaf is one this artifact declares or
-// one the target unit published, or a cast of the untyped address a by-name
-// signal query answers with when it reaches past a signature, where nothing
-// was promised for this one to compile against.
+// Materializes where a route landed as the value its use reaches it by, one
+// form per use. Data is the addressed member access when this artifact
+// declares it or the target unit published it, or a cast of the untyped
+// address a by-name signal query answers with when it reaches past a
+// signature, where nothing was promised for this one to compile against.
 auto MaterializeLeaf(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
-    const hir::RouteLeaf& leaf, mir::TypeId slot_type) -> mir::ExprId {
-  auto& unit = unit_lowerer.Unit();
+    const hir::DataLeaf& leaf) -> mir::ExprId {
+  const mir::TypeId pointer_type = PointerTypeOf(unit_lowerer, leaf);
+  return std::visit(
+      Overloaded{
+          [&](const hir::StructuralDataObjectLeaf& l) {
+            const StructuralScopeLowerer& scope =
+                OwnScopeOf(receiver, "MaterializeLeaf");
+            return AddressTypedLeaf(
+                unit_lowerer, block, receiver, scope.ClassId(),
+                scope.TranslateStructuralDataObject(
+                    hir::StructuralHops{0}, l.object),
+                pointer_type);
+          },
+          [&](const hir::ProceduralStaticLeaf& l) {
+            const StructuralScopeLowerer& scope =
+                OwnScopeOf(receiver, "MaterializeLeaf");
+            return AddressTypedLeaf(
+                unit_lowerer, block, receiver, scope.ClassId(),
+                scope.ProceduralStaticField(l.body, l.var), pointer_type);
+          },
+          // A published member is reached through the target unit's own
+          // object, whose pointer the step before it produced.
+          [&](const hir::SignatureMemberLeaf& l) {
+            return ReadPublishedMember(
+                unit_lowerer.Unit(), block, receiver, l.member);
+          },
+          [&](const hir::OpaqueLeaf& l) {
+            const mir::ExprId raw = block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee =
+                                mir::Direct{
+                                    .target = support::BuiltinFn::kFindSignal,
+                                    .receiver = receiver.expr},
+                            .arguments = {BuildStringLiteral(
+                                unit_lowerer, block, l.name)}},
+                    .type = mir::ErasedPointer(unit_lowerer.Unit().types)});
+            return block.exprs.Add(
+                mir::Expr{
+                    .data = mir::CastExpr{.operand = raw},
+                    .type = pointer_type});
+          }},
+      leaf);
+}
 
-  // A published member is reached through the target unit's own object, whose
-  // pointer the step before it produced.
-  if (const auto* member = std::get_if<hir::SignatureMemberLeaf>(&leaf)) {
-    return ReadPublishedMember(unit, block, receiver, member->member);
-  }
+// An object is the one the steps landed on, which the last step already
+// produced as a borrowed pointer. What the use holds that object as is a
+// separate fact -- a receiver a call passes takes the scope every body is
+// entered through, where a member read takes the object's own type -- so the
+// value states the pointer's type rather than staying whatever the step
+// happened to reach.
+auto MaterializeLeaf(
+    UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
+    const hir::ScopeLeaf& leaf) -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::CastExpr{.operand = receiver.expr},
+          .type = PointerTypeOf(unit_lowerer, leaf)});
+}
 
-  // A route ending at a scope names the object the steps landed on, which the
-  // last step already produced as a borrowed pointer. What the slot holds that
-  // object as is a separate fact -- a receiver a call passes takes the scope
-  // every body is entered through, where a member read takes the object's own
-  // type -- so the value states the slot's type rather than staying whatever
-  // the step happened to reach.
-  if (std::holds_alternative<hir::ScopeLeaf>(leaf)) {
-    return block.exprs.Add(
-        mir::Expr{
-            .data = mir::CastExpr{.operand = receiver.expr},
-            .type = slot_type});
-  }
+// A callable reached past a signature is answered the way a cell is, from the
+// scope's own record of what it declares -- what differs is only which of the
+// two namespaces the name is looked up in and that the answer is already a
+// code address rather than something to cast.
+auto MaterializeLeaf(
+    UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
+    const hir::OpaqueCallableLeaf& leaf) -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kFindSubroutine,
+                          .receiver = receiver.expr},
+                  .arguments = {BuildStringLiteral(
+                      unit_lowerer, block, leaf.name)}},
+          .type = mir::ErasedFunction(unit_lowerer.Unit().types)});
+}
 
-  // A callable reached past a signature is answered the same way a cell is,
-  // in the same phase, from the scope's own record of what it declares -- what
-  // differs is only which of the two namespaces the name is looked up in and
-  // that the answer is already a code address rather than something to cast.
-  if (const auto* callable = std::get_if<hir::OpaqueCallableLeaf>(&leaf)) {
-    return block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kFindSubroutine,
-                            .receiver = receiver.expr},
-                    .arguments = {BuildStringLiteral(
-                        unit_lowerer, block, callable->name)}},
-            .type = slot_type});
-  }
+// What a `disable` terminates: the target's own cell where this artifact lays
+// out the scope declaring it, and otherwise what the scope the steps reached
+// answers, unnamed (LRM 9.6.2, 23.9).
+auto MaterializeLeaf(
+    UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
+    const hir::DisableLeaf& leaf) -> mir::ExprId {
+  const mir::TypeId pointer_type =
+      DisableTargetPointerType(unit_lowerer.Unit().types);
+  return std::visit(
+      Overloaded{
+          [&](const hir::DisableTargetLeaf& l) {
+            const StructuralScopeLowerer& scope =
+                OwnScopeOf(receiver, "MaterializeLeaf");
+            return AddressTypedLeaf(
+                unit_lowerer, block, receiver, scope.ClassId(),
+                scope.DisableTargetField(l.scope), pointer_type);
+          },
+          [&](const hir::OpaqueDisableTargetLeaf&) {
+            return block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee =
+                                mir::Direct{
+                                    .target =
+                                        support::BuiltinFn::kFindDisableTarget,
+                                    .receiver = receiver.expr},
+                            .arguments = {}},
+                    .type = pointer_type});
+          }},
+      leaf);
+}
 
-  // What a `disable` terminates is answered by the scope the steps reached,
-  // unnamed (LRM 9.6.2, 23.9).
-  if (std::holds_alternative<hir::OpaqueDisableTargetLeaf>(leaf)) {
-    return block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kFindDisableTarget,
-                            .receiver = receiver.expr},
-                    .arguments = {}},
-            .type = slot_type});
-  }
+// Where a member name lands on a class the steps' scope declares: that scope
+// answers which class `class_name` means, and the class answers `name` the way
+// `ask` counts. Which class the walk lands on belongs to the instance, so one
+// artifact serving several instances asks each of them.
+auto AskClassMember(
+    UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
+    const hir::ClassMemberName& member, support::BuiltinFn ask,
+    mir::TypeId answer_type) -> mir::ExprId {
+  const mir::TypeId class_type = unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit_lowerer.Unit().builtins.void_type,
+          .ownership = mir::PointerOwnership::kBorrowed}});
+  const mir::ExprId cls = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kFindClass,
+                          .receiver = receiver.expr},
+                  .arguments = {BuildStringLiteral(
+                      unit_lowerer, block, member.class_name)}},
+          .type = class_type});
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Direct{.target = ask},
+                  .arguments =
+                      {cls,
+                       BuildStringLiteral(unit_lowerer, block, member.name)}},
+          .type = answer_type});
+}
 
-  if (const auto* opaque = std::get_if<hir::OpaqueLeaf>(&leaf)) {
-    const mir::TypeId void_ptr_type = mir::ErasedPointer(unit.types);
-    const mir::ExprId raw = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kFindSignal,
-                            .receiver = receiver.expr},
-                    .arguments = {BuildStringLiteral(
-                        unit_lowerer, block, opaque->name)}},
-            .type = void_ptr_type});
-    return block.exprs.Add(
-        mir::Expr{.data = mir::CastExpr{.operand = raw}, .type = slot_type});
-  }
+auto MaterializeLeaf(
+    UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
+    const hir::PropertyCoordinateLeaf& leaf) -> mir::ExprId {
+  return AskClassMember(
+      unit_lowerer, block, receiver, leaf.member,
+      support::BuiltinFn::kClassFindProperty,
+      CoordinateType(
+          unit_lowerer.Unit().types,
+          mir::RuntimeLibraryKind::kPropertyCoordinate));
+}
 
-  const StructuralScopeLowerer& scope = OwnScopeOf(receiver, "MaterializeLeaf");
+auto MaterializeLeaf(
+    UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
+    const hir::BehaviorCoordinateLeaf& leaf) -> mir::ExprId {
+  return AskClassMember(
+      unit_lowerer, block, receiver, leaf.member,
+      support::BuiltinFn::kClassFindBehavior,
+      CoordinateType(
+          unit_lowerer.Unit().types,
+          mir::RuntimeLibraryKind::kBehaviorCoordinate));
+}
 
-  if (const auto* object = std::get_if<hir::StructuralDataObjectLeaf>(&leaf)) {
-    return AddressTypedLeaf(
-        unit_lowerer, block, receiver, scope.ClassId(),
-        scope.TranslateStructuralDataObject(
-            hir::StructuralHops{0}, object->object),
-        slot_type);
-  }
-
-  if (const auto* target = std::get_if<hir::DisableTargetLeaf>(&leaf)) {
-    return AddressTypedLeaf(
-        unit_lowerer, block, receiver, scope.ClassId(),
-        scope.DisableTargetField(target->scope), slot_type);
-  }
-
-  const auto& static_leaf = std::get<hir::ProceduralStaticLeaf>(leaf);
-  return AddressTypedLeaf(
-      unit_lowerer, block, receiver, scope.ClassId(),
-      scope.ProceduralStaticField(static_leaf.body, static_leaf.var),
-      slot_type);
+auto MaterializeLeaf(
+    UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
+    const hir::BehaviorBodyLeaf& leaf) -> mir::ExprId {
+  return AskClassMember(
+      unit_lowerer, block, receiver, leaf.member,
+      support::BuiltinFn::kClassFindBehaviorBody,
+      mir::ErasedFunction(unit_lowerer.Unit().types));
 }
 
 // Walks from the head to whatever the last step lands on, which is a scope of
 // the elaborated tree. What the walk is for -- reaching something the scope
 // holds, or asking the scope a name -- is the caller's, so the walk ends here.
 auto BuildRouteWalk(
-    StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const hir::RouteHead& head, std::span<const hir::PathStep> steps)
     -> RouteReceiver {
   UnitLowerer& unit_lowerer = lowerer.Owner();
@@ -969,22 +1036,21 @@ auto BuildRouteWalk(
   return receiver;
 }
 
-// Composes the resolve-phase pointer value that fills a routed reference slot:
-// the walk above, then the leaf materialized where it landed. The result flows
-// into the ordinary assignment the caller emits into the resolve block.
+// Composes what a route ends at: the walk above, then the leaf materialized
+// where it landed. Appends to the frame's block and returns the value, for
+// whoever uses it there -- a slot being filled, or an access.
+template <typename Leaf>
 auto BuildRouteValue(
-    StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::RoutedPathRecipe& recipe, mir::TypeId slot_type) -> mir::ExprId {
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const hir::Route<Leaf>& route) -> mir::ExprId {
   const RouteReceiver receiver =
-      BuildRouteWalk(lowerer, frame, recipe.head, recipe.steps);
+      BuildRouteWalk(lowerer, frame, route.head, route.steps);
   return MaterializeLeaf(
-      lowerer.Owner(), *frame.current_block, receiver, recipe.leaf, slot_type);
+      lowerer.Owner(), *frame.current_block, receiver, route.leaf);
 }
 
 // Stores `value` into the scope's own `slot`. Every slot a scope settles is
-// filled this way, and each is settled in the resolve phase for one reason: the
-// phase runs over the object tree once it is whole, so what a slot holds is
-// written there and read directly at every use afterwards.
+// filled this way, once, and read directly at every use afterwards.
 void FillScopeSlot(
     const WalkFrame& frame, mir::FieldId slot, mir::ExprId value) {
   mir::Class& mir_class = *frame.current_class;
@@ -1008,66 +1074,37 @@ void FillScopeSlot(
   block.AppendStmt(mir::ExprStmt{.expr = assign});
 }
 
-// Each routed reference runs its route where the object tree is whole, so what
-// the slot ends up holding is a borrowed pointer to the target's own cell
-// rather than anything the route had to walk to reach it.
-void InstallRoutedRefs(
-    StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame) {
-  const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  for (const hir::RoutedRefId hir_id : hir_scope.routed_refs.Ids()) {
-    const auto& cu = hir_scope.routed_refs.Get(hir_id);
-    const RoutedRefMeta& meta = lowerer.RoutedRefTarget(hir_id);
-    FillScopeSlot(
-        resolve_frame, meta.target,
-        BuildRouteValue(lowerer, resolve_frame, cu.recipe, meta.slot_type));
+// Walks every stored route of one use where the object tree is whole, so what
+// its slot holds is what the route ends at rather than anything it had to walk
+// to reach it. A climbed route has no slot to fill.
+template <typename Leaf, typename Id>
+void InstallStoredRoutes(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame,
+    const base::Arena<hir::Route<Leaf>, Id>& routes) {
+  for (const Id hir_id : routes.Ids()) {
+    std::visit(
+        Overloaded{
+            [](const ClimbedRoute&) {},
+            [&](const StoredRoute& stored) {
+              FillScopeSlot(
+                  resolve_frame, stored.slot,
+                  BuildRouteValue(lowerer, resolve_frame, routes.Get(hir_id)));
+            }},
+        lowerer.ReachOf(hir_id));
   }
 }
 
-// Each name a scope asks a class for settles in the resolve phase, beside every
-// route and for the same reason: which class the walk lands on belongs to the
-// instance, so one artifact serving several instances asks each of them. The
-// walk reaches the scope declaring the class, that scope answers which class
-// the name means, and the class answers where the member name lands. What the
-// slot keeps is only the last of the three, which is what every access reads.
-template <typename Id>
-void InstallClassNameSlots(
-    StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame,
-    const base::Arena<hir::ClassNameDecl, Id>& decls,
-    const base::Translation<Id, mir::FieldId>& targets,
-    support::BuiltinFn ask) {
-  UnitLowerer& unit_lowerer = lowerer.Owner();
-  mir::Block& block = *resolve_frame.current_block;
-  const mir::TypeId class_type = unit_lowerer.Unit().types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = unit_lowerer.Unit().builtins.void_type,
-          .ownership = mir::PointerOwnership::kBorrowed}});
-  for (const Id hir_id : decls.Ids()) {
-    const hir::ClassNameDecl& decl = decls.Get(hir_id);
-    const mir::FieldId slot = targets.Get(hir_id);
-    const RouteReceiver at =
-        BuildRouteWalk(lowerer, resolve_frame, decl.head, decl.steps);
-    const mir::ExprId cls = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kFindClass,
-                            .receiver = at.expr},
-                    .arguments = {BuildStringLiteral(
-                        unit_lowerer, block, decl.class_name)}},
-            .type = class_type});
-    const mir::ExprId coordinate = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee = mir::Direct{.target = ask},
-                    .arguments =
-                        {cls,
-                         BuildStringLiteral(unit_lowerer, block, decl.name)}},
-            .type = resolve_frame.current_class->fields.Get(slot).type});
-    FillScopeSlot(resolve_frame, slot, coordinate);
-  }
+// Fills every slot the scope's walks keep, once the object tree is whole.
+void InstallScopeRoutes(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& resolve_frame) {
+  const hir::ScopeRoutes& routes = lowerer.HirScope().routes;
+  InstallStoredRoutes(lowerer, resolve_frame, routes.values);
+  InstallStoredRoutes(lowerer, resolve_frame, routes.objects);
+  InstallStoredRoutes(lowerer, resolve_frame, routes.callables);
+  InstallStoredRoutes(lowerer, resolve_frame, routes.disable_targets);
+  InstallStoredRoutes(lowerer, resolve_frame, routes.property_coordinates);
+  InstallStoredRoutes(lowerer, resolve_frame, routes.behavior_coordinates);
+  InstallStoredRoutes(lowerer, resolve_frame, routes.behavior_bodies);
 }
 
 // Appends one process activation registration to the scope's `activate` body:
@@ -1190,36 +1227,24 @@ void InstallInterfacePortConnection(
     const hir::InterfacePortConnection& conn) {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Block& block = *resolve_frame.current_block;
-  auto& types = unit_lowerer.Unit().types;
   // What the member holds is a handle on each object it stands for, which is
   // the same function of its declared type the declaring unit built it from.
-  const hir::TypeId port_type =
-      std::get<hir::EndpointCell>(hir::EndpointOf(conn.endpoint.leaf)).type;
+  const hir::DataCell port = hir::CellOf(conn.endpoint.leaf);
   const mir::TypeId member_type = unit_lowerer.MemberCellType(
-      unit_lowerer.TranslateType(port_type), hir::BorrowedObjectStorage{});
-  const mir::TypeId slot_type = types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = member_type,
-          .ownership = mir::PointerOwnership::kBorrowed}});
+      unit_lowerer.TranslateType(port.type), port.storage);
   const mir::ExprId nav =
-      BuildRouteValue(lowerer, resolve_frame, conn.endpoint, slot_type);
+      BuildRouteValue(lowerer, resolve_frame, conn.endpoint);
   const mir::ExprId target = block.exprs.Add(
       mir::Expr{.data = mir::DerefExpr{.pointer = nav}, .type = member_type});
 
   std::vector<mir::ExprId> handles;
   handles.reserve(conn.peers.size());
-  for (const hir::RoutedPathRecipe& peer : conn.peers) {
-    const mir::TypeId handle_type = types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = unit_lowerer.TranslateType(
-                std::get<hir::EndpointObject>(hir::EndpointOf(peer.leaf)).type),
-            .ownership = mir::PointerOwnership::kBorrowed}});
-    handles.push_back(
-        BuildRouteValue(lowerer, resolve_frame, peer, handle_type));
+  for (const hir::ObjectRoute& peer : conn.peers) {
+    handles.push_back(BuildRouteValue(lowerer, resolve_frame, peer));
   }
   std::size_t next = 0;
   const mir::ExprId value =
-      ComposeBoundObjects(unit_lowerer, block, port_type, handles, next);
+      ComposeBoundObjects(unit_lowerer, block, port.type, handles, next);
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
@@ -1316,27 +1341,19 @@ auto InstallPortConnections(
             "it never reaches the connection switch");
       case hir::PortDirection::kRef: {
         // A `ref` port reaches the child's reference member by the same route
-        // navigation a routed reference uses, then binds it to the peer's cell
+        // navigation any value reference uses, then binds it to the peer's cell
         // through the one canonical reference-store primitive. It holds no
         // persistent slot -- a `ref` needs no simulation-time reach, so the
         // member is reached once here in the resolve phase (LRM 23.3.3.2).
-        const auto& recipe = std::get<hir::RoutedPathRecipe>(data.endpoint);
-        if (!std::holds_alternative<hir::InUnitHead>(recipe.head)) {
+        const auto& route = std::get<hir::ValueRoute>(data.endpoint);
+        if (!std::holds_alternative<hir::InUnitHead>(route.head)) {
           throw InternalError(
               "InstallPortConnections: a ref port reaches its child downward");
         }
-        const mir::TypeId value_type = unit_lowerer.TranslateType(
-            std::get<hir::EndpointCell>(hir::EndpointOf(recipe.leaf)).type);
-        const mir::TypeId ref_type = unit_lowerer.Unit().types.Intern(
-            mir::Type{mir::RefType{
-                .pointee = value_type,
-                .mutability = mir::Mutability::kMutable}});
-        const mir::TypeId slot_type = unit_lowerer.Unit().types.Intern(
-            mir::Type{mir::PointerType{
-                .pointee = ref_type,
-                .ownership = mir::PointerOwnership::kBorrowed}});
-        const mir::ExprId nav =
-            BuildRouteValue(lowerer, resolve_frame, recipe, slot_type);
+        const hir::DataCell member = hir::CellOf(route.leaf);
+        const mir::TypeId ref_type = unit_lowerer.MemberCellType(
+            unit_lowerer.TranslateType(member.type), member.storage);
+        const mir::ExprId nav = BuildRouteValue(lowerer, resolve_frame, route);
         const mir::ExprId target = resolve_block.exprs.Add(
             mir::Expr{
                 .data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
@@ -1932,6 +1949,68 @@ auto IndexCoordinates(
   return reached;
 }
 
+namespace {
+
+// What a route ends at, walked where it is used or read out of the slot it was
+// kept in.
+template <typename Leaf>
+auto EndAlong(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const hir::Route<Leaf>& route, const RouteReach& reach) -> mir::ExprId {
+  return std::visit(
+      Overloaded{
+          [&](const ClimbedRoute&) {
+            return BuildRouteValue(lowerer, frame, route);
+          },
+          [&](const StoredRoute& stored) {
+            return frame.current_block->exprs.Add(
+                BuildStructuralFieldAccessExpr(
+                    frame, lowerer.Owner().Unit(), mir::EnclosingHops{0},
+                    stored.slot));
+          }},
+      reach);
+}
+
+}  // namespace
+
+auto StructuralScopeLowerer::RouteEnd(
+    const WalkFrame& frame, hir::RoutedObjectRefId id) const -> mir::ExprId {
+  return EndAlong(*this, frame, HirScope().routes.objects.Get(id), ReachOf(id));
+}
+
+auto StructuralScopeLowerer::RouteEnd(
+    const WalkFrame& frame, hir::RoutedCallableRefId id) const -> mir::ExprId {
+  return EndAlong(
+      *this, frame, HirScope().routes.callables.Get(id), ReachOf(id));
+}
+
+auto StructuralScopeLowerer::RouteEnd(
+    const WalkFrame& frame, hir::RoutedDisableTargetRefId id) const
+    -> mir::ExprId {
+  return EndAlong(
+      *this, frame, HirScope().routes.disable_targets.Get(id), ReachOf(id));
+}
+
+auto StructuralScopeLowerer::RouteEnd(
+    const WalkFrame& frame, hir::PropertyCoordinateId id) const -> mir::ExprId {
+  return EndAlong(
+      *this, frame, HirScope().routes.property_coordinates.Get(id),
+      ReachOf(id));
+}
+
+auto StructuralScopeLowerer::RouteEnd(
+    const WalkFrame& frame, hir::BehaviorCoordinateId id) const -> mir::ExprId {
+  return EndAlong(
+      *this, frame, HirScope().routes.behavior_coordinates.Get(id),
+      ReachOf(id));
+}
+
+auto StructuralScopeLowerer::RouteEnd(
+    const WalkFrame& frame, hir::BehaviorBodyId id) const -> mir::ExprId {
+  return EndAlong(
+      *this, frame, HirScope().routes.behavior_bodies.Get(id), ReachOf(id));
+}
+
 auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::StructuralScope& hir_scope = *hir_scope_;
@@ -2117,15 +2196,38 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   interface_port_fields_ = {
       hir_scope.interface_ports.size(), std::move(interface_port_fields)};
 
-  routed_ref_targets_ = DeclareRoutedRefSlots(*this, shape);
-  property_coordinate_targets_ = DeclareClassNameSlots(
-      *this, shape, HirScope().property_coordinates,
-      CoordinateAnswer(mir::RuntimeLibraryKind::kPropertyCoordinate));
-  behavior_coordinate_targets_ = DeclareClassNameSlots(
-      *this, shape, HirScope().behavior_coordinates,
-      CoordinateAnswer(mir::RuntimeLibraryKind::kBehaviorCoordinate));
-  behavior_body_targets_ = DeclareClassNameSlots(
-      *this, shape, HirScope().behavior_bodies, BodyAnswer());
+  mir::TypePool& types = unit_lowerer.Unit().types;
+  const hir::ScopeRoutes& routes = hir_scope.routes;
+  value_reaches_ =
+      DeclareReaches(shape, routes.values, [&](const hir::DataLeaf& leaf) {
+        return PointerTypeOf(unit_lowerer, leaf);
+      });
+  object_reaches_ =
+      DeclareReaches(shape, routes.objects, [&](const hir::ScopeLeaf& leaf) {
+        return PointerTypeOf(unit_lowerer, leaf);
+      });
+  callable_reaches_ = DeclareReaches(
+      shape, routes.callables, [&](const hir::OpaqueCallableLeaf&) {
+        return mir::ErasedFunction(types);
+      });
+  disable_target_reaches_ = DeclareReaches(
+      shape, routes.disable_targets,
+      [&](const hir::DisableLeaf&) { return DisableTargetPointerType(types); });
+  property_coordinate_reaches_ = DeclareReaches(
+      shape, routes.property_coordinates,
+      [&](const hir::PropertyCoordinateLeaf&) {
+        return CoordinateType(
+            types, mir::RuntimeLibraryKind::kPropertyCoordinate);
+      });
+  behavior_coordinate_reaches_ = DeclareReaches(
+      shape, routes.behavior_coordinates,
+      [&](const hir::BehaviorCoordinateLeaf&) {
+        return CoordinateType(
+            types, mir::RuntimeLibraryKind::kBehaviorCoordinate);
+      });
+  behavior_body_reaches_ = DeclareReaches(
+      shape, routes.behavior_bodies,
+      [&](const hir::BehaviorBodyLeaf&) { return mir::ErasedFunction(types); });
 
   // Recursively declare every owned generate child's class shape; each child
   // lowerer is retained for the body sweep.
@@ -3222,21 +3324,11 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     }
   }
 
-  // Fill every routed-reference endpoint slot first in the resolve phase, so a
-  // later resolve-phase consumer that reaches a target through a sealed
-  // endpoint -- a continuous-assign driver attached to an enclosing or
-  // cross-unit net, a port-cell connection -- dereferences a slot that is
-  // already bound.
-  InstallRoutedRefs(*this, resolve_frame);
-  InstallClassNameSlots(
-      *this, resolve_frame, HirScope().property_coordinates,
-      property_coordinate_targets_, support::BuiltinFn::kClassFindProperty);
-  InstallClassNameSlots(
-      *this, resolve_frame, HirScope().behavior_coordinates,
-      behavior_coordinate_targets_, support::BuiltinFn::kClassFindBehavior);
-  InstallClassNameSlots(
-      *this, resolve_frame, HirScope().behavior_bodies, behavior_body_targets_,
-      support::BuiltinFn::kClassFindBehaviorBody);
+  // Fill every slot first in the resolve phase, so a later resolve-phase
+  // consumer that reaches a target through one -- a continuous-assign driver
+  // attached to a cross-unit net, a port-cell connection -- dereferences a slot
+  // that is already bound.
+  InstallScopeRoutes(*this, resolve_frame);
 
   for (const hir::ContinuousAssignId id : hir_scope.continuous_assigns.Ids()) {
     auto method_or = LowerContinuousAssign(

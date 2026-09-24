@@ -76,12 +76,10 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
                 },
                 r.target);
           },
-          // A sealed endpoint reaches a structural cell through a borrowed
-          // pointer stored on this object: a routed reference (an enclosing,
-          // sibling, or cross-unit target) dereferences its slot member. The
-          // root is structural when that pointer is, so recurse through it --
-          // a `ref` formal, whose pointer roots at a local, stays non-
-          // structural.
+          // A cell reached through a pointer -- one a route stored, or a port
+          // bound to another object's cell -- is structural when that pointer
+          // is, so recurse through it; a `ref` formal, whose pointer roots at
+          // a local, stays non-structural.
           [&](const mir::DerefExpr& d) {
             return TargetOutlivesDeferredUpdate(block, d.pointer);
           },

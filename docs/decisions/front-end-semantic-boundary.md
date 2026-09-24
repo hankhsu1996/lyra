@@ -252,15 +252,15 @@ consumer that answers an absence by continuing its loop.
   is a typed layout-visible segment: the enclosing climb reaches the borrowed handle on the
   materialized scope, which HIR-to-MIR recovers from the label.
 - The endpoint-capability half of the boundary is realized. Value read, value write, and change
-  observation of one target reach it through one bound endpoint: a reference that crosses a scope
-  boundary seals to a per-instance endpoint in the resolve phase, and the hot path dereferences it
-  rather than re-navigating the parent chain on each access; only a target on the reader's own scope
-  is a direct member. The endpoint's access protocol is bound from the target's semantic kind and
-  carried by the endpoint's type -- a variable's observable cell, a resolved net, a reference member
-  -- so one lowering-time binding serves every consumer. A port connection reaches the child's port
-  member through the same route as any hierarchical reference: an input or output port over its
-  cell, a `ref` port bound once to the peer's cell through the one reference-store, with no
-  port-only route species and no port-only alias path.
+  observation of one target reach it through one bound endpoint: a reference that descends into a
+  scope or crosses into another instance seals to a per-instance endpoint in the resolve phase and
+  the hot path dereferences it, while one that only climbs to a scope enclosing the reader follows
+  that fixed number of parent edges at the access. The endpoint's access protocol is bound from the
+  target's semantic kind and carried by the endpoint's type -- a variable's observable cell, a
+  resolved net, a reference member -- so one lowering-time binding serves every consumer. A port
+  connection reaches the child's port member through the same route as any hierarchical reference:
+  an input or output port over its cell, a `ref` port bound once to the peer's cell through the one
+  reference-store, with no port-only route species and no port-only alias path.
 
 ## Relation to existing decisions
 

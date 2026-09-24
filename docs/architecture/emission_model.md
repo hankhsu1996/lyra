@@ -82,10 +82,11 @@ many of them it works on at a time.
    cannot resolve from its own inputs are expressed as SDK operations. In the C++ backend the SDK is
    the runtime library; under LLVM its operations become intrinsics the linker resolves. A backend
    never invents a second cross-unit mechanism outside the SDK.
-4. **A reference's route resolves once and seals into a sealed endpoint.** Routes execute in
-   Resolve; each route produces a candidate endpoint that the sealing barrier commits as the
-   reference's final access point. The simulation-time read and change observation read the sealed
-   endpoint directly with no per-access lookup (`reference_resolution.md` inv 3, 5).
+4. **A route that descends or crosses an instance resolves once and seals into a sealed endpoint.**
+   Such a route executes in Resolve and produces a candidate endpoint that the sealing barrier
+   commits as the reference's final access point; a route of parent edges within the instance has
+   nothing to resolve and is walked where it is used. Either way the simulation-time read and change
+   observation perform no per-access lookup (`reference_resolution.md` inv 3, 5).
 5. **Storage and fill by whether a segment is declared to the referrer.** A route is a sequence of
    segments; each segment's realization is determined by whether the referrer has a declaration to
    compile against for that step:
@@ -195,7 +196,7 @@ many of them it works on at a time.
 - A route mechanism dispatched on the frontend's lexical-form classification or on source order.
   Mechanism follows whether the segment is declared to the referrer.
 - A reference shape that splits cross-unit and intra-unit references into separate IR species,
-  separate install paths, separate vocabulary items. One reference, one route, one sealing.
+  separate install paths, separate vocabulary items. One reference, one route.
 - A design-global signal or path table that mirrors the object graph. Opaque segments resolve
   through local object-graph navigation (the parent chain, an owned child); a per-object by-name
   registration is local and permitted, a global flat table is not.

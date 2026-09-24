@@ -27,7 +27,10 @@ After Build materializes the runtime hierarchy, the route resolves: each segment
 navigation when its source and target classes are both owned by the emitting artifact, and the
 runtime SDK across unit boundaries. Seal commits each route's final endpoint. Process bodies and
 sensitivity logic consume only sealed endpoints; they never perform hierarchy traversal or name
-matching.
+matching. A route made only of parent edges within the instance is the one exception, because it has
+nothing to resolve: every scope it passes encloses the reader and exists whenever the reader does,
+so it is walked where it is used
+([a-route-of-parent-edges-is-walked-where-it-is-used](a-route-of-parent-edges-is-walked-where-it-is-used.md)).
 
 ## Decisions
 
@@ -116,8 +119,9 @@ same diagnostic.
   "root reference" kind, a "same-unit reference" kind as separate species). One semantic shape.
 - `slang::isUpward()`, source order, or AST lexical kind used as a mechanism dispatch key. The
   mechanism follows segment layout visibility.
-- A reference installed in the constructor body. Every reference resolves during Resolve and seals
-  during Seal.
+- A reference that descends or crosses a unit installed in the constructor body. Such a route may
+  reach a scope not built yet, so it resolves during Resolve and seals during Seal. A route made
+  only of parent edges is not installed anywhere; it is walked where it is used.
 - An IR vocabulary item modeling a particular runtime library's resolver shape -- a wrapper type
   carrying bind state, a named-method family for "register a by-name climb" / "register a root
   anchor" / "append a descent step". Runtime library shapes belong to the runtime; the IR names only
@@ -130,9 +134,11 @@ same diagnostic.
   where the SDK consumes them.
 - A forwarding wrapper observed in a process body as a hierarchical reference's endpoint. Forwarding
   wrappers exist only as resolution intermediates; they collapse at Seal.
-- A hot-path access that walks the runtime tree, calls a by-name lookup, or otherwise performs
-  hierarchy traversal. After Seal, every nonlocal read, write, and observation reads from a sealed
-  endpoint directly.
+- A hot-path access that descends the runtime tree, calls a by-name lookup, or otherwise performs
+  hierarchy traversal. After Seal, every read, write, and observation through a descending or
+  cross-unit route reads from a sealed endpoint directly. Following parent edges is not traversal in
+  this sense -- it is a fixed number of loads, measured as no slower than reading a slot three
+  scopes out -- and a class static property reached from inside a generate block already did it.
 - A reference whose mechanism flips between routes across compilation invocations because the
   generate order changed. The mechanism is a function of the route, not of source order.
 
