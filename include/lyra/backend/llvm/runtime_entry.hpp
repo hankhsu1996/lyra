@@ -135,6 +135,7 @@ enum class RuntimeOp : std::uint8_t {
   kMakeDpiLogicBuffer,
   kMakeDpiOpenArray,
   kClaimDeparture,
+  kSettleDeparture,
   kRetainConstant,
 };
 

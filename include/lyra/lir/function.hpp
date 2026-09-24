@@ -289,11 +289,12 @@ struct CloseVariablesTarget {};
 // `kTakeDepartureIfDue` is where a body regains control and leaves if one is
 // owed: it is a departing call rather than a question, so what a body carries
 // at such a point is the same whether or not anything encloses it. The other
-// two are a landing's ways out -- `kFinishDeparture` where the landing's own
-// region claimed it and execution continues past that region, and
-// `kDeclineDeparture` where it did not and the same departure carries on
-// outward. A LIR-only target with no MIR twin: what a body states is the region
-// and the cleanup, never how a departure travels between them.
+// two are ways out of a region's landing -- `kFinishDeparture` where the region
+// claimed it and execution continues past that region, and `kDeclineDeparture`
+// where it did not and the same departure carries on to the landing outside.
+// Past the outermost region there is no landing left to carry it to, and the
+// body itself is left. A LIR-only target with no MIR twin: what a body states
+// is the region and the cleanup, never how a departure travels between them.
 struct ControlEffectTarget {
   enum class Op : std::uint8_t {
     kTakeDepartureIfDue,
@@ -606,6 +607,14 @@ struct SuspendTerm {
 // carries no value and is not a completion.
 struct AbandonTerm {};
 
+// Leaves the body carrying the departure its landing received, once what every
+// scope owed on the way out has run: the other way a body completes beside
+// returning (LRM 9.6.2, 20.2). The departure is the one in flight rather than
+// an operand, as it is where it arrived. Whether the body's caller or the
+// activation it completes receives it is the callable's result type, as it is
+// for a return.
+struct DepartTerm {};
+
 // Ends a block control never reaches -- the join of a conditional whose arms
 // all returned, or the tail of a value-returning body that always returns
 // earlier. Reaching it is undefined, which is what lets a target drop the
@@ -631,7 +640,7 @@ struct DepartingCallInstr {
 
 using TerminatorData = std::variant<
     ReturnTerm, BranchTerm, CondBranchTerm, SuspendTerm, AbandonTerm,
-    UnreachableTerm, DepartingCallInstr>;
+    DepartTerm, UnreachableTerm, DepartingCallInstr>;
 
 struct Terminator {
   TerminatorData data;

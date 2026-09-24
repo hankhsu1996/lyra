@@ -363,8 +363,6 @@ class FunctionLowerer {
       mir::TypeId type) -> diag::Result<lir::Operand>;
 
   auto Emit(lir::TypeId type, lir::InstrData data) -> lir::Operand;
-  auto EmitCallLeavingTheFrame(lir::TypeId type, lir::CallInstr call)
-      -> lir::Operand;
   auto Append(lir::TypeId type, lir::InstrData data) -> lir::Operand;
   auto NewPlaceLocal(lir::TypeId type) -> lir::ValueId;
   void BindLocal(mir::LocalId local, lir::TypeId type, lir::Operand init);

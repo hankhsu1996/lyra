@@ -668,27 +668,7 @@ auto CodeGenFunction::LowerCall(
   if (!resolved) {
     return std::unexpected(std::move(resolved.error()));
   }
-  // A decline that no landing of this function receives is where the departure
-  // leaves the body. Leaving a suspendable body that way is the one exit the
-  // coroutine passes cannot infer, so it is marked here: without it the frame
-  // this raise walks out of is described by nothing and the search for a
-  // handler ends at the top of the stack.
-  if (const auto* effect = std::get_if<lir::ControlEffectTarget>(&call.target);
-      effect != nullptr &&
-      effect->op == lir::ControlEffectTarget::Op::kDeclineDeparture) {
-    MarkCoroutineLeftByUnwind();
-  }
   return builder_.CreateCall(resolved->callee, resolved->args);
-}
-
-void CodeGenFunction::MarkCoroutineLeftByUnwind() {
-  if (coro_handle_ == nullptr) {
-    return;
-  }
-  llvm::Module& mod = module_->Module();
-  builder_.CreateCall(
-      llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::coro_end),
-      {coro_handle_, builder_.getInt1(true)});
 }
 
 // An entry the runtime publishes, typed by what the call hands it: the values

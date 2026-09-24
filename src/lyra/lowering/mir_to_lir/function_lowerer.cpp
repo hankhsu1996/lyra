@@ -766,14 +766,7 @@ auto FunctionLowerer::BuildLanding() -> diag::Result<lir::BlockId> {
       return std::unexpected(std::move(cleaned.error()));
     }
     CloseVariables();
-    EmitCallLeavingTheFrame(
-        unit_->TranslateType(unit_->Mir().builtins.void_type),
-        lir::CallInstr{
-            .target =
-                lir::ControlEffectTarget{
-                    .op = lir::ControlEffectTarget::Op::kDeclineDeparture},
-            .args = {}});
-    Terminate(lir::UnreachableTerm{});
+    Terminate(lir::DepartTerm{});
     SetCurrent(resumed);
     return landing;
   }
@@ -846,14 +839,6 @@ auto FunctionLowerer::Emit(lir::TypeId type, lir::InstrData data)
         "here and the frame's edge gets its turn; please report this as a bug");
   }
   return Append(type, std::move(data));
-}
-
-// A call whose departure, if it makes one, leaves this frame: every region is
-// already behind it and everything owed between here and the edge has been
-// emitted, so there is nothing left here to give a turn to.
-auto FunctionLowerer::EmitCallLeavingTheFrame(
-    lir::TypeId type, lir::CallInstr call) -> lir::Operand {
-  return Append(type, std::move(call));
 }
 
 auto FunctionLowerer::Append(lir::TypeId type, lir::InstrData data)

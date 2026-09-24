@@ -244,8 +244,9 @@ auto RuntimeProcess::DriveForeignVehicle(ForeignExecution& fe) -> bool {
   // of the call rather than the whole of it, because the stack parks between
   // two stretches and a scope open across that would still be the innermost one
   // while some other execution ran; what has to outlive a park is held by the
-  // call itself instead.
-  const GeneratedCallScope stretch(&fe.Values());
+  // call itself instead. No generated body completes into it -- the call ends
+  // by the foreign code returning -- so nothing settles a departure here.
+  const GeneratedCallScope stretch(&fe.Values(), nullptr);
   fe.Resume();
   return fe.IsDone();
 }

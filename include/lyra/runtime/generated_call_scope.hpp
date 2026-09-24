@@ -1,5 +1,6 @@
 #pragma once
 
+#include <exception>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -69,10 +70,16 @@ class ActivationValueStore {
 // returns. The store is borrowed -- something outside owns it and pushes each
 // stretch scope pointing at it; a scope with none (a plain construct or a
 // non-suspending call) inherits the enclosing scope's, if any.
+//
+// Such a scope also names where the body settles a departure that leaves it,
+// borrowed from the same owner, which carries it on once the body has
+// completed. A scope with none inherits nothing here: a call made inside the
+// stretch completes into its caller, never into the execution.
 class GeneratedCallScope {
  public:
   GeneratedCallScope();
-  explicit GeneratedCallScope(ActivationValueStore* values);
+  GeneratedCallScope(
+      ActivationValueStore* values, std::exception_ptr* departure);
   ~GeneratedCallScope();
   GeneratedCallScope(const GeneratedCallScope&) = delete;
   auto operator=(const GeneratedCallScope&) -> GeneratedCallScope& = delete;
@@ -100,12 +107,17 @@ class GeneratedCallScope {
                               : arena_.New<T>(std::forward<Args>(args)...);
   }
 
+  // Settling outside a suspending body is a lowering defect -- only such a body
+  // completes into an execution rather than into its caller -- so it throws.
+  void SettleDeparture(std::exception_ptr departure);
+
   static auto Current() -> GeneratedCallScope&;
 
  private:
   GeneratedCallScope* previous_;
   GeneratedCallArena arena_;
   ActivationValueStore* values_;
+  std::exception_ptr* departure_;
 };
 
 }  // namespace lyra::runtime
