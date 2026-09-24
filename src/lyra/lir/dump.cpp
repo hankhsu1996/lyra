@@ -333,6 +333,8 @@ class LirDumper {
             [](const CloseVariablesTarget&) -> std::string {
               return "variables_close";
             },
+            [](const EndValueTarget&) -> std::string { return "end"; },
+            [](const CopyValueTarget&) -> std::string { return "copy"; },
             [](const ControlEffectTarget& c) -> std::string {
               return std::string{ControlEffectOpName(c.op)};
             },

@@ -1,6 +1,15 @@
 # Activation frame vs transient scope: naming and the escape invariant
 
-Date: 2026-07-15 Status: accepted
+Date: 2026-07-15 Status: accepted; the transient half superseded 2026-09-24
+
+**Superseded in part.** [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md)
+removes the per-stretch transient store: a value the generated side makes lives in its own frame and
+ends at the end of its full-expression. `GeneratedCallScope` now only names the running execution's
+`ActivationValueStore` for the stretch of it that runs, and is opened nowhere else. The escape
+invariant below becomes its frame form -- a value never outlives its full-expression except by being
+handed to storage that owns it (a slot, a cell, the caller's storage for a return), and every such
+hand-off either takes the value's end with it or copies. The vocabulary this entry fixes, and the
+withdrawn rejection at its end, stand.
 
 ## Context
 

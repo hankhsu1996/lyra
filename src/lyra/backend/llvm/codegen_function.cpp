@@ -1,9 +1,12 @@
 #include "lyra/backend/llvm/codegen_function.hpp"
 
+#include <array>
 #include <cstdint>
 #include <format>
 #include <optional>
+#include <utility>
 #include <variant>
+#include <vector>
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -20,6 +23,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -86,15 +90,23 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
   }
 
   // A place local is frame storage: its slot is allocated once, in the entry
-  // block, so every path that reaches it names the same address.
+  // block, so every path that reaches it names the same address. A slot of an
+  // owned type holds the object itself, as a C++ local of class type does.
   builder_.SetInsertPoint(entry);
   BindConstructionArguments();
+  frame_storage_point_ =
+      builder_.CreateAlloca(builder_.getInt8Ty(), nullptr, "frame.storage");
   for (const lir::ValueId id : fn_->values.Ids()) {
     const lir::Local& local = fn_->values.Get(id);
-    if (local.NamesStorage()) {
-      values_.emplace(
-          id, builder_.CreateAlloca(module_->Types().Map(local.type)));
+    if (!local.NamesStorage()) {
+      continue;
     }
+    const std::optional<support::RuntimeObject> object =
+        module_->Unit().types.Get(local.type).HeldObject();
+    values_.emplace(
+        id, object.has_value()
+                ? ObjectStorage(*object)
+                : FrameStorage(module_->Types().Map(local.type)));
   }
   if (IsCoroutine()) {
     // The ramp places the arguments in the frame and stops before the body's
@@ -108,19 +120,132 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
   for (std::uint32_t i = 0; i < fn_->blocks.size(); ++i) {
     builder_.SetInsertPoint(blocks_[i]);
     const lir::BasicBlock& block = fn_->blocks[i];
+    // What the call that leads here left owed is ended as the block opens --
+    // after the landing pad, where the block is a landing, since nothing may
+    // stand ahead of that.
+    std::vector<llvm::Value*> owed;
+    if (const auto found = owed_on_entry_.find(blocks_[i]);
+        found != owed_on_entry_.end()) {
+      owed = std::move(found->second);
+      owed_on_entry_.erase(found);
+    }
+    const auto settle_owed = [&] {
+      for (llvm::Value* box : owed) {
+        EndObject(support::LibraryObject::kErasedValue, box);
+      }
+      owed.clear();
+    };
     for (const lir::Instr& instr : block.instrs) {
+      if (!std::holds_alternative<lir::ReceiveDepartureInstr>(instr.data)) {
+        settle_owed();
+      }
       auto lowered = LowerInstr(instr);
       if (!lowered) {
         return std::unexpected(std::move(lowered.error()));
       }
       values_.emplace(instr.result, *lowered);
+      EndBoxes();
     }
+    settle_owed();
     auto terminated = LowerTerminatorInto(block.terminator);
     if (!terminated) {
       return std::unexpected(std::move(terminated.error()));
     }
   }
+  frame_storage_point_->eraseFromParent();
+  frame_storage_point_ = nullptr;
   return {};
+}
+
+auto CodeGenFunction::FrameStorage(llvm::Type* type) -> llvm::Value* {
+  llvm::IRBuilder<> at(frame_storage_point_);
+  return at.CreateAlloca(type);
+}
+
+auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
+    -> llvm::Value* {
+  const support::ObjectLayout layout = support::LayoutOf(object);
+  llvm::IRBuilder<> at(frame_storage_point_);
+  llvm::AllocaInst* storage =
+      at.CreateAlloca(llvm::ArrayType::get(at.getInt8Ty(), layout.size));
+  storage->setAlignment(llvm::Align(layout.align));
+  return storage;
+}
+
+auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
+  const std::optional<support::RuntimeObject> object =
+      module_->Unit().types.Get(type).HeldObject();
+  return object.has_value() ? ObjectStorage(*object) : nullptr;
+}
+
+auto CodeGenFunction::BuildInto(
+    std::string_view symbol, std::vector<llvm::Value*> args, llvm::Value* out)
+    -> llvm::Value* {
+  args.push_back(out);
+  builder_.CreateCall(Entry(symbol, module_->Types().Ptr(), args), args);
+  return out;
+}
+
+void CodeGenFunction::EndObject(
+    support::RuntimeObject object, llvm::Value* value) {
+  if (support::LayoutOf(object).ends_with_nothing_to_do) {
+    return;
+  }
+  const std::array<llvm::Value*, 1> args{value};
+  builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(object, RuntimeOp::kDestroy), module_->Types().Void(),
+          args),
+      args);
+}
+
+auto CodeGenFunction::CopyObject(
+    support::RuntimeObject object, llvm::Value* value, llvm::Value* out)
+    -> llvm::Value* {
+  return BuildInto(RuntimeSymbol(object, RuntimeOp::kCopy), {value}, out);
+}
+
+void CodeGenFunction::RelocateObject(
+    support::RuntimeObject object, llvm::Value* value, llvm::Value* out) {
+  BuildInto(RuntimeSymbol(object, RuntimeOp::kMove), {value}, out);
+  EndObject(object, value);
+}
+
+auto CodeGenFunction::Box(support::ValueDomain domain, llvm::Value* value)
+    -> llvm::Value* {
+  llvm::Value* box = BuildInto(
+      RuntimeSymbol(domain, RuntimeOp::kValueBox), {value},
+      ObjectStorage(support::LibraryObject::kErasedValue));
+  boxes_.push_back(box);
+  return box;
+}
+
+void CodeGenFunction::EndBoxes() {
+  for (llvm::Value* box : boxes_) {
+    EndObject(support::LibraryObject::kErasedValue, box);
+  }
+  boxes_.clear();
+}
+
+void CodeGenFunction::OweBoxesOnEntry(
+    std::initializer_list<lir::BlockId> successors) {
+  for (const lir::BlockId successor : successors) {
+    std::vector<llvm::Value*>& owed = owed_on_entry_[blocks_[successor.value]];
+    owed.insert(owed.end(), boxes_.begin(), boxes_.end());
+  }
+  boxes_.clear();
+}
+
+auto CodeGenFunction::ObjectOf(lir::TypeId type) const
+    -> support::RuntimeObject {
+  const std::optional<support::RuntimeObject> object =
+      module_->Unit().types.Get(type).HeldObject();
+  if (!object.has_value()) {
+    throw InternalError(
+        "llvm codegen: an owned value's operation names a type that is no "
+        "runtime object -- please report this as a bug");
+  }
+  return *object;
 }
 
 void CodeGenFunction::OpenCoroutine() {
@@ -213,6 +338,15 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             if (!value) {
               return std::unexpected(std::move(value.error()));
             }
+            // An owned answer is built in the storage the caller gave, which
+            // the body answers with as an entry does.
+            if (const std::optional<support::RuntimeObject> object =
+                    module_->Unit().types.Get(fn_->result_type).HeldObject()) {
+              llvm::Value* out = value_->getArg(value_->arg_size() - 1);
+              RelocateObject(*object, *value, out);
+              builder_.CreateRet(out);
+              return {};
+            }
             builder_.CreateRet(*value);
             return {};
           },
@@ -271,15 +405,19 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             return {};
           },
           [&](const lir::DepartingCallInstr& call) -> diag::Result<void> {
+            const lir::TypeId result_type = fn_->values.Get(call.result).type;
+            llvm::Value* out = StorageFor(result_type);
             auto resolved = ResolveCall(
                 lir::CallInstr{.target = call.target, .args = call.args},
-                fn_->values.Get(call.result).type);
+                result_type, out);
             if (!resolved) {
               return std::unexpected(std::move(resolved.error()));
             }
-            values_[call.result] = builder_.CreateInvoke(
+            llvm::Value* invoked = builder_.CreateInvoke(
                 resolved->callee, blocks_[call.returned.value],
                 blocks_[call.landing.value], resolved->args);
+            values_[call.result] = out != nullptr ? out : invoked;
+            OweBoxesOnEntry({call.returned, call.landing});
             return {};
           }},
       terminator.data);

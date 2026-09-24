@@ -7,7 +7,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/erased_value.hpp"
-#include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/value/runtime_value.hpp"
 
@@ -60,10 +59,6 @@ void ClosureValue::Invoke() {
         "ClosureValue: this body is not one run to completion -- please "
         "report this as a bug");
   }
-  // The body is generated code, so it runs in a scope of its own like every
-  // other stretch the runtime enters: the values it materializes are released
-  // when it returns, and the captures it reads are not among them.
-  GeneratedCallScope scope;
   body->run(this);
 }
 
@@ -74,10 +69,6 @@ auto ClosureValue::Start() -> void* {
         "ClosureValue: this body is not one entered as a coroutine -- please "
         "report this as a bug");
   }
-  // No scope is pushed here. A coroutine body's stretches each run in a scope
-  // naming that execution's value store, which whoever drives the body
-  // establishes and which its later resumptions need too; a scope opened here
-  // would cover only the first stretch and would name no store.
   return body->start(this);
 }
 
@@ -91,16 +82,12 @@ auto ClosureValue::RunPerElement(
         "this as a bug");
   }
   // The element and the index are borrowed for the call: the container holds
-  // them and the body only reads them. The result is the one thing the body
-  // materializes, so it is read out before the scope it lives in is released.
-  GeneratedCallScope scope;
-  void* result = body->run(this, HandleOf(item), HandleOf(index));
-  if (result == nullptr) {
-    throw InternalError(
-        "ClosureValue: an LRM 7.12 with-clause settles a value -- please "
-        "report this as a bug");
-  }
-  return ValueOf(body->result_domain, result);
+  // them and the body only reads them. The answer is built in storage given
+  // here, and taken out of it.
+  AnswerStorage answer{};
+  return TakeValue(
+      body->result_domain,
+      body->run(this, HandleOf(item), HandleOf(index), answer.bytes.data()));
 }
 
 auto ClosureValue::RunValue() -> value::RuntimeValue {
@@ -110,16 +97,9 @@ auto ClosureValue::RunValue() -> value::RuntimeValue {
         "ClosureValue: this body is not one that answers a value on its own "
         "-- please report this as a bug");
   }
-  // The result is the one thing the body materializes, so it is read out
-  // before the scope it lives in is released.
-  GeneratedCallScope scope;
-  void* result = body->run(this);
-  if (result == nullptr) {
-    throw InternalError(
-        "ClosureValue: a body that answers a value settled none -- please "
-        "report this as a bug");
-  }
-  return ValueOf(body->result_domain, result);
+  // The answer is built in storage given here, and taken out of it.
+  AnswerStorage answer{};
+  return TakeValue(body->result_domain, body->run(this, answer.bytes.data()));
 }
 
 }  // namespace lyra::runtime

@@ -2,6 +2,12 @@
 
 Date: 2026-07-15 Status: accepted
 
+Since 2026-09-24 a value the generated side makes lives in its own frame rather than in a
+per-stretch arena ([a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md)), so
+the context below describes the store this cell was an answer to, not one that exists. The cell
+itself -- one per value-typed local of a suspending body, owned by the execution -- is unchanged,
+and a load from it builds its copy in the reader's frame.
+
 ## Context
 
 On the execution backend a runtime value is an opaque handle into runtime-owned storage
@@ -144,6 +150,13 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
   that knows the scopes. A lent local proves it -- its cell is a frame slot the compiler begins at
   the declaration and ends on every way out, the abandon path included
   ([reference-binds-a-cell](reference-binds-a-cell.md)).
+
+  The other half, the size and alignment per concrete type, was never owed either: every value
+  domain realizes one runtime type whatever source type it stands for, so a value has one size per
+  domain, and temporaries now live in the frame on exactly that basis
+  ([a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md)). Whether a value
+  crossing a suspension should live in the frame too is not reopened here; the cell stands because
+  it is the storage a reference binds, not because the frame could not hold the value.
 
 - **A backend-private arena for cross-suspension values, invisible to the storage model.** Storage a
   value crosses a suspension in must be a first-class runtime concept the activation owns, not an

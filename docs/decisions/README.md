@@ -553,7 +553,16 @@ the detail lives in the entry itself.
   cross-suspension and managed-value lifetime is out of scope for the call scope. Its revisit
   condition has fired, and the ownership half of it -- invariant 6, that a handle may be aliased so
   nothing writes into a value object -- is answered by
-  [storage-owns-its-value](storage-owns-its-value.md); the ABI half stands.
+  [storage-owns-its-value](storage-owns-its-value.md); its lifetime half, the call scope owning
+  transients, is superseded by
+  [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md).
+- [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md) -- a value is an object
+  in the frame of whoever made it: an entry builds its result in storage the caller passes, sized
+  per runtime object, and the value ends at the end of its full-expression and on every early exit,
+  from one cleanup stack below MIR. A frame slot holds its object, a lent parameter is copied by the
+  callee, and an entry states whether it answers with a new value or with storage it was handed. A
+  runtime region released at each wait, and slots pointing at the temporaries that initialized them,
+  are rejected.
 - [runtime-entry-naming](runtime-entry-naming.md) -- a runtime entry is named by the operation it
   performs and typed by the call that reaches it, so neither its symbol nor its signature is written
   down a second time; the symbol has one form, what the library does not realize is stated per
@@ -585,12 +594,12 @@ the detail lives in the entry itself.
   escape invariant: `RuntimeProcess` is the lineage/scheduler node, `activation` is the control
   identity, `ActivationValueStore` is one execution's cross-suspension value storage (named a store
   rather than a frame, because the generated body already has a frame and this is not it), and
-  `GeneratedCallScope` is the per-stretch transient. A transient may not escape its stretch; every
-  escaping store copies/promotes (the one non-copying path, a method return, stays in the caller's
-  scope). A speculative slot/trace/GC shape is rejected. The entry's own rejection of a fused
-  activation record is **withdrawn**: it left the storage nowhere to live but a coroutine body's
-  local, which dies one step before the frame around it, and both readings that forbid it were
-  already in `lifetime.md`.
+  `GeneratedCallScope` was the per-stretch transient -- that half superseded by
+  [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md), where a value never
+  outlives its full-expression except by being handed to storage that owns it. A speculative
+  slot/trace/GC shape is rejected. The entry's own rejection of a fused activation record is
+  **withdrawn**: it left the storage nowhere to live but a coroutine body's local, which dies one
+  step before the frame around it, and both readings that forbid it were already in `lifetime.md`.
 - [root-unit-elaboration](root-unit-elaboration.md) -- design elaboration is the synthetic `$root`
   unit's `construct` entry, which builds the top-level modules as its owned children; there is no
   design-level free function. Engine / bind / run stay host runner policy and never enter MIR; both

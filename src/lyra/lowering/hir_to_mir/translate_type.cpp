@@ -287,9 +287,8 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             // own and is typed as the opaque handle. What it is read at is
             // whatever it meets: a comparison against a handle brings it to
             // that handle's type first, because which kind of value it is
-            // decides how it reaches generated code, and the opaque handle is
-            // the one kind that crosses as the pointer rather than as the
-            // address of what holds it.
+            // decides which runtime object it is, and an opaque handle holds a
+            // bare pointer where a class handle holds a share of ownership.
             return mir::Type{mir::ChandleType{}};
           },
           [](const hir::VoidType&) -> mir::Type {

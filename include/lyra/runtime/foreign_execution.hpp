@@ -42,10 +42,10 @@ class ForeignExecution {
   // with more to run; true once its entry has run to completion.
   [[nodiscard]] virtual auto IsDone() const -> bool = 0;
 
-  // What generated code reached from this call materializes and then reads back
+  // What generated code reached from this call allocates and then reads back
   // after a suspension -- the storage an exported subroutine's entry completes
-  // into (LRM 35.8). The stretches of the call are separated by parks, so a
-  // per-stretch arena is too short-lived for it, and the frames holding it are
+  // into (LRM 35.8). The stretches of the call are separated by parks, so no
+  // one stretch's frame lasts long enough for it, and the frames holding it are
   // this stack's, so nothing outside the call is long-lived enough to own it
   // either.
   [[nodiscard]] auto Values() -> ActivationValueStore& {

@@ -198,8 +198,8 @@ class String {
   // array element. Defined after `StringCharRef` below.
   [[nodiscard]] auto ElementRef(const PackedArray& i_arg) -> StringCharRef;
 
-  // The functional counterpart of the in-place character write, for a string
-  // reached by an opaque handle that cannot be mutated in place: a new string
+  // The functional counterpart of the in-place character write, for a caller
+  // holding a copy of the string rather than its storage: a new string
   // equal to the receiver with character `i_arg` replaced under the same LRM
   // 6.16.2 `putc` rules (an out-of-range index or a NUL byte leaves it
   // unchanged).

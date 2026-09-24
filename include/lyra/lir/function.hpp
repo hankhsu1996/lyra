@@ -252,7 +252,7 @@ struct ForeignTarget {
 // through itself so a write lands at the representation the declaration gave it
 // and a read copies out rather than aliasing. `kAllocate` asks for one the
 // running activation owns, which is what a value-typed local of a suspending
-// body needs when its handle cannot outlive the stretch that produced it.
+// body needs to keep its value across a suspension.
 // A LIR-only target with no MIR twin -- where a value's storage sits is a
 // below-MIR realization the C++ backend never sees -- so a backend realizes it
 // the way it realizes any call: the value domain the op works in names the
@@ -281,6 +281,19 @@ struct OpenVariablesTarget {};
 struct VariableAddressTarget {};
 
 struct CloseVariablesTarget {};
+
+// The end of an owned value, and a second owned value equal to one the body
+// only reads. A value the body made ends where the lowering that made it says
+// -- at the end of the full-expression that made it, at the end of the block a
+// declaration bound it in, and on every way out of either. A copy is what a
+// body takes when a value it has to own, to store in a slot or hand back to its
+// caller, is one it was lent.
+//
+// LIR-only targets with no MIR twin: a target whose own language ends a value
+// at the end of its scope states none of this.
+struct EndValueTarget {};
+
+struct CopyValueTarget {};
 
 // An operation on the control effect that leaves an execution (LRM 9.6.2, 9.7).
 // The effect crosses as the target it names, since naming one is all an effect
@@ -350,13 +363,14 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 // The target of a call: a runtime builtin, a function of this unit, a dispatch
 // slot the receiving value's own class fills, a code address the program
 // computed, a value constructor named by the call's result type, a body of this
-// program or a foreign symbol the host resolves, a value-cell operation, a
+// program or a foreign symbol the host resolves, a value-cell operation, the
+// storage a body's variables live in, the end or copy of an owned value, a
 // control-effect operation, or an operation of the coroutine protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
     ConstructTarget, SymbolTarget, ForeignTarget, ValueCellTarget,
     OpenVariablesTarget, VariableAddressTarget, CloseVariablesTarget,
-    ControlEffectTarget, CoroutineTarget>;
+    EndValueTarget, CopyValueTarget, ControlEffectTarget, CoroutineTarget>;
 
 struct CallInstr {
   CallTarget target;

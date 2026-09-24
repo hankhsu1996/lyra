@@ -991,6 +991,18 @@ enum class CallEnding : std::uint8_t {
   kDeparts,
 };
 
+// What a call to an entry answers with -- the C++ distinction between returning
+// `T` and returning `T&`. Most entries build a value, which the caller then
+// owns and ends. The others answer with storage that already exists and that
+// the caller owns nothing of: the object the call acted on, handed back so an
+// access composes onto the call (a guard, LRM 11.3.5); or a part reached inside
+// that object, which may be written and descended into further.
+enum class EntryAnswer : std::uint8_t {
+  kNewValue,
+  kTheReceiver,
+  kPartOfTheReceiver,
+};
+
 // Every property of one runtime entry: what the library calls it, how a call
 // site reaches it, and what it does with the operands it is given. A consumer
 // asking any of those reads the field for it, never a list of its own, so an
@@ -1033,13 +1045,15 @@ struct RuntimeEntry {
   // through a capability wrapper reach its write access. Where the update
   // lands and how it gets there is each target's own answer.
   bool mutates_receiver = false;
-  // Whether the entry answers with the part it reaches rather than with that
-  // part's value, so what stands at the call may be written and a further
-  // access composes onto it. A target whose values have no reachable interior
-  // realizes such a call as a read of the whole and a rebuild instead; which
-  // entries it must do that for is this, so the property stays with the entry
-  // and not with each target that has to know it.
-  bool answers_with_the_part = false;
+  // What the entry answers with. One answering with a part, rather than with
+  // that part's value, is one where what stands at the call may be written and
+  // a further access composes onto it; a target that reaches storage only
+  // through copies realizes such a call as a read of the whole and a rebuild
+  // instead.
+  // Which entries it must do that for, and which answers a caller owns and
+  // ends, are this, so the property stays with the entry and not with each
+  // target that has to know it.
+  EntryAnswer answer = EntryAnswer::kNewValue;
   // Whether the LRM 7.12 method takes a `with`-clause closure as its second
   // argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,
   // `reverse`) take none.

@@ -1,11 +1,11 @@
 #include "lyra/runtime/erased_value.hpp"
 
-#include <type_traits>
+#include <memory>
+#include <utility>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/support/value_domain.hpp"
-#include "lyra/value/chandle.hpp"
 #include "lyra/value/runtime_value.hpp"
 
 namespace lyra::runtime {
@@ -13,55 +13,51 @@ namespace lyra::runtime {
 namespace {
 
 template <typename T>
-auto Read(void* handle) -> value::RuntimeValue {
-  return value::RuntimeValue{*static_cast<const T*>(handle)};
+auto Take(void* storage) -> value::RuntimeValue {
+  auto* built = static_cast<T*>(storage);
+  value::RuntimeValue taken{std::move(*built)};
+  std::destroy_at(built);
+  return taken;
 }
 
 }  // namespace
 
 auto HandleOf(const value::RuntimeValue& value) -> const void* {
   return std::visit(
-      [](const auto& held) -> const void* {
-        using T = std::decay_t<decltype(held)>;
-        if constexpr (std::is_same_v<T, value::Chandle>) {
-          return held.Ptr();
-        } else {
-          return &held;
-        }
-      },
-      value.value);
+      [](const auto& held) -> const void* { return &held; }, value.value);
 }
 
-auto ValueOf(support::ValueDomain domain, void* handle) -> value::RuntimeValue {
+auto TakeValue(support::ValueDomain domain, void* storage)
+    -> value::RuntimeValue {
   switch (domain) {
     case support::ValueDomain::kPacked:
-      return Read<value::PackedArray>(handle);
+      return Take<value::PackedArray>(storage);
     case support::ValueDomain::kString:
-      return Read<value::String>(handle);
+      return Take<value::String>(storage);
     case support::ValueDomain::kReal:
-      return Read<value::Real>(handle);
+      return Take<value::Real>(storage);
     case support::ValueDomain::kShortReal:
-      return Read<value::ShortReal>(handle);
+      return Take<value::ShortReal>(storage);
     case support::ValueDomain::kChandle:
-      return value::RuntimeValue{value::Chandle{handle}};
+      return Take<value::Chandle>(storage);
     case support::ValueDomain::kEmpty:
-      return Read<value::Empty>(handle);
+      return Take<value::Empty>(storage);
     case support::ValueDomain::kTuple:
-      return Read<value::RuntimeTuple>(handle);
+      return Take<value::RuntimeTuple>(storage);
     case support::ValueDomain::kUnion:
-      return Read<value::RuntimeUnion>(handle);
+      return Take<value::RuntimeUnion>(storage);
     case support::ValueDomain::kTaggedUnion:
-      return Read<value::RuntimeTaggedUnion>(handle);
+      return Take<value::RuntimeTaggedUnion>(storage);
     case support::ValueDomain::kDynArray:
-      return Read<value::RuntimeDynamicArray>(handle);
+      return Take<value::RuntimeDynamicArray>(storage);
     case support::ValueDomain::kUnpackedArray:
-      return Read<value::RuntimeUnpackedArray>(handle);
+      return Take<value::RuntimeUnpackedArray>(storage);
     case support::ValueDomain::kQueue:
-      return Read<value::RuntimeQueue>(handle);
+      return Take<value::RuntimeQueue>(storage);
     case support::ValueDomain::kAssocArray:
-      return Read<value::RuntimeAssociativeArray>(handle);
+      return Take<value::RuntimeAssociativeArray>(storage);
     case support::ValueDomain::kManagedRef:
-      return Read<value::ManagedRef>(handle);
+      return Take<value::ManagedRef>(storage);
   }
   throw InternalError("erased value: unknown value domain");
 }

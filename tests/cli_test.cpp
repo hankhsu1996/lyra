@@ -719,6 +719,53 @@ TEST(LyraBuild, TheLlvmProgramRunsOnItsOwn) {
   }
 }
 
+// A value ends with the expression that made it, so what a running program
+// holds is bounded by what it can still read and not by how much it has
+// computed. A process that never waits makes a million calls here, each
+// answering a value; were those values kept until the process next waited, the
+// run would need gigabytes, and the cap it runs under is a small fraction of
+// that.
+TEST(LyraBuild, AValueEndsWithTheExpressionThatMadeIt) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src)
+      << "module Test;\n"
+      << "  function automatic logic [127:0] mix(logic [127:0] x);\n"
+      << "    return (x ^ (x << 3)) + 1;\n"
+      << "  endfunction\n"
+      << "  initial begin\n"
+      << "    logic [127:0] acc;\n"
+      << "    acc = 0;\n"
+      << "    for (int i = 0; i < 1000000; i++) acc = mix(acc);\n"
+      << "    $display(\"low=%0d\", acc[7:0]);\n"
+      << "  end\n"
+      << "endmodule\n";
+
+  const auto program = *tmp_or / "program";
+  const std::vector<std::string> args = {
+      "build",          "--backend",   "llvm",
+      "--top",          "Test",        "-o",
+      program.string(), "--cache-dir", (*tmp_or / "cache").string(),
+      src.string()};
+  const auto built = RunChildProcess(lyra, args, 120s);
+  ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+      << built.stdout_text << built.stderr_text;
+
+  auto sh_or = lyra::support::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value());
+  const std::vector<std::string> capped = {
+      "-c", std::format("ulimit -v 524288 && exec '{}'", program.string())};
+  const auto ran = RunChildProcess(*sh_or, capped, 60s);
+  EXPECT_EQ(ran.termination, TerminationKind::kExitedNormally)
+      << ran.stdout_text << ran.stderr_text;
+  EXPECT_NE(ran.stdout_text.find("low=64"), std::string::npos)
+      << "stdout: " << ran.stdout_text;
+}
+
 // An option means something to a command or it is refused by name, and the
 // refusal says which commands do take it. What is refused is a function of the
 // command alone: an option the command acts on stands even where this time it

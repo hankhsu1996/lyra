@@ -14,6 +14,7 @@
 #include "lyra/lir/external_unit_object_id.hpp"
 #include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/runtime_object.hpp"
 
 namespace lyra::lir {
 
@@ -516,6 +517,22 @@ class Type {
   // stored like any other. The cell is what is address-only, never the value
   // or the capability reaching it.
   [[nodiscard]] auto IsAddressOnly() const -> bool;
+
+  // The runtime object a value of this type is held as, and nothing for a type
+  // whose value is held as itself or is reached where it lives. A value of the
+  // design is its domain's object; an object a call builds for one use -- what
+  // a print is assembled from, what a wait registers, the storage a closure
+  // captures into, a hold on a promoted scope -- is the library's own. Which
+  // object it is, is the logical shape the value has during execution; how
+  // large one is, is a physical fact decided below this layer.
+  [[nodiscard]] auto HeldObject() const
+      -> std::optional<support::RuntimeObject>;
+
+  // True for a value its holder owns and has to end, which is a value held as
+  // a runtime object. One of these ends where the lowering that made it says,
+  // the way a C++ temporary ends with its full-expression and a local with its
+  // block.
+  [[nodiscard]] auto IsOwnedValue() const -> bool;
 
   // True for any type whose value-level shape is a single packed vector: a
   // packed array, or an enumeration or packed aggregate through its base. This
