@@ -287,6 +287,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_claim_departure", &lyra_rt_claim_departure);
   add("lyra_rt_finish_departure", &lyra_rt_finish_departure);
   add("lyra_rt_decline_departure", &lyra_rt_decline_departure);
+  add("lyra_rt_settle_departure", &lyra_rt_settle_departure);
   add("lyra_rt_take_departure_if_due", &lyra_rt_take_departure_if_due);
   add("lyra_rt_sim_time", &lyra_rt_sim_time);
   add("lyra_rt_stime", &lyra_rt_stime);

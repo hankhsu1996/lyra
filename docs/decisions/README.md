@@ -551,7 +551,10 @@ the detail lives in the entry itself.
   type, a suspension is a generic LIR control edge whose wakeup is registered by preceding runtime
   calls, and the LLVM backend states where a body suspends while LLVM's coroutine passes derive the
   frame, resume state, and spills. The engine resumes a runtime-owned adapter, never a generated
-  frame; a hand-rolled state machine in the emitter and an is-coroutine flag are rejected.
+  frame; a hand-rolled state machine in the emitter and an is-coroutine flag are rejected. A body
+  left by a departure completes through its final suspension and hands the departure to the adapter,
+  as a C++ promise stores an escaping exception, because a coroutine unwound out of is released at
+  its last wait when nothing in it reaches its end.
 - [cross-suspension-value-storage](cross-suspension-value-storage.md) -- a value-typed non-managed
   procedural local in a suspending body is an activation-frame value: overwritten in place, owned by
   the activation (which also RAII-owns the generated coroutine), reached through a frame-held handle

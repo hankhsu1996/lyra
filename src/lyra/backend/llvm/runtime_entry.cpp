@@ -170,6 +170,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "retain_constant";
     case RuntimeOp::kClaimDeparture:
       return "claim_departure";
+    case RuntimeOp::kSettleDeparture:
+      return "settle_departure";
   }
   throw InternalError("llvm codegen: unknown runtime operation");
 }

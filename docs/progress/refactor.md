@@ -2540,6 +2540,23 @@ enough to warrant its own focused review.
       it this project uses has that switched off, and its own `-j` would collide with this command
       line's; turning it on is a change to that fork. Not blocked.
 
+- [ ] R147 -- On the execution backend a run-time error that ends the run leaves a suspended body
+      without running any of the cleanups it passes, and the body's frame is then released at the
+      last wait it made, which runs what was owed there instead. A block the body left after that
+      wait is left a second time, and one it entered after it is never left. Nothing observable goes
+      wrong today only because leaving a disable target that is not the innermost is ignored rather
+      than refused; made strict, a named block holding the last wait followed by an error in a later
+      block aborts the run instead of reporting it, and nothing else in the gate changes. The C++
+      backend runs those cleanups, as destructors, and so does clang for every exception.
+
+      Two answers were tried and are not it. Letting a landing treat an error as a departure no
+      region claims changes nothing for most errors, because the runtime calls that raise them are
+      ordinary calls with no landing; and it breaks the release of a suspended foreign stack, which
+      travels the same way and which an export's entry, landing every departure, then stops. What
+      it takes is a call that can raise an error stated as one that can leave its caller, as clang
+      states every call that is not known not to unwind, and the stack release told apart from an
+      error where a landing decides to stop something. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

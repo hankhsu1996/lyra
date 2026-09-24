@@ -214,12 +214,20 @@ auto RunGeneratedProcess(GeneratedEnvironment environment) -> Coroutine<void> {
   // Every stretch of the body runs in a scope of its own naming this store, and
   // the parking between two of them holds none: a scope open across a park
   // would still be the innermost one while some other execution ran.
+  //
+  // A body completes whether it returned or departed, so the departure it
+  // settled is carried on from here, where it leaves this activation exactly
+  // as it would have left the body.
+  std::exception_ptr departure;
   for (;;) {
     {
-      GeneratedCallScope scope(&values);
+      GeneratedCallScope scope(&values, &departure);
       generated.Resume();
     }
     if (generated.Done()) {
+      if (departure != nullptr) {
+        std::rethrow_exception(departure);
+      }
       break;
     }
     co_await std::suspend_always{};
@@ -1292,6 +1300,11 @@ void lyra_rt_decline_departure() {
   // Carries the same departure outward rather than raising a second one, so
   // what a further landing tests is the target the first one named.
   abi::__cxa_rethrow();
+}
+
+void lyra_rt_settle_departure() {
+  GeneratedCallScope::Current().SettleDeparture(std::current_exception());
+  abi::__cxa_end_catch();
 }
 
 void lyra_rt_enter_target(void* runtime, void* target) {

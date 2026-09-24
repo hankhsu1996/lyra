@@ -169,7 +169,10 @@ The C++ backend realizes the region as `try` / `catch`, the raise as `throw`, an
 scope-exit object declared ahead of the body -- C++ states an extent's exit through a destructor
 rather than through a construct of its own. The execution backend has neither, so it emits the
 cleanup on each way out of the body and asks the runtime, at the points inside a region where an
-execution regains control, whether a target it is inside has been invalidated.
+execution regains control, whether a target it is inside has been invalidated. A departure no region
+of the body claims is itself one of those ways out: a body called directly carries it on to its
+caller, and a body the runtime drives as a suspended execution completes and hands it to the
+execution, the way a C++ coroutine hands an escaping exception to its promise.
 
 The execution backend's landing stops whatever the platform's unwinder carries and asks the runtime
 which target the control effect it holds names. What is not a control effect -- a run-time error,

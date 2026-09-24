@@ -164,9 +164,10 @@ void CodeGenFunction::OpenCoroutine() {
       {coro_handle_, builder_.getInt1(false)});
   builder_.CreateRet(coro_handle_);
 
-  // A body that runs to completion suspends one final time, so its owner still
-  // reads the handle as done before destroying it. Every scope it opened has
-  // already ended, so there is nothing left to run on the way out.
+  // A body that completes, by returning or by departing, suspends one final
+  // time, so its owner still reads the handle as done before destroying it.
+  // Every scope it opened has already ended, so there is nothing left to run on
+  // the way out.
   builder_.SetInsertPoint(coro_final_);
   EmitCoroutineSuspend(nullptr, coro_cleanup_, true);
 }
@@ -239,6 +240,30 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
           },
           [&](const lir::AbandonTerm&) -> diag::Result<void> {
             builder_.CreateBr(coro_cleanup_);
+            return {};
+          },
+          [&](const lir::DepartTerm&) -> diag::Result<void> {
+            if (IsCoroutine()) {
+              // A coroutine hands the departure to the activation it completes
+              // and leaves through its final suspension, as a return does.
+              // That suspension is where releasing the frame finds it stopped;
+              // a frame unwound out of is found stopped wherever it last
+              // waited, and releasing it runs that wait's abandonment again.
+              builder_.CreateCall(
+                  Entry(
+                      RuntimeSymbol(RuntimeOp::kSettleDeparture),
+                      builder_.getVoidTy(), {}),
+                  {});
+              builder_.CreateBr(coro_final_);
+              return {};
+            }
+            builder_.CreateCall(
+                Entry(
+                    RuntimeSymbol(
+                        lir::ControlEffectTarget::Op::kDeclineDeparture),
+                    builder_.getVoidTy(), {}),
+                {});
+            builder_.CreateUnreachable();
             return {};
           },
           [&](const lir::UnreachableTerm&) -> diag::Result<void> {

@@ -125,11 +125,12 @@ identity is the suspect, not the analysis.
    object-model decisions MIR fixed -- whether a handle is shared, a reference is managed, a member
    is observable -- and acts on them. _Machine-execution consequence: lowering is one-way; LIR reads
    upstream decisions and acts on them, never re-decides them._
-6. The runtime protocol is explicit: suspend, resume, and abandonment appear as CFG edges, not as
-   lowering conventions implied by node order. A suspension names both ways control can leave it --
-   the driver resumes the body, or ends it where it stands -- so what the second owes is in the
-   graph rather than assumed. _Machine-execution consequence: the scheduler's boundary is visible to
-   the optimizer as edges, not as a side convention only the lowering knows._
+6. The runtime protocol is explicit: suspend, resume, abandonment, and each way a body is left
+   appear as CFG edges, not as lowering conventions implied by node order. A suspension names both
+   ways control can leave it -- the driver resumes the body, or ends it where it stands -- so what
+   the second owes is in the graph rather than assumed; and a body left by a departure says so with
+   a terminator of its own, as a returning one does. _Machine-execution consequence: the scheduler's
+   boundary is visible to the optimizer as edges, not as a side convention only the lowering knows._
 7. LIR carries no source-language semantics. Every node is a generic machine-execution operation; no
    SV-specific shape -- an out-of-bounds guard, an index-validity predicate, an NBA region, an event
    control -- survives, because each was lowered to generic control flow or a runtime call at

@@ -1,5 +1,8 @@
 #include "lyra/runtime/generated_call_scope.hpp"
 
+#include <exception>
+#include <utility>
+
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::runtime {
@@ -15,12 +18,14 @@ auto CurrentScopeSlot() -> GeneratedCallScope*& {
 
 GeneratedCallScope::GeneratedCallScope()
     : previous_(CurrentScopeSlot()),
-      values_(previous_ != nullptr ? previous_->values_ : nullptr) {
+      values_(previous_ != nullptr ? previous_->values_ : nullptr),
+      departure_(nullptr) {
   CurrentScopeSlot() = this;
 }
 
-GeneratedCallScope::GeneratedCallScope(ActivationValueStore* values)
-    : previous_(CurrentScopeSlot()), values_(values) {
+GeneratedCallScope::GeneratedCallScope(
+    ActivationValueStore* values, std::exception_ptr* departure)
+    : previous_(CurrentScopeSlot()), values_(values), departure_(departure) {
   CurrentScopeSlot() = this;
 }
 
@@ -35,6 +40,14 @@ auto GeneratedCallScope::ActivationValues() -> ActivationValueStore& {
         "requested outside a suspending body");
   }
   return *values_;
+}
+
+void GeneratedCallScope::SettleDeparture(std::exception_ptr departure) {
+  if (departure_ == nullptr) {
+    throw InternalError(
+        "generated call: a departure was settled outside a suspending body");
+  }
+  *departure_ = std::move(departure);
 }
 
 auto GeneratedCallScope::Current() -> GeneratedCallScope& {

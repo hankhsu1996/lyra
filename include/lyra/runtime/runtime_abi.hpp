@@ -476,19 +476,22 @@ void lyra_rt_disable(void* target, void* runtime);
 auto lyra_rt_effect_names_target(void* effect, void* target) -> void*;
 void lyra_rt_take_departure_if_due(void* runtime);
 
-// A departure that arrived at a landing, in the three steps the platform's
-// unwinding protocol takes. A landing stops whatever the platform is carrying,
-// and claiming answers the target the control effect it holds names, which is
-// what the landing tests; anything else is carried on from inside the claim,
+// A departure that arrived at a landing, in the steps the platform's unwinding
+// protocol takes. A landing stops whatever the platform is carrying, and
+// claiming answers the target the control effect it holds names, which is what
+// the landing tests; anything else is carried on from inside the claim,
 // unchanged, so the landing only ever acts on a control effect. Finishing
 // releases one, which a landing does when it continues past its own region;
-// declining hands it back to carry on outward. They are entries of this ABI
-// rather than calls a body makes for itself, so generated code names no
-// unwinding symbol and no raised type, and each target's own protocol stays
-// inside the runtime.
+// declining hands it back to carry on outward. Settling hands it to the
+// activation a suspendable body completes instead, which is how such a body is
+// left by one: it then completes as it would by returning, and whoever drives
+// it carries the departure on. They are entries of this ABI rather than calls a
+// body makes for itself, so generated code names no unwinding symbol and no
+// raised type, and each target's own protocol stays inside the runtime.
 auto lyra_rt_claim_departure(void* exception) -> void*;
 void lyra_rt_finish_departure();
 [[noreturn]] void lyra_rt_decline_departure();
+void lyra_rt_settle_departure();
 
 // Reads the current simulation time, scaled to the time unit of the design
 // element the call sits in (LRM 20.3). That unit is the caller's property

@@ -599,12 +599,15 @@ each meets the same lifetime question above.
       runtime. Leaving is what the target's own scope exit does: a call that could be left that way
       names where to continue as well as where to return, and a body that claims nothing passes the
       departure outward, so it reaches a caller's region as readily as an enclosing one of its own.
-      An effect no region claims anywhere settles the activation cancelled. Disabling a named `fork`
-      exercises all of it: the branches it spawned are enclosed by the target even though their
-      bodies state no region, so the `disable` wakes one parked on a delay, that branch settles
-      cancelled where it regains control, and the process that entered the block resumes after it in
-      the same time step. `disable` of a task runs here too, now that a task enable does, and so
-      does one written inside a function and naming a block outside it.
+      An effect no region claims anywhere settles the activation cancelled, and a body that can
+      suspend is left by one the way it is left by returning, whether or not any path in it could
+      reach its end: a process that waited and then ends the run, or a branch looping forever that
+      disables the block around it, ends what it holds once. Disabling a named `fork` exercises all
+      of it: the branches it spawned are enclosed by the target even though their bodies state no
+      region, so the `disable` wakes one parked on a delay, that branch settles cancelled where it
+      regains control, and the process that entered the block resumes after it in the same time
+      step. `disable` of a task runs here too, now that a task enable does, and so does one written
+      inside a function and naming a block outside it.
 - [ ] The transient-escape rule is held by construction and naming, not by a checker.
 - [ ] Displaying an aggregate. A print item is named by the operand's value domain, and the erased
       container this backend realizes exposes no per-element walk for a formatter to use. It is the

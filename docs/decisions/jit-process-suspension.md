@@ -55,8 +55,8 @@ inside a body reaches the right token.
 
 A coroutine body is emitted as an ordinary function carrying LLVM coroutine intrinsics: the ramp
 (identity, frame allocation, begin), a suspension at each suspend edge, and a final suspension at
-completion. The coroutine passes then derive the frame layout, the resume state machine, the
-resume/destroy entries, and which values must survive a suspension.
+completion, however the body completed (D6). The coroutine passes then derive the frame layout, the
+resume state machine, the resume/destroy entries, and which values must survive a suspension.
 
 That derivation is theirs, not the emitter's. The emitter stays a mechanical translation
 (`backend_contract.md`): a coroutine result type maps to the coroutine shape, a suspend edge maps to
@@ -78,6 +78,37 @@ a coroutine handle, not the layout of a runtime class.
 
 This is the boundary, not a stage on the way to removing one. What may be replaced is how the
 adapter drives the body; that the scheduler's token is runtime-owned is the invariant.
+
+### D6. A body left by a departure completes through its final suspension, and the adapter carries the departure on
+
+A body is left in two ways that settle an outcome -- it returns, or a departure no region of its own
+claims carries it out (LRM 9.6.2, 20.2) -- and a third that settles none, being ended where it stood
+while parked. LIR states each as a terminator of its own. A coroutine body completes through its
+final suspension by either of the first two: before leaving by a departure it hands the departure to
+the adapter, the way a C++ coroutine body hands an escaping exception to its promise's
+`unhandled_exception`, and once the resume returns with the body done the adapter raises it from its
+own frame, so the activation settles exactly as it would have had the departure left the body
+directly. A body that is not a coroutine carries the departure on to its caller.
+
+What decides it is the state a released frame is found in. LLVM treats a coroutine left by unwinding
+as suspended at its final suspension by storing that suspension's index -- and a body with no path
+to its end has none, since the coroutine passes drop unreachable blocks before building the frame.
+An `always` procedure, an `initial` ending in `$finish`, and a branch looping forever are all such
+bodies; unwound out of, each is found stopped at the last wait it made, and releasing it runs that
+wait's abandonment a second time, so everything the body held is ended twice. Clang has the same
+defect for C++ -- a coroutine with no reachable end whose `unhandled_exception` rethrows runs a
+local's destructor twice on destroy (llvm-project issues 61900 and 57339) -- and the form C++
+libraries use, storing the exception and continuing to the final suspension, never reaches it. That
+is the form taken here, and it does not rest on the defect being open: it is what the LLVM coroutine
+passes are built around, and it makes no body's release depend on what else in the body is
+reachable.
+
+A run-time error does not take this path, which is where the execution backend and clang still part:
+clang routes every exception through the cleanups to the promise. Here most calls that raise one are
+ordinary calls with no landing, so an error leaves the body without meeting one, and the frame it
+leaves is released at its last wait. Treating an error as a departure no region claims at the
+landings that do exist is not the answer either: the release of a suspended foreign stack travels
+the same way, and an export's entry, which lands every departure, would stop it.
 
 ## Invariants
 
