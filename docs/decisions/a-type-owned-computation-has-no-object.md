@@ -8,6 +8,12 @@ Accepted. Revises point 3 of [rendering-a-value-by-its-type](rendering-a-value-b
 which stated where such a callable is homed as a mechanism ("the class the print site lowers into")
 rather than as the constraint it was reaching for. Reverses nothing else.
 
+Since 2026-09-24 the only such function is the assignment-pattern text:
+[enum-representation](enum-representation.md) answers an enumeration's `name` / `next` / `prev` with
+questions put to a member list the unit states as data, so an enumeration synthesizes no function to
+be owned. The decision below is unchanged for the text, and its package and compilation-unit cases
+hold for the enumeration methods by the same argument, since a member list takes no object either.
+
 ## Why this decision matters
 
 Some of what a value reads as is decided by its declaration rather than by the value: an enumeration

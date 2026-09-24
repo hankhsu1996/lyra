@@ -1,8 +1,6 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -19,6 +17,7 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -42,57 +41,6 @@ struct ClassTranslation {
   // before any declaration is.
   base::Translation<hir::MethodId, mir::CallableId> methods;
 };
-
-// A reading a type's own declaration decides about a value of it, rather than
-// one the value decides for itself. Each is realized as a type-associated
-// function the unit owns -- it takes the value and no object, so no class is
-// its owner.
-//
-// It is half of a key and so is not a dispatch set: nothing reads it to decide
-// anything, and what tells two of them apart is equality. One reading does not
-// stand for another, so a type with several has one function per reading.
-enum class TypeOwnedReading : std::uint8_t {
-  // LRM 21.2.1.6: the assignment-pattern text, which a structure, a union and a
-  // container have and nothing else does.
-  kAssignmentPatternText,
-  // LRM 6.19.5.5: the name an enumeration declares for a value.
-  kEnumerationName,
-  // LRM 6.19.5.3 / 6.19.5.4: one traversal of an enumeration's member order,
-  // shared by `next` and `prev`, which differ only in the sign of the step.
-  kEnumerationStep,
-  // LRM 6.24.2: whether a value is a member of the enumeration, which is what
-  // separates a valid assignment into one of its variables from an invalid one.
-  // The members are fixed where the enumeration is declared, so the type is
-  // what answers.
-  kEnumerationMembership,
-};
-
-// Which reading of which type. The type is the SystemVerilog one because the
-// declaration is what decides, and a lowering answers facts it then stops
-// carrying: a packed tagged union reads as its tag and the member that tag
-// names where an untagged one reads as its first member, while both project
-// onto one vector below the front end.
-struct TypeOwnedReadingKey {
-  TypeOwnedReading reading;
-  hir::TypeId type;
-
-  auto operator==(const TypeOwnedReadingKey&) const -> bool = default;
-};
-
-}  // namespace lyra::lowering::hir_to_mir
-
-template <>
-struct std::hash<lyra::lowering::hir_to_mir::TypeOwnedReadingKey> {
-  auto operator()(lyra::lowering::hir_to_mir::TypeOwnedReadingKey key)
-      const noexcept -> std::size_t {
-    const std::size_t reading =
-        std::hash<std::uint8_t>{}(static_cast<std::uint8_t>(key.reading));
-    const std::size_t type = std::hash<lyra::hir::TypeId>{}(key.type);
-    return reading ^ (type << 1U);
-  }
-};
-
-namespace lyra::lowering::hir_to_mir {
 
 // Lowers one HIR compilation unit into one MIR compilation unit, holding that
 // unit as it is built along with everything the declaration stages settled
@@ -342,17 +290,23 @@ class UnitLowerer {
         ref);
   }
 
-  // The function answering one reading of one type. Every reading a type owns
-  // is settled with this unit's declarations, so a site that has established
-  // the type owns one finds it here; a site that has not established it is
-  // asking a question it has no answer for.
-  [[nodiscard]] auto TypeOwnedReadingOf(TypeOwnedReadingKey key) const
+  // The function answering the assignment-pattern text of one type (LRM
+  // 21.2.1.6). Every such text is settled with this unit's declarations, so a
+  // site that has established the type has one finds it here; a site that has
+  // not established it is asking a question it has no answer for.
+  //
+  // The type is the SystemVerilog one because the declaration is what decides,
+  // and a lowering answers facts it then stops carrying: a packed tagged union
+  // reads as its tag and the member that tag names where an untagged one reads
+  // as its first member, while both project onto one vector below the front
+  // end.
+  [[nodiscard]] auto AssignmentPatternTextOf(hir::TypeId type) const
       -> mir::UnitCallableTarget {
-    const auto it = type_owned_readings_.find(key);
-    if (it == type_owned_readings_.end()) {
+    const auto it = assignment_pattern_texts_.find(type);
+    if (it == assignment_pattern_texts_.end()) {
       throw InternalError(
-          "UnitLowerer::TypeOwnedReadingOf: the unit owns no such reading of "
-          "this type");
+          "UnitLowerer::AssignmentPatternTextOf: this type states no "
+          "assignment-pattern text");
     }
     return mir::UnitCallableTarget{.slot = it->second};
   }
@@ -388,11 +342,13 @@ class UnitLowerer {
   // callables.
   auto PublishUnitDeclarations() -> diag::Result<void>;
 
-  // Settles every reading the types this unit names own. Which readings those
-  // are follows from each type on its own, so this is one answer per type
-  // rather than a fact gathered over the unit, and it stands whether or not
-  // anything in the unit goes on to read a value of that type.
-  void PublishTypeOwnedReadings();
+  // Settles the assignment-pattern text of every type this unit names that
+  // states one. Whether a type does follows from that type on its own, so this
+  // is one answer per type rather than a fact gathered over the unit, and it
+  // stands whether or not anything in the unit goes on to print a value of that
+  // type. Each is a function the unit owns: it takes the value and no object,
+  // so no class is its owner.
+  void PublishAssignmentPatternTexts();
 
   [[nodiscard]] auto TranslateType(const hir::Type& type) -> mir::Type;
 
@@ -410,7 +366,7 @@ class UnitLowerer {
   // names a peer. Lives only on the lowerer; the finished compilation unit
   // holds the only authoritative class representation.
   base::SymbolTable<mir::ClassId, ClassShape> declarations_;
-  std::unordered_map<TypeOwnedReadingKey, mir::CallableId> type_owned_readings_;
+  std::unordered_map<hir::TypeId, mir::CallableId> assignment_pattern_texts_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

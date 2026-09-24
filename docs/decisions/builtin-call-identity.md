@@ -49,12 +49,12 @@ in which of the two roles it names. HIR therefore holds one shape for the pair t
 together, and no callee names it.
 
 LRM 6.19.5's enumerated type methods are answered from the enumeration's declared members: `first` /
-`last` / `num` are constants of that member table, and `name` / `next` / `prev` are a search through
-it, which HIR-to-MIR emits as a callable synthesized once per enumeration. Here a call does survive
-to HIR, because answering one needs the members in their lowered form and a class for the
-synthesized callable to home on, and neither exists where names are resolved. So these keep the call
-shape the source wrote, carried by a `SubroutineRef` arm of their own over a six-valued HIR-local
-identity. Nothing below HIR names them.
+`last` / `num` are constants of that member list, and `name` / `next` / `prev` are questions put to
+it, which HIR-to-MIR emits as calls whose receiver is the member list the unit states for the
+enumeration. Here a call does survive to HIR, because answering one needs the members in their
+lowered form, which does not exist where names are resolved. So these keep the call shape the source
+wrote, carried by a `SubroutineRef` arm of their own over a six-valued HIR-local identity. Nothing
+below HIR names the six; what MIR names is the four library questions they become.
 
 MIR's callee for a built-in is one shape -- `Direct { target = BuiltinFn }` -- shared with
 user-method calls, where `target` is the symbol identity (several alternatives today, one identity

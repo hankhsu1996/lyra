@@ -27,6 +27,10 @@ struct IntegralConstant {
   auto operator==(const IntegralConstant&) const -> bool = default;
 };
 
+// Folds both planes into `seed`, for a key that holds a constant among its
+// parts.
+void HashIntegralConstant(std::size_t& seed, const IntegralConstant& value);
+
 // A constant integral value one compilation unit holds: the bits an occurrence
 // wrote and the type it wrote them at. Both belong to its identity -- the same
 // bits at two types are two values, because the type decides how wide they are

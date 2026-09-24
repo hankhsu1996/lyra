@@ -144,8 +144,8 @@ auto LowerHirDynamicCastExpr(
       case hir::RunTimeCheck::kNone:
         return BuildIntLiteral(unit, body, 1);
       case hir::RunTimeCheck::kValueIsAMemberOfTheEnumeration:
-        return body.exprs.Add(
-            BuildEnumMembershipCallExpr(owner, read_value(body), declared));
+        return body.exprs.Add(BuildEnumMembershipCallExpr(
+            owner, body, read_value(body), declared));
       case hir::RunTimeCheck::kObjectIsOfTheDestinationClass:
         return body.exprs.Add(BuildObjectIsOfClassCall(
             owner, body, read_value(body),

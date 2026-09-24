@@ -22,12 +22,16 @@ void HashWords(std::size_t& seed, const std::vector<std::uint64_t>& words) {
 
 }  // namespace
 
+void HashIntegralConstant(std::size_t& seed, const IntegralConstant& value) {
+  HashWords(seed, value.value_words);
+  HashWords(seed, value.state_words);
+}
+
 auto IntegralConstantDecl::Hash::operator()(
     const IntegralConstantDecl& decl) const -> std::size_t {
   std::size_t seed = 0;
   base::HashField(seed, decl.type.value);
-  HashWords(seed, decl.value.value_words);
-  HashWords(seed, decl.value.state_words);
+  HashIntegralConstant(seed, decl.value);
   return seed;
 }
 

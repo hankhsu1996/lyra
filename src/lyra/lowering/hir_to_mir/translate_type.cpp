@@ -5,6 +5,8 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/expression/references.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/type.hpp"
@@ -134,9 +136,10 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           },
           [&](const hir::EnumType& src) -> mir::Type {
             // An enumeration keeps a MIR type of its own, carrying its base's
-            // packed shape and its member table. A value operation reads the
-            // packed shape and so treats the value as its base integral; only
-            // the LRM 6.19.5 methods read the member table.
+            // packed shape and its members. A value operation reads the packed
+            // shape and so treats the value as its base integral; only what
+            // an enumeration answers about a value (LRM 6.19.5, 6.24.2) reads
+            // the members.
             const auto& base_mir_data =
                 Unit().types.Get(TranslateType(src.base_type));
             const auto* base_pa = base_mir_data.As<mir::PackedArrayType>();
@@ -148,10 +151,11 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             std::vector<mir::EnumMember> members;
             members.reserve(src.members.size());
             for (const auto& m : src.members) {
-              const auto value =
-                  static_cast<std::int64_t>(m.value.value_words[0]);
               members.push_back(
-                  mir::EnumMember{.name = m.name, .value = value});
+                  mir::EnumMember{
+                      .name = m.name,
+                      .value = CanonicalIntegralConstant(
+                          *base_pa, LowerHirIntegralConstant(m.value))});
             }
             return mir::Type{mir::EnumType{
                 .base = *base_pa,

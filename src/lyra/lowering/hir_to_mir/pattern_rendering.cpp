@@ -218,11 +218,7 @@ auto Renderer::Render(
                   mir::CallExpr{
                       .callee =
                           mir::Direct{
-                              .target = Owner().TypeOwnedReadingOf(
-                                  TypeOwnedReadingKey{
-                                      .reading = TypeOwnedReading::
-                                          kAssignmentPatternText,
-                                      .type = type})},
+                              .target = Owner().AssignmentPatternTextOf(type)},
                       .arguments = {value}},
               .type = StringType()});
     case PatternReading::kNothingCanAnswer:
@@ -456,8 +452,8 @@ auto Renderer::BuildEnumeration(
   const mir::TypeId mir_type = Owner().TranslateType(type);
   mir::Block& block = *frame.current_block;
 
-  const mir::ExprId name = block.exprs.Add(
-      BuildEnumNameCallExpr(Owner(), Read(frame, value, mir_type), type));
+  const mir::ExprId name = block.exprs.Add(BuildEnumNameCallExpr(
+      Owner(), block, Read(frame, value, mir_type), type));
   const mir::ExprId base_text =
       FormatLeaf(frame, Read(frame, value, mir_type), mir_type);
 

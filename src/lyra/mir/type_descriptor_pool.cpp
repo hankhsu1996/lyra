@@ -1,7 +1,6 @@
 #include "lyra/mir/type_descriptor_pool.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <variant>
 
 #include "lyra/base/hash.hpp"
@@ -17,19 +16,14 @@ auto TypeDescriptionHash::operator()(const TypeDescription& description) const
   std::visit(
       Overloaded{
           [&seed](const PackedArrayType& packed) {
-            base::HashField(
-                seed, static_cast<std::uint64_t>(packed.state_kind));
-            base::HashField(
-                seed, static_cast<std::uint64_t>(packed.signedness));
-            base::HashField(seed, packed.dims.size());
-            for (const PackedRange& dim : packed.dims) {
-              base::HashField(seed, dim.left);
-              base::HashField(seed, dim.right);
-            }
+            HashPackedShape(seed, packed);
           },
           [&seed](const UnpackedRange& range) {
             base::HashField(seed, range.left);
             base::HashField(seed, range.right);
+          },
+          [&seed](const EnumType& enumeration) {
+            HashEnumeration(seed, enumeration);
           }},
       description);
   return seed;

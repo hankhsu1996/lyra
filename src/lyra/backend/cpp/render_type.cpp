@@ -49,6 +49,8 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::value::PackedRange";
     case mir::RuntimeLibraryKind::kUnpackedRange:
       return "lyra::value::UnpackedRange";
+    case mir::RuntimeLibraryKind::kEnumeration:
+      return "lyra::value::Enumeration";
     case mir::RuntimeLibraryKind::kPrintItem:
       return "lyra::value::PrintItem";
     case mir::RuntimeLibraryKind::kPrintLiteralItem:

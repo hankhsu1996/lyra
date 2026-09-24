@@ -51,6 +51,7 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kPackedType,
   kPackedRange,
   kUnpackedRange,
+  kEnumeration,
   kPrintItem,
   kPrintLiteralItem,
   kPrintValueItem,
@@ -90,20 +91,6 @@ struct PackedArrayType {
   std::vector<PackedRange> dims;
 
   auto operator==(const PackedArrayType&) const -> bool = default;
-};
-
-struct EnumMember {
-  std::string name;
-  std::int64_t value;
-
-  auto operator==(const EnumMember&) const -> bool = default;
-};
-
-struct EnumType {
-  PackedArrayType base;
-  std::vector<EnumMember> members;
-
-  auto operator==(const EnumType&) const -> bool = default;
 };
 
 // A named member of an aggregate the source declared. The position it sits at
@@ -469,17 +456,17 @@ using TypeDeclaration = std::variant<
 class Type {
  private:
   using Data = std::variant<
-      PackedArrayType, EnumType, PackedStructType, PackedUnionType,
-      UnpackedArrayType, DynamicArrayType, QueueType, AssociativeArrayType,
-      WildcardIndexType, StringType, MachineCStringType, MachineBoolType,
-      MachineIntType, MachineFloatType, MachineArrayType, MachineFunctionType,
-      EventType, RealType, ShortRealType, RealTimeType, ChandleType, VoidType,
-      EmptyType, ObjectType, ExternalUnitObjectType, CrossUnitClassType,
-      OpaqueObjectType, RuntimeClassType, ClosureType, StructType,
-      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
-      CoroutineType, RefType, PointerType, ManagedRefType, VectorType,
-      TupleType, UnpackedStructType, UnionType, TaggedUnionType, ResolvedType,
-      DriverType, ObservableType, SampledHistoryType, EvaluationAttemptsType>;
+      PackedArrayType, PackedStructType, PackedUnionType, UnpackedArrayType,
+      DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
+      StringType, MachineCStringType, MachineBoolType, MachineIntType,
+      MachineFloatType, MachineArrayType, MachineFunctionType, EventType,
+      RealType, ShortRealType, RealTimeType, ChandleType, VoidType, EmptyType,
+      ObjectType, ExternalUnitObjectType, CrossUnitClassType, OpaqueObjectType,
+      RuntimeClassType, ClosureType, StructType, RuntimeEffectsType, FilesType,
+      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
+      ManagedRefType, VectorType, TupleType, UnpackedStructType, UnionType,
+      TaggedUnionType, ResolvedType, DriverType, ObservableType,
+      SampledHistoryType, EvaluationAttemptsType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

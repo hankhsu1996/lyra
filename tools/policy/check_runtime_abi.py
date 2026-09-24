@@ -57,6 +57,15 @@ Rules:
         disagreement emits a call whose arguments the runtime reads shifted,
         which links and runs.
 
+  R007  An entry takes a span only while two integer argument registers are
+        still free for it. The generated module hands a span over as its two
+        words and places each on its own, while the host's C ABI places a
+        struct that no longer fits the remaining registers wholly on the
+        stack. Past the sixth word the two disagree: the runtime reads the
+        pointer from one place and the length from another, and the length it
+        reads was never one. Nothing else sees it, because the call links and
+        the entry is well-formed on both sides.
+
 Usage:
   python3 tools/policy/check_runtime_abi.py
 """
@@ -82,24 +91,28 @@ RE_ATTRIBUTE = r"(?:\[\[[\w:, ]+\]\]\s*)*"
 RE_ENTRY = re.compile(
     rf"^{RE_ATTRIBUTE}(?:auto|void)\s+(lyra_rt_\w+)\s*\(", re.MULTILINE)
 RE_BINDING = re.compile(r'add\(\s*"(lyra_rt_\w+)"\s*,\s*&(lyra_rt_\w+)\s*\)')
-# One prototype with its parameter list, which ends at the first `)` because a
-# parameter type here is a machine word or an opaque pointer and never a
-# function type.
-RE_PROTOTYPE = re.compile(
-    rf"^{RE_ATTRIBUTE}(?:auto|void)\s+(lyra_rt_\w+)\s*\(([^)]*)\)(\s*->\s*\w+)?",
-    re.MULTILINE)
+# What a prototype answers with, read after its parameter list closes. An entry
+# may answer with a code address, whose type holds parentheses of its own, so
+# it runs to the end of the declaration rather than to the first one.
+RE_ANSWER = re.compile(r"\s*->\s*([^;{]+)")
 # One row of the runtime entry declaration: the entry it declares, and the
 # properties it states.
 RE_ROW = re.compile(r"case BuiltinFn::\w+:\s*return\s*\{(.*?)\};", re.S)
 RE_ROW_NAME = re.compile(r'\.name = "(\w+)"')
 # The construct entry's own parameter list, and the count the generated side
-# composes its prototype from. The list ends at the first `)` for the same
-# reason a runtime prototype's does: every parameter here is a pointer or the
-# plain-data run, never a function type.
+# composes its prototype from. The list ends at the first `)` because every
+# parameter here is a pointer or the plain-data run, never a function type.
 RE_CONSTRUCT_ENTRY = re.compile(
     r"using\s+ScopeConstructEntry\s*=\s*\w+\s*\(\s*\*\s*\)\s*\(([^)]*)\)")
 RE_CONSTRUCT_SHARED = re.compile(
     r"kScopeConstructSharedParams\s*=\s*(\d+)")
+
+# How many integer argument registers the host's calling convention has
+# (System V AMD64), what a span is spelled as, and the parameter types that go
+# in floating-point registers instead and so take none of them.
+INTEGER_ARGUMENT_REGISTERS = 6
+SPAN_PARAMETER = "LyraSpan"
+FLOAT_PARAMETERS = {"double", "float"}
 
 HANDLE_PARAMETER = "runtime"
 HANDLE_PROPERTY = ".takes_the_runtime_handle = true"
@@ -125,6 +138,13 @@ class Binding(NamedTuple):
     line: int
 
 
+class Prototype(NamedTuple):
+    name: str
+    line: int
+    parameters: list[str]
+    answer: str
+
+
 class Abi(NamedTuple):
     declared: list[Entry]
     defined: list[Entry]
@@ -137,6 +157,7 @@ class Abi(NamedTuple):
     # R006 reports rather than passing over.
     construct_shared: int | None = None
     construct_stated: int | None = None
+    spilled_spans: list[Entry] = []
 
 
 def line_of(text: str, offset: int) -> int:
@@ -161,22 +182,80 @@ def by_name(entries: list[Entry]) -> list[Entry]:
     return sorted(entries, key=lambda entry: entry.name)
 
 
+def prototypes_of(text: str) -> list[Prototype]:
+    """Each declared entry with its parameters and what it answers with.
+
+    The parameter list is closed by the parenthesis that matches its opening
+    one and split only at commas outside any nested pair, because a parameter
+    may be a code address whose own type holds a parameter list.
+    """
+    prototypes = []
+    for m in RE_ENTRY.finditer(text):
+        depth = 1
+        position = m.end()
+        start = position
+        parameters = []
+        while depth:
+            character = text[position]
+            if character == "(":
+                depth += 1
+            elif character == ")":
+                depth -= 1
+            elif character == "," and depth == 1:
+                parameters.append(text[start:position])
+                start = position + 1
+            position += 1
+        last = text[start:position - 1]
+        if last.strip():
+            parameters.append(last)
+        answer = RE_ANSWER.match(text, position)
+        prototypes.append(
+            Prototype(
+                m.group(1), line_of(text, m.start()),
+                [parameter.strip() for parameter in parameters],
+                answer.group(1).strip() if answer else ""))
+    return prototypes
+
+
 def handle_takers_of(text: str) -> set[str]:
     """The declared entries whose prototype takes the engine handle."""
     return {
-        m.group(1)
-        for m in RE_PROTOTYPE.finditer(text)
-        if HANDLE_PARAMETER in re.findall(r"\w+", m.group(2))
+        prototype.name
+        for prototype in prototypes_of(text)
+        if any(
+            HANDLE_PARAMETER in re.findall(r"\w+", parameter)
+            for parameter in prototype.parameters)
     }
 
 
 def parkers_of(text: str) -> set[str]:
     """The declared entries whose prototype answers whether the caller parks."""
     return {
-        m.group(1)
-        for m in RE_PROTOTYPE.finditer(text)
-        if (m.group(3) or "").split("->")[-1].strip() == PARK_ANSWER
+        prototype.name
+        for prototype in prototypes_of(text)
+        if prototype.answer == PARK_ANSWER
     }
+
+
+def spilled_spans_of(text: str) -> list[Entry]:
+    """The declared entries taking a span no integer register pair is left for.
+
+    A parameter takes one integer register unless it is a floating-point value,
+    which takes none of them, or a span, which takes two.
+    """
+    spilled = []
+    for prototype in prototypes_of(text):
+        used = 0
+        for parameter in prototype.parameters:
+            words = set(re.findall(r"\w+", parameter))
+            if SPAN_PARAMETER in words:
+                if used + 2 > INTEGER_ARGUMENT_REGISTERS:
+                    spilled.append(Entry(prototype.name, prototype.line))
+                    break
+                used += 2
+            elif "*" in parameter or not words & FLOAT_PARAMETERS:
+                used += 1
+    return spilled
 
 
 def rows_of(text: str, states: str) -> dict[str, bool]:
@@ -305,6 +384,15 @@ def check_r006(abi: Abi) -> list[str]:
     ]
 
 
+def check_r007(abi: Abi) -> list[str]:
+    return [
+        f"  {HEADER}:{entry.line}: R007 '{entry.name}' takes a span after the "
+        f"integer argument registers are spent, so the runtime reads its length "
+        f"from somewhere the generated module did not put it"
+        for entry in abi.spilled_spans
+    ]
+
+
 def check_r004(abi: Abi) -> list[str]:
     return check_agreement(
         abi, "R004", abi.handle_rows, abi.handle_takers,
@@ -331,7 +419,8 @@ def load(root: Path) -> Abi:
         construct_shared=construct_shared_of(
             (root / CONSTRUCT_ENTRY).read_text()),
         construct_stated=construct_stated_of(
-            (root / CONSTRUCT_PROTOTYPE).read_text()))
+            (root / CONSTRUCT_PROTOTYPE).read_text()),
+        spilled_spans=spilled_spans_of(header))
 
 
 def run_self_tests() -> bool:
@@ -473,6 +562,45 @@ def run_self_tests() -> bool:
     ok &= expect(
         len(check_r006(Abi([], [], [], construct_shared=3))) == 1,
         "R006 reports a generated side that states no count")
+
+    ok &= expect(
+        not spilled_spans_of(
+            "auto lyra_rt_a(const void* p, LyraSpan a, LyraSpan b) -> void*;"),
+        "a span with a register pair left for it is not reported")
+    ok &= expect(
+        [e.name for e in spilled_spans_of(
+            "auto lyra_rt_a(\n    const void* p, LyraSpan a, LyraSpan b,\n"
+            "    LyraSpan c) -> void*;")] == ["lyra_rt_a"],
+        "a span past the sixth integer register is reported")
+    ok &= expect(
+        not spilled_spans_of(
+            "auto lyra_rt_a(double x, double y, LyraSpan a, LyraSpan b,\n"
+            "    LyraSpan c) -> void*;"),
+        "a floating-point parameter takes no integer register")
+    ok &= expect(
+        len(spilled_spans_of(
+            "auto lyra_rt_a(double* x, void* y, void* z, LyraSpan a, "
+            "LyraSpan b) -> void*;")) == 1,
+        "a pointer to a floating-point value takes an integer register")
+    ok &= expect(
+        len(check_r007(Abi([], [], [], spilled_spans=[Entry("lyra_rt_a", 1)])))
+        == 1,
+        "R007 reports each entry it was handed")
+
+    ok &= expect(
+        prototypes_of(
+            "auto lyra_rt_a(\n    const void* p, void* (*body)(void* self, "
+            "const void* item),\n    void* runtime) -> bool;")
+        == [Prototype(
+            "lyra_rt_a", 1,
+            ["const void* p", "void* (*body)(void* self, const void* item)",
+             "void* runtime"], "bool")],
+        "a parameter holding a parameter list of its own is read whole, and "
+        "the ones after it are still read")
+    ok &= expect(
+        prototypes_of("auto lyra_rt_a(void* s) -> void (*)();")[0].answer
+        == "void (*)()",
+        "an answer that is a code address is read to the end of its type")
     return ok
 
 
@@ -483,7 +611,7 @@ def main() -> int:
     abi = load(Path(__file__).resolve().parents[2])
     failures = (
         check_r001(abi) + check_r002(abi) + check_r003(abi) + check_r004(abi)
-        + check_r005(abi) + check_r006(abi))
+        + check_r005(abi) + check_r006(abi) + check_r007(abi))
 
     if failures:
         print("Runtime ABI check failed:")

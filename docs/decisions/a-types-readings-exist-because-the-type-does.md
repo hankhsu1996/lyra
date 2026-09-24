@@ -1,6 +1,14 @@
 # A type's readings exist because the type does
 
-Date: 2026-09-16 Status: accepted
+Date: 2026-09-16 Status: accepted; narrowed 2026-09-24 to the assignment-pattern text
+
+**Narrowed.** An enumeration's readings are no longer functions per type:
+[enum-representation](enum-representation.md) now states its members once as a run-time description
+and puts the questions in the library. A description is data rather than a body, so the second cost
+below -- a walk no program had written going unbuilt -- has nothing to apply to, and it is interned
+where a use names it, as every other type description is. What follows stands for the
+assignment-pattern text, which is still a function per type; read "enumeration" below as the case
+that was answered this way until then.
 
 ## Why this decision matters
 

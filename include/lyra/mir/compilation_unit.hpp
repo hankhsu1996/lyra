@@ -219,6 +219,9 @@ struct BuiltinMirTypes {
   // What an unpacked array's description is: its declared range, which an
   // operation walking the array in its declared coordinates is handed.
   TypeId unpacked_range;
+  // What an enumeration's description is: its members in declared order, which
+  // the questions LRM 6.19.5 and 6.24.2 ask about a value are answered against.
+  TypeId enumeration;
   TypeId channel_cancellation;
   TypeId print_item;
   TypeId print_literal_item;
@@ -400,6 +403,9 @@ struct CompilationUnit {
             .unpacked_range = types.Intern(
                 Type{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kUnpackedRange}}),
+            .enumeration = types.Intern(
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kEnumeration}}),
             .channel_cancellation = types.Intern(
                 Type{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kChannelCancellation}}),

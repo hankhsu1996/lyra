@@ -325,6 +325,18 @@ auto lyra_rt_object_of(const void* handle) -> void*;
 auto lyra_rt_object_is_of_class(const void* handle, const void* definition)
     -> std::int64_t;
 
+// What an enumeration's member list answers about a value (LRM 6.19.5,
+// 6.24.2). Whether it is a member crosses as a machine integer for the same
+// reason the class check above does.
+auto lyra_rt_enumeration_has(const void* enumeration, const void* value)
+    -> std::int64_t;
+auto lyra_rt_enumeration_name(const void* enumeration, const void* value)
+    -> void*;
+auto lyra_rt_enumeration_next(
+    const void* enumeration, const void* value, const void* count) -> void*;
+auto lyra_rt_enumeration_prev(
+    const void* enumeration, const void* value, const void* count) -> void*;
+
 // The handle one capture crosses back to the body as, by declaration index. A
 // captured pointer answers the pointer it holds; a captured value answers the
 // storage the closure owns, which outlives every read of it. A body reaches its
@@ -1868,6 +1880,8 @@ auto lyra_rt_make_packed_range(std::int64_t left, std::int64_t right) -> const
 auto lyra_rt_make_unpacked_range(std::int64_t left, std::int64_t right) -> const
     void*;
 auto lyra_rt_make_packed_type(LyraSpan dims, bool is_signed, bool is_four_state)
+    -> const void*;
+auto lyra_rt_make_enumeration(const void* base, LyraSpan planes, LyraSpan names)
     -> const void*;
 auto lyra_rt_packed_from_words(
     LyraSpan value_words, LyraSpan unknown_words, const void* type) -> void*;
