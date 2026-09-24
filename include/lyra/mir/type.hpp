@@ -149,10 +149,10 @@ struct UnpackedRange {
 };
 
 // An unpacked array is an element type plus its declared range. The range is
-// the array's coordinate system: element and range selection resolve a source
-// index against it. The range lives on the type, not the runtime value -- the
-// backend value is ordinal-only payload and selection passes the range as an
-// operand sourced from this type.
+// the array's coordinate system: a source index names an element through it.
+// The range lives on the type, not the runtime value -- the backend value is
+// ordinal-only payload, and a select reads the range here to name the element
+// by its ordinal.
 struct UnpackedArrayType {
   TypeId element_type;
   UnpackedRange dim;

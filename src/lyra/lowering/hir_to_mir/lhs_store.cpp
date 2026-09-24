@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -8,6 +9,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -83,6 +85,17 @@ auto BuildCompoundExpr(
 
 }  // namespace
 
+auto StepArguments(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const DescentStep& step) -> std::vector<mir::ExprId> {
+  std::vector<mir::ExprId> arguments = step.operands;
+  if (step.count.has_value()) {
+    arguments.push_back(BuildMachineIntLiteral(
+        unit, block, static_cast<std::int64_t>(*step.count)));
+  }
+  return arguments;
+}
+
 auto DescendInto(WriteTarget base, DescentStep step) -> WriteTarget {
   base.descent.push_back(std::move(step));
   return base;
@@ -132,8 +145,8 @@ auto TargetPlace(
   mir::ExprId reached = OpenedPlace(unit, block, target.owner);
   for (const DescentStep& step : target.descent) {
     reached = CallEntry(
-        block, step.part_entry, step.position, reached, step.operands,
-        step.part_type);
+        block, step.part_entry, step.position, reached,
+        StepArguments(unit, block, step), step.part_type);
   }
   return reached;
 }
@@ -150,8 +163,8 @@ auto ReadTargetValue(
   }
   for (const DescentStep& step : target.descent) {
     reached = CallEntry(
-        block, step.value_entry, step.position, reached, step.operands,
-        step.part_type);
+        block, step.value_entry, step.position, reached,
+        StepArguments(unit, block, step), step.part_type);
   }
   return reached;
 }

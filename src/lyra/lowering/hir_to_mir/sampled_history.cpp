@@ -12,11 +12,11 @@
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type_descriptor.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -94,22 +94,22 @@ auto BuildPriorTickRead(
 }
 
 // The least significant bit of a packed value, which is the whole of what
-// `$rose` and `$fell` read (LRM 16.9.3).
+// `$rose` and `$fell` read (LRM 16.9.3): the run of one bit at the value's own
+// position zero, whatever range it was declared with.
 auto BuildLeastSignificantBit(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value,
     mir::TypeId bit_type) -> mir::ExprId {
-  const mir::ExprId zero = BuildIntLiteral(unit, block, 0);
-  const mir::ExprId shape =
-      mir::BuildTypeDescriptorRef(unit, block, block.exprs.Get(value).type);
+  const mir::ExprId lsb = BuildConstantPosition(unit, block, 0);
+  const mir::ExprId width = BuildMachineIntLiteral(unit, block, 1);
   return block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
                       mir::Direct{
-                          .target = support::BuiltinFn::kElement,
+                          .target = support::BuiltinFn::kSlice,
                           .receiver = value},
-                  .arguments = {zero, shape}},
+                  .arguments = {lsb, width}},
           .type = bit_type});
 }
 

@@ -80,11 +80,11 @@ class RuntimeQueue {
   // representation reads the target domain from here.
   [[nodiscard]] auto ElementDefault() const -> const RuntimeValue&;
 
-  // LRM 7.10.1 / 7.4.5: reads element `index` by reference. An index outside
-  // `0..size-1`, or one carrying x or z, reads the element default; a read
-  // never grows the queue. The caller copies the result out across the
-  // opaque-handle boundary rather than aliasing it.
-  [[nodiscard]] auto Element(const PackedArray& index) const
+  // LRM 7.10.1 / 7.4.5: reads the element `position` names by reference. A
+  // position that names no element here reads the element default; a read
+  // never grows the queue. The caller copies the result out
+  // across the opaque-handle boundary rather than aliasing it.
+  [[nodiscard]] auto Element(const PackedArray& position) const
       -> const RuntimeValue&;
 
   // The element at storage position `position`, counted from the first in the
@@ -93,23 +93,19 @@ class RuntimeQueue {
   [[nodiscard]] auto ElementAt(std::size_t position) const
       -> const RuntimeValue&;
 
-  // A functional element write: yields a new queue equal to this one with
-  // element `index` replaced. LRM 7.10.1 makes `index == size` an append of one
-  // element, and every other invalid index -- negative, past the append
-  // position, or carrying x or z -- discards the write.
+  // A functional element write: yields a new queue equal to this one with the
+  // element `position` names replaced. LRM 7.10.1 makes the position one past
+  // the last an append of one element, and every other invalid position --
+  // negative, past the append position, or naming none -- discards the write.
   [[nodiscard]] auto WithElement(
-      const PackedArray& index, RuntimeValue value) const -> RuntimeQueue;
+      const PackedArray& position, RuntimeValue value) const -> RuntimeQueue;
 
-  // LRM 7.10.1 slice. `form` selects the source shape from `(anchor, extent)`:
-  // a constant `q[a:b]` is `anchor = a`, `extent = b`; an indexed `q[base+:w]`
-  // grows upward from `base`, and `q[base-:w]` downward. The bounds resolve
-  // here in the wide x/z-aware domain, never as narrow selector arithmetic; an
-  // x or z bound, or an empty window after clamping, yields the empty queue.
-  // The result carries no bound of its own: a bound belongs to the variable a
-  // value is stored into, and a store is where one is applied.
-  [[nodiscard]] auto Slice(
-      const PackedArray& anchor, const PackedArray& extent,
-      const PackedArray& form) const -> RuntimeQueue;
+  // LRM 7.10.1 slice: the elements from position `lo` through `hi`. A bound
+  // that names no position, or an empty window after clamping, yields the
+  // empty queue. The result carries no bound of its own: a bound belongs to
+  // the variable a value is stored into, and a store is where one is applied.
+  [[nodiscard]] auto Slice(const PackedArray& lo, const PackedArray& hi) const
+      -> RuntimeQueue;
 
   // LRM 7.10.2.6 / 7.10.2.7: a copy with one element added at the front or the
   // back, trimmed to the bound.
@@ -182,10 +178,6 @@ class RuntimeQueue {
   // LRM 7.10.5: drops every element whose index exceeds the declared bound.
   void EnforceBound();
 
-  // A negative, out-of-range, or x / z index (LRM 7.10.1). A valid index is
-  // this queue's own ordinal, since a queue is declared zero-based.
-  [[nodiscard]] auto IsInvalidIndex(const PackedArray& index) const -> bool;
-
   // Indirect because `RuntimeValue` closes over this type: a by-value member
   // would need `RuntimeValue` complete here, which it is not.
   std::unique_ptr<RuntimeValue> element_default_;
@@ -197,10 +189,10 @@ static_assert(LyraValue<RuntimeQueue>);
 static_assert(CaseEqualComparable<RuntimeQueue>);
 static_assert(Sized<RuntimeQueue>);
 static_assert(BitstreamSizable<RuntimeQueue>);
-// A queue's `Slice(anchor, extent, form)` is dynamic-width -- the runtime
-// derives the element count from the bounds (LRM 7.10.1) -- not the fixed-width
-// `(anchor, count, shift)` contract `Sliceable` names, so despite the matching
-// arity it carries its own `Slice` rather than claiming that concept.
+// A queue's `Slice(lo, hi)` takes its element count from two bounds the
+// running program can move (LRM 7.10.1), not the fixed count `Sliceable` names,
+// so despite the matching arity it carries its own `Slice` rather than claiming
+// that concept.
 static_assert(EntryWalkable<RuntimeQueue>);
 
 }  // namespace lyra::value

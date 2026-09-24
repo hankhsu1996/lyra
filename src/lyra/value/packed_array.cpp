@@ -19,7 +19,7 @@
 #include "lyra/value/packed_convert.hpp"
 #include "lyra/value/packed_internal.hpp"
 #include "lyra/value/packed_reduction.hpp"
-#include "lyra/value/slice_selector.hpp"
+#include "lyra/value/position.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::value {
@@ -803,8 +803,34 @@ auto PackedArray::ConvertBitsInto(PackedArray dst, const PackedArray& src)
 auto PackedArray::ConvertFrom(
     const PackedArray& src, std::uint64_t dst_bit_width, bool dst_is_signed,
     bool dst_is_four_state) -> PackedArray {
-  return ConvertBitsInto(
-      Blank(dst_bit_width, dst_is_signed, dst_is_four_state), src);
+  PackedArray dst = Blank(dst_bit_width, dst_is_signed, dst_is_four_state);
+  if (src.bit_width_ > 64U || dst_bit_width > 64U) {
+    return ConvertBitsInto(std::move(dst), src);
+  }
+  // Nearly every conversion a design performs is between two values of one
+  // word each, and the rules below are the same ones the general form applies
+  // word by word (LRM 6.11.2, 6.11.3, 6.12.1): the source's bits where it
+  // reaches, and above them its sign bit where a signed source widens -- an x
+  // or z sign filling with itself into four states, and with the 0 it becomes
+  // into two.
+  const std::uint64_t sign = src.bit_width_ - 1U;
+  const bool pads = dst_bit_width > src.bit_width_ && src.is_signed_;
+  const std::uint64_t reached = MaskForWidth(src.bit_width_);
+  const auto fill = [&](std::uint64_t bits) {
+    const bool set = pads && ((bits >> sign) & 1U) != 0U;
+    return ((bits & reached) | (set ? ~reached : 0U)) &
+           MaskForWidth(dst_bit_width);
+  };
+  const std::uint64_t value = src.ValueWords()[0];
+  const std::uint64_t unknown =
+      src.is_four_state_ ? src.UnknownWords()[0] : std::uint64_t{0};
+  if (dst_is_four_state) {
+    dst.MutableValueWords()[0] = fill(value);
+    dst.MutableUnknownWords()[0] = fill(unknown);
+  } else {
+    dst.MutableValueWords()[0] = fill(value & ~unknown);
+  }
+  return dst;
 }
 
 auto PackedArray::ConvertFrom(const PackedArray& src, const PackedType& type)
@@ -1540,21 +1566,17 @@ auto OverlapOf(
 
 }  // namespace
 
-auto PackedArray::ExtractBits(
-    const PackedArray& lsb_bit, std::uint32_t bit_width) const -> PackedArray {
+auto PackedArray::ExtractRun(std::int64_t start, std::uint64_t bit_width) const
+    -> PackedArray {
   if (bit_width == 0U) {
-    throw InternalError("PackedArray::ExtractBits: bit_width must be >= 1");
-  }
-  // A fully out-of-range start (X/Z lsb, or a magnitude beyond the 64-bit
-  // position carrier) yields an all-X value for a 4-state source, all-zero for
-  // a 2-state one. A run of bits taken out of a value is unsigned whatever the
-  // value was (LRM 11.5.1).
-  if (lsb_bit.HasUnknown() || lsb_bit.BitWidth() > 64U) {
-    return PackedArray{bit_width, false, is_four_state_};
+    throw InternalError("PackedArray::ExtractRun: bit_width must be >= 1");
   }
   const RunOverlap overlap = OverlapOf(
-      lsb_bit.ToInt64(), bit_width, static_cast<std::int64_t>(bit_width_));
+      start, static_cast<std::int64_t>(bit_width),
+      static_cast<std::int64_t>(bit_width_));
 
+  // A run of bits taken out of a value is unsigned whatever the value was (LRM
+  // 11.5.1).
   PackedArray result = Blank(bit_width, false, is_four_state_);
   MoveBitRun(
       ValueWords(), overlap.in_value, result.MutableValueWords(),
@@ -1577,15 +1599,15 @@ auto PackedArray::ExtractBits(
   return result;
 }
 
-auto PackedArray::AssignSlice(
-    const PackedArray& lsb_bit, std::uint32_t bit_width,
-    const PackedArray& value) -> void {
+auto PackedArray::AssignRun(
+    std::int64_t start, std::uint64_t bit_width, const PackedArray& value)
+    -> void {
   if (bit_width == 0U) {
-    throw InternalError("PackedArray::AssignSlice: bit_width must be >= 1");
+    throw InternalError("PackedArray::AssignRun: bit_width must be >= 1");
   }
   if (value.BitWidth() != bit_width) {
     throw InternalError(
-        "PackedArray::AssignSlice: value width does not match slice width");
+        "PackedArray::AssignRun: value width does not match the run's width");
   }
   // A 2-state field inside a 4-state aggregate (LRM 7.2.1) writes a 2-state
   // value into a 4-state slot; the loop below clears the unknown plane at the
@@ -1594,14 +1616,12 @@ auto PackedArray::AssignSlice(
   // reaching 2-state storage is a missing upstream coercion.
   if (value.IsFourState() && !is_four_state_) {
     throw InternalError(
-        "PackedArray::AssignSlice: a 4-state value cannot be written into "
+        "PackedArray::AssignRun: a 4-state value cannot be written into "
         "2-state storage");
   }
-  if (lsb_bit.HasUnknown() || lsb_bit.BitWidth() > 64U) {
-    return;
-  }
   const RunOverlap overlap = OverlapOf(
-      lsb_bit.ToInt64(), bit_width, static_cast<std::int64_t>(bit_width_));
+      start, static_cast<std::int64_t>(bit_width),
+      static_cast<std::int64_t>(bit_width_));
 
   MoveBitRun(
       value.ValueWords(), overlap.in_run, MutableValueWords(), overlap.in_value,
@@ -1618,221 +1638,115 @@ auto PackedArray::AssignSlice(
 
 namespace {
 
-// Canonical shape for PackedArrayRef bit offsets: 64-bit signed 4-state.
-// Wide enough to hold any valid bit position, signed so negative-OOB indices
-// stay negative through arithmetic, 4-state so X/Z propagates from any layer
-// to the final write (LRM 11.5.1 "X/Z position is a no-op").
-constexpr std::uint64_t kOffsetBitWidth = 64;
-constexpr bool kOffsetSigned = true;
-constexpr bool kOffsetFourState = true;
+// A run of `width` bits wide in a value of the given domain, every one of them
+// what a read outside a value yields: x for four-state, 0 for two-state (LRM
+// 11.5.1).
+auto Unreached(std::uint64_t width, bool is_four_state) -> PackedArray {
+  return PackedArray{width, false, is_four_state};
+}
 
-auto Canonicalize(const PackedArray& p) -> PackedArray {
-  if (p.BitWidth() == kOffsetBitWidth && p.IsSigned() == kOffsetSigned &&
-      p.IsFourState() == kOffsetFourState) {
-    return p;
+// A run's width as the count a select states. A select never names an empty
+// run, so a count below one is a lowering defect rather than a value.
+auto RunWidth(std::int64_t width) -> std::uint64_t {
+  if (width < 1) {
+    throw InternalError("a packed select names a run of at least one bit");
   }
-  return PackedArray::ConvertFrom(
-      p, kOffsetBitWidth, kOffsetSigned, kOffsetFourState);
-}
-
-// Bit width of one element of `dim_stack`'s outer dim. Caller guarantees
-// `dim_stack.size() >= 1` and `total_bit_width % outer_count == 0`.
-auto OuterElementBitWidth(
-    std::uint64_t total_bit_width, std::span<const PackedRange> dim_stack)
-    -> std::uint32_t {
-  if (dim_stack.empty()) {
-    throw InternalError(
-        "OuterElementBitWidth: empty dim stack (selector applied to a "
-        "scalar, which the frontend should reject)");
-  }
-  return static_cast<std::uint32_t>(
-      total_bit_width / dim_stack.front().ElementCount());
-}
-
-// A resolved sub-region of a packed value: where the region starts within the
-// source's flat storage, and how many bits it runs for. Reading a part and
-// designating one consume the same resolution, so where a selection lands is
-// derived once and the two sides cannot drift.
-struct PackedSelection {
-  PackedArray bit_offset;
-  std::uint32_t bit_width;
-};
-
-// Maps a declared-coordinate index onto the outer dimension's zero-based
-// position (LRM 11.5.1): a descending range subtracts its right (least-
-// significant) endpoint, an ascending range subtracts the index from it. The
-// arithmetic runs in the canonical 64-bit offset domain, so a caller's index of
-// any width and state domain composes without a storage-domain clash, and an
-// x / z index propagates to an out-of-range offset that reads the element's
-// default. A descending zero-based range is the identity.
-auto RebaseToZeroBased(const PackedArray& idx, const PackedRange& outer)
-    -> PackedArray {
-  const auto canon = Canonicalize(idx);
-  const bool descending = outer.left >= outer.right;
-  if (descending && outer.right == 0) {
-    return canon;
-  }
-  const auto right = PackedArray::FromInt(
-      outer.right, kOffsetBitWidth, kOffsetSigned, kOffsetFourState);
-  return descending ? canon - right : right - canon;
-}
-
-// Scales an outer-element position to a flat-bit offset. One outer element is
-// `element_bw` bits; when that is 1 (selecting the innermost dimension), the
-// position is already a bit offset. X/Z in the position propagates.
-auto ScaledOuterOffset(const PackedArray& outer_units, std::uint32_t element_bw)
-    -> PackedArray {
-  if (element_bw == 1U) {
-    return Canonicalize(outer_units);
-  }
-  return Canonicalize(outer_units) * PackedArray::FromInt(
-                                         static_cast<std::int64_t>(element_bw),
-                                         kOffsetBitWidth, kOffsetSigned,
-                                         kOffsetFourState);
-}
-
-auto ResolveElement(const PackedType& source, const PackedArray& idx)
-    -> PackedSelection {
-  const auto element_bw = OuterElementBitWidth(source.bit_width, source.dims);
-  const auto zero_based = RebaseToZeroBased(idx, source.dims.front());
-  return PackedSelection{
-      .bit_offset = ScaledOuterOffset(zero_based, element_bw),
-      .bit_width = element_bw};
-}
-
-// `anchor` is the SV-declared endpoint the slice hangs from; `shift` is how
-// many outer elements the low end sits below its rebased position. A constant
-// range and an indexed part-select whose width grows toward the MSB pass `shift
-// == 0` (the anchor rebases straight to the low end); an indexed part-select
-// growing toward the LSB passes `shift == count - 1`, so the anchor rebases to
-// the high end and the low end is `count - 1` below it (LRM 11.5.1). The
-// subtraction runs in the canonical offset domain, so an anchor of any width or
-// state domain composes and an x / z anchor propagates to an out-of-range read.
-auto ResolveSlice(
-    const PackedType& source, const PackedArray& anchor, std::uint32_t count,
-    const PackedArray& shift) -> PackedSelection {
-  const auto element_bw = OuterElementBitWidth(source.bit_width, source.dims);
-  const auto low =
-      RebaseToZeroBased(anchor, source.dims.front()) - Canonicalize(shift);
-  return PackedSelection{
-      .bit_offset = ScaledOuterOffset(low, element_bw),
-      .bit_width = count * element_bw};
-}
-
-struct RawRangeSelector {
-  PackedArray anchor;
-  std::uint32_t count;
-  PackedArray shift;
-};
-
-// Derive the (low-endpoint anchor, count, shift) the bit-level `ResolveSlice`
-// consumes from a raw range selector `(a, b, form)` and the outer dim's
-// orientation. A constant range `[l:r]` gives the oriented-low endpoint and the
-// element count; an indexed part-select's base and width give the anchor and a
-// direction-dependent shift (LRM 11.5.1). No coordinate is rebased here --
-// `ResolveSlice` rebases in the value's own X/Z-aware domain.
-auto ResolveRawRangeSelector(
-    const PackedRange& outer, const PackedArray& a, const PackedArray& b,
-    const PackedArray& form) -> RawRangeSelector {
-  const bool descending = outer.left >= outer.right;
-  if (static_cast<SliceForm>(form.ToInt64()) == SliceForm::kConstant) {
-    const std::int64_t l = a.ToInt64();
-    const std::int64_t r = b.ToInt64();
-    const std::int64_t lo_endpoint = l < r ? l : r;
-    const std::int64_t hi_endpoint = l < r ? r : l;
-    const std::int64_t low = descending ? lo_endpoint : hi_endpoint;
-    const auto count =
-        static_cast<std::uint32_t>((hi_endpoint - lo_endpoint) + 1);
-    return RawRangeSelector{
-        .anchor = PackedArray::Int(static_cast<std::int32_t>(low)),
-        .count = count,
-        .shift = PackedArray::Int(0)};
-  }
-  const auto count = static_cast<std::uint32_t>(b.ToInt64());
-  const bool extend_up = (static_cast<SliceForm>(form.ToInt64()) ==
-                          SliceForm::kIndexedUp) == descending;
-  const std::int64_t shift =
-      extend_up ? 0 : static_cast<std::int64_t>(count) - 1;
-  return RawRangeSelector{
-      .anchor = a,
-      .count = count,
-      .shift = PackedArray::Int(static_cast<std::int32_t>(shift))};
+  return static_cast<std::uint64_t>(width);
 }
 
 }  // namespace
 
-auto PackedArray::ElementRef(const PackedArray& idx, const PackedType& shape)
-    -> PackedArrayRef {
-  auto sel = ResolveElement(shape, idx);
-  return PackedArrayRef{*this, sel.bit_offset, sel.bit_width};
-}
-
-auto PackedArray::Element(const PackedArray& idx, const PackedType& shape) const
+auto PackedArray::Slice(const PackedArray& position, std::int64_t width) const
     -> PackedArray {
-  auto sel = ResolveElement(shape, idx);
-  return ExtractBits(sel.bit_offset, sel.bit_width);
+  const std::uint64_t run = RunWidth(width);
+  const std::optional<std::int64_t> start = ReadPosition(position);
+  if (!start) {
+    return Unreached(run, is_four_state_);
+  }
+  return ExtractRun(*start, run);
 }
 
-auto PackedArray::WithElement(
-    const PackedArray& idx, const PackedType& shape,
-    const PackedArray& value) const -> PackedArray {
-  PackedArray result{*this};
-  result.ElementRef(idx, shape) = value;
-  return result;
-}
-
-auto PackedArray::SliceRef(
-    const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedType& shape) -> PackedArrayRef {
-  const auto raw = ResolveRawRangeSelector(shape.dims.front(), a, b, form);
-  auto sel = ResolveSlice(shape, raw.anchor, raw.count, raw.shift);
-  return PackedArrayRef{*this, sel.bit_offset, sel.bit_width};
-}
-
-auto PackedArray::Slice(
-    const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedType& shape) const -> PackedArray {
-  const auto raw = ResolveRawRangeSelector(shape.dims.front(), a, b, form);
-  auto sel = ResolveSlice(shape, raw.anchor, raw.count, raw.shift);
-  return ExtractBits(sel.bit_offset, sel.bit_width);
+auto PackedArray::SliceRef(const PackedArray& position, std::int64_t width)
+    -> PackedArrayRef {
+  return PackedArrayRef{*this, ReadPosition(position), RunWidth(width)};
 }
 
 auto PackedArray::WithSlice(
-    const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedType& shape, const PackedArray& value) const -> PackedArray {
+    const PackedArray& position, std::int64_t width,
+    const PackedArray& value) const -> PackedArray {
   PackedArray result{*this};
-  result.SliceRef(a, b, form, shape) = value;
+  result.SliceRef(position, width) = value;
   return result;
 }
 
+// Defined with the value's own accessors: every select reads a position, and
+// here each accessor it calls is a load rather than a call.
+auto ReadPosition(const PackedArray& position) -> std::optional<std::int64_t> {
+  if (position.HasUnknown()) {
+    return std::nullopt;
+  }
+  const auto words = position.ValueWords();
+  const std::uint64_t width = position.BitWidth();
+  const bool negative =
+      position.IsSigned() &&
+      ((words[(width - 1U) / 64U] >> ((width - 1U) % 64U)) & 1U) != 0U;
+  // The value fits a machine word exactly when every bit above the low 63
+  // repeats its sign, which a narrower value does by being narrower.
+  const std::uint64_t low_word =
+      words[0] | (negative ? ~MaskForWidth(width) : std::uint64_t{0});
+  if (width >= 64U && ((low_word >> 63U) != 0U) != negative) {
+    return std::nullopt;
+  }
+  for (std::size_t i = 1; i < words.size(); ++i) {
+    const std::uint64_t expected =
+        negative ? ValidBitsMask(i, width) : std::uint64_t{0};
+    if (words[i] != expected) {
+      return std::nullopt;
+    }
+  }
+  const auto value = static_cast<std::int64_t>(low_word);
+  if (value < -kPositionLimit || value > kPositionLimit) {
+    return std::nullopt;
+  }
+  return value;
+}
+
+auto PackedArray::ToPosition(const PackedArray& index) -> PackedArray {
+  const std::optional<std::int64_t> named = ReadPosition(index);
+  if (!named) {
+    return PackedArray{64U, true, true};
+  }
+  return FromInt(*named, 64U, true, true);
+}
+
 PackedArrayRef::PackedArrayRef(
-    PackedArray& root, const PackedArray& bit_offset, std::uint32_t bit_width)
-    : root_(&root),
-      bit_offset_(Canonicalize(bit_offset)),
-      bit_width_(bit_width) {
+    PackedArray& root, std::optional<std::int64_t> start,
+    std::uint64_t bit_width)
+    : root_(&root), start_(start), bit_width_(bit_width) {
 }
 
 auto PackedArrayRef::ToOwned() const -> PackedArray {
-  return std::as_const(*root_).ExtractBits(bit_offset_, bit_width_);
+  if (!start_) {
+    return Unreached(bit_width_, root_->IsFourState());
+  }
+  return std::as_const(*root_).ExtractRun(*start_, bit_width_);
 }
 
 auto PackedArrayRef::operator=(const PackedArray& value) -> PackedArrayRef& {
-  root_->AssignSlice(bit_offset_, bit_width_, value);
+  if (start_) {
+    root_->AssignRun(*start_, bit_width_, value);
+  }
   return *this;
 }
 
-auto PackedArrayRef::ElementRef(
-    const PackedArray& idx, const PackedType& shape) const -> PackedArrayRef {
-  auto sel = ResolveElement(shape, idx);
-  return PackedArrayRef{*root_, bit_offset_ + sel.bit_offset, sel.bit_width};
-}
-
 auto PackedArrayRef::SliceRef(
-    const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const PackedType& shape) const -> PackedArrayRef {
-  const auto raw = ResolveRawRangeSelector(shape.dims.front(), a, b, form);
-  auto sel = ResolveSlice(shape, raw.anchor, raw.count, raw.shift);
-  return PackedArrayRef{*root_, bit_offset_ + sel.bit_offset, sel.bit_width};
+    const PackedArray& position, std::int64_t width) const -> PackedArrayRef {
+  const std::optional<std::int64_t> inner = ReadPosition(position);
+  std::optional<std::int64_t> start;
+  if (start_ && inner) {
+    start = *start_ + *inner;
+  }
+  return PackedArrayRef{*root_, start, RunWidth(width)};
 }
 
 auto PackedArray::operator<(const PackedArray& other) const -> PackedArray {

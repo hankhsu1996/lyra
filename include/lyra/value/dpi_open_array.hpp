@@ -11,6 +11,7 @@
 
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/unpacked_range.hpp"
 
 namespace lyra::value {
 

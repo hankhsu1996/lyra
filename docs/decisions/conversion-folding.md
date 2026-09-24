@@ -1,6 +1,10 @@
 # Conversion folding
 
-Date: 2026-06-19 Status: accepted
+Date: 2026-06-19 Status: superseded by [a-select-names-a-position](a-select-names-a-position.md) P3:
+its premise that the target folds a conversion of a constant was measured false in
+[a-constant-is-stated-not-computed](a-constant-is-stated-not-computed.md), so the builder that
+states an integral operation over constants states the constant instead. That a render inspects no
+operand to pick its form stands.
 
 ## Context
 

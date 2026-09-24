@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -30,14 +31,18 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_descriptor.hpp"
-#include "lyra/value/slice_selector.hpp"
 
 // HIR-to-MIR lowering for the three select families (`a[i]`, `a[hi:lo]`,
 // `s.field`). Each family has a read-side and a write-side entry point; a
 // select's meaning is independent of whether a process or a structural scope
-// encloses it, so each entry point is one template over the pass class. The
-// bodies fan into a single per-family `Build*` factory plus a per-family inner
-// helper that handles the wrapping decisions.
+// encloses it, so each entry point is one template over the pass class. Both
+// sides state the step a select takes the same way, so reading a part and
+// designating one cannot disagree about where it is.
+//
+// A select is written in the coordinates the declaration chose, and what it
+// hands the value below is the value's own numbering from zero: this is where
+// one becomes the other, because this is the layer that still knows which
+// declaration the coordinates belong to.
 //
 // Naming convention used here, matching the rest of HIR-to-MIR:
 //   - `Lower*` -- top-level HIR-to-MIR for a HIR construct, returns
@@ -46,17 +51,10 @@
 //     (or `diag::Result<mir::Expr>`). Does not commit unless documented.
 //   - `Wrap*`  -- transforms an existing node into another node; may commit
 //     intermediate steps as a side effect.
-//   - `Unfold*` -- projects HIR structure to MIR-shaped data without
-//     emitting a single node directly.
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-auto ElementAccessCallee(mir::ExprId receiver) -> mir::Direct {
-  return mir::Direct{
-      .target = support::BuiltinFn::kElement, .receiver = receiver};
-}
 
 auto ProjectedMemberAt(
     const PackedProjection& projection, base::ComponentIndex index)
@@ -65,6 +63,42 @@ auto ProjectedMemberAt(
     throw InternalError("ProjectedMemberAt: member index out of range");
   }
   return projection.members[index.value];
+}
+
+// The value a select's receiver holds, which is what numbers the select's
+// coordinates: the receiver itself, or the storage a cell it names stands for.
+auto ReceiverValueType(const mir::CompilationUnit& unit, mir::TypeId receiver)
+    -> mir::TypeId {
+  return mir::ValueTypeOf(unit, receiver);
+}
+
+// The read `step` takes from `receiver`: its value entry, answering at the
+// part's type.
+auto MakeStepRead(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const DescentStep& step, mir::ExprId receiver) -> mir::Expr {
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{.target = step.value_entry, .receiver = receiver},
+              .arguments = StepArguments(unit, block, step)},
+      .type = step.part_type};
+}
+
+// A run of a fixed count of parts: where it starts in the receiver's own
+// numbering, and how many parts it takes. A packed value's bit-select,
+// part-select and aggregate member, and an unpacked array's slice, are all this
+// one step.
+auto RunStep(mir::ExprId start, std::uint64_t count, mir::TypeId part_type)
+    -> DescentStep {
+  return DescentStep{
+      .value_entry = support::BuiltinFn::kSlice,
+      .part_entry = support::BuiltinFn::kSliceRef,
+      .position = std::nullopt,
+      .operands = {start},
+      .count = count,
+      .part_type = part_type};
 }
 
 // Read-side wrap that materialises a borrowed packed view into an owning value
@@ -124,142 +158,115 @@ auto WrapSliceToDeclaredType(
   return BuildValueConversion(unit, block, owned_id, final_type);
 }
 
-// Append whatever coordinate system the receiver's family takes from its
-// static type rather than from the value, as the one description that type has:
-// an unpacked array's declared range, or a packed type's whole declared shape,
-// because one packed select consumes a dimension out of a stack and which bits
-// that reaches is a fact of the declaration rather than of any value of it. A
-// dynamic array is zero-based and states nothing.
-auto AppendReceiverCoordinates(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId base_type,
-    std::vector<mir::ExprId>& args) -> void {
-  const mir::TypeId value_type =
-      mir::ValueTypeOf(unit_lowerer.Unit(), base_type);
-  if (mir::HasTypeDescriptor(unit_lowerer.Unit(), value_type)) {
-    args.push_back(
-        mir::BuildTypeDescriptorRef(unit_lowerer.Unit(), block, value_type));
-  }
-}
-
-// A selector's shape crosses to the selected value as the raw integer that
-// value reads it back as, so the enum naming the shapes is the one place the
-// mapping is stated.
-auto BuildSliceFormLiteral(
-    mir::CompilationUnit& unit, mir::Block& block, value::SliceForm form)
-    -> mir::ExprId {
-  return BuildIntLiteral(unit, block, static_cast<std::int64_t>(form));
-}
-
-// `arr[hi:lo]` / `arr[base+:w]` / `arr[base-:w]` range select, lowered to a raw
-// selector `(a, b, form)`: a constant range passes its two source endpoints; an
-// indexed part-select passes its base and (constant) width, with the direction
-// in `form`. No count, offset, endpoint ordering, or rebase is computed here;
-// the selected value resolves the ordinal window against the coordinate system
-// the operands after these carry.
+// LRM 7.4.5 / 7.4.6 / 7.10.1 / 11.5.1 `arr[hi:lo]`, `arr[base+:w]` and
+// `arr[base-:w]`, as the step they take into the receiver.
+//
+// A packed value and a fixed-size or dynamic array take a run of a fixed
+// count, which the select's own result type states, starting at the part of
+// the run lowest in the receiver's numbering. For a constant range that is the
+// bound the declaration's direction puts there -- the right bound of a packed
+// value, whose numbering starts at its least significant bit, and the left
+// bound of an unpacked one, whose numbering starts at its left (the front end
+// has already held the range to the declaration's direction). An indexed
+// select counts `w` from its base; where positions grow opposite to the way the
+// select counts, the run starts `w - 1` steps below the base.
+//
+// A queue's slice is bounded by two positions instead, which the running
+// program can move (`$`, LRM 7.10.1), so its count is the queue's to work out.
 template <typename LowerOne>
-auto UnfoldRangeSelectOperands(
+auto RangeStep(
     UnitLowerer& unit_lowerer, mir::Block& block,
-    const hir::RangeBounds& bounds, mir::TypeId base_type, LowerOne lower_one)
-    -> diag::Result<std::vector<mir::ExprId>> {
-  struct RawSelector {
-    mir::ExprId a;
-    mir::ExprId b;
-    value::SliceForm form = value::SliceForm::kConstant;
+    const hir::RangeBounds& bounds, mir::TypeId receiver_type,
+    mir::TypeId result_type, LowerOne lower_one) -> diag::Result<DescentStep> {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::TypeId value_type = ReceiverValueType(unit, receiver_type);
+  const mir::Type& receiver = unit.types.Get(value_type);
+
+  if (receiver.Is<mir::QueueType>()) {
+    struct Bounds {
+      mir::ExprId lo;
+      mir::ExprId hi;
+    };
+    // `base +: w` spans `base` through `base + w - 1`, and `base -: w` spans
+    // `base - w + 1` through `base`, both in positions, since a queue is
+    // declared zero-based.
+    const auto span = [&](hir::ExprId base, hir::ExprId width,
+                          bool up) -> diag::Result<Bounds> {
+      auto base_id = lower_one(base);
+      if (!base_id) return std::unexpected(std::move(base_id.error()));
+      auto width_id = lower_one(width);
+      if (!width_id) return std::unexpected(std::move(width_id.error()));
+      const mir::ExprId other =
+          BuildSpanEnd(unit, block, *base_id, *width_id, up);
+      return up ? Bounds{.lo = *base_id, .hi = other}
+                : Bounds{.lo = other, .hi = *base_id};
+    };
+    auto queue_bounds = std::visit(
+        Overloaded{
+            [&](const hir::RangeConstantBounds& c) -> diag::Result<Bounds> {
+              auto lo = lower_one(c.left_bound);
+              if (!lo) return std::unexpected(std::move(lo.error()));
+              auto hi = lower_one(c.right_bound);
+              if (!hi) return std::unexpected(std::move(hi.error()));
+              return Bounds{.lo = *lo, .hi = *hi};
+            },
+            [&](const hir::RangeIndexedUpBounds& c) -> diag::Result<Bounds> {
+              return span(c.base_index, c.width, true);
+            },
+            [&](const hir::RangeIndexedDownBounds& c) -> diag::Result<Bounds> {
+              return span(c.base_index, c.width, false);
+            },
+        },
+        bounds);
+    if (!queue_bounds) return std::unexpected(std::move(queue_bounds.error()));
+    return DescentStep{
+        .value_entry = support::BuiltinFn::kSlice,
+        .part_entry = support::BuiltinFn::kSliceRef,
+        .position = std::nullopt,
+        .operands = {queue_bounds->lo, queue_bounds->hi},
+        .count = std::nullopt,
+        .part_type = result_type};
+  }
+
+  const PositionMap map = PositionMapOf(unit, value_type);
+  // How many positions the run covers, which the select's own result type
+  // states: its bits, or its elements.
+  const mir::Type& result = unit.types.Get(result_type);
+  const std::uint64_t run = result.IsIntegralPacked()
+                                ? result.PackedShape().BitWidth()
+                                : result.Get<mir::UnpackedArrayType>().Size();
+  // The shift from the base's own position to the run's lowest when the run
+  // counts toward lower positions: back over every position the run covers
+  // beyond the base's own step.
+  const std::int64_t below = map.step - static_cast<std::int64_t>(run);
+  // The index the run's lowest position is named by, and how far below that
+  // index's own position the run starts.
+  struct Start {
+    hir::ExprId index;
+    std::int64_t shift = 0;
   };
-  auto raw_or = std::visit(
+  const Start start = std::visit(
       Overloaded{
-          [&](const hir::RangeConstantBounds& c) -> diag::Result<RawSelector> {
-            auto l = lower_one(c.left_bound);
-            if (!l) return std::unexpected(std::move(l.error()));
-            auto r = lower_one(c.right_bound);
-            if (!r) return std::unexpected(std::move(r.error()));
-            return RawSelector{
-                .a = *l, .b = *r, .form = value::SliceForm::kConstant};
+          [&](const hir::RangeConstantBounds& c) {
+            return Start{
+                .index = map.from_right ? c.right_bound : c.left_bound,
+                .shift = 0};
           },
-          [&](const hir::RangeIndexedUpBounds& c) -> diag::Result<RawSelector> {
-            auto base = lower_one(c.base_index);
-            if (!base) return std::unexpected(std::move(base.error()));
-            auto w = lower_one(c.width);
-            if (!w) return std::unexpected(std::move(w.error()));
-            return RawSelector{
-                .a = *base, .b = *w, .form = value::SliceForm::kIndexedUp};
+          [&](const hir::RangeIndexedUpBounds& c) {
+            return Start{
+                .index = c.base_index, .shift = map.reversed ? below : 0};
           },
-          [&](const hir::RangeIndexedDownBounds& c)
-              -> diag::Result<RawSelector> {
-            auto base = lower_one(c.base_index);
-            if (!base) return std::unexpected(std::move(base.error()));
-            auto w = lower_one(c.width);
-            if (!w) return std::unexpected(std::move(w.error()));
-            return RawSelector{
-                .a = *base, .b = *w, .form = value::SliceForm::kIndexedDown};
+          [&](const hir::RangeIndexedDownBounds& c) {
+            return Start{
+                .index = c.base_index, .shift = map.reversed ? 0 : below};
           },
       },
       bounds);
-  if (!raw_or) return std::unexpected(std::move(raw_or.error()));
-  const auto form_id =
-      BuildSliceFormLiteral(unit_lowerer.Unit(), block, raw_or->form);
-  std::vector<mir::ExprId> operands = {raw_or->a, raw_or->b, form_id};
-  AppendReceiverCoordinates(unit_lowerer, block, base_type, operands);
-  return operands;
-}
-
-// A range select read: the window operands against a receiver.
-template <typename LowerOne>
-auto BuildRangeSliceCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block,
-    const hir::RangeBounds& bounds, mir::ExprId base_id,
-    mir::TypeId result_type, LowerOne lower_one) -> diag::Result<mir::Expr> {
-  auto operands_or = UnfoldRangeSelectOperands(
-      unit_lowerer, block, bounds, block.exprs.Get(base_id).type, lower_one);
-  if (!operands_or) return std::unexpected(std::move(operands_or.error()));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kSlice,
-                      .receiver = base_id},
-              .arguments = *std::move(operands_or)},
-      .type = result_type};
-}
-
-// LRM 7.2.1 packed struct / union field-as-slice. The field's
-// `(bit_offset, bit_width)` projects to the same packed-path slice shape a
-// range-select emits, so the runtime sees one slice form regardless of
-// whether the source was `s.field` or `s[hi:lo]`.
-auto UnfoldFieldSliceOperands(
-    UnitLowerer& unit_lowerer, mir::Block& block, std::uint32_t bit_offset,
-    std::uint32_t bit_width, mir::TypeId base_type)
-    -> std::vector<mir::ExprId> {
-  const auto offset_id = BuildIntLiteral(
-      unit_lowerer.Unit(), block, static_cast<std::int64_t>(bit_offset));
-  const auto width_id = BuildIntLiteral(
-      unit_lowerer.Unit(), block, static_cast<std::int64_t>(bit_width));
-  // A field occupies bits `[offset +: width]`, so it crosses as the indexed-up
-  // part-select it is; the value resolves the bit window.
-  const auto form_id = BuildSliceFormLiteral(
-      unit_lowerer.Unit(), block, value::SliceForm::kIndexedUp);
-  std::vector<mir::ExprId> operands = {offset_id, width_id, form_id};
-  AppendReceiverCoordinates(unit_lowerer, block, base_type, operands);
-  return operands;
-}
-
-auto BuildFieldSliceCallExpr(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
-    std::uint32_t bit_offset, std::uint32_t bit_width, mir::TypeId result_type)
-    -> mir::Expr {
-  std::vector<mir::ExprId> operands = UnfoldFieldSliceOperands(
-      unit_lowerer, block, bit_offset, bit_width,
-      block.exprs.Get(base_id).type);
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kSlice,
-                      .receiver = base_id},
-              .arguments = std::move(operands)},
-      .type = result_type};
+  auto index = lower_one(start.index);
+  if (!index) return std::unexpected(std::move(index.error()));
+  return RunStep(
+      WrapIndexAsPosition(unit, block, map, *index, start.shift), run,
+      result_type);
 }
 
 // The value `base_id` names, guarded by the tag naming member `index` (LRM
@@ -311,34 +318,6 @@ auto GuardedSubject(
       BuildTagGuard(unit_lowerer, block, base_id, projection, index, message));
 }
 
-// Per-kind inner helpers that combine the factory call with the
-// read/write-side wrapping. RHS readers wrap with `WrapPackedAsOwned`
-// (no-op for queue / AA); LHS writers leave the borrowed-view chain
-// intact for `operator=` to consume.
-
-auto LowerElementSelectInner(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
-    mir::ExprId idx_id, mir::TypeId result_type, bool wrap_packed_as_owned)
-    -> mir::Expr {
-  mir::Expr access_call = BuildElementAccessCallExpr(
-      unit_lowerer, block, base_id, idx_id, result_type);
-  if (!wrap_packed_as_owned) return access_call;
-  return WrapPackedAsOwned(
-      unit_lowerer.Unit(), block, std::move(access_call), result_type);
-}
-
-template <typename LowerOne>
-auto LowerRangeSelectInner(
-    UnitLowerer& unit_lowerer, mir::Block& block,
-    const hir::RangeBounds& bounds, mir::ExprId base_id,
-    mir::TypeId result_type, LowerOne lower_one) -> diag::Result<mir::Expr> {
-  auto slice_or = BuildRangeSliceCallExpr(
-      unit_lowerer, block, bounds, base_id, result_type, lower_one);
-  if (!slice_or) return std::unexpected(std::move(slice_or.error()));
-  return WrapPackedAsOwned(
-      unit_lowerer.Unit(), block, *std::move(slice_or), result_type);
-}
-
 // Packed-struct / union field access (LRM 7.2.1: a field "can be selected as if
 // it were a packed array"). A read materialises the part-select at its natural
 // type, then converts to the field's declared type, so the field's signedness
@@ -357,12 +336,9 @@ auto LowerMemberAccessInner(
       unit_lowerer, block, base_id, projection, index,
       "read of a tagged union member inconsistent with the current tag "
       "(LRM 11.9)");
-  mir::Expr slice_call = BuildFieldSliceCallExpr(
-      unit_lowerer, block, subject,
-      static_cast<std::uint32_t>(member.bit_offset),
-      static_cast<std::uint32_t>(member.bit_width), slice_type);
-  mir::Expr owned = WrapPackedAsOwned(
-      unit_lowerer.Unit(), block, std::move(slice_call), slice_type);
+  mir::Expr owned = BuildPackedRunRead(
+      unit_lowerer, block, subject, member.bit_offset, member.bit_width,
+      slice_type);
   return WrapSliceToDeclaredType(
       unit_lowerer.Unit(), block, std::move(owned), result_type);
 }
@@ -387,41 +363,55 @@ auto UnpackedMemberReach(
 
 }  // namespace
 
-// The coordinates one element step descends by: the source index, then
-// whatever the value's family takes from its static type rather than from the
-// value. The same list the read-side access passes, because reading a part and
-// designating one name the same step.
-auto ElementStepOperands(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId base_type,
-    mir::ExprId idx_id) -> std::vector<mir::ExprId> {
-  std::vector<mir::ExprId> operands = {idx_id};
-  AppendReceiverCoordinates(unit_lowerer, block, base_type, operands);
-  return operands;
+auto ElementStep(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId receiver_type,
+    mir::ExprId idx_id, mir::TypeId part_type) -> DescentStep {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::TypeId value_type = ReceiverValueType(unit, receiver_type);
+  const mir::Type& receiver = unit.types.Get(value_type);
+  // An associative array is reached by the key the source wrote, which is a
+  // value of the index type rather than a place in any order (LRM 7.8).
+  if (receiver.Is<mir::AssociativeArrayType>()) {
+    return DescentStep{
+        .value_entry = support::BuiltinFn::kElement,
+        .part_entry = support::BuiltinFn::kElementRef,
+        .position = std::nullopt,
+        .operands = {idx_id},
+        .count = std::nullopt,
+        .part_type = part_type};
+  }
+  const PositionMap map = PositionMapOf(unit, value_type);
+  const mir::ExprId position = WrapIndexAsPosition(unit, block, map, idx_id, 0);
+  if (receiver.IsIntegralPacked()) {
+    return RunStep(position, static_cast<std::uint64_t>(map.step), part_type);
+  }
+  return DescentStep{
+      .value_entry = support::BuiltinFn::kElement,
+      .part_entry = support::BuiltinFn::kElementRef,
+      .position = std::nullopt,
+      .operands = {position},
+      .count = std::nullopt,
+      .part_type = part_type};
 }
 
 auto BuildElementAccessCallExpr(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr {
-  std::vector<mir::ExprId> args = {idx_id};
-  AppendReceiverCoordinates(
-      unit_lowerer, block, block.exprs.Get(base_id).type, args);
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = ElementAccessCallee(base_id),
-              .arguments = std::move(args)},
-      .type = result_type};
+  const DescentStep step = ElementStep(
+      unit_lowerer, block, block.exprs.Get(base_id).type, idx_id, result_type);
+  return MakeStepRead(unit_lowerer.Unit(), block, step, base_id);
 }
 
 auto BuildPackedRunRead(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
     std::uint64_t bit_offset, std::uint64_t bit_width, mir::TypeId result_type)
     -> mir::Expr {
-  mir::Expr run = BuildFieldSliceCallExpr(
-      unit_lowerer, block, base, static_cast<std::uint32_t>(bit_offset),
-      static_cast<std::uint32_t>(bit_width), result_type);
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const DescentStep step = RunStep(
+      BuildConstantPosition(unit, block, static_cast<std::int64_t>(bit_offset)),
+      bit_width, result_type);
   return WrapPackedAsOwned(
-      unit_lowerer.Unit(), block, std::move(run), result_type);
+      unit, block, MakeStepRead(unit, block, step, base), result_type);
 }
 
 auto BuildPackedMemberRead(
@@ -476,18 +466,15 @@ auto LowerHirElementSelectExpr(
 
   const hir::Type& hir_base_ty = unit_lowerer.Hir().types.Get(hir_base.type);
   // LRM 6.16: indexed character read `s[i]` is the element-value access, the
-  // read-side dual of the element-reference write. It joins the generic
-  // element-access path (the explicit `getc` / `putc` methods are a separate
-  // lowering); the value-vs-reference pair mirrors a packed array element.
+  // read-side dual of the element-reference write. It answers with the
+  // character itself, so there is no view to materialise.
+  mir::Expr access_call = BuildElementAccessCallExpr(
+      unit_lowerer, block, base_id, idx_id, result_type);
   if (hir_base_ty.Is<hir::StringType>()) {
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee = ElementAccessCallee(base_id), .arguments = {idx_id}},
-        .type = result_type};
+    return access_call;
   }
-  return LowerElementSelectInner(
-      unit_lowerer, block, base_id, idx_id, result_type, true);
+  return WrapPackedAsOwned(
+      unit_lowerer.Unit(), block, std::move(access_call), result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -508,14 +495,18 @@ auto LowerHirRangeSelectExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     return block.exprs.Add(*std::move(lowered));
   };
-  return LowerRangeSelectInner(
-      unit_lowerer, block, sel.bounds, base_id, result_type, lower_one);
+  auto step = RangeStep(
+      unit_lowerer, block, sel.bounds, block.exprs.Get(base_id).type,
+      result_type, lower_one);
+  if (!step) return std::unexpected(std::move(step.error()));
+  return WrapPackedAsOwned(
+      unit_lowerer.Unit(), block,
+      MakeStepRead(unit_lowerer.Unit(), block, *step, base_id), result_type);
 }
 
 // LRM 7.2.1: packed struct / union field access "can be selected as if it
-// were a packed array". HIR -> MIR resolves the field-table index to a
-// concrete `(offset, count)` slice -- the same MIR shape `s[hi:lo]`
-// produces.
+// were a packed array". HIR -> MIR resolves the field-table index to the run of
+// bits the field occupies -- the same MIR shape `s[hi:lo]` produces.
 template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
@@ -576,13 +567,8 @@ auto LowerHirElementSelectExprLhs(
   const mir::TypeId container =
       TargetValueType(unit_lowerer.Unit(), block, *base_or);
   return DescendInto(
-      *std::move(base_or), DescentStep{
-                               .value_entry = support::BuiltinFn::kElement,
-                               .part_entry = support::BuiltinFn::kElementRef,
-                               .position = std::nullopt,
-                               .operands = ElementStepOperands(
-                                   unit_lowerer, block, container, idx_id),
-                               .part_type = result_type});
+      *std::move(base_or),
+      ElementStep(unit_lowerer, block, container, idx_id, result_type));
 }
 
 template <ExprLowerer Lowerer>
@@ -604,16 +590,10 @@ auto LowerHirRangeSelectExprLhs(
   };
   const mir::TypeId container =
       TargetValueType(unit_lowerer.Unit(), block, *base_or);
-  auto operands_or = UnfoldRangeSelectOperands(
-      unit_lowerer, block, sel.bounds, container, lower_one);
-  if (!operands_or) return std::unexpected(std::move(operands_or.error()));
-  return DescendInto(
-      *std::move(base_or), DescentStep{
-                               .value_entry = support::BuiltinFn::kSlice,
-                               .part_entry = support::BuiltinFn::kSliceRef,
-                               .position = std::nullopt,
-                               .operands = *std::move(operands_or),
-                               .part_type = result_type});
+  auto step = RangeStep(
+      unit_lowerer, block, sel.bounds, container, result_type, lower_one);
+  if (!step) return std::unexpected(std::move(step.error()));
+  return DescendInto(*std::move(base_or), *std::move(step));
 }
 
 template <ExprLowerer Lowerer>
@@ -639,6 +619,7 @@ auto LowerHirMemberAccessExprLhs(
                                  .part_entry = support::BuiltinFn::kPartRef,
                                  .position = sel.field_index,
                                  .operands = {},
+                                 .count = std::nullopt,
                                  .part_type = result_type});
   }
   const PackedProjection projection =
@@ -658,18 +639,13 @@ auto LowerHirMemberAccessExprLhs(
         "(LRM 11.9)"));
     block.AppendStmt(mir::ExprStmt{.expr = guard});
   }
-  const mir::TypeId container =
-      TargetValueType(unit_lowerer.Unit(), block, *base_or);
-  auto operands = UnfoldFieldSliceOperands(
-      unit_lowerer, block, static_cast<std::uint32_t>(member.bit_offset),
-      static_cast<std::uint32_t>(member.bit_width), container);
   return DescendInto(
-      *std::move(base_or), DescentStep{
-                               .value_entry = support::BuiltinFn::kSlice,
-                               .part_entry = support::BuiltinFn::kSliceRef,
-                               .position = std::nullopt,
-                               .operands = std::move(operands),
-                               .part_type = result_type});
+      *std::move(base_or),
+      RunStep(
+          BuildConstantPosition(
+              unit_lowerer.Unit(), block,
+              static_cast<std::int64_t>(member.bit_offset)),
+          member.bit_width, result_type));
 }
 
 // LRM 8.4: a class property write reaches the object through the handle. The

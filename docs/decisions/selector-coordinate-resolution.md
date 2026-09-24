@@ -6,7 +6,12 @@
 
 ## Status
 
-Accepted
+Superseded. Decision 1 went first, to
+[unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) and
+[packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md); decisions 2 and 3, and the
+rejected alternative that resolved a coordinate at lowering, are reversed by
+[a-select-names-a-position](a-select-names-a-position.md), which answers each of the reasons given
+below. Decision 4 stands.
 
 ## Model
 

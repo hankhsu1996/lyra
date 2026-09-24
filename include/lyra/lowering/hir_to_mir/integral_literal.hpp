@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -18,19 +20,26 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, std::int64_t value)
     -> mir::ExprId;
 
-// An integral constant, as the value-layer call that builds it. A packed value
-// is a runtime object with no literal form of its own, so what stands for one
-// in MIR is the factory that produces it: `PackedArray::FromInt` where the bits
-// fit a machine integer carrier, `PackedArray::FromWords` where they do not --
-// a value past 64 bits, or one bearing X or Z. Which factory a constant needs
-// follows from its own bits, so this is the one place that reads them; every
-// consumer downstream sees an ordinary call.
-//
-// The result's declared representation reaches the factory as a shape operand,
-// so the same call serves any width, signedness, state domain, and rank.
+// An integral constant at `type`: the unit holds it once, among the constants
+// it was written with, and an occurrence names that entry. The bits are brought
+// to the canonical form the pool keys on first, so two spellings of one value
+// are one entry.
+[[nodiscard]] auto MakeIntegralLiteral(
+    const mir::CompilationUnit& unit, mir::TypeId type,
+    const mir::IntegralConstant& value) -> mir::Expr;
+
+// The same, added to `block`.
 [[nodiscard]] auto BuildIntegralLiteral(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
     const mir::IntegralConstant& value) -> mir::ExprId;
+
+// What a builder states for an operation it has built: the constant the
+// operation folds to, where every operand was one, and the operation itself
+// otherwise.
+[[nodiscard]] auto FoldedOr(
+    const mir::CompilationUnit& unit,
+    const std::optional<mir::IntegralConstant>& folded, mir::Expr unfolded)
+    -> mir::Expr;
 
 // 2-state signed 32-bit constant, typed `int` (LRM 6.11.1).
 [[nodiscard]] auto BuildIntLiteral(

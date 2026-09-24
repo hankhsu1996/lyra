@@ -191,11 +191,21 @@ struct IsMemoryLevel<value::UnpackedArray<U>> : std::true_type {};
   return count;
 }
 
+// The position a memory address names in one level. A memory file states its
+// addresses in the coordinates the memory was declared with (LRM 21.4), so this
+// is where they are read against the declared range.
+[[nodiscard]] inline auto AddressPosition(
+    const value::UnpackedRange& range, std::int64_t address)
+    -> value::PackedArray {
+  return value::PackedArray::FromInt(
+      range.ToOrdinal(address), 64U, true, false);
+}
+
 // Resolves a row-major leaf ordinal within one subtree to its storage cell,
 // mapping each dimension's ascending-address position through its declared
 // range so a descending declaration still reads low address first. The load
-// path takes a mutable cell (`ElementRef`); the dump path reads a const cell
-// (`Element`); the ordinal decode is identical.
+// path takes a mutable cell and the dump path a const one; the ordinal decode
+// is identical.
 template <typename T>
 [[nodiscard]] auto LeafByLinearIndex(
     T& node, std::span<const value::UnpackedRange> dims, std::size_t linear)
@@ -209,9 +219,7 @@ template <typename T>
     const std::int64_t address =
         range.Low() + static_cast<std::int64_t>(linear / inner);
     return LeafByLinearIndex(
-        node.ElementRef(
-            value::PackedArray::Int(static_cast<std::int32_t>(address)), range),
-        rest, linear % inner);
+        node.ElementRef(AddressPosition(range, address)), rest, linear % inner);
   }
 }
 
@@ -228,9 +236,7 @@ template <typename T>
     const std::int64_t address =
         range.Low() + static_cast<std::int64_t>(linear / inner);
     return LeafByLinearIndexConst(
-        node.Element(
-            value::PackedArray::Int(static_cast<std::int32_t>(address)), range),
-        rest, linear % inner);
+        node.Element(AddressPosition(range, address)), rest, linear % inner);
   }
 }
 
@@ -274,8 +280,7 @@ void ReadMemMultidim(
       detail::InnerLeafCount(inner), start, finish,
       [&dest, addressed, inner](
           std::int64_t top, std::size_t ordinal) -> value::PackedArray& {
-        auto& slot = dest.ElementRef(
-            value::PackedArray::Int(static_cast<std::int32_t>(top)), addressed);
+        auto& slot = dest.ElementRef(detail::AddressPosition(addressed, top));
         return detail::LeafByLinearIndex(slot, inner, ordinal);
       });
 }
@@ -294,8 +299,7 @@ void WriteMemMultidim(
       detail::InnerLeafCount(inner), start, finish,
       [&src, addressed, inner](
           std::int64_t top, std::size_t ordinal) -> const value::PackedArray& {
-        const auto& slot = src.Element(
-            value::PackedArray::Int(static_cast<std::int32_t>(top)), addressed);
+        const auto& slot = src.Element(detail::AddressPosition(addressed, top));
         return detail::LeafByLinearIndexConst(slot, inner, ordinal);
       });
 }

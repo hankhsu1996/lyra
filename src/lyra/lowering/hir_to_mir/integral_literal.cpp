@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -55,9 +56,9 @@ auto BuildMachineIntLiteral(
           .type = unit.builtins.machine_int64});
 }
 
-auto BuildIntegralLiteral(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
-    const mir::IntegralConstant& value) -> mir::ExprId {
+auto MakeIntegralLiteral(
+    const mir::CompilationUnit& unit, mir::TypeId type,
+    const mir::IntegralConstant& value) -> mir::Expr {
   const mir::PackedArrayType& shape = unit.types.Get(type).PackedShape();
   const bool is_four_state =
       shape.state_kind == mir::IntegralStateKind::kFourState;
@@ -65,7 +66,7 @@ auto BuildIntegralLiteral(
       value.state_words, [](std::uint64_t word) { return word != 0U; });
   if (has_unknown && !is_four_state) {
     throw InternalError(
-        "BuildIntegralLiteral: a 2-state type cannot carry an X or Z bit");
+        "MakeIntegralLiteral: a 2-state type cannot carry an X or Z bit");
   }
   const std::uint64_t width = shape.BitWidth();
   const mir::IntegralConstantId constant = unit.integral_constants.Intern(
@@ -75,12 +76,27 @@ auto BuildIntegralLiteral(
               .value_words = CanonicalPlane(value.value_words, width),
               .state_words = CanonicalStatePlane(
                   value.state_words, width, is_four_state)}});
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::ReferenceExpr{
-                  .target = mir::IntegralConstantRef{.constant = constant}},
-          .type = type});
+  return mir::Expr{
+      .data =
+          mir::ReferenceExpr{
+              .target = mir::IntegralConstantRef{.constant = constant}},
+      .type = type};
+}
+
+auto BuildIntegralLiteral(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
+    const mir::IntegralConstant& value) -> mir::ExprId {
+  return block.exprs.Add(MakeIntegralLiteral(unit, type, value));
+}
+
+auto FoldedOr(
+    const mir::CompilationUnit& unit,
+    const std::optional<mir::IntegralConstant>& folded, mir::Expr unfolded)
+    -> mir::Expr {
+  if (!folded) {
+    return unfolded;
+  }
+  return MakeIntegralLiteral(unit, unfolded.type, *folded);
 }
 
 auto BuildIntLiteral(

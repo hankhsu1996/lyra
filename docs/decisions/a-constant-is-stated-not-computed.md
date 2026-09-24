@@ -1,6 +1,10 @@
 # A constant is stated by the program, not computed while it runs
 
-Date: 2026-09-17 Status: accepted
+Date: 2026-09-17 Status: accepted. D4's example of a select taking its receiver's coordinate system
+as an operand no longer holds: [a-select-names-a-position](a-select-names-a-position.md) reads that
+system where the select is lowered, and the operand pattern D4 states stands for the conversions and
+factories that still take one. That record's P3 is this entry carried one step further: an integral
+operation over constants is itself a constant of the unit.
 
 ## Context
 

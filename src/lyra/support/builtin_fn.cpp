@@ -1028,6 +1028,9 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kConvertFrom:
       return {
           .name = "convert_from", .declaration = StaticFactory{"ConvertFrom"}};
+    case BuiltinFn::kToPosition:
+      return {
+          .name = "to_position", .declaration = StaticFactory{"ToPosition"}};
     case BuiltinFn::kFromPackedArray:
       return {
           .name = "from_packed_array",

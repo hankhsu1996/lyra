@@ -119,8 +119,11 @@ what the construct means.
 
 - Control-flow graphs, basic blocks, branches, or phi nodes.
 - Storage placement, offsets, or memory layout.
-- The resolution of a selector's declared coordinate to a storage position -- the declared-range
-  rebase. A select carries the source-level selector; the selected value resolves the coordinate.
+- A source language's coordinate system: a declared range, its direction, which part-select form the
+  source wrote. HIR-to-MIR reads it, and a select states where it lands in the selected value's own
+  numbering -- a bit from a packed value's least significant end, an element from an unpacked
+  array's left -- and how many parts a fixed-size run takes. That numbering is the value's, not a
+  storage layout, the way an LLVM `extractvalue` index or a shift amount is.
 - Scheduling, dirty tracking, or wakeup filtering.
 - The frontend's symbol or string identity. MIR carries only MIR's own ids.
 - SystemVerilog source-level syntactic sugar. Sugar collapses to MIR's primitives at HIR-to-MIR.
@@ -280,11 +283,11 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   callable boundary; a language whose blocks and whose function bodies are one construct has to let
   `return` pass through them, and MIR, where they are two constructs, does not.)
 - Storage offsets, byte layouts, or alignment data in MIR nodes. (Storage placement belongs to LIR.)
-- A select whose selector is a resolved storage position rather than the source-level coordinate: a
-  lowering that rebases a declared index against the container's range (`i - left`, `left - i`, an
-  indexed-part-select width offset) and hands MIR the resulting position. The rebase is a storage
-  computation the selected value owns; a select carries the source selector. (Coordinate resolution
-  is the value's, not a synthesized MIR operator's.)
+- A select carrying a source language's coordinate system for a consumer to resolve: a declared
+  range or shape beside the index, a direction, which part-select form was written. Every consumer
+  would then work out the same position again, on every evaluation where the consumer is the
+  runtime, and the form is SystemVerilog syntax reaching past HIR-to-MIR. (SV does not shape MIR's
+  vocabulary; a select states a position in the value's own numbering.)
 - A secondary hierarchy or identity system that shadows MIR ids (coordinate tuples, ordinals, symbol
   paths used as identity). (Identity is owned by the layer; programming languages do not have two
   parallel name systems for the same thing.)

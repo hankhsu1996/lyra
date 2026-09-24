@@ -937,24 +937,18 @@ auto lyra_rt_packed_reduction_nand(const void* value) -> void*;
 auto lyra_rt_packed_reduction_nor(const void* value) -> void*;
 auto lyra_rt_packed_reduction_xnor(const void* value) -> void*;
 auto lyra_rt_packed_to_owned(const void* value) -> void*;
-// Positional access (LRM 11.5.1). `element` copies the bit-select / element
-// out; `with_element` returns a copy with that element replaced -- the
-// functional write the execution backend uses because it cannot mutate a packed
-// value in place. Both state the receiver's declared shape through `shape`,
-// because which bits a coordinate reaches is decided by how the declaration
-// divides the value's bits.
-auto lyra_rt_packed_element(
-    const void* value, const void* index, const void* shape) -> void*;
-auto lyra_rt_packed_with_element(
-    const void* value, const void* index, const void* shape,
-    const void* replacement) -> void*;
-// A part-select states the same shape, and its bounds name a coordinate in it.
+// A run of `width` bits from `position` (LRM 11.5.1): `slice` copies it out,
+// and `with_slice` returns a copy with it replaced -- the functional write the
+// execution backend uses because it cannot mutate a packed value in place. A
+// bit-select and a packed aggregate's member are the same run, one bit or one
+// member wide.
 auto lyra_rt_packed_slice(
-    const void* value, const void* a, const void* b, const void* form,
-    const void* shape) -> void*;
+    const void* value, const void* position, std::int64_t width) -> void*;
 auto lyra_rt_packed_with_slice(
-    const void* value, const void* a, const void* b, const void* form,
-    const void* shape, const void* replacement) -> void*;
+    const void* value, const void* position, std::int64_t width,
+    const void* replacement) -> void*;
+// The position an index names, as the value position arithmetic is done in.
+auto lyra_rt_packed_to_position(const void* index) -> void*;
 
 auto lyra_rt_string_from_packed_array(const void* bits) -> void*;
 // LRM 21.3.4.3: an unpacked array of byte read as text, in element order.
@@ -1289,9 +1283,9 @@ auto lyra_rt_dynarray_with_element(
     const void* array, const void* index, void* value) -> void*;
 auto lyra_rt_dynarray_delete(const void* array) -> void*;
 auto lyra_rt_dynarray_slice(
-    const void* array, const void* a, const void* b, const void* form) -> void*;
+    const void* array, const void* start, std::int64_t count) -> void*;
 auto lyra_rt_dynarray_with_slice(
-    const void* array, const void* a, const void* b, const void* form,
+    const void* array, const void* start, std::int64_t count,
     const void* replacement) -> void*;
 auto lyra_rt_dynarray_size(const void* array) -> void*;
 auto lyra_rt_dynarray_eq(const void* lhs, const void* rhs) -> void*;
@@ -1306,10 +1300,9 @@ auto lyra_rt_dynarray_value_cell_alloc() -> void*;
 void lyra_rt_dynarray_value_cell_store(void* cell, const void* value);
 auto lyra_rt_dynarray_value_cell_load(const void* cell) -> void*;
 
-// A fixed-size unpacked array (LRM 7.4.2). Its payload is ordinal-only: the
-// declared range is the receiver's static type's, so every coordinate-consuming
-// entry takes it as a `[left:right]` operand pair rather than reading it off
-// the value.
+// A fixed-size unpacked array (LRM 7.4.2). Its payload is ordinal-only, and
+// every access names an element by its ordinal: the declared range is the
+// static type's, and a select has read it before any of these is reached.
 auto lyra_rt_unpackedarray_from_literal(
     void* prototype, LyraSpan unit, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_conform_size(const void* parts, std::int64_t count)
@@ -1318,17 +1311,15 @@ auto lyra_rt_unpackedarray_from_array_dynarray(
     const void* source, void* prototype, std::int64_t declared) -> void*;
 auto lyra_rt_unpackedarray_from_array_queue(
     const void* source, void* prototype, std::int64_t declared) -> void*;
-auto lyra_rt_unpackedarray_element(
-    const void* array, const void* index, const void* declared) -> void*;
-auto lyra_rt_unpackedarray_with_element(
-    const void* array, const void* index, const void* declared, void* value)
+auto lyra_rt_unpackedarray_element(const void* array, const void* position)
     -> void*;
+auto lyra_rt_unpackedarray_with_element(
+    const void* array, const void* position, void* value) -> void*;
 auto lyra_rt_unpackedarray_slice(
-    const void* array, const void* a, const void* b, const void* form,
-    const void* declared) -> void*;
+    const void* array, const void* start, std::int64_t count) -> void*;
 auto lyra_rt_unpackedarray_with_slice(
-    const void* array, const void* a, const void* b, const void* form,
-    const void* declared, const void* replacement) -> void*;
+    const void* array, const void* start, std::int64_t count,
+    const void* replacement) -> void*;
 auto lyra_rt_unpackedarray_size(const void* array) -> void*;
 auto lyra_rt_unpackedarray_eq(const void* lhs, const void* rhs) -> void*;
 auto lyra_rt_unpackedarray_ne(const void* lhs, const void* rhs) -> void*;
@@ -1477,8 +1468,7 @@ auto lyra_rt_queue_from_array_dynarray(
 auto lyra_rt_queue_element(const void* queue, const void* index) -> void*;
 auto lyra_rt_queue_with_element(
     const void* queue, const void* index, void* value) -> void*;
-auto lyra_rt_queue_slice(
-    const void* queue, const void* anchor, const void* extent, const void* form)
+auto lyra_rt_queue_slice(const void* queue, const void* lo, const void* hi)
     -> void*;
 auto lyra_rt_queue_size(const void* queue) -> void*;
 auto lyra_rt_queue_push_back(const void* queue, void* item) -> void*;

@@ -167,8 +167,7 @@ class PhysicalNet {
       if (CoversTheName(placement, value.BitWidth())) {
         return value;
       }
-      return value.ExtractBits(
-          value::PackedArray::IntUnsigned(placement.net_offset), width_);
+      return value.ExtractRun(placement.net_offset, width_);
     } else {
       return value;
     }
@@ -182,8 +181,7 @@ class PhysicalNet {
       if (CoversTheName(placement, into.BitWidth())) {
         return value;
       }
-      into.AssignSlice(
-          value::PackedArray::IntUnsigned(placement.net_offset), width_, value);
+      into.AssignRun(placement.net_offset, width_, value);
       return into;
     } else {
       return value;
@@ -273,7 +271,7 @@ class PhysicalNet {
   [[nodiscard]] static auto SliceOfPositions(
       const T& value, std::uint32_t from, std::uint32_t width) -> T {
     if constexpr (std::same_as<T, value::PackedArray>) {
-      return value.ExtractBits(value::PackedArray::IntUnsigned(from), width);
+      return value.ExtractRun(from, width);
     } else {
       return value;
     }

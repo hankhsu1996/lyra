@@ -216,8 +216,8 @@ struct BuiltinMirTypes {
   // One dimension of that descriptor, named so the stack a descriptor is built
   // from is spelled through the type dispatch like every other type.
   TypeId packed_range;
-  // What an unpacked array's description is: the declared range a select on one
-  // resolves a coordinate against.
+  // What an unpacked array's description is: its declared range, which an
+  // operation walking the array in its declared coordinates is handed.
   TypeId unpacked_range;
   TypeId channel_cancellation;
   TypeId print_item;

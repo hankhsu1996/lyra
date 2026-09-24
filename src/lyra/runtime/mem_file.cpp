@@ -25,6 +25,7 @@
 #include "lyra/value/runtime_value.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unpacked_array.hpp"
+#include "lyra/value/unpacked_range.hpp"
 
 namespace lyra::runtime {
 

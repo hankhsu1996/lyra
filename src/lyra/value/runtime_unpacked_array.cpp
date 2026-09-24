@@ -14,6 +14,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/position.hpp"
 #include "lyra/value/runtime_value.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unpacked_array.hpp"
@@ -84,11 +85,10 @@ auto RuntimeUnpackedArray::ElementDefault() const -> const RuntimeValue& {
   return *element_default_;
 }
 
-auto RuntimeUnpackedArray::Element(
-    const PackedArray& sv_index, const UnpackedRange& range) const
+auto RuntimeUnpackedArray::Element(const PackedArray& position) const
     -> const RuntimeValue& {
   const std::optional<std::size_t> ordinal =
-      ResolveUnpackedOrdinal(sv_index, range, data_.size());
+      ElementOrdinal(position, data_.size());
   if (!ordinal) {
     return *element_default_;
   }
@@ -105,11 +105,11 @@ auto RuntimeUnpackedArray::ElementAt(std::size_t position) const
 }
 
 auto RuntimeUnpackedArray::WithElement(
-    const PackedArray& sv_index, const UnpackedRange& range,
-    RuntimeValue value) const -> RuntimeUnpackedArray {
+    const PackedArray& position, RuntimeValue value) const
+    -> RuntimeUnpackedArray {
   RuntimeUnpackedArray result(*this);
   const std::optional<std::size_t> ordinal =
-      ResolveUnpackedOrdinal(sv_index, range, data_.size());
+      ElementOrdinal(position, data_.size());
   if (ordinal) {
     result.data_[*ordinal] = std::move(value);
   }
@@ -187,25 +187,20 @@ auto RuntimeUnpackedArray::ToByteString() const -> String {
   return String{std::move(out)};
 }
 
-auto RuntimeUnpackedArray::Slice(
-    const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const UnpackedRange& range) const -> RuntimeUnpackedArray {
-  const SliceWindow window = ResolveSliceWindow(a, b, form, range);
+auto RuntimeUnpackedArray::Slice(const PackedArray& start, std::int64_t count)
+    const -> RuntimeUnpackedArray {
   return FromValues(
-      *element_default_, detail::ArraySliceGather(
-                             data_, *element_default_, window.base,
-                             window.count, window.base_known));
+      *element_default_,
+      detail::ArraySliceGather(
+          data_, *element_default_, ReadPosition(start), SliceCount(count)));
 }
 
 auto RuntimeUnpackedArray::WithSlice(
-    const PackedArray& a, const PackedArray& b, const PackedArray& form,
-    const UnpackedRange& range, const RuntimeUnpackedArray& replacement) const
-    -> RuntimeUnpackedArray {
-  const SliceWindow window = ResolveSliceWindow(a, b, form, range);
+    const PackedArray& start, std::int64_t count,
+    const RuntimeUnpackedArray& replacement) const -> RuntimeUnpackedArray {
   RuntimeUnpackedArray result(*this);
   detail::ArraySliceScatter(
-      result.data_, window.base, window.count, replacement.data_,
-      window.base_known);
+      result.data_, ReadPosition(start), SliceCount(count), replacement.data_);
   return result;
 }
 

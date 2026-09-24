@@ -6,7 +6,10 @@
 
 ## Status
 
-Accepted
+Accepted; the select operand is superseded by
+[a-select-names-a-position](a-select-names-a-position.md), which reads the range where the select is
+lowered and hands the access an ordinal. That the range belongs to the type and the payload is
+ordinal-only stands.
 
 ## Scope
 

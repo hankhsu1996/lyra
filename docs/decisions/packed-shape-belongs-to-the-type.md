@@ -1,6 +1,8 @@
 # A packed value's shape belongs to its type, not to the value
 
-Date: 2026-09-17 Status: accepted
+Date: 2026-09-17 Status: accepted; D2's select half is superseded by
+[a-select-names-a-position](a-select-names-a-position.md): the declared shape is read where the
+select is lowered, and the access is handed a position and a width instead.
 
 Supersedes the packed clause of [selector-coordinate-resolution](selector-coordinate-resolution.md)
 decision 1 and the packed carve-out of

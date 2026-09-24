@@ -29,6 +29,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/integral_constant_folding.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
@@ -402,9 +403,12 @@ auto BuildMirUnaryExpr(
     return MakeFromBoolCall(not_id, result_type);
   }
 
-  return mir::Expr{
-      .data = mir::UnaryExpr{.op = ValueOperator(op), .operand = operand_id},
-      .type = result_type};
+  const mir::UnaryOp value_op = ValueOperator(op);
+  return FoldedOr(
+      unit, mir::FoldUnary(unit, block, value_op, operand_id, result_type),
+      mir::Expr{
+          .data = mir::UnaryExpr{.op = value_op, .operand = operand_id},
+          .type = result_type});
 }
 
 }  // namespace
@@ -507,11 +511,12 @@ auto BuildMirBinaryExpr(
             mir::UnaryExpr{.op = mir::UnaryOp::kLogicalNot, .operand = inner},
         .type = result_type};
   }
-  return mir::Expr{
-      .data =
-          mir::BinaryExpr{
-              .op = LowerBinaryOp(op), .lhs = lhs_id, .rhs = rhs_id},
-      .type = result_type};
+  const mir::BinaryOp value_op = LowerBinaryOp(op);
+  return FoldedOr(
+      unit, mir::FoldBinary(unit, block, value_op, lhs_id, rhs_id, result_type),
+      mir::Expr{
+          .data = mir::BinaryExpr{.op = value_op, .lhs = lhs_id, .rhs = rhs_id},
+          .type = result_type});
 }
 
 template <ExprLowerer Lowerer>

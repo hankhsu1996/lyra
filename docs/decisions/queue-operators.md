@@ -14,7 +14,9 @@ pick a write-side method -- is superseded by
 [value-descent-as-named-calls](value-descent-as-named-calls.md): reading an element and reaching one
 are two entries the lowering names outright, so no flag chooses between them. That an access is a
 call rather than a select node, and that the store boundary conforms the element shape, are
-unchanged.
+unchanged. The slice's operands are superseded by
+[a-select-names-a-position](a-select-names-a-position.md): an indexed form is turned into its two
+positions where it is lowered, so the queue is handed a low and a high position and no form.
 
 ## Context
 

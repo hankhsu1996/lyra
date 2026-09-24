@@ -16,8 +16,8 @@
 #include "lyra/value/format.hpp"
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/position.hpp"
 #include "lyra/value/queue_bound.hpp"
-#include "lyra/value/slice_selector.hpp"
 
 namespace lyra::value {
 
@@ -263,18 +263,20 @@ class Queue {
   // misses. Reads never grow the queue -- the write path owns the `q[$+1]`
   // append semantic. The non-const overload returns the shield's discard
   // target; the const overload returns the element default by direct reference.
-  [[nodiscard]] auto Element(const PackedArray& idx) -> T& {
-    if (IsInvalidIndex(idx)) {
+  [[nodiscard]] auto Element(const PackedArray& position) -> T& {
+    const auto ordinal = ElementOrdinal(position, data_.size());
+    if (!ordinal) {
       return shield_.DiscardTarget();
     }
-    return data_[static_cast<std::size_t>(idx.ToInt64())];
+    return data_[*ordinal];
   }
 
-  [[nodiscard]] auto Element(const PackedArray& idx) const -> const T& {
-    if (IsInvalidIndex(idx)) {
+  [[nodiscard]] auto Element(const PackedArray& position) const -> const T& {
+    const auto ordinal = ElementOrdinal(position, data_.size());
+    if (!ordinal) {
       return shield_.Default();
     }
-    return data_[static_cast<std::size_t>(idx.ToInt64())];
+    return data_[*ordinal];
   }
 
   // LRM 7.10.1 write: `q[$+1] = v` (index == size) appends a default-shaped
@@ -282,57 +284,36 @@ class Queue {
   // the discard sink so the write is ignored. The backend routes here
   // only for an element-write lvalue, so a read of `index == size` still
   // sees the default rather than growing the queue.
-  [[nodiscard]] auto ElementRef(const PackedArray& idx) -> T& {
-    if (!idx.HasUnknown()) {
-      const auto v = idx.ToInt64();
-      if (v >= 0 && static_cast<std::uint64_t>(v) < data_.size()) {
-        return data_[static_cast<std::size_t>(v)];
-      }
-      if (v >= 0 && static_cast<std::uint64_t>(v) == data_.size()) {
-        data_.push_back(shield_.Default());
-        EnforceBound();
-        if (static_cast<std::uint64_t>(v) < data_.size()) {
-          return data_[static_cast<std::size_t>(v)];
-        }
-        return shield_.DiscardTarget();
+  [[nodiscard]] auto ElementRef(const PackedArray& position) -> T& {
+    if (const auto ordinal = ElementOrdinal(position, data_.size())) {
+      return data_[*ordinal];
+    }
+    const std::optional<std::int64_t> at = ReadPosition(position);
+    if (at && static_cast<std::uint64_t>(*at) == data_.size()) {
+      data_.push_back(shield_.Default());
+      EnforceBound();
+      if (static_cast<std::uint64_t>(*at) < data_.size()) {
+        return data_[static_cast<std::size_t>(*at)];
       }
     }
     return shield_.DiscardTarget();
   }
 
-  // LRM 7.10.1 queue slice. `form` selects the source shape from `(anchor,
-  // extent)`: a constant `q[a:b]` is `anchor = a`, `extent = b`; an indexed
-  // `q[base+:w]` is `anchor = base`, `extent = w`, growing upward; `q[base-:w]`
-  // grows downward. The `base +/- (w - 1)` bound is computed here in the wide
-  // int64 domain, never synthesized at lowering. An x/z bound, or `lo > hi`
-  // after clamping, yields the empty queue; `lo` clamps up to 0 and `hi` down
-  // to the last index. The result carries this queue's element shape. `form` is
-  // the shared `value::SliceForm` (`slice_selector.hpp`).
-  [[nodiscard]] auto Slice(
-      const PackedArray& anchor, const PackedArray& extent,
-      const PackedArray& form) const -> Queue {
+  // LRM 7.10.1 queue slice: the elements from position `lo` through `hi`. A
+  // bound that names no position, or `lo > hi` after clamping, yields the empty
+  // queue; `lo` clamps up to 0 and `hi` down to the last index. The result
+  // carries this queue's element shape.
+  [[nodiscard]] auto Slice(const PackedArray& lo, const PackedArray& hi) const
+      -> Queue {
     Queue out(shield_.Default());
-    if (anchor.HasUnknown() || extent.HasUnknown() || data_.empty()) {
+    const std::optional<std::int64_t> first = ReadPosition(lo);
+    const std::optional<std::int64_t> last = ReadPosition(hi);
+    if (!first || !last) {
       return out;
     }
-    const std::int64_t an = anchor.ToInt64();
-    const std::int64_t ex = extent.ToInt64();
-    std::int64_t lo = an;
-    std::int64_t hi = ex;
-    switch (static_cast<SliceForm>(form.ToInt64())) {
-      case SliceForm::kIndexedUp:
-        hi = an + ex - 1;
-        break;
-      case SliceForm::kIndexedDown:
-        lo = an - ex + 1;
-        hi = an;
-        break;
-      case SliceForm::kConstant:
-        break;
-    }
-    const std::int64_t a = std::max<std::int64_t>(lo, 0);
-    const auto last = static_cast<std::int64_t>(data_.size()) - 1;
-    const std::int64_t b = std::min<std::int64_t>(hi, last);
+    const std::int64_t a = std::max<std::int64_t>(*first, 0);
+    const std::int64_t b = std::min<std::int64_t>(
+        *last, static_cast<std::int64_t>(data_.size()) - 1);
     for (std::int64_t i = a; i <= b; ++i) {
       out.data_.push_back(data_[static_cast<std::size_t>(i)]);
     }
@@ -413,10 +394,11 @@ class Queue {
     data_.clear();
   }
   auto DeleteIndex(const PackedArray& index) -> void {
-    if (IsInvalidIndex(index)) {
+    const auto ordinal = ElementOrdinal(index, data_.size());
+    if (!ordinal) {
       return;
     }
-    data_.erase(data_.begin() + static_cast<std::ptrdiff_t>(index.ToInt64()));
+    data_.erase(data_.begin() + static_cast<std::ptrdiff_t>(*ordinal));
   }
 
   // LRM 7.12.2 ordering: an in-place positional permutation (queues are
@@ -544,15 +526,6 @@ class Queue {
            });
   }
 
-  [[nodiscard]] auto IsInvalidIndex(const PackedArray& idx) const -> bool {
-    if (idx.HasUnknown()) {
-      return true;
-    }
-    const auto v = idx.ToInt64();
-    return v < 0 || static_cast<std::uint64_t>(v) >=
-                        static_cast<std::uint64_t>(data_.size());
-  }
-
   // A bound is the greatest index the queue may hold (LRM 7.10.5). A queue with
   // no bound spells that as a negative one, so a bound and its absence reach
   // every construction and every store as the same operand rather than as two
@@ -589,10 +562,10 @@ static_assert(LyraValue<Queue<PackedArray>>);
 static_assert(Sized<Queue<PackedArray>>);
 static_assert(BitstreamSizable<Queue<PackedArray>>);
 static_assert(Indexable<Queue<PackedArray>>);
-// A queue's `Slice(anchor, extent, form)` is dynamic-width -- the runtime
-// derives the element count from the bounds (LRM 7.10.1) -- not the fixed-width
-// `(anchor, count, shift)` contract `Sliceable` names, so despite the matching
-// arity it carries its own `Slice` rather than claiming that concept.
+// A queue's `Slice(lo, hi)` takes its element count from two bounds the
+// running program can move (LRM 7.10.1), not the fixed count `Sliceable` names,
+// so despite the matching arity it carries its own `Slice` rather than claiming
+// that concept.
 static_assert(Ownable<Queue<PackedArray>>);
 static_assert(Defaultable<Queue<PackedArray>>);
 static_assert(ConditionallyMergeable<Queue<PackedArray>>);

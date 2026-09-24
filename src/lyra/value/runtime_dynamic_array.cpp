@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -11,6 +12,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/position.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/runtime_value.hpp"
 #include "lyra/value/unpacked_array.hpp"
@@ -89,22 +91,14 @@ auto RuntimeDynamicArray::ElementDefault() const -> const RuntimeValue& {
   return *element_default_;
 }
 
-auto RuntimeDynamicArray::IsInvalidIndex(const PackedArray& index) const
-    -> bool {
-  if (index.HasUnknown()) {
-    return true;
-  }
-  const std::int64_t value = index.ToInt64();
-  return value < 0 || static_cast<std::uint64_t>(value) >=
-                          static_cast<std::uint64_t>(data_.size());
-}
-
-auto RuntimeDynamicArray::Element(const PackedArray& index) const
+auto RuntimeDynamicArray::Element(const PackedArray& position) const
     -> const RuntimeValue& {
-  if (IsInvalidIndex(index)) {
+  const std::optional<std::size_t> ordinal =
+      ElementOrdinal(position, data_.size());
+  if (!ordinal) {
     return *element_default_;
   }
-  return data_[static_cast<std::size_t>(index.ToInt64())];
+  return data_[*ordinal];
 }
 
 auto RuntimeDynamicArray::ElementAt(std::size_t position) const
@@ -117,10 +111,12 @@ auto RuntimeDynamicArray::ElementAt(std::size_t position) const
 }
 
 auto RuntimeDynamicArray::WithElement(
-    const PackedArray& index, RuntimeValue value) const -> RuntimeDynamicArray {
+    const PackedArray& position, RuntimeValue value) const
+    -> RuntimeDynamicArray {
   RuntimeDynamicArray result(*this);
-  if (!IsInvalidIndex(index)) {
-    result.data_[static_cast<std::size_t>(index.ToInt64())] = std::move(value);
+  if (const std::optional<std::size_t> ordinal =
+          ElementOrdinal(position, data_.size())) {
+    result.data_[*ordinal] = std::move(value);
   }
   return result;
 }
@@ -129,29 +125,26 @@ auto RuntimeDynamicArray::Delete() const -> RuntimeDynamicArray {
   return RuntimeDynamicArray(*element_default_);
 }
 
-auto RuntimeDynamicArray::Slice(
-    const PackedArray& a, const PackedArray& b, const PackedArray& form) const
-    -> RuntimeUnpackedArray {
-  const SliceWindow window = ResolveSliceWindow(a, b, form);
+auto RuntimeDynamicArray::Slice(const PackedArray& start, std::int64_t count)
+    const -> RuntimeUnpackedArray {
   return RuntimeUnpackedArray::FromValues(
-      *element_default_, detail::ArraySliceGather(
-                             data_, *element_default_, window.base,
-                             window.count, window.base_known));
+      *element_default_,
+      detail::ArraySliceGather(
+          data_, *element_default_, ReadPosition(start), SliceCount(count)));
 }
 
 auto RuntimeDynamicArray::WithSlice(
-    const PackedArray& a, const PackedArray& b, const PackedArray& form,
+    const PackedArray& start, std::int64_t count,
     const RuntimeUnpackedArray& replacement) const -> RuntimeDynamicArray {
-  const SliceWindow window = ResolveSliceWindow(a, b, form);
+  const std::size_t window = SliceCount(count);
   std::vector<RuntimeValue> replacement_values;
-  replacement_values.reserve(window.count);
-  for (std::uint32_t i = 0; i < window.count; ++i) {
+  replacement_values.reserve(window);
+  for (std::size_t i = 0; i < window; ++i) {
     replacement_values.push_back(replacement.ElementAt(i));
   }
   RuntimeDynamicArray result(*this);
   detail::ArraySliceScatter(
-      result.data_, window.base, window.count, replacement_values,
-      window.base_known);
+      result.data_, ReadPosition(start), window, replacement_values);
   return result;
 }
 

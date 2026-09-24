@@ -15,6 +15,7 @@
 #include "lyra/value/format.hpp"
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/position.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/unpacked_array.hpp"
 
@@ -168,43 +169,39 @@ class DynamicArray {
   }
 
   // LRM 7.4.5: an invalid-index write lands on the shield's discard target.
-  [[nodiscard]] auto ElementRef(const PackedArray& idx) -> T& {
-    if (IsInvalidIndex(idx)) {
+  [[nodiscard]] auto ElementRef(const PackedArray& position) -> T& {
+    const auto ordinal = ElementOrdinal(position, data_.size());
+    if (!ordinal) {
       return shield_.DiscardTarget();
     }
-    return data_[static_cast<std::size_t>(idx.ToInt64())];
+    return data_[*ordinal];
   }
 
   // LRM 7.4.5: an invalid-index read returns the element default (LRM Table
   // 7-1).
-  [[nodiscard]] auto Element(const PackedArray& idx) const -> const T& {
-    if (IsInvalidIndex(idx)) {
+  [[nodiscard]] auto Element(const PackedArray& position) const -> const T& {
+    const auto ordinal = ElementOrdinal(position, data_.size());
+    if (!ordinal) {
       return shield_.Default();
     }
-    return data_[static_cast<std::size_t>(idx.ToInt64())];
+    return data_[*ordinal];
   }
 
-  // LRM 7.4.5 / 7.4.6 contiguous-range selector. A dynamic array is zero-based,
-  // so the source index is the storage ordinal (identity rebase); the slice
-  // result is a fixed-size unpacked array over `[base : base + count - 1]`.
-  // Partial-OOB positions and an x / z selector yield the canonical default at
-  // the type-fixed count's width; see `concepts.hpp` for the `Sliceable` shape.
-  [[nodiscard]] auto Slice(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form) const
+  // LRM 7.4.5 / 7.4.6 contiguous-range selector: a fixed-size unpacked array of
+  // `count` elements from `start`. An element outside the array, and every
+  // element of a start that names no position, reads the canonical default.
+  [[nodiscard]] auto Slice(const PackedArray& start, std::int64_t count) const
       -> UnpackedArray<T> {
-    const SliceWindow win = ResolveSliceWindow(a, b, form);
     return UnpackedArray<T>(
         shield_.Default(),
         detail::ArraySliceGather(
-            data_, shield_.Default(), win.base, win.count, win.base_known));
+            data_, shield_.Default(), ReadPosition(start), SliceCount(count)));
   }
 
-  [[nodiscard]] auto SliceRef(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form)
+  [[nodiscard]] auto SliceRef(const PackedArray& start, std::int64_t count)
       -> ArraySliceRef<T> {
-    const SliceWindow win = ResolveSliceWindow(a, b, form);
     return ArraySliceRef<T>{
-        data_, shield_.Default(), win.base, win.count, win.base_known};
+        data_, shield_.Default(), ReadPosition(start), SliceCount(count)};
   }
 
   // LRM 11.2.2 + 11.4.5 aggregate equality. Runtime size mismatch yields
@@ -457,13 +454,6 @@ class DynamicArray {
              return detail::Entry<PackedArray, T>{
                  PackedArray::Int(static_cast<int>(i)), &e};
            });
-  }
-
-  [[nodiscard]] auto IsInvalidIndex(const PackedArray& idx) const -> bool {
-    if (idx.HasUnknown()) return true;
-    const auto v = idx.ToInt64();
-    return v < 0 || static_cast<std::uint64_t>(v) >=
-                        static_cast<std::uint64_t>(data_.size());
   }
 
   detail::OobShield<T> shield_;

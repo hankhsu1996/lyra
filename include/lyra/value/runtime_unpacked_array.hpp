@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -25,10 +26,10 @@ class String;
 // type-erased `RuntimeValue` elements and an element-default prototype, and
 // composes the value contract by visiting them.
 //
-// The payload is ordinal-only: the declared coordinate range is a fact of the
-// receiver's static type and reaches element access as a `[left:right]` operand
-// pair, so whole-value movement is range-agnostic and no store relabels a
-// coordinate.
+// The payload is ordinal-only: an access names an element by its ordinal,
+// counted from the left, because the declared range is a fact of the static
+// type the select was written against and is read there. Whole-value movement
+// is therefore range-agnostic and no store relabels a coordinate.
 //
 // Value semantics are preserved by immutability: an element write is a
 // functional operation returning a new array (`WithElement`), never an in-place
@@ -107,48 +108,41 @@ class RuntimeUnpackedArray {
   // representation reads the target domain from here.
   [[nodiscard]] auto ElementDefault() const -> const RuntimeValue&;
 
-  // LRM 7.4.5: reads the element the source index `sv_index` names, resolved
-  // against the declared range the receiver's static type supplies. An index
-  // the range does not name, or an x / z one, reads the element default. The
-  // caller copies the result out across the opaque-handle boundary rather than
+  // LRM 7.4.5: reads the element `position` names, counted from the left. A
+  // position that names no element here reads the element default. The caller
+  // copies the result out across the opaque-handle boundary rather than
   // aliasing it.
-  [[nodiscard]] auto Element(
-      const PackedArray& sv_index, const UnpackedRange& range) const
+  [[nodiscard]] auto Element(const PackedArray& position) const
       -> const RuntimeValue&;
 
   // The element at storage position `position`, counted from the first in the
-  // array's own order -- the coordinate LRM 7.12 walks a container by, and the
-  // one this value carries, its declared range belonging to the static type. A
+  // array's own order -- the coordinate LRM 7.12 walks a container by. A
   // position past the last is a walk defect rather than an out-of-range read.
   [[nodiscard]] auto ElementAt(std::size_t position) const
       -> const RuntimeValue&;
 
   // A functional element write: yields a new array equal to this one with the
-  // named element replaced by `value`. LRM 7.4.5: an index the declared range
-  // does not name, or an x / z one, leaves the array unchanged.
+  // named element replaced by `value`. LRM 7.4.5: a position that names no
+  // element here leaves the array unchanged.
   [[nodiscard]] auto WithElement(
-      const PackedArray& sv_index, const UnpackedRange& range,
-      RuntimeValue value) const -> RuntimeUnpackedArray;
+      const PackedArray& position, RuntimeValue value) const
+      -> RuntimeUnpackedArray;
 
-  // LRM 7.4.5 contiguous-range selector. The raw selector `(a, b, form)` is
-  // resolved to the storage-ordinal window against the receiver's declared
-  // range; a partial-out-of-range position yields the element default and an
-  // x / z base yields a wholly-default sub-array. The result is ordinal-only
-  // payload, so it carries no declared range of its own.
-  [[nodiscard]] auto Slice(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const UnpackedRange& range) const -> RuntimeUnpackedArray;
+  // LRM 7.4.5 contiguous-range selector: `count` elements from `start`. An
+  // element outside the array reads the element default, and a start that
+  // names no position reads a wholly-default sub-array. The result is
+  // ordinal-only payload, so it carries no declared range of its own.
+  [[nodiscard]] auto Slice(const PackedArray& start, std::int64_t count) const
+      -> RuntimeUnpackedArray;
 
   // A functional whole-slice write (LRM 7.6): yields a new array equal to this
-  // one with the window the selector names replaced, element for element, by
-  // `replacement`. The window is resolved exactly as `Slice` resolves it, and
-  // the same coordinates that read the default write nothing -- a position the
-  // declared range does not name is skipped, and an x / z base leaves the array
+  // one with the window replaced, element for element, by `replacement`. The
+  // same places that read the default write nothing -- an element outside the
+  // array is skipped, and a start that names no position leaves the array
   // unchanged. Assignment compatibility gives the two the same element count.
   [[nodiscard]] auto WithSlice(
-      const PackedArray& a, const PackedArray& b, const PackedArray& form,
-      const UnpackedRange& range, const RuntimeUnpackedArray& replacement) const
-      -> RuntimeUnpackedArray;
+      const PackedArray& start, std::int64_t count,
+      const RuntimeUnpackedArray& replacement) const -> RuntimeUnpackedArray;
 
   // LRM 11.4.5 `==` / `!=` (Any data type): an element-wise reduction that
   // propagates X / Z through each element's own equality.
@@ -229,6 +223,6 @@ static_assert(Sized<RuntimeUnpackedArray>);
 static_assert(BitstreamSizable<RuntimeUnpackedArray>);
 static_assert(BitstreamConvertible<RuntimeUnpackedArray>);
 static_assert(EntryWalkable<RuntimeUnpackedArray>);
-static_assert(RangedSliceable<RuntimeUnpackedArray>);
+static_assert(Sliceable<RuntimeUnpackedArray>);
 
 }  // namespace lyra::value
