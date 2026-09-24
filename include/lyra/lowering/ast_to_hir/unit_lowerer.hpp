@@ -787,37 +787,24 @@ class UnitLowerer {
   [[nodiscard]] auto TakeScopeDeclarations(const slang::ast::Scope& scope)
       -> ScopeDeclarations;
 
-  // Routed reference dedup. `slot_owner_frame` is the frame whose `routed_refs`
-  // arena holds the slot -- the scope whose MIR class receives the endpoint
-  // member and whose resolve body installs it. For an intra-unit reference that
-  // reaches an enclosing ancestor or a sibling-of-ancestor head the slot owner
-  // is the referrer's frame while the head lives in an enclosing frame; for a
-  // downward head in the referrer's own scope the slot owner is also the head's
-  // owner.
-  auto MapOrGetRoutedRef(ScopeFrameId slot_owner_frame, hir::RoutedRefDecl decl)
-      -> hir::RoutedRefId;
-  auto TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
-      -> base::Arena<hir::RoutedRefDecl, hir::RoutedRefId>;
+  // The routes gathered for `owner_frame`, the scope whose names take them and
+  // which each of them is counted from, wherever its head lies. Handed over
+  // once, when the scope is finished.
+  auto RoutesOf(ScopeFrameId owner_frame) -> hir::ScopeRoutes&;
+  auto TakeRoutesForFrame(ScopeFrameId owner_frame) -> hir::ScopeRoutes;
 
   // The same, for where a name lands on a class this unit cannot name. Two
   // accesses that walk to the same scope and ask it for the same name on the
   // same class are one slot, for the reason two references over one route are
   // one endpoint.
   auto MapOrGetPropertyCoordinate(
-      ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
+      ScopeFrameId owner_frame, hir::ClassNameDecl decl)
       -> hir::PropertyCoordinateId;
   auto MapOrGetBehaviorCoordinate(
-      ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
+      ScopeFrameId owner_frame, hir::ClassNameDecl decl)
       -> hir::BehaviorCoordinateId;
-  auto MapOrGetBehaviorBody(
-      ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
+  auto MapOrGetBehaviorBody(ScopeFrameId owner_frame, hir::ClassNameDecl decl)
       -> hir::BehaviorBodyId;
-  auto TakePropertyCoordinatesForFrame(ScopeFrameId slot_owner_frame)
-      -> base::Arena<hir::ClassNameDecl, hir::PropertyCoordinateId>;
-  auto TakeBehaviorCoordinatesForFrame(ScopeFrameId slot_owner_frame)
-      -> base::Arena<hir::ClassNameDecl, hir::BehaviorCoordinateId>;
-  auto TakeBehaviorBodiesForFrame(ScopeFrameId slot_owner_frame)
-      -> base::Arena<hir::ClassNameDecl, hir::BehaviorBodyId>;
 
   // The compilation-unit declaration pass (LRM 23.6 / 23.9 / 27): before any
   // executable body lowers, walk the whole unit's scope tree and mint every
@@ -951,12 +938,11 @@ class UnitLowerer {
   // and every such scope lowers what it declares, so nothing is left over.
   void RequireEveryClassBodyLowered() const;
 
-  // Builds a HIR Expr referring to the leaf `decl` navigates to.
-  // `slot_owner_frame` is the frame whose routed-reference arena holds the
-  // slot.
+  // Builds a HIR Expr referring to the data `route` navigates to.
+  // `owner_frame` is the frame whose routes hold it.
   auto MakeRoutedMemberRef(
-      ScopeFrameId slot_owner_frame, hir::RoutedRefDecl decl,
-      diag::SourceSpan span) -> hir::Expr;
+      ScopeFrameId owner_frame, hir::ValueRoute route, diag::SourceSpan span)
+      -> hir::Expr;
 
   // The reference to `value` over a route the caller derived: the route says
   // how the reader reaches it, and what the route ends at follows from the
@@ -964,35 +950,34 @@ class UnitLowerer {
   // the route from there; one reached through an interface port has no such
   // position to read -- the port is the only reach -- so that route is derived
   // at the reference site and handed here.
-  [[nodiscard]] auto MakeRoutedRef(
-      const slang::ast::ValueSymbol& value, ScopeFrameId slot_owner,
-      ScopeRoute route) -> diag::Result<hir::ReferenceRoute>;
+  [[nodiscard]] auto MakeRoutedValueRef(
+      const slang::ast::ValueSymbol& value, ScopeFrameId owner_frame,
+      ScopeRoute route) -> diag::Result<hir::RoutedValueRef>;
 
   // The reference to the object `route` reaches. Reaching an object across an
   // instance boundary seals like reaching a cell there: the route runs once at
   // elaboration and what it lands on is read directly after, so a caller
   // holding this reaches the object with no traversal of its own.
   [[nodiscard]] auto MakeRoutedObjectRef(
-      ScopeFrameId slot_owner, ScopeRoute route, hir::TypeId object_type)
-      -> hir::RoutedRef;
+      ScopeFrameId owner_frame, ScopeRoute route, hir::TypeId object_type)
+      -> hir::RoutedObjectRef;
 
   // The reference to the callable `route` reaches by name, for a callable no
   // unit published. It seals on the same terms the object does and over the
   // same walk: the scope answers the name once at elaboration and the call
   // reads the entry directly after.
   [[nodiscard]] auto MakeRoutedCallableRef(
-      ScopeFrameId slot_owner, ScopeRoute route, std::string name,
-      hir::ExternalCalleeInterface interface) -> hir::RoutedRef;
+      ScopeFrameId owner_frame, ScopeRoute route, std::string name,
+      hir::ExternalCalleeInterface interface) -> hir::RoutedCallableRef;
 
   // What a `disable` naming `target` terminates, reached over a route (LRM
   // 9.6.2, 23.6). Where this unit lays out the scope that declares `target` the
   // route runs to that scope and carries its own identity for the block;
   // otherwise it runs to the block's own node on the object tree, which answers
-  // for what it carries. Both seal in the resolve phase, so the statement
-  // itself walks nothing.
+  // for what it carries.
   [[nodiscard]] auto MakeRoutedDisableTargetRef(
       const WalkFrame& frame, const slang::ast::Symbol& target,
-      diag::SourceSpan span) -> diag::Result<hir::RoutedRef>;
+      diag::SourceSpan span) -> diag::Result<hir::RoutedDisableTargetRef>;
 
   // How this reader reaches the object an instance of another unit is, given
   // how the name reached it. A port is the answer where the name went through
@@ -1008,7 +993,7 @@ class UnitLowerer {
   // serves every consumer of a reference -- reading it, writing it, and waiting
   // on it changing -- so no consumer can make one symbol a value to itself and
   // a signal to the next. A cell on an instance resolves to a route from the
-  // reader to it, sealed once at elaboration; one a namespace unit owns, having
+  // reader to it; one a namespace unit owns, having
   // no instance to route through, resolves to its name across the boundary.
   //
   // The caller states that the name denotes storage, by having classified it,
@@ -1157,26 +1142,26 @@ class UnitLowerer {
       const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame)
       -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
-  // The reader-relative route to a cell in an instantiated scope: a direct
-  // member when the target sits on the reader's own scope, a routed reference
-  // otherwise -- a typed enclosing climb to a this-unit ancestor member, a
-  // typed downward head when this unit emits the head's class, or a by-name
-  // head where the route crosses into another instance's unit.
+  // The reader-relative route to a cell in an instantiated scope: a count of
+  // parent edges when the target sits on the reader's own scope or one
+  // enclosing it in this unit, a typed downward head when this unit emits the
+  // head's class, or a by-name head where the route crosses into another
+  // instance's unit.
   [[nodiscard]] auto TranslateReferenceRoute(
       const WalkFrame& frame, const slang::ast::ValueSymbol& value)
-      -> diag::Result<std::optional<hir::ReferenceRoute>>;
+      -> diag::Result<std::optional<hir::RoutedValueRef>>;
 
   // What `route` reaches.
   [[nodiscard]] auto ResolveRouteTarget(
       const slang::ast::ValueSymbol& value, const ScopeRoute& route)
-      -> diag::Result<hir::RouteLeaf>;
+      -> diag::Result<hir::DataLeaf>;
 
   // The same, when the route lands on an object of a unit that published the
   // name. Empty otherwise, which is every case where no declaration stands
   // behind the name at the point the reference is compiled.
   [[nodiscard]] auto LookupPublishedRouteTarget(
       const slang::ast::ValueSymbol& value, const ScopeRoute& route)
-      -> std::optional<hir::RouteLeaf>;
+      -> std::optional<hir::DataLeaf>;
 
   // Reserves an identity for each static-lifetime local one procedural block
   // subtree of `body` declares, and recurses into the blocks nested in it.
@@ -1279,16 +1264,7 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::Scope*, ScopeFrameId> scope_frames_;
   std::unordered_map<const slang::ast::Scope*, std::vector<hir::ClassId>>
       classes_by_scope_;
-  std::map<ScopeFrameId, base::Arena<hir::RoutedRefDecl, hir::RoutedRefId>>
-      routed_refs_by_frame_;
-  std::map<
-      ScopeFrameId, base::Arena<hir::ClassNameDecl, hir::PropertyCoordinateId>>
-      property_coordinates_by_frame_;
-  std::map<
-      ScopeFrameId, base::Arena<hir::ClassNameDecl, hir::BehaviorCoordinateId>>
-      behavior_coordinates_by_frame_;
-  std::map<ScopeFrameId, base::Arena<hir::ClassNameDecl, hir::BehaviorBodyId>>
-      behavior_bodies_by_frame_;
+  std::map<ScopeFrameId, hir::ScopeRoutes> routes_by_frame_;
   std::uint32_t next_scope_frame_ = 0;
   std::uint32_t next_with_clause_ = 0;
   std::unordered_map<const slang::ast::Symbol*, MintedProceduralScope>

@@ -88,120 +88,71 @@ auto IsProceduralScope(const slang::ast::Symbol& symbol) -> bool {
 
 }  // namespace
 
-auto UnitLowerer::MapOrGetRoutedRef(
-    ScopeFrameId slot_owner_frame, hir::RoutedRefDecl decl)
-    -> hir::RoutedRefId {
-  auto& slots = routed_refs_by_frame_[slot_owner_frame];
-  // Two references that navigate the same way to the same target are one
-  // endpoint; two that reach it differently are two, and the route is what says
-  // which. An object reached through a port and the same object named
-  // hierarchically coincide only in the instance being lowered -- the port
-  // reaches whatever it was bound to, the name reaches what it names -- so
-  // sharing one endpoint between them would make the second follow the first's
-  // binding.
-  for (const hir::RoutedRefId id : slots.Ids()) {
-    if (slots.Get(id).recipe == decl.recipe) return id;
-  }
-  return slots.Add(std::move(decl));
+auto UnitLowerer::RoutesOf(ScopeFrameId owner_frame) -> hir::ScopeRoutes& {
+  return routes_by_frame_[owner_frame];
 }
 
-auto UnitLowerer::TakeRoutedRefsForFrame(ScopeFrameId slot_owner_frame)
-    -> base::Arena<hir::RoutedRefDecl, hir::RoutedRefId> {
-  const auto it = routed_refs_by_frame_.find(slot_owner_frame);
-  if (it == routed_refs_by_frame_.end()) {
+auto UnitLowerer::TakeRoutesForFrame(ScopeFrameId owner_frame)
+    -> hir::ScopeRoutes {
+  const auto it = routes_by_frame_.find(owner_frame);
+  if (it == routes_by_frame_.end()) {
     return {};
   }
   auto out = std::move(it->second);
-  routed_refs_by_frame_.erase(it);
+  routes_by_frame_.erase(it);
   return out;
 }
 
 namespace {
 
-// The slot for `decl` in `slots`, reusing one that already asks the same scope
-// for the same name on the same class.
-template <typename Id>
-auto MapOrGetClassName(
-    base::Arena<hir::ClassNameDecl, Id>& slots, hir::ClassNameDecl decl) -> Id {
-  for (const Id id : slots.Ids()) {
-    const hir::ClassNameDecl& at = slots.Get(id);
-    if (at.head == decl.head && at.steps == decl.steps &&
-        at.class_name == decl.class_name && at.name == decl.name) {
-      return id;
-    }
+// The id of `walk` in `table`, reusing one already there. Two walks that
+// navigate the same way to the same end are one; two that reach it differently
+// are two, and the walk is what says which. An object reached through a port
+// and the same object named hierarchically coincide only in the instance being
+// lowered -- the port reaches whatever it was bound to, the name reaches what
+// it names -- so sharing one between them would make the second follow the
+// first's binding.
+template <typename Walk, typename Id>
+auto MapOrGetRoute(base::Arena<Walk, Id>& table, Walk walk) -> Id {
+  for (const Id id : table.Ids()) {
+    if (table.Get(id) == walk) return id;
   }
-  return slots.Add(std::move(decl));
+  return table.Add(std::move(walk));
 }
 
 }  // namespace
 
 auto UnitLowerer::MapOrGetPropertyCoordinate(
-    ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
+    ScopeFrameId owner_frame, hir::ClassNameDecl decl)
     -> hir::PropertyCoordinateId {
-  return MapOrGetClassName(
-      property_coordinates_by_frame_[slot_owner_frame], std::move(decl));
+  return MapOrGetRoute(
+      RoutesOf(owner_frame).property_coordinates, std::move(decl));
 }
 
 auto UnitLowerer::MapOrGetBehaviorCoordinate(
-    ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
+    ScopeFrameId owner_frame, hir::ClassNameDecl decl)
     -> hir::BehaviorCoordinateId {
-  return MapOrGetClassName(
-      behavior_coordinates_by_frame_[slot_owner_frame], std::move(decl));
+  return MapOrGetRoute(
+      RoutesOf(owner_frame).behavior_coordinates, std::move(decl));
 }
 
 auto UnitLowerer::MapOrGetBehaviorBody(
-    ScopeFrameId slot_owner_frame, hir::ClassNameDecl decl)
-    -> hir::BehaviorBodyId {
-  return MapOrGetClassName(
-      behavior_bodies_by_frame_[slot_owner_frame], std::move(decl));
-}
-
-auto UnitLowerer::TakePropertyCoordinatesForFrame(ScopeFrameId slot_owner_frame)
-    -> base::Arena<hir::ClassNameDecl, hir::PropertyCoordinateId> {
-  const auto it = property_coordinates_by_frame_.find(slot_owner_frame);
-  if (it == property_coordinates_by_frame_.end()) {
-    return {};
-  }
-  auto out = std::move(it->second);
-  property_coordinates_by_frame_.erase(it);
-  return out;
-}
-
-auto UnitLowerer::TakeBehaviorCoordinatesForFrame(ScopeFrameId slot_owner_frame)
-    -> base::Arena<hir::ClassNameDecl, hir::BehaviorCoordinateId> {
-  const auto it = behavior_coordinates_by_frame_.find(slot_owner_frame);
-  if (it == behavior_coordinates_by_frame_.end()) {
-    return {};
-  }
-  auto out = std::move(it->second);
-  behavior_coordinates_by_frame_.erase(it);
-  return out;
-}
-
-auto UnitLowerer::TakeBehaviorBodiesForFrame(ScopeFrameId slot_owner_frame)
-    -> base::Arena<hir::ClassNameDecl, hir::BehaviorBodyId> {
-  const auto it = behavior_bodies_by_frame_.find(slot_owner_frame);
-  if (it == behavior_bodies_by_frame_.end()) {
-    return {};
-  }
-  auto out = std::move(it->second);
-  behavior_bodies_by_frame_.erase(it);
-  return out;
+    ScopeFrameId owner_frame, hir::ClassNameDecl decl) -> hir::BehaviorBodyId {
+  return MapOrGetRoute(RoutesOf(owner_frame).behavior_bodies, std::move(decl));
 }
 
 auto UnitLowerer::MakeRoutedMemberRef(
-    ScopeFrameId slot_owner_frame, hir::RoutedRefDecl decl,
-    diag::SourceSpan span) -> hir::Expr {
-  const hir::TypeId type =
-      std::get<hir::EndpointCell>(hir::EndpointOf(decl.recipe.leaf)).type;
-  const hir::RoutedRefId slot =
-      MapOrGetRoutedRef(slot_owner_frame, std::move(decl));
-  return hir::MakeRefExpr(hir::RoutedRef{.id = slot}, type, span);
+    ScopeFrameId owner_frame, hir::ValueRoute route, diag::SourceSpan span)
+    -> hir::Expr {
+  const hir::TypeId type = hir::CellOf(route.leaf).type;
+  const hir::RoutedValueRefId id =
+      MapOrGetRoute(RoutesOf(owner_frame).values, std::move(route));
+  return hir::MakeRefExpr(hir::RoutedValueRef{.id = id}, type, span);
 }
 
 auto UnitLowerer::LookupPublishedRouteTarget(
     const slang::ast::ValueSymbol& value, const ScopeRoute& route)
-    -> std::optional<hir::RouteLeaf> {
+    -> std::optional<hir::DataLeaf> {
   // Which unit's object the route landed on is what the walk that built it
   // knows; a route that landed on none reached a scope with no declaration
   // behind it, and the name it ends at was never promised to anyone.
@@ -230,7 +181,7 @@ auto UnitLowerer::LookupPublishedRouteTarget(
 
 auto UnitLowerer::ResolveRouteTarget(
     const slang::ast::ValueSymbol& value, const ScopeRoute& route)
-    -> diag::Result<hir::RouteLeaf> {
+    -> diag::Result<hir::DataLeaf> {
   // A member the owning unit published is named against the signature this
   // unit consumed, which also states what storage the name reaches -- so
   // nothing about it is read off the unit that declared it.
@@ -268,49 +219,47 @@ auto UnitLowerer::ResolveRouteTarget(
       .type = *type};
 }
 
-auto UnitLowerer::MakeRoutedRef(
-    const slang::ast::ValueSymbol& value, ScopeFrameId slot_owner,
-    ScopeRoute route) -> diag::Result<hir::ReferenceRoute> {
+auto UnitLowerer::MakeRoutedValueRef(
+    const slang::ast::ValueSymbol& value, ScopeFrameId owner_frame,
+    ScopeRoute route) -> diag::Result<hir::RoutedValueRef> {
   auto leaf = ResolveRouteTarget(value, route);
   if (!leaf) return std::unexpected(std::move(leaf.error()));
-  const hir::RoutedRefId id = MapOrGetRoutedRef(
-      slot_owner, hir::RoutedRefDecl{
-                      .recipe = hir::RoutedPathRecipe{
-                          .head = std::move(route.head),
-                          .steps = std::move(route.steps),
-                          .leaf = *std::move(leaf)}});
-  return hir::ReferenceRoute{hir::RoutedRef{.id = id}};
+  const hir::RoutedValueRefId id = MapOrGetRoute(
+      RoutesOf(owner_frame).values, hir::ValueRoute{
+                                        .head = std::move(route.head),
+                                        .steps = std::move(route.steps),
+                                        .leaf = *std::move(leaf)});
+  return hir::RoutedValueRef{.id = id};
 }
 
 auto UnitLowerer::MakeRoutedObjectRef(
-    ScopeFrameId slot_owner, ScopeRoute route, hir::TypeId object_type)
-    -> hir::RoutedRef {
-  const hir::RoutedRefId id = MapOrGetRoutedRef(
-      slot_owner, hir::RoutedRefDecl{
-                      .recipe = hir::RoutedPathRecipe{
-                          .head = std::move(route.head),
-                          .steps = std::move(route.steps),
-                          .leaf = hir::ScopeLeaf{.type = object_type}}});
-  return hir::RoutedRef{.id = id};
+    ScopeFrameId owner_frame, ScopeRoute route, hir::TypeId object_type)
+    -> hir::RoutedObjectRef {
+  const hir::RoutedObjectRefId id = MapOrGetRoute(
+      RoutesOf(owner_frame).objects,
+      hir::ObjectRoute{
+          .head = std::move(route.head),
+          .steps = std::move(route.steps),
+          .leaf = hir::ScopeLeaf{.type = object_type}});
+  return hir::RoutedObjectRef{.id = id};
 }
 
 auto UnitLowerer::MakeRoutedCallableRef(
-    ScopeFrameId slot_owner, ScopeRoute route, std::string name,
-    hir::ExternalCalleeInterface interface) -> hir::RoutedRef {
-  const hir::RoutedRefId id = MapOrGetRoutedRef(
-      slot_owner, hir::RoutedRefDecl{
-                      .recipe = hir::RoutedPathRecipe{
-                          .head = std::move(route.head),
-                          .steps = std::move(route.steps),
-                          .leaf = hir::OpaqueCallableLeaf{
-                              .name = std::move(name),
-                              .interface = std::move(interface)}}});
-  return hir::RoutedRef{.id = id};
+    ScopeFrameId owner_frame, ScopeRoute route, std::string name,
+    hir::ExternalCalleeInterface interface) -> hir::RoutedCallableRef {
+  const hir::RoutedCallableRefId id = MapOrGetRoute(
+      RoutesOf(owner_frame).callables,
+      hir::CallableRoute{
+          .head = std::move(route.head),
+          .steps = std::move(route.steps),
+          .leaf = hir::OpaqueCallableLeaf{
+              .name = std::move(name), .interface = std::move(interface)}});
+  return hir::RoutedCallableRef{.id = id};
 }
 
 auto UnitLowerer::MakeRoutedDisableTargetRef(
     const WalkFrame& frame, const slang::ast::Symbol& target,
-    diag::SourceSpan span) -> diag::Result<hir::RoutedRef> {
+    diag::SourceSpan span) -> diag::Result<hir::RoutedDisableTargetRef> {
   // A scope's identity indexes its declaring scope's registry, so a route
   // carrying one runs to that scope, and the procedural scopes between are
   // where the target sits rather than steps of their own -- the same reading a
@@ -329,17 +278,17 @@ auto UnitLowerer::MakeRoutedDisableTargetRef(
         span, diag::DiagCode::kUnsupportedStatementForm,
         "a disable of a block or task reached this way is not yet supported");
   }
-  hir::RouteLeaf leaf =
+  hir::DisableLeaf leaf =
       minted.has_value()
-          ? hir::RouteLeaf{hir::DisableTargetLeaf{.scope = minted->scope}}
-          : hir::RouteLeaf{hir::OpaqueDisableTargetLeaf{}};
-  const hir::RoutedRefId id = MapOrGetRoutedRef(
-      frame.Current(), hir::RoutedRefDecl{
-                           .recipe = hir::RoutedPathRecipe{
-                               .head = std::move(route->head),
-                               .steps = std::move(route->steps),
-                               .leaf = std::move(leaf)}});
-  return hir::RoutedRef{.id = id};
+          ? hir::DisableLeaf{hir::DisableTargetLeaf{.scope = minted->scope}}
+          : hir::DisableLeaf{hir::OpaqueDisableTargetLeaf{}};
+  const hir::RoutedDisableTargetRefId id = MapOrGetRoute(
+      RoutesOf(frame.Current()).disable_targets,
+      hir::DisableTargetRoute{
+          .head = std::move(route->head),
+          .steps = std::move(route->steps),
+          .leaf = std::move(leaf)});
+  return hir::RoutedDisableTargetRef{.id = id};
 }
 
 auto UnitLowerer::RouteToUnitObject(
@@ -373,31 +322,23 @@ auto UnitLowerer::RouteToUnitObject(
 
 auto UnitLowerer::TranslateReferenceRoute(
     const WalkFrame& frame, const slang::ast::ValueSymbol& value)
-    -> diag::Result<std::optional<hir::ReferenceRoute>> {
+    -> diag::Result<std::optional<hir::RoutedValueRef>> {
   // This unit's own identity for the target, if it declares it.
   const auto data_object = LookupStructuralDataObjectBinding(value);
   const auto procedural_static = LookupProceduralStatic(value);
   const std::optional<hir::StructuralHops> data_object_hops =
       data_object ? frame.HopsTo(data_object->home_frame) : std::nullopt;
 
-  // A data object of the reader's own scope is a direct member of `self`: the
-  // one shape that is no route at all, and so has no leaf and no sealed
-  // endpoint.
-  if (data_object_hops.has_value() && data_object_hops->value == 0) {
-    return hir::ReferenceRoute{
-        hir::DirectMemberRef{.var = data_object->var_id}};
-  }
-
-  const auto routed_ref = [&](ScopeFrameId slot_owner, ScopeRoute route)
-      -> diag::Result<std::optional<hir::ReferenceRoute>> {
-    auto reference = MakeRoutedRef(value, slot_owner, std::move(route));
+  const auto routed_ref = [&](ScopeFrameId owner_frame, ScopeRoute route)
+      -> diag::Result<std::optional<hir::RoutedValueRef>> {
+    auto reference = MakeRoutedValueRef(value, owner_frame, std::move(route));
     if (!reference) return std::unexpected(std::move(reference.error()));
     return *reference;
   };
 
-  // The target's storage hangs under an ancestor scope of the same unit, so
-  // the whole route is a typed climb to it: a routed reference sealed once in
-  // the resolve phase rather than re-walked on each access.
+  // The target's storage is the reader's own scope's or hangs under a scope
+  // enclosing it in the same unit (LRM 23.9), so the whole route is a count of
+  // parent edges, and zero of them for the reader's own scope.
   const auto in_unit_route = [&](hir::StructuralHops hops) {
     return routed_ref(
         frame.Current(), ScopeRoute{
@@ -1010,20 +951,18 @@ auto UnitLowerer::ObservedThroughModport(
   for (const hir::PublishedMemberId id : watched) {
     const hir::PublishedMember member =
         unit_.external_unit_objects.Get(object).members.Get(id);
-    const hir::RoutedRefId slot = MapOrGetRoutedRef(
-        frame.Current(), hir::RoutedRefDecl{
-                             .recipe = hir::RoutedPathRecipe{
-                                 .head = route.head,
-                                 .steps = route.steps,
-                                 .leaf = hir::SignatureMemberLeaf{
-                                     .object = object,
-                                     .member = id,
-                                     .storage = member.storage,
-                                     .type = member.type}}});
+    const hir::RoutedValueRefId reference = MapOrGetRoute(
+        RoutesOf(frame.Current()).values, hir::ValueRoute{
+                                              .head = route.head,
+                                              .steps = route.steps,
+                                              .leaf = hir::SignatureMemberLeaf{
+                                                  .object = object,
+                                                  .member = id,
+                                                  .storage = member.storage,
+                                                  .type = member.type}});
     out.push_back(
         hir::SensitivityEntry{
-            .ref = hir::ValueTarget{hir::ReferenceRoute{
-                hir::RoutedRef{.id = slot}}},
+            .ref = hir::ValueTarget{hir::RoutedValueRef{.id = reference}},
             .footprint = std::nullopt});
   }
   return out;

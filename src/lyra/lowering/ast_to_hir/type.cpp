@@ -1294,9 +1294,9 @@ auto UnitLowerer::InternLocalClass(
 auto UnitLowerer::PopulateClassBodiesDeclaredIn(const slang::ast::Scope& scope)
     -> diag::Result<void> {
   // A class body reaches the declarations of the scope that declares it and
-  // records its routed references against that scope's frame, so it lowers
-  // while that scope is being lowered -- with the same reach a process of the
-  // scope has, and before the scope takes the references recorded against it.
+  // records its routes against that scope's frame, so it lowers while that
+  // scope is being lowered -- with the same reach a process of the scope has,
+  // and before the scope takes the routes recorded against it.
   const auto pending = pending_class_bodies_.find(&scope);
   if (pending == pending_class_bodies_.end()) return {};
   std::vector<PendingClassBody> batch = std::move(pending->second);

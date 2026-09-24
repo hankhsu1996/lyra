@@ -328,10 +328,9 @@ struct TimedStmt {
 };
 
 // LRM 15.5.1 `-> e;` and `->> [ delay_or_event_control ] e;`. The `event`
-// ExprId resolves to a PrimaryExpr of a direct or routed reference pointing at
-// the event variable. `timing` says when the trigger happens: `->` triggers
-// where the statement is reached, and `->>` makes it a nonblocking update event
-// due in the NBA region of the slot its control names.
+// ExprId names the event variable. `timing` says when the trigger happens: `->`
+// triggers where the statement is reached, and `->>` makes it a nonblocking
+// update event due in the NBA region of the slot its control names.
 struct EventTriggerStmt {
   ExprId event;
   EffectTiming timing;
@@ -379,11 +378,11 @@ struct DirectDisableTarget {
 };
 
 // The scope a `disable` names elsewhere on the elaborated hierarchy (LRM 23.6):
-// a route to it, sealed once in the resolve phase like every other reference
-// that crosses an instance boundary. Which of the two forms a statement carries
-// says where the target lives and nothing about how the source spelled it.
+// a route to it, walked the way any other name's route is. Which of the two
+// forms a statement carries says where the target lives and nothing about how
+// the source spelled it.
 struct RoutedDisableTarget {
-  RoutedRef target;
+  RoutedDisableTargetRef target;
 
   auto operator==(const RoutedDisableTarget&) const -> bool = default;
 };

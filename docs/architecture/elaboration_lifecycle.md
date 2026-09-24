@@ -80,7 +80,15 @@ declarative records. Build does **not** execute any value-level SystemVerilog bo
 initializer, no process body, no port read, no reference dereference.
 
 Generate is Build-phase logic: its conditions are constant expressions (LRM 27.5), available from
-the parameter environment, so generate never depends on Resolve.
+the parameter environment, so generate never depends on Resolve. A nested scope's parameter
+environment includes every constant of the scopes enclosing it in the same instance -- a loop
+block's index and what the block settles from it (LRM 27.4) -- and each of those is settled while
+its own scope is built, before any scope inside it is. A reference whose route is only parent edges
+within the instance passes nothing that can be missing, so it has nothing to resolve: it is walked
+where it is used, by a generate construct during Build exactly as by a process later. The language
+confines a constant expression to constants (LRM 11.2.1), which only such references reach, so
+nothing one reads waits on Resolve; every reference descending into a scope, or crossing into
+another instance, does.
 
 ### Resolve
 
@@ -150,10 +158,12 @@ this phase.
    no instance's incoming bindings are observed before Seal commits them. SystemVerilog-visible
    time-zero ordering is a property of these phases, never an accident of when a C++ constructor
    returns.
-9. **The hot path consumes only sealed endpoints.** Simulation-time reads, writes, and observations
-   reach sealed endpoints; no hot-path access performs route traversal, name matching, or resolution
-   lookup. Whatever mechanism orders Resolve and Seal exists only at elaboration; it does not
-   persist into simulation.
+9. **The hot path resolves nothing.** Simulation-time reads, writes, and observations through a
+   route that descends or crosses an instance reach sealed endpoints; one that only climbs to an
+   enclosing scope of the same instance follows a fixed number of parent edges, which is neither
+   traversal nor lookup. No hot-path access performs name matching or resolution lookup. Whatever
+   mechanism orders Resolve and Seal exists only at elaboration; it does not persist into
+   simulation.
 
 ## Boundary to Adjacent Layers
 
@@ -165,8 +175,9 @@ this phase.
 - **`runtime_model.md`** defines the constructor / simulation execution-context split. This doc
   refines that split into the five phases.
 - **`reference_resolution.md`** owns _what_ a route segment classifies as and what its endpoint
-  becomes. This doc owns _when_: every reference resolves in Resolve, seals in Seal, and is read on
-  the hot path after Activate.
+  becomes. This doc owns _when_: every cross-instance reference resolves in Resolve, seals in Seal,
+  and is read on the hot path after Activate; a reference that only climbs to an enclosing scope of
+  the same instance resolves in no phase, being walked where it is used.
 - **`hierarchy_and_generate.md`** owns the object tree this lifecycle builds; generate is
   Build-phase constructor-time logic.
 - **`specialization_model.md`** owns parameter strategy, orthogonal to the lifecycle.
@@ -192,9 +203,9 @@ this phase.
   is a forwarding link resolved away during Seal; it owns no child-side cell and needs no
   simulation-time reach from the parent.
 - Letting "when the C++ constructor returns" determine any SystemVerilog-observable ordering.
-- Reading a route's endpoint on the simulation hot path via hierarchy traversal or by-name lookup.
-  Every nonlocal hot-path read consumes a sealed endpoint; whatever resolution mechanism produced it
-  exists only across elaboration.
+- Reading a route's endpoint on the simulation hot path via descent, a crossing into another
+  instance, or by-name lookup. Every such read consumes a sealed endpoint; whatever resolution
+  mechanism produced it exists only across elaboration.
 
 ## Notes / Examples
 

@@ -37,7 +37,7 @@ a host compiler accepts, links, loads `hello_test` through `$readmemh`, executes
 on the testbench's own software request -- with the program's expected output and a full instruction
 trace. Its sources, includes and defines are read from the `lyra.toml` at the design's root, so no
 setting has to be passed on the command line, which closes the last accepted-option gap between this
-and the condition above. Measured 2026-09-02. The program's own output lands in a log file beside
+and the condition above. Measured 2026-09-24. The program's own output lands in a log file beside
 the design rather than on stdout, so an empty terminal is what a correct run looks like.
 
 **The run is silent.** It used to report `unique` and `priority` violations from nearly every
@@ -49,14 +49,16 @@ catch-all reports nothing, one without reports when nothing matched -- so it can
 unnoticed.
 
 **Nothing runs this design automatically**, so every sentence here is only as fresh as the last time
-someone ran it by hand. It has stood false twice. The first time, a lowering identity minted for a
-construct the assertion policy elides aborted seventeen of the design's twenty-four modules for
-three days. The second, found the same way, was a lowering that pattern-matched a count for an
+someone ran it by hand. It has stood false three times. The first time, a lowering identity minted
+for a construct the assertion policy elides aborted seventeen of the design's twenty-four modules
+for three days. The second, found the same way, was a lowering that pattern-matched a count for an
 integer literal -- a replication's multiplier and an assignment pattern's alike, both of which the
 standard's own idiom writes as arithmetic -- aborting nine modules including both tops; it
-reproduced on a clean checkout, so it had been sitting in `main` for as long as nobody ran this.
-Re-run before trusting this section, and treat a status sentence here as a measurement rather than a
-property.
+reproduced on a clean checkout, so it had been sitting in `main` for as long as nobody ran this. The
+third was a segfault while the hierarchy was being built: a generate conditional two levels below a
+loop chose its block by reading the loop's index through a reference that was filled in only once
+the whole tree existed. Re-run before trusting this section, and treat a status sentence here as a
+measurement rather than a property.
 
 ## Two walls
 

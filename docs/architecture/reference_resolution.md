@@ -50,8 +50,8 @@ its changes.
 ## Core Invariants
 
 1. Every reference is a route from a structural origin to an endpoint. The route is a sequence of
-   segments; the endpoint, once sealed, is the canonical access point for every read, write, and
-   observation against the reference.
+   segments; the endpoint is the canonical access point for every read, write, and observation
+   against the reference.
 2. Each segment is classified by whether the referrer has a declaration to compile against for that
    step. A **declared** segment's target is one the referrer already compiles against -- a class its
    own artifact owns, or a member on a signature it consumes -- and its realization is typed
@@ -65,10 +65,12 @@ its changes.
    it does not. The second is not a weaker identity -- a name checked by the compiler that consumes
    it and a name looked up in a run-time registry share a spelling and nothing else.
 
-3. A reference's route executes once during the binding-graph phase, producing a candidate endpoint;
-   the endpoint is committed at the sealing barrier and read directly thereafter. Simulation-time
-   access reads the sealed endpoint with no per-access lookup, no hierarchy traversal, and no name
-   matching. One sealed endpoint serves both value access and change observation.
+3. A route that descends into a scope or crosses into another instance executes once during the
+   binding-graph phase, producing a candidate endpoint; the endpoint is committed at the sealing
+   barrier and read directly thereafter. A route of parent edges within the instance passes nothing
+   that can be missing, so it executes nowhere ahead of time: its access follows those edges, a
+   fixed number of loads. Either way simulation-time access performs no lookup, no descent, and no
+   name matching, and one endpoint serves both value access and change observation.
 4. Route execution is total in the architecture's contract. The frontend fully elaborates and
    validates every reference, and the constructed object graph is faithful to that elaboration (see
    `hierarchy_and_generate.md`). A reference to a non-constructed runtime target (a non-selected
@@ -111,8 +113,9 @@ its changes.
   graph to the frontend's elaboration that makes route execution total.
 - `runtime_model.md` places route execution in the constructor context (the binding-graph phases at
   t = 0) and access in the simulation context (t >= 0).
-- `elaboration_lifecycle.md` owns _when_ a route executes and seals. Routes execute in Resolve;
-  endpoints commit in Seal; initializers and reads observe only sealed endpoints.
+- `elaboration_lifecycle.md` owns _when_ a route executes and seals. A route that descends or
+  crosses an instance executes in Resolve and its endpoint commits in Seal; one of parent edges is
+  walked where it is used.
 - `identity_and_ownership.md` owns the identity rules that route segments thread.
 - `scheduling.md` owns the wakeup that fires when a sealed endpoint's underlying cell changes.
 
@@ -144,9 +147,10 @@ its changes.
   mechanisms for cross-instance access is the canonical violation.
 - Resolution by flattened symbol-name lookup or a design-global path table that mirrors the object
   graph.
-- A per-access runtime lookup on the simulation path. Routes execute once during elaboration; the
-  hot path reads a sealed endpoint. A hot-path read that performs any hierarchy traversal, parent
-  walk, or by-name lookup is the canonical hot-path violation.
+- A per-access runtime lookup on the simulation path. A route that descends or crosses an instance
+  executes once during elaboration and the hot path reads its sealed endpoint. A hot-path read that
+  descends the hierarchy or looks a name up is the canonical hot-path violation; following a fixed
+  number of parent edges is neither.
 - A route that seals an object reference to the address of whichever object it held at sealing. The
   reference's value is the design's to change, so such an endpoint is correct only until the first
   assignment and silently wrong afterwards.

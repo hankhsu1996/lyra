@@ -198,9 +198,9 @@ A target the statement's own declaration scope declares needs no reach at all: a
 only meaningful against that scope's own registry, and holding it is the whole of naming the target.
 That is the only form available to a class method or a package subroutine, neither of which stands
 on the design hierarchy. A target anywhere else on that hierarchy is reached the way every other
-name that leaves a scope is -- a route, sealed once during elaboration
-(`hierarchical-callable-dispatch.md` D5) -- so what a `disable` can name is decided by the route and
-not by which side of the writer's own declaration chain the target sits on.
+name that leaves a scope is -- a route (`hierarchical-callable-dispatch.md` D5) -- so what a
+`disable` can name is decided by the route and not by which side of the writer's own declaration
+chain the target sits on.
 
 ## Cross-references
 

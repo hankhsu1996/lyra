@@ -6,10 +6,14 @@
 // connected variable's -- and a wait registers on a cell, so every form of
 // waiting is checked here: an edge event control (LRM 9.4.2), the implicit
 // sensitivity an `always_comb` and an `always @*` infer (LRM 9.2.2.2.1,
-// 9.4.2.2), and a level-sensitive `wait` (LRM 9.4.3).
+// 9.4.2.2), and a level-sensitive `wait` (LRM 9.4.3). The name reaches the
+// port from wherever it is written: the port's own scope, a block nested in
+// it, where the name is found by searching outward (LRM 23.9), and the parent,
+// through a hierarchical name reaching down into the instance (LRM 23.6).
 module Leaf (ref logic r);
   int edges = 0;
   int waited = 0;
+  int nested_edges = 0;
   logic inverted;
   logic followed;
 
@@ -23,12 +27,21 @@ module Leaf (ref logic r);
     wait (r == 1'b1);
     waited = 1;
   end
+
+  begin : outer
+    begin : inner
+      always @(posedge r) nested_edges = nested_edges + 1;
+    end
+  end
 endmodule
 
 module Top;
   logic clk = 0;
+  int parent_edges = 0;
 
   Leaf leaf (.r(clk));
+
+  always @(posedge leaf.r) parent_edges = parent_edges + 1;
 
   always #5 clk = ~clk;
 
@@ -48,6 +61,14 @@ module Top;
       $fatal(1, "the child's combinational read did not follow the ref port");
     if (leaf.followed !== clk)
       $fatal(1, "the child's implicit-sensitivity read did not follow the port");
+    if (leaf.nested_edges !== 2)
+      $fatal(
+          1, "a block nested in the child saw %0d positive edges, expected 2",
+          leaf.nested_edges);
+    if (parent_edges !== 2)
+      $fatal(
+          1, "the parent saw %0d positive edges through leaf.r, expected 2",
+          parent_edges);
     $display("All checks passed");
   end
 endmodule

@@ -109,15 +109,15 @@ auto LowerHirRealLiteral(
       BuildRealLiteral(unit_lowerer.Unit(), block, type, r.value));
 }
 
-// A direct or routed reference reaches its endpoint's observable cell as an
-// lvalue; the dispatcher dereferences it to reach the storage the cell stands
-// for. Both route kinds funnel through the one endpoint binding, so read and
-// write share exactly the reach that observation does.
-auto LowerReferenceRouteExpr(
+// A value reference reaches its endpoint's observable cell as an lvalue; the
+// dispatcher dereferences it to reach the storage the cell stands for. Every
+// route funnels through the one endpoint binding, so read and write share
+// exactly the reach that observation does.
+auto LowerRoutedValueRefExpr(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const hir::ReferenceRoute& route) -> mir::Expr {
+    const hir::RoutedValueRef& reference) -> mir::Expr {
   return EndpointCellExpr(
-      frame, lowerer.Owner().Unit(), BindEndpoint(lowerer, frame, route));
+      frame, lowerer.Owner().Unit(), BindEndpoint(lowerer, frame, reference));
 }
 
 // The pattern that declares the identifier is its binding origin, so the read
@@ -296,10 +296,6 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::ThisHandle&) -> mir::Expr {
             return LowerHirThisHandle(frame, result_type);
           },
-          [&](const hir::DirectMemberRef& m) -> mir::Expr {
-            return LowerReferenceRouteExpr(
-                process.EnclosingScopeLowerer(), frame, hir::ReferenceRoute{m});
-          },
           [&](const hir::ProceduralVarRef& l) -> mir::Expr {
             return LowerProceduralVarRefExpr(process, frame, l, result_type);
           },
@@ -317,9 +313,9 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::StaticPropertyRef& r) -> mir::Expr {
             return LowerStaticPropertyRefExpr(process.Owner(), frame, r);
           },
-          [&](const hir::RoutedRef& c) -> mir::Expr {
-            return LowerReferenceRouteExpr(
-                process.EnclosingScopeLowerer(), frame, hir::ReferenceRoute{c});
+          [&](const hir::RoutedValueRef& c) -> mir::Expr {
+            return LowerRoutedValueRefExpr(
+                process.EnclosingScopeLowerer(), frame, c);
           },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);
@@ -355,10 +351,6 @@ auto LowerHirPrimaryExprStructural(
                 "LowerHirPrimaryExprStructural: HIR ThisHandle does not appear "
                 "in structural expressions");
           },
-          [&](const hir::DirectMemberRef& m) -> mir::Expr {
-            return LowerReferenceRouteExpr(
-                lowerer, frame, hir::ReferenceRoute{m});
-          },
           [](const hir::ProceduralVarRef&) -> mir::Expr {
             throw InternalError(
                 "LowerHirPrimaryExprStructural: HIR ProceduralVarRef does not "
@@ -375,9 +367,8 @@ auto LowerHirPrimaryExprStructural(
           [&](const hir::StaticPropertyRef& r) -> mir::Expr {
             return LowerStaticPropertyRefExpr(lowerer.Owner(), frame, r);
           },
-          [&](const hir::RoutedRef& c) -> mir::Expr {
-            return LowerReferenceRouteExpr(
-                lowerer, frame, hir::ReferenceRoute{c});
+          [&](const hir::RoutedValueRef& c) -> mir::Expr {
+            return LowerRoutedValueRefExpr(lowerer, frame, c);
           },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);

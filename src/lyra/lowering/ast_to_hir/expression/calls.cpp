@@ -518,7 +518,7 @@ auto LowerObjectSubroutineCall(
       if (const auto callable = promised.FindCallable(sym.name)) {
         const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
             hir::Type{hir::UnitObjectType{.unit_name = unit_name}});
-        const hir::RoutedRef receiver = unit_lowerer.MakeRoutedObjectRef(
+        const hir::RoutedObjectRef receiver = unit_lowerer.MakeRoutedObjectRef(
             frame.Current(), std::move(route), object_type);
         return hir::Expr{
             .type = promised.callables.Get(*callable).result_type,
@@ -549,9 +549,9 @@ auto LowerObjectSubroutineCall(
   const hir::TypeId scope_type =
       unit_lowerer.Unit().types.Intern(hir::Type{hir::OpaqueScopeType{}});
   const ScopeRoute entry_route = route;
-  const hir::RoutedRef receiver = unit_lowerer.MakeRoutedObjectRef(
+  const hir::RoutedObjectRef receiver = unit_lowerer.MakeRoutedObjectRef(
       frame.Current(), std::move(route), scope_type);
-  const hir::RoutedRef entry = unit_lowerer.MakeRoutedCallableRef(
+  const hir::RoutedCallableRef entry = unit_lowerer.MakeRoutedCallableRef(
       frame.Current(), entry_route, std::string{sym.name}, *interface);
   return hir::Expr{
       .type = *result_type,

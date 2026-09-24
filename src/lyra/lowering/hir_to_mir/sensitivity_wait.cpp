@@ -31,9 +31,9 @@ auto BuildObservableCellExpr(
     -> mir::ExprId {
   return std::visit(
       Overloaded{
-          [&](const hir::ReferenceRoute& route) -> mir::ExprId {
+          [&](const hir::RoutedValueRef& reference) -> mir::ExprId {
             return block.exprs.Add(EndpointCellExpr(
-                frame, unit, BindEndpoint(lowerer, frame, route)));
+                frame, unit, BindEndpoint(lowerer, frame, reference)));
           },
           [&](const hir::ExternalUnitValueRef& pkg) -> mir::ExprId {
             return block.exprs.Add(
@@ -70,9 +70,9 @@ auto BuildObservablePtrExpr(
   };
   return std::visit(
       Overloaded{
-          [&](const hir::ReferenceRoute& route) -> mir::ExprId {
+          [&](const hir::RoutedValueRef& reference) -> mir::ExprId {
             return EndpointObservablePtr(
-                block, frame, unit, BindEndpoint(lowerer, frame, route));
+                block, frame, unit, BindEndpoint(lowerer, frame, reference));
           },
           [&](const hir::ExternalUnitValueRef&) -> mir::ExprId {
             return address_of_cell();

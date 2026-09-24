@@ -212,10 +212,7 @@ auto StructuralScopeLowerer::Run(
   auto pc = PopulatePortConnections(*slang_scope_, frame);
   if (!pc) return std::unexpected(std::move(pc.error()));
 
-  scope.routed_refs = owner_->TakeRoutedRefsForFrame(frame_);
-  scope.property_coordinates = owner_->TakePropertyCoordinatesForFrame(frame_);
-  scope.behavior_coordinates = owner_->TakeBehaviorCoordinatesForFrame(frame_);
-  scope.behavior_bodies = owner_->TakeBehaviorBodiesForFrame(frame_);
+  scope.routes = owner_->TakeRoutesForFrame(frame_);
   return scope;
 }
 
@@ -578,9 +575,18 @@ auto StructuralScopeLowerer::PopulateNetMember(
     if (!strength) return std::unexpected(std::move(strength.error()));
     auto rhs_or = LowerExpr(*init, frame);
     if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-    const hir::ExprId lhs_id = frame.Exprs().Add(
-        hir::MakeRefExpr(
-            hir::DirectMemberRef{.var = local}, *type_id_or, span));
+    // The net is this scope's own, so the driver reaches it over the route
+    // that climbs no edges.
+    auto net_ref = owner_->MakeRoutedValueRef(
+        net, frame_,
+        ScopeRoute{
+            .head = hir::InUnitHead{.hops = {}},
+            .steps = {},
+            .unit_name = std::nullopt,
+            .open = {}});
+    if (!net_ref) return std::unexpected(std::move(net_ref.error()));
+    const hir::ExprId lhs_id =
+        frame.Exprs().Add(hir::MakeRefExpr(*net_ref, *type_id_or, span));
     const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
     const auto& reads = owner_->Sensitivity().AnalyzeReads(*init, net);
     auto sensitivity = owner_->TranslateSensitivityReads(reads, frame);

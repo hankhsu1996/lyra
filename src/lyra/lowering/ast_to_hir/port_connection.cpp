@@ -53,11 +53,11 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
 // onto the instance, then the position that member sits at in the object its
 // signature describes (LRM 23.3.3). Every connection reaches the child's side
 // this way, whichever kind of port it is.
-auto PublishedMemberRecipe(
+auto PublishedMemberRoute(
     const hir::OwnedChildStep& instance_step,
     hir::ExternalUnitObjectId child_object, hir::PublishedMemberId member,
-    hir::PublishedStorage storage, hir::TypeId type) -> hir::RoutedPathRecipe {
-  return hir::RoutedPathRecipe{
+    hir::PublishedStorage storage, hir::TypeId type) -> hir::ValueRoute {
+  return hir::ValueRoute{
       .head = hir::InUnitHead{.hops = {}},
       .steps = {hir::PathStep{instance_step}},
       .leaf = hir::SignatureMemberLeaf{
@@ -192,7 +192,7 @@ class PairedPositions {
 // walk over nothing rather than a case of its own.
 auto RoutesToPairedObjects(
     const ScopeRoute& reach, const hir::ObjectsBehindType& behind,
-    diag::SourceSpan span) -> diag::Result<std::vector<hir::RoutedPathRecipe>> {
+    diag::SourceSpan span) -> diag::Result<std::vector<hir::ObjectRoute>> {
   if (reach.steps.empty()) {
     throw InternalError(
         "RoutesToPairedObjects: a reach through an interface port starts at "
@@ -207,7 +207,7 @@ auto RoutesToPairedObjects(
         "is not the one it stands for is not yet supported");
   }
   const std::uint64_t objects = paired->Count();
-  std::vector<hir::RoutedPathRecipe> peers;
+  std::vector<hir::ObjectRoute> peers;
   peers.reserve(objects);
   for (std::uint64_t position = 0; position < objects; ++position) {
     // Every position reaches the same member and differs only in which object
@@ -224,7 +224,7 @@ auto RoutesToPairedObjects(
         },
         steps.back());
     peers.push_back(
-        hir::RoutedPathRecipe{
+        hir::ObjectRoute{
             .head = reach.head,
             .steps = std::move(steps),
             .leaf = hir::ScopeLeaf{.type = behind.shape.element_type}});
@@ -244,7 +244,7 @@ auto RoutesToPairedObjects(
 auto InterfaceActualRoutes(
     UnitLowerer& unit_lowerer, const slang::ast::PortConnection& conn,
     const hir::ObjectsBehindType& behind, diag::SourceSpan span,
-    WalkFrame frame) -> diag::Result<std::vector<hir::RoutedPathRecipe>> {
+    WalkFrame frame) -> diag::Result<std::vector<hir::ObjectRoute>> {
   const slang::ast::Expression* actual = conn.getExpression();
   const auto* named =
       actual == nullptr
@@ -278,7 +278,7 @@ auto InterfaceActualRoutes(
     return PortConnectionUnsupported(
         span, "this interface port connection form is not yet supported");
   }
-  std::vector<hir::RoutedPathRecipe> peers;
+  std::vector<hir::ObjectRoute> peers;
   peers.reserve(instances->size());
   for (const auto* instance : *instances) {
     auto route = unit_lowerer.RouteToScope(frame, instance->body);
@@ -291,7 +291,7 @@ auto InterfaceActualRoutes(
     // A route ends at one object, so what types a peer is the element the
     // member stands for rather than the member's whole shape.
     peers.push_back(
-        hir::RoutedPathRecipe{
+        hir::ObjectRoute{
             .head = std::move(route->head),
             .steps = std::move(route->steps),
             .leaf = hir::ScopeLeaf{.type = behind.shape.element_type}});
@@ -344,7 +344,7 @@ auto ConnectInterfacePort(
       hir::PortConnection{
           .span = span,
           .kind = hir::InterfacePortConnection{
-              .endpoint = PublishedMemberRecipe(
+              .endpoint = PublishedMemberRoute(
                   instance_step, child_object, published.member, member.storage,
                   member_type),
               .peers = *std::move(peers)}});
@@ -478,20 +478,19 @@ auto ConnectElementPorts(
     // Which cell that member is, is the child's own statement of it, so the
     // parent never reads the child's declaration to find out. The route ends at
     // the member, whatever part of it the port stands for.
-    const hir::RoutedPathRecipe port_recipe = PublishedMemberRecipe(
+    const hir::ValueRoute port_route = PublishedMemberRoute(
         instance_step, child_object, projection->member, member.storage,
         unit_lowerer.ImportSignatureType(child_signature, member.type));
     // An input/output port reads the child cell during simulation, so it holds
-    // a persistent routed reference; a `ref` port is bound once in the resolve
-    // phase, so it keeps only the reach.
+    // a value reference; a `ref` port is bound once, so it keeps only the
+    // reach.
     const std::vector<hir::PublishedSelector> port_path =
         ImportPublishedPath(unit_lowerer, child_signature, projection->path);
     const auto cell_endpoint = [&]() -> hir::PortEndpoint {
       return hir::PortCellEndpoint{
           .cell = frame.Exprs().Add(ProjectPublishedPath(
               unit_lowerer, frame, port_path,
-              unit_lowerer.MakeRoutedMemberRef(
-                  home_frame, hir::RoutedRefDecl{.recipe = port_recipe}, span),
+              unit_lowerer.MakeRoutedMemberRef(home_frame, port_route, span),
               span))};
     };
 
@@ -567,7 +566,7 @@ auto ConnectElementPorts(
               "a ref port naming part of an internal name is not yet "
               "supported");
         }
-        endpoint = port_recipe;
+        endpoint = port_route;
         auto peer_or = scope.LowerExpr(*expr, frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
         peer = frame.Exprs().Add(*std::move(peer_or));
@@ -600,8 +599,7 @@ auto ConnectElementPorts(
         }
         auto couplings = ConnectBidirectionalPort(
             scope, inst, expr->as<slang::ast::AssignmentExpression>().left(),
-            unit_lowerer.MakeRoutedMemberRef(
-                home_frame, hir::RoutedRefDecl{.recipe = port_recipe}, span),
+            unit_lowerer.MakeRoutedMemberRef(home_frame, port_route, span),
             *projection->run, span, frame);
         if (!couplings) return std::unexpected(std::move(couplings.error()));
         for (const hir::NetJoin& coupling : *couplings) {
