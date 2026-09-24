@@ -32,6 +32,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/forwarding_entry.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
@@ -2324,82 +2325,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
 
 namespace {
 
-// Builds the entry a scope answers an SV name with: a free function taking the
-// generic scope as its receiver, downcasting it to the declaring class, and
-// forwarding the formals to the subroutine. A caller reaching one has no
-// declaration to compile against, so the entry's prototype is erased in the
-// table and restored at the call site from the same declaration this is built
-// from -- which is what makes a caller and this agree without a promise
-// between them.
-auto SynthesizeSubroutineEntry(
-    mir::CompilationUnit& unit, const mir::Class& cls, mir::ClassId cls_id,
-    mir::CallableId subroutine) -> mir::CallableCode {
-  const mir::CallableCode& target = cls.callables.Get(subroutine).code;
-  mir::CallableCode code = mir::CallableCode::Defined();
-  const mir::LocalId self = code.AddLocal(unit.builtins.scope_ptr);
-  code.params.push_back(self);
-  // The subroutine's own receiver leads its params, and the entry supplies it
-  // from the scope it was handed rather than forwarding one; what the entry
-  // takes beyond that are the formals the source wrote.
-  const std::span<const mir::LocalId> formals =
-      std::span{target.params}.subspan(
-          target.HasReceiver(cls.self_pointer_type) ? 1 : 0);
-  std::vector<mir::ExprId> arguments;
-  arguments.reserve(formals.size());
-  for (const mir::LocalId formal : formals) {
-    const mir::LocalDecl& decl = target.locals.Get(formal);
-    const mir::LocalId param = code.AddLocal(decl.type);
-    code.params.push_back(param);
-    arguments.push_back(
-        code.Body().exprs.Add(mir::MakeLocalRefExpr(param, decl.type)));
-  }
-  code.result_type = target.result_type;
-
-  const mir::ExprId self_ref = code.Body().exprs.Add(
-      mir::MakeLocalRefExpr(self, unit.builtins.scope_ptr));
-  const mir::ExprId typed = code.Body().exprs.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = self_ref},
-          .type = cls.self_pointer_type});
-  const mir::ExprId call = code.Body().exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target =
-                              mir::CallableTarget{
-                                  .owner = cls_id, .slot = subroutine},
-                          .receiver = typed},
-                  .arguments = std::move(arguments)},
-          .type = target.result_type});
-  // A task suspends its caller until it completes (LRM 13.3), so the entry
-  // suspends too: it awaits the body and hands back the completion, which is
-  // what the enabling process awaits in turn. Anything else completes where it
-  // is called and its result is the entry's.
-  const mir::Type& result = unit.types.Get(target.result_type);
-  if (const auto* coroutine = result.As<mir::CoroutineType>()) {
-    const mir::LocalId completion = code.AddLocal(coroutine->payload);
-    code.Body().AppendStmt(
-        mir::LocalDeclStmt{
-            .target = completion,
-            .init = code.Body().exprs.Add(
-                mir::Expr{
-                    .data = mir::AwaitExpr{.awaitable = call},
-                    .type = coroutine->payload})});
-    code.Body().AppendStmt(
-        mir::ReturnStmt{
-            .value = code.Body().exprs.Add(
-                mir::MakeLocalRefExpr(completion, coroutine->payload))});
-  } else if (result.Is<mir::VoidType>()) {
-    code.Body().AppendStmt(mir::ExprStmt{.expr = call});
-    code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
-  } else {
-    code.Body().AppendStmt(mir::ReturnStmt{.value = call});
-  }
-  return code;
-}
-
 // Builds a runtime scope class's definition as an ordinary constructed value: a
 // per-phase ABI adapter that downcasts the generic scope receiver to `cls` and
 // forwards to the phase body (empty when the phase has none), wrapped in a
@@ -2419,32 +2344,9 @@ auto InstallGeneratedDefinition(
     mir::ClassRef base, mir::Class& rooted, mir::CallableCode& rooted_ctor,
     mir::CallableId resolve_body, mir::CallableId init_body,
     mir::CallableId create_body) -> std::vector<mir::ExprId> {
-  const mir::TypeId scope_ptr = unit.builtins.scope_ptr;
-  const mir::TypeId self_ptr = cls.self_pointer_type;
-  const mir::TypeId void_type = unit.builtins.void_type;
   const auto make_adapter = [&](mir::CallableId body) -> mir::AbiAdapterId {
-    mir::CallableCode code = mir::CallableCode::Defined();
-    const mir::LocalId self = code.AddLocal(scope_ptr);
-    code.params = {self};
-    code.result_type = void_type;
-    const mir::ExprId self_ref =
-        code.Body().exprs.Add(mir::MakeLocalRefExpr(self, scope_ptr));
-    const mir::ExprId typed = code.Body().exprs.Add(
-        mir::Expr{
-            .data = mir::CastExpr{.operand = self_ref}, .type = self_ptr});
-    const mir::ExprId call = code.Body().exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target =
-                                mir::CallableTarget{
-                                    .owner = cls_id, .slot = body},
-                            .receiver = typed},
-                    .arguments = {}},
-            .type = void_type});
-    code.Body().AppendStmt(mir::ExprStmt{.expr = call});
+    mir::CallableCode code =
+        BuildForwardingEntry(unit, cls, cls_id, body, unit.builtins.scope_ptr);
     return cls.abi_adapters.Add(
         mir::AbiAdapter{
             .code = std::move(code), .published = mir::UnpublishedEntry{}});
@@ -3296,8 +3198,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const mir::CallableId method_id = subroutine_callables[sub_id.value];
     mir_class.abi_adapters.Add(
         mir::AbiAdapter{
-            .code = SynthesizeSubroutineEntry(
-                unit_lowerer.Unit(), mir_class, class_id_, method_id),
+            .code = BuildForwardingEntry(
+                unit_lowerer.Unit(), mir_class, class_id_, method_id,
+                unit_lowerer.Unit().builtins.scope_ptr),
             .published = mir::SubroutineEntry{.name = name}});
   }
 

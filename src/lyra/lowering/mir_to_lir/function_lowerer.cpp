@@ -45,34 +45,69 @@ namespace {
 constexpr base::ComponentIndex kUpdatedReceiver{0};
 constexpr base::ComponentIndex kMutatingCallResult{1};
 
-// Whether a callee can leave by a departure rather than by returning. The
-// design's own code can, wherever it stands, because a `disable` anywhere
-// inside it reaches every execution it encloses (LRM 9.6.2). A runtime entry
-// answers for itself, since only the entry knows whether it runs the design's
-// code or raises. Foreign code is the one callee a departure never comes out
-// of: it stops at that frame and crosses as a value instead.
-auto CanDepart(const lir::CallTarget& target) -> bool {
+// How a call to a callee ends. The design's own code can depart, wherever it
+// stands and whatever artifact holds it, because a `disable` anywhere inside it
+// reaches every execution it encloses (LRM 9.6.2). A runtime entry answers for
+// itself, since only the entry knows whether it runs the design's code or
+// raises. Foreign code is the one callee a departure never comes out of: it
+// stops at that frame and crosses as a value instead.
+auto EndingOf(const lir::CallTarget& target) -> support::CallEnding {
+  using support::CallEnding;
   return std::visit(
       Overloaded{
-          [](const lir::FunctionTarget&) { return true; },
-          [](const lir::DispatchTarget&) { return true; },
-          [](const lir::IndirectTarget&) { return true; },
+          [](const lir::FunctionTarget&) {
+            return CallEnding::kReturnsOrDeparts;
+          },
+          [](const lir::DispatchTarget&) {
+            return CallEnding::kReturnsOrDeparts;
+          },
+          [](const lir::IndirectTarget&) {
+            return CallEnding::kReturnsOrDeparts;
+          },
+          [](const lir::SymbolTarget&) {
+            return CallEnding::kReturnsOrDeparts;
+          },
           [](const lir::ControlEffectTarget& effect) {
-            return effect.op != lir::ControlEffectTarget::Op::kFinishDeparture;
+            switch (effect.op) {
+              case lir::ControlEffectTarget::Op::kTakeDepartureIfDue:
+                return CallEnding::kReturnsOrDeparts;
+              case lir::ControlEffectTarget::Op::kFinishDeparture:
+                return CallEnding::kReturns;
+              case lir::ControlEffectTarget::Op::kDeclineDeparture:
+                return CallEnding::kDeparts;
+            }
+            throw InternalError("mir_to_lir: unknown control-effect operation");
           },
           [](const lir::BuiltinTarget& builtin) {
-            return support::RuntimeEntryOf(builtin.fn).can_depart;
+            return support::RuntimeEntryOf(builtin.fn).ending;
           },
           // Building a coroutine's frame places its arguments and stops before
           // its first statement, so none of the body has run when it returns.
-          [](const lir::CoroutineTarget&) { return false; },
-          [](const lir::ConstructTarget&) { return false; },
-          [](const lir::ForeignTarget&) { return false; },
-          [](const lir::ValueCellTarget&) { return false; },
-          [](const lir::OpenVariablesTarget&) { return false; },
-          [](const lir::VariableAddressTarget&) { return false; },
-          [](const lir::CloseVariablesTarget&) { return false; }},
+          [](const lir::CoroutineTarget&) { return CallEnding::kReturns; },
+          [](const lir::ConstructTarget&) { return CallEnding::kReturns; },
+          [](const lir::ForeignTarget&) { return CallEnding::kReturns; },
+          [](const lir::ValueCellTarget&) { return CallEnding::kReturns; },
+          [](const lir::OpenVariablesTarget&) { return CallEnding::kReturns; },
+          [](const lir::VariableAddressTarget&) {
+            return CallEnding::kReturns;
+          },
+          [](const lir::CloseVariablesTarget&) {
+            return CallEnding::kReturns;
+          }},
       target);
+}
+
+// Whether a call ending this way can leave by a departure, which is what
+// obliges it to name the landing the departure reaches.
+auto MayDepart(support::CallEnding ending) -> bool {
+  switch (ending) {
+    case support::CallEnding::kReturns:
+      return false;
+    case support::CallEnding::kReturnsOrDeparts:
+    case support::CallEnding::kDeparts:
+      return true;
+  }
+  throw InternalError("mir_to_lir: unknown call ending");
 }
 
 auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
@@ -284,8 +319,8 @@ auto LocalLabel(const mir::CallableCode& code, mir::LocalId local)
 // under, composed from the same three names that unit composed it from.
 auto ExternalMethodSymbol(
     std::string_view unit_name, std::string_view class_name,
-    std::string_view method_name) -> lir::ForeignTarget {
-  return lir::ForeignTarget{
+    std::string_view method_name) -> lir::SymbolTarget {
+  return lir::SymbolTarget{
       .symbol = lir::ClassCallableSymbol(
           unit_name, lir::SymbolPart::Name(class_name),
           lir::SymbolPart::Name(method_name))};
@@ -325,7 +360,7 @@ auto FunctionLowerer::LowerCallTarget(
                       // A body this unit's own namespace owns is reached by the
                       // symbol this unit emits it under, which it composes from
                       // the position the body sits at where nothing names it.
-                      return lir::CallTarget{lir::ForeignTarget{
+                      return lir::CallTarget{lir::SymbolTarget{
                           .symbol = unit_->UnitCallableSymbol(t.slot)}};
                     },
                     [&](const mir::ExternalUnitCallableTarget& t)
@@ -335,7 +370,7 @@ auto FunctionLowerer::LowerCallTarget(
                       // unit because a namespace name is unique only inside it.
                       // Only a body that unit published can be named this way,
                       // so the name is the whole of the part.
-                      return lir::CallTarget{lir::ForeignTarget{
+                      return lir::CallTarget{lir::SymbolTarget{
                           .symbol = lir::NamespaceCallableSymbol(
                               t.unit_name,
                               lir::SymbolPart::Name(t.callable_name))}};
@@ -350,7 +385,7 @@ auto FunctionLowerer::LowerCallTarget(
                       // It answers to no name, so its symbol is composed from
                       // the unit and which of them it is -- the same parts the
                       // unit that defines it composes.
-                      return lir::CallTarget{lir::ForeignTarget{
+                      return lir::CallTarget{lir::SymbolTarget{
                           .symbol = MintedEntrySymbol(t.unit_name, t.entry)}};
                     }},
                 d.target);
@@ -648,7 +683,7 @@ auto FunctionLowerer::ConstructorOf(const mir::ClassRef& cls)
             return EnteredConstructor{
                 .object_type = unit_->ExternalClassValueType(
                     ext.unit_name, ext.class_name),
-                .callee = lir::CallTarget{lir::ForeignTarget{
+                .callee = lir::CallTarget{lir::SymbolTarget{
                     .symbol = lir::ConstructorSymbol(
                         ext.unit_name,
                         lir::SymbolPart::Name(ext.class_name))}}};
@@ -706,7 +741,7 @@ auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
     }
     args.push_back(*std::move(lowered));
   }
-  auto entered = EmitDepartingCall(
+  auto entered = EmitCallTo(
       base->callee, std::move(args),
       unit_->TranslateType(unit_->Mir().builtins.void_type));
   if (!entered) {
@@ -804,7 +839,7 @@ auto FunctionLowerer::Terminated() const -> bool {
 auto FunctionLowerer::Emit(lir::TypeId type, lir::InstrData data)
     -> lir::Operand {
   if (const auto* call = std::get_if<lir::CallInstr>(&data);
-      call != nullptr && CanDepart(call->target)) {
+      call != nullptr && MayDepart(EndingOf(call->target))) {
     throw InternalError(
         "FunctionLowerer::Emit: a callee that can leave without returning has "
         "to be stated as a departing call, so that whatever is owed between "
@@ -1350,19 +1385,18 @@ auto FunctionLowerer::LeaveCarrying() -> diag::Result<void> {
   // Declining puts the departure back on its way, and a region outside this
   // one is entitled to the same chance at it that this one just had, so the
   // decline is itself a point it can leave from.
-  auto declined = EmitDepartingCall(
+  auto declined = EmitCallTo(
       lir::ControlEffectTarget{
           .op = lir::ControlEffectTarget::Op::kDeclineDeparture},
       {}, unit_->TranslateType(unit_->Mir().builtins.void_type));
   if (!declined) {
     return std::unexpected(std::move(declined.error()));
   }
-  Terminate(lir::UnreachableTerm{});
   return {};
 }
 
 auto FunctionLowerer::TakeDepartureIfDue() -> diag::Result<void> {
-  auto taken = EmitDepartingCall(
+  auto taken = EmitCallTo(
       lir::ControlEffectTarget{
           .op = lir::ControlEffectTarget::Op::kTakeDepartureIfDue},
       {CurrentRuntime()},
@@ -1982,7 +2016,7 @@ auto FunctionLowerer::LowerObjectConstruction(
     }
     args.push_back(*std::move(lowered));
   }
-  auto entered = EmitDepartingCall(
+  auto entered = EmitCallTo(
       constructor->callee, std::move(args),
       unit_->TranslateType(unit_->Mir().builtins.void_type));
   if (!entered) {
@@ -2131,7 +2165,7 @@ auto FunctionLowerer::LowerDriveToCompletion(
     return activation;
   }
   const lir::Operand driven = *std::move(activation);
-  auto drove = EmitDepartingCall(
+  auto drove = EmitCallTo(
       lir::BuiltinTarget{
           .fn = support::BuiltinFn::kRunExportedTaskToCompletion},
       {driven}, unit_->TranslateType(unit_->Mir().builtins.void_type));
@@ -2193,12 +2227,32 @@ auto FunctionLowerer::EmitCall(
   if (!target) {
     return std::unexpected(std::move(target.error()));
   }
-  if (CanDepart(*target)) {
-    return EmitDepartingCall(*std::move(target), std::move(args), result_type);
+  return EmitCallTo(*std::move(target), std::move(args), result_type);
+}
+
+auto FunctionLowerer::EmitCallTo(
+    lir::CallTarget target, std::vector<lir::Operand> args,
+    lir::TypeId result_type) -> diag::Result<lir::Operand> {
+  switch (EndingOf(target)) {
+    case support::CallEnding::kReturns:
+      return Emit(
+          result_type,
+          lir::CallInstr{.target = std::move(target), .args = std::move(args)});
+    case support::CallEnding::kReturnsOrDeparts:
+      return EmitDepartingCall(std::move(target), std::move(args), result_type);
+    case support::CallEnding::kDeparts: {
+      auto departed =
+          EmitDepartingCall(std::move(target), std::move(args), result_type);
+      if (!departed) {
+        return departed;
+      }
+      // Nothing comes back to the point the call returns to, so whatever the
+      // source wrote after the call is never reached and has no lowering.
+      Terminate(lir::UnreachableTerm{});
+      return departed;
+    }
   }
-  return Emit(
-      result_type,
-      lir::CallInstr{.target = *std::move(target), .args = std::move(args)});
+  throw InternalError("mir_to_lir: unknown call ending");
 }
 
 auto FunctionLowerer::LowerCoroutineAwait(

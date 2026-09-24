@@ -339,9 +339,10 @@ auto CallStatementSuspends(
   }
   return std::visit(
       Overloaded{
-          [](const hir::SystemSubroutineRef& sys) {
-            return support::LookupSystemSubroutine(sys.id).suspends;
-          },
+          // No system subroutine parks its caller: the ones that end the run
+          // leave the calling execution instead (LRM 20.2), which a function
+          // may do and could not do by suspending (LRM 13.4).
+          [](const hir::SystemSubroutineRef&) { return false; },
           // An intra-unit task enable and a cross-unit one (LRM 26.3) both
           // complete as coroutines, which the call's type already answered.
           [](const hir::StructuralSubroutineRef&) { return false; },

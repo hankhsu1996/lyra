@@ -7,20 +7,18 @@
 namespace lyra::runtime {
 
 // A simulation control task (LRM 20.2) and the implicit `$finish` a `$fatal`
-// makes (LRM 20.10) -- ends the run after the current slot completes. The
-// calling execution gives up control and is never dispatched again, which is
-// the one departure that waits for nothing: the run is over, so there is
-// nothing for it to be waiting for and nothing that could restart it.
-// `origin` and `level` arrive as Lyra values, the same as any other call
-// argument. `$stop` suspends where `$finish` exits, and a run nothing can
-// resume tells the two apart only in what it prints, so the task's own name is
-// what reaches the engine.
-auto Finish(
+// makes (LRM 20.10) -- ends the run after the current slot completes, and the
+// calling execution departs, so no statement after the call runs in any body,
+// a function included (LRM 13.4). `origin` and `level` arrive as Lyra values,
+// the same as any other call argument. `$stop` suspends where `$finish` exits,
+// and a run nothing can resume tells the two apart only in what it prints, so
+// the task's own name is what reaches the engine.
+[[noreturn]] void Finish(
     RuntimeEffects& runtime, const lyra::value::String& origin,
-    const lyra::value::PackedArray& level) -> bool;
+    const lyra::value::PackedArray& level);
 
-auto Stop(
+[[noreturn]] void Stop(
     RuntimeEffects& runtime, const lyra::value::String& origin,
-    const lyra::value::PackedArray& level) -> bool;
+    const lyra::value::PackedArray& level);
 
 }  // namespace lyra::runtime

@@ -86,6 +86,17 @@ cc_test(
 )
 
 cc_test(
+    name = "mir_verify_test",
+    srcs = ["mir/verify_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "//:mir",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "diag_render_tests",
     srcs = ["diag/render_test.cpp"],
     copts = LYRA_COPTS,

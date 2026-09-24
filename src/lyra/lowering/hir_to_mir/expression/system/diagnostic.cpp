@@ -78,9 +78,9 @@ auto LowerDiagnosticSystemSubroutineCall(
   if (!is_fatal) return emit_call;
 
   // $fatal: emit happens as its own statement, then the implicit $finish call
-  // becomes this lowering's returned expression. The finish call suspends, so
-  // the caller awaits it; the two statements land in the enclosing block in
-  // source order.
+  // becomes this lowering's returned expression, which departs from the
+  // calling execution rather than returning; the two statements land in the
+  // enclosing block in source order.
   const mir::ExprId emit_call_id = block.exprs.Add(std::move(emit_call));
   block.AppendStmt(mir::ExprStmt{.expr = emit_call_id});
 
@@ -96,7 +96,7 @@ auto LowerDiagnosticSystemSubroutineCall(
           mir::CallExpr{
               .callee = mir::Direct{.target = support::BuiltinFn::kFinish},
               .arguments = {finish_runtime_id, finish_origin_id, level_id}},
-      .type = unit.builtins.machine_bool};
+      .type = unit.builtins.void_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

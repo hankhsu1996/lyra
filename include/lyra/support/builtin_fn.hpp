@@ -552,10 +552,11 @@ enum class BuiltinFn : std::uint16_t {
   kDistErlang,
   // LRM 20.2 simulation control. Takes the runtime handle, the call's origin,
   // and the diagnostic level (0 / 1 / 2) that selects what the tool prints
-  // about it (Table 20-1). The call suspends and never resumes; the runtime
-  // drops the process at the next dispatch. `$stop` suspends the simulation
-  // where `$finish` exits it, and a run nothing can resume tells the two apart
-  // only in what it prints, so each names the entry that prints for it.
+  // about it (Table 20-1). The call ends the run and never returns: the calling
+  // execution departs, so no statement after it runs, in any body -- a
+  // function included (LRM 13.4). `$stop` suspends the simulation where
+  // `$finish` exits it, and a run nothing can resume tells the two apart only
+  // in what it prints, so each names the entry that prints for it.
   kFinish,
   kStop,
   // Ancestor-scope resolution for a hierarchical reference whose route starts
@@ -704,7 +705,7 @@ enum class BuiltinFn : std::uint16_t {
   // instead of letting a departure cross a frame this compiler did not emit.
   // The answer is the int LRM 35.8 gives an exported task's entry: 1 while a
   // disable is active on this execution thread -- one reached a block it is
-  // inside, or its process was terminated -- and 0 otherwise.
+  // inside, its process was terminated, or the run ended -- and 0 otherwise.
   //
   // The three checks are the ones the clause makes the simulator's, each placed
   // where its evidence is: what an imported task returned, whether an imported
@@ -970,6 +971,17 @@ struct StaticFactory {
 // answered where the source is read and no layer below meets it.
 using EntryDeclaration = std::variant<FreeFunction, Method, StaticFactory>;
 
+// The ways a call can end, which decide what follows it: a call that returns
+// is followed by the statement after it, one that departs by the cleanups
+// between it and the landing that claims the departure, and one that can do
+// either by both. A call that only departs is followed by nothing, so what
+// stands after it in the source is never reached.
+enum class CallEnding : std::uint8_t {
+  kReturns,
+  kReturnsOrDeparts,
+  kDeparts,
+};
+
 // Every property of one runtime entry: what the library calls it, how a call
 // site reaches it, and what it does with the operands it is given. A consumer
 // asking any of those reads the field for it, never a list of its own, so an
@@ -1001,12 +1013,12 @@ struct RuntimeEntry {
   // answers with an ordinary value and nothing about that value says the
   // caller stopped.
   bool parks_the_caller = false;
-  // Whether a call to the entry can end other than by returning, because it
-  // runs the design's own code or because raising is what it is for. A
-  // `disable` anywhere inside such a call reaches every execution it encloses
-  // (LRM 9.6.2), so what is owed between the call site and the frame's edge has
-  // to get its turn before the departure carries on past it.
-  bool can_depart = false;
+  // How a call to the entry ends. One that can depart runs the design's own
+  // code or raises because that is what it is for, and a `disable` anywhere
+  // inside such a call reaches every execution it encloses (LRM 9.6.2), so what
+  // is owed between the call site and the frame's edge has to get its turn
+  // before the departure carries on past it.
+  CallEnding ending = CallEnding::kReturns;
   // Whether the entry updates the object it acts on, so that object names a
   // place rather than a value -- which is what makes a receiver reaching
   // through a capability wrapper reach its write access. Where the update

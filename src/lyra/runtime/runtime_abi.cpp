@@ -33,6 +33,7 @@
 #include "lyra/runtime/dpi_context.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/finish.hpp"
 #include "lyra/runtime/fork.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
@@ -1326,18 +1327,16 @@ auto lyra_rt_realtime(void* runtime, const void* unit_power) -> void* {
       *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(unit_power)));
 }
 
-auto lyra_rt_finish(void* runtime, const void* origin, const void* level)
-    -> bool {
-  static_cast<RuntimeEffects*>(runtime)->EndRun(
-      "$finish", Read<String>(origin), Read<PackedArray>(level));
-  return true;
+void lyra_rt_finish(void* runtime, const void* origin, const void* level) {
+  Finish(
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(origin),
+      Read<PackedArray>(level));
 }
 
-auto lyra_rt_stop(void* runtime, const void* origin, const void* level)
-    -> bool {
-  static_cast<RuntimeEffects*>(runtime)->EndRun(
-      "$stop", Read<String>(origin), Read<PackedArray>(level));
-  return true;
+void lyra_rt_stop(void* runtime, const void* origin, const void* level) {
+  Stop(
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(origin),
+      Read<PackedArray>(level));
 }
 
 auto lyra_rt_run_host_command(void* runtime, const void* command) -> void* {

@@ -314,8 +314,11 @@ class LirDumper {
               return std::format("through {}", FormatOperand(i.callee));
             },
             [](const ConstructTarget&) -> std::string { return "Construct"; },
+            [](const SymbolTarget& s) -> std::string {
+              return std::format("extern {}", s.symbol);
+            },
             [](const ForeignTarget& f) -> std::string {
-              return std::format("extern {}", f.symbol);
+              return std::format("foreign {}", f.symbol);
             },
             [](const ValueCellTarget& f) -> std::string {
               return std::string{ValueCellOpName(f.op)};

@@ -183,16 +183,15 @@ protocol on top of it.
       an execution that holds an unreturned foreign call (LRM 9.6.3, 9.7) reaches it the same way:
       it is asked to stop and handed control once more, and its terminal state is published only
       once its foreign frames have returned.
-  - [ ] Two ways of ending do not reach the foreign side, and both end the run correctly without it.
-        A run-time error of the design raised inside an exported **function**'s body travels out
-        through the foreign frame rather than stopping at the entry, because a region lands the
-        departure kind and not the error kind and a function's body has no frame of the runtime's
-        between it and its entry, where a task's driver is exactly that. And `$fatal` or `$finish`
-        reached from an exported subroutine parks the execution rather than departing, so the
-        boundary is never reached at all and the foreign frames are abandoned with the run. In both
-        the error is reported and the exit status is right; what is lost is the chance to clean up
-        that LRM 35.9 exists to give the foreign side. An exported task's run-time error is not
-        among these: it stops at the boundary and the entry answers 1.
+  - [ ] A run-time error of the design raised inside an exported **function**'s body travels out
+        through the foreign frame rather than stopping at the entry, so the foreign caller never
+        gets control back. A region lands the departure kind and not the error kind, and a
+        function's body has no frame of the runtime's between it and its entry, where a task's
+        driver is exactly that. The error is reported and the exit status is right; what is lost is
+        the chance to clean up that LRM 35.9 exists to give the foreign side. Ending the run by
+        `$finish` or `$fatal` is not among these -- it departs and stops at the entry -- and neither
+        is an exported task's run-time error, which stops at its driver and answers 1. Closing it
+        takes somewhere in a function's path that can catch an error, which no region is today.
 - [x] D6d -- Side-effect attribution inside an exported subroutine body. `%m` (LRM 21.2.1.5) renders
       the exported subroutine's own instantiated position, and a severity task (LRM 20.10) tags its
       report with the call site, so both already read where the exported body is rather than where

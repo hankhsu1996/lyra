@@ -1076,8 +1076,14 @@ struct ExportedResult {
 };
 
 // Closes an export entry around the boundary `body`: the check LRM 35.9 item d
-// makes the simulator's, then the region that lands whatever no region of the
-// body claimed, then the answer the entry hands its foreign caller.
+// makes the simulator's, then the departure an execution that must stop owes
+// before any statement of the body runs -- the foreign side may call in again
+// after a disable or after the run ended, and nothing of the design runs then
+// -- all inside the region that lands whatever no region of the body claimed,
+// then the answer the entry hands its foreign caller. The entry is that region
+// whether or not a symbol stands in front of it: where the name belongs to a
+// scope, one does, and where it belongs to a namespace, the entry is the
+// symbol and the foreign caller's frame is directly above it.
 //
 // Three answers, told apart by what the entry returns rather than by a flag. A
 // function that returns a value answers with it on the way through and with
@@ -1086,19 +1092,31 @@ struct ExportedResult {
 // int (LRM 35.8), answers with it whichever way the boundary ended, so its two
 // paths meet at one return.
 void CloseForeignExportEntry(
-    UnitLowerer& module, mir::Block& entry, mir::Block&& body,
-    mir::TypeId result_type, const std::optional<ExportedResult>& returned) {
+    UnitLowerer& module, CallableBindings& bindings, mir::Block& entry,
+    mir::Block&& body, mir::TypeId result_type,
+    const std::optional<ExportedResult>& returned) {
   mir::CompilationUnit& unit = module.Unit();
 
+  mir::Block ran;
   AppendRuntimeEffectStmt(
-      module, entry, support::BuiltinFn::kCheckExportReachable, {});
+      module, ran, support::BuiltinFn::kCheckExportReachable, {});
+  AppendRuntimeEffectStmt(
+      module, ran, support::BuiltinFn::kTakeDepartureIfDue, {});
+  ran.AppendStmt(
+      mir::BlockStmt{.scope = ran.child_scopes.Add(std::move(body))});
 
-  // The entry lands nothing of its own: the frame the foreign caller reached is
-  // the linkage symbol in front of this one, and that is where a departure has
-  // to stop. A region here would be one frame too high -- what stands between
-  // the two is not this compiler's to guarantee stays on the unwind path.
+  // The frame above belongs to another language and ends only by returning, so
+  // nothing may unwind into it (LRM 35.9): the region claims every departure
+  // and consumes it. Whether one is due is answered again where control comes
+  // back, so landing it here loses nothing.
+  const mir::TypeId effect_type = unit.types.Intern(
+      mir::Type{mir::RuntimeLibraryType{
+          .kind = mir::RuntimeLibraryKind::kControlEffect}});
+  const mir::BlockId region = entry.child_scopes.Add(std::move(ran));
+  const mir::LocalId caught = bindings.DeclareAnonymous(effect_type);
+  const mir::BlockId consumed = entry.child_scopes.Add(mir::Block{});
   entry.AppendStmt(
-      mir::BlockStmt{.scope = entry.child_scopes.Add(std::move(body))});
+      mir::TryStmt{.body = region, .caught = caught, .handler = consumed});
 
   if (returned.has_value()) {
     const mir::ExprId fallback =
@@ -1183,12 +1201,8 @@ auto SynthesizeForeignExportEntry(
   CallableBindings bindings(unit, code);
   mir::Block& entry = code.Body();
 
-  // Nothing leaves this entry by unwinding. The frame above it belongs to
-  // another language, and such a frame ends only by returning, so the whole
-  // boundary stands inside a region that lands whatever names no region of its
-  // own; what the foreign side is told instead is the answer LRM 35.9 gives it.
-  // The effect is not carried across -- whether a departure is due is answered
-  // where control comes back, so landing it here loses nothing.
+  // The boundary's own statements, which the entry's region closes around once
+  // they are built.
   mir::Block body;
 
   std::optional<mir::LocalId> scope_param;
@@ -1404,7 +1418,7 @@ auto SynthesizeForeignExportEntry(
   }
 
   CloseForeignExportEntry(
-      module, entry, std::move(body), code.result_type,
+      module, bindings, entry, std::move(body), code.result_type,
       !is_task && has_return
           ? std::optional{ExportedResult{
                 .abi = export_decl.ret_abi,
@@ -1452,33 +1466,14 @@ void PublishForeignScopeName(
   }
   code.result_type = prototype.result;
 
-  const bool answers = !unit.types.Get(prototype.result).Is<mir::VoidType>();
-
-  // This is the last frame before the foreign caller, so it is where a
-  // departure stops: past it there is no frame this compiler emitted for one to
-  // travel through (LRM 35.9). Both paths meet at one return -- the entry's
-  // answer where the body ran out, the standard's own where a departure ended
-  // it, which LRM 35.8 gives an exported task as the int it returns and which
-  // an exported function has no channel for, so it answers with a default its
-  // caller is required not to read.
-  std::optional<mir::LocalId> answer;
-  if (answers) {
-    answer = bindings.DeclareAnonymous(prototype.result);
-    body.AppendStmt(
-        mir::LocalDeclStmt{
-            .target = *answer,
-            .init = body.exprs.Add(
-                mir::Expr{
-                    .data = mir::MachineIntLiteral{.value = 0},
-                    .type = prototype.result})});
-  }
-
-  mir::Block ran;
+  // The entry this resolves to is the region that stops a departure before it
+  // reaches the foreign caller, so what comes back here is always an answer,
+  // and handing it on is the whole of what is left.
   const mir::LocalId scope = bindings.DeclareAnonymous(unit.builtins.scope_ptr);
-  ran.AppendStmt(
+  body.AppendStmt(
       mir::LocalDeclStmt{
           .target = scope,
-          .init = ran.exprs.Add(
+          .init = body.exprs.Add(
               mir::Expr{
                   .data =
                       mir::CallExpr{
@@ -1490,12 +1485,12 @@ void PublishForeignScopeName(
                   .type = unit.builtins.scope_ptr})});
 
   const mir::ExprId scope_ref =
-      ran.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr));
-  const mir::ExprId name = ran.exprs.Add(
+      body.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr));
+  const mir::ExprId name = body.exprs.Add(
       mir::Expr{
           .data = mir::StringLiteral{.value = linkage.foreign_name},
           .type = unit.types.Intern(mir::Type{mir::MachineCStringType{}})});
-  const mir::ExprId entry = ran.exprs.Add(
+  const mir::ExprId entry = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
@@ -1505,7 +1500,7 @@ void PublishForeignScopeName(
                   .arguments = {scope_ref, name}},
           .type = mir::ErasedFunction(unit.types)});
 
-  const mir::ExprId restored = ran.exprs.Add(
+  const mir::ExprId restored = body.exprs.Add(
       mir::Expr{
           .data = mir::CastExpr{.operand = entry},
           .type = unit.types.Intern(
@@ -1515,65 +1510,23 @@ void PublishForeignScopeName(
   std::vector<mir::ExprId> call_args;
   call_args.reserve(code.params.size() + 1);
   call_args.push_back(
-      ran.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr)));
+      body.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr)));
   for (const mir::LocalId param : code.params) {
-    call_args.push_back(ran.exprs.Add(
+    call_args.push_back(body.exprs.Add(
         mir::MakeLocalRefExpr(param, code.locals.Get(param).type)));
   }
-  const mir::ExprId call = ran.exprs.Add(
+  const mir::ExprId call = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Indirect{.code = restored},
                   .arguments = std::move(call_args)},
           .type = prototype.result});
-  if (answers) {
-    const mir::ExprId place =
-        ran.exprs.Add(mir::MakeLocalRefExpr(*answer, prototype.result));
-    ran.AppendStmt(
-        mir::ExprStmt{
-            .expr = ran.exprs.Add(
-                mir::MakeAssignExpr(place, call, unit.builtins.void_type))});
-  } else {
-    ran.AppendStmt(mir::ExprStmt{.expr = call});
-  }
-
-  mir::Block departed;
-  if (answers) {
-    const mir::ExprId place =
-        departed.exprs.Add(mir::MakeLocalRefExpr(*answer, prototype.result));
-    const mir::ExprId active = departed.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kDisableIsActive},
-                    .arguments = {departed.exprs.Add(
-                        mir::MakeCurrentRuntimeCallExpr(
-                            unit.builtins.effects))}},
-            .type = prototype.result});
-    departed.AppendStmt(
-        mir::ExprStmt{
-            .expr = departed.exprs.Add(
-                mir::MakeAssignExpr(place, active, unit.builtins.void_type))});
-  }
-
-  const mir::TypeId effect_type = unit.types.Intern(
-      mir::Type{mir::RuntimeLibraryType{
-          .kind = mir::RuntimeLibraryKind::kControlEffect}});
-  body.AppendStmt(
-      mir::TryStmt{
-          .body = body.child_scopes.Add(std::move(ran)),
-          .caught = bindings.DeclareAnonymous(effect_type),
-          .handler = body.child_scopes.Add(std::move(departed))});
-  if (answers) {
-    body.AppendStmt(
-        mir::ReturnStmt{
-            .value = body.exprs.Add(
-                mir::MakeLocalRefExpr(*answer, prototype.result))});
-  } else {
+  if (unit.types.Get(prototype.result).Is<mir::VoidType>()) {
+    body.AppendStmt(mir::ExprStmt{.expr = call});
     body.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+  } else {
+    body.AppendStmt(mir::ReturnStmt{.value = call});
   }
 
   unit.foreign_scope_entries.push_back(

@@ -40,10 +40,10 @@ auto ReplaceDpiScope(Scope* scope) -> Scope* {
 
 namespace {
 
-// Kept apart from the int the boundary answers with, because what the checks
-// need is the predicate and what crosses the boundary is the standard's own
-// encoding of it.
-auto DepartureIsDue(RuntimeEffects& effects) -> bool {
+// Whether this execution is in the disabled state of LRM 35.9. Kept apart from
+// the int the boundary answers with, because what the checks need is the
+// predicate and what crosses the boundary is the standard's own encoding of it.
+auto IsDisabled(RuntimeEffects& effects) -> bool {
   const RuntimeProcess* process = effects.TryCurrentProcess();
   return process != nullptr && process->DepartureIsDue();
 }
@@ -51,7 +51,7 @@ auto DepartureIsDue(RuntimeEffects& effects) -> bool {
 }  // namespace
 
 auto DisableIsActive(RuntimeEffects& effects) -> std::int32_t {
-  return DepartureIsDue(effects) ? 1 : 0;
+  return IsDisabled(effects) ? 1 : 0;
 }
 
 void AcknowledgeStop(RuntimeEffects& effects) {
@@ -62,16 +62,16 @@ void AcknowledgeStop(RuntimeEffects& effects) {
 
 void CheckImportTaskAcknowledged(
     RuntimeEffects& effects, std::int32_t returned) {
-  if (!DepartureIsDue(effects) || returned == 1) {
+  if (!IsDisabled(effects) || returned == 1) {
     return;
   }
   effects.ReportDesignFailure(
-      "an imported task returned while a disable was active on its execution "
-      "thread without returning 1 (LRM 35.9 item b)");
+      "an imported task returned while its execution thread was in the "
+      "disabled state without returning 1 (LRM 35.9 item b)");
 }
 
 void CheckImportFunctionAcknowledged(RuntimeEffects& effects) {
-  if (!DepartureIsDue(effects)) {
+  if (!IsDisabled(effects)) {
     return;
   }
   RunningState* running = effects.TryRunning();
@@ -79,17 +79,17 @@ void CheckImportFunctionAcknowledged(RuntimeEffects& effects) {
     return;
   }
   effects.ReportDesignFailure(
-      "an imported function returned while a disable was active on its "
-      "execution thread without calling svAckDisabledState (LRM 35.9 item c)");
+      "an imported function returned while its execution thread was in the "
+      "disabled state without calling svAckDisabledState (LRM 35.9 item c)");
 }
 
 void CheckExportReachable(RuntimeEffects& effects) {
-  if (!DepartureIsDue(effects)) {
+  if (!IsDisabled(effects)) {
     return;
   }
   effects.ReportDesignFailure(
-      "foreign code called an exported subroutine after a disable became "
-      "active on its execution thread (LRM 35.9 item d)");
+      "foreign code called an exported subroutine after its execution thread "
+      "entered the disabled state (LRM 35.9 item d)");
 }
 
 }  // namespace lyra::runtime

@@ -33,10 +33,13 @@ auto ReplaceDpiScope(Scope* scope) -> Scope*;
 // LRM 35.8: the int an exported task's entry hands its foreign caller, and what
 // `svIsDisabledState` answers -- 1 while a disable is active on this
 // execution thread, 0 otherwise. Active covers everything that stops an
-// execution: a disable reaching a block it is inside, and its process being
-// terminated. They are one answer because foreign code can do only one thing
-// about either. An execution running none of the design's own code has nothing
-// to stop, and answers 0.
+// execution: a disable reaching a block it is inside, its process being
+// terminated, and the run ending. The standard names only the first, because
+// it is the only one it lets reach a foreign call and return to it; the others
+// reach the foreign side the same way here, and they are one answer because
+// foreign code can do only one thing about any of them -- stop calling in and
+// return. An execution running none of the design's own code has nothing to
+// stop, and answers 0.
 [[nodiscard]] auto DisableIsActive(RuntimeEffects& effects) -> std::int32_t;
 
 // `svAckDisabledState` (LRM 35.9 item c): the foreign frame now running says it

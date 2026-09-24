@@ -45,6 +45,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/unit_values.hpp"
+#include "lyra/mir/verify.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -616,6 +617,7 @@ void UnitLowerer::PublishTypeOwnedReadings() {
 
 auto UnitLowerer::Finish() -> mir::CompilationUnit {
   mir::SettleUnitValues(unit_);
+  mir::Verify(unit_);
   return std::move(unit_);
 }
 

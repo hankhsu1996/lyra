@@ -16,6 +16,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/process_kind.hpp"
@@ -112,7 +113,14 @@ void Runtime::RunSimulation() {
     // LRM 4: every scope initializes before any activates, so a time-zero
     // initializer reads sealed endpoints and no process runs before all of
     // them have.
-    WalkInitialize(design_->Root());
+    //
+    // Initializing runs in no process, so an initializer that ends the run --
+    // by asking (LRM 20.2) or by an error of the design (LRM 20.10) -- leaves
+    // the initialization itself, and this is where that lands: what is left of
+    // it does not run. The rest of the run still walks to its end -- creating a
+    // process runs none of its statements, and the final procedures run
+    // because the simulation reached its end (LRM 9.2.3).
+    RunAsLanding(*this, [this] { WalkInitialize(design_->Root()); });
     WalkActivate(design_->Root());
     RegisterProcesses();
 
@@ -346,20 +354,19 @@ void Runtime::ExecuteFinalProcesses() {
     // the collector stays empty.
     std::vector<CoroutineHandle> woken;
     const bool completed = ResumeProcess(handle, woken);
-    if (completed) {
-      continue;
-    }
     // LRM 9.2.3: a `$finish` reached inside a final procedure ends the
-    // simulation immediately, so the ones still queued do not run. Nothing else
-    // can suspend one, because the statements a final procedure may contain are
-    // those a function may, so a suspension without a further request is a
-    // lowering that admitted one it cannot.
+    // simulation immediately, so the ones still queued do not run. The request
+    // is what says so, however the procedure itself came to an end.
     if (end_requests_ != requests_before) {
       break;
     }
-    throw InternalError(
-        "Runtime::ExecuteFinalProcesses: a final procedure suspended, which "
-        "the statements it may contain cannot do (LRM 9.2.3)");
+    // The statements a final procedure may contain are those a function may, so
+    // one that suspended is a lowering that admitted one it cannot.
+    if (!completed) {
+      throw InternalError(
+          "Runtime::ExecuteFinalProcesses: a final procedure suspended, which "
+          "the statements it may contain cannot do (LRM 9.2.3)");
+    }
   }
   finals_.Clear();
 }

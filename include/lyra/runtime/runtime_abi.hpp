@@ -488,14 +488,14 @@ auto lyra_rt_stime(void* runtime, const void* unit_power) -> void*;
 auto lyra_rt_realtime(void* runtime, const void* unit_power) -> void*;
 
 // Records a request to tear the simulation down once the current time slot
-// completes, and prints what the level selects about it (LRM 20.2, Table 20-1).
-// Each arranges no resumption at all, so each parks, and the recorded request
-// is what keeps the process from ever being dispatched again. The origin
-// crosses as an opaque string value and the level as an opaque packed value,
-// like every scalar.
-auto lyra_rt_finish(void* runtime, const void* origin, const void* level)
-    -> bool;
-auto lyra_rt_stop(void* runtime, const void* origin, const void* level) -> bool;
+// completes, prints what the level selects about it (LRM 20.2, Table 20-1), and
+// departs from the calling execution, so neither returns. The origin crosses as
+// an opaque string value and the level as an opaque packed value, like every
+// scalar.
+[[noreturn]] void lyra_rt_finish(
+    void* runtime, const void* origin, const void* level);
+[[noreturn]] void lyra_rt_stop(
+    void* runtime, const void* origin, const void* level);
 
 // Runs a command line through the host's command processor and yields what it
 // answered; the null form runs nothing and yields whether a command processor

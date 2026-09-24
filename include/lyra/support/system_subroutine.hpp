@@ -318,13 +318,6 @@ struct SystemSubroutineDesc {
   ReturnConvention result_conv;
   ArgCountPolicy arg_policy;
   SystemSubroutineSemantic semantic;
-  // Invoking this subroutine suspends the calling process ($finish suspends
-  // and never resumes; the engine drops the process on the next dispatch,
-  // LRM 20.2). Stated as a fact so HIR-to-MIR lowers a suspending call through
-  // an awaited expression rather than inferring it from the subroutine's
-  // semantic kind; each backend then realizes the await in its target (C++
-  // `co_await`, LLVM's own mechanism).
-  bool suspends = false;
 };
 
 namespace detail {
@@ -547,7 +540,6 @@ inline constexpr std::array kSystemSubroutines = {
         .semantic =
             TerminationSystemSubroutineInfo{
                 .default_level = 1, .builtin_fn = BuiltinFn::kFinish},
-        .suspends = true,
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{17},
@@ -928,7 +920,6 @@ inline constexpr std::array kSystemSubroutines = {
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
         .semantic =
             DiagnosticSystemSubroutineInfo{.builtin_fn = BuiltinFn::kEmitFatal},
-        .suspends = true,
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{54},
@@ -1151,7 +1142,6 @@ inline constexpr std::array kSystemSubroutines = {
         .semantic =
             TerminationSystemSubroutineInfo{
                 .default_level = 1, .builtin_fn = BuiltinFn::kStop},
-        .suspends = true,
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{77},
@@ -1162,7 +1152,6 @@ inline constexpr std::array kSystemSubroutines = {
         .semantic =
             TerminationSystemSubroutineInfo{
                 .default_level = 1, .builtin_fn = BuiltinFn::kFinish},
-        .suspends = true,
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{78},

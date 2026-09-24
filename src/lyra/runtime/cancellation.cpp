@@ -1,8 +1,10 @@
 #include "lyra/runtime/cancellation.hpp"
 
 #include <exception>
+#include <functional>
 #include <utility>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 
@@ -102,6 +104,20 @@ Unwound::~Unwound() = default;
 
 CancellationTarget::CancellationTarget() = default;
 CancellationTarget::~CancellationTarget() = default;
+
+void RunAsLanding(
+    RuntimeEffects& effects, const std::function<void()>& stretch) {
+  try {
+    stretch();
+  } catch (const ControlEffect& effect) {
+    if (effect.target != nullptr) {
+      throw InternalError(
+          "RunAsLanding: a departure a region owns left every region");
+    }
+  } catch (const std::exception&) {
+    ReportRaisedError(effects, std::current_exception());
+  }
+}
 
 void Disable(CancellationTarget* target, RuntimeEffects& effects) {
   target->Invalidate(effects);
