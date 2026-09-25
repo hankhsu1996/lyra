@@ -11,8 +11,13 @@
 #include <vector>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/support/member_layout.hpp"
 
 namespace lyra::runtime {
+
+static_assert(
+    ClassValue::MembersAt(sizeof(Scope)) ==
+    support::MembersAt(support::ValueHolder::kScope));
 
 // The default scope-program entry: a scope with no work for a lifecycle phase
 // keeps this no-op, which ignores the scope it is handed.
@@ -30,7 +35,7 @@ void ScopeConstructNoOp(
 
 Scope::Scope(
     Scope* parent, HierarchySegment segment, const ScopeDefinition* definition)
-    : ClassValue(definition),
+    : ClassValue(definition, sizeof(Scope)),
       parent_(parent),
       segment_(std::move(segment)),
       program_(&definition->program) {

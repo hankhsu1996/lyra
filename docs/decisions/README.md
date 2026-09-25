@@ -298,6 +298,12 @@ the detail lives in the entry itself.
   cell's identity is its address. Keeping per-slot allocation everywhere, making slots movable, a
   `std::vector` of slots, and a separate block type for closures are rejected; variant space
   amplification is the value representation's problem, not this one's.
+- [a-member-is-reached-at-a-derived-offset](a-member-is-reached-at-a-derived-offset.md) -- the
+  execution backend reaches a member at a distance it derives from the members' types and the
+  runtime's stated figures, with a value and its members in one allocation of equal-sized slots.
+  Only where a lineage passes through another unit's class is the count ahead of a class's own read
+  from what the runtime realized, because publishing `local` storage in a signature would make a
+  private change recompile other units -- which the C++ backend's headers do.
 - [construct-in-final-home](construct-in-final-home.md) -- a long-lived runtime object whose
   execution state binds to its own address is constructed where it will live, so a closure value is
   built into the region or the execution that will own it rather than in the arena and moved. One

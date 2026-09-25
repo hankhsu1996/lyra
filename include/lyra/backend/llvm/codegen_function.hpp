@@ -393,11 +393,12 @@ class CodeGenFunction {
   // that declares it filled. A body forwards the address without inspecting it.
   auto DefinitionOf(lir::TypeId type) -> diag::Result<llvm::Value*>;
 
-  // The address of the storage a member step reaches. A class's storage extends
-  // its base's, so the step names the class that declares the member beside the
-  // slot that class gave it and the runtime adds where that class's own storage
-  // begins. What kind of value the step arrived at does not enter into it: a
-  // value carries the class it is whatever holds it.
+  // The address of the storage a member step reaches: a fixed distance from
+  // the value, past the kind of value it is and the members its lineage carries
+  // ahead of the declaring class's own. Where that lineage passes through
+  // another unit's class, how many members it carries is read from the
+  // declaring class's definition, which the runtime completed when it realized
+  // the class.
   auto MemberStorage(llvm::Value* owner, const lir::StatedMemberRef& member)
       -> diag::Result<llvm::Value*>;
 

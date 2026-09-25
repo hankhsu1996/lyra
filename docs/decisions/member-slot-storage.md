@@ -1,6 +1,9 @@
 # Member storage as runtime-owned typed storage
 
-Date: 2026-07-09 Status: accepted
+Date: 2026-07-09 Status: accepted; its later step taken by
+[a-member-is-reached-at-a-derived-offset](a-member-is-reached-at-a-derived-offset.md), which derives
+native member offsets on the execution backend. A member place no longer resolves through the
+runtime, and physical layout is no longer future work.
 
 ## Context
 

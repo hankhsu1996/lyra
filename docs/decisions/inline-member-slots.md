@@ -1,6 +1,9 @@
 # A storage block whose owner never moves holds its slots inline
 
-Date: 2026-09-11 Status: accepted
+Date: 2026-09-11 Status: accepted; D2 realized by
+[a-member-is-reached-at-a-derived-offset](a-member-is-reached-at-a-derived-offset.md), which puts an
+object's and a scope's slots in the value's own allocation rather than in a block beside it, so
+invariant 3's one block type now serves the owners that move and a body's variables.
 
 ## Context
 

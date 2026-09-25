@@ -6,7 +6,7 @@
 namespace lyra::runtime {
 
 PromotedScopeRef::PromotedScopeRef(const ObjectDefinition* definition)
-    : held_(GcNew<ManagedObject>(definition)) {
+    : held_(MakeManagedObject(definition)) {
 }
 
 auto PromotedScopeRef::Storage() const -> ManagedObject* {
