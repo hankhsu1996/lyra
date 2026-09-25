@@ -35,9 +35,6 @@ class Scope : public ClassValue {
  public:
   using ChildVisitor = std::function<void(Scope&)>;
 
-  Scope(
-      Scope* parent, HierarchySegment segment,
-      const ScopeDefinition* definition);
   // Defined in this class's own source file, because a class whose virtual
   // functions are all written in a header is emitted into every translation
   // unit that builds one.
@@ -207,7 +204,17 @@ class Scope : public ClassValue {
 
   void ForEachChild(const ChildVisitor& fn);
 
+ protected:
+  // A scope the runtime lays out is made with room for its members after it,
+  // so only the allocation that makes that room builds one; a target that lays
+  // its own scopes out builds one as the base of its own class.
+  Scope(
+      Scope* parent, HierarchySegment segment,
+      const ScopeDefinition* definition);
+
  private:
+  friend class ClassValue;
+
   struct SignalEntry {
     std::string_view name;
     void* address;

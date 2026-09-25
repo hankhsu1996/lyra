@@ -95,7 +95,6 @@ enum class RuntimeOp : std::uint8_t {
   kScopeDeclareExport,
   kScopeDeclareClass,
   kRunProgram,
-  kMemberAddress,
   kSequenceMake,
   kSequenceElement,
   kClosureMake,

@@ -271,26 +271,16 @@ auto lyra_rt_make_promoted_scope(const void* definition, void* out) -> void*;
 // storage behind one is an operation.
 auto lyra_rt_promoted_scope_deref(void* handle) -> void*;
 
-// The address of a property's storage on a value, named by the class that
-// declares the property and the slot that class gave it. A class carries what
-// its bases declare before what it declares itself, so a property keeps one
-// slot in the class that declares it and in every class extending that one, and
-// where that class's own properties begin is a fact of the class rather than of
-// the access -- which is why the access states a pair and this side adds.
-auto lyra_rt_member_addr(
-    void* value, const void* declared_by, std::uint32_t slot) -> void*;
-
-// The body a value's class answers one behavior with (LRM 8.20), the code axis
-// of the coordinate rule above and named the same way: the class that
-// introduced the behavior, and which of that class's introductions it is. What
-// class a value is, is a fact only this side holds, while entering a body with
-// the right arguments is only the asking code's to do -- so this answers with
-// the address and calls nothing.
+// The body a value's class answers one behavior with (LRM 8.20), named by the
+// class that introduced the behavior and which of that class's introductions it
+// is. What class a value is, is a fact only this side holds, while entering a
+// body with the right arguments is only the asking code's to do -- so this
+// answers with the address and calls nothing.
 //
-// Both of these take the value and nothing about what kind of value it is. An
-// instance standing in the design hierarchy and an object the program built
-// with `new` carry the class the same way, so the question is asked of the
-// class either way and one entry answers it.
+// It takes the value and nothing about what kind of value it is. An instance
+// standing in the design hierarchy and an object the program built with `new`
+// carry the class the same way, so the question is asked of the class either
+// way and one entry answers it.
 auto lyra_rt_method(
     void* value, const void* introduced_by, std::uint32_t ordinal)
     -> LyraMethodEntry;

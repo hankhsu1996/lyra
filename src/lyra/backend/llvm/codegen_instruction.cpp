@@ -27,6 +27,7 @@
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/member_layout.hpp"
 #include "lyra/support/runtime_object.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -36,6 +37,96 @@ namespace {
 auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
+}
+
+// Where the members of a value of some class sit, as far as this unit can say:
+// which kind of value holds them, and how many members the lineage carries
+// ahead of the ones that class declares itself. The count is a sum over the
+// lineage, and a lineage passing through another unit's class includes storage
+// that unit keeps to itself, so there the count is not this unit's to know.
+struct MemberPlacement {
+  support::ValueHolder holder{};
+  std::optional<std::uint32_t> ahead;
+};
+
+auto HolderOf(
+    const lir::CompilationUnit& unit, const std::optional<lir::Base>& extends)
+    -> support::ValueHolder {
+  return lir::StandsInObjectTree(unit, extends) ? support::ValueHolder::kScope
+                                                : support::ValueHolder::kObject;
+}
+
+auto MembersAhead(
+    const lir::CompilationUnit& unit, const std::optional<lir::Base>& extends)
+    -> std::optional<std::uint32_t> {
+  if (!extends.has_value()) {
+    return 0;
+  }
+  return std::visit(
+      Overloaded{
+          [&](const lir::IntraUnitBase& intra) -> std::optional<std::uint32_t> {
+            const lir::Class& base = unit.classes.Get(intra.class_id);
+            const std::optional<std::uint32_t> before =
+                MembersAhead(unit, base.base);
+            if (!before.has_value()) {
+              return std::nullopt;
+            }
+            return *before + static_cast<std::uint32_t>(base.members.size());
+          },
+          [](const lir::CrossUnitBase&) -> std::optional<std::uint32_t> {
+            return std::nullopt;
+          },
+          [](const lir::ObjectTreeBase&) -> std::optional<std::uint32_t> {
+            return 0;
+          },
+          [](const lir::ManagedObjectBase&) -> std::optional<std::uint32_t> {
+            return 0;
+          }},
+      *extends);
+}
+
+auto PlacementOf(const lir::CompilationUnit& unit, lir::TypeId declared_by)
+    -> MemberPlacement {
+  const std::optional<lir::TypeDeclaration> declaration =
+      unit.types.Get(declared_by).Declaration();
+  if (!declaration.has_value()) {
+    throw InternalError(
+        "llvm codegen: a member step names a type that declares nothing");
+  }
+  return std::visit(
+      Overloaded{
+          [&](const lir::ObjectType& object) -> MemberPlacement {
+            const lir::Class& cls = unit.classes.Get(object.class_id);
+            return {
+                .holder = HolderOf(unit, cls.base),
+                .ahead = MembersAhead(unit, cls.base)};
+          },
+          [&](const lir::CrossUnitClassType& cls) -> MemberPlacement {
+            const lir::ExternalClass* record =
+                lir::FindExternalClass(unit, cls.unit_name, cls.class_name);
+            if (record == nullptr) {
+              throw InternalError(
+                  "llvm codegen: a member step names another unit's class this "
+                  "unit consumed no promise about");
+            }
+            return {.holder = HolderOf(unit, record->base), .ahead = {}};
+          },
+          // A gathered scope is the storage a block promoted out of its frame,
+          // held as an object of its own and extending nothing.
+          [](const lir::StructType&) -> MemberPlacement {
+            return {.holder = support::ValueHolder::kObject, .ahead = 0};
+          },
+          [](const lir::ClosureType&) -> MemberPlacement {
+            throw InternalError(
+                "llvm codegen: a capture is reached through its closure's own "
+                "access, never by a member step");
+          },
+          [](const lir::ExternalUnitObjectType&) -> MemberPlacement {
+            throw InternalError(
+                "llvm codegen: another unit's object is reached through what "
+                "it promised, never by a member step");
+          }},
+      *declaration);
 }
 
 // The signature a call is made under: the result the instruction defines, over
@@ -346,19 +437,33 @@ auto CodeGenFunction::DefinitionOf(lir::TypeId type)
 auto CodeGenFunction::MemberStorage(
     llvm::Value* owner, const lir::StatedMemberRef& member)
     -> diag::Result<llvm::Value*> {
-  auto declared_by = DefinitionOf(member.declared_by);
-  if (!declared_by) {
-    return std::unexpected(std::move(declared_by.error()));
+  const MemberPlacement placement =
+      PlacementOf(module_->Unit(), member.declared_by);
+  auto* offset_ty = llvm::Type::getInt64Ty(module_->Context());
+  llvm::Value* ahead = nullptr;
+  if (placement.ahead.has_value()) {
+    ahead = llvm::ConstantInt::get(offset_ty, *placement.ahead);
+  } else {
+    auto declared_by = DefinitionOf(member.declared_by);
+    if (!declared_by) {
+      return std::unexpected(std::move(declared_by.error()));
+    }
+    llvm::Value* count = builder_.CreateLoad(
+        llvm::Type::getInt32Ty(module_->Context()),
+        builder_.CreateConstInBoundsGEP1_64(
+            llvm::Type::getInt8Ty(module_->Context()), *declared_by,
+            support::kFirstMemberAt));
+    ahead = builder_.CreateZExt(count, offset_ty);
   }
-  const std::array<llvm::Value*, 3> args{
-      owner, *declared_by,
-      llvm::ConstantInt::get(
-          llvm::Type::getInt32Ty(module_->Context()), member.slot.value)};
-  return builder_.CreateCall(
-      Entry(
-          RuntimeSymbol(RuntimeOp::kMemberAddress), module_->Types().Ptr(),
-          args),
-      args);
+  llvm::Value* position = builder_.CreateAdd(
+      ahead, llvm::ConstantInt::get(offset_ty, member.slot.value));
+  llvm::Value* offset = builder_.CreateAdd(
+      llvm::ConstantInt::get(offset_ty, support::MembersAt(placement.holder)),
+      builder_.CreateMul(
+          position,
+          llvm::ConstantInt::get(offset_ty, support::kMemberSlotSize)));
+  return builder_.CreateInBoundsGEP(
+      llvm::Type::getInt8Ty(module_->Context()), owner, offset);
 }
 
 // The type of the storage the chain has arrived at where step `index` applies,

@@ -85,8 +85,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "scope_declare_class";
     case RuntimeOp::kRunProgram:
       return "run_program";
-    case RuntimeOp::kMemberAddress:
-      return "member_addr";
     case RuntimeOp::kSequenceMake:
       return "sequence_make";
     case RuntimeOp::kSequenceElement:

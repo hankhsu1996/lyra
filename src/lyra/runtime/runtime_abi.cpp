@@ -687,14 +687,13 @@ using lyra::runtime::FindExportEntry;
 using lyra::runtime::FindProperty;
 using lyra::runtime::ForkWaitAll;
 using lyra::runtime::ForkWaitFirst;
-using lyra::runtime::GcNew;
 using lyra::runtime::GcObject;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::LeaveCancellationTarget;
 using lyra::runtime::LentStorage;
 using lyra::runtime::MakeForeignExecution;
-using lyra::runtime::ManagedObject;
+using lyra::runtime::MakeManagedObject;
 using lyra::runtime::MemberStorageSchema;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
@@ -1146,7 +1145,7 @@ auto lyra_rt_closure_capture(void* self, std::uint32_t index) -> void* {
 
 auto lyra_rt_object_make(const void* definition, void* out) -> void* {
   ObjectRef object =
-      GcNew<ManagedObject>(static_cast<const ObjectDefinition*>(definition));
+      MakeManagedObject(static_cast<const ObjectDefinition*>(definition));
   return Emplace(out, object.Handle());
 }
 
@@ -1614,8 +1613,9 @@ auto lyra_rt_make_scope(
     -> void* {
   const auto* def = static_cast<const ScopeDefinition*>(definition);
   auto* identity = static_cast<HierarchySegment*>(segment);
-  auto instance =
-      std::make_unique<Scope>(static_cast<Scope*>(parent), *identity, def);
+  std::unique_ptr<Scope> instance(
+      ClassValue::Make<Scope>(
+          def, static_cast<Scope*>(parent), *identity, def));
   def->construct(
       instance.get(), static_cast<Scope*>(parent), identity,
       lyra::runtime::ScopeConstructArguments{
@@ -1647,12 +1647,6 @@ auto lyra_rt_find_child(void* self, const void* name, LyraSpan indices)
     -> void* {
   return static_cast<Scope*>(self)->FindChild(
       static_cast<const char*>(name), ValuesOf<PackedArray>(indices));
-}
-
-auto lyra_rt_member_addr(
-    void* value, const void* declared_by, std::uint32_t slot) -> void* {
-  return static_cast<ClassValue*>(value)->Member(
-      static_cast<const ObjectDefinition*>(declared_by), slot);
 }
 
 auto lyra_rt_sequence_make(LyraSpan handles) -> void* {

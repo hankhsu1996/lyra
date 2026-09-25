@@ -249,7 +249,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_make_promoted_scope", &lyra_rt_make_promoted_scope);
   add("lyra_rt_promoted_scope_deref", &lyra_rt_promoted_scope_deref);
   add("lyra_rt_method", &lyra_rt_method);
-  add("lyra_rt_member_addr", &lyra_rt_member_addr);
   add("lyra_rt_class_find_property", &lyra_rt_class_find_property);
   add("lyra_rt_class_find_behavior", &lyra_rt_class_find_behavior);
   add("lyra_rt_class_find_behavior_body", &lyra_rt_class_find_behavior_body);

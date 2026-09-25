@@ -453,6 +453,12 @@ each meets the same lifetime question above.
       base's extended with its own, so an inherited member keeps its position in every class
       extending it and an addition a base does not publish moves nothing. Settled in
       `../decisions/inherited-member-reference.md`.
+- [x] **Reaching a member costs what reaching a field costs.** A member sits at a fixed distance
+      from its value, derived when the unit is compiled, and a value holds its members in one
+      allocation -- so an access is one address computation rather than a question put to the
+      runtime. Only a class extending another unit's class reads how much storage its lineage
+      carries ahead of its own, because a unit does not publish what it keeps to itself. Settled in
+      `../decisions/a-member-is-reached-at-a-derived-offset.md`.
 - [x] Calling an inherited method, and constructing the base. The receiver crosses without being
       re-typed to the class that declares the body, so an inherited method reaches the storage the
       object holds for what that body names; and constructing enters the base's construction first,

@@ -59,7 +59,8 @@ auto RunDeclaredProgram(
       argc, argv, root_name,
       [&root](
           Scope* parent, HierarchySegment segment) -> std::unique_ptr<Scope> {
-        auto scope = std::make_unique<Scope>(parent, segment, &root);
+        std::unique_ptr<Scope> scope(
+            ClassValue::Make<Scope>(&root, parent, segment, &root));
         root.construct(scope.get(), parent, &segment, {});
         return scope;
       });
