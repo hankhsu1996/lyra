@@ -27,10 +27,6 @@ auto ManagedObjectRootCppType() -> std::string_view {
   return "lyra::runtime::GcObject";
 }
 
-auto ObjectViewConversionCppName() -> std::string_view {
-  return "lyra::runtime::ViewAs";
-}
-
 namespace {
 
 void WriteTypeList(
@@ -424,6 +420,18 @@ auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::StructType&) { return opens_no_storage(); },
           [&](const mir::ClosureType&) { return opens_no_storage(); },
       });
+}
+
+auto ConversionAsCpp(
+    const mir::CompilationUnit& unit, mir::TypeId from, mir::TypeId to)
+    -> Conversion {
+  const auto* from_ref = unit.types.Get(from).As<mir::ManagedRefType>();
+  const auto* to_ref = unit.types.Get(to).As<mir::ManagedRefType>();
+  if (from_ref != nullptr && to_ref != nullptr) {
+    return ConvertedThroughView{
+        .from = from_ref->pointee, .to = to_ref->pointee};
+  }
+  return ConvertedByCastNotation{.to = to};
 }
 
 void WriteOne(TargetText& out, const CppConstructorName& constructor) {

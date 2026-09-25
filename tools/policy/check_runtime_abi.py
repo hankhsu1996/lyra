@@ -66,6 +66,15 @@ Rules:
         reads was never one. Nothing else sees it, because the call links and
         the entry is well-formed on both sides.
 
+  R008  Whether an entry can raise is stated once, the same way as R005.
+        Its runtime entry declaration says a call to it only returns, and its
+        prototype is `noexcept`; a call site builds no landing for the first,
+        and the compiler holds the definition to the second. A row claiming an
+        entry cannot raise while its definition can sends a departure through
+        a frame that has nowhere to land it.
+
+        Scoped like R004.
+
 Usage:
   python3 tools/policy/check_runtime_abi.py
 """
@@ -91,9 +100,11 @@ RE_ATTRIBUTE = r"(?:\[\[[\w:, ]+\]\]\s*)*"
 RE_ENTRY = re.compile(
     rf"^{RE_ATTRIBUTE}(?:auto|void)\s+(lyra_rt_\w+)\s*\(", re.MULTILINE)
 RE_BINDING = re.compile(r'add\(\s*"(lyra_rt_\w+)"\s*,\s*&(lyra_rt_\w+)\s*\)')
-# What a prototype answers with, read after its parameter list closes. An entry
-# may answer with a code address, whose type holds parentheses of its own, so
-# it runs to the end of the declaration rather than to the first one.
+# Whether a prototype may raise, read where its parameter list closes, and then
+# what it answers with. An entry may answer with a code address, whose type
+# holds parentheses of its own, so the answer runs to the end of the declaration
+# rather than to the first one.
+RE_NOEXCEPT = re.compile(r"\s*noexcept")
 RE_ANSWER = re.compile(r"\s*->\s*([^;{]+)")
 # One row of the runtime entry declaration: the entry it declares, and the
 # properties it states.
@@ -118,6 +129,7 @@ HANDLE_PARAMETER = "runtime"
 HANDLE_PROPERTY = ".takes_the_runtime_handle = true"
 PARK_ANSWER = "bool"
 PARK_PROPERTY = ".parks_the_caller = true"
+RETURN_PROPERTY = ".ending = CallEnding::kReturns"
 
 VIOLATION_HINT = (
     "An entry is one contract written in three places. Add the side that is "
@@ -143,6 +155,7 @@ class Prototype(NamedTuple):
     line: int
     parameters: list[str]
     answer: str
+    cannot_raise: bool
 
 
 class Abi(NamedTuple):
@@ -151,8 +164,10 @@ class Abi(NamedTuple):
     bound: list[Binding]
     handle_takers: set[str] = set()
     parkers: set[str] = set()
+    non_raisers: set[str] = set()
     handle_rows: dict[str, bool] = {}
     park_rows: dict[str, bool] = {}
+    return_rows: dict[str, bool] = {}
     # Absent where the side it is read from declares nothing of the kind, which
     # R006 reports rather than passing over.
     construct_shared: int | None = None
@@ -208,12 +223,16 @@ def prototypes_of(text: str) -> list[Prototype]:
         last = text[start:position - 1]
         if last.strip():
             parameters.append(last)
+        noexcept = RE_NOEXCEPT.match(text, position)
+        if noexcept:
+            position = noexcept.end()
         answer = RE_ANSWER.match(text, position)
         prototypes.append(
             Prototype(
                 m.group(1), line_of(text, m.start()),
                 [parameter.strip() for parameter in parameters],
-                answer.group(1).strip() if answer else ""))
+                answer.group(1).strip() if answer else "",
+                noexcept is not None))
     return prototypes
 
 
@@ -234,6 +253,15 @@ def parkers_of(text: str) -> set[str]:
         prototype.name
         for prototype in prototypes_of(text)
         if prototype.answer == PARK_ANSWER
+    }
+
+
+def non_raisers_of(text: str) -> set[str]:
+    """The declared entries whose prototype says they cannot raise."""
+    return {
+        prototype.name
+        for prototype in prototypes_of(text)
+        if prototype.cannot_raise
     }
 
 
@@ -405,6 +433,12 @@ def check_r005(abi: Abi) -> list[str]:
         "answers with")
 
 
+def check_r008(abi: Abi) -> list[str]:
+    return check_agreement(
+        abi, "R008", abi.return_rows, abi.non_raisers, "cannot raise",
+        "declares")
+
+
 def load(root: Path) -> Abi:
     header = (root / HEADER).read_text()
     entries = (root / ENTRIES).read_text()
@@ -414,8 +448,10 @@ def load(root: Path) -> Abi:
         bound=bindings_of((root / BINDINGS).read_text()),
         handle_takers=handle_takers_of(header),
         parkers=parkers_of(header),
+        non_raisers=non_raisers_of(header),
         handle_rows=rows_of(entries, HANDLE_PROPERTY),
         park_rows=rows_of(entries, PARK_PROPERTY),
+        return_rows=rows_of(entries, RETURN_PROPERTY),
         construct_shared=construct_shared_of(
             (root / CONSTRUCT_ENTRY).read_text()),
         construct_stated=construct_stated_of(
@@ -437,8 +473,10 @@ def run_self_tests() -> bool:
             bound=bindings_of(bindings),
             handle_takers=handle_takers_of(header),
             parkers=parkers_of(header),
+            non_raisers=non_raisers_of(header),
             handle_rows=rows_of(entries, HANDLE_PROPERTY),
-            park_rows=rows_of(entries, PARK_PROPERTY))
+            park_rows=rows_of(entries, PARK_PROPERTY),
+            return_rows=rows_of(entries, RETURN_PROPERTY))
 
     ok = True
     ok &= expect(
@@ -537,6 +575,27 @@ def run_self_tests() -> bool:
     ok &= expect(
         not check_r005(abi(header=parks, entries=says_parks)),
         "R005 is silent when the two sides agree")
+    ok &= expect(
+        parkers_of("auto lyra_rt_a(void* p) noexcept -> bool;")
+        == {"lyra_rt_a"},
+        "a prototype that cannot raise is still read for the park question")
+
+    raises_none = "void lyra_rt_a(void* p) noexcept;"
+    raises = "void lyra_rt_a(void* p);"
+    says_returns = row.format(", .ending = CallEnding::kReturns")
+    ok &= expect(
+        non_raisers_of(raises_none) == {"lyra_rt_a"}
+        and not non_raisers_of(raises),
+        "a prototype is read for whether it can raise")
+    ok &= expect(
+        len(check_r008(abi(header=raises, entries=says_returns))) == 1,
+        "R008 reports a row claiming an entry the prototype lets raise")
+    ok &= expect(
+        len(check_r008(abi(header=raises_none, entries=states_none))) == 1,
+        "R008 reports a prototype that cannot raise under a row that may depart")
+    ok &= expect(
+        not check_r008(abi(header=raises_none, entries=says_returns)),
+        "R008 is silent when the two sides agree")
 
     entry_type = (
         "using ScopeConstructEntry = void (*)(\n"
@@ -594,7 +653,7 @@ def run_self_tests() -> bool:
         == [Prototype(
             "lyra_rt_a", 1,
             ["const void* p", "void* (*body)(void* self, const void* item)",
-             "void* runtime"], "bool")],
+             "void* runtime"], "bool", False)],
         "a parameter holding a parameter list of its own is read whole, and "
         "the ones after it are still read")
     ok &= expect(
@@ -611,7 +670,8 @@ def main() -> int:
     abi = load(Path(__file__).resolve().parents[2])
     failures = (
         check_r001(abi) + check_r002(abi) + check_r003(abi) + check_r004(abi)
-        + check_r005(abi) + check_r006(abi) + check_r007(abi))
+        + check_r005(abi) + check_r006(abi) + check_r007(abi)
+        + check_r008(abi))
 
     if failures:
         print("Runtime ABI check failed:")

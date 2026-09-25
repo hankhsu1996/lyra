@@ -299,4 +299,14 @@ void RenderCallExpr(
   text.Arguments(call.arguments);
 }
 
+void RenderStructuralCall(
+    const ScopeView& view, support::BuiltinFn fn, mir::TypeId result_type,
+    TargetText& out) {
+  const std::optional<CallReceiver> receiver;
+  CallWriter text(view, receiver, out);
+  WriteEntryCallee(
+      view, support::RuntimeEntryOf(fn), std::nullopt, result_type, text);
+  text.Arguments({});
+}
+
 }  // namespace lyra::backend::cpp

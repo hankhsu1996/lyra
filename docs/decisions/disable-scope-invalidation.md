@@ -166,6 +166,15 @@ which region consumes it are fixed here and re-decided by no backend.
   also treated a sentence about targets in general as a finding about this one, which is how a
   rejected shape comes back without anyone arguing for it.
 
+  What both reasons answer is a gate placed where analysis says one is needed. The uniform form --
+  every call handing back whether it left, and every caller branching on it, with nothing analysed
+  -- escapes both, because the calling convention and not the body would carry it. It loses on other
+  grounds: no frame between the leaving and the region can do anything with the answer but pass it
+  on, since the source language has no way to catch one, and calls sit inside expressions, which a
+  checked answer would force apart into statements. Unwinding carries the same thing for nothing on
+  the path that does not leave; its one obligation, stopping at a foreign frame, is met by the
+  entry's own region.
+
 - **An explicit resume-reason or a pending-control state on the activation.** A single "disabled"
   signal cannot name which scope or how far to unwind, which recursion and nesting require; the
   generation supplies both. A new enum is a second source of truth beside the generation.

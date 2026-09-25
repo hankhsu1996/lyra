@@ -259,16 +259,17 @@ void CodeGenFunction::OpenCoroutine() {
 
   llvm::Constant* null_ptr = llvm::ConstantPointerNull::get(ptr_ty);
   coro_id_ = builder_.CreateCall(
-      llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::coro_id),
+      llvm::Intrinsic::getOrInsertDeclaration(&mod, llvm::Intrinsic::coro_id),
       {builder_.getInt32(0), null_ptr, null_ptr, null_ptr});
   llvm::Value* size = builder_.CreateCall(
-      llvm::Intrinsic::getDeclaration(
+      llvm::Intrinsic::getOrInsertDeclaration(
           &mod, llvm::Intrinsic::coro_size, {size_ty}),
       {});
   llvm::Value* memory = builder_.CreateCall(
       mod.getOrInsertFunction("malloc", ptr_ty, size_ty), {size});
   coro_handle_ = builder_.CreateCall(
-      llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::coro_begin),
+      llvm::Intrinsic::getOrInsertDeclaration(
+          &mod, llvm::Intrinsic::coro_begin),
       {coro_id_, memory});
 
   coro_final_ = llvm::BasicBlock::Create(ctx, "coro.final", value_);
@@ -277,7 +278,7 @@ void CodeGenFunction::OpenCoroutine() {
 
   builder_.SetInsertPoint(coro_cleanup_);
   llvm::Value* frame = builder_.CreateCall(
-      llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::coro_free),
+      llvm::Intrinsic::getOrInsertDeclaration(&mod, llvm::Intrinsic::coro_free),
       {coro_id_, coro_handle_});
   builder_.CreateCall(
       mod.getOrInsertFunction("free", builder_.getVoidTy(), ptr_ty), {frame});
@@ -285,8 +286,9 @@ void CodeGenFunction::OpenCoroutine() {
 
   builder_.SetInsertPoint(coro_end_);
   builder_.CreateCall(
-      llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::coro_end),
-      {coro_handle_, builder_.getInt1(false)});
+      llvm::Intrinsic::getOrInsertDeclaration(&mod, llvm::Intrinsic::coro_end),
+      {coro_handle_, builder_.getInt1(false),
+       llvm::ConstantTokenNone::get(module_->Context())});
   builder_.CreateRet(coro_handle_);
 
   // A body that completes, by returning or by departing, suspends one final
@@ -304,11 +306,12 @@ void CodeGenFunction::EmitCoroutineSuspend(
       is_final ? llvm::cast<llvm::Value>(
                      llvm::ConstantTokenNone::get(module_->Context()))
                : llvm::cast<llvm::Value>(builder_.CreateCall(
-                     llvm::Intrinsic::getDeclaration(
+                     llvm::Intrinsic::getOrInsertDeclaration(
                          &mod, llvm::Intrinsic::coro_save),
                      {coro_handle_}));
   llvm::Value* arm = builder_.CreateCall(
-      llvm::Intrinsic::getDeclaration(&mod, llvm::Intrinsic::coro_suspend),
+      llvm::Intrinsic::getOrInsertDeclaration(
+          &mod, llvm::Intrinsic::coro_suspend),
       {save, builder_.getInt1(is_final)});
   // The suspension's three arms: the caller regains control (the default), the
   // body resumes where it left off, or the execution is ended where it stands.
@@ -376,7 +379,12 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             builder_.CreateBr(coro_cleanup_);
             return {};
           },
-          [&](const lir::DepartTerm&) -> diag::Result<void> {
+          [&](const lir::DepartTerm& depart) -> diag::Result<void> {
+            auto departure = LowerOperand(depart.departure);
+            if (!departure) {
+              return std::unexpected(std::move(departure.error()));
+            }
+            const std::array<llvm::Value*, 1> args{*departure};
             if (IsCoroutine()) {
               // A coroutine hands the departure to the activation it completes
               // and leaves through its final suspension, as a return does.
@@ -386,8 +394,8 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
               builder_.CreateCall(
                   Entry(
                       RuntimeSymbol(RuntimeOp::kSettleDeparture),
-                      builder_.getVoidTy(), {}),
-                  {});
+                      builder_.getVoidTy(), args),
+                  args);
               builder_.CreateBr(coro_final_);
               return {};
             }
@@ -395,8 +403,8 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
                 Entry(
                     RuntimeSymbol(
                         lir::ControlEffectTarget::Op::kDeclineDeparture),
-                    builder_.getVoidTy(), {}),
-                {});
+                    builder_.getVoidTy(), args),
+                args);
             builder_.CreateUnreachable();
             return {};
           },

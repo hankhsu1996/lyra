@@ -135,6 +135,15 @@ language.
    execution with nothing after the region to continue into ends; that outcome is the activation's,
    not a result its caller reads.
 
+7. **Whether a call can leave is a property of its callee's declaration, never of what the callee
+   does.** Nothing proves a callee cannot leave; one that cannot says so where it is declared. A
+   proof would need the callee's body, which another unit may hold, and a call written before the
+   proof existed would have to be revisited when it changed.
+
+8. **A run-time error is the departure no region may claim from the first landing that receives
+   it.** It is reported there, once, and then travels as every other departure does, so every
+   cleanup it passes runs and it stops at a foreign frame's entry like the rest.
+
 ## Forbidden shapes
 
 - **A control construct below the source language that means "cancellation".** What a body carries
@@ -172,18 +181,33 @@ cleanup on each way out of the body and asks the runtime, at the points inside a
 execution regains control, whether a target it is inside has been invalidated. A departure no region
 of the body claims is itself one of those ways out: a body called directly carries it on to its
 caller, and a body the runtime drives as a suspended execution completes and hands it to the
-execution, the way a C++ coroutine hands an escaping exception to its promise.
+execution, the way a C++ coroutine hands an escaping exception to its promise. Both realize the
+construct the way a C++ compiler realizes the same C++: a call is assumed able to leave unless its
+callee is declared not to be, and that declaration is true because the callee's definition is
+`noexcept` -- so a wrong one terminates rather than letting a departure slip past a landing.
 
-The execution backend's landing stops whatever the platform's unwinder carries and asks the runtime
-which target the control effect it holds names. What is not a control effect -- a run-time error,
-and the release of a suspended stack, which must pass every frame untouched -- the runtime raises
-again from inside that question, unchanged, so the landing only ever acts on a control effect and
-its code names no raised type. Which exception is a control effect is a question only the language
-the runtime is written in can answer, and naming that language's type identity from generated code
-would make a fact of the runtime's own spelling -- its mangling, and which translation unit holds
-the one definition of the identity -- something every artifact links against. Rust's `catch_unwind`
-has the same shape for the same reason: its landing matches anything, and the runtime then decides
-from the exception it was handed whether the raise was its own.
+Both backends' landings catch whatever the platform's unwinder carries and ask the runtime what it
+was. A control effect is itself. A run-time error is settled there -- reported, the run ended, the
+execution asked to stop -- and carried on as the departure no region may claim, so it is reported
+once, by the first landing it reaches, and every cleanup after that runs as for any departure. The
+release of a suspended stack, which must pass every frame untouched, the runtime raises again from
+inside that question, unchanged. Which exception is which is a question only the language the
+runtime is written in can answer, and naming that language's type identity from generated code would
+make a fact of the runtime's own spelling -- its mangling, and which translation unit holds the one
+definition of the identity -- something every artifact links against. Rust's `catch_unwind` has the
+same shape for the same reason: its landing matches anything, and the runtime then decides from the
+exception it was handed whether the raise was its own.
+
+The execution backend keeps the scopes a departure can meet -- cleanups, the end of each value the
+body owns, and regions alike -- on one stack in the order they nest, as Clang's exception handling
+does. A call's landing belongs to the innermost scope open where it is made, so every call inside
+one scope unwinds to the same landing; the landing receives what arrived and passes it to that
+scope, whose cleanup runs once on the way out and passes it to the scope it is nested in, until a
+region's handler or the frame's own edge takes it. A cleanup's code therefore appears once on the
+unwinding path however many calls inside it can leave, while the ordinary ways out -- falling off
+the end, a return, a loop exit -- still copy it, as below. A value whose end passes to storage or
+to the caller stops being owed at that point, so the landings built while it was owed keep ending it
+and those built afterwards do not.
 
 Enumerating a body's ways out is what every compiler targeting a control-flow graph or a stack
 machine does with a cleanup construct. JVM bytecode has no `finally`; the compiler copies the

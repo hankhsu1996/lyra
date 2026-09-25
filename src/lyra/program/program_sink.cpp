@@ -109,6 +109,11 @@ struct AbiSignatureOf<R(A...)> {
   }
 };
 
+// Whether an entry can raise is no part of how it is called, so an entry that
+// cannot is called the same way.
+template <typename R, typename... A>
+struct AbiSignatureOf<R(A...) noexcept> : AbiSignatureOf<R(A...)> {};
+
 auto AbiKindOfLlvm(llvm::Type* type) -> AbiKind {
   if (type->isVoidTy()) {
     return AbiKind::kVoid;
@@ -284,7 +289,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_disable", &lyra_rt_disable);
   add("lyra_rt_effect_names_target", &lyra_rt_effect_names_target);
   add("lyra_rt_retain_constant", &lyra_rt_retain_constant);
-  add("lyra_rt_claim_departure", &lyra_rt_claim_departure);
+  add("lyra_rt_receive_departure", &lyra_rt_receive_departure);
   add("lyra_rt_finish_departure", &lyra_rt_finish_departure);
   add("lyra_rt_decline_departure", &lyra_rt_decline_departure);
   add("lyra_rt_settle_departure", &lyra_rt_settle_departure);
@@ -1432,10 +1437,7 @@ auto CompileObject(
   driver::ContentNamer namer;
   namer.Add("module", module.Print());
   namer.Add("code generator", build.code_generator.hex);
-  namer.Add(
-      "pipeline level",
-      std::format(
-          "speed {} size {}", level.getSpeedupLevel(), level.getSizeLevel()));
+  namer.Add("pipeline level", std::format("O{}", std::to_underlying(level)));
   driver::ContentName name = namer.Finish();
   ObjectFile object{
       .path = build.object_dir / (name.hex + ".o"), .name = std::move(name)};

@@ -10,9 +10,6 @@ build --action_env=CC=clang
 build --action_env=CXX=clang++
 build --cxxopt='-std=c++23'
 
-# LLVM 17 doesn't build with C++23 (constexpr unique_ptr requires complete types)
-build --per_file_copt=external/llvm-project.*.cpp@-std=c++17
-
 # LLVM is optimized even in an unoptimized build, and nothing else is. The
 # conformance corpus runs the compiler once per case, and almost all of that
 # time is spent inside LLVM producing machine code: at the default compilation
@@ -29,7 +26,12 @@ build --per_file_copt=external/llvm-project.*.cpp@-std=c++17
 # Assertions are deliberately left on: `-DNDEBUG` would buy a little more speed
 # by disabling the checks LLVM makes on what we hand it, which are the ones
 # that catch our own misuse of it.
-build --per_file_copt=external/llvm-project.*@-O2
+#
+# The pattern matches the repository's directory by the one part of its name
+# that is LLVM's own. Bazel prefixes the directory with the module that provides
+# the repository, so a pattern spelling the whole name matches only the module it
+# was written against and silently leaves LLVM unoptimized under another one.
+build --per_file_copt=external/[^/]*llvm-project[^/]*/.*@-O2
 
 build --incompatible_strict_action_env
 build --verbose_failures

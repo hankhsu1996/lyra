@@ -372,6 +372,17 @@ using CallTarget = std::variant<
     OpenVariablesTarget, VariableAddressTarget, CloseVariablesTarget,
     EndValueTarget, CopyValueTarget, ControlEffectTarget, CoroutineTarget>;
 
+// How a call to `target` ends, which is a property of the callee and never of
+// what it happens to do. The design's own code can depart, wherever it stands
+// and whatever artifact holds it, because a `disable` anywhere inside it
+// reaches every execution it encloses (LRM 9.6.2). Runtime code can depart
+// wherever it can raise, since a run-time error is a departure too; a runtime
+// entry answers for itself, and one that only moves memory raises nothing a
+// departure is made of. Foreign code is the one callee a departure never comes
+// out of: it stops at that frame and crosses as a value instead. A call that
+// can depart names the landing the departure reaches, so it is a terminator.
+auto CallEndingOf(const CallTarget& target) -> support::CallEnding;
+
 struct CallInstr {
   CallTarget target;
   std::vector<Operand> args;
@@ -563,7 +574,8 @@ struct CastInstr {
 };
 
 // Receives the departure that transferred here, answering the target it names
-// (LRM 9.6.2) -- null where no region may claim it. A block beginning with this
+// (LRM 9.6.2) -- null where no region may claim it, which is what a run-time
+// error is received as. A block beginning with this
 // is a landing, which is the whole of what makes it one: it is reached only as
 // some departing call's landing, and what arrives is not an operand anyone
 // passed.
@@ -621,13 +633,16 @@ struct SuspendTerm {
 // carries no value and is not a completion.
 struct AbandonTerm {};
 
-// Leaves the body carrying the departure its landing received, once what every
-// scope owed on the way out has run: the other way a body completes beside
-// returning (LRM 9.6.2, 20.2). The departure is the one in flight rather than
-// an operand, as it is where it arrived. Whether the body's caller or the
-// activation it completes receives it is the callable's result type, as it is
-// for a return.
-struct DepartTerm {};
+// Leaves the body carrying `departure`, the one a landing received, once what
+// every scope owed on the way out has run: the other way a body completes
+// beside returning (LRM 9.6.2, 20.2). It is an operand rather than whatever the
+// unwinder brought, because a run-time error was received as the departure no
+// region may claim, and that is the one that leaves. Whether the body's caller
+// or the activation it completes receives it is the callable's result type, as
+// it is for a return.
+struct DepartTerm {
+  Operand departure;
+};
 
 // Ends a block control never reaches -- the join of a conditional whose arms
 // all returned, or the tail of a value-returning body that always returns
@@ -642,8 +657,8 @@ struct UnreachableTerm {};
 // It is a terminator and not an instruction because control leaves the block
 // through it either way, which is what a terminator means here; both of this
 // IR's peers say it the same way. Only a callee that can depart takes this
-// form -- an ordinary runtime call cannot, so it stays an instruction and costs
-// nothing.
+// form, which is every callee but one declared not to; a call to one that
+// cannot stays an instruction.
 struct DepartingCallInstr {
   ValueId result;
   CallTarget target;

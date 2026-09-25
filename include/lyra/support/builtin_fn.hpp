@@ -666,6 +666,14 @@ enum class BuiltinFn : std::uint16_t {
   kEnterTarget,
   kLeaveTarget,
   kEffectNamesTarget,
+  // What a region binds as the effect it caught, asked of whatever unwound into
+  // it: an effect is itself, a run-time error is the departure it becomes, and
+  // anything that is not the design's passes on from inside the question. No
+  // call in MIR names it, because the binding is part of what a region is;
+  // each target calls it where it realizes one, and the thing it asks about is
+  // whatever that target holds in flight -- a C++ handler holds it implicitly,
+  // while a target that unwinds by hand hands the entry the pointer it caught.
+  kReceiveDeparture,
   // LRM 9.7's `process` methods. The class is one the runtime library defines
   // and every unit imports rather than declares, so no per-unit declaration
   // names these and the library carries each of them out. `kProcessSelf` names
@@ -1003,6 +1011,10 @@ enum class EntryAnswer : std::uint8_t {
   kPartOfTheReceiver,
 };
 
+// Whether a call ending this way can leave by a departure, which is what
+// obliges it to name the landing the departure reaches.
+[[nodiscard]] auto MayDepart(CallEnding ending) -> bool;
+
 // Every property of one runtime entry: what the library calls it, how a call
 // site reaches it, and what it does with the operands it is given. A consumer
 // asking any of those reads the field for it, never a list of its own, so an
@@ -1034,12 +1046,17 @@ struct RuntimeEntry {
   // answers with an ordinary value and nothing about that value says the
   // caller stopped.
   bool parks_the_caller = false;
-  // How a call to the entry ends. One that can depart runs the design's own
-  // code or raises because that is what it is for, and a `disable` anywhere
-  // inside such a call reaches every execution it encloses (LRM 9.6.2), so what
-  // is owed between the call site and the frame's edge has to get its turn
-  // before the departure carries on past it.
-  CallEnding ending = CallEnding::kReturns;
+  // How a call to the entry ends. An entry can depart unless its definition
+  // cannot raise a departure: a run-time error it raises is a departure too,
+  // and it may run the design's own code, which a `disable` anywhere reaches
+  // (LRM 9.6.2), so what is owed between the call site and the frame's edge has
+  // to get its turn before the departure carries on past it. Two kinds of entry
+  // raise none, and their definitions say so by being `noexcept`: one that runs
+  // on a way out of a body -- a cleanup, or a region's test of what it caught
+  // -- where a raise would have nowhere to go, and one that only moves memory,
+  // whose one possible failure is running out of it, which ends the program
+  // rather than the design.
+  CallEnding ending = CallEnding::kReturnsOrDeparts;
   // Whether the entry updates the object it acts on, so that object names a
   // place rather than a value -- which is what makes a receiver reaching
   // through a capability wrapper reach its write access. Where the update

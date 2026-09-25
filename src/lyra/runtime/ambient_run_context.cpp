@@ -40,15 +40,6 @@ auto AmbientRunContext::Current() -> AmbientRunContext& {
   return *CurrentSlot();
 }
 
-void ReportFatalWithoutLeaving(std::string_view message) {
-  RuntimeEffects& effects = AmbientRunContext::Current().Effects();
-  effects.ReportDesignFailure(message);
-  if (RuntimeProcess* process = effects.TryCurrentProcess();
-      process != nullptr) {
-    process->RequestTermination(ProcessTerminationCause::kKilled);
-  }
-}
-
 auto CurrentExportScope() -> Scope* {
   Scope* scope = CurrentDpiScope();
   if (scope == nullptr) {

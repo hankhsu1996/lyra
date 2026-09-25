@@ -31,11 +31,6 @@ namespace lyra::backend::cpp {
 // has to know its owner, which this base records.
 [[nodiscard]] auto ManagedObjectRootCppType() -> std::string_view;
 
-// The conversion of an object reference to the same object seen as another
-// class, `ViewAs<From, To>(r)`. Every object reference is one C++ type, so a
-// C++ cast would only copy it.
-[[nodiscard]] auto ObjectViewConversionCppName() -> std::string_view;
-
 // A MIR type, written into the output as its C++ type. An enum is written as
 // its base type, a packed array; there is no C++ enum. It holds a view of the
 // unit, which outlives the writing.
@@ -129,6 +124,57 @@ void WriteStorageOf(
             Write(out, ".Deref<", CppType(unit, view.pointee), ">()");
           }},
       PlaceAccessAsCpp(unit, place_type));
+}
+
+// How a value of one type is written as another. C++'s cast notation picks the
+// conversion from the pair of types, the same way the MIR node does, so naming
+// the destination is enough: `(T)x`. An object reference is the pair it cannot
+// pick from, because every object reference is one C++ type whatever class it
+// is seen as and `(T)r` would only copy it; the same object seen as another
+// class is `ViewAs<From, To>(r)`, over the classes the two reference types
+// name.
+//
+// This is the only place that spells a conversion; a cast writes punctuation
+// around its answer.
+struct ConvertedByCastNotation {
+  mir::TypeId to;
+};
+
+struct ConvertedThroughView {
+  mir::TypeId from;
+  mir::TypeId to;
+};
+
+using Conversion = std::variant<ConvertedByCastNotation, ConvertedThroughView>;
+
+[[nodiscard]] auto ConversionAsCpp(
+    const mir::CompilationUnit& unit, mir::TypeId from, mir::TypeId to)
+    -> Conversion;
+
+// The conversion of a value, in a position needing `at_least`. `write_value`
+// writes the value being converted and is told the precedence its position in
+// the conversion needs.
+template <typename WriteValue>
+void WriteConversionOf(
+    TargetText& out, const mir::CompilationUnit& unit, mir::TypeId from,
+    mir::TypeId to, Precedence at_least, WriteValue write_value) {
+  std::visit(
+      Overloaded{
+          // A prefix form: in `(T)x->m` the `->` applies to `x`, so a position
+          // like that gets `((T)x)->m`.
+          [&](const ConvertedByCastNotation& c) {
+            const Enclosure enclosure(out, Precedence::kPrefix, at_least);
+            Write(out, "(", CppType(unit, c.to), ")");
+            write_value(Precedence::kPostfix);
+          },
+          [&](const ConvertedThroughView& v) {
+            Write(
+                out, "lyra::runtime::ViewAs<", CppType(unit, v.from), ", ",
+                CppType(unit, v.to), ">(");
+            write_value(Precedence::kAssignment);
+            out += ")";
+          }},
+      ConversionAsCpp(unit, from, to));
 }
 
 }  // namespace lyra::backend::cpp

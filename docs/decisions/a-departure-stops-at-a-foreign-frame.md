@@ -46,7 +46,10 @@ first point of its own that it reaches.
 ```text
 D1. No departure crosses a frame this compiler did not emit. An exported subroutine's entry is a
     region that lands whatever no region of its body claimed, because past it there is no frame of
-    ours for a departure to travel through.
+    ours for a departure to travel through. That includes a run-time error of the design and a
+    failure of the tool: a region receives whatever unwinds into it, and receiving an error settles
+    it into the departure no region may claim, so nothing thrown reaches the foreign frame -- not
+    even into a foreign handler that would catch anything.
 
 D2. What the entry hands back in its place is the standard's own answer. An exported task returns
     the disable-active int (LRM 35.8) whichever way its boundary ended, so its two paths meet at one

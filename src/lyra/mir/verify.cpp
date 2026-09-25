@@ -16,6 +16,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::mir {
 
@@ -38,22 +39,60 @@ auto HoldsSuspension(const Block& block) -> bool {
          std::ranges::any_of(block.child_scopes, HoldsSuspension);
 }
 
+// Whether anything in `block` could leave it by departing. Only a call can, and
+// a runtime entry declared to return is the one callee known not to.
+auto MayDepart(const Block& block) -> bool {
+  return std::ranges::any_of(
+             block.exprs,
+             [](const Expr& expr) {
+               const auto* call = std::get_if<CallExpr>(&expr.data);
+               if (call == nullptr) {
+                 return false;
+               }
+               const std::optional<support::BuiltinFn> fn =
+                   DirectBuiltinFn(*call);
+               return !fn.has_value() ||
+                      support::MayDepart(support::RuntimeEntryOf(*fn).ending);
+             }) ||
+         std::ranges::any_of(block.child_scopes, MayDepart);
+}
+
+// Whether some cleanup in `block`, at any depth, could depart.
+auto HoldsDepartingCleanup(const Block& block) -> bool {
+  return std::ranges::any_of(
+             block.stmts,
+             [&](const Stmt& stmt) {
+               const auto* finally = std::get_if<FinallyStmt>(&stmt.data);
+               return finally != nullptr &&
+                      MayDepart(block.child_scopes.Get(finally->cleanup));
+             }) ||
+         std::ranges::any_of(block.child_scopes, HoldsDepartingCleanup);
+}
+
 // `describe` names the body, and is asked only once there is something to
 // report: the check runs over every body of every unit, and composing a name
 // for each one costs more than the check itself.
 void VerifyCode(
     const CompilationUnit& unit, const CallableCode& code,
     const auto& describe) {
-  if (!code.body.has_value() ||
-      unit.types.Get(code.result_type).Is<CoroutineType>() ||
-      !HoldsSuspension(*code.body)) {
+  if (!code.body.has_value()) {
     return;
   }
-  throw InternalError(
-      std::format(
-          "mir verify: {} suspends, but its result type is not a coroutine, "
-          "so nothing could resume it",
-          describe()));
+  if (!unit.types.Get(code.result_type).Is<CoroutineType>() &&
+      HoldsSuspension(*code.body)) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} suspends, but its result type is not a coroutine, "
+            "so nothing could resume it",
+            describe()));
+  }
+  if (HoldsDepartingCleanup(*code.body)) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} has a cleanup that can depart, which would have "
+            "nowhere to go while another departure is leaving",
+            describe()));
+  }
 }
 
 void VerifyClass(const CompilationUnit& unit, const Class& cls) {

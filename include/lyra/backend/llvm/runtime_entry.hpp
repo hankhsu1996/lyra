@@ -136,7 +136,6 @@ enum class RuntimeOp : std::uint8_t {
   kMakeDpiBitBuffer,
   kMakeDpiLogicBuffer,
   kMakeDpiOpenArray,
-  kClaimDeparture,
   kSettleDeparture,
   kRetainConstant,
   // Ending an object held in the generated body's own storage, copying one into

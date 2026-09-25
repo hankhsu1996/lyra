@@ -119,29 +119,6 @@ auto BinaryPrecedence(mir::BinaryOp op) -> Precedence {
   throw InternalError("BinaryPrecedence: unknown MIR BinaryOp");
 }
 
-// Parentheses around one form: the opening one is written when this is
-// constructed, before the form, and the closing one when it is destroyed,
-// after. Both are written only when the position needs more than the form's own
-// precedence.
-class Enclosure {
- public:
-  Enclosure(TargetText& out, Precedence held, Precedence needed)
-      : out_(out), enclosed_(NeedsParentheses(held, needed)) {
-    if (enclosed_) out_ += "(";
-  }
-  ~Enclosure() {
-    if (enclosed_) out_ += ")";
-  }
-  Enclosure(const Enclosure&) = delete;
-  Enclosure(Enclosure&&) = delete;
-  auto operator=(const Enclosure&) -> Enclosure& = delete;
-  auto operator=(Enclosure&&) -> Enclosure& = delete;
-
- private:
-  TargetText& out_;
-  bool enclosed_;
-};
-
 // The operand of a prefix operator has to be postfix, not just prefix: `-(-1)`
 // written as `--1` would be a decrement.
 void RenderUnaryExpr(
@@ -178,30 +155,14 @@ void RenderConditionalExpr(
       Operand{.expr = c.else_value, .at_least = Precedence::kAssignment});
 }
 
-// A conversion, `(T)x`. C++'s cast notation picks the conversion from the pair
-// of types, the same way the MIR node does. It is a prefix form: in `(T)x->m`
-// the `->` applies to `x`, so a position like that gets `((T)x)->m`.
-//
-// An object reference is the exception. Every object reference is one C++
-// type, so `(T)r` would only copy it; the conversion to the same object seen as
-// another class is `ViewAs<From, To>(r)`.
 void RenderCastExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::CastExpr& cast,
     Precedence at_least, TargetText& out) {
-  const mir::Expr& operand = view.Expr(cast.operand);
-  const auto* from =
-      view.Unit().types.Get(operand.type).As<mir::ManagedRefType>();
-  const auto* to = view.Unit().types.Get(expr.type).As<mir::ManagedRefType>();
-  if (from != nullptr && to != nullptr) {
-    Write(
-        view, out, ObjectViewConversionCppName(), "<", from->pointee, ", ",
-        to->pointee, ">(", cast.operand, ")");
-    return;
-  }
-  const Enclosure enclosure(out, Precedence::kPrefix, at_least);
-  Write(
-      view, out, "(", expr.type, ")",
-      Operand{.expr = cast.operand, .at_least = Precedence::kPostfix});
+  WriteConversionOf(
+      out, view.Unit(), view.Expr(cast.operand).type, expr.type, at_least,
+      [&](Precedence needed) {
+        Write(view, out, Operand{.expr = cast.operand, .at_least = needed});
+      });
 }
 
 void RenderFieldAccessExpr(

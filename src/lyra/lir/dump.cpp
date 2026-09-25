@@ -260,7 +260,9 @@ class LirDumper {
                   s.abandoned.value);
             },
             [](const AbandonTerm&) -> std::string { return "abandon"; },
-            [](const DepartTerm&) -> std::string { return "depart"; },
+            [&](const DepartTerm& depart) -> std::string {
+              return std::format("depart {}", FormatOperand(depart.departure));
+            },
             [](const UnreachableTerm&) -> std::string { return "unreachable"; },
             [&](const DepartingCallInstr& call) -> std::string {
               return std::format(

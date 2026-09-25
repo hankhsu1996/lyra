@@ -169,8 +169,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_dpi_open_array";
     case RuntimeOp::kRetainConstant:
       return "retain_constant";
-    case RuntimeOp::kClaimDeparture:
-      return "claim_departure";
     case RuntimeOp::kSettleDeparture:
       return "settle_departure";
     case RuntimeOp::kDestroy:
@@ -904,6 +902,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEnterTarget:
     case support::BuiltinFn::kLeaveTarget:
     case support::BuiltinFn::kEffectNamesTarget:
+    case support::BuiltinFn::kReceiveDeparture:
     case support::BuiltinFn::kProcessSelf:
     case support::BuiltinFn::kProcessStatus:
     case support::BuiltinFn::kProcessKill:

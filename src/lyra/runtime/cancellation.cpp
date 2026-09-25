@@ -67,8 +67,8 @@ void RaiseUnclaimableEffect() {
   throw ControlEffect{.target = nullptr};
 }
 
-void RaiseControlEffect(CancellationTarget* target) {
-  throw ControlEffect{.target = target};
+void RaiseDeclinedDeparture(ControlEffect effect) {
+  throw ControlEffect{.target = effect.target};
 }
 
 auto ClassifyUnwind() -> Unwound {
@@ -83,13 +83,25 @@ auto ClassifyUnwind() -> Unwound {
   }
 }
 
-auto ClaimableTarget() -> CancellationTarget* {
-  // Asked the same way as above, and for the same reason. Anything else leaves
-  // by the same raise that asked, which carries it on unchanged.
+void SettleRaised(RuntimeEffects& effects, const std::exception_ptr& raised) {
+  ReportRaisedError(effects, raised);
+  if (RuntimeProcess* process = effects.TryCurrentProcess();
+      process != nullptr) {
+    process->RequestTermination(ProcessTerminationCause::kKilled);
+  }
+}
+
+auto ReceiveDeparture() -> ControlEffect {
+  // Asked the same way as above, and for the same reason. Anything neither
+  // arm names leaves by the same raise that asked, which carries it on
+  // unchanged.
   try {
     throw;
   } catch (const ControlEffect& effect) {
-    return effect.target;
+    return effect;
+  } catch (const std::exception&) {
+    SettleRaised(current_runtime(), std::current_exception());
+    return ControlEffect{.target = nullptr};
   }
 }
 
@@ -115,7 +127,7 @@ void RunAsLanding(
           "RunAsLanding: a departure a region owns left every region");
     }
   } catch (const std::exception&) {
-    ReportRaisedError(effects, std::current_exception());
+    SettleRaised(effects, std::current_exception());
   }
 }
 

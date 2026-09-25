@@ -96,6 +96,9 @@ report. It is not a language event and does not borrow the language's ending.
 
 - **A check after every operation that can fail.** It puts failure handling into bodies that have
   nothing to do with it, which is why a check after every resumption was rejected for cancellation.
+  A uniform form, where every call hands back whether it left and nothing is analysed, escapes that
+  reason and loses for the one `disable-scope-invalidation.md` gives beside it: no frame between can
+  act on the answer, and a checked answer breaks every expression holding a call apart.
 
 ## What this reverses
 

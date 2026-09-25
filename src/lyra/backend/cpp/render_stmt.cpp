@@ -4,12 +4,14 @@
 #include <variant>
 
 #include "lyra/backend/cpp/naming.hpp"
+#include "lyra/backend/cpp/render_call.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -68,16 +70,28 @@ void RenderBlockStmt(
   out += "\n";
 }
 
+// The region catches whatever unwinds into it, and binds what it caught as the
+// control effect it carries, which only the runtime can say: an effect is
+// itself, a run-time error becomes the departure it is, and anything else is
+// passed on from inside that question before the handler runs.
 void RenderTryStmt(
     const ScopeView& view, const mir::TryStmt& s, TargetText& out) {
   const auto& caught = view.Code().locals.Get(s.caught);
   out += "try ";
   WriteBracedBlock(view, view.Block().child_scopes.Get(s.body), out);
+  out += " catch (...) {\n";
+  out.Indent();
+  out.OpenLine();
   Write(
-      view, out, " catch (", caught.type, "& ",
-      CppLocalName(view.Code().named_locals, s.caught), ") ");
-  WriteBracedBlock(view, view.Block().child_scopes.Get(s.handler), out);
-  out += "\n";
+      view, out, caught.type, " ",
+      CppLocalName(view.Code().named_locals, s.caught), " = ");
+  RenderStructuralCall(
+      view, support::BuiltinFn::kReceiveDeparture, caught.type, out);
+  out += ";\n";
+  RenderNestedBlock(view, view.Block().child_scopes.Get(s.handler), out);
+  out.Outdent();
+  out.OpenLine();
+  out += "}\n";
 }
 
 void RenderRaiseStmt(

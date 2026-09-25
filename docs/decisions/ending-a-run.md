@@ -138,7 +138,10 @@ D9. A body is left in exactly two ways: it returns, or it departs. A departure i
     names, or the activation's own landing. So an activation settles the value it produced or the
     departure that reached its landing, and a condition the source language cannot express is not a
     third outcome beside them: it is a departure no region can claim, which is the shape a kill
-    already takes. Such a departure is reported at that landing, and the run ends there.
+    already takes. It becomes one at the first landing it reaches -- a region's, a cleanup's, or the
+    activation's own -- which reports it and ends the run, and from there it travels as every other
+    departure does. The raiser cannot do this itself: the library that raises most such errors is
+    also what the compiler folds constants with, where no run exists.
 
 D10. A task that ends the run departs from the execution that called it, and never parks it. The
      simulator exits at the call (LRM 20.2), so no statement after it runs, and the call is legal

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 
 namespace lyra::backend::cpp {
@@ -64,6 +65,29 @@ enum class Precedence : std::uint8_t {
     -> bool {
   return RankOf(held) < RankOf(needed);
 }
+
+// Parentheses around one form: the opening one is written when this is
+// constructed, before the form, and the closing one when it is destroyed,
+// after. Both are written only when the position needs more than the form's own
+// precedence.
+class Enclosure {
+ public:
+  Enclosure(TargetText& out, Precedence held, Precedence needed)
+      : out_(out), enclosed_(NeedsParentheses(held, needed)) {
+    if (enclosed_) out_ += "(";
+  }
+  ~Enclosure() {
+    if (enclosed_) out_ += ")";
+  }
+  Enclosure(const Enclosure&) = delete;
+  Enclosure(Enclosure&&) = delete;
+  auto operator=(const Enclosure&) -> Enclosure& = delete;
+  auto operator=(Enclosure&&) -> Enclosure& = delete;
+
+ private:
+  TargetText& out_;
+  bool enclosed_;
+};
 
 // The level one step tighter than a binary operator's: what its right operand
 // needs, since the operators are left-associative. `a - (b - c)` keeps its
