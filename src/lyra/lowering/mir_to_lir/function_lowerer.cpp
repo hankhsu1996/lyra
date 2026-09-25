@@ -46,6 +46,19 @@ namespace {
 constexpr base::ComponentIndex kUpdatedReceiver{0};
 constexpr base::ComponentIndex kMutatingCallResult{1};
 
+// Whether a call ending this way can leave by a departure, which is what
+// obliges it to name the landing the departure reaches.
+auto MayDepart(support::CallEnding ending) -> bool {
+  switch (ending) {
+    case support::CallEnding::kReturns:
+      return false;
+    case support::CallEnding::kReturnsOrDeparts:
+    case support::CallEnding::kDeparts:
+      return true;
+  }
+  throw InternalError("mir_to_lir: unknown call ending");
+}
+
 auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
@@ -398,7 +411,7 @@ FunctionLowerer::FunctionLowerer(
     UnitLowerer& unit, const mir::CallableCode& code, std::string name)
     : unit_(&unit),
       code_(&code),
-      constructed_class_(nullptr),
+      construction_(std::nullopt),
       closure_(nullptr),
       build_(nullptr),
       name_(std::move(name)),
@@ -407,22 +420,23 @@ FunctionLowerer::FunctionLowerer(
 }
 
 FunctionLowerer::FunctionLowerer(
-    UnitLowerer& unit, const mir::Class& cls, std::string name)
+    UnitLowerer& unit, const mir::Class& cls,
+    const mir::ConstructorDecl& constructor, std::string name)
     : unit_(&unit),
-      code_(&cls.constructor.code),
-      constructed_class_(&cls),
+      code_(&constructor.code),
+      construction_(Construction{.cls = &cls, .constructor = &constructor}),
       closure_(nullptr),
       build_(nullptr),
       name_(std::move(name)),
-      variable_slot_(cls.constructor.code.locals.size(), std::nullopt),
-      locals_(cls.constructor.code.locals.size(), std::nullopt) {
+      variable_slot_(constructor.code.locals.size(), std::nullopt),
+      locals_(constructor.code.locals.size(), std::nullopt) {
 }
 
 FunctionLowerer::FunctionLowerer(
     UnitLowerer& unit, const mir::ClosureDecl& closure, std::string name)
     : unit_(&unit),
       code_(&closure.invoke),
-      constructed_class_(nullptr),
+      construction_(std::nullopt),
       closure_(&closure),
       build_(nullptr),
       name_(std::move(name)),
@@ -434,7 +448,7 @@ FunctionLowerer::FunctionLowerer(
     UnitLowerer& unit, const mir::ValueBuild& build, std::string name)
     : unit_(&unit),
       code_(nullptr),
-      constructed_class_(nullptr),
+      construction_(std::nullopt),
       closure_(nullptr),
       build_(&build),
       name_(std::move(name)) {
@@ -520,7 +534,12 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // A closure invoke's receiver names the storage its captures live in, and
   // leads the per-invocation parameters in the signature.
   if (closure_ != nullptr) {
-    BindCaptureReceiver(mir::LocalId{0});
+    if (!code_->receiver.has_value()) {
+      throw InternalError(
+          "mir_to_lir: a closure's body reads its captures through the "
+          "closure, yet states no receiver");
+    }
+    BindCaptureReceiver(*code_->receiver);
   }
   for (const mir::LocalId param : code_->params) {
     const lir::TypeId type =
@@ -646,7 +665,9 @@ auto FunctionLowerer::ConstructorOf(const mir::ClassRef& cls)
           },
           [](const mir::RuntimeClassRef&) -> std::optional<EnteredConstructor> {
             return std::nullopt;
-          }},
+          },
+          [](const mir::ManagedObjectRootRef&)
+              -> std::optional<EnteredConstructor> { return std::nullopt; }},
       cls);
 }
 
@@ -667,16 +688,21 @@ auto FunctionLowerer::ObjectTypeOf(const mir::ClassRef& cls)
             return Unsupported(
                 "mir_to_lir: a class the runtime library defines states no "
                 "record of its own");
+          },
+          [](const mir::ManagedObjectRootRef&) -> diag::Result<lir::TypeId> {
+            return Unsupported(
+                "mir_to_lir: the managed object root states no record of its "
+                "own");
           }},
       cls);
 }
 
 auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
-  if (constructed_class_ == nullptr || !constructed_class_->base.has_value()) {
+  if (!construction_.has_value() || !construction_->cls->base.has_value()) {
     return {};
   }
   const std::optional<EnteredConstructor> base =
-      ConstructorOf(*constructed_class_->base);
+      ConstructorOf(*construction_->cls->base);
   if (!base.has_value()) {
     return {};
   }
@@ -684,7 +710,7 @@ auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
   // the arguments are complete however the source arrived at them, so there is
   // nothing to establish about them here.
   const std::vector<mir::ExprId>& stated =
-      constructed_class_->constructor.base_args;
+      construction_->constructor->base_args;
   std::vector<lir::Operand> args;
   args.reserve(stated.size() + 1);
   // The base is entered on the object being constructed, which leads its
@@ -775,10 +801,7 @@ auto FunctionLowerer::UnwindEntryAt(std::size_t index)
   auto entered = std::visit(
       Overloaded{
           [&](const CleanupScope& cleanup) -> diag::Result<lir::BlockId> {
-            return owed_then_outward([&] {
-              return LowerBlockInto(
-                  cleanup.owner->child_scopes.Get(cleanup.cleanup));
-            });
+            return owed_then_outward([&] { return LowerCleanupInto(cleanup); });
           },
           [&](const ValueEnd& end) -> diag::Result<lir::BlockId> {
             return owed_then_outward([&]() -> diag::Result<void> {
@@ -807,6 +830,12 @@ auto FunctionLowerer::UnwindEntryAt(std::size_t index)
                 Load(slot, unit_->ControlEffectType()));
             Terminate(lir::BranchTerm{.target = region.handler});
             return entry;
+          },
+          [](const TerminateScope&) -> diag::Result<lir::BlockId> {
+            throw InternalError(
+                "mir_to_lir: a cleanup's code can depart, and a departure "
+                "starting inside a cleanup has nowhere to go -- please report "
+                "this as a bug");
           }},
       kind);
   SetCurrent(resumed);
@@ -892,7 +921,7 @@ auto FunctionLowerer::Terminated() const -> bool {
 auto FunctionLowerer::Emit(lir::TypeId type, lir::InstrData data)
     -> lir::Operand {
   if (const auto* call = std::get_if<lir::CallInstr>(&data);
-      call != nullptr && support::MayDepart(lir::CallEndingOf(call->target))) {
+      call != nullptr && MayDepart(lir::CallEndingOf(call->target))) {
     throw InternalError(
         "FunctionLowerer::Emit: a callee that can leave without returning has "
         "to be stated as a departing call, so that whatever is owed between "
@@ -1516,8 +1545,7 @@ auto FunctionLowerer::RunCleanupsDownTo(std::size_t depth)
     auto lowered = std::visit(
         Overloaded{
             [&](const CleanupScope& cleanup) -> diag::Result<void> {
-              return LowerBlockInto(
-                  cleanup.owner->child_scopes.Get(cleanup.cleanup));
+              return LowerCleanupInto(cleanup);
             },
             [&](const ValueEnd& end) -> diag::Result<void> {
               EndValue(lir::Use{.value = end.value});
@@ -1528,15 +1556,25 @@ auto FunctionLowerer::RunCleanupsDownTo(std::size_t depth)
               return {};
             },
             [](const EndPassedOn&) -> diag::Result<void> { return {}; },
-            // Leaving a region by an ordinary way out owes it nothing: its
-            // handler is only for a departure.
-            [](const RegionScope&) -> diag::Result<void> { return {}; }},
+            // Leaving a region, or a cleanup's own code, by an ordinary way out
+            // owes it nothing: a region's handler is only for a departure.
+            [](const RegionScope&) -> diag::Result<void> { return {}; },
+            [](const TerminateScope&) -> diag::Result<void> { return {}; }},
         kind);
     if (!lowered) {
       return lowered;
     }
   }
   return {};
+}
+
+auto FunctionLowerer::LowerCleanupInto(CleanupScope cleanup)
+    -> diag::Result<void> {
+  OpenScope(TerminateScope{});
+  auto lowered =
+      LowerBlockInto(cleanup.owner->child_scopes.Get(cleanup.cleanup));
+  scopes_.pop_back();
+  return lowered;
 }
 
 auto FunctionLowerer::SuspendResumingAt(lir::BlockId resume)
@@ -1595,7 +1633,8 @@ auto FunctionLowerer::LowerFinallyInto(
   if (Terminated()) {
     return {};
   }
-  return LowerBlockInto(block.child_scopes.Get(stmt.cleanup));
+  return LowerCleanupInto(
+      CleanupScope{.owner = &block, .cleanup = stmt.cleanup});
 }
 
 auto FunctionLowerer::LowerTryInto(
@@ -2072,6 +2111,9 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
           [&](const mir::AwaitExpr&) {
             return names_no_place("the value an await settles");
           },
+          [&](const mir::WaitExpr&) {
+            return names_no_place("a wait, which yields nothing");
+          },
           [&](const mir::VectorGetExpr&) {
             return names_no_place("the handle a sequence answers with");
           }},
@@ -2452,8 +2494,8 @@ auto FunctionLowerer::LowerCoroutineAwait(
     completion_slot = AllocateCompletionFor(unit_->TranslateType(type));
   }
 
-  const mir::Expr& awaitable = block.exprs.Get(await.awaitable);
-  const auto* direct = std::get_if<mir::CallExpr>(&awaitable.data);
+  const mir::Expr& execution = block.exprs.Get(await.execution);
+  const auto* direct = std::get_if<mir::CallExpr>(&execution.data);
   if (direct == nullptr && completion_slot.has_value()) {
     return Unsupported(
         "mir_to_lir: an awaited execution that completes with a value must be "
@@ -2461,8 +2503,8 @@ auto FunctionLowerer::LowerCoroutineAwait(
   }
   auto activation =
       direct != nullptr
-          ? EnterCoroutine(block, *direct, awaitable.type, completion_slot)
-          : LowerExpr(block, await.awaitable);
+          ? EnterCoroutine(block, *direct, execution.type, completion_slot)
+          : LowerExpr(block, await.execution);
   if (!activation) {
     return activation;
   }
@@ -3081,38 +3123,17 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return LowerExpr(block, m.operand);
           },
           [&](const mir::AwaitExpr& await) -> diag::Result<lir::Operand> {
-            // What is being awaited says which of the two this is, and the two
-            // are different operations rather than two readings of one.
-            //
-            // A registered wait has already arranged this execution's
+            return LowerCoroutineAwait(block, await, type);
+          },
+          [&](const mir::WaitExpr& wait) -> diag::Result<lir::Operand> {
+            // The registration has already arranged this execution's
             // resumption and answered whether it must park; where it must, a
             // control edge hands control back to the scheduler, which resumes
             // at the next block. A delay, an event control and a join differ
-            // only in the call that precedes it.
-            //
-            // An execution registers nothing, because its completion is the
-            // awaited body's to signal, so what this waits for is that body
-            // reaching its end.
-            const mir::Expr& awaitable = block.exprs.Get(await.awaitable);
-            if (unit_->Mir()
-                    .types.Get(awaitable.type)
-                    .Is<mir::CoroutineType>()) {
-              return LowerCoroutineAwait(block, await, type);
-            }
-            if (type != unit_->Mir().builtins.void_type) {
-              return Unsupported(
-                  "mir_to_lir: a value-carrying await is not yet lowerable to "
-                  "LIR");
-            }
-            if (!std::holds_alternative<mir::CallExpr>(awaitable.data)) {
-              return Unsupported(
-                  "mir_to_lir: an awaitable that is not a registration call is "
-                  "not yet lowerable to LIR");
-            }
-            // The call is lowered like any other -- what it answers is the
-            // machine boolean MIR gave it, and the suspend edge is what this
-            // adds around it.
-            auto park = LowerExpr(block, await.awaitable);
+            // only in the call that precedes it. That call is lowered like any
+            // other -- what it answers is the machine boolean MIR gave it, and
+            // the suspend edge is what this adds around it.
+            auto park = LowerExpr(block, wait.registration);
             if (!park) {
               return std::unexpected(std::move(park.error()));
             }
@@ -3132,8 +3153,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             if (!checked) {
               return std::unexpected(std::move(checked.error()));
             }
-            // An await of nothing yields nothing, so what stands here is never
-            // read.
+            // A wait yields nothing, so what stands here is never read.
             return *park;
           },
       },

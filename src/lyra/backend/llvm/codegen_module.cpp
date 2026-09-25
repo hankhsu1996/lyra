@@ -48,8 +48,8 @@ CodeGenModule::CodeGenModule(
     // run is what a unit promised of its object: nothing constructs one through
     // a definition, and what extends it enters it by name with its own
     // arguments already in hand.
-    if (cls.tree_program.has_value()) {
-      scope_constructions_.insert(cls.constructor);
+    if (cls.tree_program.has_value() && cls.constructor.has_value()) {
+      scope_constructions_.insert(*cls.constructor);
     }
   }
 }
@@ -402,11 +402,16 @@ auto CodeGenModule::StateClass(llvm::IRBuilderBase& builder, lir::ClassId id)
     return {};
   }
   if (driven_by != nullptr) {
+    if (!cls.constructor.has_value()) {
+      throw InternalError(
+          "llvm: the runtime drives a class no object is built of -- please "
+          "report this as a bug");
+    }
     const std::array<llvm::Value*, 5> stated{
         declared, UnitFunction(driven_by->resolve_state),
         UnitFunction(driven_by->initialize_state),
         UnitFunction(driven_by->create_processes),
-        UnitFunction(cls.constructor)};
+        UnitFunction(*cls.constructor)};
     StateCall(builder, RuntimeOp::kScopeDeclareProgram, stated, void_ty);
   }
   for (const lir::PublishedCallable& published : cls.subroutines) {

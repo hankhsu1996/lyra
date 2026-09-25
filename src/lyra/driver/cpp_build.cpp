@@ -12,9 +12,11 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/backend/cpp/api.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/dpi/abi_header.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
@@ -530,9 +532,13 @@ auto LinkProgram(
 }
 
 auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
-    -> diag::Result<WrittenUnit> {
+    -> diag::Result<EmittedUnit> {
+  diag::DiagnosticSink refused;
   const backend::cpp::CppUnitArtifacts artifacts =
-      backend::cpp::EmitCppUnit(unit);
+      backend::cpp::EmitCppUnit(unit, refused);
+  if (refused.HasErrors()) {
+    return RefusedUnit{.refusals = refused.Diagnostics()};
+  }
   WrittenUnit written{
       .files = {},
       .translation_unit = artifacts.code.relpath,
@@ -550,14 +556,25 @@ auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
   return written;
 }
 
-void CppProjectSink::Collect(WrittenUnit unit) {
-  written_.insert(
-      written_.end(), std::make_move_iterator(unit.files.begin()),
-      std::make_move_iterator(unit.files.end()));
-  translation_units_.push_back(std::move(unit.translation_unit));
-  if (unit.dpi_fragment.has_value()) {
-    dpi::AddAbiFragment(dpi_fragments_, *std::move(unit.dpi_fragment));
-  }
+void CppProjectSink::Collect(EmittedUnit unit) {
+  std::visit(
+      Overloaded{
+          [&](WrittenUnit& written) {
+            written_.insert(
+                written_.end(), std::make_move_iterator(written.files.begin()),
+                std::make_move_iterator(written.files.end()));
+            translation_units_.push_back(std::move(written.translation_unit));
+            if (written.dpi_fragment.has_value()) {
+              dpi::AddAbiFragment(
+                  dpi_fragments_, *std::move(written.dpi_fragment));
+            }
+          },
+          [&](RefusedUnit& refused) {
+            for (diag::Diagnostic& refusal : refused.refusals) {
+              refusals_->Report(std::move(refusal));
+            }
+          }},
+      unit);
 }
 
 auto CppProjectSink::Finish(const mir::CompilationUnit& root)
@@ -567,6 +584,9 @@ auto CppProjectSink::Finish(const mir::CompilationUnit& root)
     return std::unexpected(std::move(written.error()));
   }
   Collect(*std::move(written));
+  if (refusals_->HasErrors()) {
+    return {};
+  }
   const backend::cpp::CppArtifact host_main =
       backend::cpp::EmitCppHostMain(root);
   if (auto r = WriteArtifact(host_main); !r) {

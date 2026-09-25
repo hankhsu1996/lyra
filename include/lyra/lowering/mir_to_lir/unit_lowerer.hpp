@@ -138,10 +138,10 @@ class UnitLowerer {
   [[nodiscard]] auto MethodRef(mir::ClassId owner, mir::CallableId callable)
       -> lir::StatedDispatchRef;
 
-  // The LIR function a class's constructor lowers to. Every class defines its
-  // own construction, so every one of them has this function, and it is named
-  // before any body is lowered -- which is what lets a derived class enter its
-  // base's whichever order the two are lowered in.
+  // The LIR function a class's constructor lowers to. Every class an object is
+  // built of defines its own construction, so every one of them has this
+  // function, and it is named before any body is lowered -- which is what lets
+  // a derived class enter its base's whichever order the two are lowered in.
   [[nodiscard]] auto ConstructorFunction(mir::ClassId cls) const
       -> lir::FunctionId;
 
@@ -167,8 +167,9 @@ class UnitLowerer {
       -> lir::StructId;
 
   // What is settled about one MIR class before any body of it is lowered: its
-  // own LIR identity, its constructor's function, one function identity per
-  // callable that has a body, the behaviors it introduces in the order it
+  // own LIR identity, its constructor's function where it has a constructor,
+  // one function identity per callable that has a body, the behaviors it
+  // introduces in the order it
   // introduces them, and which of those each callable is. A callable with no
   // body is no function of this unit and holds none; one that introduces no
   // behavior holds no ordinal, and the two are independent. An ordinal is read
@@ -176,7 +177,7 @@ class UnitLowerer {
   // list it indexes are one act.
   struct ClassIdentities {
     lir::ClassId lir_class{};
-    lir::FunctionId constructor{};
+    std::optional<lir::FunctionId> constructor;
     base::Translation<mir::CallableId, std::optional<lir::FunctionId>> methods;
     base::Translation<mir::CallableId, std::optional<lir::DispatchOrdinal>>
         ordinals;

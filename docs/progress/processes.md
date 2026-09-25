@@ -197,6 +197,11 @@ under each item, and the conformance gaps at the end.
       event aliasing / nullness / comparison are out of scope: each wants an event variable to be an
       assignable handle to a shared synchronization object, which is a question about values rather
       than about scheduling.
+  - [x] What is out of scope is refused where the source is read, with one answer whichever backend
+        was asked for: an event given a value, by assignment or as a declaration's initializer (LRM
+        15.5.5.1, 15.5.5.2), and an event read as a value, as an operand or as a condition (LRM
+        15.5.5.3). It once reached the source backend and came out as C++ the host compiler
+        rejected.
 - [x] P11 -- `wait (cond) body` level-sensitive control (LRM 9.4.3). Sensitivity is precomputed by
       slang's flow analysis on `cond` as a standalone expression. The "skip suspend if cond is
       already true" semantic falls out of the lowering. `wait fork;` (LRM 9.6.1) is a distinct

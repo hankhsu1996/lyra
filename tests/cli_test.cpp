@@ -476,6 +476,60 @@ TEST(LyraTopSelection, RefusesATopWhosePortNeedsAnInstantiation) {
   }
 }
 
+// A construct Lyra does not yet carry out is refused by the compiler, in its
+// own words and with one answer whichever backend was asked for, and nothing is
+// written -- rather than a project written as text another compiler rejects, or
+// each backend failing in a vocabulary of its own. An event used as a handle
+// (LRM 15.5.5) is such a construct, in every position a program can put it; the
+// first of these once reached the source backend and came out as C++ the host
+// compiler would not accept.
+TEST(LyraEmit, AConstructNotYetSupportedIsRefusedBeforeAnythingIsWritten) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  struct Position {
+    std::string_view name;
+    std::string_view body;
+  };
+  static constexpr std::array<Position, 7> kPositions = {
+      {{.name = "assigned", .body = "  event e;\n  initial e = null;\n"},
+       {.name = "initialized", .body = "  event e = null;\n"},
+       {.name = "initialized-in-a-procedure",
+        .body = "  initial begin event e = null; end\n"},
+       {.name = "compared",
+        .body = "  event e;\n  initial if (e == null) $display(\"x\");\n"},
+       {.name = "tested",
+        .body = "  event e;\n  initial if (e) $display(\"x\");\n"},
+       {.name = "negated", .body = "  event e;\n  initial $display(!e);\n"},
+       {.name = "looped-on",
+        .body = "  event e;\n  initial while (e) $display(\"x\");\n"}}};
+
+  for (const Position& position : kPositions) {
+    const std::string source = std::format("{}.sv", position.name);
+    std::ofstream(*tmp_or / source) << "module Test;\n"
+                                    << position.body << "endmodule\n";
+    const std::string out = std::format("out-{}", position.name);
+
+    const auto emitted = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("emit cpp --top Test -o {} {}", out, source));
+    EXPECT_NE(emitted.exit_code, 0) << position.name;
+    EXPECT_NE(
+        emitted.stderr_text.find("is not yet supported"), std::string::npos)
+        << position.name << ": " << emitted.stderr_text;
+    EXPECT_FALSE(std::filesystem::exists(*tmp_or / out / "Test.cpp"))
+        << position.name << ": the refused unit was written anyway";
+
+    const auto ran = RunLyraFrom(
+        lyra, *tmp_or, std::format("run --backend llvm --top Test {}", source));
+    EXPECT_NE(ran.exit_code, 0) << position.name;
+    EXPECT_EQ(ran.stderr_text, emitted.stderr_text)
+        << position.name << ": the two backends answered differently";
+  }
+}
+
 // A command that names nothing says so, and says enough to act on. The two
 // ways of arriving there look identical without that: nothing declared
 // anywhere, or a declaration that itself named no sources -- and the

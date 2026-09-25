@@ -49,6 +49,7 @@ auto TakeSelf(
   const mir::TypeId opaque = OpaquePointer(unit);
   const mir::LocalId self = code.AddLocal(opaque);
   code.params.push_back(self);
+  code.receiver = self;
   const mir::ExprId read =
       code.Body().exprs.Add(mir::MakeLocalRefExpr(self, opaque));
   return code.Body().exprs.Add(
@@ -139,6 +140,11 @@ auto ClassPointerType(mir::CompilationUnit& unit, const mir::ClassRef& ref)
             throw InternalError(
                 "InstallObjectRecord: a class of the source language extends a "
                 "class of the runtime library");
+          },
+          [](const mir::ManagedObjectRootRef&) -> mir::TypeId {
+            throw InternalError(
+                "InstallObjectRecord: the root every object extends has no "
+                "class of its own to be read back as");
           }},
       ref);
 }
@@ -175,12 +181,13 @@ void InstallObjectRecord(
   // language's own conversion, which is why it is an entry rather than an
   // offset: where a base sits inside an object is that language's answer.
   std::optional<mir::AbiAdapterId> to_base;
-  if (cls.base.has_value()) {
+  const std::optional<mir::ClassRef> declared_base = mir::DeclaredBase(cls);
+  if (declared_base.has_value()) {
     Entry entry = BeginEntry(unit, cls.self_pointer_type);
     const mir::ExprId as_base = entry.code.Body().exprs.Add(
         mir::Expr{
             .data = mir::CastExpr{.operand = entry.typed_self},
-            .type = ClassPointerType(unit, *cls.base)});
+            .type = ClassPointerType(unit, *declared_base)});
     EndEntry(unit, entry, as_base);
     to_base = AddEntry(cls, std::move(entry));
   }
@@ -212,7 +219,7 @@ void InstallObjectRecord(
     if (!role.has_value()) {
       const std::optional<std::string_view> name =
           mir::NameOf(cls.named_callables, method);
-      if (name.has_value() && cls.callables.Get(method).code.body.has_value()) {
+      if (name.has_value()) {
         body_names.emplace_back(
             std::string{*name}, BehaviorEntry(unit, cls, id, method));
       }
@@ -223,10 +230,20 @@ void InstallObjectRecord(
     // takes its place among what the class introduces, because that is what
     // every reader counts over, and it holds nothing -- which is sound because
     // no object of such a class is ever built.
-    const std::optional<mir::AbiAdapterId> entry =
-        cls.callables.Get(method).code.body.has_value()
-            ? std::optional{BehaviorEntry(unit, cls, id, method)}
-            : std::nullopt;
+    const std::optional<mir::AbiAdapterId> entry = std::visit(
+        Overloaded{
+            [&](mir::DefinedHere) -> std::optional<mir::AbiAdapterId> {
+              return BehaviorEntry(unit, cls, id, method);
+            },
+            [](mir::LeftAbstract) -> std::optional<mir::AbiAdapterId> {
+              return std::nullopt;
+            },
+            [](mir::DefinedByForeignCode) -> std::optional<mir::AbiAdapterId> {
+              throw InternalError(
+                  "InstallObjectRecord: a foreign function belongs to no class "
+                  "(LRM 35.4)");
+            }},
+        mir::FormOf(cls.callables.Get(method)));
     std::visit(
         Overloaded{
             [&](const mir::IntroducesVirtualSlot&) {
@@ -461,12 +478,12 @@ void InstallObjectRecord(
 
     mir::ExprId base =
         record.Add(mir::Expr{.data = mir::NullLiteral{}, .type = record_ptr});
-    if (cls.base.has_value()) {
+    if (declared_base.has_value()) {
       const mir::ExprId of = record.Add(
           mir::Expr{
               .data =
                   mir::ReferenceExpr{
-                      .target = mir::ObjectRecordRef{.of = *cls.base}},
+                      .target = mir::ObjectRecordRef{.of = *declared_base}},
               .type = record_type});
       base = record.Add(mir::MakeAddressOfExpr(of, record_ptr));
     }
@@ -479,7 +496,9 @@ void InstallObjectRecord(
           mir::Expr{
               .data =
                   mir::ReferenceExpr{
-                      .target = mir::StaticConstantRef{.constant = constant}},
+                      .target =
+                          mir::StaticConstantRef{
+                              .owner = id, .constant = constant}},
               .type = type});
       const mir::ExprId data = record.Add(
           mir::Expr{

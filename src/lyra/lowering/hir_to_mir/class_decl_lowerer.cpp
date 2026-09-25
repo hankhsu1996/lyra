@@ -212,9 +212,14 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
           .ownership = mir::PointerOwnership::kBorrowed,
           .mutability = mir::Mutability::kMutable}});
 
+  // A class extending nothing the source wrote still extends the root every
+  // object does; an interface class has no object and extends nothing at all
+  // (LRM 8.26).
   std::optional<mir::ClassRef> base_ref;
   if (hir_class.base.has_value()) {
     base_ref = unit_lowerer.TranslateClassRef(*hir_class.base);
+  } else if (!hir_class.is_interface_class) {
+    base_ref = mir::ClassRef{mir::ManagedObjectRootRef{}};
   }
   std::vector<mir::ClassRef> implements;
   implements.reserve(hir_class.implements.size());
@@ -589,8 +594,10 @@ auto ClassDeclLowerer::PopulateBodies(
 
   ctor_code.params = std::move(ctor_params);
   ctor_code.result_type = unit_lowerer.Unit().builtins.void_type;
-  mir_class.constructor = mir::ConstructorDecl{
-      .code = std::move(ctor_code), .base_args = std::move(base_args)};
+  if (!hir_class.is_interface_class) {
+    mir_class.constructor = mir::ConstructorDecl{
+        .code = std::move(ctor_code), .base_args = std::move(base_args)};
+  }
 
   std::vector<BodyStatics> body_statics;
   body_statics.reserve(hir_class.methods.size() + 1);

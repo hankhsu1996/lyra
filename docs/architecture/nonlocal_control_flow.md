@@ -205,8 +205,8 @@ one scope unwinds to the same landing; the landing receives what arrived and pas
 scope, whose cleanup runs once on the way out and passes it to the scope it is nested in, until a
 region's handler or the frame's own edge takes it. A cleanup's code therefore appears once on the
 unwinding path however many calls inside it can leave, while the ordinary ways out -- falling off
-the end, a return, a loop exit -- still copy it, as below. A value whose end passes to storage or
-to the caller stops being owed at that point, so the landings built while it was owed keep ending it
+the end, a return, a loop exit -- still copy it, as below. A value whose end passes to storage or to
+the caller stops being owed at that point, so the landings built while it was owed keep ending it
 and those built afterwards do not.
 
 Enumerating a body's ways out is what every compiler targeting a control-flow graph or a stack

@@ -16,6 +16,7 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/pattern.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -58,7 +59,8 @@ auto TypeHasRealLeaf(const slang::ast::Type& type) -> bool {
 // follow: for a real there is no x/z plane, so the bit-matching the case
 // operators specify (LRM 12.5) has no single correct meaning. Lowering rejects
 // it here -- including a real-element aggregate, where case equality would
-// recurse element-wise into the same undefined comparison.
+// recurse element-wise into the same undefined comparison. An event operand is
+// refused here too, whatever the operator.
 auto CheckBinaryOperands(
     const slang::ast::BinaryExpression& bin, diag::SourceSpan span)
     -> diag::Result<void> {
@@ -72,7 +74,11 @@ auto CheckBinaryOperands(
         "case equality (=== / !==) is not defined on real or shortreal "
         "operands (LRM Table 11-1)");
   }
-  return {};
+  if (auto refused = RefuseReadingAnEventAsAValue(*bin.left().type, span);
+      !refused) {
+    return refused;
+  }
+  return RefuseReadingAnEventAsAValue(*bin.right().type, span);
 }
 
 }  // namespace
@@ -102,6 +108,10 @@ template <ExprLowerer Lowerer>
 auto LowerUnaryExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::UnaryExpression& un,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  if (auto refused = RefuseReadingAnEventAsAValue(*un.operand().type, span);
+      !refused) {
+    return std::unexpected(std::move(refused.error()));
+  }
   const hir::UnaryOp op = LowerUnaryOp(un.op);
   auto operand_or = lowerer.LowerExpr(un.operand(), frame);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));

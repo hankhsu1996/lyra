@@ -1,6 +1,5 @@
 #include "lyra/mir/verify.hpp"
 
-#include <algorithm>
 #include <cstdint>
 #include <format>
 #include <optional>
@@ -16,7 +15,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::mir {
 
@@ -30,43 +28,41 @@ auto BodyLabel(std::optional<std::string_view> name, std::uint32_t position)
                           : std::format("body {}", position);
 }
 
-auto HoldsSuspension(const Block& block) -> bool {
-  return std::ranges::any_of(
-             block.exprs,
-             [](const Expr& expr) {
-               return std::holds_alternative<AwaitExpr>(expr.data);
-             }) ||
-         std::ranges::any_of(block.child_scopes, HoldsSuspension);
-}
-
-// Whether anything in `block` could leave it by departing. Only a call can, and
-// a runtime entry declared to return is the one callee known not to.
-auto MayDepart(const Block& block) -> bool {
-  return std::ranges::any_of(
-             block.exprs,
-             [](const Expr& expr) {
-               const auto* call = std::get_if<CallExpr>(&expr.data);
-               if (call == nullptr) {
-                 return false;
-               }
-               const std::optional<support::BuiltinFn> fn =
-                   DirectBuiltinFn(*call);
-               return !fn.has_value() ||
-                      support::MayDepart(support::RuntimeEntryOf(*fn).ending);
-             }) ||
-         std::ranges::any_of(block.child_scopes, MayDepart);
-}
-
-// Whether some cleanup in `block`, at any depth, could depart.
-auto HoldsDepartingCleanup(const Block& block) -> bool {
-  return std::ranges::any_of(
-             block.stmts,
-             [&](const Stmt& stmt) {
-               const auto* finally = std::get_if<FinallyStmt>(&stmt.data);
-               return finally != nullptr &&
-                      MayDepart(block.child_scopes.Get(finally->cleanup));
-             }) ||
-         std::ranges::any_of(block.child_scopes, HoldsDepartingCleanup);
+// Whether anything in `block` suspends, checking on the way that each
+// suspension waits on what its kind waits on: an await on an execution, a wait
+// on the answer a registration gives. The two differ in what ends them, so a
+// suspension whose operand is the other kind's is a program neither backend
+// could translate as written.
+auto Suspends(
+    const CompilationUnit& unit, const Block& block, const auto& describe)
+    -> bool {
+  bool suspends = false;
+  for (const Expr& expr : block.exprs) {
+    if (const auto* await = std::get_if<AwaitExpr>(&expr.data)) {
+      suspends = true;
+      if (!unit.types.Get(block.exprs.Get(await->execution).type)
+               .Is<CoroutineType>()) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} awaits something that is not an execution",
+                describe()));
+      }
+    } else if (const auto* wait = std::get_if<WaitExpr>(&expr.data)) {
+      suspends = true;
+      if (!unit.types.Get(block.exprs.Get(wait->registration).type)
+               .Is<MachineBoolType>()) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} waits on something that does not answer "
+                "whether it must park",
+                describe()));
+      }
+    }
+  }
+  for (const Block& child : block.child_scopes) {
+    suspends = Suspends(unit, child, describe) || suspends;
+  }
+  return suspends;
 }
 
 // `describe` names the body, and is asked only once there is something to
@@ -75,24 +71,15 @@ auto HoldsDepartingCleanup(const Block& block) -> bool {
 void VerifyCode(
     const CompilationUnit& unit, const CallableCode& code,
     const auto& describe) {
-  if (!code.body.has_value()) {
+  if (!code.body.has_value() || !Suspends(unit, *code.body, describe) ||
+      unit.types.Get(code.result_type).Is<CoroutineType>()) {
     return;
   }
-  if (!unit.types.Get(code.result_type).Is<CoroutineType>() &&
-      HoldsSuspension(*code.body)) {
-    throw InternalError(
-        std::format(
-            "mir verify: {} suspends, but its result type is not a coroutine, "
-            "so nothing could resume it",
-            describe()));
-  }
-  if (HoldsDepartingCleanup(*code.body)) {
-    throw InternalError(
-        std::format(
-            "mir verify: {} has a cleanup that can depart, which would have "
-            "nowhere to go while another departure is leaving",
-            describe()));
-  }
+  throw InternalError(
+      std::format(
+          "mir verify: {} suspends, but its result type is not a coroutine, "
+          "so nothing could resume it",
+          describe()));
 }
 
 void VerifyClass(const CompilationUnit& unit, const Class& cls) {
@@ -101,9 +88,11 @@ void VerifyClass(const CompilationUnit& unit, const Class& cls) {
                ? std::format("class '{}' in unit '{}'", *cls.name, unit.name)
                : std::format("a scope of unit '{}'", unit.name);
   };
-  VerifyCode(unit, cls.constructor.code, [&] {
-    return std::format("the constructor of {}", owner());
-  });
+  if (cls.constructor.has_value()) {
+    VerifyCode(unit, cls.constructor->code, [&] {
+      return std::format("the constructor of {}", owner());
+    });
+  }
   for (const CallableId id : cls.callables.Ids()) {
     VerifyCode(unit, cls.callables.Get(id).code, [&] {
       return std::format(

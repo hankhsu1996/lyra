@@ -25,12 +25,11 @@ auto BuildForwardingEntry(
   mir::CallableCode code = mir::CallableCode::Defined();
   const mir::LocalId receiver = code.AddLocal(receiver_type);
   code.params.push_back(receiver);
-  // The body's own receiver leads its params, and the entry supplies it from
-  // the one it was handed rather than forwarding one; what the entry takes
-  // beyond that are the formals the source wrote.
-  const std::span<const mir::LocalId> formals =
-      std::span{forwarded.params}.subspan(
-          forwarded.HasReceiver(cls.self_pointer_type) ? 1 : 0);
+  code.receiver = receiver;
+  // The body supplies its own receiver from the one the entry was handed
+  // rather than forwarding one; what the entry takes beyond that is what the
+  // body takes beyond its receiver.
+  const std::span<const mir::LocalId> formals = forwarded.ParamsAfterReceiver();
   std::vector<mir::ExprId> arguments;
   arguments.reserve(formals.size());
   for (const mir::LocalId formal : formals) {
@@ -72,7 +71,7 @@ auto BuildForwardingEntry(
             .target = completion,
             .init = code.Body().exprs.Add(
                 mir::Expr{
-                    .data = mir::AwaitExpr{.awaitable = call},
+                    .data = mir::AwaitExpr{.execution = call},
                     .type = coroutine->payload})});
     code.Body().AppendStmt(
         mir::ReturnStmt{

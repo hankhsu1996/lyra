@@ -1011,10 +1011,6 @@ enum class EntryAnswer : std::uint8_t {
   kPartOfTheReceiver,
 };
 
-// Whether a call ending this way can leave by a departure, which is what
-// obliges it to name the landing the departure reaches.
-[[nodiscard]] auto MayDepart(CallEnding ending) -> bool;
-
 // Every property of one runtime entry: what the library calls it, how a call
 // site reaches it, and what it does with the operands it is given. A consumer
 // asking any of those reads the field for it, never a list of its own, so an

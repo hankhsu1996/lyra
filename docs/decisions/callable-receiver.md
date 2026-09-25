@@ -76,14 +76,14 @@ The C++ backend renders each form in its natural idiom:
 - **Method-form callable** -> static method on the enclosing class whose first formal is `M* self`.
   The class still owns the storage; the method body lives on the class so it can name private
   members. The body sees `self->X`, never implicit `this`.
-- **Closure** -> lambda whose capture clause is
-  `[self = <enclosing self expr>, cap1 = ..., cap2 = lyra::runtime::Ref<T>(<lvalue>)]` -- a
-  by-reference capture binds a `Ref<T>` rather than a snapshot. Every capture is name-explicit; the
-  clause never contains `[this]`, `[=]`, or `[&]`. The body sees `self->X` through the captured
-  binding, never implicit `this`. A coroutine closure (a fork branch) is realized as a stateless
-  lambda whose captures pass as frame-copied parameters supplied by an immediate call -- a backend
-  realization of the same captures, since a capturing coroutine lambda would dangle; the MIR closure
-  still carries `self` and the rest as captures.
+- **Closure** -> a struct whose members are the captures, built as
+  `sv_closure_<n>{self, cap1, lyra::runtime::Ref<T>(<lvalue>)}` -- a by-reference capture binds a
+  `Ref<T>` rather than a snapshot. Its call operator is the invoke, which reads each capture through
+  the closure it runs against, the way the MIR invoke reads it through its receiver, so the captured
+  `self` is reached as `closure->self->X`, never through an implicit `this`. A coroutine closure (a
+  fork branch) is started through a static function taking the closure by value, so the captures are
+  copied into the coroutine's frame -- a backend realization of the same captures, since a closure
+  borrowed by a coroutine would dangle.
 
 Every callable body lowers to a static function over the explicit receiver `self`. The callables an
 engine or the C++ language reaches through an instance entry -- the C++ constructor (instance

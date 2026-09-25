@@ -10,6 +10,7 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -546,10 +547,33 @@ struct CompilationUnit {
   return unit.GetClass(id).name.has_value();
 }
 
+// Whether some unit of the program declares the class `ref` names. A class the
+// runtime library defines does not, and neither does the root every object
+// extends: both are there before any unit is, declare no member of the source
+// language, and hold no record a class could step to.
+[[nodiscard]] inline auto DeclaredByAUnit(const ClassRef& ref) -> bool {
+  return std::visit(
+      Overloaded{
+          [](const IntraUnitClassRef&) { return true; },
+          [](const CrossUnitClassRef&) { return true; },
+          [](const RuntimeClassRef&) { return false; },
+          [](const ManagedObjectRootRef&) { return false; }},
+      ref);
+}
+
+// The class some unit declares that `cls` extends, where it extends one -- the
+// class an object of it is also an object of (LRM 8.13).
+[[nodiscard]] inline auto DeclaredBase(const Class& cls)
+    -> std::optional<ClassRef> {
+  if (cls.base.has_value() && DeclaredByAUnit(*cls.base)) {
+    return cls.base;
+  }
+  return std::nullopt;
+}
+
 // The classes of the program this one's declaration rests on: the class it
 // extends (LRM 8.13) and each interface it commits to (LRM 8.26), counted only
-// where that is a class some unit declares. A class the runtime library defines
-// is not one, because the library is there before any unit is.
+// where some unit declares it.
 //
 // This is the whole of what a declaration has to have behind it. Everything
 // else a class names -- the type of a property, of an argument, of a result --
@@ -559,16 +583,13 @@ struct CompilationUnit {
 [[nodiscard]] inline auto RestsOnDeclaredClasses(const Class& cls)
     -> std::vector<ClassRef> {
   std::vector<ClassRef> resting;
-  const auto take = [&resting](const ClassRef& ref) {
-    if (!std::holds_alternative<RuntimeClassRef>(ref)) {
-      resting.push_back(ref);
-    }
-  };
-  if (cls.base.has_value()) {
-    take(*cls.base);
+  if (const std::optional<ClassRef> base = DeclaredBase(cls)) {
+    resting.push_back(*base);
   }
   for (const ClassRef& implemented : cls.implements) {
-    take(implemented);
+    if (DeclaredByAUnit(implemented)) {
+      resting.push_back(implemented);
+    }
   }
   return resting;
 }

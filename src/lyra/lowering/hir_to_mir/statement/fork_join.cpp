@@ -147,8 +147,7 @@ auto LowerForkStmt(
                                         : builtins.void_type});
 
   if (dispatch.parent_waits) {
-    fork_block.AppendStmt(
-        BuildSuspendingCallStmt(process.Owner(), fork_block, call_id));
+    fork_block.AppendStmt(BuildWaitStmt(process.Owner(), fork_block, call_id));
   } else {
     fork_block.AppendStmt(mir::ExprStmt{.expr = call_id});
   }
@@ -187,7 +186,7 @@ auto LowerWaitForkStmt(
                       mir::Direct{.target = support::BuiltinFn::kWaitFork},
                   .arguments = {runtime_id}},
           .type = builtins.machine_bool});
-  mir::Stmt waited = BuildSuspendingCallStmt(process.Owner(), block, call_id);
+  mir::Stmt waited = BuildWaitStmt(process.Owner(), block, call_id);
   waited.label = std::move(label);
   return waited;
 }

@@ -4,7 +4,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -140,11 +139,11 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
 
   // A callable the unit's namespace owns -- a package's own body (LRM 26.3) --
-  // is a body like any other and becomes a function of the unit. One with no
-  // body is a DPI-C import, reached as a foreign symbol and defined elsewhere.
+  // is a body like any other and becomes a function of the unit. A DPI-C
+  // import is reached as a foreign symbol and defined elsewhere.
   for (const mir::CallableId id : mir_->callables.Ids()) {
     const mir::CallableDecl& callable = mir_->callables.Get(id);
-    if (!callable.code.body.has_value()) {
+    if (!std::holds_alternative<mir::DefinedHere>(mir::FormOf(callable))) {
       continue;
     }
     auto fn =
@@ -297,15 +296,18 @@ auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
   ordinals.reserve(cls.callables.size());
   ClassIdentities identities{
       .lir_class = out_.classes.Declare(),
-      .constructor = out_.functions.Declare(),
+      .constructor = cls.constructor.has_value()
+                         ? std::optional{out_.functions.Declare()}
+                         : std::nullopt,
       .methods = {},
       .ordinals = {},
       .introduces = {}};
   for (const mir::CallableId callable : cls.callables.Ids()) {
     const mir::CallableDecl& decl = cls.callables.Get(callable);
     const std::optional<lir::FunctionId> body =
-        decl.code.body.has_value() ? std::optional{out_.functions.Declare()}
-                                   : std::nullopt;
+        std::holds_alternative<mir::DefinedHere>(mir::FormOf(decl))
+            ? std::optional{out_.functions.Declare()}
+            : std::nullopt;
     std::optional<lir::DispatchOrdinal> ordinal;
     if (mir::IntroducesSlot(decl.virtual_dispatch)) {
       ordinal = lir::DispatchOrdinal{
@@ -385,29 +387,19 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   // A class's bodies become functions of the program, and a body's own name is
   // unique only within its class -- so the class qualifies it, being itself
   // unique program-wide.
-  auto constructor =
-      FunctionLowerer(
-          *this, cls,
-          lir::ConstructorSymbol(
-              mir_->name, lir::SymbolPartOf(cls.name, owner.value)))
-          .Run();
-  if (!constructor) {
-    return std::unexpected(std::move(constructor.error()));
-  }
-  out_.functions.Define(identities.constructor, *std::move(constructor));
-  out.constructor = identities.constructor;
-
-  // Which of the class's bodies a hierarchical name may end at, by the
-  // identifier such a name spells. That identifier is the whole of the
-  // identity: it is what the scope is asked for at run time and what the
-  // declaration was written under, so the two meet on it and on nothing else.
-  std::unordered_set<std::string_view> published;
-  for (const mir::AbiAdapterId aid : cls.abi_adapters.Ids()) {
-    const mir::AbiAdapter& adapter = cls.abi_adapters.Get(aid);
-    if (const auto* entry =
-            std::get_if<mir::SubroutineEntry>(&adapter.published)) {
-      published.insert(entry->name);
+  if (cls.constructor.has_value()) {
+    const lir::FunctionId function = ConstructorFunction(owner);
+    auto constructor =
+        FunctionLowerer(
+            *this, cls, *cls.constructor,
+            lir::ConstructorSymbol(
+                mir_->name, lir::SymbolPartOf(cls.name, owner.value)))
+            .Run();
+    if (!constructor) {
+      return std::unexpected(std::move(constructor.error()));
     }
+    out_.functions.Define(function, *std::move(constructor));
+    out.constructor = function;
   }
 
   // Only a callable this program defines becomes a function: a DPI-C import is
@@ -428,10 +420,6 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
       out_.functions.Define(*body, *std::move(fn));
       const std::optional<std::string_view> name =
           mir::NameOf(cls.named_callables, cid);
-      if (name.has_value() && published.contains(*name)) {
-        out.subroutines.push_back(
-            lir::PublishedCallable{.name = std::string{*name}, .entry = *body});
-      }
       // A callable answering no dispatch position leaves the value it is made
       // on nothing to decide (LRM 8.14), so what a referrer with no name for
       // the class needs is the body rather than a position to find one at.
@@ -446,29 +434,49 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     }
   }
 
-  // A foreign caller reaches a subroutine under a C identifier and hands it
-  // arguments in their boundary carriers (LRM 35.4, 35.5.6), so what the name
-  // reaches is the body that converts between the two and calls the subroutine
-  // -- a body of its own, with its own signature, rather than the subroutine.
   for (const mir::AbiAdapterId aid : cls.abi_adapters.Ids()) {
     const mir::AbiAdapter& adapter = cls.abi_adapters.Get(aid);
-    const auto* linkage = std::get_if<mir::ForeignLinkage>(&adapter.published);
-    if (linkage == nullptr) {
-      continue;
+    auto published = std::visit(
+        Overloaded{
+            [](const mir::UnpublishedEntry&) -> diag::Result<void> {
+              return {};
+            },
+            // A hierarchical name ends at the subroutine itself (LRM 23.8):
+            // this target enters a body through the prototype it was declared
+            // with, so the entry's erased receiver buys it nothing.
+            [&](const mir::SubroutineEntry& entry) -> diag::Result<void> {
+              out.subroutines.push_back(
+                  lir::PublishedCallable{
+                      .name = entry.name,
+                      .entry = MethodFunction(owner, entry.subroutine)});
+              return {};
+            },
+            // A foreign caller reaches a subroutine under a C identifier and
+            // hands it arguments in their boundary carriers (LRM 35.4,
+            // 35.5.6), so what the name reaches is the body that converts
+            // between the two and calls the subroutine -- a body of its own,
+            // with its own signature, rather than the subroutine.
+            [&](const mir::ForeignLinkage& linkage) -> diag::Result<void> {
+              auto fn =
+                  FunctionLowerer(
+                      *this, adapter.code,
+                      lir::ScopeEntrySymbol(
+                          mir_->name, lir::SymbolPartOf(cls.name, owner.value),
+                          aid.value))
+                      .Run();
+              if (!fn) {
+                return std::unexpected(std::move(fn.error()));
+              }
+              out.exports.push_back(
+                  lir::PublishedCallable{
+                      .name = linkage.foreign_name,
+                      .entry = out_.functions.Add(*std::move(fn))});
+              return {};
+            }},
+        adapter.published);
+    if (!published) {
+      return std::unexpected(std::move(published.error()));
     }
-    auto fn = FunctionLowerer(
-                  *this, adapter.code,
-                  lir::ScopeEntrySymbol(
-                      mir_->name, lir::SymbolPartOf(cls.name, owner.value),
-                      aid.value))
-                  .Run();
-    if (!fn) {
-      return std::unexpected(std::move(fn.error()));
-    }
-    out.exports.push_back(
-        lir::PublishedCallable{
-            .name = linkage->foreign_name,
-            .entry = out_.functions.Add(*std::move(fn))});
   }
   return out;
 }
@@ -534,7 +542,14 @@ auto UnitLowerer::MethodRef(mir::ClassId owner, mir::CallableId callable)
 
 auto UnitLowerer::ConstructorFunction(mir::ClassId cls) const
     -> lir::FunctionId {
-  return class_identities_.Get(cls).constructor;
+  const std::optional<lir::FunctionId>& constructor =
+      class_identities_.Get(cls).constructor;
+  if (!constructor.has_value()) {
+    throw InternalError(
+        "mir_to_lir: a construction enters a class no object is built of -- "
+        "please report this as a bug");
+  }
+  return *constructor;
 }
 
 auto UnitLowerer::ClosureFunction(mir::ClosureId closure) const
@@ -621,6 +636,9 @@ auto UnitLowerer::LowerBase(const mir::ClassRef& base) const -> lir::Base {
           // is the runtime's and nothing else.
           [](const mir::RuntimeClassRef&) -> lir::Base {
             return lir::Base{lir::ObjectTreeBase{}};
+          },
+          [](const mir::ManagedObjectRootRef&) -> lir::Base {
+            return lir::Base{lir::ManagedObjectBase{}};
           }},
       base);
 }

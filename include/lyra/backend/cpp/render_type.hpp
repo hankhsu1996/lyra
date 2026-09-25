@@ -6,6 +6,7 @@
 #include "lyra/backend/cpp/precedence.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -26,9 +27,9 @@ namespace lyra::backend::cpp {
 // can only suspend by awaiting something.
 [[nodiscard]] auto SuspensionCppType() -> std::string_view;
 
-// The base of every class that extends nothing (LRM 8.13). Objects are held by
-// shared ownership, and an object that hands out a handle to itself (LRM 8.11)
-// has to know its owner, which this base records.
+// The root every object the program builds extends. Objects are held by shared
+// ownership, and an object that hands out a handle to itself (LRM 8.11) has to
+// know its owner, which this root records.
 [[nodiscard]] auto ManagedObjectRootCppType() -> std::string_view;
 
 // A MIR type, written into the output as its C++ type. An enum is written as
@@ -104,6 +105,28 @@ using PlaceAccess = std::variant<OpenedByDereference, OpenedThroughView>;
 [[nodiscard]] auto PlaceAccessAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId type_id) -> PlaceAccess;
 
+// The object a call is entered on, given its receiver of this type. A pointer
+// designates the object it addresses, which is opened as any place of it is:
+// `(*p)`. A value of any other type is that object itself -- a library value
+// whose own member function the call names, such as a string or a reference to
+// an object -- so there is nothing to open. A receiver may be such a value
+// where a place never is, which is why this is a question of its own.
+struct ReceiverIsTheObject {};
+
+using ReceiverAccess = std::variant<ReceiverIsTheObject, OpenedByDereference>;
+
+[[nodiscard]] auto ReceiverAccessAsCpp(
+    const mir::CompilationUnit& unit, mir::TypeId type_id) -> ReceiverAccess;
+
+// What a dereference opens, as a postfix form: `(*p)`. `write_place` writes
+// the pointer and is told the precedence it needs after the `*`.
+template <typename WritePlace>
+void WriteDereferenced(TargetText& out, WritePlace write_place) {
+  out += "(*";
+  write_place(Precedence::kPrefix);
+  out += ")";
+}
+
 // The storage behind a place, written as a postfix form so the caller can put a
 // member or a call right after it. `write_place` writes the place itself and is
 // told the precedence its position needs: after the `*` of a dereference, or
@@ -114,11 +137,7 @@ void WriteStorageOf(
     WritePlace write_place) {
   std::visit(
       Overloaded{
-          [&](OpenedByDereference) {
-            out += "(*";
-            write_place(Precedence::kPrefix);
-            out += ")";
-          },
+          [&](OpenedByDereference) { WriteDereferenced(out, write_place); },
           [&](const OpenedThroughView& view) {
             write_place(Precedence::kPostfix);
             Write(out, ".Deref<", CppType(unit, view.pointee), ">()");
@@ -132,7 +151,8 @@ void WriteStorageOf(
 // pick from, because every object reference is one C++ type whatever class it
 // is seen as and `(T)r` would only copy it; the same object seen as another
 // class is `ViewAs<From, To>(r)`, over the classes the two reference types
-// name.
+// name. A pair this target realizes neither way is refused as unsupported
+// rather than written as a cast the host compiler would reject.
 //
 // This is the only place that spells a conversion; a cast writes punctuation
 // around its answer.
@@ -149,15 +169,15 @@ using Conversion = std::variant<ConvertedByCastNotation, ConvertedThroughView>;
 
 [[nodiscard]] auto ConversionAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId from, mir::TypeId to)
-    -> Conversion;
+    -> diag::Result<Conversion>;
 
 // The conversion of a value, in a position needing `at_least`. `write_value`
 // writes the value being converted and is told the precedence its position in
 // the conversion needs.
 template <typename WriteValue>
-void WriteConversionOf(
-    TargetText& out, const mir::CompilationUnit& unit, mir::TypeId from,
-    mir::TypeId to, Precedence at_least, WriteValue write_value) {
+void WriteConversion(
+    TargetText& out, const mir::CompilationUnit& unit,
+    const Conversion& conversion, Precedence at_least, WriteValue write_value) {
   std::visit(
       Overloaded{
           // A prefix form: in `(T)x->m` the `->` applies to `x`, so a position
@@ -174,7 +194,27 @@ void WriteConversionOf(
             write_value(Precedence::kAssignment);
             out += ")";
           }},
-      ConversionAsCpp(unit, from, to));
+      conversion);
 }
+
+// How a value of a type that names nothing is written (LRM 8.4, 6.14). An
+// object reference and a chandle are values of their own types, `T{}`; a
+// pointer and a code address are the null address. Any other type has no such
+// value on this target and is refused as unsupported.
+struct NullAsEmptyValue {
+  mir::TypeId type;
+};
+
+struct NullAsNullAddress {};
+
+using NullSpelling = std::variant<NullAsEmptyValue, NullAsNullAddress>;
+
+[[nodiscard]] auto NullSpellingAsCpp(
+    const mir::CompilationUnit& unit, mir::TypeId type)
+    -> diag::Result<NullSpelling>;
+
+void WriteNull(
+    TargetText& out, const mir::CompilationUnit& unit,
+    const NullSpelling& spelling);
 
 }  // namespace lyra::backend::cpp

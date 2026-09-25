@@ -502,28 +502,29 @@ struct CompositeExpr {
   std::vector<ExprId> parts;
 };
 
-// The suspension protocol applied to what is awaited: control leaves here and
-// comes back when what is awaited says so (LRM 9.4 timing controls, 13.5 task
-// enable). What is awaited is one of two things, and its own type says which:
-// an execution, which ends this wait by completing and hands over the value it
-// completed with; or a call that has already arranged this execution's
-// resumption and answers whether control must be given up at all.
+// Waiting for an execution to reach its end (LRM 13.3 task enable): the
+// execution `execution` evaluates to takes over the thread, and control comes
+// back here once it completes, with the value it completed with. `Expr::type`
+// is that value -- a task's output pack, or `Void` for one with no outputs.
 //
-// `Expr::type` is what the await yields -- the awaited execution's payload,
-// which is a task's output pack or `Void` for one with no outputs, and `Void`
-// for the second form, which yields nothing. Await is an expression, not a
-// statement, because it is a value-producing operation that resumes (a
-// suspending call), not a terminator like `return`: a value-yielding task
-// completion and a void suspension are the same node.
-//
-// Invariant: an await appears only at statement top level -- as the expression
-// of an `ExprStmt`, or as the right-hand side of the local-decl / assignment
-// that binds its completion value -- never nested inside another expression,
-// because SV suspends only at statement position (LRM 13.4). The node is a
-// general expression for uniformity with the rest of the set; HIR-to-MIR never
-// produces a nested one.
+// Invariant, shared with `WaitExpr`: it appears only at statement top level --
+// as the expression of an `ExprStmt`, or as the right-hand side of the
+// local-decl / assignment that binds its completion value -- because SV
+// suspends only at statement position (LRM 13.4). It is an expression rather
+// than a statement because it yields a value.
 struct AwaitExpr {
-  ExprId awaitable;
+  ExprId execution;
+};
+
+// Waiting for what a call has just registered (LRM 9.4 timing controls, 9.6
+// `wait fork`, 9.7 `await`): `registration` has arranged this execution's
+// resumption and answers whether control must be given up at all, so control
+// leaves here where it answers true and comes back when what it registered
+// happens. Yields nothing. A different operation from awaiting an execution:
+// what ends the wait is the scheduler rather than another body, and nothing is
+// handed back.
+struct WaitExpr {
+  ExprId registration;
 };
 
 // Projects one element out of a sequence value by position. The position is an
@@ -553,11 +554,13 @@ struct FunctionRef {
   AbiAdapterId adapter;
 };
 
-// A place naming one of this class's static constants (`Class::name`), the data
-// dual of `FunctionRef`. `Expr::type` is the constant's type; as a place it is
-// read in an rvalue context or has its address taken via `AddressOfExpr` (how
-// the constructor passes its generated-behavior constant to the runtime base).
+// A place naming one of a class's static constants (`Class::name`), the data
+// dual of `FunctionRef`, and like it naming the class that owns the constant.
+// `Expr::type` is the constant's type; as a place it is read in an rvalue
+// context or has its address taken via `AddressOfExpr` (how the constructor
+// passes its generated-behavior constant to the runtime base).
 struct StaticConstantRef {
+  ClassId owner;
   StaticConstantId constant;
 };
 
@@ -667,7 +670,7 @@ using ExprData = std::variant<
     MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
     ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
     AddressOfExpr, MachineArrayDataExpr, MoveExpr, FieldAccessExpr, ClosureExpr,
-    CompositeExpr, AwaitExpr, VectorGetExpr>;
+    CompositeExpr, AwaitExpr, WaitExpr, VectorGetExpr>;
 
 struct Expr {
   ExprData data;

@@ -36,8 +36,10 @@ class FunctionLowerer {
       UnitLowerer& unit, const mir::CallableCode& code, std::string name);
   // Lowers a class's constructor. The base is constructed before the body runs
   // (LRM 8.7), and what base that is belongs to the class rather than to the
-  // body, so the class comes with the code it constructs from.
-  FunctionLowerer(UnitLowerer& unit, const mir::Class& cls, std::string name);
+  // body, so the class comes with the constructor it builds from.
+  FunctionLowerer(
+      UnitLowerer& unit, const mir::Class& cls,
+      const mir::ConstructorDecl& constructor, std::string name);
   // Lowers a closure's invoke. Its signature leads with the receiver naming the
   // storage the captures live in, and the body reads each of them as a member
   // of it.
@@ -93,6 +95,12 @@ class FunctionLowerer {
     lir::ValueId caught{};
   };
 
+  // Stands over a cleanup's own code while it is lowered. A cleanup runs on
+  // every way out of its body, a departure included, so a departure starting
+  // inside one would have nowhere to go, and nothing under this scope may ask
+  // for a landing.
+  struct TerminateScope {};
+
   // A scope a departure meets on its way out of the body, kept on one stack in
   // the order they nest, which is the order a departure meets them. Each is
   // reached two ways, both built the first time something needs them and
@@ -100,8 +108,9 @@ class FunctionLowerer {
   // innermost unwinds to, and `unwind_entry` is where a departure continues
   // when it reaches this scope from one nested inside it -- the cleanup run
   // once and passed outward, or the region's handler.
-  using ScopeKind =
-      std::variant<CleanupScope, ValueEnd, SlotEnd, EndPassedOn, RegionScope>;
+  using ScopeKind = std::variant<
+      CleanupScope, ValueEnd, SlotEnd, EndPassedOn, RegionScope,
+      TerminateScope>;
   struct UnwindScope {
     ScopeKind kind;
     std::optional<lir::BlockId> landing;
@@ -204,6 +213,9 @@ class FunctionLowerer {
   // first. A way out of a guarded body runs the cleanups it leaves and no
   // others, so the depth a loop recorded is what bounds it.
   auto RunCleanupsDownTo(std::size_t depth) -> diag::Result<void>;
+  // Lowers a cleanup's own code, on whichever way out reached it, under a
+  // scope that refuses any landing inside it.
+  auto LowerCleanupInto(CleanupScope cleanup) -> diag::Result<void>;
   // Hands control back to the scheduler, leaving the body at `resume`. Being
   // ended rather than run again is a way out of every scope open here, so the
   // second way out runs all of their cleanups and then ends the body; the
@@ -480,9 +492,16 @@ class FunctionLowerer {
   // with, naming the storage its captures live in.
   void BindCaptureReceiver(mir::LocalId receiver);
 
+  // A class's constructor and the class it builds, held together because the
+  // base the one names is entered with what the other states.
+  struct Construction {
+    const mir::Class* cls;
+    const mir::ConstructorDecl* constructor;
+  };
+
   UnitLowerer* unit_;
   const mir::CallableCode* code_;
-  const mir::Class* constructed_class_;
+  std::optional<Construction> construction_;
   const mir::ClosureDecl* closure_;
   const mir::ValueBuild* build_;
   std::string name_;

@@ -49,6 +49,13 @@ struct ObjectTreeBase {
   auto operator==(const ObjectTreeBase&) const -> bool = default;
 };
 
+// The root every managed object extends: what a class the source wrote without
+// an `extends` clause extends. It too is the runtime's, and the lineage of the
+// source language ends at it.
+struct ManagedObjectBase {
+  auto operator==(const ManagedObjectBase&) const -> bool = default;
+};
+
 // The functions the runtime enters on an object of a class it drives. The
 // runtime enters all three or none, so they are read as a group: every route
 // and alias is bound while the tree is complete and nothing has run, then every
@@ -62,7 +69,8 @@ struct ObjectTreeProgram {
   FunctionId create_processes;
 };
 
-using Base = std::variant<IntraUnitBase, CrossUnitBase, ObjectTreeBase>;
+using Base = std::variant<
+    IntraUnitBase, CrossUnitBase, ObjectTreeBase, ManagedObjectBase>;
 
 // A typed member of whatever declares it -- the storage a member place reaches
 // by a member projection. Its position in the declaring list is its member
@@ -173,7 +181,9 @@ struct Class {
   std::optional<ObjectTreeProgram> tree_program;
   std::vector<Member> members;
   std::vector<NamedMember> named_members;
-  FunctionId constructor{};
+  // How an object of this class is built, absent for an interface class (LRM
+  // 8.26), of which none ever is.
+  std::optional<FunctionId> constructor;
   std::vector<Introduction> introduces;
   std::vector<DeclaredBody> bodies;
   std::vector<DispatchTakeover> takeovers;
@@ -307,9 +317,9 @@ struct CompilationUnit {
 };
 
 // The type naming the class `base` extends, in this unit's own pool, or nothing
-// where the lineage ends there. A base the runtime library defines ends one: it
-// declares nothing of the source language, so there is no class of the program
-// past it.
+// where the lineage ends there. A base the runtime library defines ends one --
+// the object tree and the managed object root alike: it declares nothing of the
+// source language, so there is no class of the program past it.
 [[nodiscard]] inline auto BaseType(
     const CompilationUnit& unit, const Base& base) -> std::optional<TypeId> {
   return std::visit(
@@ -325,6 +335,9 @@ struct CompilationUnit {
                     .class_name = cross.class_name}});
           },
           [](const ObjectTreeBase&) -> std::optional<TypeId> {
+            return std::nullopt;
+          },
+          [](const ManagedObjectBase&) -> std::optional<TypeId> {
             return std::nullopt;
           }},
       base);
@@ -349,9 +362,9 @@ struct CompilationUnit {
 // extends. It is the lineage rather than one base that answers: a unit's object
 // is a promise standing in the tree and a class realizing it, so a class one
 // step from the tree and a class two steps from it are equally in it, and only
-// the realizing one supplies the bodies. A class extending a class of the
-// source language leaves the lineage before reaching the tree, which is what
-// makes the walk end on an answer rather than run out of steps.
+// the realizing one supplies the bodies. A class of the source language
+// reaches the managed object root instead, and an interface class extends
+// nothing, so every lineage ends on an answer.
 //
 // The walk crosses the unit boundary, because a class this unit compiles and
 // one another unit promised are the same kind of thing asked the same question,
@@ -361,24 +374,22 @@ struct CompilationUnit {
 // in the tree reaches it in one step and is recorded wherever it is named.
 [[nodiscard]] inline auto StandsInObjectTree(
     const CompilationUnit& unit, const std::optional<Base>& extends) -> bool {
-  const std::optional<Base>* standing = &extends;
-  while (standing->has_value()) {
-    if (std::holds_alternative<ObjectTreeBase>(**standing)) {
-      return true;
-    }
-    if (const auto* intra = std::get_if<IntraUnitBase>(&**standing)) {
-      standing = &unit.classes.Get(intra->class_id).base;
-      continue;
-    }
-    const auto& cross = std::get<CrossUnitBase>(**standing);
-    const ExternalClass* promised =
-        FindExternalClass(unit, cross.unit_name, cross.class_name);
-    if (promised == nullptr) {
-      return false;
-    }
-    standing = &promised->base;
-  }
-  return false;
+  return extends.has_value() &&
+         std::visit(
+             Overloaded{
+                 [](const ObjectTreeBase&) -> bool { return true; },
+                 [](const ManagedObjectBase&) -> bool { return false; },
+                 [&](const IntraUnitBase& intra) -> bool {
+                   return StandsInObjectTree(
+                       unit, unit.classes.Get(intra.class_id).base);
+                 },
+                 [&](const CrossUnitBase& cross) -> bool {
+                   const ExternalClass* promised = FindExternalClass(
+                       unit, cross.unit_name, cross.class_name);
+                   return promised != nullptr &&
+                          StandsInObjectTree(unit, promised->base);
+                 }},
+             *extends);
 }
 
 }  // namespace lyra::lir

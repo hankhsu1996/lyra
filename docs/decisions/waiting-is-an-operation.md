@@ -67,11 +67,22 @@ target.** A call that may park its caller does the whole operation and answers w
 must give up control. Both backends call that one function and differ only in how they spell giving
 up control.
 
-**D2. MIR states a suspending construct the way a source language writes it: awaiting that call.**
-One node, at the layer whose peers are languages. What is awaited says which of the two awaits it is
--- an execution, whose completion is another body's to signal, or a call that has already arranged
-this execution's resumption -- and that is a fact the operand's type states rather than one a
-consumer works out.
+**D2. MIR states a suspending construct the way a source language writes it: waiting on that call.**
+At the layer whose peers are languages, with no decomposition. The language writes two different
+constructs here, and MIR states two: awaiting an execution, which ends when another body completes
+and hands back what it completed with (LRM 13.3), and waiting on a call that has already arranged
+this execution's resumption and answers whether control must be given up (LRM 9.4). Each is a node
+of its own.
+
+_Revised 2026-09-24._ This first read "one node, whose operand's type says which of the two it is".
+That held only for an execution, whose type is its own; a registration's type is a machine boolean,
+which says nothing, so each consumer decided the operation by testing for the other type, and the
+execution lowering also tested whether the operand was a call -- a second input to the same
+question. Two constructs the source writes differently are two nodes at the layer whose peers are
+languages, which is this record's own requirement; a single node was taken from C++, where both
+reach one protocol object this record removed. What two nodes cost is that each can now be written
+over the other's operand, so verifying a unit refuses an await on anything but an execution and a
+wait on anything but a registration's answer.
 
 **D3. Each backend realizes the await in its own terms, and neither invents a name to do it.** The
 machine-model path decomposes it into the call, a branch on its answer, a suspend edge and the
@@ -151,8 +162,9 @@ runtime can answer at any point which frame would park.
 - `wait (cond)` is its own runtime operation. It watches the same leaves as an event control over
   the same reads, and the two part company only where a stopped process is started again.
 
-- MIR is unchanged. The whole of the fix is below it -- what the shared declaration names, and what
-  the runtime keeps -- plus one library type the direct-rendering target awaits.
+- The whole of the fix is below MIR -- what the shared declaration names, and what the runtime keeps
+  -- plus one library type the direct-rendering target awaits. MIR's one change came later, with the
+  revision of D2.
 
 - A suspension costs one allocation for what is being waited for. Whether that is visible in a
   simulation's throughput has not been measured; the shape to reach for if it is, is storage on the

@@ -2357,11 +2357,19 @@ enough to warrant its own focused review.
       coming back is that the entries answer with nothing, so writing it no longer compiles, and a
       policy rule refuses a format call anywhere in the backend.
 
-- [ ] R138 -- The three intermediate-form dumps compose their text the way the C++ backend used to.
+- [x] R138 -- The three intermediate-form dumps compose their text the way the C++ backend used to.
       Each node answers with a string and whoever asked for it copies that string into the one it is
       building, so a byte near the bottom of a deeply nested form is copied once per level above it.
       It is the same shape R137 removed, one subsystem over, found by searching for the decision
       rather than by reading the diff.
+
+      **Measured, and there is nothing here to fix.** An optimized build dumps the middle form of
+      the 48-unit RISC-V core -- 45.8 MB -- in 0.36 s, against 0.06 s to check the same design. The
+      printing is 63% of that run, about 200 MB/s, and what it spends is the formatting library
+      parsing its format strings at run time and small allocations; copying, the cost this entry
+      was opened on, is 5%. A third of a second on the largest real design is below what anybody
+      waits for, so rewriting the three dumps would buy nothing a reader can feel. The figures
+      quoted below were an unoptimized build and included lowering.
 
       **What is not the same is the requirement.** R137 answers to the end-to-end iteration budget,
       because what it writes is the artifact a build then compiles. A dump is written only when
@@ -2376,7 +2384,18 @@ enough to warrant its own focused review.
       include lowering, which is why neither is a rate for the printing alone -- getting one is the
       first step, and it is the step that decides whether there is anything here.
 
-- [ ] R139 -- The source backend has no way to refuse. It holds twenty-two invariant violations and
+- [x] R139 -- The source backend refuses what it cannot realize. The unit's refusals travel with the
+      scope every render entry already holds; an entry with no form for a node reports it as
+      unsupported, writes nothing for it and goes on, so one run reports every such node, and a run
+      that reported anything writes no file. Continuing inside a body is sound here where the
+      lowering's is not, because a render entry never reads another's text. The cast of a pair and
+      the spelling of a null are type-mapping answers that can say "not realized", which is how the
+      two silent answers the entry below records became refusals. Found by: an `event` given `null`
+      emitted C++ the host compiler rejected; it is now refused as unsupported.
+
+      What the entry said when it was opened, kept for the reasoning:
+
+      The source backend has no way to refuse. It holds twenty-two invariant violations and
       not one statement that a construct is beyond it, where the execution backend holds ten; and
       the settled reading of a conversion says outright that a target "refuses a pair it does not
       realize", with every unrealizable pair answered as unsupported. The execution backend does

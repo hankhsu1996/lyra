@@ -57,10 +57,9 @@ type-level.
   `Shared<StructType>`, not the execution instance.
 - Which capture form a SystemVerilog construct requires. That is HIR-to-MIR capture / lifetime
   policy.
-- **Target realization.** Whether a `ClosureType` is realized as an anonymous C++ lambda and a scope
-  `StructType` as a named nested `struct` is the backend's choice. This doc owns the semantic shape,
-  not its emitted form. Physical placement, physical field offsets, and retention realization are
-  LIR and backend concerns.
+- **Target realization.** How a `ClosureType` and a scope `StructType` are spelled in a target
+  language is the backend's choice. This doc owns the semantic shape, not its emitted form. Physical
+  placement, physical field offsets, and retention realization are LIR and backend concerns.
 
 ## Core Invariants
 
@@ -186,9 +185,10 @@ invoke    : field_access(closure_receiver, field_of(scope)) then ... -> read sco
 
 The current C++ backend realizes the scope as a `struct` + `shared_ptr`, spelled from the identity
 its unit's registry gave it because the source declared no such aggregate to name it by, and the
-closure as an anonymous lambda holding its captures -- or, where the invoke is a coroutine, as one
-taking them as parameters and called at once to yield the coroutine, because a coroutine lambda's
-captures do not survive its first suspension. That is this backend's realization, not the MIR
+closure as a struct holding its captures whose call operator is the invoke, reading each capture
+through the closure the way the invoke's receiver does -- or, where the invoke is a coroutine,
+started through a static function taking the closure by value, because the captures have to live in
+the coroutine's frame past its first suspension. That is this backend's realization, not the MIR
 definition.
 
 The three capture forms differ only by field type:

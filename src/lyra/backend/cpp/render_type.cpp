@@ -1,7 +1,9 @@
 #include "lyra/backend/cpp/render_type.hpp"
 
+#include <expected>
 #include <span>
 #include <string_view>
+#include <utility>
 #include <variant>
 
 #include "lyra/backend/cpp/naming.hpp"
@@ -335,16 +337,18 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::EvaluationAttemptsType&) {
             out += "lyra::runtime::EvaluationAttempts";
           },
-          // A closure is emitted as a lambda, whose type C++ cannot name.
-          // Nothing asks for it: a closure is used where it is written, and
-          // its body reaches its captures as the lambda's own.
-          [](const mir::ClosureType&) {
-            throw InternalError(
-                "backend::cpp: a closure is emitted as a lambda, whose type "
-                "C++ "
-                "lets nothing name -- please report this as a bug");
+          [&](const mir::ClosureType& c) {
+            Write(out, CppClosureName(c.closure_id));
           },
       });
+}
+
+auto ReceiverAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
+    -> ReceiverAccess {
+  if (unit.types.Get(type_id).Is<mir::PointerType>()) {
+    return OpenedByDereference{};
+  }
+  return ReceiverIsTheObject{};
 }
 
 auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
@@ -422,24 +426,96 @@ auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
       });
 }
 
+namespace {
+
+auto IsMachineScalar(const mir::Type& type) -> bool {
+  return type.Is<mir::MachineIntType>() || type.Is<mir::MachineBoolType>() ||
+         type.Is<mir::MachineFloatType>();
+}
+
+// The values C++ cast notation converts among by itself: both sides one of
+// these, and the same one.
+auto CastNotationRelates(const mir::Type& from, const mir::Type& to) -> bool {
+  return (from.IsIntegralPacked() && to.IsIntegralPacked()) ||
+         (IsMachineScalar(from) && IsMachineScalar(to)) ||
+         (from.Is<mir::PointerType>() && to.Is<mir::PointerType>()) ||
+         (from.Is<mir::MachineFunctionType>() &&
+          to.Is<mir::MachineFunctionType>());
+}
+
+// A value the runtime answers "is this nothing" for, which is what reducing
+// one to a machine boolean asks (LRM 12.4).
+auto HasTruthValue(const mir::Type& type) -> bool {
+  return type.IsIntegralPacked() || type.IsRealFamily() ||
+         IsMachineScalar(type) || type.Is<mir::ManagedRefType>() ||
+         type.Is<mir::ChandleType>();
+}
+
+// A refusal naming what it refuses in the target's own spelling of the types
+// involved, which is the vocabulary this backend has for them.
+template <typename... Pieces>
+auto Refusal(diag::DiagCode code, const Pieces&... pieces)
+    -> std::unexpected<diag::Diagnostic> {
+  TargetText message;
+  Write(message, pieces...);
+  return diag::Fail(code, std::move(message).Take());
+}
+
+}  // namespace
+
 auto ConversionAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId from, mir::TypeId to)
-    -> Conversion {
-  const auto* from_ref = unit.types.Get(from).As<mir::ManagedRefType>();
-  const auto* to_ref = unit.types.Get(to).As<mir::ManagedRefType>();
+    -> diag::Result<Conversion> {
+  const mir::Type& source = unit.types.Get(from);
+  const mir::Type& destination = unit.types.Get(to);
+  const auto* from_ref = source.As<mir::ManagedRefType>();
+  const auto* to_ref = destination.As<mir::ManagedRefType>();
   if (from_ref != nullptr && to_ref != nullptr) {
     return ConvertedThroughView{
         .from = from_ref->pointee, .to = to_ref->pointee};
   }
-  return ConvertedByCastNotation{.to = to};
+  if (CastNotationRelates(source, destination) ||
+      (destination.Is<mir::MachineBoolType>() && HasTruthValue(source))) {
+    return ConvertedByCastNotation{.to = to};
+  }
+  return Refusal(
+      diag::DiagCode::kUnsupportedConversionForm,
+      "the C++ backend has no conversion from `", CppType(unit, from), "` to `",
+      CppType(unit, to), "`");
+}
+
+auto NullSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type)
+    -> diag::Result<NullSpelling> {
+  const mir::Type& t = unit.types.Get(type);
+  if (t.Is<mir::ManagedRefType>() || t.Is<mir::ChandleType>()) {
+    return NullAsEmptyValue{.type = type};
+  }
+  if (t.Is<mir::PointerType>() || t.Is<mir::MachineFunctionType>()) {
+    return NullAsNullAddress{};
+  }
+  return Refusal(
+      diag::DiagCode::kUnsupportedExpressionForm,
+      "the C++ backend has no value of `", CppType(unit, type),
+      "` that names nothing");
+}
+
+void WriteNull(
+    TargetText& out, const mir::CompilationUnit& unit,
+    const NullSpelling& spelling) {
+  std::visit(
+      Overloaded{
+          [&](const NullAsEmptyValue& empty) {
+            Write(out, CppType(unit, empty.type), "{}");
+          },
+          [&](NullAsNullAddress) { out += "nullptr"; }},
+      spelling);
 }
 
 void WriteOne(TargetText& out, const CppConstructorName& constructor) {
   const mir::CompilationUnit& unit = constructor.of.Unit();
   const mir::TypeId type_id = constructor.of.Type();
-  // Most types are constructed by naming them, `T(args)`. The name comes from
-  // the type mapping, so a type with no C++ name, a closure, is refused there
-  // and only there.
+  // Most types are constructed by naming them, `T(args)`, with the name the
+  // type mapping gives.
   const auto by_naming_itself = [&](const auto&) {
     Write(out, constructor.of);
   };
@@ -539,7 +615,10 @@ void WriteOne(TargetText& out, const CppClassRef& ref) {
             Write(
                 out, CppUnitScope(e.unit_name), "::", ToCppName(e.class_name));
           },
-          [&](const mir::RuntimeClassRef& e) { out += e.symbol; }},
+          [&](const mir::RuntimeClassRef& e) { out += e.symbol; },
+          [&](const mir::ManagedObjectRootRef&) {
+            out += ManagedObjectRootCppType();
+          }},
       ref.Ref());
 }
 

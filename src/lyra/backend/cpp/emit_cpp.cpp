@@ -33,9 +33,10 @@ void WriteInclude(TargetText& out, std::string_view path) {
 // A constant of the unit's namespace, `const T name = value;`. The value is a
 // single expression, written by the ordinary expression render.
 void RenderNamespaceValue(
-    const mir::CompilationUnit& unit, mir::TypeId type, const CppName& name,
-    const mir::ValueBuild& build, TargetText& out) {
-  const ScopeView view = ScopeView::ForUnitConstant(unit, build.body);
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    mir::TypeId type, const CppName& name, const mir::ValueBuild& build,
+    TargetText& out) {
+  const ScopeView view = ScopeView::ForConstant(unit, build.body, refusals);
   WriteDeclaration(
       out,
       DeclaredCell{
@@ -51,11 +52,13 @@ void RenderNamespaceValue(
 // The run-time type descriptions, defined in the code file ahead of every
 // class. A class's constant may use one, and C++ initializes the constants of
 // one file in the order they are written, but gives no order across files.
-void RenderTypeDescriptions(const mir::CompilationUnit& unit, TargetText& out) {
+void RenderTypeDescriptions(
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    TargetText& out) {
   for (const mir::TypeDescriptorId id : unit.type_descriptors.Ids()) {
     RenderNamespaceValue(
-        unit, mir::TypeDescriptorTypeOf(unit, id), CppTypeDescriptorName(id),
-        unit.builds.descriptors.Get(id), out);
+        unit, refusals, mir::TypeDescriptorTypeOf(unit, id),
+        CppTypeDescriptorName(id), unit.builds.descriptors.Get(id), out);
   }
 }
 
@@ -63,11 +66,12 @@ void RenderTypeDescriptions(const mir::CompilationUnit& unit, TargetText& out) {
 // is built once. They come after the descriptions because each uses the
 // description of its own type.
 void RenderIntegralConstants(
-    const mir::CompilationUnit& unit, TargetText& out) {
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    TargetText& out) {
   for (const mir::IntegralConstantId id : unit.integral_constants.Ids()) {
     RenderNamespaceValue(
-        unit, unit.integral_constants.Get(id).type, CppIntegralConstantName(id),
-        unit.builds.constants.Get(id), out);
+        unit, refusals, unit.integral_constants.Get(id).type,
+        CppIntegralConstantName(id), unit.builds.constants.Get(id), out);
   }
 }
 
@@ -119,11 +123,14 @@ auto FileConsumed(const mir::ConsumedSignature& consumed) -> std::string {
 // includes the headers of its bases, so two units can include each other's
 // headers without a cycle. Anything other units never name goes into the
 // `.cpp`, so changing it recompiles no other unit.
-auto RenderUnitFiles(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
-  const UnitText callables = RenderUnitCallables(unit);
+auto RenderUnitFiles(
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
+    -> CppUnitArtifacts {
+  const UnitText callables = RenderUnitCallables(unit, refusals);
   const UnitText variables = RenderUnitStaticVariables(unit);
   const UnitText forwards = RenderUnitForwardDeclarations(unit);
-  UnitClasses classes = RenderUnitClasses(unit);
+  UnitClasses classes = RenderUnitClasses(unit, refusals);
+  const UnitClosures closures = RenderUnitClosures(unit, refusals);
   const SourceName unit_namespace = UnitNamespaceOf(unit.name);
 
   TargetText opened;
@@ -177,19 +184,21 @@ auto RenderUnitFiles(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
   AppendSection(realized, forwards.code);
   {
     const TargetText::Section descriptions(realized);
-    RenderTypeDescriptions(unit, realized);
+    RenderTypeDescriptions(unit, refusals, realized);
   }
   {
     const TargetText::Section constants(realized);
-    RenderIntegralConstants(unit, realized);
+    RenderIntegralConstants(unit, refusals, realized);
   }
   AppendSection(realized, classes.internal);
+  AppendSection(realized, closures.declarations);
   AppendSection(realized, variables.code);
+  AppendSection(realized, closures.definitions);
   AppendSection(realized, classes.definitions);
   AppendSection(realized, callables.code);
   {
     const TargetText::Section foreign(realized);
-    RenderForeignScopeSymbols(unit, realized);
+    RenderForeignScopeSymbols(unit, refusals, realized);
   }
   realized += "\n";
 
@@ -238,8 +247,10 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
 
 }  // namespace
 
-auto EmitCppUnit(const mir::CompilationUnit& unit) -> CppUnitArtifacts {
-  return RenderUnitFiles(unit);
+auto EmitCppUnit(
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
+    -> CppUnitArtifacts {
+  return RenderUnitFiles(unit, refusals);
 }
 
 auto EmitCppHostMain(const mir::CompilationUnit& root) -> CppArtifact {

@@ -15,7 +15,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::backend::cpp {
@@ -30,10 +29,10 @@ enum class ReceiverPlacement : std::uint8_t {
   kIntoArgumentList
 };
 
-// A call's receiver, and whether its members are reached with `->` or `.`.
+// A call's receiver, and how the object it is entered on is reached from it.
 struct CallReceiver {
   mir::ExprId expr;
-  std::string_view member_access;
+  ReceiverAccess access;
 };
 
 auto ResolveReceiver(const ScopeView& view, const mir::Callee& callee)
@@ -42,11 +41,23 @@ auto ResolveReceiver(const ScopeView& view, const mir::Callee& callee)
   if (!receiver.has_value()) {
     return std::nullopt;
   }
-  const mir::Expr& expr = view.Expr(*receiver);
   return CallReceiver{
       .expr = *receiver,
-      .member_access =
-          view.Unit().types.Get(expr.type).Is<mir::PointerType>() ? "->" : "."};
+      .access = ReceiverAccessAsCpp(view.Unit(), view.Expr(*receiver).type)};
+}
+
+// The object a call is entered on, followed by the `.` its member takes.
+void WriteReceiverObject(
+    const ScopeView& view, const CallReceiver& receiver, TargetText& out) {
+  const auto write_receiver = [&](Precedence at_least) {
+    Write(view, out, Operand{.expr = receiver.expr, .at_least = at_least});
+  };
+  std::visit(
+      Overloaded{
+          [&](ReceiverIsTheObject) { write_receiver(Precedence::kPostfix); },
+          [&](OpenedByDereference) { WriteDereferenced(out, write_receiver); }},
+      receiver.access);
+  out += ".";
 }
 
 // Whether a templated method name follows a value or a type. After a value,
@@ -98,11 +109,7 @@ class CallWriter {
     if (HasReceiver()) {
       switch (placement) {
         case ReceiverPlacement::kIntoCalleeName:
-          Write(
-              *view_, *out_,
-              Operand{
-                  .expr = (*receiver_)->expr, .at_least = Precedence::kPostfix},
-              (*receiver_)->member_access);
+          WriteReceiverObject(*view_, **receiver_, *out_);
           break;
         case ReceiverPlacement::kIntoArgumentList:
           receiver_leads_arguments_ = true;

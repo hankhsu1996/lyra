@@ -168,16 +168,21 @@ auto WriteCppSources(
   if (!design) {
     return std::nullopt;
   }
-  driver::CppProjectSink sources(dir, ctx.args->formatting);
+  driver::CppProjectSink sources(dir, ctx.args->formatting, *ctx.sink);
   auto lowered = compiler::LowerToSemantic(
       *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
       [&](compiler::SemanticUnit unit) { return sources.Write(unit.mir); },
-      [&](driver::WrittenUnit unit) { sources.Collect(std::move(unit)); });
+      [&](driver::EmittedUnit unit) { sources.Collect(std::move(unit)); });
   if (!lowered) {
     return std::nullopt;
   }
   if (auto written = sources.Finish(lowered->root); !written) {
     ctx.sink->Report(std::move(written.error()));
+    return std::nullopt;
+  }
+  // A unit refused somewhere leaves a project short of the design, which is no
+  // program to build.
+  if (ctx.sink->HasErrors()) {
     return std::nullopt;
   }
   return sources.TakeSources();

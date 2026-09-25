@@ -4,17 +4,6 @@
 
 namespace lyra::support {
 
-auto MayDepart(CallEnding ending) -> bool {
-  switch (ending) {
-    case CallEnding::kReturns:
-      return false;
-    case CallEnding::kReturnsOrDeparts:
-    case CallEnding::kDeparts:
-      return true;
-  }
-  throw InternalError("MayDepart: unknown call ending");
-}
-
 auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
   switch (id) {
     case BuiltinFn::kElement:

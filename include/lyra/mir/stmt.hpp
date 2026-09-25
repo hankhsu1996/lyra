@@ -89,7 +89,7 @@ struct RaiseStmt {
 // on its way out, and a second one would have nowhere to go: a target that
 // runs cleanups as part of unwinding cannot start another unwind from one, and
 // a landing inside the cleanup would stand among the very scopes being left.
-// So every call it makes is to a runtime entry declared to return.
+// A lowering that would have to give a cleanup's code a landing refuses it.
 struct FinallyStmt {
   BlockId body;
   BlockId cleanup;

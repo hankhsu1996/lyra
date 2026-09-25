@@ -95,6 +95,7 @@ auto ConstructionValueOf(const hir::StructuralScope& scope)
 // record and whoever finishes the constructor want all of them -- so which
 // class is meant is decided once rather than once per part.
 struct ClassUnderConstruction {
+  mir::ClassId id;
   mir::Class* cls = nullptr;
   mir::CallableCode* ctor = nullptr;
   const std::vector<mir::LocalId>* prefix = nullptr;
@@ -140,6 +141,7 @@ auto BuildPromise(
     prefix.push_back(ctor.AddLocal(type));
   }
   ctor.params = {ctor_self, prefix[0], prefix[1]};
+  ctor.receiver = ctor_self;
   ctor.result_type = unit.builtins.void_type;
 
   mir::Class cls;
@@ -154,6 +156,7 @@ auto BuildPromise(
     mir::CallableCode code{};
     const mir::LocalId self = code.AddLocal(self_pointer);
     code.params = {self};
+    code.receiver = self;
     code.result_type = unit.types.Intern(
         mir::Type{mir::PointerType{
             .pointee = member.cell_type,
@@ -177,10 +180,10 @@ auto BuildPromise(
         realization.callables.Get(subroutine.body).code;
     mir::CallableCode code{};
     code.params.reserve(body.params.size());
-    code.params.push_back(code.AddLocal(self_pointer));
-    for (std::size_t at = 1; at < body.params.size(); ++at) {
-      code.params.push_back(
-          code.AddLocal(body.locals.Get(body.params[at]).type));
+    code.receiver = code.AddLocal(self_pointer);
+    code.params.push_back(*code.receiver);
+    for (const mir::LocalId formal : body.ParamsAfterReceiver()) {
+      code.params.push_back(code.AddLocal(body.locals.Get(formal).type));
     }
     code.result_type = body.result_type;
     const mir::CallableId id = cls.callables.Add(
@@ -2443,9 +2446,10 @@ namespace {
 // is formed in.
 auto InstallGeneratedDefinition(
     mir::CompilationUnit& unit, mir::Class& cls, mir::ClassId cls_id,
-    mir::ClassRef base, mir::Class& rooted, mir::CallableCode& rooted_ctor,
-    mir::CallableId resolve_body, mir::CallableId init_body,
-    mir::CallableId create_body) -> std::vector<mir::ExprId> {
+    mir::ClassRef base, mir::ClassId rooted_id, mir::Class& rooted,
+    mir::CallableCode& rooted_ctor, mir::CallableId resolve_body,
+    mir::CallableId init_body, mir::CallableId create_body)
+    -> std::vector<mir::ExprId> {
   const auto make_adapter = [&](mir::CallableId body) -> mir::AbiAdapterId {
     mir::CallableCode code =
         BuildForwardingEntry(unit, cls, cls_id, body, unit.builtins.scope_ptr);
@@ -2565,7 +2569,8 @@ auto InstallGeneratedDefinition(
             .data =
                 mir::ReferenceExpr{
                     .target =
-                        mir::StaticConstantRef{.constant = table.records}},
+                        mir::StaticConstantRef{
+                            .owner = rooted_id, .constant = table.records}},
             .type = table.records_type});
     const mir::ExprId data = definition.Add(
         mir::Expr{
@@ -2591,7 +2596,9 @@ auto InstallGeneratedDefinition(
       mir::Expr{
           .data =
               mir::ReferenceExpr{
-                  .target = mir::StaticConstantRef{.constant = classes_id}},
+                  .target =
+                      mir::StaticConstantRef{
+                          .owner = rooted_id, .constant = classes_id}},
           .type = classes_type});
   const mir::ExprId classes_data = definition.Add(
       mir::Expr{
@@ -2624,7 +2631,9 @@ auto InstallGeneratedDefinition(
       mir::Expr{
           .data =
               mir::ReferenceExpr{
-                  .target = mir::StaticConstantRef{.constant = def_id}},
+                  .target =
+                      mir::StaticConstantRef{
+                          .owner = rooted_id, .constant = def_id}},
           .type = const_type});
   const mir::ExprId addr = cex.Add(
       mir::Expr{
@@ -3062,8 +3071,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             unit_lowerer.Unit(), node_class, name_node.class_id,
             mir::ClassRef{mir::RuntimeClassRef{
                 .symbol = std::string{mir::kObjectTreeClassSymbol}}},
-            node_class, node_ctor_code, empty_phase(), empty_phase(),
-            empty_phase());
+            name_node.class_id, node_class, node_ctor_code, empty_phase(),
+            empty_phase(), empty_phase());
     FinalizeConstructor(
         unit_lowerer.Unit(), node_class, std::move(node_ctor_code),
         node_ctor_prefix_local_ids, node_base_trailing_args);
@@ -3297,7 +3306,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .code = BuildForwardingEntry(
                 unit_lowerer.Unit(), mir_class, class_id_, method_id,
                 unit_lowerer.Unit().builtins.scope_ptr),
-            .published = mir::SubroutineEntry{.name = name}});
+            .published =
+                mir::SubroutineEntry{.name = name, .subroutine = method_id}});
   }
 
   for (const hir::ProcessId id : hir_scope.processes.Ids()) {
@@ -3521,16 +3531,18 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   const ClassUnderConstruction rooted =
       promise.has_value()
           ? ClassUnderConstruction{
+                .id = *promise_id_,
                 .cls = &promise->cls,
                 .ctor = &promise->ctor,
                 .prefix = &promise->ctor_prefix}
           : ClassUnderConstruction{
+                .id = class_id_,
                 .cls = &mir_class,
                 .ctor = &ctor_code,
                 .prefix = &base_prefix_local_ids};
   const std::vector<mir::ExprId> record_args = InstallGeneratedDefinition(
-      unit, mir_class, class_id_, base, *rooted.cls, *rooted.ctor, resolve_body,
-      init_body, create_body);
+      unit, mir_class, class_id_, base, rooted.id, *rooted.cls, *rooted.ctor,
+      resolve_body, init_body, create_body);
   FinalizeConstructor(
       unit, *rooted.cls, std::move(*rooted.ctor), *rooted.prefix, record_args);
 
@@ -3553,6 +3565,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     mir::CallableCode code = mir::CallableCode::Defined();
     const mir::LocalId self = code.AddLocal(self_ptr_type);
     code.params = {self};
+    code.receiver = self;
     const mir::TypeId cell_type = mir_class.fields.Get(slot).type;
     code.result_type = unit.types.Intern(
         mir::Type{mir::PointerType{

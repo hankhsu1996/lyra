@@ -322,21 +322,14 @@ auto LowerStreamingUnpackAssign(
       .data = mir::BlockStmt{.scope = wrapper_scope_id}};
 }
 
-// Whether this call statement is a suspension point (LRM 13.3). A callee whose
-// completion the caller awaits states that in its call's type, so that is read
-// from the type rather than re-derived -- the type is the single carrier of a
-// call protocol, and reading it here is what keeps it so. The visit answers
-// what a type cannot: a callee that parks the process through a runtime entry
-// instead of completing, and one whose enable lowers to something other than a
-// call. It is exhaustive over the callee kinds, so a kind that becomes
-// suspendable forces a decision here rather than silently defaulting to
-// non-suspending.
-auto CallStatementSuspends(
-    ProcessLowerer& process, const hir::CallExpr& call, mir::TypeId call_type)
-    -> bool {
-  if (process.Owner().Unit().types.Get(call_type).Is<mir::CoroutineType>()) {
-    return true;
-  }
+// Whether this call statement parks the process until what the call registers
+// happens (LRM 9.7 `await` among them). A task enable is not asked here: its
+// completion is awaited, which the call's type states. The visit answers what a
+// type cannot: a callee that parks the process through a runtime entry instead
+// of completing. It is exhaustive over the callee kinds, so a kind that comes
+// to park forces a decision here rather than silently defaulting to not
+// parking.
+auto CallStatementWaits(const hir::CallExpr& call) -> bool {
   return std::visit(
       Overloaded{
           // No system subroutine parks its caller: the ones that end the run
@@ -551,14 +544,21 @@ auto LowerExprStmt(
     if (!call_or) return std::unexpected(std::move(call_or.error()));
     const mir::ExprId call_id = block.exprs.Add(*std::move(call_or));
     const mir::TypeId call_type = block.exprs.Get(call_id).type;
-    if (CallStatementSuspends(process, *call, call_type)) {
-      mir::Stmt waited =
-          BuildSuspendingCallStmt(process.Owner(), block, call_id);
-      waited.label = std::move(label);
-      return waited;
-    }
-    return mir::Stmt{
-        .label = std::move(label), .data = mir::ExprStmt{.expr = call_id}};
+    mir::Stmt stmt = [&] {
+      if (process.Owner()
+              .Unit()
+              .types.Get(call_type)
+              .Is<mir::CoroutineType>()) {
+        return BuildAwaitStmt(process.Owner(), block, call_id);
+      }
+      if (CallStatementWaits(*call)) {
+        return BuildWaitStmt(process.Owner(), block, call_id);
+      }
+      return mir::Stmt{
+          .label = std::nullopt, .data = mir::ExprStmt{.expr = call_id}};
+    }();
+    stmt.label = std::move(label);
+    return stmt;
   }
   if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
     if (!assign->compound_op.has_value() &&

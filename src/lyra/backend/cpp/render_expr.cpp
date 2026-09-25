@@ -9,12 +9,12 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/render_call.hpp"
-#include "lyra/backend/cpp/render_decl.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
@@ -158,9 +158,14 @@ void RenderConditionalExpr(
 void RenderCastExpr(
     const ScopeView& view, const mir::Expr& expr, const mir::CastExpr& cast,
     Precedence at_least, TargetText& out) {
-  WriteConversionOf(
-      out, view.Unit(), view.Expr(cast.operand).type, expr.type, at_least,
-      [&](Precedence needed) {
+  auto conversion =
+      ConversionAsCpp(view.Unit(), view.Expr(cast.operand).type, expr.type);
+  if (!conversion) {
+    view.Refuse(std::move(conversion.error()));
+    return;
+  }
+  WriteConversion(
+      out, view.Unit(), *conversion, at_least, [&](Precedence needed) {
         Write(view, out, Operand{.expr = cast.operand, .at_least = needed});
       });
 }
@@ -192,8 +197,7 @@ void RenderFieldAccessExpr(
             Write(out, CppStructFieldName(t.slot));
           },
           [&](const mir::ClosureFieldTarget& t) {
-            // Inside a lambda a capture is a plain name, so the access is that
-            // name and the receiver is not written.
+            write_receiver();
             Write(out, CppClosureCaptureName(t.slot));
           },
           [&](const mir::CrossUnitClassFieldTarget& t) {
@@ -234,7 +238,7 @@ void RenderReferenceExpr(
           },
           [&](const mir::StaticConstantRef& r) {
             Write(
-                out, CppClassName(view.Class(), view.ClassId()),
+                out, CppClassName(view.Unit().GetClass(r.owner), r.owner),
                 "::", CppStaticConstantName(r.constant));
           },
           [&](const mir::ObjectRecordRef& r) {
@@ -347,60 +351,28 @@ void RenderBlockExpr(
   out += "()";
 }
 
-// A closure is a lambda capturing its fields by value, in field order:
-// `[sv_capture_0 = init](params) -> R { body }`. The body names a capture by
-// the same name, so the two agree.
-//
-// A coroutine closure is `[](T sv_capture_0) -> R { body }(init)` instead: its
-// fields are parameters, copied into the coroutine frame, because a capturing
-// coroutine lambda would dangle once the process it starts outlives it.
-//
-// Nothing is captured as `this`, `=` or `&`; a field that aliases storage has a
-// `Ref<T>` type.
+// A closure value is its type built from its captures in the type's member
+// order, `sv_closure_<n>{init, ...}`. One whose body completes as a coroutine
+// is started as it is built, because what the site holds is the execution:
+// `sv_closure_<n>::sv_start(sv_closure_<n>{init, ...})`.
 void RenderClosureExpr(
     const ScopeView& view, const mir::ClosureExpr& construct, TargetText& out) {
   const mir::ClosureDecl& decl = view.Unit().GetClosure(construct.closure);
-  const mir::CallableCode& code = decl.invoke;
-  const ScopeView body_view = view.WithClosure(code);
-
-  const auto write_body = [&]() {
-    Write(view, out, " -> ", code.result_type, " ");
-    WriteBody(out, [&] { RenderBlockStatements(body_view, out); });
-  };
-
-  const auto init_of = [&](mir::FieldId field) {
-    return FieldInitValue(construct.field_inits, field);
-  };
-
-  if (view.Unit().types.Get(code.result_type).Is<mir::CoroutineType>()) {
-    if (!code.params.empty()) {
-      throw InternalError(
-          "RenderClosureExpr: coroutine closure has per-invocation parameters");
-    }
-    out += "[](";
+  const MintedName name = CppClosureName(construct.closure);
+  const auto write_value = [&] {
+    Write(out, name, "{");
     WriteSeparated(out, decl.field_order, ", ", [&](mir::FieldId field) {
-      Write(
-          view, out, decl.fields.Get(field).type, " ",
-          CppClosureCaptureName(field));
+      Write(view, out, FieldInitValue(construct.field_inits, field));
     });
-    out += ")";
-    write_body();
-    out += "(";
-    WriteSeparated(out, decl.field_order, ", ", [&](mir::FieldId field) {
-      Write(view, out, init_of(field));
-    });
+    out += "}";
+  };
+  if (view.Unit().types.Get(decl.invoke.result_type).Is<mir::CoroutineType>()) {
+    Write(out, name, "::", CppClosureStartName(), "(");
+    write_value();
     out += ")";
     return;
   }
-
-  out += "[";
-  WriteSeparated(out, decl.field_order, ", ", [&](mir::FieldId field) {
-    Write(view, out, CppClosureCaptureName(field), " = ", init_of(field));
-  });
-  out += "](";
-  WriteParameters(view.Unit(), code, code.params, out);
-  out += ")";
-  write_body();
+  write_value();
 }
 
 // `T{parts}`. The type is always written: a bare `{parts}` as an argument or
@@ -491,14 +463,12 @@ void RenderExpr(
             WriteCStringLiteral(s.value, out);
           },
           [&](const mir::NullLiteral&) {
-            // A null object handle or chandle is a value of its own type (LRM
-            // 8.4, 6.14), `T{}`; any other null is a pointer, `nullptr`.
-            const mir::Type& type = view.Unit().types.Get(expr.type);
-            if (type.Is<mir::ManagedRefType>() || type.Is<mir::ChandleType>()) {
-              Write(view, out, expr.type, "{}");
+            auto spelling = NullSpellingAsCpp(view.Unit(), expr.type);
+            if (!spelling) {
+              view.Refuse(std::move(spelling.error()));
               return;
             }
-            out += "nullptr";
+            WriteNull(out, view.Unit(), *spelling);
           },
           [&](const mir::MachineBoolLiteral& b) {
             out += b.value ? "true" : "false";
@@ -576,21 +546,18 @@ void RenderExpr(
             RenderPartsAsBraceInit(view, expr.type, c.parts, out);
           },
           [&](const mir::AwaitExpr& a) {
-            // Awaiting a coroutine is `co_await c`. A call that may park
-            // returns whether it parked, so it is wrapped to be awaitable:
-            // `co_await Suspension{call}`.
             const Enclosure enclosure(out, Precedence::kPrefix, at_least);
-            const mir::Expr& awaited = view.Expr(a.awaitable);
-            if (view.Unit().types.Get(awaited.type).Is<mir::CoroutineType>()) {
-              Write(
-                  view, out, "co_await ",
-                  Operand{
-                      .expr = a.awaitable, .at_least = Precedence::kPostfix});
-              return;
-            }
             Write(
-                view, out, "co_await ", SuspensionCppType(), "{", a.awaitable,
-                "}");
+                view, out, "co_await ",
+                Operand{.expr = a.execution, .at_least = Precedence::kPostfix});
+          },
+          // A registration answers whether it parked, so it is wrapped to be
+          // awaitable: `co_await Suspension{call}`.
+          [&](const mir::WaitExpr& w) {
+            const Enclosure enclosure(out, Precedence::kPrefix, at_least);
+            Write(
+                view, out, "co_await ", SuspensionCppType(), "{",
+                w.registration, "}");
           },
           [&](const mir::VectorGetExpr& g) {
             Write(
