@@ -54,7 +54,7 @@ the `Future` trait is resolved before that IR exists.
 
 **Which layer that is, here, is worth being exact about, because getting it wrong is how this was
 first designed.** LLVM IR and rustc's MIR are LIR's peers, not MIR's -- `lir.md` says so, and MIR's
-own peers are C++, Rust and Python, where awaiting is one construct a program writes. So the
+own peers are C++, Rust and Python, where awaiting is a construct a program writes. So the
 decomposition those two show belongs at MIR-to-LIR, which is where `lir.md` already puts it: "an
 await, a sensitivity wait, becomes suspend/resume edges with scheduler calls". What does not belong
 anywhere is the protocol _object_, and the shared runtime declaration -- which both backends read,
@@ -79,10 +79,20 @@ That held only for an execution, whose type is its own; a registration's type is
 which says nothing, so each consumer decided the operation by testing for the other type, and the
 execution lowering also tested whether the operand was a call -- a second input to the same
 question. Two constructs the source writes differently are two nodes at the layer whose peers are
-languages, which is this record's own requirement; a single node was taken from C++, where both
-reach one protocol object this record removed. What two nodes cost is that each can now be written
-over the other's operand, so verifying a unit refuses an await on anything but an execution and a
-wait on anything but a registration's answer.
+languages, which is this record's own requirement.
+
+The single node was taken from C++ and Rust, which do write one construct -- and even there the
+operation is stated in the node rather than chosen by whoever reads it. C++'s `co_await` obtains an
+awaiter from the operand's type by overload resolution and evaluates its `await_ready`,
+`await_suspend` and `await_resume` ([expr.await]); clang's `CoawaitExpr` stores those three as
+resolved sub-expressions, so the choice is made once, by the front end, and code generation reads
+it. Rust's `.await` reaches `poll` through `IntoFuture` (the Reference's await expression), resolved
+before its MIR exists. One syntactic construct, then, and the operation it resolved to recorded
+where it is written. Here the source writes two constructs, and what clang records as resolved
+sub-expressions is here which of the two nodes it is. A protocol the operand's type resolved through
+would not change that: its answer would still have to be stated, which is what the node does. What
+two nodes cost is that each can now be written over the other's operand, so verifying a unit refuses
+an await on anything but an execution and a wait on anything but a registration's answer.
 
 **D3. Each backend realizes the await in its own terms, and neither invents a name to do it.** The
 machine-model path decomposes it into the call, a branch on its answer, a suspend edge and the
