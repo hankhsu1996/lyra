@@ -131,7 +131,7 @@ auto Emit(
   }
 
   lyra::diag::DiagnosticSink sink;
-  auto design = lyra::compiler::LowerToHir(
+  auto design = lyra::compiler::DeclareUnits(
       std::move(compilation.front.elaborated->compilation),
       compilation.front.elaborated->source_mapper,
       lyra::compiler::LoweringPolicy{}, sink);

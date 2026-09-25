@@ -31,9 +31,10 @@ struct ExecutableDesign {
   ExecutableUnit root;
 };
 
-// Models the whole design semantically, then composes the one step no unit
-// produces. A unit's lowering reads no other unit's, so as many units are
-// lowered at once as `width` allows.
+// Lowers every declared unit's bodies to HIR and hands each unit on. A unit's
+// lowering reads no other unit's, so as many units are in flight at once as
+// `width` allows; reaching a unit's HIR reads the front end, which the units
+// take in turn, and everything after it runs beside the other units.
 //
 // What a consumer does with a unit is split along the same line. `produce`
 // takes one unit to whatever the consumer wants of it and runs beside the
@@ -46,22 +47,18 @@ struct ExecutableDesign {
 //
 // Every unit is attempted whatever the others reported, so one run accounts
 // for the whole design, and failures are reported in the order the units are
-// listed. Nothing comes back when any of them failed: what is short of the
-// design is not the design, and holding it to the checks a complete one
-// answers would report a stated gap as a bug. `produce` answering with a
-// diagnostic -- a backend that has no form for the unit -- is reported like any
-// other failure inside this stage, and that unit is not consumed.
+// listed; whether any unit failed is the sink's answer. `produce` answering
+// with a diagnostic -- a backend that has no form for the unit -- is reported
+// like any other failure inside this stage, and that unit is not consumed.
 template <typename Produce, typename Consume>
-auto LowerToSemantic(
-    ElaboratedDesign& design, const diag::SourceManager& sources,
-    diag::DiagnosticSink& sink, std::size_t width, Produce produce,
-    Consume consume) -> std::optional<SemanticDesign> {
-  using Produced = std::invoke_result_t<Produce, SemanticUnit>;
+void LowerToHir(
+    ElaboratedDesign& design, diag::DiagnosticSink& sink, std::size_t width,
+    Produce produce, Consume consume) {
+  using Produced = std::invoke_result_t<Produce, hir::CompilationUnit>;
   support::ProduceInOrder(
-      design.hir.units.size(), width,
+      design.units.UnitCount(), width,
       [&](std::size_t i) -> Produced {
-        const hir::CompilationUnit hir_unit = std::move(design.hir.units[i]);
-        auto unit = LowerUnitToSemantic(hir_unit, sources);
+        auto unit = design.units.LowerUnit(i);
         if (!unit) {
           return std::unexpected(std::move(unit.error()));
         }
@@ -74,11 +71,34 @@ auto LowerToSemantic(
           sink.Report(std::move(produced.error()));
         }
       });
+}
+
+// Models the whole design semantically, then composes the one step no unit
+// produces. Nothing comes back when any unit failed: what is short of the
+// design is not the design, and holding it to the checks a complete one
+// answers would report a stated gap as a bug.
+template <typename Produce, typename Consume>
+auto LowerToSemantic(
+    ElaboratedDesign& design, const diag::SourceManager& sources,
+    diag::DiagnosticSink& sink, std::size_t width, Produce produce,
+    Consume consume) -> std::optional<SemanticDesign> {
+  using Produced = std::invoke_result_t<Produce, SemanticUnit>;
+  LowerToHir(
+      design, sink, width,
+      [&](const hir::CompilationUnit& hir_unit) -> Produced {
+        auto unit = LowerUnitToSemantic(hir_unit, sources);
+        if (!unit) {
+          return std::unexpected(std::move(unit.error()));
+        }
+        return produce(*std::move(unit));
+      },
+      consume);
   if (sink.HasErrors()) {
     return std::nullopt;
   }
 
-  auto root = SynthesizeDesignRoot(design.tops, design.hir.signatures, sources);
+  auto root =
+      SynthesizeDesignRoot(design.tops, design.units.Signatures(), sources);
   if (!root) {
     sink.Report(std::move(root.error()));
     return std::nullopt;

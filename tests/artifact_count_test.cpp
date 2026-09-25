@@ -12,10 +12,11 @@
 // and one per repetition where they do not, so a run that shared nothing and a
 // run that shared what it must not are each a failure.
 
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
-#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -23,6 +24,8 @@
 #include <slang/driver/Driver.h>
 
 #include "lyra/compiler/compile.hpp"
+#include "lyra/compiler/lower_design.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 
@@ -58,28 +61,36 @@ auto CompiledBlocksOfGenerate(std::string_view source, std::size_t depth)
   if (!front.elaborated.has_value()) return 0;
 
   lyra::diag::DiagnosticSink sink;
-  auto design = lyra::compiler::LowerToHir(
+  auto design = lyra::compiler::DeclareUnits(
       std::move(front.elaborated->compilation), front.elaborated->source_mapper,
       lyra::compiler::LoweringPolicy{}, sink);
-  EXPECT_TRUE(design.has_value()) << "the probe design did not lower";
+  EXPECT_TRUE(design.has_value()) << "the probe design did not declare";
   if (!design.has_value()) return 0;
 
-  for (const lyra::hir::CompilationUnit& unit : design->hir.units) {
-    const lyra::hir::StructuralScope* scope = &unit.root_scope;
-    for (std::size_t level = 0;; ++level) {
-      const lyra::hir::Generate* found = nullptr;
-      for (const lyra::hir::Generate& generate : scope->generates) {
-        if (generate.child_scopes.size() != 0) {
-          found = &generate;
-          break;
+  std::optional<std::size_t> blocks;
+  lyra::compiler::LowerToHir(
+      *design, sink, 1,
+      [depth](const lyra::hir::CompilationUnit& unit)
+          -> lyra::diag::Result<std::optional<std::size_t>> {
+        const lyra::hir::StructuralScope* scope = &unit.root_scope;
+        for (std::size_t level = 0;; ++level) {
+          const lyra::hir::Generate* found = nullptr;
+          for (const lyra::hir::Generate& generate : scope->generates) {
+            if (generate.child_scopes.size() != 0) {
+              found = &generate;
+              break;
+            }
+          }
+          if (found == nullptr) return std::nullopt;
+          if (level == depth) return found->child_scopes.size();
+          scope = &*found->child_scopes.begin();
         }
-      }
-      if (found == nullptr) break;
-      if (level == depth) return found->child_scopes.size();
-      scope = &*found->child_scopes.begin();
-    }
-  }
-  return 0;
+      },
+      [&blocks](std::optional<std::size_t> in_unit) {
+        if (!blocks.has_value()) blocks = in_unit;
+      });
+  EXPECT_FALSE(sink.HasErrors()) << "the probe design did not lower";
+  return blocks.value_or(0);
 }
 
 TEST(ArtifactCount, RepeatedBlocksAreCompiledOnce) {

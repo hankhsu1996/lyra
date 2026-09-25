@@ -679,6 +679,12 @@ the detail lives in the entry itself.
   than reuse, and every compile is attempted so every failure is reported. Defaulting to one per
   processor, a field in the design declaration, emitting a graph for a build tool, and giving a
   foreign source a schedule of its own are rejected.
+- [the-front-end-has-one-reader](the-front-end-has-one-reader.md) -- a unit's bodies are lowered to
+  HIR as the first step of its own pipeline, so no unit's HIR waits for another's and the peak no
+  longer holds all of them, but the elaborated AST is read by one unit at a time: the front end
+  elaborates what a reader first touches, and a unit reads past its own body wherever a name lands.
+  Reading a frozen AST from every worker, turning instance caching off to make that sound, and
+  reading a duplicate instance through the body it duplicates are rejected.
 - [a-precompiled-header-is-an-attempt](a-precompiled-header-is-an-attempt.md) -- making a build
   faster may not change whether it succeeds or what it produces, so a header compiled in advance is
   offered to a compile and never required by one: a compile that failed with one is run again

@@ -198,13 +198,10 @@ Rules:
         rather than to its largest unit. Whatever such a step actually reads
         about each unit is a record the unit publishes, and the record is
         what crosses.
-        The admitted entries carry their reason and the reasons are not
-        alike. A linker holds every artifact by right, and an in-process
-        execution session is a linker. A lowering that builds the whole
-        design's form before handing any of it on is instead the shape this
-        rule is named for, admitted because it is where the remaining work
-        is rather than because it is correct. An entry whose file no longer
-        matches fails until it goes, so the record only shrinks.
+        An admitted entry carries its reason. A linker holds every artifact
+        by right, and an in-process execution session is a linker; nothing
+        else has one. An entry whose file no longer matches fails until it
+        goes, so the record only shrinks.
         Scope: every .cpp/.hpp under src/lyra and include/lyra.
 
   A023  In the AST-to-HIR lowering, an expression a body states is lowered,
@@ -1026,17 +1023,7 @@ A022_PATTERN = re.compile(
     r"\b(?:std::)?(?:span\s*<\s*const\s+|vector\s*<\s*)"
     r"(?:(?:hir|mir|lir)::CompilationUnit|compiler::ExecutableUnit)\s*>")
 
-A022_ADMITTED: dict[str, str] = {
-    "include/lyra/lowering/ast_to_hir/lower.hpp": (
-        "the whole design's HIR, built in one pass before any of it is "
-        "lowered further -- the shape this rule is named for, standing "
-        "because a unit's published surface is derived in a phase that runs "
-        "across every unit before any body is lowered"
-    ),
-    "src/lyra/lowering/ast_to_hir/compilation_lowerer.cpp": (
-        "that same set, where it is built"
-    ),
-}
+A022_ADMITTED: dict[str, str] = {}
 
 # Rule A023
 # The two ways to reach the answer the front end already has for an expression:
