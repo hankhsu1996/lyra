@@ -236,9 +236,9 @@ ownership, or native in-frame layout) for every value.
       chain of `ref` ports denotes the one variable at its end. An `output` / `inout` argument is
       not subject to this -- it copies out through the actual's own write path.
 
-      Two things still refuse. A component of an aggregate is realized here as part of one value
-      rather than as storage of its own, which the entry below covers. And reaching the storage a
-      reference binds, rather than reading or writing through it, is not an operation here: the two
+      Two things still refuse. A component of an aggregate cannot be lent yet, which the entry below
+      covers. And reaching the storage a reference binds, rather than reading or writing through it,
+      is not an operation here: the two
       kinds are different storage with one type between them, so an address taken through a
       reference would name whichever kind the type does not admit. Waiting on a `ref` port's own
       name is what asks for it (LRM 9.4.2).
@@ -246,29 +246,25 @@ ownership, or native in-frame layout) for every value.
 - [ ] **A component of an aggregate is storage of its own.** The language gives a member of an
       unpacked structure and an element of an unpacked array an identity a second name may denote,
       independent of the position it sits at and of the value its parent currently holds
-      (`../architecture/storage.md`). Three behaviours follow, and this backend offers none of them
-      because it realizes an aggregate as one value and reaches a part of it by extracting and
-      rebuilding. A component can be lent, so a `ref` actual may name a member or an element and a
-      write through it reaches that component and nothing else. A whole assignment to a fixed-size
-      aggregate writes into the components that are already there (LRM 7.6), so a reference to one
-      goes on denoting it and observes the new value, rather than the store replacing the value
-      those components were part of. And a variable-size container preserves every element's
-      identity across an insertion or a removal at any position (LRM 7.10.3), with an element
-      removed while a reference is bound going on existing for whoever holds it and its writes
-      invisible through the container (LRM 13.5.2).
+      (`../architecture/storage.md`).
 
-      The three are one question rather than three: whether a component's identity is independent of
-      the value its parent holds. `../decisions/storage-owns-its-value.md` settles that a storage
-      entity owns its value's representation and a component with identity is itself storage, and
-      settles the fixed unpacked array and the unpacked struct; what a variable-size container's
-      element storage becomes is deliberately still open there, as is how the IR names a component's
-      storage at all.
+      Done: a component is read where it lies and written in place, an element of an array, a
+      queue or an associative array alike, and a method changing a container changes it in place;
+      a whole assignment to a fixed-size aggregate writes into the components already there (LRM
+      7.6). `../decisions/a-part-of-storage-is-reached-where-it-lies.md` holds the design.
 
-- [x] **Writing into a local that holds a value rather than storage.** A local needs storage exactly
-      when the body needs an address for it, and every way a body asks for one counts: assigning it,
-      designating a part of it to write, and calling a method that changes it -- the last two
-      because a local's storage is read and written whole, so both are a whole value rebuilt and
-      stored back through the local. A local a body only reads stays the value it was bound to.
+      Still refused or unsettled: a component cannot be lent, so a `ref` actual naming a member or
+      an element is refused -- a write through it into a component of a subscribable variable has
+      to reach the variable too, and a reference cannot say that yet. And a variable-size container
+      preserving every element's identity across an insertion or a removal (LRM 7.10.3), with an
+      element removed while a reference is bound going on existing for whoever holds it (LRM
+      13.5.2), is a question of the container's representation that
+      `../decisions/storage-owns-its-value.md` leaves open.
+
+- [x] **Writing into a local that holds a value rather than storage.** Every declared local has
+      storage of its own -- a slot of the frame, or, for a type whose values the runtime builds,
+      storage in the execution's store -- so assigning it, writing a part of it, and calling a
+      method that changes it all reach that storage.
 
 ## Value realization: two tracks today, one native model deferred
 
@@ -280,8 +276,8 @@ The value layer is realized two ways, and the breadth work above runs against th
 - The execution backend realizes each value as an opaque handle to a type-erased runtime object in
   its own frame (`../decisions/a-value-lives-in-its-makers-frame.md`,
   `../decisions/jit-aggregate-realization.md`): it emits generated code with no host compiler to
-  expand a template, so an aggregate is one erased object and an interior write is a functional
-  whole-value update.
+  expand a template, so an aggregate is one erased object, and a component that is storage of its
+  own is reached through the library where it lies.
 
 Both are correct and agree per source (the backend-agreement tests check this), but they are two
 implementations of the same value semantics. Every value domain added to the execution backend is a

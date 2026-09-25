@@ -174,6 +174,17 @@ class Var : public Observable, public ValueStorageCore<T> {
   // per-value-family test it reports through is in scope.
   void PublishTransition(const std::optional<T>& before);
 
+  // Where a write reaching part of the cell lands: the cell's own storage, or,
+  // while a procedural continuous assignment is in effect (LRM 10.6), storage
+  // nothing reads -- the partial write is overridden exactly as a whole-value
+  // write through `Set` is.
+  [[nodiscard]] auto PartialWriteTarget() -> T& {
+    if (takeovers_ != nullptr && takeovers_->Highest() != nullptr) {
+      return takeovers_->Discarded(this->Get());
+    }
+    return this->Storage();
+  }
+
   // RAII entry to partial-write context. Construct via `var.Mutate()` at the
   // start of a chain; the returned handle names the cell's own storage, so a
   // partial write expressed as a single selector chain (e.g. ending in a
@@ -279,7 +290,7 @@ class Ref {
   // shorter route.
   [[nodiscard]] auto MutationStorage() const -> T& {
     if (signal_ != nullptr) {
-      return signal_->Storage();
+      return signal_->PartialWriteTarget();
     }
     return *plain_;
   }

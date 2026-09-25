@@ -321,4 +321,10 @@ auto RuntimeValueContainerOf(
       prototype.value);
 }
 
+auto DiscardTarget(const RuntimeValue& element_default) -> RuntimeValue& {
+  thread_local RuntimeValue discarded;
+  discarded = element_default;
+  return discarded;
+}
+
 }  // namespace lyra::value

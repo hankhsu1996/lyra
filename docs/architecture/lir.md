@@ -48,18 +48,19 @@ below LIR, at LIR-to-LLVM.
 - A self-contained type graph: LIR-owned type identities that type every local, value, place
   projection, return, and call argument. Each is translated from a generic-PL type at MIR-to-LIR and
   carries no live reference back to MIR.
-- The place vocabulary: a place is a base local plus a projection chain of member and dereference
-  steps, spelled inside the instruction that consumes it and never held. Every load, store, and
-  address-of names a place by logical identity, and address-of is the one operation that turns the
-  path into a value the program can retain. There is no index or slice step: a value aggregate's
-  interior is not independently addressable and is reached by value projection, and storage behind
-  an indirection is reached by a dereference step.
+- The place vocabulary: a place is a base local plus a projection chain of member, dereference,
+  element, and component steps, spelled inside the instruction that consumes it and never held.
+  Every load, store, and address-of names a place by logical identity, and address-of is the one
+  operation that turns the path into a value the program can retain. An element or component step
+  reaches a part that is storage of its own -- an array's element, a structure's member; a part that
+  is a view of its whole -- a packed value's bits, a string's character, a union's member -- is
+  reached by value projection. There is no slice step, because a window is several elements rather
+  than one storage, and storage behind an indirection is reached by a dereference step.
 - The transient-value vocabulary: a computed value with a pure dataflow origin, not backed by a
   named memory location.
-- The value-aggregate selector vocabulary: which subvalue a step names -- a product's component
-  slot, the one member an active-member value holds at a time, a runtime coordinate, a fixed-width
-  window. One extract and one update carry every step; the selector never says how the step is
-  realized.
+- The value-aggregate selector vocabulary: which subvalue of a view a step names -- the one member
+  an active-member value holds at a time, a runtime coordinate, a fixed-width window. One extract
+  and one update carry every step; the selector never says how the step is realized.
 - Logical storage topology: which local, member, element, or referent a place names, and the logical
   identity of every class member and callable a node refers to. A member step reaches a class this
   unit compiles or a class another unit published, both member-bearing objects of this unit's own
@@ -104,18 +105,19 @@ identity is the suspect, not the analysis.
    layer._
 2. Each LIR local either names storage or is a transient value, and which one is explicit. Which one
    a local is follows a canonical lowering rule, not the source language's notion of a variable: a
-   local is a place -- named storage -- exactly when the canonical lowering needs an address for it
-   (its address is taken, it is assigned after its initialization, or it holds a control-flow join).
-   A value computed once and consumed is a transient value with a pure dataflow origin. The rule
-   fixes the storage topology; it does not minimize it -- recovering a register where the address is
-   never truly needed is a separate derivation below LIR. _Machine-execution consequence: the
-   codegen knows for every value whether it lives in memory or in a register-class temporary; no
-   value's storage class must be inferred._
+   local is a place -- named storage -- exactly when the canonical lowering names it as storage (a
+   declared local, a value a part is reached in, or a result that control-flow paths join at). A
+   value computed once and consumed is a transient value with a pure dataflow origin. The rule fixes
+   the storage topology; it does not minimize it -- recovering a register where the address is never
+   truly needed is a separate derivation below LIR. _Machine-execution consequence: the codegen
+   knows for every value whether it lives in memory or in a register-class temporary; no value's
+   storage class must be inferred._
 3. LIR fixes logical storage topology, not physical layout. A place names storage by logical
-   identity -- a base local and a projection chain of member and dereference steps -- never as a
-   byte offset, an address, or pointer arithmetic. The physical realization of that topology is
-   derived below LIR. _Machine-execution consequence: one LIR program is valid for every target; the
-   target-specific layout is a separate derivation, not a property baked into a place._
+   identity -- a base local and a projection chain of steps naming a member, a referent, an element,
+   or a component -- never as a byte offset, an address, or pointer arithmetic. The physical
+   realization of that topology is derived below LIR. _Machine-execution consequence: one LIR
+   program is valid for every target; the target-specific layout is a separate derivation, not a
+   property baked into a place._
 4. LIR identity is self-contained. Every type, class, member, and callable a LIR node names is a
    LIR-owned identity. Every MIR type entering LIR is fully translated to a LIR type or rejected at
    the MIR-to-LIR boundary; no LIR node carries a MIR id, index, or borrowed pointer as a live
@@ -266,38 +268,24 @@ own -- not merely something a source-level assignment can target. Path and ident
 and the split is what makes the vocabulary safe: the path is written where an instruction consumes
 it and locates whatever its base and projections reach at that moment, while the identity a program
 retains is the value address-of yields (`storage.md`). Assignability and place-ness are different
-questions: in a value language, `s.b = x` on a struct is assignable but names no independent
-storage, because the struct is a value and `s.b` is a part of it, not a location. So the place
-vocabulary is for mutable, independently addressable storage (a local that needs an address, an
-object member reached through its receiver, the referent of a dereference); a value aggregate is not
-that. An unpacked struct -- the heterogeneous product value (see `mir.md`) -- reached through an
-opaque handle is a first-class value, but its interior is not a place the way an object's members
-are: value semantics forbid mutating a component in place, because the change would be visible
-through every copy of the struct. So a component is reached by value projection, not by an
-addressable sub-place. Reading a component extracts it from the product value; writing a component
-produces a new product value equal to the old one with that component replaced, which is then stored
-whole into the struct's own storage -- a component write is a whole-value store of a functional
-update, uniform whether the struct lives in a local or in an observable cell. This is the
-value-aggregate counterpart of the object member's place: an object member is mutable addressable
-storage, so it is a place loaded and stored in place; a struct component is an immutable value part,
-so it is a pair of value operations, an extract and an insert (the aggregate peers of LLVM's
-`extractvalue` / `insertvalue`). The two look different because the value / reference distinction is
-real, not because one is a special case of the other. The same principle governs the rest of the
-value-aggregate family: a packed slice, a container element, and a union member are value
-sub-accesses, so a sub-write is a functional whole-value update, never a store into an independently
-addressable sub-place. One extract and one update carry every one of them, and the selector says
-only which subvalue is named -- a product's component slot, the one member an active-member value
-holds at a time, a runtime coordinate, a fixed-width window. All of this follows from the
-realization MIR fixed for the aggregate; what the source language lets a second name denote is a
-separate question, and `storage.md` owns it. Which library entry realizes a step, and whether it is
-an instruction or a call at all, is a realization question answered below LIR; it never decides
-which node the step is expressed as. A whole-value mutating method on a value receiver -- a
-container's `delete`, a queue's `push` -- follows the same rule: it is realized as a functional
-operation whose result is stored back through the receiver's owner, not an in-place mutation of the
-value. How a target keeps value semantics for such a store is below LIR: a target with
-language-level value copies may fulfill it by mutating a private copy in place, while one whose
-container value is reached through a shared handle must produce a new value, so the model LIR states
--- a new whole value written back to the owner -- holds for both.
+questions, and which parts of a value are storage of their own is the language's answer rather than
+this layer's. An element of an array, queue or associative array, and a member of an unpacked
+structure, each have an identity a second name may denote (`storage.md`), so each is a place: a step
+into it extends the place holding its value, a load reads it where it lies, and a store writes into
+the object already there. Value semantics hold because a copy of the aggregate copies its parts, so
+no two values share one and a write through one is seen through no other. A packed value's bits, a
+string's character and a union's member have no identity of their own; each is a view of its whole,
+reached by value projection -- an extract, and an update producing the whole again, which is stored
+where the whole lives (the aggregate peers of LLVM's `extractvalue` / `insertvalue`). One extract
+and one update carry every such view, and the selector says only which subvalue is named -- the one
+member an active-member value holds at a time, a runtime coordinate, a fixed-width window. A step's
+direction is the access's: reading a missing element reads the default, and writing one allocates or
+discards it by the container's own rule, which the library applies when the step is realized. Which
+library entry realizes a step, and whether it is an instruction or a call at all, is a realization
+question answered below LIR; it never decides which node the step is expressed as. A mutating method
+on a receiver -- a container's `delete`, a queue's `push` -- changes the storage the receiver names
+in place; where the receiver is a view, it is read out, changed, and written back as any write to a
+view is.
 
 LIR carries the fact that a packed value is two-state or four-state; it does not carry how a
 four-state value is stored. The canonical encoding of a four-state value -- value bits plus a state

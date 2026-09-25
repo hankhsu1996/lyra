@@ -608,18 +608,6 @@ auto UnitLowerer::PromisedClass(
   return *promised;
 }
 
-auto UnitLowerer::ProductOf(std::vector<lir::TypeId> components)
-    -> lir::TypeId {
-  if (const auto it = product_memo_.find(components);
-      it != product_memo_.end()) {
-    return it->second;
-  }
-  const lir::TypeId id =
-      out_.types.Intern(lir::Type{lir::TupleType{.elements = components}});
-  product_memo_.emplace(std::move(components), id);
-  return id;
-}
-
 auto UnitLowerer::LowerBase(const mir::ClassRef& base) const -> lir::Base {
   return std::visit(
       Overloaded{

@@ -40,4 +40,28 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
   throw InternalError("value domain: unknown domain");
 }
 
+auto PartsAreStorage(ValueDomain domain) -> bool {
+  switch (domain) {
+    case ValueDomain::kTuple:
+    case ValueDomain::kDynArray:
+    case ValueDomain::kUnpackedArray:
+    case ValueDomain::kQueue:
+    case ValueDomain::kAssocArray:
+      return true;
+    case ValueDomain::kPacked:
+    case ValueDomain::kString:
+    case ValueDomain::kUnion:
+    case ValueDomain::kTaggedUnion:
+      return false;
+    // A value with no parts at all has none to be storage.
+    case ValueDomain::kReal:
+    case ValueDomain::kShortReal:
+    case ValueDomain::kChandle:
+    case ValueDomain::kEmpty:
+    case ValueDomain::kManagedRef:
+      return false;
+  }
+  throw InternalError("value domain: unknown domain");
+}
+
 }  // namespace lyra::support

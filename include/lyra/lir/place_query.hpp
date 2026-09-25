@@ -45,12 +45,12 @@ auto PlaceType(
 auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool;
 
 // Whether an instruction brings a value into existence rather than naming one
-// that already exists. A load of a place local names the value its slot holds,
-// a cast reads a value as another type, and a library entry that answers with
-// storage it was handed names that storage; every other load, and every call,
-// build, update and operator, makes a value of its own. Where that value's type
-// is an owned one, what made it owes its end.
-auto MakesValue(const Function& fn, const InstrData& instr) -> bool;
+// that already exists. A load names the value its place holds, where it lies; a
+// cast reads a value as another type; and a library entry that answers with
+// storage it was handed names that storage. Every call, build, update and
+// operator makes a value of its own. Where that value's type is an owned one,
+// what made it owes its end.
+auto MakesValue(const InstrData& instr) -> bool;
 
 // The same question of a call, which its target alone answers -- asked of a
 // call that may depart as much as of one that returns.

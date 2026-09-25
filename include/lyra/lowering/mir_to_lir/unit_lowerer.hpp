@@ -1,15 +1,11 @@
 #pragma once
 
-#include <cstddef>
-#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
-#include "lyra/base/hash.hpp"
-#include "lyra/base/interner.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/compilation_unit.hpp"
@@ -85,10 +81,6 @@ class UnitLowerer {
   // translated, so the two layers cannot disagree about what a predicate
   // reduces to.
   auto MachineBoolType() -> lir::TypeId;
-
-  // The product a call completes with where the operation answers with more
-  // than one value, which no source-level type names.
-  auto ProductOf(std::vector<lir::TypeId> components) -> lir::TypeId;
 
   // A control effect crossing to or from the runtime. Its shape does not
   // depend on which region catches it -- an effect is the target it names --
@@ -238,7 +230,6 @@ class UnitLowerer {
       external_unit_object_identities_;
   base::Translation<mir::ClosureId, ClosureIdentities> closure_identities_;
   base::Translation<mir::StructId, lir::StructId> struct_identities_;
-  std::map<std::vector<lir::TypeId>, lir::TypeId> product_memo_;
   // Set the first time a MIR type with no LIR mirror is reached; surfaced as
   // the unit's failure at `Run`, so translation stays non-throwing and
   // total-shaped while an unmirrored type is still a clean diagnostic, not a

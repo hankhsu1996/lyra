@@ -12,8 +12,9 @@ namespace lyra::support {
 
 // An object the runtime library defines that is not a value of the design:
 // what an entry builds for one use -- what a print is assembled from, what a
-// wait registers, the storage a closure captures into -- and what the
-// generated side holds for a while -- an execution, a hold on a promoted scope.
+// wait registers, the storage a closure captures into, a write in progress into
+// storage a wrapper stands for -- and what the generated side holds for a while
+// -- an execution, a hold on a promoted scope.
 enum class LibraryObject : std::uint8_t {
   kClosure,
   kPrintItem,
@@ -29,6 +30,7 @@ enum class LibraryObject : std::uint8_t {
   kErasedValue,
   kExecution,
   kPromotedScope,
+  kOpenWrite,
 };
 
 // An object generated code holds by value: it gives the object storage in its
@@ -117,6 +119,8 @@ constexpr auto LayoutOf(LibraryObject object) -> ObjectLayout {
       return {.size = 8, .align = 8, .ends_with_nothing_to_do = false};
     case LibraryObject::kPromotedScope:
       return {.size = 24, .align = 8, .ends_with_nothing_to_do = false};
+    case LibraryObject::kOpenWrite:
+      return {.size = 144, .align = 8, .ends_with_nothing_to_do = false};
   }
   throw InternalError("runtime object: unknown library object");
 }

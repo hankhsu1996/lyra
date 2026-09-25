@@ -104,16 +104,14 @@ auto RuntimeUnpackedArray::ElementAt(std::size_t position) const
   return data_[position];
 }
 
-auto RuntimeUnpackedArray::WithElement(
-    const PackedArray& position, RuntimeValue value) const
-    -> RuntimeUnpackedArray {
-  RuntimeUnpackedArray result(*this);
+auto RuntimeUnpackedArray::ElementRef(const PackedArray& position)
+    -> RuntimeValue& {
   const std::optional<std::size_t> ordinal =
       ElementOrdinal(position, data_.size());
-  if (ordinal) {
-    result.data_[*ordinal] = std::move(value);
+  if (!ordinal) {
+    return DiscardTarget(*element_default_);
   }
-  return result;
+  return data_[*ordinal];
 }
 
 auto RuntimeUnpackedArray::FromString(
@@ -195,13 +193,11 @@ auto RuntimeUnpackedArray::Slice(const PackedArray& start, std::int64_t count)
           data_, *element_default_, ReadPosition(start), SliceCount(count)));
 }
 
-auto RuntimeUnpackedArray::WithSlice(
+void RuntimeUnpackedArray::AssignSlice(
     const PackedArray& start, std::int64_t count,
-    const RuntimeUnpackedArray& replacement) const -> RuntimeUnpackedArray {
-  RuntimeUnpackedArray result(*this);
+    const RuntimeUnpackedArray& replacement) {
   detail::ArraySliceScatter(
-      result.data_, ReadPosition(start), SliceCount(count), replacement.data_);
-  return result;
+      data_, ReadPosition(start), SliceCount(count), replacement.data_);
 }
 
 // A declared range is never empty, so the fold below always runs at least once

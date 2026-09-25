@@ -27,10 +27,10 @@ struct RuntimeValue;
 // type-erased `RuntimeValue` elements and an element-default prototype, and
 // composes the value contract by visiting them.
 //
-// Value semantics are preserved by immutability: every apparent mutation is a
-// functional operation returning a new queue, never an in-place write, so a
-// queue whose handle is shared by a copy is never disturbed by a write through
-// another copy.
+// Each element is storage of its own, and a method changing the queue changes
+// it where it lies. Value semantics hold because a copy of the queue copies its
+// elements: no two queues share one, so a write through one is never seen
+// through another.
 class RuntimeQueue {
  public:
   // The uninitialized sentinel form -- the empty queue before its declared
@@ -39,10 +39,9 @@ class RuntimeQueue {
   // with the real element default.
   RuntimeQueue();
 
-  // An empty queue of a known element shape, which a functional operation
-  // yielding no element starts from. `element_default` is the shape source for
-  // out-of-range reads (LRM 7.4.5) and for the slot an append creates, so it
-  // carries the exact element representation.
+  // An empty queue of a known element shape. `element_default` is the shape
+  // source for out-of-range reads (LRM 7.4.5) and for the slot an append
+  // creates, so it carries the exact element representation.
   explicit RuntimeQueue(RuntimeValue element_default);
 
   // The same, holding no element whose index exceeds `max_bound`
@@ -82,23 +81,22 @@ class RuntimeQueue {
 
   // LRM 7.10.1 / 7.4.5: reads the element `position` names by reference. A
   // position that names no element here reads the element default; a read
-  // never grows the queue. The caller copies the result out
-  // across the opaque-handle boundary rather than aliasing it.
+  // never grows the queue.
   [[nodiscard]] auto Element(const PackedArray& position) const
       -> const RuntimeValue&;
+
+  // LRM 7.10.1: the element `position` names, as storage a write lands in. The
+  // position one past the last appends an element there first, trimmed to the
+  // bound, and every other position naming none -- negative, past the append
+  // position, or unknown -- yields storage nothing reads, so a write there is
+  // discarded.
+  [[nodiscard]] auto ElementRef(const PackedArray& position) -> RuntimeValue&;
 
   // The element at storage position `position`, counted from the first in the
   // queue's own order -- the coordinate LRM 7.12 walks a container by. A
   // position past the last is a walk defect rather than an out-of-range read.
   [[nodiscard]] auto ElementAt(std::size_t position) const
       -> const RuntimeValue&;
-
-  // A functional element write: yields a new queue equal to this one with the
-  // element `position` names replaced. LRM 7.10.1 makes the position one past
-  // the last an append of one element, and every other invalid position --
-  // negative, past the append position, or naming none -- discards the write.
-  [[nodiscard]] auto WithElement(
-      const PackedArray& position, RuntimeValue value) const -> RuntimeQueue;
 
   // LRM 7.10.1 slice: the elements from position `lo` through `hi`. A bound
   // that names no position, or an empty window after clamping, yields the
@@ -107,10 +105,10 @@ class RuntimeQueue {
   [[nodiscard]] auto Slice(const PackedArray& lo, const PackedArray& hi) const
       -> RuntimeQueue;
 
-  // LRM 7.10.2.6 / 7.10.2.7: a copy with one element added at the front or the
-  // back, trimmed to the bound.
-  [[nodiscard]] auto PushFront(RuntimeValue item) const -> RuntimeQueue;
-  [[nodiscard]] auto PushBack(RuntimeValue item) const -> RuntimeQueue;
+  // LRM 7.10.2.6 / 7.10.2.7: one element added at the front or the back, the
+  // queue then trimmed to its bound.
+  void PushFront(RuntimeValue item);
+  void PushBack(RuntimeValue item);
 
   // LRM 10.10: a copy of this queue with every element of a spread part
   // appended in order, trimmed to the bound. The part crosses erased as any
@@ -129,25 +127,21 @@ class RuntimeQueue {
       const RuntimeValue& source, RuntimeValue element_default,
       const PackedArray& max_bound) -> RuntimeQueue;
 
-  // LRM 7.10.2.4 / 7.10.2.5 pop, as its two halves: the element at the front
-  // or the back, and the queue left once it is gone. An empty queue has none
-  // to remove, so it reads the element default and stays as it is.
-  [[nodiscard]] auto Front() const -> const RuntimeValue&;
-  [[nodiscard]] auto Back() const -> const RuntimeValue&;
-  [[nodiscard]] auto PopFront() const -> RuntimeQueue;
-  [[nodiscard]] auto PopBack() const -> RuntimeQueue;
+  // LRM 7.10.2.4 / 7.10.2.5: removes the element at the front or the back and
+  // answers with it. An empty queue has none to remove, so it answers with the
+  // element default and stays as it is.
+  auto PopFront() -> RuntimeValue;
+  auto PopBack() -> RuntimeValue;
 
-  // LRM 7.10.2.2: a copy with `item` inserted before `index`, where
-  // `index == size` appends. An x or z, negative, or beyond-size index leaves
-  // the queue unchanged.
-  [[nodiscard]] auto Insert(const PackedArray& index, RuntimeValue item) const
-      -> RuntimeQueue;
+  // LRM 7.10.2.2: inserts `item` before `index`, where `index == size`
+  // appends. An x or z, negative, or beyond-size index leaves the queue
+  // unchanged.
+  void Insert(const PackedArray& index, RuntimeValue item);
 
-  // LRM 7.10.2.3: a copy emptied, or a copy with the element at `index`
-  // removed. An invalid index leaves the queue unchanged.
-  [[nodiscard]] auto Delete() const -> RuntimeQueue;
-  [[nodiscard]] auto DeleteIndex(const PackedArray& index) const
-      -> RuntimeQueue;
+  // LRM 7.10.2.3: empties the queue, or removes the element at `index`. An
+  // invalid index leaves the queue unchanged.
+  void Delete();
+  void DeleteIndex(const PackedArray& index);
 
   // LRM 11.4.5 `==` / `!=` (Any data type): a size check then an element-wise
   // reduction that propagates X / Z through each element's own equality.

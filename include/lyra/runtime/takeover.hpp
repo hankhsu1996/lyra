@@ -94,6 +94,14 @@ class Takeovers {
     return nullptr;
   }
 
+  // Where a procedural write reaching part of the cell lands while a level is
+  // in effect: storage shaped like `shown` that nothing reads, so the write is
+  // discarded as a whole-value write is.
+  auto Discarded(const T& shown) -> T& {
+    discarded_ = shown;
+    return *discarded_;
+  }
+
  private:
   [[nodiscard]] static auto IndexOf(support::TakeoverLevel level)
       -> std::size_t {
@@ -111,6 +119,7 @@ class Takeovers {
 
   std::array<std::optional<T>, support::kTakeoverLevelCount> slots_;
   std::array<std::uint32_t, support::kTakeoverLevelCount> generations_{};
+  std::optional<T> discarded_;
 };
 
 }  // namespace lyra::runtime

@@ -95,9 +95,16 @@ auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool {
 
 auto CallMakesValue(const CallTarget& target) -> bool {
   // Allocating a value cell answers the cell, which is storage the running
-  // activation keeps, whatever type the cell is named by.
+  // activation keeps, whatever type the cell is named by; reading one answers
+  // what the cell holds, where it lies; and storing answers nothing.
   if (const auto* cell = std::get_if<ValueCellTarget>(&target)) {
-    return cell->op != ValueCellTarget::Op::kAllocate;
+    switch (cell->op) {
+      case ValueCellTarget::Op::kAllocate:
+      case ValueCellTarget::Op::kLoad:
+      case ValueCellTarget::Op::kStore:
+        return false;
+    }
+    throw InternalError("lir: unknown value cell operation");
   }
   const auto* builtin = std::get_if<BuiltinTarget>(&target);
   if (builtin == nullptr) {
@@ -113,14 +120,14 @@ auto CallMakesValue(const CallTarget& target) -> bool {
   throw InternalError("lir: unknown entry answer");
 }
 
-auto MakesValue(const Function& fn, const InstrData& instr) -> bool {
+auto MakesValue(const InstrData& instr) -> bool {
   return std::visit(
       Overloaded{
           [](const CallInstr& call) { return CallMakesValue(call.target); },
-          [&](const LoadInstr& load) {
-            return !(
-                IsPlaceLocal(fn, load.place.base) && load.place.chain.empty());
-          },
+          // A read answers with the storage it reached, which whoever holds
+          // that storage owns; only a value the reader keeps is copied, and
+          // keeping it is a step of its own.
+          [](const LoadInstr&) { return false; },
           [](const CastInstr&) { return false; },
           [](const ProductInstr&) { return true; },
           [](const UnionInstr&) { return true; },
@@ -166,6 +173,29 @@ auto PlaceType(
             },
             [&](const MemberProjection& projection) {
               current = StatedMemberType(unit, projection.member);
+            },
+            [&](const ElementProjection&) {
+              const std::optional<TypeId> element =
+                  unit.types.Get(current).ContainerElementType();
+              if (!element) {
+                throw InternalError(
+                    "lir: an element step over a type that holds no run of "
+                    "elements");
+              }
+              current = *element;
+            },
+            [&](const PartProjection& projection) {
+              const Type& product = unit.types.Get(current);
+              if (!product.IsProduct()) {
+                throw InternalError(
+                    "lir: a part step over a type that is not a product");
+              }
+              const std::vector<TypeId> components =
+                  product.ProductComponentTypes();
+              if (projection.index.value >= components.size()) {
+                throw InternalError("lir: part step out of range");
+              }
+              current = components[projection.index.value];
             }},
         step);
   }

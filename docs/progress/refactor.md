@@ -2578,32 +2578,31 @@ enough to warrant its own focused review.
       states every call that is not known not to unwind, and the stack release told apart from an
       error where a landing decides to stop something. Not blocked.
 
-- [ ] R148 -- On the execution backend, reading one element of a variable copies the whole variable,
-      and writing one element copies it, rebuilds it and copies it back. The representative compute
-      block runs 42 table passes a second there against 4,650 on the C++ backend (2026-09-24, both
-      optimized); a profile of it puts 31% of the time in a cell read copying a 1024-element array,
-      26% in the store copying it back, 18% in rebuilding it around one element, and 22% in ending
-      the copies. The C++ backend reads the same cell through a reference and writes the element in
-      place.
+- [x] R148 -- On the execution backend, reading one element of a variable copied the whole variable,
+      and writing one element copied it, rebuilt it and copied it back. The representative compute
+      block ran 42 table passes a second there against 4,650 on the C++ backend (2026-09-24, both
+      optimized); a profile put 31% of the time in a cell read copying a 1024-element array, 26% in
+      the store copying it back, 18% in rebuilding it around one element, and 22% in ending the
+      copies.
 
-      The reason the execution backend did otherwise is gone: it read the whole value because a
-      value lived behind a handle the runtime owned, with no interior the generated side could
-      reach. A value is now an object in storage whose address the generated side holds, so a read
-      can answer with a reference to the storage, as `Get() const&` does, and an element write can
-      land in the element, as the decision on storage owning its value already asks.
+      Done: an element and a structure member are steps of the place holding their variable, a read
+      answers with the value where it lies, a write into what a cell holds is a write opened on the
+      cell and ended with the full-expression, and a method changing its receiver changes it in
+      place (`decisions/a-part-of-storage-is-reached-where-it-lies.md`). The block now runs 2,870
+      passes a second against the C++ backend's 4,340, both measured 2026-09-24.
 
-      The same premise is what gives every such variable a cell in the execution's store rather
-      than a slot of the frame. The MIR predicate choosing it, and the record that one storage per
-      variable argues from, both reason that the holder has only a handle into storage the runtime
-      releases -- which stopped being true when values moved into the frame. What still holds is
-      that a variable needs storage a reference can bind and that survives a suspension, and a
-      frame object has both: the coroutine passes carry it across a suspension, and its address is
-      stable. So the question this entry answers includes whether a variable is a frame object,
-      which would make a read an address and remove the copy above at its root.
+      This entry first proposed making a variable a frame object, reasoning that where a variable
+      lives was the root. It was not: the measured variable is a module variable, which no frame
+      holds, and an automatic's storage in the execution's store was already addressable. The copy
+      was in how an access to a part was lowered.
 
-      Target: a read of a variable's value, and a step to one of its parts, answer with the storage
-      they reach -- the entry's answer is stated as the storage it was handed, as it already is
-      for a guard -- and only a value the program keeps past the full-expression is copied. Not
+- [ ] R149 -- A write to part of a variable something waits on copies the whole variable first, on
+      both backends. The write captures a before-image of the whole value so that, when it ends, the
+      variable can say whether it changed (LRM 4.3); for an unpacked array that is every element,
+      however few the write touched. Nothing is copied when nothing waits and nothing samples the
+      variable, which is the common case and the one the compute block measures. What changed is
+      answerable at the part written, so the capture belongs with the part rather than with the
+      whole -- which means the write's place steps tell the variable which parts they reached. Not
       blocked.
 
 ## Out of Scope

@@ -107,6 +107,7 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::FilesType& t) { return address(t); },
           [&](const lir::DiagnosticType& t) { return address(t); },
           [&](const lir::RuntimeLibraryType& t) { return address(t); },
+          [&](const lir::OpenWriteType& t) { return address(t); },
 
           // A value that already is an address: a handle onto storage of some
           // other lifetime, an execution's own frame, or -- for a chandle (LRM

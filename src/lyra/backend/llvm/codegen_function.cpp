@@ -200,10 +200,14 @@ void CodeGenFunction::EndObject(
       args);
 }
 
-auto CodeGenFunction::CopyObject(
-    support::RuntimeObject object, llvm::Value* value, llvm::Value* out)
-    -> llvm::Value* {
-  return BuildInto(RuntimeSymbol(object, RuntimeOp::kCopy), {value}, out);
+void CodeGenFunction::AssignObject(
+    support::RuntimeObject object, llvm::Value* storage, llvm::Value* value) {
+  const std::array<llvm::Value*, 2> args{storage, value};
+  builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(object, RuntimeOp::kAssign), module_->Types().Void(),
+          args),
+      args);
 }
 
 void CodeGenFunction::RelocateObject(

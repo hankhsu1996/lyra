@@ -44,10 +44,10 @@ enum class AssociativeIndexOrder : std::uint8_t {
 // What it does carry is the order its index type imposes, which the
 // monomorphized counterpart reads off its key type parameter.
 //
-// Value semantics are preserved by immutability: every apparent mutation is a
-// functional operation returning a new array, never an in-place write, so an
-// array whose handle is shared by a copy is never disturbed by a write through
-// another copy.
+// Each element is storage of its own, and a method changing the array changes
+// it where it lies. Value semantics hold because a copy of the array copies its
+// entries: no two arrays share one, so a write through one is never seen
+// through another.
 class RuntimeAssociativeArray {
  public:
   // The uninitialized sentinel form -- the empty array before its declared
@@ -112,26 +112,24 @@ class RuntimeAssociativeArray {
   [[nodiscard]] auto ElementAt(std::size_t position) const
       -> const RuntimeValue&;
 
-  // A functional element write: yields a new array with `value` stored under
-  // `index`, allocating the entry if there was none (LRM 7.8.7). An index
-  // carrying x or z is invalid whatever it names, so the write is discarded.
-  [[nodiscard]] auto WithElement(const RuntimeValue& index, RuntimeValue value)
-      const -> RuntimeAssociativeArray;
+  // LRM 7.8.7: the entry under `index`, as storage a write lands in, allocated
+  // from the value an absent index reads if there was none. An index carrying x
+  // or z is invalid whatever it names, so it yields storage nothing reads and a
+  // write there is discarded.
+  [[nodiscard]] auto ElementRef(const RuntimeValue& index) -> RuntimeValue&;
 
-  // The same writes, all of them, as one operation: `entries` applied in order,
-  // so a repeated index keeps the last write and an invalid one is discarded
-  // exactly as above. Every apparent mutation here yields a new array, so
-  // filling one from a set already in hand is linear in that set only while it
-  // is one operation. An array literal, a projection into another keyed array
-  // (LRM 7.12.5) and a memory load (LRM 21.4) are each built through it.
+  // Writes under many indices as one operation: `entries` applied in order, so
+  // a repeated index keeps the last write and an invalid one is discarded
+  // exactly as above, and the whole set is ordered once rather than an entry at
+  // a time. An array literal, a projection into another keyed array (LRM
+  // 7.12.5) and a memory load (LRM 21.4) are each built through it.
   [[nodiscard]] auto WithEntries(std::vector<RuntimeAssociativeEntry> entries)
       const -> RuntimeAssociativeArray;
 
-  // LRM 7.9.3 `delete`: a copy emptied, or a copy without the entry under
-  // `index`. An index with no entry leaves the array unchanged.
-  [[nodiscard]] auto Delete() const -> RuntimeAssociativeArray;
-  [[nodiscard]] auto DeleteIndex(const RuntimeValue& index) const
-      -> RuntimeAssociativeArray;
+  // LRM 7.9.3 `delete`: empties the array, or removes the entry under `index`.
+  // An index with no entry leaves the array unchanged.
+  void Delete();
+  void DeleteIndex(const RuntimeValue& index);
 
   // LRM 7.9.4 -- 7.9.7 traversal: the smallest and largest indices the array
   // holds, and the neighbours of a probe index. Each is absent when no such

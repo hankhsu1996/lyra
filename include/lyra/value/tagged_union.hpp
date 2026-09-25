@@ -157,11 +157,24 @@ class TaggedUnion {
     return PackedArray::Bit(HasUnknown());
   }
 
+  // LRM 11.9 leaves an uninitialized tagged union undefined, and the stand-in
+  // this type gives it is tag 0 with the first member's default, which is what
+  // resetting restores. A first member already active is reset where it lies,
+  // keeping the shape it was built with.
+  auto ResetToDefault() -> void {
+    if (auto* first = std::get_if<0>(&data_)) {
+      first->ResetToDefault();
+      return;
+    }
+    data_.template emplace<0>();
+  }
+
  private:
   std::variant<Ts...> data_;
 };
 
 static_assert(LyraValue<TaggedUnion<PackedArray, PackedArray>>);
+static_assert(Defaultable<TaggedUnion<Empty, PackedArray>>);
 static_assert(LyraValue<TaggedUnion<Empty, PackedArray>>);
 static_assert(CaseEqualComparable<TaggedUnion<PackedArray, PackedArray>>);
 

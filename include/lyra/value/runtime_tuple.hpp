@@ -38,13 +38,12 @@ class RuntimeTuple {
   // has no SV size query of its own, so this is the host count alone.
   [[nodiscard]] auto RawSize() const -> std::size_t;
 
-  // Reads component `index` by reference. The caller copies it out across the
-  // opaque-handle boundary rather than aliasing it.
+  // Reads component `index` by reference.
   [[nodiscard]] auto Component(std::size_t index) const -> const RuntimeValue&;
 
-  // Overwrites component `index` with `value`. The declared domain of a struct
-  // field never changes, so the replacement's alternative matches the slot's.
-  void SetComponent(std::size_t index, RuntimeValue value);
+  // Component `index`, as storage a write lands in. A component is storage of
+  // its own (LRM 7.2), so a write reaches it and nothing else.
+  [[nodiscard]] auto ComponentRef(std::size_t index) -> RuntimeValue&;
 
   // LRM 11.4.5 `==` / `!=` (Any data type): a component-wise reduction that
   // propagates X / Z through each component's own equality.

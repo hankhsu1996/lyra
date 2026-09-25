@@ -373,6 +373,13 @@ class LirDumper {
                 out += std::format(
                     ".member({}:{})", FormatType(m.member.declared_by),
                     m.member.slot.value);
+              },
+              [&](const ElementProjection& e) {
+                out +=
+                    std::format(".element({})", FormatOperands(e.coordinates));
+              },
+              [&](const PartProjection& p) {
+                out += std::format(".part({})", p.index.value);
               }},
           step);
     }

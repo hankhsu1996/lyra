@@ -246,8 +246,9 @@ closed below.
       timing, so what each column says is that its own backend moved and by how much. It runs now
       that a value ends with the expression that made it: **42 table passes per second in 5.4 MB**
       at any length (2026-09-24), against 4,650 per second for the C++ backend on the same machine.
-      The gap is whole-value copies on every read and element write, which the refactor queue
-      records.
+      The gap was whole-value copies on every read and element write. With an element read where
+      it lies and written in place, the same case runs **2,870 table passes per second, against
+      4,340 for the C++ backend** measured the same day (2026-09-24).
 
       The same case now sustains **1,634 table passes per second, 67x off Verilator** (2026-09-22).
       That is an absolute rate rather than a comparison, recorded because the ratios above compare

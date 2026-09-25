@@ -225,7 +225,8 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const DriverType& t) { Combine(seed, t.value); },
           [&](const ObservableType& t) { Combine(seed, t.value); },
           [&](const SampledHistoryType& t) { Combine(seed, t.value); },
-          [](const EvaluationAttemptsType&) {}});
+          [](const EvaluationAttemptsType&) {},
+          [&](const OpenWriteType& t) { Combine(seed, t.value); }});
   return seed;
 }
 
@@ -282,7 +283,8 @@ auto Type::KindName() const -> std::string_view {
           [](const SampledHistoryType&) { return "sampled value history"; },
           [](const EvaluationAttemptsType&) {
             return "concurrent assertion attempts";
-          }});
+          },
+          [](const OpenWriteType&) { return "open write"; }});
 }
 
 auto Type::Declaration() const -> std::optional<TypeDeclaration> {
@@ -343,6 +345,7 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const DriverType&) { return names_none(); },
           [&](const SampledHistoryType&) { return names_none(); },
           [&](const EvaluationAttemptsType&) { return names_none(); },
+          [&](const OpenWriteType&) { return names_none(); },
           [&](const EventType&) { return names_none(); },
           [&](const RuntimeEffectsType&) { return names_none(); },
           [&](const FilesType&) { return names_none(); },
@@ -353,6 +356,90 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const PointerType&) { return names_none(); },
           [&](const ManagedRefType&) { return names_none(); },
           [&](const VectorType&) { return names_none(); }});
+}
+
+auto Type::ContainerElementType() const -> std::optional<TypeId> {
+  using Element = std::optional<TypeId>;
+  return Visit(
+      Overloaded{
+          // The four a declaration names as holding a run of values, however
+          // the run is sized and however it is indexed.
+          [](const UnpackedArrayType& t) -> Element { return t.element_type; },
+          [](const DynamicArrayType& t) -> Element { return t.element_type; },
+          [](const QueueType& t) -> Element { return t.element_type; },
+          [](const AssociativeArrayType& t) -> Element {
+            return t.element_type;
+          },
+
+          // These hold a run of values too and are still not containers: a
+          // lowering builds them to carry something, where a container is a
+          // type a declaration named.
+          [](const MachineArrayType&) -> Element { return std::nullopt; },
+          [](const VectorType&) -> Element { return std::nullopt; },
+
+          // One vector of bits, under a set of names or not: what looks like
+          // an element is a run of that vector rather than a value held beside
+          // the others.
+          [](const PackedArrayType&) -> Element { return std::nullopt; },
+          [](const PackedStructType&) -> Element { return std::nullopt; },
+          [](const PackedUnionType&) -> Element { return std::nullopt; },
+
+          // Held all at once, or one at a time, but never as a run of one
+          // type.
+          [](const TupleType&) -> Element { return std::nullopt; },
+          [](const UnpackedStructType&) -> Element { return std::nullopt; },
+          [](const UnionType&) -> Element { return std::nullopt; },
+          [](const TaggedUnionType&) -> Element { return std::nullopt; },
+
+          // A single quantity or a single token.
+          [](const WildcardIndexType&) -> Element { return std::nullopt; },
+          [](const StringType&) -> Element { return std::nullopt; },
+          [](const MachineCStringType&) -> Element { return std::nullopt; },
+          [](const MachineBoolType&) -> Element { return std::nullopt; },
+          [](const MachineIntType&) -> Element { return std::nullopt; },
+          [](const MachineFloatType&) -> Element { return std::nullopt; },
+          [](const RealType&) -> Element { return std::nullopt; },
+          [](const ShortRealType&) -> Element { return std::nullopt; },
+          [](const RealTimeType&) -> Element { return std::nullopt; },
+          [](const ChandleType&) -> Element { return std::nullopt; },
+          [](const EventType&) -> Element { return std::nullopt; },
+          [](const EmptyType&) -> Element { return std::nullopt; },
+          [](const VoidType&) -> Element { return std::nullopt; },
+
+          // Storage that keeps one value, and a write open on such storage;
+          // the run, where there is one, belongs to the value kept.
+          [](const ObservableType&) -> Element { return std::nullopt; },
+          [](const ResolvedType&) -> Element { return std::nullopt; },
+          [](const DriverType&) -> Element { return std::nullopt; },
+          [](const SampledHistoryType&) -> Element { return std::nullopt; },
+          [](const EvaluationAttemptsType&) -> Element { return std::nullopt; },
+          [](const OpenWriteType&) -> Element { return std::nullopt; },
+
+          // These refer to a value living elsewhere rather than holding one,
+          // so a container reached through one is reached by dereferencing it
+          // first.
+          [](const RefType&) -> Element { return std::nullopt; },
+          [](const PointerType&) -> Element { return std::nullopt; },
+          [](const ManagedRefType&) -> Element { return std::nullopt; },
+          [](const CoroutineType&) -> Element { return std::nullopt; },
+          [](const MachineFunctionType&) -> Element { return std::nullopt; },
+
+          // A nominal type names a declaration, and a declaration is not a run
+          // of anything.
+          [](const ObjectType&) -> Element { return std::nullopt; },
+          [](const ExternalUnitObjectType&) -> Element { return std::nullopt; },
+          [](const CrossUnitClassType&) -> Element { return std::nullopt; },
+          [](const OpaqueObjectType&) -> Element { return std::nullopt; },
+          [](const RuntimeClassType&) -> Element { return std::nullopt; },
+          [](const StructType&) -> Element { return std::nullopt; },
+          [](const ClosureType&) -> Element { return std::nullopt; },
+
+          // A handle to a runtime facility, and an inert payload the library
+          // owns the shape of.
+          [](const RuntimeEffectsType&) -> Element { return std::nullopt; },
+          [](const FilesType&) -> Element { return std::nullopt; },
+          [](const DiagnosticType&) -> Element { return std::nullopt; },
+          [](const RuntimeLibraryType&) -> Element { return std::nullopt; }});
 }
 
 auto Type::Pointee() const -> std::optional<TypeId> {
@@ -387,6 +474,9 @@ auto Type::DerefTarget() const -> std::optional<TypeId> {
   }
   if (const auto* driver = As<DriverType>()) {
     return driver->value;
+  }
+  if (const auto* write = As<OpenWriteType>()) {
+    return write->value;
   }
   return Pointee();
 }
@@ -556,7 +646,12 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
           [](const VectorType&) -> Held { return std::nullopt; },
           // A body in flight is taken by whoever drives it, the moment it is
           // made, so nothing is left for its maker to hold.
-          [](const CoroutineType&) -> Held { return std::nullopt; }});
+          [](const CoroutineType&) -> Held { return std::nullopt; },
+          // Held by the writer for as long as the write lasts; ending it is
+          // what reports the write.
+          [](const OpenWriteType&) -> Held {
+            return LibraryObject::kOpenWrite;
+          }});
 }
 
 auto Type::IsOwnedValue() const -> bool {

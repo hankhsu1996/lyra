@@ -187,6 +187,13 @@ class FunctionLowerer {
   // passes its end along with it; one it was only lent is copied, so what is
   // handed on is always one this body owned.
   auto HandOn(lir::Operand value) -> lir::Operand;
+  // A value the expression goes on reading after it writes where the value was
+  // read from. One this body made is its own already; one it was only lent is
+  // copied, since the write changes what the loan shows. The copy ends with the
+  // full-expression like any other value it made.
+  auto Kept(lir::Operand value) -> lir::Operand;
+  // Whether this body made `value` and still owes its end.
+  [[nodiscard]] auto OwesItsEnd(const lir::Operand& value) const -> bool;
   // States the end of an owned value, and of the one a frame slot holds.
   void EndValue(lir::Operand value);
   void EndSlotValue(lir::ValueId slot);
@@ -284,12 +291,25 @@ class FunctionLowerer {
   // declares the entry to a call site that writes it out.
   auto LowerCallOperands(const mir::Block& block, const mir::CallExpr& call)
       -> diag::Result<std::vector<lir::Operand>>;
-  auto LowerPlace(const mir::Block& block, mir::ExprId id)
+  // What an access does to the place it names: reads it, writes it whole, or
+  // writes into a part of it. Only the last asks anything of the storage: a
+  // write into what a subscribable cell holds is made through a write opened
+  // on the cell, which tells the cell once what the write did, while reading
+  // it and replacing it whole are the cell's own operations.
+  enum class Reach : std::uint8_t { kRead, kWhole, kInto };
+  // What reaching a part asks of the value holding it: reading a part reads
+  // the holder, and writing a part, whole or in part, writes into the holder.
+  static auto HolderReach(Reach part) -> Reach;
+  // Whether the access writes into what the storage holds, which is what a
+  // cell reporting its writes has to be opened for.
+  static auto WritesInto(Reach reach) -> bool;
+  auto LowerPlace(const mir::Block& block, mir::ExprId id, Reach reach)
       -> diag::Result<lir::Place>;
   // The storage a reference names, or why the referent has none. Whether a
   // referent has storage is the target's own fact, so the place side owns that
   // answer and a use in value position reads it.
-  auto ReferencePlace(const mir::ReferenceTarget& target, mir::TypeId type)
+  auto ReferencePlace(
+      const mir::ReferenceTarget& target, mir::TypeId type, Reach reach)
       -> diag::Result<lir::Place>;
   // The storage a program-wide symbol names. The symbol carries the cell's
   // address, so the place opens there and dereferences it -- the same shape a
@@ -310,6 +330,42 @@ class FunctionLowerer {
   // the contents live.
   auto WrapperContentsPlace(const mir::Block& block, mir::ExprId wrapper)
       -> diag::Result<lir::Place>;
+  // Opens a write into what a wrapper stands for: an object held for the rest
+  // of the full-expression, whose end tells the wrapper what the write did,
+  // and whose dereference names the storage the write lands in. `handle`
+  // reaches the wrapper, and `value` is the type of what it holds.
+  auto OpenWrite(lir::Operand handle, lir::TypeId value)
+      -> diag::Result<lir::Place>;
+  // Whether a value of `container` holds each of its parts as storage of its
+  // own, so a part is a step of the place holding the value rather than a
+  // position in it.
+  [[nodiscard]] auto PartsAreStorageIn(lir::TypeId container) const -> bool;
+  // How an expression names a part of a value that holds its parts as storage
+  // of their own, where it names one.
+  [[nodiscard]] auto StorageSelection(const mir::Block& block, mir::ExprId id)
+      const -> std::optional<support::PartSelection>;
+  // The access an expression makes to a part that is storage of its own, where
+  // it is one.
+  [[nodiscard]] auto StoragePartAccess(
+      const mir::Block& block, mir::ExprId id) const -> const mir::CallExpr*;
+  // The place a part that is storage of its own names: the place holding the
+  // value it is part of, one step further. Reaching the part for any write is
+  // writing into that place.
+  auto PartPlace(
+      const mir::Block& block, const mir::CallExpr& part, Reach reach)
+      -> diag::Result<lir::Place>;
+  // The step from a value into one of its parts that is storage of its own.
+  auto PartStep(const mir::Block& block, const mir::CallExpr& part)
+      -> diag::Result<lir::Projection>;
+  // The place the value `id` evaluates to is reached in. An expression naming
+  // storage names its place; any other value is held in a slot of this frame
+  // for the rest of the full-expression, which is then its place.
+  auto PlaceHolding(const mir::Block& block, mir::ExprId id, Reach reach)
+      -> diag::Result<lir::Place>;
+  // A slot of this frame holding `value` for the rest of the full-expression.
+  auto HeldInSlot(lir::Operand value, lir::TypeId type) -> lir::ValueId;
+  [[nodiscard]] auto NamesStorage(const mir::Block& block, mir::ExprId id) const
+      -> bool;
   auto MemberRefOf(const mir::FieldRef& field) -> lir::StatedMemberRef;
   // Reads the value held where an expression names storage, whichever way it
   // names it. A cell is address-only and holds no value a reader can take out
@@ -394,13 +450,11 @@ class FunctionLowerer {
   auto LowerCompoundOperator(
       mir::BinaryOp op, lir::Operand old_value, lir::Operand rhs,
       lir::TypeId type) -> lir::Operand;
-  // A method that changes the object it is applied to. The generated side reads
-  // a value out of its storage as a copy, so the entry answers with the changed
-  // object rather than changing one in place, and the answer is put back where
-  // the object came from. Where the method also states a result of its own -- a
-  // queue pop yields the element it removed (LRM 7.10.2.4) -- the entry
-  // completes with both, the changed object first, and each is projected out of
-  // that product.
+  // A method that changes the object it is applied to. The entry changes the
+  // object where it lies, and answers with whatever result of its own the
+  // method states -- a queue pop yields the element it removed (LRM 7.10.2.4).
+  // An object that is a view of its whole is read out, changed, and written
+  // back as a write to a view is.
   auto LowerMutatingCall(
       const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
       mir::TypeId type) -> diag::Result<lir::Operand>;
@@ -411,22 +465,38 @@ class FunctionLowerer {
   // one twice, once to read and once to write. `change` is handed a way to read
   // the old value and the type it has, and answers with what to put back; one
   // that never reads emits no read at all, which is how a plain write reaches
-  // this. What this yields is the write, whose type is void; a caller in
-  // expression position states the value its own expression has, out of what it
-  // kept while `change` ran.
-  using ValueReader = std::function<lir::Operand()>;
+  // this. A read may be a call, which can depart like any other. What this
+  // yields is the write, whose type is void; a caller in expression position
+  // states the value its own expression has, out of what it kept while `change`
+  // ran.
+  using ValueReader = std::function<diag::Result<lir::Operand>()>;
   using ValueChange = std::function<diag::Result<lir::Operand>(
       const ValueReader&, lir::TypeId)>;
   auto UpdateTarget(
       const mir::Block& block, mir::ExprId target, const ValueChange& change)
       -> diag::Result<lir::Operand>;
-  // Updating a target that reaches into a value aggregate: a read of the
-  // owner's whole value, a rebuild of it with the part changed, and the change
-  // put back through the owner. The owner's storage hands the generated side a
-  // copy rather than itself, so nothing here has an interior to write.
-  auto LowerValuePartUpdate(
+  // Whether a target reaches, somewhere along its chain, a part that is a view
+  // of its whole rather than storage of its own.
+  [[nodiscard]] auto ReachesViewedPart(
+      const mir::Block& block, mir::ExprId target) const -> bool;
+  // Updating a part whose chain passes through a view: what the part is taken
+  // from is updated in turn, with the part changed inside it. Out of a view,
+  // the part is extracted and the whole rebuilt around it; out of a value a
+  // view reached, the value is held in a slot and the part written where it
+  // lies there.
+  auto UpdateThroughView(
       const mir::Block& block, mir::ExprId target, const ValueChange& change)
       -> diag::Result<lir::Operand>;
+  // The window of elements a target names, where it is a window over a
+  // container that holds its elements as storage of their own.
+  [[nodiscard]] auto StorageWindow(const mir::Block& block, mir::ExprId target)
+      const -> const mir::CallExpr*;
+  // Updating a window of elements: the elements it spans, read as one value,
+  // and what that value is changed to written into the elements already there
+  // (LRM 7.6).
+  auto LowerWindowUpdate(
+      const mir::Block& block, const mir::CallExpr& window, mir::ExprId target,
+      const ValueChange& change) -> diag::Result<lir::Operand>;
   // Which subvalue one reaching call names, in the vocabulary this layer's
   // aggregate instructions take.
   auto LowerValuePartSelector(
@@ -448,12 +518,12 @@ class FunctionLowerer {
   auto Load(lir::Place place, lir::TypeId type) -> lir::Operand;
   auto Store(lir::Place place, lir::Operand value) -> lir::Operand;
 
-  // Reading and writing a slot the activation owns: a load copies the current
-  // value out and a store overwrites it, the first store installing the slot's
-  // representation. The handle is typed as the slot's value type -- both cross
-  // the boundary as one opaque handle -- so each operation states the value the
-  // slot holds, which is what names the entry realizing it: a store settles
-  // nothing and a handle is opaque, so neither of those carries it.
+  // Reading and writing a slot the activation owns: a load answers with the
+  // value where it lies and a store overwrites it, the first store installing
+  // the slot's representation. Each operation states the value the slot holds,
+  // which is what names the entry realizing it: a store settles nothing and the
+  // slot's address says nothing of what it holds, so neither of those carries
+  // it.
   auto LoadActivationValue(lir::Operand handle, lir::TypeId value_type)
       -> lir::Operand;
   auto StoreActivationValue(

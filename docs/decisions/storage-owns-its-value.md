@@ -144,9 +144,11 @@ associative array; the dynamic array is still open.
   model states, and the designator-over-the-owner path is the defect above rather than the fallback.
 
 - **An obligation on the IR and runtime contract, not discharged here.** A component with storage
-  identity has to be nameable as storage, and LIR's place vocabulary has member and dereference
-  steps and no index step. What that contract becomes -- and how a detached element's ownership is
-  expressed -- is a separate design, deliberately not decided in this entry.
+  identity has to be nameable as storage, and LIR's place vocabulary had member and dereference
+  steps and no index step. How it is named is answered by
+  [a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md): an
+  element and a component are place steps. How a detached element's ownership is expressed is still
+  a separate design.
 
 - **`jit-value-realization` invariant 6 no longer describes the identity-bearing aggregates.** Its
   ABI half -- values crossing as opaque handles, the runtime performing every operation -- is

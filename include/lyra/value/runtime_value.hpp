@@ -130,9 +130,9 @@ struct RuntimeValue {
 // builds one back up without naming a single domain: a spread concatenation
 // part (LRM 10.10) crosses erased and is read this way, and so is an actual
 // imaged across the DPI-C boundary (Annex H.7.3). The builder takes the whole
-// element list rather than one element at a time, because these values are
-// immutable and a per-element rebuild is quadratic in the element count. A
-// value of any other domain reaching these is a caller that took a
+// element list rather than one element at a time, because a value built one
+// element at a time is copied at every step, which is quadratic in the element
+// count. A value of any other domain reaching these is a caller that took a
 // non-container for one.
 [[nodiscard]] auto RuntimeValueContainerSize(const RuntimeValue& value)
     -> std::size_t;
@@ -141,6 +141,12 @@ struct RuntimeValue {
 [[nodiscard]] auto RuntimeValueContainerOf(
     const RuntimeValue& prototype, std::vector<RuntimeValue> elements)
     -> RuntimeValue;
+
+// Where a write naming no element of a container lands (LRM 7.4.5, 7.8.6,
+// 7.10.1): storage shaped like `element_default` that nothing ever reads, so
+// the write is discarded without whoever writes having to ask first.
+[[nodiscard]] auto DiscardTarget(const RuntimeValue& element_default)
+    -> RuntimeValue&;
 
 // One index and the element stored under it. A keyed container closes over the
 // erased value, so this is the first point at which a pair of them can be

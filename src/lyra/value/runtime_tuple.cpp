@@ -33,16 +33,11 @@ auto RuntimeTuple::Component(std::size_t index) const -> const RuntimeValue& {
   return components_[index];
 }
 
-void RuntimeTuple::SetComponent(std::size_t index, RuntimeValue value) {
+auto RuntimeTuple::ComponentRef(std::size_t index) -> RuntimeValue& {
   if (index >= components_.size()) {
-    throw InternalError("RuntimeTuple::SetComponent: index out of range");
+    throw InternalError("RuntimeTuple::ComponentRef: index out of range");
   }
-  if (components_[index].value.index() != value.value.index()) {
-    throw InternalError(
-        "RuntimeTuple::SetComponent: replacement domain differs from the "
-        "field's declared domain");
-  }
-  components_[index] = std::move(value);
+  return components_[index];
 }
 
 namespace {

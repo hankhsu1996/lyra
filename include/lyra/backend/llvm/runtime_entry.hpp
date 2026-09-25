@@ -103,6 +103,7 @@ enum class RuntimeOp : std::uint8_t {
   kObjectDeref,
   kMakePromotedScope,
   kPromotedScopeDeref,
+  kOpenWriteStorage,
   kMethod,
   kClassFindProperty,
   kClassFindBehavior,
@@ -139,12 +140,14 @@ enum class RuntimeOp : std::uint8_t {
   kSettleDeparture,
   kRetainConstant,
   // Ending an object held in the generated body's own storage, copying one into
-  // further storage, and moving one into storage that takes it over -- a slot,
-  // or what a caller gave for a body's answer. Each is named by the object it
-  // acts on.
+  // further storage, moving one into storage that takes it over -- a slot, or
+  // what a caller gave for a body's answer -- and writing one into an object
+  // already there, which goes on being that object. Each is named by the object
+  // it acts on.
   kDestroy,
   kCopy,
   kMove,
+  kAssign,
 };
 
 // What a member slot is for, which two declarations answer differently for a

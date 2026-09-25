@@ -229,11 +229,23 @@ class Union {
     return PackedArray::Bit(HasUnknown());
   }
 
+  // LRM Table 7-1: an unpacked union's default is its first member's. A first
+  // member already active is reset where it lies, keeping the shape it was
+  // built with, so a container can scrub a reused discard slot in place.
+  auto ResetToDefault() -> void {
+    if (auto* first = std::get_if<0>(&data_)) {
+      first->ResetToDefault();
+      return;
+    }
+    data_.template emplace<0>();
+  }
+
  private:
   std::variant<Ts...> data_;
 };
 
 static_assert(LyraValue<Union<PackedArray, PackedArray>>);
+static_assert(Defaultable<Union<PackedArray, PackedArray>>);
 static_assert(CaseEqualComparable<Union<PackedArray, PackedArray>>);
 static_assert(NetResolvable<Union<PackedArray, PackedArray>>);
 
