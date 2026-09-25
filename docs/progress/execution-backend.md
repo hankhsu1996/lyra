@@ -32,10 +32,17 @@ runs -- coverage is read off a file that only ever shrinks, never asserted.
 
 ## Runtime-value lifetime
 
-A runtime value crosses the execution boundary as an opaque handle into runtime-owned storage
-(`../decisions/jit-value-realization.md`); a transient lives in a per-stretch scope and is released
-when that stretch returns. A value whose lifetime crosses a suspension needs storage that outlives
-the stretch that made it.
+A value the generated side makes is an object in its own frame, built there by the entry that
+answers with it and ended where the source says it stops being readable
+(`../decisions/a-value-lives-in-its-makers-frame.md`). A value whose lifetime crosses a suspension
+needs storage the execution owns.
+
+- [x] **Memory is bounded by what the program can still read, not by how much it computed.** Every
+      value an entry or a generated body answers with is built in the caller's frame and ended at
+      the end of its full-expression, on every early exit and every departure too; a declared
+      variable's frame slot holds its object and ends it with its block. A loop of a million
+      function calls holds 4.5 MB, as it does at a hundred thousand; before, the values accumulated
+      until the next wait, 1.85 GB at a million calls.
 
 - [x] **A value that crosses a suspension survives, for the value domains realized today.** A
       value-typed non-managed procedural local in a suspending body -- a loop counter, a read-only
@@ -48,11 +55,10 @@ the stretch that made it.
       value. Contracts and rationale: `../decisions/cross-suspension-value-storage.md`,
       `../decisions/activation-frame-and-transient-scope.md`.
 
-- [x] **The storage lifetimes are named and separated.** The per-stretch transient scope, the
-      activation frame, the activation's control identity, and the process lineage node are distinct
-      names for distinct concepts; a per-stretch transient may not escape its stretch, and every
-      store into longer-lived storage copies or promotes (the one non-copying path, a method return,
-      stays in the caller's scope). Settled in
+- [x] **The storage lifetimes are named and separated.** The activation frame, the activation's
+      control identity, and the process lineage node are distinct names for distinct concepts; a
+      value never outlives its full-expression except by being handed to storage that owns it, and
+      every such hand-off takes the value's end with it or copies. Settled in
       `../decisions/activation-frame-and-transient-scope.md`.
 
 - [x] **One ownership model for a procedural value, instead of three.** A declared variable is one
@@ -90,15 +96,12 @@ ownership, or native in-frame layout) for every value.
       procedural local crosses a suspension as an activation-frame value. It extended the activation
       frame with another domain rather than forcing a new lifetime discipline, since a real is a
       non-managed value like a packed one.
-- [x] **The chandle** (LRM 6.14) -- realized on the execution backend as a pointer-like value
-      domain: the value is the pointer itself, carried inline rather than behind a handle to a
-      runtime-owned object. A chandle defaults to null, assigns from null and from another chandle,
-      takes the equality and case-equality families and the boolean test, lives in a member slot as
-      a variable of its own, and comes into existence from the pointer a foreign call hands back --
-      the only way one ever holds a value, since the language admits no other literal for it. This
-      is the one value domain whose value is the handle itself: it owns nothing, so nothing is lost
-      by carrying it as the bare pointer. A class handle does not share the shape -- it carries a
-      share of ownership beside the address, so it is a value living in storage like every other.
+- [x] **The chandle** (LRM 6.14) -- realized on the execution backend as a value domain holding one
+      host pointer. A chandle defaults to null, assigns from null and from another chandle, takes
+      the equality and case-equality families and the boolean test, lives in a member slot as a
+      variable of its own, and comes into existence from the pointer a foreign call hands back --
+      the only way one ever holds a value, since the language admits no other literal for it. It is
+      an object in the frame like every other value, one that owns nothing, so ending it is nothing.
 - [x] **A class handle as a value domain** (LRM 8.3) -- realized on the execution backend as the
       erased value a type-erased aggregate holds, beside the member slot and the local it already
       lived in. A handle is an element of a fixed-size unpacked array, a dynamic array, a queue and
@@ -264,7 +267,7 @@ ownership, or native in-frame layout) for every value.
 - [x] **Writing into a local that holds a value rather than storage.** A local needs storage exactly
       when the body needs an address for it, and every way a body asks for one counts: assigning it,
       designating a part of it to write, and calling a method that changes it -- the last two
-      because a value aggregate has no addressable interior, so both are a whole value rebuilt and
+      because a local's storage is read and written whole, so both are a whole value rebuilt and
       stored back through the local. A local a body only reads stays the value it was bound to.
 
 ## Value realization: two tracks today, one native model deferred
@@ -274,10 +277,11 @@ The value layer is realized two ways, and the breadth work above runs against th
 - The transitional C++ backend realizes each value type as a monomorphized target type -- the host
   C++ compiler expands one concrete type per element type, and an aggregate interior is written in
   place because that type owns real storage.
-- The execution backend realizes each value as an opaque handle into a runtime-owned, type-erased
-  object (`../decisions/jit-value-realization.md`, `../decisions/jit-aggregate-realization.md`): it
-  emits generated code with no host compiler to expand a template, so an aggregate is one erased
-  object and an interior write is a functional whole-value update.
+- The execution backend realizes each value as an opaque handle to a type-erased runtime object in
+  its own frame (`../decisions/a-value-lives-in-its-makers-frame.md`,
+  `../decisions/jit-aggregate-realization.md`): it emits generated code with no host compiler to
+  expand a template, so an aggregate is one erased object and an interior write is a functional
+  whole-value update.
 
 Both are correct and agree per source (the backend-agreement tests check this), but they are two
 implementations of the same value semantics. Every value domain added to the execution backend is a

@@ -16,16 +16,9 @@ auto CurrentScopeSlot() -> GeneratedCallScope*& {
 
 }  // namespace
 
-GeneratedCallScope::GeneratedCallScope()
-    : previous_(CurrentScopeSlot()),
-      values_(previous_ != nullptr ? previous_->values_ : nullptr),
-      departure_(nullptr) {
-  CurrentScopeSlot() = this;
-}
-
 GeneratedCallScope::GeneratedCallScope(
-    ActivationValueStore* values, std::exception_ptr* departure)
-    : previous_(CurrentScopeSlot()), values_(values), departure_(departure) {
+    ActivationValueStore& values, std::exception_ptr* departure)
+    : previous_(CurrentScopeSlot()), values_(&values), departure_(departure) {
   CurrentScopeSlot() = this;
 }
 
@@ -34,11 +27,6 @@ GeneratedCallScope::~GeneratedCallScope() {
 }
 
 auto GeneratedCallScope::ActivationValues() -> ActivationValueStore& {
-  if (values_ == nullptr) {
-    throw InternalError(
-        "generated call: no value store; a cross-suspension value was "
-        "requested outside a suspending body");
-  }
   return *values_;
 }
 
@@ -52,7 +40,9 @@ void GeneratedCallScope::SettleDeparture(std::exception_ptr departure) {
 
 auto GeneratedCallScope::Current() -> GeneratedCallScope& {
   if (CurrentScopeSlot() == nullptr) {
-    throw InternalError("generated call: no active call scope");
+    throw InternalError(
+        "generated call: no execution is open; a cross-suspension value or a "
+        "departure was reached for outside a suspending body");
   }
   return *CurrentScopeSlot();
 }

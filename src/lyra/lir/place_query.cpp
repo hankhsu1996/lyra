@@ -11,6 +11,7 @@
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lir {
 
@@ -90,6 +91,47 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
 auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool {
   const auto* use = std::get_if<Use>(&operand);
   return use != nullptr && fn.values.Get(use->value).NamesStorage();
+}
+
+auto MakesValue(const Function& fn, const InstrData& instr) -> bool {
+  return std::visit(
+      Overloaded{
+          // Allocating a value cell answers the cell, which is storage the
+          // running activation keeps, whatever type the cell is named by.
+          [](const CallInstr& call) {
+            if (const auto* cell = std::get_if<ValueCellTarget>(&call.target)) {
+              return cell->op != ValueCellTarget::Op::kAllocate;
+            }
+            const auto* builtin = std::get_if<BuiltinTarget>(&call.target);
+            if (builtin == nullptr) {
+              return true;
+            }
+            switch (support::RuntimeEntryOf(builtin->fn).answer) {
+              case support::EntryAnswer::kNewValue:
+                return true;
+              case support::EntryAnswer::kTheReceiver:
+              case support::EntryAnswer::kPartOfTheReceiver:
+                return false;
+            }
+            throw InternalError("lir: unknown entry answer");
+          },
+          [&](const LoadInstr& load) {
+            return !(
+                IsPlaceLocal(fn, load.place.base) && load.place.chain.empty());
+          },
+          [](const CastInstr&) { return false; },
+          [](const ProductInstr&) { return true; },
+          [](const UnionInstr&) { return true; },
+          [](const AggregateExtractInstr&) { return true; },
+          [](const AggregateUpdateInstr&) { return true; },
+          [](const BinaryInstr&) { return true; },
+          [](const UnaryInstr&) { return true; },
+          [](const ArrayInstr&) { return true; },
+          [](const TagTestInstr&) { return true; },
+          [](const AddrOfInstr&) { return true; },
+          [](const StoreInstr&) { return false; },
+          [](const ReceiveDepartureInstr&) { return true; }},
+      instr);
 }
 
 auto PlaceType(

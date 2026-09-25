@@ -240,13 +240,13 @@ void RuntimeProcess::ReleaseTerminatedLineage(RuntimeProcess& process) {
 auto RuntimeProcess::DriveForeignVehicle(ForeignExecution& fe) -> bool {
   const ForeignExecutionGuard guard(*this, fe);
   // Foreign code reached from here may call back into generated code (LRM
-  // 35.7), which is a crossing into it like any other. The scope is one stretch
-  // of the call rather than the whole of it, because the stack parks between
-  // two stretches and a scope open across that would still be the innermost one
-  // while some other execution ran; what has to outlive a park is held by the
-  // call itself instead. No generated body completes into it -- the call ends
-  // by the foreign code returning -- so nothing settles a departure here.
-  const GeneratedCallScope stretch(&fe.Values(), nullptr);
+  // 35.7) that keeps values across a park, so each stretch of the call names
+  // the call's own store. The scope is one stretch of the call rather than the
+  // whole of it, because the stack parks between two stretches and a scope open
+  // across that would still be the innermost one while some other execution
+  // ran. No generated body completes into it -- the call ends by the foreign
+  // code returning -- so nothing settles a departure here.
+  const GeneratedCallScope stretch(fe.Values(), nullptr);
   fe.Resume();
   return fe.IsDone();
 }

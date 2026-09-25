@@ -18,9 +18,9 @@ namespace lyra::runtime {
 // of a container it was handed and results in a value, and a value body takes
 // nothing and results in a value each time it is run.
 //
-// A body that answers a value states which representation the answer comes back
-// in, because a result crosses as a handle and a handle carries no type: it is
-// a fact only whoever compiled the body holds.
+// A body that answers a value builds it in storage its caller gives, and states
+// which representation it comes back in, because a handle carries no type: it
+// is a fact only whoever compiled the body holds.
 struct SynchronousBody {
   void (*run)(void* self) = nullptr;
 };
@@ -28,11 +28,12 @@ struct CoroutineBody {
   void* (*start)(void* self) = nullptr;
 };
 struct PerElementBody {
-  void* (*run)(void* self, const void* item, const void* index) = nullptr;
+  void* (*run)(void* self, const void* item, const void* index, void* out) =
+      nullptr;
   support::ValueDomain result_domain{};
 };
 struct ValueBody {
-  void* (*run)(void* self) = nullptr;
+  void* (*run)(void* self, void* out) = nullptr;
   support::ValueDomain result_domain{};
 };
 using ClosureBody =
@@ -52,7 +53,7 @@ struct ClosureDefinition {
 // expression an event control is watching for a change in the value of. It
 // owns one storage object per capture, so a captured value is a copy taken
 // where the closure was built and released with the closure, never a handle
-// into the stretch that built it, which may be gone by the time the body runs.
+// into the body that built it, which may be gone by the time this one runs.
 class ClosureValue {
  public:
   // `captures` supplies one handle per capture, in declaration order. Each is
@@ -73,13 +74,12 @@ class ClosureValue {
   [[nodiscard]] auto Start() -> void*;
 
   // Runs a per-element body on one entry (LRM 7.12.4) and answers the value it
-  // settled on, read out of the scope it was materialized in.
+  // settled on.
   [[nodiscard]] auto RunPerElement(
       const value::RuntimeValue& item, const value::RuntimeValue& index)
       -> value::RuntimeValue;
 
-  // Runs a body that takes nothing and answers what it settled on, read out of
-  // the scope it was materialized in.
+  // Runs a body that takes nothing and answers what it settled on.
   [[nodiscard]] auto RunValue() -> value::RuntimeValue;
 
  private:

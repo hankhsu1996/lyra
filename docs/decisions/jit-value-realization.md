@@ -1,6 +1,16 @@
 # JIT value realization: opaque handles plus a generated-call scope
 
-Date: 2026-07-07 Status: accepted
+Date: 2026-07-07 Status: accepted; the lifetime half superseded 2026-09-24
+
+**Superseded in part** by [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md).
+Its premise below -- "generated LLVM code cannot construct or own a runtime value object; it can
+only hold a pointer to one" -- does not hold: clang-generated code constructs and owns these very
+objects given their size, alignment, and out-of-line constructor and destructor, and every value
+domain has one size whatever source type it stands for. A value now lives in the generated body's
+own frame and ends at the end of its full-expression; `GeneratedCallScope` owns no values. The
+per-call region was not an optimization gap but a correctness defect -- memory grew with the work
+done between two waits. Values still cross as pointers and the runtime still performs every
+operation on them; that half stands.
 
 ## Context
 

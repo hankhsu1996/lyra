@@ -26,7 +26,7 @@ class StorageBlock {
   [[nodiscard]] auto Held(std::uint32_t index) -> void*;
 
   // Takes a copy of what `handle` names into slot `index`, which is how a value
-  // reaches storage outliving the stretch that made it.
+  // reaches storage outliving the body that made it.
   void Adopt(std::uint32_t index, void* handle);
 
   [[nodiscard]] auto Size() const -> std::uint32_t;

@@ -12,6 +12,7 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/member_storage_kind.hpp"
+#include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::lir {
@@ -40,9 +41,10 @@ inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
 // over this boundary instead of by the compiler.
 inline constexpr std::size_t kScopeConstructSharedParams = 3;
 
-// The domain a LIR type is realized in, absent for a type the runtime library
-// has no value realization for. The one place a LIR type is classified, so the
-// entry a call names and the storage a cell owns cannot disagree.
+// The domain a LIR type is realized in, absent for a type whose values are not
+// values of the design. It is the type's held object where that object is a
+// domain's, so the entry a call names and the storage a cell owns read one
+// classification.
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<support::ValueDomain>;
 
@@ -137,6 +139,13 @@ enum class RuntimeOp : std::uint8_t {
   kClaimDeparture,
   kSettleDeparture,
   kRetainConstant,
+  // Ending an object held in the generated body's own storage, copying one into
+  // further storage, and moving one into storage that takes it over -- a slot,
+  // or what a caller gave for a body's answer. Each is named by the object it
+  // acts on.
+  kDestroy,
+  kCopy,
+  kMove,
 };
 
 // What a member slot is for, which two declarations answer differently for a
@@ -241,6 +250,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming;
 // closed set already publishes its spelling.
 auto RuntimeSymbol(RuntimeOp op) -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, RuntimeOp op) -> std::string;
+auto RuntimeSymbol(support::RuntimeObject object, RuntimeOp op) -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::BinaryOp op)
     -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::UnaryOp op) -> std::string;

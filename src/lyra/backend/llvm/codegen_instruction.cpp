@@ -27,6 +27,7 @@
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/runtime_object.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -98,36 +99,38 @@ auto ValuesHeldBy(const lir::Type& type) -> std::optional<lir::TypeId> {
 auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
     -> diag::Result<llvm::Value*> {
   const lir::TypeId result_type = fn_->values.Get(instr.result).type;
+  llvm::Value* const out =
+      lir::MakesValue(*fn_, instr.data) ? StorageFor(result_type) : nullptr;
   return std::visit(
       Overloaded{
           [&](const lir::CallInstr& call) -> diag::Result<llvm::Value*> {
-            return LowerCall(call, result_type);
+            return LowerCall(call, result_type, out);
           },
           [&](const lir::ReceiveDepartureInstr&) -> diag::Result<llvm::Value*> {
             return LowerReceiveDeparture();
           },
           [&](const lir::ProductInstr& product) -> diag::Result<llvm::Value*> {
-            return LowerProduct(product, result_type);
+            return LowerProduct(product, result_type, out);
           },
           [&](const lir::ArrayInstr& array) -> diag::Result<llvm::Value*> {
             return LowerArray(array, result_type);
           },
           [&](const lir::UnionInstr& u) -> diag::Result<llvm::Value*> {
-            return LowerUnion(u, result_type);
+            return LowerUnion(u, result_type, out);
           },
           [&](const lir::AggregateExtractInstr& extract)
               -> diag::Result<llvm::Value*> {
-            return LowerAggregateExtract(extract);
+            return LowerAggregateExtract(extract, out);
           },
           [&](const lir::AggregateUpdateInstr& update)
               -> diag::Result<llvm::Value*> {
-            return LowerAggregateUpdate(update);
+            return LowerAggregateUpdate(update, out);
           },
           [&](const lir::TagTestInstr& test) -> diag::Result<llvm::Value*> {
             return LowerTagTest(test, result_type);
           },
           [&](const lir::LoadInstr& load) -> diag::Result<llvm::Value*> {
-            return LowerLoad(load, result_type);
+            return LowerLoad(load, result_type, out);
           },
           [&](const lir::StoreInstr& store) -> diag::Result<llvm::Value*> {
             return LowerStore(store);
@@ -136,10 +139,10 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
             return LowerAddrOf(addr, result_type);
           },
           [&](const lir::BinaryInstr& binary) -> diag::Result<llvm::Value*> {
-            return LowerBinary(binary, result_type);
+            return LowerBinary(binary, out);
           },
           [&](const lir::UnaryInstr& unary) -> diag::Result<llvm::Value*> {
-            return LowerUnary(unary, result_type);
+            return LowerUnary(unary, out);
           },
           [&](const lir::CastInstr& cast) -> diag::Result<llvm::Value*> {
             return LowerCast(cast, result_type);
@@ -150,10 +153,13 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
 // Reading a place reads whatever storage it names, except where the storage
 // decides what reading it means: a cell's contents have no address of their
 // own, and a capture's storage is the closure's rather than an instance's, so
-// each comes out through its own access rather than from an address.
+// each comes out through its own access rather than from an address. A read
+// that makes an owned value builds it in `out`; the one read that does not is
+// of a frame slot, which holds the object and so names it where it lies.
 auto CodeGenFunction::LowerLoad(
-    const lir::LoadInstr& load, lir::TypeId result_type)
+    const lir::LoadInstr& load, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
+  llvm::Type* const result = module_->Types().Map(result_type);
   if (const std::optional<CapturePlace> capture = CapturePlaceOf(load.place)) {
     auto closure = ResolvePlaceAddress(capture->closure);
     if (!closure) {
@@ -163,9 +169,12 @@ auto CodeGenFunction::LowerLoad(
         *closure,
         llvm::ConstantInt::get(
             llvm::Type::getInt32Ty(module_->Context()), capture->index)};
-    return builder_.CreateCall(
-        Entry(RuntimeSymbol(RuntimeOp::kClosureCapture), result_type, args),
-        args);
+    llvm::Value* held = builder_.CreateCall(
+        Entry(RuntimeSymbol(RuntimeOp::kClosureCapture), result, args), args);
+    if (out == nullptr) {
+      return held;
+    }
+    return CopyObject(ObjectOf(result_type), held, out);
   }
   auto wrapper = WrapperPlaceOf(load.place);
   if (!wrapper) {
@@ -178,27 +187,27 @@ auto CodeGenFunction::LowerLoad(
     }
     if (const std::optional<support::ValueDomain> cell =
             PlaceValueCellDomain(load.place, result_type)) {
-      const std::array<llvm::Value*, 1> args{*address};
-      return builder_.CreateCall(
-          Entry(
-              RuntimeSymbol(*cell, lir::ValueCellTarget::Op::kLoad),
-              result_type, args),
-          args);
+      return BuildInto(
+          RuntimeSymbol(*cell, lir::ValueCellTarget::Op::kLoad), {*address},
+          out);
     }
-    return builder_.CreateLoad(module_->Types().Map(result_type), *address);
+    if (const std::optional<support::RuntimeObject> object =
+            module_->Unit().types.Get(result_type).HeldObject()) {
+      if (out == nullptr) {
+        return *address;
+      }
+      return CopyObject(*object, *address, out);
+    }
+    return builder_.CreateLoad(result, *address);
   }
   const WrapperPlace& through = **wrapper;
   auto address = ResolvePlaceAddress(through.wrapper);
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
-  const std::array<llvm::Value*, 1> args{*address};
-  return builder_.CreateCall(
-      Entry(
-          RuntimeSymbol(
-              through.domain, through.kind, support::BuiltinFn::kLoad),
-          result_type, args),
-      args);
+  return BuildInto(
+      RuntimeSymbol(through.domain, through.kind, support::BuiltinFn::kLoad),
+      {*address}, out);
 }
 
 // Writing a place mirrors reading one, and a write through a wrapper is what
@@ -228,6 +237,20 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
               RuntimeSymbol(*cell, lir::ValueCellTarget::Op::kStore),
               module_->Types().Void(), args),
           args);
+    }
+    // A frame slot of an owned type holds the object, and a store into one
+    // hands it the value along with its end, so the value moves in and nothing
+    // is left behind where it was built.
+    if (const std::optional<support::RuntimeObject> object =
+            module_->Unit().types.Get(OperandType(store.value)).HeldObject()) {
+      if (!lir::IsPlaceLocal(*fn_, store.place.base) ||
+          !store.place.chain.empty()) {
+        return Unsupported(
+            "llvm codegen: an owned value stored into storage other than a "
+            "frame slot or a cell");
+      }
+      RelocateObject(*object, *value, *address);
+      return nullptr;
     }
     return builder_.CreateStore(*value, *address);
   }
@@ -410,7 +433,7 @@ auto CodeGenFunction::IsHandleSequence(lir::TypeId type) const -> bool {
 }
 
 auto CodeGenFunction::LowerBinary(
-    const lir::BinaryInstr& binary, lir::TypeId result_type)
+    const lir::BinaryInstr& binary, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
   const lir::TypeId operand_type = OperandType(binary.lhs);
   // A machine integer is a native value, not a value-domain handle: its
@@ -435,9 +458,7 @@ auto CodeGenFunction::LowerBinary(
   if (!rhs) {
     return std::unexpected(std::move(rhs.error()));
   }
-  const std::array<llvm::Value*, 2> args{*lhs, *rhs};
-  return builder_.CreateCall(
-      Entry(RuntimeSymbol(*domain, binary.op), result_type, args), args);
+  return BuildInto(RuntimeSymbol(*domain, binary.op), {*lhs, *rhs}, out);
 }
 
 auto CodeGenFunction::LowerMachineBinary(
@@ -498,8 +519,7 @@ auto CodeGenFunction::LowerMachineBinary(
   throw InternalError("llvm codegen: unknown binary operator");
 }
 
-auto CodeGenFunction::LowerUnary(
-    const lir::UnaryInstr& unary, lir::TypeId result_type)
+auto CodeGenFunction::LowerUnary(const lir::UnaryInstr& unary, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
   const lir::TypeId operand_type = OperandType(unary.operand);
   // A machine integer is a native value, not a value-domain handle: its
@@ -520,9 +540,7 @@ auto CodeGenFunction::LowerUnary(
   if (!operand) {
     return std::unexpected(std::move(operand.error()));
   }
-  const std::array<llvm::Value*, 1> args{*operand};
-  return builder_.CreateCall(
-      Entry(RuntimeSymbol(*domain, unary.op), result_type, args), args);
+  return BuildInto(RuntimeSymbol(*domain, unary.op), {*operand}, out);
 }
 
 auto CodeGenFunction::LowerMachineUnary(const lir::UnaryInstr& unary)
@@ -636,7 +654,7 @@ auto CodeGenFunction::LowerReceiveDeparture() -> diag::Result<llvm::Value*> {
 }
 
 auto CodeGenFunction::ResolveCall(
-    const lir::CallInstr& call, lir::TypeId result_type)
+    const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<ResolvedCall> {
   std::vector<llvm::Value*> operands;
   operands.reserve(call.args.size());
@@ -654,6 +672,11 @@ auto CodeGenFunction::ResolveCall(
   if (!args) {
     return std::unexpected(std::move(args.error()));
   }
+  // Storage for what the callee builds goes last, whichever kind of callee it
+  // is: an entry of the library and a body of this program take it alike.
+  if (out != nullptr) {
+    args->push_back(out);
+  }
   auto callee = ResolveCallee(call, result_type, *args);
   if (!callee) {
     return std::unexpected(std::move(callee.error()));
@@ -662,13 +685,34 @@ auto CodeGenFunction::ResolveCall(
 }
 
 auto CodeGenFunction::LowerCall(
-    const lir::CallInstr& call, lir::TypeId result_type)
+    const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
-  auto resolved = ResolveCall(call, result_type);
+  // Ending an object whose storage going away is the whole of its end is
+  // nothing to emit.
+  if (std::holds_alternative<lir::EndValueTarget>(call.target) &&
+      support::LayoutOf(ObjectOf(OperandType(call.args.at(0))))
+          .ends_with_nothing_to_do) {
+    return nullptr;
+  }
+  // Entering a body builds the execution it becomes. Nothing ends that here:
+  // whoever drives it takes it out of the storage, the moment it is made.
+  if (const auto* coroutine = std::get_if<lir::CoroutineTarget>(&call.target)) {
+    switch (coroutine->op) {
+      case lir::CoroutineTarget::Op::kEnterBorrowedEnvironment:
+      case lir::CoroutineTarget::Op::kEnterOwnedEnvironment:
+        out = ObjectStorage(support::LibraryObject::kExecution);
+        break;
+      case lir::CoroutineTarget::Op::kAwait:
+      case lir::CoroutineTarget::Op::kRelease:
+        break;
+    }
+  }
+  auto resolved = ResolveCall(call, result_type, out);
   if (!resolved) {
     return std::unexpected(std::move(resolved.error()));
   }
-  return builder_.CreateCall(resolved->callee, resolved->args);
+  llvm::Value* called = builder_.CreateCall(resolved->callee, resolved->args);
+  return out != nullptr ? out : called;
 }
 
 // An entry the runtime publishes, typed by what the call hands it: the values
@@ -696,12 +740,8 @@ auto CodeGenFunction::CallArgs(
     return std::unexpected(std::move(encoding.error()));
   }
   if (const std::optional<ErasedArgument>& argument = encoding->erased) {
-    const std::array<llvm::Value*, 1> boxed{operands[argument->position]};
-    operands[argument->position] = builder_.CreateCall(
-        Entry(
-            RuntimeSymbol(argument->domain, RuntimeOp::kValueBox),
-            module_->Types().Ptr(), boxed),
-        boxed);
+    operands[argument->position] =
+        Box(argument->domain, operands[argument->position]);
   }
   // A position the callee names is not a value the program computed, so this
   // target writes it where its calls take values: right after the object whose
@@ -872,6 +912,20 @@ auto CodeGenFunction::ResolveCallee(
             return Entry(
                 RuntimeSymbol(RuntimeOp::kVariablesClose), result_type, args);
           },
+          [&](const lir::EndValueTarget&)
+              -> diag::Result<llvm::FunctionCallee> {
+            return Entry(
+                RuntimeSymbol(
+                    ObjectOf(OperandType(call.args.at(0))),
+                    RuntimeOp::kDestroy),
+                result_type, args);
+          },
+          [&](const lir::CopyValueTarget&)
+              -> diag::Result<llvm::FunctionCallee> {
+            return Entry(
+                RuntimeSymbol(ObjectOf(result_type), RuntimeOp::kCopy),
+                result_type, args);
+          },
           [&](const lir::ControlEffectTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
             return Entry(RuntimeSymbol(t.op), result_type, args);
@@ -891,7 +945,7 @@ auto CodeGenFunction::ResolveCallee(
 auto CodeGenFunction::SpanOver(
     std::span<llvm::Value* const> values, llvm::Type* element) -> llvm::Value* {
   auto* storage_ty = llvm::ArrayType::get(element, values.size());
-  llvm::Value* storage = builder_.CreateAlloca(storage_ty);
+  llvm::Value* storage = FrameStorage(storage_ty);
   for (std::uint32_t i = 0; i < values.size(); ++i) {
     llvm::Value* slot =
         builder_.CreateConstInBoundsGEP2_64(storage_ty, storage, 0, i);
@@ -936,7 +990,7 @@ auto CodeGenFunction::LowerArray(
 // homogeneous value's entry is named by its single domain instead, so what
 // crosses to one erased is decided at that entry rather than here.
 auto CodeGenFunction::LowerProduct(
-    const lir::ProductInstr& product, lir::TypeId result_type)
+    const lir::ProductInstr& product, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
   const std::vector<lir::TypeId> components =
       module_->Unit().types.Get(result_type).ProductComponentTypes();
@@ -956,20 +1010,11 @@ auto CodeGenFunction::LowerProduct(
     if (!component) {
       return std::unexpected(std::move(component.error()));
     }
-    const std::array<llvm::Value*, 1> box{*component};
-    boxed.push_back(builder_.CreateCall(
-        Entry(
-            RuntimeSymbol(*domain, RuntimeOp::kValueBox),
-            module_->Types().Ptr(), box),
-        box));
+    boxed.push_back(Box(*domain, *component));
   }
-  const std::array<llvm::Value*, 1> args{
-      SpanOver(boxed, module_->Types().Ptr())};
-  return builder_.CreateCall(
-      Entry(
-          RuntimeSymbol(support::ValueDomain::kTuple, RuntimeOp::kMake),
-          result_type, args),
-      args);
+  return BuildInto(
+      RuntimeSymbol(support::ValueDomain::kTuple, RuntimeOp::kMake),
+      {SpanOver(boxed, module_->Types().Ptr())}, out);
 }
 
 auto CodeGenFunction::UnionMemberDomain(
@@ -988,7 +1033,7 @@ auto CodeGenFunction::UnionMemberDomain(
 }
 
 auto CodeGenFunction::LowerUnion(
-    const lir::UnionInstr& u, lir::TypeId result_type)
+    const lir::UnionInstr& u, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
   // The live member's value crosses boxed, the way a product's components do;
   // the union domain's `make` takes which member is live beside it.
@@ -1000,23 +1045,16 @@ auto CodeGenFunction::LowerUnion(
   if (!value) {
     return std::unexpected(std::move(value.error()));
   }
-  const std::array<llvm::Value*, 1> box{*value};
-  llvm::Value* boxed = builder_.CreateCall(
-      Entry(
-          RuntimeSymbol(*member_domain, RuntimeOp::kValueBox),
-          module_->Types().Ptr(), box),
-      box);
   auto union_domain = DomainOf(result_type);
   if (!union_domain) {
     return std::unexpected(std::move(union_domain.error()));
   }
-  const std::array<llvm::Value*, 2> args{
-      llvm::ConstantInt::get(
-          llvm::Type::getInt64Ty(module_->Context()), u.index.value),
-      boxed};
-  return builder_.CreateCall(
-      Entry(RuntimeSymbol(*union_domain, RuntimeOp::kMake), result_type, args),
-      args);
+  return BuildInto(
+      RuntimeSymbol(*union_domain, RuntimeOp::kMake),
+      {llvm::ConstantInt::get(
+           llvm::Type::getInt64Ty(module_->Context()), u.index.value),
+       Box(*member_domain, *value)},
+      out);
 }
 
 auto CodeGenFunction::LowerTagTest(
@@ -1081,18 +1119,14 @@ auto CodeGenFunction::SelectorArgs(
     if (!domain) {
       return std::unexpected(std::move(domain.error()));
     }
-    const std::array<llvm::Value*, 1> box{*lowered};
-    shape.push_back(builder_.CreateCall(
-        Entry(
-            RuntimeSymbol(*domain, RuntimeOp::kValueBox),
-            module_->Types().Ptr(), box),
-        box));
+    shape.push_back(Box(*domain, *lowered));
   }
   return {};
 }
 
 auto CodeGenFunction::LowerAggregateExtract(
-    const lir::AggregateExtractInstr& extract) -> diag::Result<llvm::Value*> {
+    const lir::AggregateExtractInstr& extract, llvm::Value* out)
+    -> diag::Result<llvm::Value*> {
   auto aggregate = LowerOperand(extract.aggregate);
   if (!aggregate) {
     return std::unexpected(std::move(aggregate.error()));
@@ -1137,15 +1171,12 @@ auto CodeGenFunction::LowerAggregateExtract(
   // thing of the value, and the aggregate's own domain is what names the entry
   // that answers, so one composition serves both.
   const auto positional = [&](base::ComponentIndex index) -> llvm::Value* {
-    const std::array<llvm::Value*, 2> args{
-        *aggregate,
-        llvm::ConstantInt::get(
-            llvm::Type::getInt64Ty(module_->Context()), index.value)};
-    return builder_.CreateCall(
-        Entry(
-            RuntimeSymbol(*domain, RuntimeOp::kExtract), module_->Types().Ptr(),
-            args),
-        args);
+    return BuildInto(
+        RuntimeSymbol(*domain, RuntimeOp::kExtract),
+        {*aggregate,
+         llvm::ConstantInt::get(
+             llvm::Type::getInt64Ty(module_->Context()), index.value)},
+        out);
   };
   return std::visit(
       Overloaded{
@@ -1157,28 +1188,25 @@ auto CodeGenFunction::LowerAggregateExtract(
             if (!shape) {
               return std::unexpected(std::move(shape.error()));
             }
-            return builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(*domain, support::BuiltinFn::kElement),
-                    module_->Types().Ptr(), *shape),
-                *shape);
+            return BuildInto(
+                RuntimeSymbol(*domain, support::BuiltinFn::kElement),
+                *std::move(shape), out);
           },
           [&](const lir::ContainerSlice& s) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(s.operands);
             if (!shape) {
               return std::unexpected(std::move(shape.error()));
             }
-            return builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(*domain, support::BuiltinFn::kSlice),
-                    module_->Types().Ptr(), *shape),
-                *shape);
+            return BuildInto(
+                RuntimeSymbol(*domain, support::BuiltinFn::kSlice),
+                *std::move(shape), out);
           }},
       extract.selector);
 }
 
 auto CodeGenFunction::LowerAggregateUpdate(
-    const lir::AggregateUpdateInstr& update) -> diag::Result<llvm::Value*> {
+    const lir::AggregateUpdateInstr& update, llvm::Value* out)
+    -> diag::Result<llvm::Value*> {
   auto aggregate = LowerOperand(update.aggregate);
   if (!aggregate) {
     return std::unexpected(std::move(aggregate.error()));
@@ -1206,16 +1234,13 @@ auto CodeGenFunction::LowerAggregateUpdate(
   // its place; the aggregate's own domain names the entry that performs it.
   const auto positional = [&](base::ComponentIndex index,
                               llvm::Value* written) -> llvm::Value* {
-    const std::array<llvm::Value*, 3> args{
-        *aggregate,
-        llvm::ConstantInt::get(
-            llvm::Type::getInt64Ty(module_->Context()), index.value),
-        written};
-    return builder_.CreateCall(
-        Entry(
-            RuntimeSymbol(*domain, RuntimeOp::kUpdate), module_->Types().Ptr(),
-            args),
-        args);
+    return BuildInto(
+        RuntimeSymbol(*domain, RuntimeOp::kUpdate),
+        {*aggregate,
+         llvm::ConstantInt::get(
+             llvm::Type::getInt64Ty(module_->Context()), index.value),
+         written},
+        out);
   };
   return std::visit(
       Overloaded{
@@ -1233,12 +1258,7 @@ auto CodeGenFunction::LowerAggregateUpdate(
             }
             llvm::Value* written = *replacement;
             if (part_domain->has_value()) {
-              const std::array<llvm::Value*, 1> box{written};
-              written = builder_.CreateCall(
-                  Entry(
-                      RuntimeSymbol(**part_domain, RuntimeOp::kValueBox),
-                      module_->Types().Ptr(), box),
-                  box);
+              written = Box(**part_domain, written);
             }
             return positional(part.index, written);
           },
@@ -1247,22 +1267,18 @@ auto CodeGenFunction::LowerAggregateUpdate(
             if (!shape) {
               return std::unexpected(std::move(shape.error()));
             }
-            return builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(*domain, RuntimeOp::kWithElement),
-                    module_->Types().Ptr(), *shape),
-                *shape);
+            return BuildInto(
+                RuntimeSymbol(*domain, RuntimeOp::kWithElement),
+                *std::move(shape), out);
           },
           [&](const lir::ContainerSlice& s) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(s.operands);
             if (!shape) {
               return std::unexpected(std::move(shape.error()));
             }
-            return builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(*domain, RuntimeOp::kWithSlice),
-                    module_->Types().Ptr(), *shape),
-                *shape);
+            return BuildInto(
+                RuntimeSymbol(*domain, RuntimeOp::kWithSlice),
+                *std::move(shape), out);
           }},
       update.selector);
 }
@@ -1378,19 +1394,26 @@ auto CodeGenFunction::LowerTypeDescriptorRef(const lir::TypeDescriptorRef& ref)
   });
 }
 
-// A built value belongs to the arena of the stretch that built it, so the run
-// takes its own copy before the cell keeps the address.
+// The initializer builds the value in storage of this body's frame, which ends
+// with the body, so the run takes its own copy before the cell keeps the
+// address.
 auto CodeGenFunction::LowerIntegralConstantRef(
     const lir::IntegralConstantRef& ref) -> llvm::Value* {
-  llvm::Function* build = module_->UnitFunction(
-      module_->Unit().integral_constant_initializers.Get(ref.constant));
+  const lir::FunctionId initializer =
+      module_->Unit().integral_constant_initializers.Get(ref.constant);
+  const support::RuntimeObject object =
+      ObjectOf(module_->Unit().functions.Get(initializer).result_type);
   return BuiltOnce(module_->IntegralConstantCell(ref.constant), [&] {
-    const std::array<llvm::Value*, 1> built{builder_.CreateCall(build, {})};
-    return builder_.CreateCall(
+    llvm::Value* built = ObjectStorage(object);
+    builder_.CreateCall(module_->UnitFunction(initializer), {built});
+    const std::array<llvm::Value*, 1> args{built};
+    llvm::Value* retained = builder_.CreateCall(
         Entry(
             RuntimeSymbol(RuntimeOp::kRetainConstant), module_->Types().Ptr(),
-            built),
-        built);
+            args),
+        args);
+    EndObject(object, built);
+    return retained;
   });
 }
 
@@ -1422,18 +1445,16 @@ auto CodeGenFunction::LowerRealConst(const lir::RealConst& constant)
 auto CodeGenFunction::LowerNullConst(const lir::NullConst& constant)
     -> llvm::Value* {
   // Referring to nothing is a value of the type like any other, so where the
-  // type's values live in storage the null one does too and the constant is a
-  // handle to it. A pointer, and a domain whose value is its own handle, have
-  // no storage behind the handle for it to name, so there the null is the null
-  // pointer itself.
+  // type's values are objects the null one is too, built in the frame like any
+  // other. It holds nothing, so its storage going away is the whole of its
+  // end. A pointer has no object behind it to build, so there the null is the
+  // null pointer itself.
   const std::optional<support::ValueDomain> domain =
       ValueDomainOf(module_->Unit(), constant.type);
-  if (domain && !support::ValueDomainIsItsOwnHandle(*domain)) {
-    return builder_.CreateCall(
-        Entry(
-            RuntimeSymbol(*domain, RuntimeOp::kDefault), constant.type,
-            std::span<llvm::Value* const>{}),
-        std::array<llvm::Value*, 0>{});
+  if (domain.has_value()) {
+    return BuildInto(
+        RuntimeSymbol(*domain, RuntimeOp::kDefault), {},
+        ObjectStorage(*domain));
   }
   return llvm::ConstantPointerNull::get(
       llvm::cast<llvm::PointerType>(module_->Types().Map(constant.type)));
@@ -1714,7 +1735,7 @@ auto CodeGenFunction::ConstructionOf(
                 wildcard_index ? RuntimeOp::kFromEntriesDefaultWildcard
                                : RuntimeOp::kFromEntriesDefault));
           },
-          // A sequence outlives the stretch that built it -- the owner keeps
+          // A sequence outlives the body that built it -- the owner keeps
           // its address, and a dimension above it keeps that address as an
           // ordinary element -- so the runtime takes the handles rather than
           // the element list standing as the value.
@@ -1742,8 +1763,8 @@ auto CodeGenFunction::ConstructionOf(
               // What a value formats as is the value's own answer, so both of
               // these are named by the representation of what they are built
               // over. Each borrows that value rather than copying it, which
-              // holds because the value it borrows is a transient of the same
-              // generated entry and outlives the print the entry ends with.
+              // holds because the value it borrows belongs to the same
+              // full-expression as the print, and ends only after it.
               case lir::RuntimeLibraryKind::kPrintValueItem:
                 return over_operand(RuntimeOp::kMakePrintValueItem);
               // An operand, and an operand carrying the text its own type
@@ -2074,6 +2095,8 @@ auto CodeGenFunction::EncodingOf(
           [](const lir::CloseVariablesTarget&) -> Encoded {
             return CallEncoding{};
           },
+          [](const lir::EndValueTarget&) -> Encoded { return CallEncoding{}; },
+          [](const lir::CopyValueTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ControlEffectTarget&) -> Encoded {
             return CallEncoding{};
           },

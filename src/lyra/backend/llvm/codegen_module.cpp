@@ -138,6 +138,12 @@ auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
     params.resize(kScopeConstructSharedParams);
     params.push_back(types_.Span());
   }
+  // A body answering a value its caller will own builds that value in storage
+  // the caller gives, handed over last, and answers with it -- the shape every
+  // runtime entry answering one has.
+  if (unit_->types.Get(fn.result_type).IsOwnedValue()) {
+    params.push_back(types_.Ptr());
+  }
   auto* fn_ty =
       llvm::FunctionType::get(types_.Map(fn.result_type), params, false);
   return llvm::Function::Create(

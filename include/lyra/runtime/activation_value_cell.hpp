@@ -7,10 +7,8 @@ namespace lyra::runtime {
 
 // A procedural local's value storage, owned by an activation and reached by a
 // handle a suspending body holds across suspensions. It is the runtime home a
-// value-typed local needs on the execution backend, where a value crosses the
-// boundary as an opaque handle whose transient arena storage is released at
-// each suspension: the handle a generated frame holds points here, into
-// activation-lifetime storage, not into that per-stretch arena.
+// value-typed local of such a body has on the execution backend: storage that
+// lives as long as the execution, which a reference can bind.
 //
 // It is not observable -- a procedural local is not a signal, so a write is
 // never an update event and no subscriber is woken. That non-observation is the

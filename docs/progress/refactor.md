@@ -1837,11 +1837,10 @@ enough to warrant its own focused review.
 
 - [ ] R115 -- The `null` literal is typed as the opaque handle, and a comment says every handle
       absorbs it. That holds where a target compiles per type and an implicit conversion covers the
-      difference; it is false where the kind of value decides how a value crosses to generated code,
-      because the opaque handle is the one kind that crosses as the pointer itself and every other
-      crosses as the address of what it holds. Two comparisons therefore have to bring such an
-      operand to the handle's type before stating themselves, and a third that forgets gets a null
-      address read as a value.
+      difference; it is false where the kind of value decides which runtime object a value is,
+      because an opaque handle holds a bare pointer where a class handle holds a share of ownership.
+      Two comparisons therefore have to bring such an operand to the handle's type before stating
+      themselves, and a third that forgets reads one object as the other.
 
       Target: a literal that names no object carries no kind of value of its own, so whatever
       consumes one states the type it is read at and the shape stops being forgettable. Not blocked.
@@ -1987,7 +1986,7 @@ enough to warrant its own focused review.
       a loop generate's step is exactly such a position. A sparse index array reaches the shared
       body for the first time, carrying the value the genvar held rather than an ordinal.
 
-- [ ] R120 -- On the execution backend, a body that does not suspend holds every value it builds
+- [x] R120 -- On the execution backend, a body that does not suspend holds every value it builds
       until it returns, so a run's footprint grows with the amount of work rather than with what the
       design declares. Values crossing into generated code are owned by the scope wrapping the call
       that made them and released when that scope ends; a process body that loops without waiting is
@@ -2008,6 +2007,12 @@ enough to warrant its own focused review.
       outlive the statement that made it. The scope's extent is right for what crosses a call
       boundary and wrong as the lifetime of every intermediate a loop produces, and separating those
       two is the question -- not a larger arena, which moves the ceiling and keeps the growth.
+
+      Resolved by removing the scope's ownership of values altogether rather than by separating
+      the two extents inside it: every value is built in the frame of whoever made it and ended at
+      the end of its full-expression, as a C++ compiler ends a temporary
+      (`../decisions/a-value-lives-in-its-makers-frame.md`). A loop of a million function calls now
+      holds 4.5 MB, the same as at a hundred thousand.
 
 - [ ] R121 -- Every runtime entry the execution backend can call is registered in one function, and
       that function is long enough that the editor reports its size when it grows. It is a flat list
@@ -2556,6 +2561,34 @@ enough to warrant its own focused review.
       it takes is a call that can raise an error stated as one that can leave its caller, as clang
       states every call that is not known not to unwind, and the stack release told apart from an
       error where a landing decides to stop something. Not blocked.
+
+- [ ] R148 -- On the execution backend, reading one element of a variable copies the whole variable,
+      and writing one element copies it, rebuilds it and copies it back. The representative compute
+      block runs 42 table passes a second there against 4,650 on the C++ backend (2026-09-24, both
+      optimized); a profile of it puts 31% of the time in a cell read copying a 1024-element array,
+      26% in the store copying it back, 18% in rebuilding it around one element, and 22% in ending
+      the copies. The C++ backend reads the same cell through a reference and writes the element in
+      place.
+
+      The reason the execution backend did otherwise is gone: it read the whole value because a
+      value lived behind a handle the runtime owned, with no interior the generated side could
+      reach. A value is now an object in storage whose address the generated side holds, so a read
+      can answer with a reference to the storage, as `Get() const&` does, and an element write can
+      land in the element, as the decision on storage owning its value already asks.
+
+      The same premise is what gives every such variable a cell in the execution's store rather
+      than a slot of the frame. The MIR predicate choosing it, and the record that one storage per
+      variable argues from, both reason that the holder has only a handle into storage the runtime
+      releases -- which stopped being true when values moved into the frame. What still holds is
+      that a variable needs storage a reference can bind and that survives a suspension, and a
+      frame object has both: the coroutine passes carry it across a suspension, and its address is
+      stable. So the question this entry answers includes whether a variable is a frame object,
+      which would make a read an address and remove the copy above at its root.
+
+      Target: a read of a variable's value, and a step to one of its parts, answer with the storage
+      they reach -- the entry's answer is stated as the storage it was handed, as it already is
+      for a guard -- and only a value the program keeps past the full-expression is copied. Not
+      blocked.
 
 ## Out of Scope
 

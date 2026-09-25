@@ -68,13 +68,26 @@ class FunctionLowerer {
     std::size_t cleanup_depth{};
   };
 
-  // A cleanup owed on every way out of the body it guards, and the block whose
-  // child scopes hold it. It is lowered afresh at each way out, because a CFG
-  // reaches an extent's end by as many edges as there are ways to leave it.
-  struct PendingCleanup {
+  // What is owed on every way out of the extent that incurred it: a cleanup a
+  // guarded body states, with the block whose child scopes hold it; the end of
+  // an owned value the extent made; and the end of the owned value a frame slot
+  // holds. Each is emitted afresh at each way out, because a CFG reaches an
+  // extent's end by as many edges as there are ways to leave it. A value whose
+  // end passed to a slot, or to the caller, leaves nothing where its own end
+  // stood.
+  struct GuardCleanup {
     const mir::Block* owner = nullptr;
     mir::BlockId cleanup{};
   };
+  struct ValueEnd {
+    lir::ValueId value;
+  };
+  struct SlotEnd {
+    lir::ValueId slot;
+  };
+  struct EndPassedOn {};
+  using PendingCleanup =
+      std::variant<GuardCleanup, ValueEnd, SlotEnd, EndPassedOn>;
 
   // Where a control effect leaving a region's body lands: the block that runs
   // the region's handler, the storage the effect is bound to for it to read,
@@ -88,8 +101,8 @@ class FunctionLowerer {
   // Where a source local's storage is. A local whose type the runtime holds
   // values of gets storage of its own among the body's variables, and the
   // binding names it by the address the body opened over that storage -- which
-  // is the one storage a reference can bind and the one that outlives the
-  // stretch that wrote it. A local whose type is stable as it stands -- a
+  // is the one storage a reference can bind and the one that outlives a
+  // suspension of the body. A local whose type is stable as it stands -- a
   // pointer, a code reference, a machine scalar -- is a slot of the body's own
   // frame.
   //
@@ -129,9 +142,36 @@ class FunctionLowerer {
   // handed.
   auto ConstructBase() -> diag::Result<void>;
 
+  // A block is an extent: what its declarations bind ends where it does. Its
+  // statements run in order, and a block expression's run where the value that
+  // follows them can still read what they declared, so theirs end with the
+  // full-expression the block expression stands in.
   auto LowerBlockInto(const mir::Block& block) -> diag::Result<void>;
+  auto LowerStatementsInto(const mir::Block& block) -> diag::Result<void>;
   auto LowerStmtInto(const mir::Block& block, const mir::Stmt& stmt)
       -> diag::Result<void>;
+  // An expression a statement evaluates for itself, which is a full-expression:
+  // every value made while evaluating it ends when it is done (C++
+  // [class.temporary]; Rust's temporary scopes). What it yields is read by
+  // nothing.
+  auto LowerDiscardedInto(const mir::Block& block, mir::ExprId id)
+      -> diag::Result<void>;
+  // A declaration: its initializer is a full-expression, and the value it
+  // settles is the local's -- copied into storage of the local's own, or taken
+  // by the frame slot the local is, which ends it with the enclosing block.
+  auto DeclareLocal(
+      const mir::Block& block, mir::LocalId local, mir::ExprId init)
+      -> diag::Result<void>;
+  // Ends every value owed above `depth` that no way out has already ended, and
+  // forgets them. A block that control left by a statement of its own has had
+  // them ended on that way out, and a way out never returns here.
+  auto CloseExtent(std::size_t depth) -> diag::Result<void>;
+  // The value a store into a slot, or a return, hands on. One this body made
+  // passes its end along with it; one it was only lent is copied, so what is
+  // handed on is always one this body owned.
+  auto HandOn(lir::Operand value) -> lir::Operand;
+  // States the end of an owned value.
+  void EndValue(lir::Operand value);
   auto LowerIfInto(const mir::Block& block, const mir::IfStmt& stmt)
       -> diag::Result<void>;
   auto LowerForInto(const mir::Block& block, const mir::ForStmt& stmt)
@@ -318,8 +358,8 @@ class FunctionLowerer {
   auto LowerCompoundOperator(
       mir::BinaryOp op, lir::Operand old_value, lir::Operand rhs,
       lir::TypeId type) -> lir::Operand;
-  // A method that changes the object it is applied to. The generated side holds
-  // a value as a handle a copy may alias, so the entry answers with the changed
+  // A method that changes the object it is applied to. The generated side reads
+  // a value out of its storage as a copy, so the entry answers with the changed
   // object rather than changing one in place, and the answer is put back where
   // the object came from. Where the method also states a result of its own -- a
   // queue pop yields the element it removed (LRM 7.10.2.4) -- the entry
@@ -346,8 +386,8 @@ class FunctionLowerer {
       -> diag::Result<lir::Operand>;
   // Updating a target that reaches into a value aggregate: a read of the
   // owner's whole value, a rebuild of it with the part changed, and the change
-  // put back through the owner. A value reaches the generated side as a handle
-  // a copy may alias, so nothing here has an interior to write.
+  // put back through the owner. The owner's storage hands the generated side a
+  // copy rather than itself, so nothing here has an interior to write.
   auto LowerValuePartUpdate(
       const mir::Block& block, mir::ExprId target, const ValueChange& change)
       -> diag::Result<lir::Operand>;
@@ -365,7 +405,10 @@ class FunctionLowerer {
   auto Emit(lir::TypeId type, lir::InstrData data) -> lir::Operand;
   auto Append(lir::TypeId type, lir::InstrData data) -> lir::Operand;
   auto NewPlaceLocal(lir::TypeId type) -> lir::ValueId;
-  void BindLocal(mir::LocalId local, lir::TypeId type, lir::Operand init);
+  // Answers the frame slot the local became where that slot owns its value,
+  // for the caller to end with the extent the local belongs to.
+  auto BindLocal(mir::LocalId local, lir::TypeId type, lir::Operand init)
+      -> std::optional<lir::ValueId>;
   auto Load(lir::Place place, lir::TypeId type) -> lir::Operand;
   auto Store(lir::Place place, lir::Operand value) -> lir::Operand;
 

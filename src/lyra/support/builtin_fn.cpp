@@ -17,19 +17,19 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "element_ref",
           .declaration = Method{"ElementRef"},
-          .answers_with_the_part = true};
+          .answer = EntryAnswer::kPartOfTheReceiver};
     case BuiltinFn::kSliceRef:
       return {
           .name = "slice_ref",
           .declaration = Method{"SliceRef"},
-          .answers_with_the_part = true};
+          .answer = EntryAnswer::kPartOfTheReceiver};
     case BuiltinFn::kPart:
       return {.name = "extract", .declaration = Method{"Get"}};
     case BuiltinFn::kPartRef:
       return {
           .name = "part_ref",
           .declaration = Method{"GetRef"},
-          .answers_with_the_part = true};
+          .answer = EntryAnswer::kPartOfTheReceiver};
     case BuiltinFn::kTagMatches:
       return {.name = "tag_matches", .declaration = Method{"IsTagged"}};
     case BuiltinFn::kMakeActiveMember:
@@ -37,7 +37,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kRequire:
       return {
           .name = "require",
-          .declaration = FreeFunction{"lyra::value::Require"}};
+          .declaration = FreeFunction{"lyra::value::Require"},
+          .answer = EntryAnswer::kTheReceiver};
     case BuiltinFn::kSize:
       return {.name = "size", .declaration = Method{"Size"}};
     case BuiltinFn::kLen:

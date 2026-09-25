@@ -12,6 +12,7 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -172,6 +173,12 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "claim_departure";
     case RuntimeOp::kSettleDeparture:
       return "settle_departure";
+    case RuntimeOp::kDestroy:
+      return "destroy";
+    case RuntimeOp::kCopy:
+      return "copy";
+    case RuntimeOp::kMove:
+      return "move";
   }
   throw InternalError("llvm codegen: unknown runtime operation");
 }
@@ -185,156 +192,19 @@ auto SelectsByStatedIndex(
 
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<support::ValueDomain> {
-  using Domain = std::optional<support::ValueDomain>;
-  return unit.types.Get(type).Visit(
+  const std::optional<support::RuntimeObject> held =
+      unit.types.Get(type).HeldObject();
+  if (!held.has_value()) {
+    return std::nullopt;
+  }
+  return std::visit(
       Overloaded{
-          [](const lir::PackedArrayType&) -> Domain {
-            return support::ValueDomain::kPacked;
-          },
-          // A packed aggregate is a packed value at runtime: one vector under a
-          // set of names, and a name is not something a value carries, so it
-          // takes no domain of its own.
-          [](const lir::PackedStructType&) -> Domain {
-            return support::ValueDomain::kPacked;
-          },
-          [](const lir::PackedUnionType&) -> Domain {
-            return support::ValueDomain::kPacked;
-          },
-          // LRM 7.8.1 gives a wildcard-indexed array no index data type, so
-          // this type names where an index goes rather than what one is made
-          // of. What goes there is always integral -- the clause admits nothing
-          // else as an index -- at whatever width the expression carried, which
-          // is why the type states no width and the value does.
-          [](const lir::WildcardIndexType&) -> Domain {
-            return support::ValueDomain::kPacked;
-          },
-          [](const lir::StringType&) -> Domain {
-            return support::ValueDomain::kString;
-          },
-          // `real` and `realtime` are one host-precision value (LRM 6.12.1);
-          // `shortreal` is the single-precision one.
-          [](const lir::RealType&) -> Domain {
-            return support::ValueDomain::kReal;
-          },
-          [](const lir::RealTimeType&) -> Domain {
-            return support::ValueDomain::kReal;
-          },
-          [](const lir::ShortRealType&) -> Domain {
-            return support::ValueDomain::kShortReal;
-          },
-          // A chandle (LRM 6.14) is a pointer-sized value carried inline: the
-          // domain's handle is the chandle value itself, not a reference to a
-          // runtime-owned value object.
-          [](const lir::ChandleType&) -> Domain {
-            return support::ValueDomain::kChandle;
-          },
-          // A declared structure and the anonymous product a lowering composes
-          // realize as one product value; what the structure declares beyond
-          // it is the name of each member, which no value carries.
-          [](const lir::TupleType&) -> Domain {
-            return support::ValueDomain::kTuple;
-          },
-          [](const lir::UnpackedStructType&) -> Domain {
-            return support::ValueDomain::kTuple;
-          },
-          // An untagged union erases its tag and gives a cross-member read the
-          // component default; a tagged union keeps the tag observable and
-          // faults a mismatched access (LRM 7.3 / 7.3.2), so the two realize as
-          // different runtime value types and name different domains.
-          [](const lir::UnionType&) -> Domain {
-            return support::ValueDomain::kUnion;
-          },
-          [](const lir::TaggedUnionType&) -> Domain {
-            return support::ValueDomain::kTaggedUnion;
-          },
-          // A tagged union's `void` member (LRM 7.3.2) is a value carrying no
-          // bits; it crosses the boundary as its own domain so a build's
-          // payload is uniform whatever the member type.
-          [](const lir::EmptyType&) -> Domain {
-            return support::ValueDomain::kEmpty;
-          },
-          [](const lir::DynamicArrayType&) -> Domain {
-            return support::ValueDomain::kDynArray;
-          },
-          // A container's domain names how its elements are held and nothing
-          // its declaration says: an unpacked array's range (LRM 7.4.2), a
-          // queue's bound (LRM 7.10), and an associative array's index type
-          // (LRM 7.8) each reach an operation as an operand of their own, so
-          // one realization per domain serves every declared shape.
-          [](const lir::UnpackedArrayType&) -> Domain {
-            return support::ValueDomain::kUnpackedArray;
-          },
-          [](const lir::QueueType&) -> Domain {
-            return support::ValueDomain::kQueue;
-          },
-          [](const lir::AssociativeArrayType&) -> Domain {
-            return support::ValueDomain::kAssocArray;
-          },
-          // A class handle (LRM 8.3) refers to an object the simulator owns.
-          // Which object it refers to is the whole value, so the domain's
-          // operations are the ones over a reference -- defaulting to null,
-          // copying, and comparing identity -- and never operations on the
-          // object it names.
-          [](const lir::ManagedRefType&) -> Domain {
-            return support::ValueDomain::kManagedRef;
-          },
-
-          // Machine data crosses to a target on the target's own terms, so it
-          // is emitted as the target's own scalar, array, or code address and
-          // never reaches the runtime's value library at all.
-          [](const lir::MachineIntType&) -> Domain { return std::nullopt; },
-          [](const lir::MachineFloatType&) -> Domain { return std::nullopt; },
-          [](const lir::MachineBoolType&) -> Domain { return std::nullopt; },
-          [](const lir::MachineCStringType&) -> Domain { return std::nullopt; },
-          [](const lir::MachineArrayType&) -> Domain { return std::nullopt; },
-          [](const lir::MachineFunctionType&) -> Domain {
+          [](support::ValueDomain domain)
+              -> std::optional<support::ValueDomain> { return domain; },
+          [](support::LibraryObject) -> std::optional<support::ValueDomain> {
             return std::nullopt;
-          },
-
-          // The absence of a type is not a value of one.
-          [](const lir::VoidType&) -> Domain { return std::nullopt; },
-
-          // An object, and the several ways of naming one. A value of an
-          // object's own type is never handed about: what travels is a
-          // reference to it, which is the domain above.
-          [](const lir::ObjectType&) -> Domain { return std::nullopt; },
-          [](const lir::ExternalUnitObjectType&) -> Domain {
-            return std::nullopt;
-          },
-          [](const lir::CrossUnitClassType&) -> Domain { return std::nullopt; },
-          [](const lir::OpaqueObjectType&) -> Domain { return std::nullopt; },
-          [](const lir::RuntimeClassType&) -> Domain { return std::nullopt; },
-          [](const lir::StructType&) -> Domain { return std::nullopt; },
-          [](const lir::ClosureType&) -> Domain { return std::nullopt; },
-
-          // Storage the runtime owns and services it provides. Each holds or
-          // answers with a value, and that value has a domain of its own; the
-          // storage is reached through its own access rather than being handed
-          // over as a value. A named event is storage of this kind too: LRM
-          // 15.5 fixes its identity for the life of its scope, so it is never
-          // copied.
-          [](const lir::ObservableType&) -> Domain { return std::nullopt; },
-          [](const lir::ResolvedType&) -> Domain { return std::nullopt; },
-          [](const lir::DriverType&) -> Domain { return std::nullopt; },
-          [](const lir::SampledHistoryType&) -> Domain { return std::nullopt; },
-          [](const lir::EvaluationAttemptsType&) -> Domain {
-            return std::nullopt;
-          },
-          [](const lir::EventType&) -> Domain { return std::nullopt; },
-          [](const lir::RuntimeEffectsType&) -> Domain { return std::nullopt; },
-          [](const lir::FilesType&) -> Domain { return std::nullopt; },
-          [](const lir::DiagnosticType&) -> Domain { return std::nullopt; },
-          [](const lir::RuntimeLibraryType&) -> Domain { return std::nullopt; },
-
-          // An address, and a run of storage reached through one. What has a
-          // domain is whatever sits at the far end.
-          [](const lir::RefType&) -> Domain { return std::nullopt; },
-          [](const lir::PointerType&) -> Domain { return std::nullopt; },
-          [](const lir::VectorType&) -> Domain { return std::nullopt; },
-
-          // A body in flight, which carries a value out at its end rather than
-          // being one.
-          [](const lir::CoroutineType&) -> Domain { return std::nullopt; }});
+          }},
+      *held);
 }
 
 auto RuntimeSymbol(RuntimeOp op) -> std::string {
@@ -343,6 +213,12 @@ auto RuntimeSymbol(RuntimeOp op) -> std::string {
 
 auto RuntimeSymbol(support::ValueDomain domain, RuntimeOp op) -> std::string {
   return Symbol(domain, RuntimeOpName(op));
+}
+
+auto RuntimeSymbol(support::RuntimeObject object, RuntimeOp op) -> std::string {
+  return std::format(
+      "{}{}_{}", kRuntimeSymbolPrefix, support::RuntimeObjectName(object),
+      RuntimeOpName(op));
 }
 
 auto RuntimeSymbol(support::ValueDomain domain, lir::BinaryOp op)
@@ -673,11 +549,12 @@ auto RuntimeSymbol(
 }
 
 auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
-  // A value crosses this boundary as a handle a copy may alias, so nothing here
-  // may answer with the part of one: a write through such an answer would be
-  // visible through every copy. What this backend needs instead is the
-  // functional update the part's owner performs, which the lowering builds from
-  // the parts rather than reaching for an entry here.
+  // A value's storage is reached from this side only through its own access,
+  // which reads a copy out and takes a whole value back, so nothing here may
+  // answer with the part of one: a write through such an answer would land in a
+  // copy nothing keeps. What this backend needs instead is the functional
+  // update the part's owner performs, which the lowering builds from the parts
+  // rather than reaching for an entry here.
   constexpr std::string_view kAnswersWithPartOfAValue =
       "answers with part of a value rather than its contents";
   // Recovering a handle from the object it refers to is what a shared-owner

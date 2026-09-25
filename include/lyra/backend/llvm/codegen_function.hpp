@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <optional>
 #include <span>
 #include <string>
@@ -18,12 +19,14 @@
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace llvm {
 class BasicBlock;
 class Function;
 class FunctionCallee;
+class Instruction;
 class Value;
 }  // namespace llvm
 
@@ -62,9 +65,51 @@ class CodeGenFunction {
   // rather than where the arguments are named.
   auto BindConstructionArguments() -> void;
   auto LowerInstr(const lir::Instr& instr) -> diag::Result<llvm::Value*>;
-  auto ResolveCall(const lir::CallInstr& call, lir::TypeId result_type)
+
+  // Storage in the body's own frame, allocated where the body opens: every
+  // path reaching an instruction then names the same storage, and a loop
+  // reuses it rather than growing the stack on each turn.
+  auto FrameStorage(llvm::Type* type) -> llvm::Value*;
+  // Frame storage for one runtime object, sized and aligned as the library
+  // states that object.
+  auto ObjectStorage(support::RuntimeObject object) -> llvm::Value*;
+  // Where a value of `type` an instruction makes is built: storage for the
+  // runtime object an owned value is, and nothing for any other value, which
+  // the instruction answers as itself. Every owned value is built in storage
+  // its maker gives, as clang builds a class-type result through `sret`, and
+  // is ended by the end LIR states for it.
+  auto StorageFor(lir::TypeId type) -> llvm::Value*;
+  // Calls the entry `symbol`, which builds its answer in `out`, handed to it
+  // last; what the call answers is `out`.
+  auto BuildInto(
+      std::string_view symbol, std::vector<llvm::Value*> args, llvm::Value* out)
+      -> llvm::Value*;
+  // The runtime object an owned value of `type` is.
+  [[nodiscard]] auto ObjectOf(lir::TypeId type) const -> support::RuntimeObject;
+  // Ends the object `value` names, where ending one has anything to do.
+  void EndObject(support::RuntimeObject object, llvm::Value* value);
+  // Builds a second object equal to `value` in `out`.
+  auto CopyObject(
+      support::RuntimeObject object, llvm::Value* value, llvm::Value* out)
+      -> llvm::Value*;
+  // Moves the object `value` names into `out`, and ends what the move left
+  // behind: the value now lives in `out` and nowhere else.
+  void RelocateObject(
+      support::RuntimeObject object, llvm::Value* value, llvm::Value* out);
+  // A value boxed into the erased representation of `domain`, in storage of
+  // its own that lives until the call it is handed to returns.
+  auto Box(support::ValueDomain domain, llvm::Value* value) -> llvm::Value*;
+  // Ends every box made for the instruction just emitted, whose one call has
+  // returned. Where that call is one a departure can leave, the boxes are owed
+  // on both edges, so they are ended as each successor opens.
+  void EndBoxes();
+  void OweBoxesOnEntry(std::initializer_list<lir::BlockId> successors);
+
+  auto ResolveCall(
+      const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<ResolvedCall>;
-  auto LowerCall(const lir::CallInstr& call, lir::TypeId result_type)
+  auto LowerCall(
+      const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   // Opens a landing: the pad the platform transfers to, and the target the
   // departure names, which is what the body's own test reads.
@@ -87,32 +132,37 @@ class CodeGenFunction {
       -> llvm::Value*;
   auto LowerArray(const lir::ArrayInstr& array, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
-  auto LowerProduct(const lir::ProductInstr& product, lir::TypeId result_type)
-      -> diag::Result<llvm::Value*>;
-  auto LowerUnion(const lir::UnionInstr& u, lir::TypeId result_type)
+  auto LowerProduct(
+      const lir::ProductInstr& product, lir::TypeId result_type,
+      llvm::Value* out) -> diag::Result<llvm::Value*>;
+  auto LowerUnion(
+      const lir::UnionInstr& u, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   // The runtime domain a union's member `index` boxes as. Both union kinds hold
   // their member types positionally, so this reads either one.
   [[nodiscard]] auto UnionMemberDomain(
       lir::TypeId union_type, std::uint32_t index) const
       -> diag::Result<support::ValueDomain>;
-  auto LowerAggregateExtract(const lir::AggregateExtractInstr& extract)
+  auto LowerAggregateExtract(
+      const lir::AggregateExtractInstr& extract, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  auto LowerAggregateUpdate(const lir::AggregateUpdateInstr& update)
+  auto LowerAggregateUpdate(
+      const lir::AggregateUpdateInstr& update, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   auto LowerTagTest(const lir::TagTestInstr& test, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
-  auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
+  auto LowerLoad(
+      const lir::LoadInstr& load, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
   auto LowerAddrOf(const lir::AddrOfInstr& addr, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
-  auto LowerBinary(const lir::BinaryInstr& binary, lir::TypeId result_type)
+  auto LowerBinary(const lir::BinaryInstr& binary, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   auto LowerMachineBinary(
       const lir::BinaryInstr& binary, lir::Signedness signedness)
       -> diag::Result<llvm::Value*>;
-  auto LowerUnary(const lir::UnaryInstr& unary, lir::TypeId result_type)
+  auto LowerUnary(const lir::UnaryInstr& unary, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   auto LowerMachineUnary(const lir::UnaryInstr& unary)
       -> diag::Result<llvm::Value*>;
@@ -363,6 +413,14 @@ class CodeGenFunction {
   llvm::IRBuilder<> builder_;
   std::unordered_map<lir::ValueId, llvm::Value*> values_;
   std::vector<llvm::BasicBlock*> blocks_;
+  // Where frame storage is allocated: the end of the code the body opens with,
+  // ahead of its first statement.
+  llvm::Instruction* frame_storage_point_ = nullptr;
+  // The boxes made for the call being emitted, and the boxes a call a
+  // departure can leave owes each of its successors as it opens.
+  std::vector<llvm::Value*> boxes_;
+  std::unordered_map<llvm::BasicBlock*, std::vector<llvm::Value*>>
+      owed_on_entry_;
   // A coroutine body's ramp state: the coroutine identity (which names the
   // frame to release) and its handle, plus the blocks every suspension and
   // return funnels through. The frame's layout and the resume state machine are

@@ -398,6 +398,171 @@ auto Type::IsAddressOnly() const -> bool {
          Is<SampledHistoryType>() || Is<EvaluationAttemptsType>();
 }
 
+auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
+  using Held = std::optional<support::RuntimeObject>;
+  using support::LibraryObject;
+  using support::ValueDomain;
+  return Visit(
+      Overloaded{
+          [](const PackedArrayType&) -> Held { return ValueDomain::kPacked; },
+          // A packed aggregate is a packed value at runtime: one vector under a
+          // set of names, and a name is not something a value carries.
+          [](const PackedStructType&) -> Held { return ValueDomain::kPacked; },
+          [](const PackedUnionType&) -> Held { return ValueDomain::kPacked; },
+          // LRM 7.8.1 gives a wildcard-indexed array no index data type, so
+          // this type names where an index goes rather than what one is made
+          // of. What goes there is always integral, at whatever width the
+          // expression carried, which is why the value states its width.
+          [](const WildcardIndexType&) -> Held { return ValueDomain::kPacked; },
+          [](const StringType&) -> Held { return ValueDomain::kString; },
+          // `real` and `realtime` are one host-precision value (LRM 6.12.1);
+          // `shortreal` is the single-precision one.
+          [](const RealType&) -> Held { return ValueDomain::kReal; },
+          [](const RealTimeType&) -> Held { return ValueDomain::kReal; },
+          [](const ShortRealType&) -> Held { return ValueDomain::kShortReal; },
+          // A chandle (LRM 6.14) is a value holding one host pointer.
+          [](const ChandleType&) -> Held { return ValueDomain::kChandle; },
+          // A declared structure and the anonymous product a lowering composes
+          // realize as one product value; what the structure declares beyond
+          // it is the name of each member, which no value carries.
+          [](const TupleType&) -> Held { return ValueDomain::kTuple; },
+          [](const UnpackedStructType&) -> Held { return ValueDomain::kTuple; },
+          // An untagged union erases its tag and gives a cross-member read the
+          // component default; a tagged union keeps the tag observable and
+          // faults a mismatched access (LRM 7.3 / 7.3.2), so the two are
+          // different runtime values.
+          [](const UnionType&) -> Held { return ValueDomain::kUnion; },
+          [](const TaggedUnionType&) -> Held {
+            return ValueDomain::kTaggedUnion;
+          },
+          // A tagged union's `void` member (LRM 7.3.2) is a value carrying no
+          // bits, a value of its own so a build's payload is uniform whatever
+          // the member type.
+          [](const EmptyType&) -> Held { return ValueDomain::kEmpty; },
+          // A container's value is how its elements are held and nothing its
+          // declaration says: an unpacked array's range (LRM 7.4.2), a queue's
+          // bound (LRM 7.10), and an associative array's index type (LRM 7.8)
+          // each reach an operation as an operand of their own, so one runtime
+          // value per kind serves every declared shape.
+          [](const DynamicArrayType&) -> Held {
+            return ValueDomain::kDynArray;
+          },
+          [](const UnpackedArrayType&) -> Held {
+            return ValueDomain::kUnpackedArray;
+          },
+          [](const QueueType&) -> Held { return ValueDomain::kQueue; },
+          [](const AssociativeArrayType&) -> Held {
+            return ValueDomain::kAssocArray;
+          },
+          // A class handle (LRM 8.3) refers to an object the simulator owns.
+          // Which object it refers to is the whole value, so the value's
+          // operations are the ones over a reference -- defaulting to null,
+          // copying, and comparing identity.
+          [](const ManagedRefType&) -> Held {
+            return ValueDomain::kManagedRef;
+          },
+
+          // The storage a closure's captures live in is built for the call that
+          // hands it on.
+          [](const ClosureType&) -> Held { return LibraryObject::kClosure; },
+          // A shared pointer is a hold on storage that outlives the scope
+          // asking for it, and letting the hold go is what ends it; the other
+          // two name storage somebody else ends.
+          [](const PointerType& pointer) -> Held {
+            switch (pointer.ownership) {
+              case PointerOwnership::kShared:
+                return LibraryObject::kPromotedScope;
+              case PointerOwnership::kUnique:
+              case PointerOwnership::kBorrowed:
+                return std::nullopt;
+            }
+            throw InternalError("lir: unknown pointer ownership");
+          },
+          [](const RuntimeLibraryType& library) -> Held {
+            switch (library.kind) {
+              // Built for one use by the call that answers with one.
+              case RuntimeLibraryKind::kPrintItem:
+              case RuntimeLibraryKind::kPrintLiteralItem:
+              case RuntimeLibraryKind::kPrintValueItem:
+                return LibraryObject::kPrintItem;
+              case RuntimeLibraryKind::kFormatSpec:
+                return LibraryObject::kFormatSpec;
+              case RuntimeLibraryKind::kFormatArg:
+                return LibraryObject::kFormatArg;
+              case RuntimeLibraryKind::kChannelCancellation:
+                return LibraryObject::kChannelCancellation;
+              case RuntimeLibraryKind::kHierarchySegment:
+                return LibraryObject::kHierarchySegment;
+              case RuntimeLibraryKind::kDpiBitBuffer:
+                return LibraryObject::kDpiBitBuffer;
+              case RuntimeLibraryKind::kDpiLogicBuffer:
+                return LibraryObject::kDpiLogicBuffer;
+              case RuntimeLibraryKind::kDpiOpenArray:
+                return LibraryObject::kDpiOpenArray;
+              case RuntimeLibraryKind::kTrigger:
+                return LibraryObject::kTrigger;
+              case RuntimeLibraryKind::kObservation:
+                return LibraryObject::kObservation;
+              // Kept by the run -- a description, a coordinate, a class's
+              // record, the time format -- or reached inside something else --
+              // a buffer's chunk, an image's handle, the effect a departure
+              // carries, the target a disable names.
+              case RuntimeLibraryKind::kPackedType:
+              case RuntimeLibraryKind::kPackedRange:
+              case RuntimeLibraryKind::kUnpackedRange:
+              case RuntimeLibraryKind::kEnumeration:
+              case RuntimeLibraryKind::kTimeFormat:
+              case RuntimeLibraryKind::kDpiBitChunk:
+              case RuntimeLibraryKind::kDpiLogicChunk:
+              case RuntimeLibraryKind::kDpiOpenArrayHandle:
+              case RuntimeLibraryKind::kCancellationTarget:
+              case RuntimeLibraryKind::kControlEffect:
+              case RuntimeLibraryKind::kPropertyCoordinate:
+              case RuntimeLibraryKind::kBehaviorCoordinate:
+              case RuntimeLibraryKind::kObjectDefinition:
+                return std::nullopt;
+            }
+            throw InternalError("lir: unknown runtime library kind");
+          },
+
+          // Machine data is held as itself: a scalar, an array, a code address.
+          [](const MachineCStringType&) -> Held { return std::nullopt; },
+          [](const MachineBoolType&) -> Held { return std::nullopt; },
+          [](const MachineIntType&) -> Held { return std::nullopt; },
+          [](const MachineFloatType&) -> Held { return std::nullopt; },
+          [](const MachineArrayType&) -> Held { return std::nullopt; },
+          [](const MachineFunctionType&) -> Held { return std::nullopt; },
+          // The absence of a type is not a value of one.
+          [](const VoidType&) -> Held { return std::nullopt; },
+          // An object, the several ways of naming one, and storage an owner
+          // holds: each is reached where it lives rather than held, and what it
+          // holds or answers with is a value of its own.
+          [](const ObjectType&) -> Held { return std::nullopt; },
+          [](const ExternalUnitObjectType&) -> Held { return std::nullopt; },
+          [](const CrossUnitClassType&) -> Held { return std::nullopt; },
+          [](const OpaqueObjectType&) -> Held { return std::nullopt; },
+          [](const RuntimeClassType&) -> Held { return std::nullopt; },
+          [](const StructType&) -> Held { return std::nullopt; },
+          [](const EventType&) -> Held { return std::nullopt; },
+          [](const ObservableType&) -> Held { return std::nullopt; },
+          [](const ResolvedType&) -> Held { return std::nullopt; },
+          [](const DriverType&) -> Held { return std::nullopt; },
+          [](const SampledHistoryType&) -> Held { return std::nullopt; },
+          [](const EvaluationAttemptsType&) -> Held { return std::nullopt; },
+          [](const RuntimeEffectsType&) -> Held { return std::nullopt; },
+          [](const FilesType&) -> Held { return std::nullopt; },
+          [](const DiagnosticType&) -> Held { return std::nullopt; },
+          [](const RefType&) -> Held { return std::nullopt; },
+          [](const VectorType&) -> Held { return std::nullopt; },
+          // A body in flight is taken by whoever drives it, the moment it is
+          // made, so nothing is left for its maker to hold.
+          [](const CoroutineType&) -> Held { return std::nullopt; }});
+}
+
+auto Type::IsOwnedValue() const -> bool {
+  return HeldObject().has_value();
+}
+
 auto MemberTypes(const std::vector<AggregateMember>& members)
     -> std::vector<TypeId> {
   std::vector<TypeId> types;

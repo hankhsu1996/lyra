@@ -326,7 +326,6 @@ auto MemberStorage::HeldValue() -> void* {
           // itself, so that whoever takes a copy of it takes a hold too, and
           // reaching the storage behind it is a step of its own.
           [](PromotedScopeRef& held) -> void* { return &held; },
-          [](value::Chandle& chandle) -> void* { return chandle.Ptr(); },
           // Storage a write can reach again hands nothing back in place: a
           // reader given the storage itself would see a later write change what
           // it already read, so reading copies out instead.
@@ -371,6 +370,7 @@ auto MemberStorage::HeldValue() -> void* {
           [](value::String& value) -> void* { return &value; },
           [](value::Real& value) -> void* { return &value; },
           [](value::ShortReal& value) -> void* { return &value; },
+          [](value::Chandle& value) -> void* { return &value; },
           [](value::RuntimeTuple& value) -> void* { return &value; },
           [](value::RuntimeUnion& value) -> void* { return &value; },
           [](value::RuntimeTaggedUnion& value) -> void* { return &value; },
@@ -404,7 +404,6 @@ void MemberStorage::AdoptFrom(void* handle) {
           // long as this owner lasts, which is the whole of LRM 6.21's
           // lifetime rule: no other step acquires anything and none releases.
           [&](PromotedScopeRef& held) { adopt(held); },
-          [&](value::Chandle& chandle) { chandle = value::Chandle{handle}; },
           [](CancellationTarget&) {
             throw InternalError(
                 "MemberStorage: a cancellation source is created by the scope "
@@ -462,6 +461,7 @@ void MemberStorage::AdoptFrom(void* handle) {
           [&](value::String& value) { adopt(value); },
           [&](value::Real& value) { adopt(value); },
           [&](value::ShortReal& value) { adopt(value); },
+          [&](value::Chandle& value) { adopt(value); },
           [&](value::RuntimeTuple& value) { adopt(value); },
           [&](value::RuntimeUnion& value) { adopt(value); },
           [&](value::RuntimeTaggedUnion& value) { adopt(value); },

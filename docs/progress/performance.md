@@ -241,10 +241,13 @@ closed below.
       [../decisions/a-constant-is-stated-not-computed.md](../decisions/a-constant-is-stated-not-computed.md).
 
       The execution backend reads **1.15x** on the clocked-pipeline case, over four rounds after a
-      cold first one. It is a different case and the two figures do not compare: the case the other
-      column measures cannot run on that backend at a length worth timing, for the reason the
-      refactor queue now records, so what each column says is that its own backend moved and by how
-      much.
+      cold first one. It is a different case and the two figures do not compare: when this was
+      measured, the case the other column measures could not run on that backend at a length worth
+      timing, so what each column says is that its own backend moved and by how much. It runs now
+      that a value ends with the expression that made it: **42 table passes per second in 5.4 MB**
+      at any length (2026-09-24), against 4,650 per second for the C++ backend on the same machine.
+      The gap is whole-value copies on every read and element write, which the refactor queue
+      records.
 
       The same case now sustains **1,634 table passes per second, 67x off Verilator** (2026-09-22).
       That is an absolute rate rather than a comparison, recorded because the ratios above compare

@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/runtime/generated_call_scope.hpp"
 
 namespace lyra::runtime {
 
@@ -190,17 +189,14 @@ auto Scope::HierarchicalPath() const -> lyra::value::String {
 }
 
 void Scope::Resolve() {
-  GeneratedCallScope call;
   program_->resolve_state(this);
 }
 
 void Scope::Initialize() {
-  GeneratedCallScope call;
   program_->initialize_state(this);
 }
 
 void Scope::CreateProcesses() {
-  GeneratedCallScope call;
   program_->create_processes(this);
 }
 
