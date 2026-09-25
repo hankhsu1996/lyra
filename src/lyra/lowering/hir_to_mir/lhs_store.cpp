@@ -132,10 +132,8 @@ auto OpenedPlace(
                           .receiver = place},
                   .arguments = {}},
           .type = unit.types.Intern(
-              mir::Type{mir::PointerType{
-                  .pointee = value_type,
-                  .ownership = mir::PointerOwnership::kBorrowed,
-                  .mutability = mir::Mutability::kMutable}})});
+              mir::Type{mir::OpenWriteType{
+                  .wrapper = block.exprs.Get(place).type}})});
   return block.exprs.Add(mir::MakeDerefExpr(opened, value_type));
 }
 

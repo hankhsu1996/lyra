@@ -435,6 +435,18 @@ struct EvaluationAttemptsType {
   auto operator==(const EvaluationAttemptsType&) const -> bool = default;
 };
 
+// A write in progress into the storage a capability wrapper stands for, whose
+// contents are values of `value` (LRM 11.5.1). It is an object the writer holds
+// and owes the end of: dereferencing it reaches those contents, which the
+// write's parts land in, and ending it -- with the full-expression, or on any
+// way out of it -- is the end of the write, when the wrapper learns once what
+// the write did (LRM 4.3).
+struct OpenWriteType {
+  TypeId value;
+
+  auto operator==(const OpenWriteType&) const -> bool = default;
+};
+
 // The declaration a type names: a class this unit compiles, an object or a
 // class another unit declares, or one of the two a lowering introduces that no
 // source declaration stands behind. What identifies each differs -- a position
@@ -467,7 +479,7 @@ class Type {
       DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
       ManagedRefType, VectorType, TupleType, UnpackedStructType, UnionType,
       TaggedUnionType, ResolvedType, DriverType, ObservableType,
-      SampledHistoryType, EvaluationAttemptsType>;
+      SampledHistoryType, EvaluationAttemptsType, OpenWriteType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -559,6 +571,14 @@ class Type {
   // The component types a product value is built from, in order. A type that
   // is not a product is a caller error.
   [[nodiscard]] auto ProductComponentTypes() const -> std::vector<TypeId>;
+
+  // The type of the elements this one holds a run of, or nothing where it
+  // holds none: the unpacked array (LRM 7.4), the dynamic array (7.5), the
+  // associative array (7.8) and the queue (7.10). Narrower than holding values:
+  // a machine array and a vector hold a run of them and are still not
+  // containers, being shapes a lowering builds rather than types a declaration
+  // named.
+  [[nodiscard]] auto ContainerElementType() const -> std::optional<TypeId>;
 
   // How this type's sign bit is read as a machine integer, and nothing for a
   // type that is not one. What makes a type a machine integer is that its

@@ -10,26 +10,36 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "element",
           .declaration = Method{"Element"},
+          .selects = PartSelection::kElement,
           .index_operand = 1};
     case BuiltinFn::kSlice:
-      return {.name = "slice", .declaration = Method{"Slice"}};
+      return {
+          .name = "slice",
+          .declaration = Method{"Slice"},
+          .selects = PartSelection::kWindow};
     case BuiltinFn::kElementRef:
       return {
           .name = "element_ref",
           .declaration = Method{"ElementRef"},
-          .answer = EntryAnswer::kPartOfTheReceiver};
+          .answer = EntryAnswer::kPartOfTheReceiver,
+          .selects = PartSelection::kElement};
     case BuiltinFn::kSliceRef:
       return {
           .name = "slice_ref",
           .declaration = Method{"SliceRef"},
-          .answer = EntryAnswer::kPartOfTheReceiver};
+          .answer = EntryAnswer::kPartOfTheReceiver,
+          .selects = PartSelection::kWindow};
     case BuiltinFn::kPart:
-      return {.name = "extract", .declaration = Method{"Get"}};
+      return {
+          .name = "extract",
+          .declaration = Method{"Get"},
+          .selects = PartSelection::kComponent};
     case BuiltinFn::kPartRef:
       return {
           .name = "part_ref",
           .declaration = Method{"GetRef"},
-          .answer = EntryAnswer::kPartOfTheReceiver};
+          .answer = EntryAnswer::kPartOfTheReceiver,
+          .selects = PartSelection::kComponent};
     case BuiltinFn::kTagMatches:
       return {.name = "tag_matches", .declaration = Method{"IsTagged"}};
     case BuiltinFn::kMakeActiveMember:

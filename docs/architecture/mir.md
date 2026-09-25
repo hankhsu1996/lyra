@@ -483,12 +483,10 @@ An assignment whose target descends into a value -- a container element, a struc
 member, a fixed-width range -- states an abstract update of the owning value: which owner, which
 levels the descent reaches through, how many times each evaluates, the value written and its
 coercion, and that the owning value is the value updated. The owner is a place; the descent is a run
-of calls, each naming the entry the lowering settled for it. Nothing about the target asserts that
-the interior is independently addressable storage, an alias with its own identity, or a reference
-that outlives the owner -- a value aggregate has no such interior to name. How that update keeps
-value semantics is a lower layer's concern: MIR-to-LIR legalizes the descent into explicit
-whole-value operations, an extract and an insert (`lir.md`), and a backend may instead realize the
-same semantics by mutating private storage in place. A construct that binds the designated part
-rather than writing it -- a reference actual, an output pack component, a nonblocking update --
-binds the same statement of owner and descent; it is owner-relative, so it names no interior pointer
-and aliases nothing the owner does not already own.
+of calls, each naming the entry the lowering settled for it. Nothing about the target asserts how
+the part is reached: whether it is storage of its own is the language's fact about the type it is
+part of (`storage.md`), which MIR-to-LIR reads to state a part that is storage as a step of the
+owner's place and a part that is a view as an extract and an insert (`lir.md`). A construct that
+binds the designated part rather than writing it -- a reference actual, an output pack component, a
+nonblocking update -- binds the same statement of owner and descent; it is owner-relative, so it
+names no interior pointer and aliases nothing the owner does not already own.

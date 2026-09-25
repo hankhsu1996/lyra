@@ -176,22 +176,18 @@ auto RuntimeAssociativeArray::ElementAt(std::size_t position) const
   return data_[position].element;
 }
 
-auto RuntimeAssociativeArray::WithElement(
-    const RuntimeValue& index, RuntimeValue value) const
-    -> RuntimeAssociativeArray {
-  RuntimeAssociativeArray result(*this);
-  if (const std::optional<std::size_t> position = result.Find(index)) {
-    result.data_[*position].element = std::move(value);
-    return result;
+auto RuntimeAssociativeArray::ElementRef(const RuntimeValue& index)
+    -> RuntimeValue& {
+  if (const std::optional<std::size_t> position = Find(index)) {
+    return data_[*position].element;
   }
   if (NamesNoEntry(index)) {
-    return result;
+    return DiscardTarget(*element_default_);
   }
-  result.data_.insert(
-      result.data_.begin() +
-          static_cast<std::ptrdiff_t>(result.LowerBound(index)),
-      RuntimeAssociativeEntry{.index = index, .element = std::move(value)});
-  return result;
+  const auto inserted = data_.insert(
+      data_.begin() + static_cast<std::ptrdiff_t>(LowerBound(index)),
+      RuntimeAssociativeEntry{.index = index, .element = *user_default_});
+  return inserted->element;
 }
 
 auto RuntimeAssociativeArray::WithEntries(
@@ -210,20 +206,14 @@ auto RuntimeAssociativeArray::WithEntries(
   return result;
 }
 
-auto RuntimeAssociativeArray::Delete() const -> RuntimeAssociativeArray {
-  RuntimeAssociativeArray result(*this);
-  result.data_.clear();
-  return result;
+void RuntimeAssociativeArray::Delete() {
+  data_.clear();
 }
 
-auto RuntimeAssociativeArray::DeleteIndex(const RuntimeValue& index) const
-    -> RuntimeAssociativeArray {
-  RuntimeAssociativeArray result(*this);
-  if (const std::optional<std::size_t> position = result.Find(index)) {
-    result.data_.erase(
-        result.data_.begin() + static_cast<std::ptrdiff_t>(*position));
+void RuntimeAssociativeArray::DeleteIndex(const RuntimeValue& index) {
+  if (const std::optional<std::size_t> position = Find(index)) {
+    data_.erase(data_.begin() + static_cast<std::ptrdiff_t>(*position));
   }
-  return result;
 }
 
 auto RuntimeAssociativeArray::FirstIndex() const

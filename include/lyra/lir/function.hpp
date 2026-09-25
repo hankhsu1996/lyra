@@ -42,9 +42,9 @@ struct BlockId {
 // temporary is a transient computed once and consumed. A place local is named
 // storage on the frame. Which one a local is follows a canonical lowering rule,
 // not the source notion of a variable: a local is a place exactly when the
-// lowering needs an address for it -- its address is taken, it is assigned
-// after its initialization, or it holds a control-flow join. LIR is not SSA, so
-// a value produced on several paths is a place each path writes, not a merge of
+// lowering names it as storage -- a declared local, a value a part is reached
+// in, or a result that control-flow paths join at. LIR is not SSA, so a value
+// produced on several paths is a place each path writes, not a merge of
 // transients.
 enum class LocalKind : std::uint8_t { kParam, kTemp, kPlace };
 
@@ -248,9 +248,9 @@ struct ForeignTarget {
   std::string symbol;
 };
 
-// An operation on a value cell -- storage that holds a value, written and read
-// through itself so a write lands at the representation the declaration gave it
-// and a read copies out rather than aliasing. `kAllocate` asks for one the
+// An operation on a value cell -- storage that holds a value, written through
+// itself so a write lands at the representation the declaration gave it, and
+// read by answering with the value where it lies. `kAllocate` asks for one the
 // running activation owns, which is what a value-typed local of a suspending
 // body needs to keep its value across a suspension.
 // A LIR-only target with no MIR twin -- where a value's storage sits is a
@@ -414,13 +414,11 @@ struct UnionInstr {
   Operand value;
 };
 
-// Names a subvalue within an aggregate value by its declaration-order
-// position, carrying no operands because the position is the whole coordinate.
-// One selector covers a product's component and an active-member value's
-// member: whether every part coexists or one is live at a time, what a read of
-// a member that is not live answers with, and whether an update settles which
-// member is live all follow from the aggregate's type, the same way the entry
-// realizing a coordinate step does.
+// Names a member of an active-member value by its declaration-order position,
+// carrying no operands because the position is the whole coordinate. What a
+// read of a member that is not live answers with, and whether an update settles
+// which member is live, follow from the aggregate's type, the same way the
+// entry realizing a coordinate step does.
 struct Part {
   base::ComponentIndex index;
 };
@@ -441,12 +439,13 @@ struct ContainerSlice {
 
 using AggregateSelector = std::variant<Part, ContainerElement, ContainerSlice>;
 
-// Extracts a subvalue of an aggregate value, named by `selector`. The aggregate
-// is a value, reached by value: the subvalue is copied out, not aliased. This
-// is the read half of value-aggregate access, the peer of LLVM's
-// `extractvalue`; it is distinct from a place projection, which reaches
-// independently addressable storage. The result's type is the selected
-// subvalue's type.
+// Extracts a subvalue of an aggregate value, named by `selector`: a part that
+// is a view of the whole it belongs to rather than storage of its own -- a bit
+// or a slice of a packed value, a character of a string, a member of a union.
+// The subvalue is built out of the aggregate, not aliased. This is the read
+// half of value-aggregate access, the peer of LLVM's `extractvalue`; a part
+// that is storage of its own is a step of a place instead. The result's type
+// is the selected subvalue's type.
 struct AggregateExtractInstr {
   Operand aggregate;
   AggregateSelector selector;
@@ -454,11 +453,10 @@ struct AggregateExtractInstr {
 
 // Produces an aggregate value equal to `aggregate` with the subvalue at
 // `selector` replaced by `replacement`. A pure value operation -- it never
-// mutates the operand -- so a component write is a whole-value store of the
-// result, and value semantics hold even when the operand is shared. The peer of
-// LLVM's `insertvalue`; a value aggregate has no independently addressable
-// interior, so a subvalue write is this functional update, not a store into a
-// sub-place. The result's type is the operand's aggregate type.
+// mutates the operand -- so writing a part that is a view of its whole is a
+// store of the whole this builds. The peer of LLVM's `insertvalue`; a part
+// that is storage of its own is written where it lies instead. The result's
+// type is the operand's aggregate type.
 struct AggregateUpdateInstr {
   Operand aggregate;
   AggregateSelector selector;
@@ -512,9 +510,28 @@ struct MemberProjection {
   StatedMemberRef member;
 };
 
+// Selects one element of whatever container the projection has reached, by the
+// coordinate the program computed -- an ordinal, or the index an associative
+// array is keyed by. Only a container that holds each element as storage of
+// its own is stepped into this way (LRM 7.4, 7.8, 7.10); a part that is a view
+// of its whole is reached by value projection instead. Which element the step
+// reaches depends on the access: a read of one that is not there reads the
+// default, and a write to one allocates or discards it by the container's own
+// rule, so the access, not the step, says which.
+struct ElementProjection {
+  std::vector<Operand> coordinates;
+};
+
+// Selects one component of whatever product the projection has reached, by its
+// declaration-order position. A component is storage of its own (LRM 7.2).
+struct PartProjection {
+  base::ComponentIndex index;
+};
+
 // One step of a place's projection chain: each names storage reached from the
 // storage the chain has arrived at, never a byte offset from it.
-using Projection = std::variant<DerefProjection, MemberProjection>;
+using Projection = std::variant<
+    DerefProjection, MemberProjection, ElementProjection, PartProjection>;
 
 // Storage named by logical identity: a base plus a projection chain. The base
 // is either a place local, whose storage the chain starts at, or a
@@ -522,6 +539,10 @@ using Projection = std::variant<DerefProjection, MemberProjection>;
 // is what a load, store, or address-of names; the physical address it resolves
 // to is derived below LIR, never encoded here. An empty chain names the base
 // local itself.
+//
+// A load names the value the place holds, where it lies, and a store writes
+// into the storage the place names: an element or a component takes the value
+// into the object already there.
 struct Place {
   Operand base;
   std::vector<Projection> chain;

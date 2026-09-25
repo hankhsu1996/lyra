@@ -434,11 +434,12 @@ auto BuildDefaultValueExpr(
           },
 
           // Storage the runtime installs and a service it provides: a cell that
-          // is observed, a net's resolution, a driver's contribution, the
-          // history a sampled value reads, what an assertion has in flight, the
-          // effects a body runs under, the open files, the diagnostic stream,
-          // and the library values a call names. What a declaration holds is
-          // the value inside one of these, which answers above.
+          // is observed, a net's resolution, a driver's contribution, a write
+          // open on one of them, the history a sampled value reads, what an
+          // assertion has in flight, the effects a body runs under, the open
+          // files, the diagnostic stream, and the library values a call names.
+          // What a declaration holds is the value inside one of these, which
+          // answers above.
           [&](const mir::ObservableType&) -> mir::Expr {
             return holds_no_declared_value("an observable cell");
           },
@@ -447,6 +448,9 @@ auto BuildDefaultValueExpr(
           },
           [&](const mir::DriverType&) -> mir::Expr {
             return holds_no_declared_value("a driver's contribution");
+          },
+          [&](const mir::OpenWriteType&) -> mir::Expr {
+            return holds_no_declared_value("a write in progress");
           },
           [&](const mir::SampledHistoryType&) -> mir::Expr {
             return holds_no_declared_value("a sampled value's history");

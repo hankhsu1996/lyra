@@ -24,10 +24,9 @@ struct RuntimeValue;
 // elements and an element-default prototype, and composes the value contract by
 // visiting them.
 //
-// Value semantics are preserved by immutability: every apparent mutation is a
-// functional operation returning a new array (`WithElement`, `Delete`), never
-// an in-place write, so an array whose handle is shared by a copy is never
-// disturbed by a write through another copy.
+// Each element is storage of its own, written where it lies, and value
+// semantics hold because a copy of the array copies its elements: no two arrays
+// share one, so a write through one is never seen through another.
 class RuntimeDynamicArray {
  public:
   // The uninitialized sentinel form -- the empty array before its declared
@@ -71,11 +70,14 @@ class RuntimeDynamicArray {
   [[nodiscard]] auto ElementDefault() const -> const RuntimeValue&;
 
   // LRM 7.4.5 / 7.4.6: reads the element `position` names by reference. A
-  // position that names no element here reads the element default. The caller
-  // copies the result out across the opaque-handle boundary rather than
-  // aliasing it.
+  // position that names no element here reads the element default.
   [[nodiscard]] auto Element(const PackedArray& position) const
       -> const RuntimeValue&;
+
+  // LRM 7.4.6: the element `position` names, as storage a write lands in. A
+  // position that names no element here yields storage nothing reads, so a
+  // write there is discarded.
+  [[nodiscard]] auto ElementRef(const PackedArray& position) -> RuntimeValue&;
 
   // The element at storage position `position`, counted from the first in the
   // array's own order -- the coordinate LRM 7.12 walks a container by. A
@@ -83,16 +85,8 @@ class RuntimeDynamicArray {
   [[nodiscard]] auto ElementAt(std::size_t position) const
       -> const RuntimeValue&;
 
-  // A functional element write: yields a new array equal to this one with the
-  // element `position` names replaced by `value`. LRM 7.4.6: a position that
-  // names no element here leaves the array unchanged (the write is discarded).
-  [[nodiscard]] auto WithElement(
-      const PackedArray& position, RuntimeValue value) const
-      -> RuntimeDynamicArray;
-
-  // LRM 7.5.3 `delete`: a functional clear -- yields the empty array with the
-  // same element default.
-  [[nodiscard]] auto Delete() const -> RuntimeDynamicArray;
+  // LRM 7.5.3 `delete`: empties the array, keeping its element default.
+  void Delete();
 
   // LRM 7.4.6 contiguous-range read: `count` elements from `start`, as a
   // fixed-size unpacked array. An element outside the array, and every element
@@ -100,14 +94,14 @@ class RuntimeDynamicArray {
   [[nodiscard]] auto Slice(const PackedArray& start, std::int64_t count) const
       -> RuntimeUnpackedArray;
 
-  // A functional whole-slice write (LRM 7.6): yields a new array with the
-  // window replaced, element for element, by `replacement`. An element outside
-  // the array is skipped and a start that names no position performs no
-  // operation, matching the invalid-index write contract; assignment
-  // compatibility gives the replacement the window's element count.
-  [[nodiscard]] auto WithSlice(
+  // A whole-slice write (LRM 7.6): the window takes `replacement`, element for
+  // element, into the elements already there. An element outside the array is
+  // skipped and a start that names no position writes no element, matching the
+  // invalid-index write contract; assignment compatibility gives the
+  // replacement the window's element count.
+  void AssignSlice(
       const PackedArray& start, std::int64_t count,
-      const RuntimeUnpackedArray& replacement) const -> RuntimeDynamicArray;
+      const RuntimeUnpackedArray& replacement);
 
   // LRM 10.10 unpacked concatenation, as the two-operand steps a join folds to:
   // this array with one element appended, or with every element of a spread

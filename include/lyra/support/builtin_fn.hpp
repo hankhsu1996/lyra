@@ -1011,6 +1011,17 @@ enum class EntryAnswer : std::uint8_t {
   kPartOfTheReceiver,
 };
 
+// How an entry that reaches one part of the value it acts on names that part:
+// by a coordinate the program computes (LRM 7.4.5, 7.8, 7.10.1), by a
+// declaration-order position (LRM 7.2, 7.3), or by a window of consecutive
+// elements (LRM 7.4.6). Reading the part and writing into it name it the same
+// way, so the entry for each shares the answer.
+enum class PartSelection : std::uint8_t {
+  kElement,
+  kComponent,
+  kWindow,
+};
+
 // Every property of one runtime entry: what the library calls it, how a call
 // site reaches it, and what it does with the operands it is given. A consumer
 // asking any of those reads the field for it, never a list of its own, so an
@@ -1060,13 +1071,16 @@ struct RuntimeEntry {
   bool mutates_receiver = false;
   // What the entry answers with. One answering with a part, rather than with
   // that part's value, is one where what stands at the call may be written and
-  // a further access composes onto it; a target that reaches storage only
-  // through copies realizes such a call as a read of the whole and a rebuild
-  // instead.
+  // a further access composes onto it; a target realizes such a call over a
+  // part that is storage of its own as a step into it, and over a part that is
+  // a view of its whole as a read of the whole and a rebuild.
   // Which entries it must do that for, and which answers a caller owns and
   // ends, are this, so the property stays with the entry and not with each
   // target that has to know it.
   EntryAnswer answer = EntryAnswer::kNewValue;
+  // How the entry names the part it reaches, absent for an entry that reaches
+  // none.
+  std::optional<PartSelection> selects = std::nullopt;
   // Whether the LRM 7.12 method takes a `with`-clause closure as its second
   // argument. The other LRM 7.5 / 7.10 array entries (`size`, `delete`,
   // `reverse`) take none.

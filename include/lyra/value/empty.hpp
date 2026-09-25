@@ -47,6 +47,9 @@ struct Empty {
   [[nodiscard]] static auto CountBits(const PackedArray&) -> PackedArray {
     return PackedArray::Int(0);
   }
+  // A type with one value always holds its default.
+  static auto ResetToDefault() -> void {
+  }
 };
 
 // A value carrying no bits renders as no text: the tag alone says which member
@@ -64,5 +67,6 @@ struct Formatter<Empty> {
 static_assert(LyraValue<Empty>);
 static_assert(CaseEqualComparable<Empty>);
 static_assert(BitstreamSizable<Empty>);
+static_assert(Defaultable<Empty>);
 
 }  // namespace lyra::value

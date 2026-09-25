@@ -77,7 +77,9 @@ the detail lives in the entry itself.
 - [value-projection-write](value-projection-write.md) -- a value-aggregate interior write is an
   owner-relative functional whole-value update through the owner, not a place store; the in-place
   write a target may realize it as is a property of that target. How the update is stated is
-  superseded by [value-descent-as-named-calls](value-descent-as-named-calls.md).
+  superseded by [value-descent-as-named-calls](value-descent-as-named-calls.md), and for a part that
+  is storage of its own the update itself is superseded by
+  [a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md).
 - [value-descent-as-named-calls](value-descent-as-named-calls.md) -- every level of a descent into a
   value is a call whose entry HIR-to-MIR names, composed through the receiver, so no node names a
   part and no consumer classifies a step or recovers an owner. Supersedes the selector-path node of
@@ -559,8 +561,9 @@ the detail lives in the entry itself.
   cross-suspension and managed-value lifetime is out of scope for the call scope. Its revisit
   condition has fired, and the ownership half of it -- invariant 6, that a handle may be aliased so
   nothing writes into a value object -- is answered by
-  [storage-owns-its-value](storage-owns-its-value.md); its lifetime half, the call scope owning
-  transients, is superseded by
+  [storage-owns-its-value](storage-owns-its-value.md), and realized for parts that are storage by
+  [a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md); its
+  lifetime half, the call scope owning transients, is superseded by
   [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md).
 - [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md) -- a value is an object
   in the frame of whoever made it: an entry builds its result in storage the caller passes, sized
@@ -569,6 +572,12 @@ the detail lives in the entry itself.
   callee, and an entry states whether it answers with a new value or with storage it was handed. A
   runtime region released at each wait, and slots pointing at the temporaries that initialized them,
   are rejected.
+- [a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md) -- on
+  the execution backend an element or a structure member is a step of the place holding its
+  variable, realized through the library as a member step is; a read answers with the value where it
+  lies, a write into what a wrapper holds is an open write ended with the full-expression, and a
+  store through a part assigns into the object there. A call answering the part's address is
+  rejected, because a dereferenced pointer to a value already means a value cell.
 - [runtime-entry-naming](runtime-entry-naming.md) -- a runtime entry is named by the operation it
   performs and typed by the call that reaches it, so neither its symbol nor its signature is written
   down a second time; the symbol has one form, what the library does not realize is stated per

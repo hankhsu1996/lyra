@@ -191,7 +191,7 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
     -> diag::Result<llvm::Value*> {
   const lir::TypeId result_type = fn_->values.Get(instr.result).type;
   llvm::Value* const out =
-      lir::MakesValue(*fn_, instr.data) ? StorageFor(result_type) : nullptr;
+      lir::MakesValue(instr.data) ? StorageFor(result_type) : nullptr;
   return std::visit(
       Overloaded{
           [&](const lir::CallInstr& call) -> diag::Result<llvm::Value*> {
@@ -221,7 +221,7 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
             return LowerTagTest(test, result_type);
           },
           [&](const lir::LoadInstr& load) -> diag::Result<llvm::Value*> {
-            return LowerLoad(load, result_type, out);
+            return LowerLoad(load, result_type);
           },
           [&](const lir::StoreInstr& store) -> diag::Result<llvm::Value*> {
             return LowerStore(store);
@@ -241,18 +241,16 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
       instr.data);
 }
 
-// Reading a place reads whatever storage it names, except where the storage
-// decides what reading it means: a cell's contents have no address of their
-// own, and a capture's storage is the closure's rather than an instance's, so
-// each comes out through its own access rather than from an address. A read
-// that makes an owned value builds it in `out`; the one read that does not is
-// of a frame slot, which holds the object and so names it where it lies.
+// Reading a place answers with the value it holds, where it lies, whatever
+// storage that is: a cell's contents and a capture's storage are asked of the
+// cell and the closure, and anything else is its own address. A value of a
+// type held as itself is read out of that address.
 auto CodeGenFunction::LowerLoad(
-    const lir::LoadInstr& load, lir::TypeId result_type, llvm::Value* out)
+    const lir::LoadInstr& load, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
   llvm::Type* const result = module_->Types().Map(result_type);
   if (const std::optional<CapturePlace> capture = CapturePlaceOf(load.place)) {
-    auto closure = ResolvePlaceAddress(capture->closure);
+    auto closure = ResolvePlaceAddress(capture->closure, Access::kRead);
     if (!closure) {
       return std::unexpected(std::move(closure.error()));
     }
@@ -260,45 +258,49 @@ auto CodeGenFunction::LowerLoad(
         *closure,
         llvm::ConstantInt::get(
             llvm::Type::getInt32Ty(module_->Context()), capture->index)};
-    llvm::Value* held = builder_.CreateCall(
+    return builder_.CreateCall(
         Entry(RuntimeSymbol(RuntimeOp::kClosureCapture), result, args), args);
-    if (out == nullptr) {
-      return held;
-    }
-    return CopyObject(ObjectOf(result_type), held, out);
   }
   auto wrapper = WrapperPlaceOf(load.place);
   if (!wrapper) {
     return std::unexpected(std::move(wrapper.error()));
   }
-  if (!wrapper->has_value()) {
-    auto address = ResolvePlaceAddress(load.place);
+  if (wrapper->has_value()) {
+    const WrapperPlace& through = **wrapper;
+    auto address = ResolvePlaceAddress(through.wrapper, Access::kRead);
     if (!address) {
       return std::unexpected(std::move(address.error()));
     }
-    if (const std::optional<support::ValueDomain> cell =
-            PlaceValueCellDomain(load.place, result_type)) {
-      return BuildInto(
-          RuntimeSymbol(*cell, lir::ValueCellTarget::Op::kLoad), {*address},
-          out);
-    }
-    if (const std::optional<support::RuntimeObject> object =
-            module_->Unit().types.Get(result_type).HeldObject()) {
-      if (out == nullptr) {
-        return *address;
-      }
-      return CopyObject(*object, *address, out);
-    }
-    return builder_.CreateLoad(result, *address);
+    return ContentsOf(through.domain, through.kind, *address);
   }
-  const WrapperPlace& through = **wrapper;
-  auto address = ResolvePlaceAddress(through.wrapper);
+  auto address = ResolvePlaceAddress(load.place, Access::kRead);
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
-  return BuildInto(
-      RuntimeSymbol(through.domain, through.kind, support::BuiltinFn::kLoad),
-      {*address}, out);
+  if (const std::optional<support::ValueDomain> cell =
+          PlaceValueCellDomain(load.place, result_type)) {
+    const std::array<llvm::Value*, 1> args{*address};
+    return builder_.CreateCall(
+        Entry(
+            RuntimeSymbol(*cell, lir::ValueCellTarget::Op::kLoad),
+            module_->Types().Ptr(), args),
+        args);
+  }
+  if (module_->Unit().types.Get(result_type).HeldObject().has_value()) {
+    return *address;
+  }
+  return builder_.CreateLoad(result, *address);
+}
+
+auto CodeGenFunction::ContentsOf(
+    support::ValueDomain domain, WrapperKind kind, llvm::Value* wrapper)
+    -> llvm::Value* {
+  const std::array<llvm::Value*, 1> args{wrapper};
+  return builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(domain, kind, support::BuiltinFn::kLoad),
+          module_->Types().Ptr(), args),
+      args);
 }
 
 // Writing a place mirrors reading one, and a write through a wrapper is what
@@ -316,7 +318,7 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     if (!value) {
       return std::unexpected(std::move(value.error()));
     }
-    auto address = ResolvePlaceAddress(store.place);
+    auto address = ResolvePlaceAddress(store.place, Access::kWrite);
     if (!address) {
       return std::unexpected(std::move(address.error()));
     }
@@ -329,24 +331,25 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
               module_->Types().Void(), args),
           args);
     }
-    // A frame slot of an owned type holds the object, and a store into one
-    // hands it the value along with its end, so the value moves in and nothing
-    // is left behind where it was built.
     if (const std::optional<support::RuntimeObject> object =
             module_->Unit().types.Get(OperandType(store.value)).HeldObject()) {
-      if (!lir::IsPlaceLocal(*fn_, store.place.base) ||
-          !store.place.chain.empty()) {
-        return Unsupported(
-            "llvm codegen: an owned value stored into storage other than a "
-            "frame slot or a cell");
+      // A frame slot of an owned type holds the object, and a store into one
+      // hands it the value along with its end, so the value moves in and
+      // nothing is left behind where it was built.
+      if (lir::IsPlaceLocal(*fn_, store.place.base) &&
+          store.place.chain.empty()) {
+        RelocateObject(*object, *value, *address);
+        return nullptr;
       }
-      RelocateObject(*object, *value, *address);
+      // Anything else a chain reaches is an object that is already there, and
+      // a store writes into it: whatever names that storage goes on naming it.
+      AssignObject(*object, *address, *value);
       return nullptr;
     }
     return builder_.CreateStore(*value, *address);
   }
   const WrapperPlace& through = **wrapper;
-  auto address = ResolvePlaceAddress(through.wrapper);
+  auto address = ResolvePlaceAddress(through.wrapper, Access::kWrite);
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
@@ -366,10 +369,12 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
 // A place resolves to an address. A place local's storage is its frame slot;
 // any other base is a reference value, whose referent the opening dereference
 // names. Each further dereference reads the reference held in the storage
-// reached so far, and each member step asks the instance for that member's
-// storage.
-auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
-    -> diag::Result<llvm::Value*> {
+// reached so far -- or, where that storage is a wrapper, reaches its contents
+// for a read -- a member step asks the instance for that member's storage, and
+// an element or part step asks the value reached so far for the one it names,
+// the way the access needs it.
+auto CodeGenFunction::ResolvePlaceAddress(
+    const lir::Place& place, Access access) -> diag::Result<llvm::Value*> {
   auto step = place.chain.begin();
   llvm::Value* address = nullptr;
 
@@ -408,6 +413,26 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
     auto reached_storage = std::visit(
         Overloaded{
             [&](const lir::DerefProjection&) -> diag::Result<llvm::Value*> {
+              // A wrapper's contents are the wrapper's to answer for. Read,
+              // they are where it keeps them; written, they are reached through
+              // the write the wrapper opened, which is what reports it.
+              if (const std::optional<std::pair<WrapperKind, lir::TypeId>>
+                      wrapper = WrapperOf(module_->Unit().types.Get(reached))) {
+                switch (access) {
+                  case Access::kRead:
+                    break;
+                  case Access::kWrite:
+                    throw InternalError(
+                        "llvm codegen: a write into what a wrapper holds is "
+                        "made through the write the wrapper opened -- please "
+                        "report this as a bug");
+                }
+                auto domain = DomainOf(wrapper->second);
+                if (!domain) {
+                  return std::unexpected(std::move(domain.error()));
+                }
+                return ContentsOf(*domain, wrapper->first, address);
+              }
               return OpenedReferent(
                   builder_.CreateLoad(module_->Types().Ptr(), address),
                   reached);
@@ -415,6 +440,44 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
             [&](const lir::MemberProjection& projection)
                 -> diag::Result<llvm::Value*> {
               return MemberStorage(address, projection.member);
+            },
+            [&](const lir::ElementProjection& element)
+                -> diag::Result<llvm::Value*> {
+              auto domain = DomainOf(reached);
+              if (!domain) {
+                return std::unexpected(std::move(domain.error()));
+              }
+              std::vector<llvm::Value*> args{address};
+              auto filled = SelectorArgs(reached, element.coordinates, args);
+              if (!filled) {
+                return std::unexpected(std::move(filled.error()));
+              }
+              return builder_.CreateCall(
+                  Entry(
+                      RuntimeSymbol(
+                          *domain, StepEntry(
+                                       access, support::BuiltinFn::kElement,
+                                       support::BuiltinFn::kElementRef)),
+                      module_->Types().Ptr(), args),
+                  args);
+            },
+            [&](const lir::PartProjection& part) -> diag::Result<llvm::Value*> {
+              auto domain = DomainOf(reached);
+              if (!domain) {
+                return std::unexpected(std::move(domain.error()));
+              }
+              const std::array<llvm::Value*, 2> args{
+                  address, llvm::ConstantInt::get(
+                               llvm::Type::getInt64Ty(module_->Context()),
+                               part.index.value)};
+              return builder_.CreateCall(
+                  Entry(
+                      RuntimeSymbol(
+                          *domain, StepEntry(
+                                       access, support::BuiltinFn::kPart,
+                                       support::BuiltinFn::kPartRef)),
+                      module_->Types().Ptr(), args),
+                  args);
             }},
         *step);
     if (!reached_storage) {
@@ -423,6 +486,18 @@ auto CodeGenFunction::ResolvePlaceAddress(const lir::Place& place)
     address = *reached_storage;
   }
   return address;
+}
+
+auto CodeGenFunction::StepEntry(
+    Access access, support::BuiltinFn read, support::BuiltinFn write)
+    -> support::BuiltinFn {
+  switch (access) {
+    case Access::kRead:
+      return read;
+    case Access::kWrite:
+      return write;
+  }
+  throw InternalError("llvm codegen: unknown access");
 }
 
 auto CodeGenFunction::DefinitionOf(lir::TypeId type)
@@ -478,17 +553,19 @@ auto CodeGenFunction::ReachedType(
 }
 
 // The address of what `reference` refers to, given the type it is. Most
-// references are the address already and opening one is nothing. Two are not:
-// a class handle and a hold on a promoted scope each carry what they name as a
-// fact they hold rather than are, so the runtime answers which storage is meant
-// -- and for the handle that is also where one referring to no object is caught
-// (LRM 8.3).
+// references are the address already and opening one is nothing. Three are
+// not: a class handle, a hold on a promoted scope, and a write opened on a
+// wrapper each carry what they name as a fact they hold rather than are, so
+// the runtime answers which storage is meant -- and for the handle that is
+// also where one referring to no object is caught (LRM 8.3).
 auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
     -> llvm::Value* {
   const lir::Type& referring = module_->Unit().types.Get(type);
   std::optional<RuntimeOp> op;
   if (referring.Is<lir::ManagedRefType>()) {
     op = RuntimeOp::kObjectDeref;
+  } else if (referring.Is<lir::OpenWriteType>()) {
+    op = RuntimeOp::kOpenWriteStorage;
   } else if (const auto* pointer = referring.As<lir::PointerType>()) {
     switch (pointer->ownership) {
       case lir::PointerOwnership::kUnique:
@@ -516,7 +593,7 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
 auto CodeGenFunction::LowerAddrOf(
     const lir::AddrOfInstr& addr, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
-  auto address = ResolvePlaceAddress(addr.place);
+  auto address = ResolvePlaceAddress(addr.place, Access::kWrite);
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
@@ -1045,8 +1122,8 @@ auto CodeGenFunction::ResolveCallee(
 
 // A {pointer, length} span over a scratch buffer this function fills with
 // `values`. The element type is the caller's to state: the machine element a
-// LIR type names where the span carries plain data, and the ABI's opaque
-// handle where it carries a run of runtime-owned values. Nothing here reads
+// LIR type names where the span carries plain data, and an address where it
+// carries a run of objects the library defines. Nothing here reads
 // what the values mean, so nothing depends on which entry the span feeds.
 auto CodeGenFunction::SpanOver(
     std::span<llvm::Value* const> values, llvm::Type* element) -> llvm::Value* {
@@ -1186,28 +1263,6 @@ auto CodeGenFunction::LowerTagTest(
       args);
 }
 
-// The domain a value crossing into a positional part states for itself, and
-// nothing where the value it goes into already holds one for that part. A
-// product holds every part at once, so a part conforms to the prototype the
-// product carries and crosses as the bare handle it is; an active-member value
-// holds one part at a time and carries no prototype for the others, so a value
-// replacing one has to say which domain it is in. The coordinate rule one
-// entry over is the same rule over a keyed container, where the coordinate is
-// the value with no prototype waiting for it.
-auto CodeGenFunction::PartDomain(
-    lir::TypeId container, base::ComponentIndex position) const
-    -> diag::Result<std::optional<support::ValueDomain>> {
-  const lir::Type& ty = module_->Unit().types.Get(container);
-  if (!ty.IsUnion()) {
-    return std::nullopt;
-  }
-  auto domain = UnionMemberDomain(container, position.value);
-  if (!domain) {
-    return std::unexpected(std::move(domain.error()));
-  }
-  return *domain;
-}
-
 auto CodeGenFunction::SelectorArgs(
     lir::TypeId container, const std::vector<lir::Operand>& operands,
     std::vector<llvm::Value*>& shape) -> diag::Result<void> {
@@ -1272,10 +1327,8 @@ auto CodeGenFunction::LowerAggregateExtract(
     }
     return shape;
   };
-  // A positional part is named by its index alone. Reaching a product's
-  // component and reaching an active-member value's live member ask the same
-  // thing of the value, and the aggregate's own domain is what names the entry
-  // that answers, so one composition serves both.
+  // A member of an active-member value is named by its index alone, and the
+  // aggregate's own domain is what names the entry that answers.
   const auto positional = [&](base::ComponentIndex index) -> llvm::Value* {
     return BuildInto(
         RuntimeSymbol(*domain, RuntimeOp::kExtract),
@@ -1336,8 +1389,8 @@ auto CodeGenFunction::LowerAggregateUpdate(
     shape.push_back(*replacement);
     return shape;
   };
-  // A positional part is replaced by naming its index and the value that takes
-  // its place; the aggregate's own domain names the entry that performs it.
+  // A member is replaced by naming its index and the value that takes its
+  // place; the aggregate's own domain names the entry that performs it.
   const auto positional = [&](base::ComponentIndex index,
                               llvm::Value* written) -> llvm::Value* {
     return BuildInto(
@@ -1353,20 +1406,14 @@ auto CodeGenFunction::LowerAggregateUpdate(
           [&](const lir::Part& part) -> diag::Result<llvm::Value*> {
             // An active-member value keeps no per-member prototype, so the
             // runtime cannot recover which domain a raw handle is in and the
-            // caller states it by boxing the replacement in the part's own
+            // caller states it by boxing the replacement in the member's own
             // domain. Whether the write then makes the member live or faults a
-            // mismatched tag follows from the domain the entry is named in. A
-            // product answers with no such domain, because its parts keep their
-            // own and the runtime reads them back.
-            auto part_domain = PartDomain(container, part.index);
-            if (!part_domain) {
-              return std::unexpected(std::move(part_domain.error()));
+            // mismatched tag follows from the domain the entry is named in.
+            auto member_domain = UnionMemberDomain(container, part.index.value);
+            if (!member_domain) {
+              return std::unexpected(std::move(member_domain.error()));
             }
-            llvm::Value* written = *replacement;
-            if (part_domain->has_value()) {
-              written = Box(**part_domain, written);
-            }
-            return positional(part.index, written);
+            return positional(part.index, Box(*member_domain, *replacement));
           },
           [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(e.operands);
@@ -1727,16 +1774,29 @@ auto CodeGenFunction::StorageDomainBehind(lir::TypeId operand) const
 auto CodeGenFunction::PlaceValueCellDomain(
     const lir::Place& place, lir::TypeId value) const
     -> std::optional<support::ValueDomain> {
-  // A projection reaches storage the runtime built and owns the representation
-  // of, whether it names a member of an owner or dereferences a pointer that
-  // arrived at one -- and the pointer form is how a name past another unit's
-  // signature reaches it (LRM 23.6). An empty chain names the base local, whose
-  // slot holds the value itself and is read off its address.
+  // A value cell is storage the runtime built around a declaration's value and
+  // owns the representation of. It is reached by the member step naming it, or
+  // by dereferencing a pointer that arrived at one -- and the pointer form is
+  // how a name past another unit's signature reaches it (LRM 23.6). An element
+  // or a component is the value itself, where its container holds it; so is
+  // what a write opened on a wrapper reaches, and a base local's own slot.
   if (place.chain.empty()) {
     return std::nullopt;
   }
-  if (MemberStorageKindOf(module_->Unit(), value, MemberSlotRole::kVariable) !=
-      support::MemberStorageKind::kValueCell) {
+  const bool reaches_a_cell = std::visit(
+      Overloaded{
+          [](const lir::MemberProjection&) { return true; },
+          [&](const lir::DerefProjection&) {
+            return module_->Unit()
+                .types.Get(ReachedType(place, std::ssize(place.chain) - 1))
+                .Is<lir::PointerType>();
+          },
+          [](const lir::ElementProjection&) { return false; },
+          [](const lir::PartProjection&) { return false; }},
+      place.chain.back());
+  if (!reaches_a_cell ||
+      MemberStorageKindOf(module_->Unit(), value, MemberSlotRole::kVariable) !=
+          support::MemberStorageKind::kValueCell) {
     return std::nullopt;
   }
   return ValueDomainOf(module_->Unit(), value);
@@ -2087,6 +2147,11 @@ auto CodeGenFunction::ConstructionOf(
           [&](const lir::EventType&) -> diag::Result<Construction> {
             return no_construct();
           },
+          // A write is opened by the wrapper it writes through, which is an
+          // operation on the wrapper rather than a value anything builds.
+          [&](const lir::OpenWriteType&) -> diag::Result<Construction> {
+            return no_construct();
+          },
 
           // A stable runtime facade, realized as a live reference rather than
           // as a value anything builds.
@@ -2121,20 +2186,17 @@ auto CodeGenFunction::BuiltinErasedOperand(
     lir::TypeId result_type) const
     -> diag::Result<std::optional<ErasedArgument>> {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(target.fn);
-  // A value put into a positional part crosses in the domain the part states,
-  // where the value it goes into holds no prototype for that part. It is the
-  // call's last operand, everything before it naming which part. The value it
-  // goes into is what the call answers with, because an entry that builds one
-  // takes no object to read it from.
+  // A value made the live member of an active-member value crosses in the
+  // member's own domain, since that value holds no prototype for its members.
+  // It is the call's last operand, everything before it naming which member.
+  // The value it goes into is what the call answers with, because an entry that
+  // builds one takes no object to read it from.
   if (target.fn == support::BuiltinFn::kMakeActiveMember) {
-    auto part = PartDomain(result_type, *target.position);
-    if (!part) {
-      return std::unexpected(std::move(part.error()));
+    auto member = UnionMemberDomain(result_type, target.position->value);
+    if (!member) {
+      return std::unexpected(std::move(member.error()));
     }
-    if (!part->has_value()) {
-      return std::nullopt;
-    }
-    return ErasedArgument{.position = call.args.size() - 1, .domain = **part};
+    return ErasedArgument{.position = call.args.size() - 1, .domain = *member};
   }
   if (entry.result_prototype_operand.has_value()) {
     return InItsOwnDomain(call, *entry.result_prototype_operand);

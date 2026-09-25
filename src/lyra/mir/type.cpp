@@ -197,6 +197,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ObservableType& t) { HashId(seed, t.value); },
           [&](const ResolvedType& t) { HashId(seed, t.value); },
           [&](const DriverType& t) { HashId(seed, t.value); },
+          [&](const OpenWriteType& t) { HashId(seed, t.wrapper); },
           [&](const SampledHistoryType& t) { HashId(seed, t.value); },
           [](const EvaluationAttemptsType&) {},
           [&](const StructType& t) { HashField(seed, t.struct_id.value); },
@@ -350,6 +351,7 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           // no holder ever has a copy of one to lose.
           [](const ObservableType&) { return false; },
           [](const ResolvedType&) { return false; },
+          [](const OpenWriteType&) { return false; },
           [](const SampledHistoryType&) { return false; },
           [](const EvaluationAttemptsType&) { return false; },
           [](const EventType&) { return false; },
@@ -421,6 +423,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const ObservableType&) -> Element { return std::nullopt; },
           [](const ResolvedType&) -> Element { return std::nullopt; },
           [](const DriverType&) -> Element { return std::nullopt; },
+          [](const OpenWriteType&) -> Element { return std::nullopt; },
           [](const SampledHistoryType&) -> Element { return std::nullopt; },
           [](const EvaluationAttemptsType&) -> Element { return std::nullopt; },
 

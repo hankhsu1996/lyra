@@ -8,6 +8,10 @@
 
 Accepted; D1's representation is superseded by
 [value-descent-as-named-calls](value-descent-as-named-calls.md) (2026-09-09), and D4 is not built.
+D2 is superseded for a part that is storage of its own -- an array element, a structure member -- by
+[a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md)
+(2026-09-24): such a part is written where it lies on both backends, and D2 governs the views that
+remain.
 
 D2 is the load-bearing half and stands: an interior write is a functional whole-value update stored
 back through the owner, with owner and coordinates evaluated once. What the superseding entry

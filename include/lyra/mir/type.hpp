@@ -807,6 +807,19 @@ struct DriverType {
   auto operator==(const DriverType&) const -> bool = default;
 };
 
+// A write in progress into the storage the capability wrapper `wrapper` stands
+// for (LRM 11.5.1): what opening that storage for a write answers with. It is
+// an object the writer holds, not an address: dereferencing it reaches the
+// contents the write's parts land in, and it ends with the full-expression
+// that opened it, which is when the wrapper learns once what the write did
+// (LRM 4.3). The wrapper is part of the type because which one was opened is
+// what the end reports to.
+struct OpenWriteType {
+  TypeId wrapper;
+
+  auto operator==(const OpenWriteType&) const -> bool = default;
+};
+
 // A type one MIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
 // that names each one rather than defaulting is what makes an alternative added
@@ -828,8 +841,8 @@ class Type {
       RuntimeClassType, RuntimeEffectsType, FilesType, DiagnosticType,
       RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
       VectorType, TupleType, UnpackedStructType, UnionType, TaggedUnionType,
-      EmptyType, ObservableType, ResolvedType, DriverType, SampledHistoryType,
-      EvaluationAttemptsType, StructType, ClosureType>;
+      EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
+      SampledHistoryType, EvaluationAttemptsType, StructType, ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

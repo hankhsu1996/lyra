@@ -88,10 +88,10 @@ class CodeGenFunction {
   [[nodiscard]] auto ObjectOf(lir::TypeId type) const -> support::RuntimeObject;
   // Ends the object `value` names, where ending one has anything to do.
   void EndObject(support::RuntimeObject object, llvm::Value* value);
-  // Builds a second object equal to `value` in `out`.
-  auto CopyObject(
-      support::RuntimeObject object, llvm::Value* value, llvm::Value* out)
-      -> llvm::Value*;
+  // Writes `value` into the object already at `storage`, which goes on being
+  // that object.
+  void AssignObject(
+      support::RuntimeObject object, llvm::Value* storage, llvm::Value* value);
   // Moves the object `value` names into `out`, and ends what the move left
   // behind: the value now lives in `out` and nowhere else.
   void RelocateObject(
@@ -151,8 +151,7 @@ class CodeGenFunction {
       -> diag::Result<llvm::Value*>;
   auto LowerTagTest(const lir::TagTestInstr& test, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
-  auto LowerLoad(
-      const lir::LoadInstr& load, lir::TypeId result_type, llvm::Value* out)
+  auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
   auto LowerAddrOf(const lir::AddrOfInstr& addr, lir::TypeId result_type)
@@ -188,11 +187,22 @@ class CodeGenFunction {
   void EmitCoroutineSuspend(
       llvm::BasicBlock* resume, llvm::BasicBlock* abandoned, bool is_final);
 
+  // Which way an access goes through a place. A step into a container reaches
+  // a different element for each: a read of one that is not there reads the
+  // default and changes nothing, and a write to one allocates or discards it by
+  // the container's own rule.
+  enum class Access : std::uint8_t { kRead, kWrite };
   // The address a place names. The base contributes the storage the chain
   // starts from, either a place local's own frame slot or the referent of a
   // reference value, and each further step walks one projection.
-  auto ResolvePlaceAddress(const lir::Place& place)
+  auto ResolvePlaceAddress(const lir::Place& place, Access access)
       -> diag::Result<llvm::Value*>;
+  // Which of a part's two entries an access steps through: `read`, which
+  // answers with the part as it is, or `write`, which answers with the storage
+  // a write lands in.
+  static auto StepEntry(
+      Access access, support::BuiltinFn read, support::BuiltinFn write)
+      -> support::BuiltinFn;
   auto LowerIntConst(const lir::IntConst& constant)
       -> diag::Result<llvm::Value*>;
   auto LowerStrConst(const lir::StrConst& constant) -> llvm::Value*;
@@ -314,12 +324,6 @@ class CodeGenFunction {
       const lir::CallInstr& call, std::size_t position) const
       -> diag::Result<ErasedArgument>;
 
-  // The representation a value put into a positional part crosses in, absent
-  // where the value it goes into already holds a prototype for that part.
-  [[nodiscard]] auto PartDomain(
-      lir::TypeId container, base::ComponentIndex position) const
-      -> diag::Result<std::optional<support::ValueDomain>>;
-
   auto SelectorArgs(
       lir::TypeId container, const std::vector<lir::Operand>& operands,
       std::vector<llvm::Value*>& shape) -> diag::Result<void>;
@@ -372,6 +376,11 @@ class CodeGenFunction {
   };
   [[nodiscard]] auto WrapperPlaceOf(const lir::Place& place) const
       -> diag::Result<std::optional<WrapperPlace>>;
+  // The contents of the wrapper at `wrapper`, as the storage a read of them
+  // answers with.
+  auto ContentsOf(
+      support::ValueDomain domain, WrapperKind kind, llvm::Value* wrapper)
+      -> llvm::Value*;
   // A capture read: the closure value whose captures the place reaches, and
   // which of them it names; nothing when the place reaches an instance's own
   // members instead. A capture lives in storage the closure owns, so it is

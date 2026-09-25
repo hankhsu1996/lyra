@@ -559,6 +559,10 @@ class MirDumper {
             [](const DriverType& d) -> std::string {
               return std::format("Driver(value=Type[{}])", d.value.value);
             },
+            [](const OpenWriteType& w) -> std::string {
+              return std::format(
+                  "OpenWrite(wrapper=Type[{}])", w.wrapper.value);
+            },
             [](const SampledHistoryType& h) -> std::string {
               return std::format(
                   "SampledHistory(value=Type[{}])", h.value.value);

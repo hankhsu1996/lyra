@@ -13,6 +13,8 @@
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/runtime_object.hpp"
+#include "lyra/support/value_domain.hpp"
 
 namespace lyra::lir {
 
@@ -34,6 +36,28 @@ auto LentValues(const CompilationUnit& unit, TypeId storage) -> TypeId {
     return observable->value;
   }
   return storage;
+}
+
+// A part reached by value projection is a view of its whole -- a bit of a
+// packed value, a character of a string, a member of a union. A part that is
+// storage of its own (LRM 7.2, 7.4, 7.8, 7.10) is a step of a place instead,
+// because a write has to land in it and a value built out of it is a copy no
+// write reaches.
+void RequireViewedPart(
+    const CompilationUnit& unit, const Function& fn, const Operand& aggregate) {
+  const std::optional<TypeId> type = OperandType(fn, aggregate);
+  if (!type) {
+    throw InternalError("lir verify: a projected aggregate has no type");
+  }
+  const std::optional<support::RuntimeObject> held =
+      unit.types.Get(*type).HeldObject();
+  const auto* domain =
+      held.has_value() ? std::get_if<support::ValueDomain>(&*held) : nullptr;
+  if (domain != nullptr && support::PartsAreStorage(*domain)) {
+    throw InternalError(
+        "lir verify: a part that is storage of its own is projected by value "
+        "rather than reached as a step of a place");
+  }
 }
 
 void VerifyInstr(
@@ -115,11 +139,16 @@ void VerifyInstr(
                   "lir verify: cast changes its value's representation");
             }
           },
+          [&](const AggregateExtractInstr& extract) {
+            RequireViewedPart(unit, fn, extract.aggregate);
+          },
+          [&](const AggregateUpdateInstr& update) {
+            RequireViewedPart(unit, fn, update.aggregate);
+          },
           [](const CallInstr&) {}, [](const ProductInstr&) {},
           [](const ArrayInstr&) {}, [](const UnionInstr&) {},
-          [](const AggregateExtractInstr&) {},
-          [](const AggregateUpdateInstr&) {}, [](const TagTestInstr&) {},
-          [](const BinaryInstr&) {}, [](const UnaryInstr&) {},
+          [](const TagTestInstr&) {}, [](const BinaryInstr&) {},
+          [](const UnaryInstr&) {},
           // Where it may stand is a property of the block rather than of the
           // instruction, so it is held where the blocks are walked.
           [](const ReceiveDepartureInstr&) {}},

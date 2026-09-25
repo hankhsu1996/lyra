@@ -4,12 +4,13 @@ namespace lyra::lir {
 
 struct CompilationUnit;
 
-// Checks the LIR place model within a unit and throws InternalError on a
-// malformed place: a Load / Store whose base is not projectable to an object,
-// whose member projection is out of range, or whose value / result types do not
-// line up. A narrow first slice -- it verifies places, not the CFG, call ABI,
-// or every instruction; further checks join it as the vocabulary grows. A
-// failure is a compiler-bug invariant, not a user diagnostic.
+// Checks what a unit's LIR claims about its storage and its control, and throws
+// InternalError where a claim does not hold: a load, store or address-of whose
+// place and value disagree about what the storage holds, a cast that changes a
+// packed value's representation, a part that is storage of its own reached by
+// value projection, a suspension outside a coroutine body, and a landing no
+// departing call names. A failure is a compiler-bug invariant, not a user
+// diagnostic. Every unit is checked before a backend reads it.
 void Verify(const CompilationUnit& unit);
 
 }  // namespace lyra::lir

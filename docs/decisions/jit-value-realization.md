@@ -10,7 +10,10 @@ domain has one size whatever source type it stands for. A value now lives in the
 own frame and ends at the end of its full-expression; `GeneratedCallScope` owns no values. The
 per-call region was not an optimization gap but a correctness defect -- memory grew with the work
 done between two waits. Values still cross as pointers and the runtime still performs every
-operation on them; that half stands.
+operation on them; that half stands. Invariant 6, that nothing writes into a value object, is
+superseded for a part that is storage of its own by
+[a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md): such a
+part is written where it lies.
 
 ## Context
 

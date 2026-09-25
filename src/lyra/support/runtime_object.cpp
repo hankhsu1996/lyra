@@ -39,6 +39,8 @@ auto LibraryObjectName(LibraryObject object) -> std::string_view {
       return "execution";
     case LibraryObject::kPromotedScope:
       return "promoted_scope";
+    case LibraryObject::kOpenWrite:
+      return "open_write";
   }
   throw InternalError("runtime object: unknown library object");
 }

@@ -31,10 +31,9 @@ class String;
 // type the select was written against and is read there. Whole-value movement
 // is therefore range-agnostic and no store relabels a coordinate.
 //
-// Value semantics are preserved by immutability: an element write is a
-// functional operation returning a new array (`WithElement`), never an in-place
-// write, so an array whose handle is shared by a copy is never disturbed by a
-// write through another copy.
+// Each element is storage of its own, written where it lies, and value
+// semantics hold because a copy of the array copies its elements: no two arrays
+// share one, so a write through one is never seen through another.
 class RuntimeUnpackedArray {
  public:
   // The uninitialized sentinel form -- the empty array before its declared
@@ -109,24 +108,20 @@ class RuntimeUnpackedArray {
   [[nodiscard]] auto ElementDefault() const -> const RuntimeValue&;
 
   // LRM 7.4.5: reads the element `position` names, counted from the left. A
-  // position that names no element here reads the element default. The caller
-  // copies the result out across the opaque-handle boundary rather than
-  // aliasing it.
+  // position that names no element here reads the element default.
   [[nodiscard]] auto Element(const PackedArray& position) const
       -> const RuntimeValue&;
+
+  // LRM 7.4.5: the element `position` names, as storage a write lands in. A
+  // position that names no element here yields storage nothing reads, so a
+  // write there is discarded.
+  [[nodiscard]] auto ElementRef(const PackedArray& position) -> RuntimeValue&;
 
   // The element at storage position `position`, counted from the first in the
   // array's own order -- the coordinate LRM 7.12 walks a container by. A
   // position past the last is a walk defect rather than an out-of-range read.
   [[nodiscard]] auto ElementAt(std::size_t position) const
       -> const RuntimeValue&;
-
-  // A functional element write: yields a new array equal to this one with the
-  // named element replaced by `value`. LRM 7.4.5: a position that names no
-  // element here leaves the array unchanged.
-  [[nodiscard]] auto WithElement(
-      const PackedArray& position, RuntimeValue value) const
-      -> RuntimeUnpackedArray;
 
   // LRM 7.4.5 contiguous-range selector: `count` elements from `start`. An
   // element outside the array reads the element default, and a start that
@@ -135,14 +130,14 @@ class RuntimeUnpackedArray {
   [[nodiscard]] auto Slice(const PackedArray& start, std::int64_t count) const
       -> RuntimeUnpackedArray;
 
-  // A functional whole-slice write (LRM 7.6): yields a new array equal to this
-  // one with the window replaced, element for element, by `replacement`. The
-  // same places that read the default write nothing -- an element outside the
-  // array is skipped, and a start that names no position leaves the array
-  // unchanged. Assignment compatibility gives the two the same element count.
-  [[nodiscard]] auto WithSlice(
+  // A whole-slice write (LRM 7.6): the window takes `replacement`, element for
+  // element, into the elements already there. The same places that read the
+  // default write nothing -- an element outside the array is skipped, and a
+  // start that names no position writes no element at all. Assignment
+  // compatibility gives the two the same element count.
+  void AssignSlice(
       const PackedArray& start, std::int64_t count,
-      const RuntimeUnpackedArray& replacement) const -> RuntimeUnpackedArray;
+      const RuntimeUnpackedArray& replacement);
 
   // LRM 11.4.5 `==` / `!=` (Any data type): an element-wise reduction that
   // propagates X / Z through each element's own equality.

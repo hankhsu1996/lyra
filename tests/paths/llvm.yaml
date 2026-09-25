@@ -9,7 +9,7 @@
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"
 08_classes/interface_class_implements: "dispatching on a behavior an interface class states is not yet supported"
 08_classes/this_names_the_current_instance: "the self_handle builtin answers with the handle referring to the object a body runs on"
-13_tasks_and_functions/function_ref_argument_targets: "binding part of a value rather than writing it is not yet lowerable to LIR"
+13_tasks_and_functions/function_ref_argument_targets: "binding a reference to an element or a structure member is not yet lowerable to LIR"
 16_assertions/procedural_concurrent_assertion_queues_where_it_runs: "a concurrent assertion embedded in a procedure is not yet lowered"
 21_output/assignment_pattern_format_of_a_wildcard_indexed_array: "an operand holding an associative array with a wildcard index type"
 23_hierarchy/ref_port_is_waited_on: "reaching the storage a reference binds, rather than reading or writing through it, is not yet an operation on this backend"

@@ -331,6 +331,14 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::DriverType& d) {
             Write(out, "lyra::runtime::Driver<", type(d.value), ">");
           },
+          // A write is dereferenced in the expression that opens it and ends
+          // with that expression, so nothing ever holds one under a name.
+          [](const mir::OpenWriteType&) {
+            throw InternalError(
+                "backend::cpp: a write in progress is dereferenced where it is "
+                "opened, so nothing names its type -- please report this as a "
+                "bug");
+          },
           [&](const mir::SampledHistoryType& h) {
             Write(out, "lyra::runtime::SampledHistory<", type(h.value), ">");
           },
@@ -367,6 +375,11 @@ auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           // A `ref` is dereferenced like a pointer, which reaches the cell it
           // is bound to (LRM 23.3.3.2).
           [&](const mir::RefType&) -> PlaceAccess {
+            return OpenedByDereference{};
+          },
+          // A write opened on a wrapper is dereferenced like a pointer, which
+          // reaches the contents the write lands in.
+          [&](const mir::OpenWriteType&) -> PlaceAccess {
             return OpenedByDereference{};
           },
           [&](const mir::ManagedRefType& m) -> PlaceAccess {
@@ -598,6 +611,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::ObservableType& t) { by_naming_itself(t); },
           [&](const mir::ResolvedType& t) { by_naming_itself(t); },
           [&](const mir::DriverType& t) { by_naming_itself(t); },
+          [&](const mir::OpenWriteType& t) { by_naming_itself(t); },
           [&](const mir::SampledHistoryType& t) { by_naming_itself(t); },
           [&](const mir::EvaluationAttemptsType& t) { by_naming_itself(t); },
           [&](const mir::ClosureType& t) { by_naming_itself(t); },

@@ -110,19 +110,18 @@ auto RuntimeDynamicArray::ElementAt(std::size_t position) const
   return data_[position];
 }
 
-auto RuntimeDynamicArray::WithElement(
-    const PackedArray& position, RuntimeValue value) const
-    -> RuntimeDynamicArray {
-  RuntimeDynamicArray result(*this);
-  if (const std::optional<std::size_t> ordinal =
-          ElementOrdinal(position, data_.size())) {
-    result.data_[*ordinal] = std::move(value);
+auto RuntimeDynamicArray::ElementRef(const PackedArray& position)
+    -> RuntimeValue& {
+  const std::optional<std::size_t> ordinal =
+      ElementOrdinal(position, data_.size());
+  if (!ordinal) {
+    return DiscardTarget(*element_default_);
   }
-  return result;
+  return data_[*ordinal];
 }
 
-auto RuntimeDynamicArray::Delete() const -> RuntimeDynamicArray {
-  return RuntimeDynamicArray(*element_default_);
+void RuntimeDynamicArray::Delete() {
+  data_.clear();
 }
 
 auto RuntimeDynamicArray::Slice(const PackedArray& start, std::int64_t count)
@@ -133,19 +132,17 @@ auto RuntimeDynamicArray::Slice(const PackedArray& start, std::int64_t count)
           data_, *element_default_, ReadPosition(start), SliceCount(count)));
 }
 
-auto RuntimeDynamicArray::WithSlice(
+void RuntimeDynamicArray::AssignSlice(
     const PackedArray& start, std::int64_t count,
-    const RuntimeUnpackedArray& replacement) const -> RuntimeDynamicArray {
+    const RuntimeUnpackedArray& replacement) {
   const std::size_t window = SliceCount(count);
   std::vector<RuntimeValue> replacement_values;
   replacement_values.reserve(window);
   for (std::size_t i = 0; i < window; ++i) {
     replacement_values.push_back(replacement.ElementAt(i));
   }
-  RuntimeDynamicArray result(*this);
   detail::ArraySliceScatter(
-      result.data_, ReadPosition(start), window, replacement_values);
-  return result;
+      data_, ReadPosition(start), window, replacement_values);
 }
 
 auto RuntimeDynamicArray::ConcatElement(RuntimeValue item) const

@@ -137,23 +137,20 @@ auto RuntimeQueue::ElementAt(std::size_t position) const
   return data_[position];
 }
 
-auto RuntimeQueue::WithElement(
-    const PackedArray& position, RuntimeValue value) const -> RuntimeQueue {
-  RuntimeQueue result(*this);
+auto RuntimeQueue::ElementRef(const PackedArray& position) -> RuntimeValue& {
+  if (const std::optional<std::size_t> ordinal =
+          ElementOrdinal(position, data_.size())) {
+    return data_[*ordinal];
+  }
   const std::optional<std::int64_t> at = ReadPosition(position);
-  if (!at || *at < 0) {
-    return result;
+  if (at && static_cast<std::uint64_t>(*at) == data_.size()) {
+    data_.push_back(*element_default_);
+    EnforceBound();
+    if (static_cast<std::uint64_t>(*at) < data_.size()) {
+      return data_[static_cast<std::size_t>(*at)];
+    }
   }
-  const auto slot = static_cast<std::uint64_t>(*at);
-  if (slot == result.data_.size()) {
-    result.data_.push_back(std::move(value));
-    result.EnforceBound();
-    return result;
-  }
-  if (slot < result.data_.size()) {
-    result.data_[static_cast<std::size_t>(slot)] = std::move(value);
-  }
-  return result;
+  return DiscardTarget(*element_default_);
 }
 
 auto RuntimeQueue::Slice(const PackedArray& lo, const PackedArray& hi) const
@@ -173,18 +170,14 @@ auto RuntimeQueue::Slice(const PackedArray& lo, const PackedArray& hi) const
   return result;
 }
 
-auto RuntimeQueue::PushFront(RuntimeValue item) const -> RuntimeQueue {
-  RuntimeQueue result(*this);
-  result.data_.push_front(std::move(item));
-  result.EnforceBound();
-  return result;
+void RuntimeQueue::PushFront(RuntimeValue item) {
+  data_.push_front(std::move(item));
+  EnforceBound();
 }
 
-auto RuntimeQueue::PushBack(RuntimeValue item) const -> RuntimeQueue {
-  RuntimeQueue result(*this);
-  result.data_.push_back(std::move(item));
-  result.EnforceBound();
-  return result;
+void RuntimeQueue::PushBack(RuntimeValue item) {
+  data_.push_back(std::move(item));
+  EnforceBound();
 }
 
 auto RuntimeQueue::ConcatSpread(const RuntimeValue& part) const
@@ -213,64 +206,48 @@ auto RuntimeQueue::FromArray(
   return result;
 }
 
-auto RuntimeQueue::Front() const -> const RuntimeValue& {
-  return data_.empty() ? *element_default_ : data_.front();
-}
-
-auto RuntimeQueue::Back() const -> const RuntimeValue& {
-  return data_.empty() ? *element_default_ : data_.back();
-}
-
-auto RuntimeQueue::PopFront() const -> RuntimeQueue {
-  RuntimeQueue result(*this);
-  if (!result.data_.empty()) {
-    result.data_.pop_front();
+auto RuntimeQueue::PopFront() -> RuntimeValue {
+  if (data_.empty()) {
+    return *element_default_;
   }
-  return result;
+  RuntimeValue popped = std::move(data_.front());
+  data_.pop_front();
+  return popped;
 }
 
-auto RuntimeQueue::PopBack() const -> RuntimeQueue {
-  RuntimeQueue result(*this);
-  if (!result.data_.empty()) {
-    result.data_.pop_back();
+auto RuntimeQueue::PopBack() -> RuntimeValue {
+  if (data_.empty()) {
+    return *element_default_;
   }
-  return result;
+  RuntimeValue popped = std::move(data_.back());
+  data_.pop_back();
+  return popped;
 }
 
-auto RuntimeQueue::Insert(const PackedArray& index, RuntimeValue item) const
-    -> RuntimeQueue {
-  RuntimeQueue result(*this);
+void RuntimeQueue::Insert(const PackedArray& index, RuntimeValue item) {
   if (index.HasUnknown()) {
-    return result;
+    return;
   }
   const std::int64_t position = index.ToInt64();
-  if (position < 0 ||
-      static_cast<std::uint64_t>(position) > result.data_.size()) {
-    return result;
+  if (position < 0 || static_cast<std::uint64_t>(position) > data_.size()) {
+    return;
   }
-  result.data_.insert(
-      result.data_.begin() + static_cast<std::ptrdiff_t>(position),
-      std::move(item));
-  result.EnforceBound();
-  return result;
+  data_.insert(
+      data_.begin() + static_cast<std::ptrdiff_t>(position), std::move(item));
+  EnforceBound();
 }
 
-auto RuntimeQueue::Delete() const -> RuntimeQueue {
-  RuntimeQueue result(*this);
-  result.data_.clear();
-  return result;
+void RuntimeQueue::Delete() {
+  data_.clear();
 }
 
-auto RuntimeQueue::DeleteIndex(const PackedArray& index) const -> RuntimeQueue {
-  RuntimeQueue result(*this);
+void RuntimeQueue::DeleteIndex(const PackedArray& index) {
   const std::optional<std::size_t> ordinal =
       ElementOrdinal(index, data_.size());
   if (!ordinal) {
-    return result;
+    return;
   }
-  result.data_.erase(
-      result.data_.begin() + static_cast<std::ptrdiff_t>(*ordinal));
-  return result;
+  data_.erase(data_.begin() + static_cast<std::ptrdiff_t>(*ordinal));
 }
 
 auto RuntimeQueue::operator==(const RuntimeQueue& other) const -> PackedArray {

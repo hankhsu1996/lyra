@@ -99,6 +99,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_promoted_scope";
     case RuntimeOp::kPromotedScopeDeref:
       return "promoted_scope_deref";
+    case RuntimeOp::kOpenWriteStorage:
+      return "open_write_storage";
     case RuntimeOp::kMethod:
       return "method";
     case RuntimeOp::kClassFindProperty:
@@ -175,6 +177,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "copy";
     case RuntimeOp::kMove:
       return "move";
+    case RuntimeOp::kAssign:
+      return "assign";
   }
   throw InternalError("llvm codegen: unknown runtime operation");
 }
@@ -417,7 +421,10 @@ auto MemberStorageKindOf(
           [&](const lir::RuntimeEffectsType& t) { return none(t); },
           [&](const lir::FilesType& t) { return none(t); },
           [&](const lir::DiagnosticType& t) { return none(t); },
-          [&](const lir::CoroutineType& t) { return none(t); }});
+          [&](const lir::CoroutineType& t) { return none(t); },
+          // A write is open for the length of the full-expression doing it,
+          // which no owner outlasts.
+          [&](const lir::OpenWriteType& t) { return none(t); }});
 }
 
 auto DeclaredStorageOf(
@@ -510,7 +517,8 @@ auto RuntimeSymbol(
     case WrapperKind::kCell:
       return spelled("cell");
     case WrapperKind::kNet:
-      if (fn == support::BuiltinFn::kStore) {
+      if (fn == support::BuiltinFn::kStore ||
+          fn == support::BuiltinFn::kOpenForWrite) {
         throw InternalError(
             "llvm codegen: a net's resolved value takes no store; a value "
             "reaches a net through one of its drivers");
@@ -545,14 +553,6 @@ auto RuntimeSymbol(
 }
 
 auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
-  // A value's storage is reached from this side only through its own access,
-  // which reads a copy out and takes a whole value back, so nothing here may
-  // answer with the part of one: a write through such an answer would land in a
-  // copy nothing keeps. What this backend needs instead is the functional
-  // update the part's owner performs, which the lowering builds from the parts
-  // rather than reaching for an entry here.
-  constexpr std::string_view kAnswersWithPartOfAValue =
-      "answers with part of a value rather than its contents";
   // Recovering a handle from the object it refers to is what a shared-owner
   // realization needs and a traced one does not, since there the handle is the
   // pointer a body already holds. So this target owes no entry: it owes the
@@ -725,6 +725,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kBeginTakeover:
     case support::BuiltinFn::kDriveTakeover:
     case support::BuiltinFn::kEndTakeover:
+    // Opening a write reaches the contents of the wrapper it is opened on, and
+    // what the write reports when it ends is that wrapper's own business.
+    case support::BuiltinFn::kOpenForWrite:
       return NamedByWrapper{};
 
     // A driver is attached by the net that issues it, a fold is installed on
@@ -743,9 +746,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSampledHistoryPush:
     case support::BuiltinFn::kSampledHistoryAt:
       return NamedByStorageDomain{};
-
-    case support::BuiltinFn::kOpenForWrite:
-      return NotRealized{.shape = kAnswersWithPartOfAValue};
 
     case support::BuiltinFn::kSelfHandle:
       return NotRealized{.shape = kRecoversAHandleFromItsObject};
