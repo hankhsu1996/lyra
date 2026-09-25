@@ -41,8 +41,11 @@ enum class LibraryObject : std::uint8_t {
 // An object generated code holds by value: it gives the object storage in its
 // own frame, the library builds the object there, and the object ends where
 // the program that made it says. A value of every domain is one, and so is
-// each library object. What the library keeps for the whole run, and storage
-// an owner holds, is reached by address instead and is not one of these.
+// each library object -- except that generated code lays a product out itself,
+// as a record of its components' objects, and holds the product domain's one
+// object only where it hands a product to the library or takes one back. What
+// the library keeps for the whole run, and storage an owner holds, is reached
+// by address instead and is not one of these.
 //
 // Two sides name it, as they do a value domain: a backend gives the storage
 // and calls the entries that build and end an object, and the runtime defines

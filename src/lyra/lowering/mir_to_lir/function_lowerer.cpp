@@ -587,7 +587,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     const lir::ValueId slot = fn_.values.Add(
         lir::Local{
             .name = "completion",
-            .type = payload,
+            .type = CompletionCellType(payload),
             .kind = lir::LocalKind::kParam});
     fn_.params.push_back(slot);
     completion_cell_ =
@@ -1020,10 +1020,21 @@ auto FunctionLowerer::HandOn(lir::Operand value) -> lir::Operand {
           .target = lir::CopyValueTarget{}, .args = {std::move(value)}}));
 }
 
+auto FunctionLowerer::CompletionCellType(lir::TypeId payload) -> lir::TypeId {
+  return unit_->Types().Intern(
+      lir::Type{lir::PointerType{
+          .pointee = payload,
+          .ownership = lir::PointerOwnership::kBorrowed,
+          .mutability = lir::Mutability::kMutable}});
+}
+
 auto FunctionLowerer::AllocateCompletionFor(lir::TypeId payload)
     -> lir::Operand {
   const lir::ValueId result = fn_.values.Add(
-      lir::Local{.name = {}, .type = payload, .kind = lir::LocalKind::kTemp});
+      lir::Local{
+          .name = {},
+          .type = CompletionCellType(payload),
+          .kind = lir::LocalKind::kTemp});
   // Into the entry block rather than where the call stands, so a call inside a
   // loop writes into one place instead of leaving a fresh one behind on every
   // iteration.

@@ -540,8 +540,7 @@ class FunctionLowerer {
   // value where it lies and a store overwrites it, the first store installing
   // the slot's representation. Each operation states the value the slot holds,
   // which is what names the entry realizing it: a store settles nothing and the
-  // slot's address says nothing of what it holds, so neither of those carries
-  // it.
+  // handle names storage rather than a value, so neither of those carries it.
   auto LoadActivationValue(lir::Operand handle, lir::TypeId value_type)
       -> lir::Operand;
   auto StoreActivationValue(
@@ -553,6 +552,9 @@ class FunctionLowerer {
   // outlives what it calls; a cell of the callee's own would be gone by the
   // time the caller read it.
   auto AllocateCompletionFor(lir::TypeId payload) -> lir::Operand;
+  // What a handle to such a cell is: the address of storage holding a
+  // `payload`, which is not itself a `payload`.
+  auto CompletionCellType(lir::TypeId payload) -> lir::TypeId;
 
   // Brings the storage this body's variables live in into existence and binds
   // each of them to the address of its own piece of it. Runs once, before

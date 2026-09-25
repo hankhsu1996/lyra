@@ -97,17 +97,16 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
   BindConstructionArguments();
   frame_storage_point_ =
       builder_.CreateAlloca(builder_.getInt8Ty(), nullptr, "frame.storage");
+  LayOutRuntimeParameters();
   for (const lir::ValueId id : fn_->values.Ids()) {
     const lir::Local& local = fn_->values.Get(id);
     if (!local.NamesStorage()) {
       continue;
     }
-    const std::optional<support::RuntimeObject> object =
-        module_->Unit().types.Get(local.type).HeldObject();
+    llvm::Value* owned = StorageFor(local.type);
     values_.emplace(
-        id, object.has_value()
-                ? ObjectStorage(*object)
-                : FrameStorage(module_->Types().Map(local.type)));
+        id, owned != nullptr ? owned
+                             : FrameStorage(module_->Types().Map(local.type)));
   }
   if (IsCoroutine()) {
     // The ramp places the arguments in the frame and stops before the body's
@@ -124,17 +123,20 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
     // What the call that leads here left owed is ended as the block opens --
     // after the landing pad, where the block is a landing, since nothing may
     // stand ahead of that.
-    std::vector<llvm::Value*> owed;
+    OwedOnEntry owed;
     if (const auto found = owed_on_entry_.find(blocks_[i]);
         found != owed_on_entry_.end()) {
       owed = std::move(found->second);
       owed_on_entry_.erase(found);
     }
     const auto settle_owed = [&] {
-      for (llvm::Value* box : owed) {
-        EndObject(support::LibraryObject::kErasedValue, box);
+      for (const Receipt& receipt : owed.receipts) {
+        Received(receipt.type, receipt.received, receipt.out);
       }
-      owed.clear();
+      for (const Lent& lent : owed.lent) {
+        EndObject(lent.object, lent.value);
+      }
+      owed = {};
     };
     for (const lir::Instr& instr : block.instrs) {
       if (!std::holds_alternative<lir::ReceiveDepartureInstr>(instr.data)) {
@@ -145,7 +147,7 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
         return std::unexpected(std::move(lowered.error()));
       }
       values_.emplace(instr.result, *lowered);
-      EndBoxes();
+      EndLent();
     }
     settle_owed();
     auto terminated = LowerTerminatorInto(block.terminator);
@@ -163,9 +165,8 @@ auto CodeGenFunction::FrameStorage(llvm::Type* type) -> llvm::Value* {
   return at.CreateAlloca(type);
 }
 
-auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
+auto CodeGenFunction::LaidOutStorage(support::ObjectLayout layout)
     -> llvm::Value* {
-  const support::ObjectLayout layout = support::LayoutOf(object);
   llvm::IRBuilder<> at(frame_storage_point_);
   llvm::AllocaInst* storage =
       at.CreateAlloca(llvm::ArrayType::get(at.getInt8Ty(), layout.size));
@@ -173,10 +174,16 @@ auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
   return storage;
 }
 
+auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
+    -> llvm::Value* {
+  return LaidOutStorage(support::LayoutOf(object));
+}
+
 auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
-  const std::optional<support::RuntimeObject> object =
-      module_->Unit().types.Get(type).HeldObject();
-  return object.has_value() ? ObjectStorage(*object) : nullptr;
+  if (!module_->Unit().types.Get(type).IsOwnedValue()) {
+    return nullptr;
+  }
+  return LaidOutStorage(module_->Types().StorageOf(type));
 }
 
 auto CodeGenFunction::BuildInto(
@@ -216,36 +223,199 @@ void CodeGenFunction::RelocateObject(
   EndObject(object, value);
 }
 
+auto CodeGenFunction::ComponentAddress(
+    lir::TypeId product, llvm::Value* value, std::size_t index)
+    -> llvm::Value* {
+  return builder_.CreateConstInBoundsGEP1_64(
+      builder_.getInt8Ty(), value,
+      module_->Types().LayoutOfProduct(product).offsets.at(index));
+}
+
+void CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value) {
+  if (!module_->Unit().types.Get(type).IsProduct()) {
+    EndObject(ObjectOf(type), value);
+    return;
+  }
+  const ProductLayout& layout = module_->Types().LayoutOfProduct(type);
+  for (std::size_t i = 0; i < layout.components.size(); ++i) {
+    EndValue(layout.components[i], ComponentAddress(type, value, i));
+  }
+}
+
+auto CodeGenFunction::CopyValue(
+    lir::TypeId type, llvm::Value* value, llvm::Value* out) -> llvm::Value* {
+  if (!module_->Unit().types.Get(type).IsProduct()) {
+    return CopyObject(ObjectOf(type), value, out);
+  }
+  const ProductLayout& layout = module_->Types().LayoutOfProduct(type);
+  for (std::size_t i = 0; i < layout.components.size(); ++i) {
+    CopyValue(
+        layout.components[i], ComponentAddress(type, value, i),
+        ComponentAddress(type, out, i));
+  }
+  return out;
+}
+
+void CodeGenFunction::RelocateValue(
+    lir::TypeId type, llvm::Value* value, llvm::Value* out) {
+  if (!module_->Unit().types.Get(type).IsProduct()) {
+    RelocateObject(ObjectOf(type), value, out);
+    return;
+  }
+  const ProductLayout& layout = module_->Types().LayoutOfProduct(type);
+  for (std::size_t i = 0; i < layout.components.size(); ++i) {
+    RelocateValue(
+        layout.components[i], ComponentAddress(type, value, i),
+        ComponentAddress(type, out, i));
+  }
+}
+
+auto CodeGenFunction::ToRuntime(lir::TypeId type, llvm::Value* value)
+    -> llvm::Value* {
+  const lir::TypePool& types = module_->Unit().types;
+  // A run of values handed over together is read one element at a time, so a
+  // run of products crosses as a run of their erased forms.
+  if (const auto* run = types.Get(type).As<lir::MachineArrayType>();
+      run != nullptr && types.Get(run->element).IsProduct()) {
+    llvm::Value* elements = builder_.CreateExtractValue(value, {0});
+    std::vector<llvm::Value*> erased;
+    erased.reserve(run->size);
+    for (std::uint64_t i = 0; i < run->size; ++i) {
+      llvm::Value* element = builder_.CreateLoad(
+          module_->Types().Ptr(), builder_.CreateConstInBoundsGEP1_64(
+                                      module_->Types().Ptr(), elements, i));
+      erased.push_back(ToRuntime(run->element, element));
+    }
+    return SpanOver(erased, module_->Types().Ptr());
+  }
+  if (!types.Get(type).IsProduct()) {
+    return value;
+  }
+  llvm::Value* erased = ObjectStorage(support::ValueDomain::kTuple);
+  ToRuntimeInto(type, value, erased);
+  lent_.push_back(
+      Lent{.object = support::ValueDomain::kTuple, .value = erased});
+  return erased;
+}
+
+void CodeGenFunction::ToRuntimeInto(
+    lir::TypeId product, llvm::Value* value, llvm::Value* out) {
+  const ProductLayout& layout = module_->Types().LayoutOfProduct(product);
+  std::vector<llvm::Value*> boxed;
+  boxed.reserve(layout.components.size());
+  for (std::size_t i = 0; i < layout.components.size(); ++i) {
+    const lir::TypeId component = layout.components[i];
+    auto domain = DomainOf(component);
+    if (!domain) {
+      throw InternalError(
+          "llvm codegen: a product component is no value of a runtime domain "
+          "-- please report this as a bug");
+    }
+    boxed.push_back(Box(
+        *domain, ToRuntime(component, ComponentAddress(product, value, i))));
+  }
+  BuildInto(
+      RuntimeSymbol(support::ValueDomain::kTuple, RuntimeOp::kMake),
+      {SpanOver(boxed, module_->Types().Ptr())}, out);
+}
+
+// Each component comes out in its own domain's form, so a component that is
+// itself a product comes out erased and is laid out in turn, from storage of
+// its own that nothing else holds.
+void CodeGenFunction::FromRuntime(
+    lir::TypeId type, llvm::Value* erased, llvm::Value* out) {
+  const ProductLayout& layout = module_->Types().LayoutOfProduct(type);
+  for (std::size_t i = 0; i < layout.components.size(); ++i) {
+    const lir::TypeId component = layout.components[i];
+    llvm::Value* index = llvm::ConstantInt::get(
+        builder_.getInt64Ty(), static_cast<std::uint64_t>(i));
+    llvm::Value* into = ComponentAddress(type, out, i);
+    llvm::Value* extracted = BuildInto(
+        RuntimeSymbol(support::ValueDomain::kTuple, RuntimeOp::kExtract),
+        {erased, index},
+        ReceivingStorage(ProductCrossing::kErased, component, into));
+    Received(component, extracted, into);
+  }
+}
+
+auto CodeGenFunction::ReceivingStorage(
+    ProductCrossing crossing, lir::TypeId type, llvm::Value* out)
+    -> llvm::Value* {
+  switch (crossing) {
+    case ProductCrossing::kLaidOut:
+      return out;
+    case ProductCrossing::kErased:
+      if (out == nullptr || !module_->Unit().types.Get(type).IsProduct()) {
+        return out;
+      }
+      return ObjectStorage(support::ValueDomain::kTuple);
+  }
+  throw InternalError("llvm codegen: unknown product crossing");
+}
+
+auto CodeGenFunction::Received(
+    lir::TypeId type, llvm::Value* received, llvm::Value* out) -> llvm::Value* {
+  if (received == out) {
+    return out;
+  }
+  FromRuntime(type, received, out);
+  EndObject(support::ValueDomain::kTuple, received);
+  return out;
+}
+
 auto CodeGenFunction::Box(support::ValueDomain domain, llvm::Value* value)
     -> llvm::Value* {
   llvm::Value* box = BuildInto(
       RuntimeSymbol(domain, RuntimeOp::kValueBox), {value},
       ObjectStorage(support::LibraryObject::kErasedValue));
-  boxes_.push_back(box);
+  lent_.push_back(
+      Lent{.object = support::LibraryObject::kErasedValue, .value = box});
   return box;
 }
 
-void CodeGenFunction::EndBoxes() {
-  for (llvm::Value* box : boxes_) {
-    EndObject(support::LibraryObject::kErasedValue, box);
+void CodeGenFunction::EndLent() {
+  for (const Lent& lent : lent_) {
+    EndObject(lent.object, lent.value);
   }
-  boxes_.clear();
+  lent_.clear();
 }
 
-void CodeGenFunction::OweBoxesOnEntry(
+void CodeGenFunction::OweLentOnEntry(
     std::initializer_list<lir::BlockId> successors) {
   for (const lir::BlockId successor : successors) {
-    std::vector<llvm::Value*>& owed = owed_on_entry_[blocks_[successor.value]];
-    owed.insert(owed.end(), boxes_.begin(), boxes_.end());
+    std::vector<Lent>& owed = owed_on_entry_[blocks_[successor.value]].lent;
+    owed.insert(owed.end(), lent_.begin(), lent_.end());
   }
-  boxes_.clear();
+  lent_.clear();
+}
+
+void CodeGenFunction::LayOutRuntimeParameters() {
+  if (!module_->IsClosureBody(id_)) {
+    return;
+  }
+  for (const lir::ValueId param : fn_->params) {
+    const lir::TypeId type = fn_->values.Get(param).type;
+    if (!module_->Unit().types.Get(type).IsProduct()) {
+      continue;
+    }
+    llvm::Value* laid_out = StorageFor(type);
+    FromRuntime(type, values_.at(param), laid_out);
+    values_[param] = laid_out;
+    laid_out_parameters_.emplace_back(type, laid_out);
+  }
+}
+
+void CodeGenFunction::EndLaidOutParameters() {
+  for (const auto& [type, laid_out] : laid_out_parameters_) {
+    EndValue(type, laid_out);
+  }
 }
 
 auto CodeGenFunction::ObjectOf(lir::TypeId type) const
     -> support::RuntimeObject {
-  const std::optional<support::RuntimeObject> object =
-      module_->Unit().types.Get(type).HeldObject();
-  if (!object.has_value()) {
+  const lir::Type& ty = module_->Unit().types.Get(type);
+  const std::optional<support::RuntimeObject> object = ty.HeldObject();
+  if (!object.has_value() || ty.IsProduct()) {
     throw InternalError(
         "llvm codegen: an owned value's operation names a type that is no "
         "runtime object -- please report this as a bug");
@@ -339,6 +509,7 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
               return {};
             }
             if (!ret.value.has_value()) {
+              EndLaidOutParameters();
               builder_.CreateRetVoid();
               return {};
             }
@@ -347,14 +518,23 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
               return std::unexpected(std::move(value.error()));
             }
             // An owned answer is built in the storage the caller gave, which
-            // the body answers with as an entry does.
-            if (const std::optional<support::RuntimeObject> object =
-                    module_->Unit().types.Get(fn_->result_type).HeldObject()) {
+            // the body answers with as an entry does -- and in the form the
+            // caller holds it in, which for the runtime is the erased one.
+            if (module_->Unit().types.Get(fn_->result_type).IsOwnedValue()) {
               llvm::Value* out = value_->getArg(value_->arg_size() - 1);
-              RelocateObject(*object, *value, out);
+              if (module_->IsClosureBody(id_) &&
+                  module_->Unit().types.Get(fn_->result_type).IsProduct()) {
+                ToRuntimeInto(fn_->result_type, *value, out);
+                EndValue(fn_->result_type, *value);
+                EndLent();
+              } else {
+                RelocateValue(fn_->result_type, *value, out);
+              }
+              EndLaidOutParameters();
               builder_.CreateRet(out);
               return {};
             }
+            EndLaidOutParameters();
             builder_.CreateRet(*value);
             return {};
           },
@@ -390,6 +570,7 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
               return std::unexpected(std::move(departure.error()));
             }
             const std::array<llvm::Value*, 1> args{*departure};
+            EndLaidOutParameters();
             if (IsCoroutine()) {
               // A coroutine hands the departure to the activation it completes
               // and leaves through its final suspension, as a return does.
@@ -422,9 +603,11 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             llvm::Value* const out = lir::CallMakesValue(call.target)
                                          ? StorageFor(result_type)
                                          : nullptr;
+            llvm::Value* const receiving = ReceivingStorage(
+                ProductCrossingOf(call.target), result_type, out);
             auto resolved = ResolveCall(
                 lir::CallInstr{.target = call.target, .args = call.args},
-                result_type, out);
+                result_type, receiving);
             if (!resolved) {
               return std::unexpected(std::move(resolved.error()));
             }
@@ -432,7 +615,12 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
                 resolved->callee, blocks_[call.returned.value],
                 blocks_[call.landing.value], resolved->args);
             values_[call.result] = out != nullptr ? out : invoked;
-            OweBoxesOnEntry({call.returned, call.landing});
+            if (receiving != out) {
+              owed_on_entry_[blocks_[call.returned.value]].receipts.push_back(
+                  Receipt{
+                      .type = result_type, .received = receiving, .out = out});
+            }
+            OweLentOnEntry({call.returned, call.landing});
             return {};
           }},
       terminator.data);

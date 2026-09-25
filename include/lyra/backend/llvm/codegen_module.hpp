@@ -76,6 +76,11 @@ class CodeGenModule {
   [[nodiscard]] auto IsScopeConstruction(lir::FunctionId function) const
       -> bool;
 
+  // Whether this function is the body of a closure, which only the runtime
+  // calls: it is handed its arguments, and answers, in the forms the runtime
+  // holds values in.
+  [[nodiscard]] auto IsClosureBody(lir::FunctionId function) const -> bool;
+
   // The cell holding the runtime definition of a type whose values the runtime
   // builds -- a scope class, a struct, or a closure. The unit that declares one
   // fills its cell where it states everything else it declares; a reference
@@ -172,6 +177,7 @@ class CodeGenModule {
   // other way round from how the unit states it: a class names the function
   // that builds a value of it, and what asks here is a function being emitted.
   std::unordered_set<lir::FunctionId> scope_constructions_;
+  std::unordered_set<lir::FunctionId> closure_bodies_;
   base::Translation<lir::TypeDescriptorId, llvm::GlobalVariable*>
       type_descriptor_cells_;
   base::Translation<lir::IntegralConstantId, llvm::GlobalVariable*>

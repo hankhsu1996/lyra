@@ -221,7 +221,7 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           },
           [&](const lir::AggregateExtractInstr& extract)
               -> diag::Result<llvm::Value*> {
-            return LowerAggregateExtract(extract, out);
+            return LowerAggregateExtract(extract, result_type, out);
           },
           [&](const lir::AggregateUpdateInstr& update)
               -> diag::Result<llvm::Value*> {
@@ -320,9 +320,11 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     if (!address) {
       return std::unexpected(std::move(address.error()));
     }
+    const lir::TypeId stored = OperandType(store.value);
     if (const std::optional<support::ValueDomain> cell =
-            PlaceValueCellDomain(store.place, OperandType(store.value))) {
-      const std::array<llvm::Value*, 2> args{*address, *value};
+            PlaceValueCellDomain(store.place, stored)) {
+      const std::array<llvm::Value*, 2> args{
+          *address, ToRuntime(stored, *value)};
       return builder_.CreateCall(
           Entry(
               RuntimeSymbol(*cell, lir::ValueCellTarget::Op::kStore),
@@ -355,7 +357,8 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
   if (!value) {
     return std::unexpected(std::move(value.error()));
   }
-  const std::array<llvm::Value*, 2> args{*address, *value};
+  const std::array<llvm::Value*, 2> args{
+      *address, ToRuntime(OperandType(store.value), *value)};
   return builder_.CreateCall(
       Entry(
           RuntimeSymbol(
@@ -646,7 +649,10 @@ auto CodeGenFunction::LowerBinary(
   if (!rhs) {
     return std::unexpected(std::move(rhs.error()));
   }
-  return BuildInto(RuntimeSymbol(*domain, binary.op), {*lhs, *rhs}, out);
+  return BuildInto(
+      RuntimeSymbol(*domain, binary.op),
+      {ToRuntime(operand_type, *lhs), ToRuntime(OperandType(binary.rhs), *rhs)},
+      out);
 }
 
 auto CodeGenFunction::LowerMachineBinary(
@@ -728,7 +734,9 @@ auto CodeGenFunction::LowerUnary(const lir::UnaryInstr& unary, llvm::Value* out)
   if (!operand) {
     return std::unexpected(std::move(operand.error()));
   }
-  return BuildInto(RuntimeSymbol(*domain, unary.op), {*operand}, out);
+  return BuildInto(
+      RuntimeSymbol(*domain, unary.op), {ToRuntime(operand_type, *operand)},
+      out);
 }
 
 auto CodeGenFunction::LowerMachineUnary(const lir::UnaryInstr& unary)
@@ -873,15 +881,47 @@ auto CodeGenFunction::ResolveCall(
   return ResolvedCall{.callee = *callee, .args = *std::move(args)};
 }
 
+auto CodeGenFunction::LowerInPlace(
+    const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
+    -> std::optional<llvm::Value*> {
+  const lir::TypePool& types = module_->Unit().types;
+  // Every call carried out here acts on an owned value, which an instruction
+  // made and so is never a constant.
+  const auto owned = [&](const lir::Operand& operand) -> llvm::Value* {
+    const auto* use = std::get_if<lir::Use>(&operand);
+    if (use == nullptr) {
+      throw InternalError(
+          "llvm codegen: an owned value's operation is handed a constant -- "
+          "please report this as a bug");
+    }
+    return values_.at(use->value);
+  };
+  // Ending an object whose storage going away is the whole of its end is
+  // nothing to emit.
+  if (std::holds_alternative<lir::EndValueTarget>(call.target)) {
+    const lir::TypeId ended = OperandType(call.args.at(0));
+    if (module_->Types().StorageOf(ended).ends_with_nothing_to_do) {
+      return nullptr;
+    }
+    if (types.Get(ended).IsProduct()) {
+      EndValue(ended, owned(call.args.at(0)));
+      return nullptr;
+    }
+    return std::nullopt;
+  }
+  if (std::holds_alternative<lir::CopyValueTarget>(call.target) &&
+      types.Get(result_type).IsProduct()) {
+    return CopyValue(result_type, owned(call.args.at(0)), out);
+  }
+  return std::nullopt;
+}
+
 auto CodeGenFunction::LowerCall(
     const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
-  // Ending an object whose storage going away is the whole of its end is
-  // nothing to emit.
-  if (std::holds_alternative<lir::EndValueTarget>(call.target) &&
-      support::LayoutOf(ObjectOf(OperandType(call.args.at(0))))
-          .ends_with_nothing_to_do) {
-    return nullptr;
+  if (const std::optional<llvm::Value*> in_place =
+          LowerInPlace(call, result_type, out)) {
+    return *in_place;
   }
   // Entering a body builds the execution it becomes. Nothing ends that here:
   // whoever drives it takes it out of the storage, the moment it is made.
@@ -896,12 +936,17 @@ auto CodeGenFunction::LowerCall(
         break;
     }
   }
-  auto resolved = ResolveCall(call, result_type, out);
+  llvm::Value* const receiving =
+      ReceivingStorage(ProductCrossingOf(call.target), result_type, out);
+  auto resolved = ResolveCall(call, result_type, receiving);
   if (!resolved) {
     return std::unexpected(std::move(resolved.error()));
   }
   llvm::Value* called = builder_.CreateCall(resolved->callee, resolved->args);
-  return out != nullptr ? out : called;
+  if (out == nullptr) {
+    return called;
+  }
+  return Received(result_type, receiving, out);
 }
 
 // An entry the runtime publishes, typed by what the call hands it: the values
@@ -927,6 +972,19 @@ auto CodeGenFunction::CallArgs(
   auto encoding = EncodingOf(call, result_type);
   if (!encoding) {
     return std::unexpected(std::move(encoding.error()));
+  }
+  // A scope's construction hands the values its class is parameterized by on
+  // to that class's own generated construction, which reads them as this
+  // target lays them out; everything else a runtime entry is handed, it reads.
+  const std::size_t read_by_runtime =
+      std::holds_alternative<ScopeOperandsAfterDefinition>(
+          encoding->operand_form)
+          ? kScopeStructuralOperands
+          : operands.size();
+  if (ProductCrossingOf(call.target) == ProductCrossing::kErased) {
+    for (std::size_t i = 0; i < read_by_runtime; ++i) {
+      operands[i] = ToRuntime(OperandType(call.args.at(i)), operands[i]);
+    }
   }
   if (const std::optional<ErasedArgument>& argument = encoding->erased) {
     operands[argument->position] =
@@ -1177,41 +1235,28 @@ auto CodeGenFunction::LowerArray(
   return SpanOver(elements, module_->Types().Map(element_type));
 }
 
-// A product value is assembled by boxing each component into the erased
-// representation its own domain names, then collecting the boxed components.
-// The domains come from the result product type, so the generated side never
-// inspects a component's runtime representation.
-//
-// The components each have a domain of their own, so no entry can be named by
-// one of them and the caller is the only side that knows them all. A
-// homogeneous value's entry is named by its single domain instead, so what
-// crosses to one erased is decided at that entry rather than here.
+// A product value is laid out in place: each component is built where the
+// product's layout puts it, from a value LIR ends on its own, so the product
+// takes a copy.
 auto CodeGenFunction::LowerProduct(
     const lir::ProductInstr& product, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
-  const std::vector<lir::TypeId> components =
-      module_->Unit().types.Get(result_type).ProductComponentTypes();
-  if (components.size() != product.components.size()) {
+  const ProductLayout& layout = module_->Types().LayoutOfProduct(result_type);
+  if (layout.components.size() != product.components.size()) {
     throw InternalError(
         "llvm codegen: a product's result type does not describe the "
         "components it is built from");
   }
-  std::vector<llvm::Value*> boxed;
-  boxed.reserve(product.components.size());
-  for (std::uint32_t i = 0; i < product.components.size(); ++i) {
-    auto domain = DomainOf(components[i]);
-    if (!domain) {
-      return std::unexpected(std::move(domain.error()));
-    }
+  for (std::size_t i = 0; i < product.components.size(); ++i) {
     auto component = LowerOperand(product.components[i]);
     if (!component) {
       return std::unexpected(std::move(component.error()));
     }
-    boxed.push_back(Box(*domain, *component));
+    CopyValue(
+        layout.components[i], *component,
+        ComponentAddress(result_type, out, i));
   }
-  return BuildInto(
-      RuntimeSymbol(support::ValueDomain::kTuple, RuntimeOp::kMake),
-      {SpanOver(boxed, module_->Types().Ptr())}, out);
+  return out;
 }
 
 auto CodeGenFunction::UnionMemberDomain(
@@ -1250,7 +1295,7 @@ auto CodeGenFunction::LowerUnion(
       RuntimeSymbol(*union_domain, RuntimeOp::kMake),
       {llvm::ConstantInt::get(
            llvm::Type::getInt64Ty(module_->Context()), u.index.value),
-       Box(*member_domain, *value)},
+       Box(*member_domain, ToRuntime(OperandType(u.value), *value))},
       out);
 }
 
@@ -1290,23 +1335,38 @@ auto CodeGenFunction::SelectorArgs(
       shape.push_back(*lowered);
       continue;
     }
-    auto domain = DomainOf(OperandType(operand));
+    const lir::TypeId type = OperandType(operand);
+    auto domain = DomainOf(type);
     if (!domain) {
       return std::unexpected(std::move(domain.error()));
     }
-    shape.push_back(Box(*domain, *lowered));
+    shape.push_back(Box(*domain, ToRuntime(type, *lowered)));
   }
   return {};
 }
 
 auto CodeGenFunction::LowerAggregateExtract(
-    const lir::AggregateExtractInstr& extract, llvm::Value* out)
-    -> diag::Result<llvm::Value*> {
+    const lir::AggregateExtractInstr& extract, lir::TypeId result_type,
+    llvm::Value* out) -> diag::Result<llvm::Value*> {
   auto aggregate = LowerOperand(extract.aggregate);
   if (!aggregate) {
     return std::unexpected(std::move(aggregate.error()));
   }
   const lir::TypeId container = OperandType(extract.aggregate);
+  if (module_->Unit().types.Get(container).IsProduct()) {
+    const auto* part = std::get_if<lir::Part>(&extract.selector);
+    if (part == nullptr) {
+      throw InternalError(
+          "llvm codegen: a product's component is named by its position");
+    }
+    return CopyValue(
+        result_type, ComponentAddress(container, *aggregate, part->index.value),
+        out);
+  }
+  // Whatever else the aggregate is, the runtime holds it, and hands a product
+  // part back erased.
+  llvm::Value* const receiving =
+      ReceivingStorage(ProductCrossing::kErased, result_type, out);
   // A sequence of handles belongs to no value domain, so which object a
   // coordinate names is answered by the entry that knows the sequence rather
   // than by a value's own element read.
@@ -1349,9 +1409,9 @@ auto CodeGenFunction::LowerAggregateExtract(
         {*aggregate,
          llvm::ConstantInt::get(
              llvm::Type::getInt64Ty(module_->Context()), index.value)},
-        out);
+        receiving);
   };
-  return std::visit(
+  auto extracted = std::visit(
       Overloaded{
           [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
             return positional(component.index);
@@ -1363,7 +1423,7 @@ auto CodeGenFunction::LowerAggregateExtract(
             }
             return BuildInto(
                 RuntimeSymbol(*domain, support::BuiltinFn::kElement),
-                *std::move(shape), out);
+                *std::move(shape), receiving);
           },
           [&](const lir::ContainerSlice& s) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(s.operands);
@@ -1372,9 +1432,13 @@ auto CodeGenFunction::LowerAggregateExtract(
             }
             return BuildInto(
                 RuntimeSymbol(*domain, support::BuiltinFn::kSlice),
-                *std::move(shape), out);
+                *std::move(shape), receiving);
           }},
       extract.selector);
+  if (!extracted) {
+    return std::unexpected(std::move(extracted.error()));
+  }
+  return Received(result_type, *extracted, out);
 }
 
 auto CodeGenFunction::LowerAggregateUpdate(
@@ -1389,6 +1453,19 @@ auto CodeGenFunction::LowerAggregateUpdate(
     return std::unexpected(std::move(replacement.error()));
   }
   const lir::TypeId container = OperandType(update.aggregate);
+  const lir::TypeId replaced = OperandType(update.replacement);
+  if (module_->Unit().types.Get(container).IsProduct()) {
+    const auto* part = std::get_if<lir::Part>(&update.selector);
+    if (part == nullptr) {
+      throw InternalError(
+          "llvm codegen: a product's component is named by its position");
+    }
+    CopyValue(container, *aggregate, out);
+    llvm::Value* slot = ComponentAddress(container, out, part->index.value);
+    EndValue(replaced, slot);
+    CopyValue(replaced, *replacement, slot);
+    return out;
+  }
   auto domain = DomainOf(container);
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
@@ -1400,7 +1477,7 @@ auto CodeGenFunction::LowerAggregateUpdate(
     if (!filled) {
       return std::unexpected(std::move(filled.error()));
     }
-    shape.push_back(*replacement);
+    shape.push_back(ToRuntime(replaced, *replacement));
     return shape;
   };
   // A member is replaced by naming its index and the value that takes its
@@ -2231,6 +2308,38 @@ auto CodeGenFunction::BuiltinErasedOperand(
     return std::nullopt;
   }
   return InItsOwnDomain(call, *entry.index_operand);
+}
+
+auto CodeGenFunction::ProductCrossingOf(const lir::CallTarget& target)
+    -> ProductCrossing {
+  return std::visit(
+      Overloaded{
+          [](const lir::BuiltinTarget&) { return ProductCrossing::kErased; },
+          [](const lir::ConstructTarget&) { return ProductCrossing::kErased; },
+          [](const lir::ValueCellTarget&) { return ProductCrossing::kErased; },
+          [](const lir::OpenVariablesTarget&) {
+            return ProductCrossing::kErased;
+          },
+          [](const lir::VariableAddressTarget&) {
+            return ProductCrossing::kErased;
+          },
+          [](const lir::CloseVariablesTarget&) {
+            return ProductCrossing::kErased;
+          },
+          [](const lir::EndValueTarget&) { return ProductCrossing::kErased; },
+          [](const lir::CopyValueTarget&) { return ProductCrossing::kErased; },
+          [](const lir::ControlEffectTarget&) {
+            return ProductCrossing::kErased;
+          },
+          [](const lir::CoroutineTarget&) { return ProductCrossing::kErased; },
+          [](const lir::FunctionTarget&) { return ProductCrossing::kLaidOut; },
+          [](const lir::DispatchTarget&) { return ProductCrossing::kLaidOut; },
+          [](const lir::IndirectTarget&) { return ProductCrossing::kLaidOut; },
+          [](const lir::SymbolTarget&) { return ProductCrossing::kLaidOut; },
+          // A foreign callee takes the carriers the boundary already marshaled
+          // every operand to (LRM 35.5.6), none of which is a product.
+          [](const lir::ForeignTarget&) { return ProductCrossing::kLaidOut; }},
+      target);
 }
 
 auto CodeGenFunction::EncodingOf(

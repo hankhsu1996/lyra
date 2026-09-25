@@ -1,5 +1,9 @@
 #include "lyra/backend/llvm/codegen_types.hpp"
 
+#include <algorithm>
+#include <optional>
+#include <utility>
+
 #include <llvm/IR/LLVMContext.h>
 
 #include "lyra/base/internal_error.hpp"
@@ -124,6 +128,49 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
       });
   cache_.emplace(id, mapped);
   return mapped;
+}
+
+auto CodeGenTypes::StorageOf(lir::TypeId type) -> support::ObjectLayout {
+  const lir::Type& ty = unit_->types.Get(type);
+  if (ty.IsProduct()) {
+    return LayoutOfProduct(type).storage;
+  }
+  const std::optional<support::RuntimeObject> object = ty.HeldObject();
+  if (!object.has_value()) {
+    throw InternalError(
+        "llvm codegen: storage asked of a type whose values are not owned -- "
+        "please report this as a bug");
+  }
+  return support::LayoutOf(*object);
+}
+
+auto CodeGenTypes::LayoutOfProduct(lir::TypeId product)
+    -> const ProductLayout& {
+  if (const auto found = products_.find(product); found != products_.end()) {
+    return found->second;
+  }
+  const auto aligned_up = [](std::uint32_t size, std::uint32_t align) {
+    return (size + align - 1) / align * align;
+  };
+  ProductLayout layout{
+      .components = unit_->types.Get(product).ProductComponentTypes(),
+      .offsets = {},
+      .storage = {.size = 0, .align = 1, .ends_with_nothing_to_do = true}};
+  layout.offsets.reserve(layout.components.size());
+  for (const lir::TypeId component : layout.components) {
+    const support::ObjectLayout held = StorageOf(component);
+    const std::uint32_t offset = aligned_up(layout.storage.size, held.align);
+    layout.offsets.push_back(offset);
+    layout.storage.size = offset + held.size;
+    layout.storage.align = std::max(layout.storage.align, held.align);
+    layout.storage.ends_with_nothing_to_do =
+        layout.storage.ends_with_nothing_to_do && held.ends_with_nothing_to_do;
+  }
+  // An empty product still occupies a byte, as an empty C++ record does, so
+  // that two of them are two objects.
+  layout.storage.size = std::max<std::uint32_t>(
+      aligned_up(layout.storage.size, layout.storage.align), 1);
+  return products_.emplace(product, std::move(layout)).first->second;
 }
 
 }  // namespace lyra::backend::llvm_backend

@@ -280,11 +280,14 @@ The value layer is realized two ways, and the breadth work above runs against th
 - The transitional C++ backend realizes each value type as a monomorphized target type -- the host
   C++ compiler expands one concrete type per element type, and an aggregate interior is written in
   place because that type owns real storage.
-- The execution backend realizes each value as an opaque handle to a type-erased runtime object in
-  its own frame (`../decisions/a-value-lives-in-its-makers-frame.md`,
-  `../decisions/jit-aggregate-realization.md`): it emits generated code with no host compiler to
-  expand a template, so an aggregate is one erased object, and a component that is storage of its
-  own is reached through the library where it lies.
+- The execution backend realizes each value as a runtime object in its own frame
+  (`../decisions/a-value-lives-in-its-makers-frame.md`), one type per domain, since it emits
+  generated code with no host compiler to expand a template. A product -- an unpacked struct, a
+  function's answer -- is laid out by the code generator the way the host compiler lays out the C++
+  backend's, with its operations compiled once per product type; the runtime holds it in that same
+  layout and calls those operations
+  (`../decisions/a-product-is-laid-out-from-its-components.md`). Containers and unions stay one
+  erased object, and a component that is storage of its own is reached where it lies.
 
 Both are correct and agree per source (the backend-agreement tests check this), but they are two
 implementations of the same value semantics. Every value domain added to the execution backend is a

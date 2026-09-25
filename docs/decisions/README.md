@@ -69,9 +69,16 @@ the detail lives in the entry itself.
   block 30.9% fewer instructions, 3,237 -> 4,711 table passes a second. Resolving in machine
   integers in the runtime, a known-flag position, and restating a literal in a deferred write are
   rejected.
-- [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend every
-  aggregate is a runtime-owned opaque value (erasure), not structurally monomorphized; the choice is
-  below LIR, and LIR's aggregate operations stay realization-agnostic.
+- [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend a union or a
+  container is a runtime-owned erased value, not structurally monomorphized; the choice is below
+  LIR, and LIR's aggregate operations stay realization-agnostic. Superseded for products by the
+  entry below.
+- [a-product-is-laid-out-from-its-components](a-product-is-laid-out-from-its-components.md) -- the
+  execution backend lays a product out itself, as a C record of its components' objects, so a
+  function's answer is built in its caller's storage and read in place; the runtime, compiled once,
+  still holds a product erased, and one crossing to it is converted. Call-chain 1,044.7 M -> 895.5 M
+  instructions; a struct-variable loop 427.1 M -> 538.0 M, the conversion's price until the runtime
+  holds products laid out.
 - [slice-value-semantics](slice-value-semantics.md) -- a slice read materializes an owned value; the
   access model is value, not borrow.
 - [value-projection-write](value-projection-write.md) -- a value-aggregate interior write is an

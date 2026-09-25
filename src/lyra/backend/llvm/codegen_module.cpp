@@ -52,11 +52,18 @@ CodeGenModule::CodeGenModule(
       scope_constructions_.insert(*cls.constructor);
     }
   }
+  for (const lir::ClosureId id : unit.closures.Ids()) {
+    closure_bodies_.insert(unit.closures.Get(id).invoke);
+  }
 }
 
 auto CodeGenModule::IsScopeConstruction(lir::FunctionId function) const
     -> bool {
   return scope_constructions_.contains(function);
+}
+
+auto CodeGenModule::IsClosureBody(lir::FunctionId function) const -> bool {
+  return closure_bodies_.contains(function);
 }
 
 auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
