@@ -54,12 +54,23 @@ struct RuntimeClassRef {
   auto operator==(const RuntimeClassRef&) const -> bool = default;
 };
 
+// The root every object the program builds extends where its class extends
+// nothing the source wrote (LRM 8.13): what makes it an object the simulator
+// owns and a handle can name. It is not a class of the design hierarchy, so
+// extending it roots nothing in the runtime's tree, and each target realizes it
+// in its own terms.
+struct ManagedObjectRootRef {
+  auto operator==(const ManagedObjectRootRef&) const -> bool = default;
+};
+
 // A reference to the class an object extends: one this unit declares, one
-// another unit declares, or one the runtime library provides. The three are
-// reached differently -- a registry lookup, a name resolved against a consumed
-// signature, a library symbol -- so each is its own arm.
-using ClassRef =
-    std::variant<IntraUnitClassRef, CrossUnitClassRef, RuntimeClassRef>;
+// another unit declares, one the runtime library provides, or the root of every
+// object the program builds. They are reached differently -- a registry lookup,
+// a name resolved against a consumed signature, a library symbol, a target's
+// own realization -- so each is its own arm.
+using ClassRef = std::variant<
+    IntraUnitClassRef, CrossUnitClassRef, RuntimeClassRef,
+    ManagedObjectRootRef>;
 
 // A method that introduces a new virtual dispatch slot on the class it
 // declares -- LRM 8.20 `virtual function` first appearance in an inheritance

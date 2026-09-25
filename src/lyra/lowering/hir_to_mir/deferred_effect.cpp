@@ -178,8 +178,7 @@ auto AppendArrivalAtDueRegion(
                           .target = support::BuiltinFn::kResumeInNbaRegion},
                   .arguments = {runtime_id}},
           .type = unit.builtins.machine_bool});
-  body.AppendStmt(
-      BuildSuspendingCallStmt(process.Owner(), body, region_call_id));
+  body.AppendStmt(BuildWaitStmt(process.Owner(), body, region_call_id));
   return {};
 }
 

@@ -48,12 +48,18 @@ two ways.
 - The boundary between three backend entry kinds:
   - **Type mapping** -- one dispatch per MIR type variant returning a target representation (a
     target-language type literal for C++, a size + an LLVM type for LLVM IR). This is the only entry
-    that names a target-language runtime library type.
+    that names a target-language runtime library type. It also answers every other question a target
+    asks about a type or a pair of types -- how a value of one is constructed, and how a value of
+    one is written as the other -- and where the target answers such a question with a library
+    function, the function's name is part of that answer.
   - **Place access** -- one dispatch per MIR type variant returning how the storage behind a place
     of that type is named as an lvalue, which is what a by-reference binding and the owner of a
     descending write both compose onto. This is the only entry that names a runtime library's access
     protocol. Reading what a wrapper holds and replacing the whole of it are calls rather than
-    accesses, so neither is one of its answers.
+    accesses, so neither is one of its answers. It also answers which object a call is entered on,
+    given its receiver: a call's receiver may be a plain value, whose own member the call names,
+    where a place is always a handle, so that answer is its own -- a handle designates the storage
+    it addresses, and a value is the object itself.
   - **Value emission** -- the entries that translate MIR expression, statement, member, and body
     nodes into target-language form. They compose mechanical syntactic wrappers around recursive
     renders; they make no decisions about what the program means.
@@ -171,8 +177,9 @@ two ways.
 
 8. **A value-emission entry names no runtime library identifier.** Every name it emits is either the
    target language's own syntax or the answer of a dispatch that owns naming: type mapping for a
-   type, place access for a wrapper's access protocol, and the shared runtime-entry declaration for
-   an operation. The entry looks nothing up itself; it composes punctuation around what its children
+   type -- including how a value of it is constructed and how it is written as another type -- place
+   access for a wrapper's access protocol, and the shared runtime-entry declaration for an
+   operation. The entry looks nothing up itself; it composes punctuation around what its children
    render to. This is invariants 2 and 3 read forward rather than as prohibitions, and it is what
    makes the contract checkable by reading a render entry instead of reasoning about it -- a
    property the earlier form did not have, which is why a spelling written into an emitter went

@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lyra/backend/cpp/target_text.hpp"
+#include "lyra/diag/sink.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -48,12 +49,35 @@ struct UnitClasses {
   TargetText definitions;
 };
 
-auto RenderUnitClasses(const mir::CompilationUnit& unit) -> UnitClasses;
+// Every render below that writes a body reports into `refusals` what it has no
+// form for, and goes on.
+auto RenderUnitClasses(
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
+    -> UnitClasses;
+
+// Every closure of the unit as a type of its own: its captures as members and
+// its one body. A body that returns is the call operator, run against the
+// closure it was called on; one that completes as a coroutine is started
+// through a static function taking the closure by value, so the captures live
+// in the coroutine's frame for as long as the execution does. Either way the
+// body's first local is the closure it reads its captures through. The types
+// are declared ahead of every body that builds one, and the bodies after every
+// class, since a body may use any of them.
+struct UnitClosures {
+  TargetText declarations;
+  TargetText definitions;
+};
+
+auto RenderUnitClosures(
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
+    -> UnitClosures;
 
 // The functions of the unit's namespace -- package functions and tasks, DPI-C
 // imports, and the entry points of DPI-C exports -- as free functions. An
 // import is only declared; the user's C code defines it.
-auto RenderUnitCallables(const mir::CompilationUnit& unit) -> UnitText;
+auto RenderUnitCallables(
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
+    -> UnitText;
 
 // The unit's package variables (LRM 26.2): declared in the header, so other
 // units can name them, and defined once in the code file.
@@ -63,7 +87,8 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText;
 // unit declaring that scope writes the same definition, and the linker keeps
 // one.
 void RenderForeignScopeSymbols(
-    const mir::CompilationUnit& unit, TargetText& out);
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    TargetText& out);
 
 // `namespace U { class C; }` for each class of another unit whose objects this
 // unit points at. A pointer needs only the declaration, so that unit's header

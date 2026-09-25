@@ -33,7 +33,7 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .fields = fields,
       .named_fields = named_fields,
       .tree_program = std::nullopt,
-      .constructor = {},
+      .constructor = std::nullopt,
       .contained = contained,
       .callables = {},
       .abi_adapters = {},

@@ -9,11 +9,11 @@ A deferred effect -- a non-blocking assignment, a postponed `$strobe`, a deferre
 (`architecture/scheduling.md`). The closure is invoked after the stretch that built it has returned,
 from a queue holding closures of many capture shapes and one signature.
 
-The C++ backend gets this from the host language: the closure renders as a lambda, its captures are
-the lambda's own fields, and the conversion into the region's `std::function` is the language's. The
-execution backend has no host compiler to lay a lambda out. It needed an answer to three questions
-the C++ backend never had to ask: what the environment is, who owns the captured values once the
-building stretch has returned, and how the invoke reaches them.
+The C++ backend gets this from the host language: the closure renders as a struct whose members are
+its captures, the host compiler lays it out, and the conversion into the region's `std::function` is
+the language's. The execution backend has no host compiler to lay a closure out. It needed an answer
+to three questions the C++ backend never had to ask: what the environment is, who owns the captured
+values once the building stretch has returned, and how the invoke reaches them.
 
 `architecture/compiler_generated_storage.md` fixes the semantic shape -- capture fields plus one
 invoke body, read through a read-only receiver -- and leaves target realization open, naming

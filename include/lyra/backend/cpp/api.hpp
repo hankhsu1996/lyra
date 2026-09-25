@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "lyra/backend/cpp/artifact.hpp"
+#include "lyra/diag/sink.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::backend::cpp {
@@ -18,7 +19,12 @@ struct CppUnitArtifacts {
 };
 
 // The files one unit becomes; the design root is emitted like any other unit.
-auto EmitCppUnit(const mir::CompilationUnit& unit) -> CppUnitArtifacts;
+// A construct this target has no form for is reported into `refusals` and the
+// rest of the unit is written anyway, so one run reports every such construct;
+// files from a unit that reported one are not a program and are not written.
+auto EmitCppUnit(
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
+    -> CppUnitArtifacts;
 
 // `main.cpp`, which makes the design root and runs it. It needs no other unit:
 // a symbol only C code calls (LRM 35.7) is defined by the unit declaring it,

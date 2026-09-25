@@ -28,7 +28,7 @@ struct LyraSpan {
 // between the two is not something the language guarantees.
 using LyraMethodEntry = void (*)();
 
-auto lyra_rt_current_runtime() -> void*;
+auto lyra_rt_current_runtime() noexcept -> void*;
 auto lyra_rt_files(void* runtime) -> void*;
 auto lyra_rt_time_format(void* runtime) -> const void*;
 
@@ -143,10 +143,10 @@ void lyra_rt_record_coverage(void* runtime, const void* site, bool succeeded);
 // nothing else crosses. A closure is taken, supplying both the entry and the
 // captures, because the body runs after the one that built them has returned
 // (LRM 9.3.2).
-auto lyra_rt_enter_coroutine_borrowed_environment(void* frame, void* out)
-    -> void*;
-auto lyra_rt_enter_coroutine_owned_environment(void* closure, void* out)
-    -> void*;
+auto lyra_rt_enter_coroutine_borrowed_environment(
+    void* frame, void* out) noexcept -> void*;
+auto lyra_rt_enter_coroutine_owned_environment(
+    void* closure, void* out) noexcept -> void*;
 
 // Calling a task (LRM 13.3, where the call is also named a task enable).
 // `await_coroutine` gives the calling thread to `activation` and runs it there,
@@ -167,10 +167,10 @@ void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine);
 
 void lyra_rt_enter_scope_static_init(void* runtime, void* unit_instance);
 void lyra_rt_enter_namespace_static_init(void* runtime);
-void lyra_rt_leave_static_init(void* runtime);
+void lyra_rt_leave_static_init(void* runtime) noexcept;
 
 void lyra_rt_enter_dpi_scope(void* runtime, void* decl_scope);
-void lyra_rt_leave_dpi_scope(void* runtime);
+void lyra_rt_leave_dpi_scope(void* runtime) noexcept;
 
 // The DPI-C disable protocol (LRM 35.9). The question an exported task's entry
 // answers as its int, and the three checks the clause makes the simulator's.
@@ -478,28 +478,30 @@ auto lyra_rt_retain_constant(const void* value) -> const void*;
 // because a simulated process cannot be made to run code partway through a
 // statement.
 void lyra_rt_enter_target(void* runtime, void* target);
-void lyra_rt_leave_target(void* runtime, void* target);
+void lyra_rt_leave_target(void* runtime, void* target) noexcept;
 void lyra_rt_disable(void* target, void* runtime);
-auto lyra_rt_effect_names_target(void* effect, void* target, void* out)
+auto lyra_rt_effect_names_target(void* effect, void* target, void* out) noexcept
     -> void*;
 void lyra_rt_take_departure_if_due(void* runtime);
 
 // A departure that arrived at a landing, in the steps the platform's unwinding
 // protocol takes. A landing stops whatever the platform is carrying, and
-// claiming answers the target the control effect it holds names, which is what
-// the landing tests; anything else is carried on from inside the claim,
-// unchanged, so the landing only ever acts on a control effect. Finishing
-// releases one, which a landing does when it continues past its own region;
-// declining hands it back to carry on outward. Settling hands it to the
-// activation a suspendable body completes instead, which is how such a body is
-// left by one: it then completes as it would by returning, and whoever drives
-// it carries the departure on. They are entries of this ABI rather than calls a
-// body makes for itself, so generated code names no unwinding symbol and no
-// raised type, and each target's own protocol stays inside the runtime.
-auto lyra_rt_claim_departure(void* exception) -> void*;
+// receiving turns it into the departure it carries -- a run-time error is
+// settled there and becomes the departure no region may claim -- and answers
+// the target that departure names, which is what the landing tests; anything
+// else is carried on from inside the receive, unchanged. Finishing releases
+// the departure, which a landing does when it continues past its own region;
+// declining carries the one the landing holds on outward. Settling hands that
+// one to the activation a suspendable body completes instead, which is how such
+// a body is left by one: it then completes as it would by returning, and
+// whoever drives it carries the departure on. They are entries of this ABI
+// rather than calls a body makes for itself, so generated code names no
+// unwinding symbol and no raised type, and each target's own protocol stays
+// inside the runtime.
+auto lyra_rt_receive_departure(void* exception) -> void*;
 void lyra_rt_finish_departure();
-[[noreturn]] void lyra_rt_decline_departure();
-void lyra_rt_settle_departure();
+[[noreturn]] void lyra_rt_decline_departure(void* target);
+void lyra_rt_settle_departure(void* target);
 
 // Reads the current simulation time, scaled to the time unit of the design
 // element the call sits in (LRM 20.3). That unit is the caller's property
@@ -671,9 +673,10 @@ auto lyra_rt_find_disable_target(void* self) -> void*;
 // that description gave it; closing it ends the whole of it, and with it every
 // variable, which is the only thing that ends them. Every way out of the body
 // closes it, the one no statement spells included.
-auto lyra_rt_variables_open(const void* schema) -> void*;
-auto lyra_rt_variable_addr(void* variables, std::uint32_t index) -> void*;
-void lyra_rt_variables_close(void* variables);
+auto lyra_rt_variables_open(const void* schema) noexcept -> void*;
+auto lyra_rt_variable_addr(void* variables, std::uint32_t index) noexcept
+    -> void*;
+void lyra_rt_variables_close(void* variables) noexcept;
 
 // The description opening that storage reads, built from what one body's own
 // artifact states: a pair of bytes per variable, naming the storage kind its
@@ -775,7 +778,7 @@ auto lyra_rt_ref_to_cell(void* cell) -> void*;
 auto lyra_rt_ref_to_value(void* storage) -> void*;
 
 auto lyra_rt_packed_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_packed_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_packed_cell_initialize(void* cell, const void* prototype) noexcept;
 void lyra_rt_packed_cell_set(void* cell, const void* value);
 void lyra_rt_packed_cell_arm_sampling(void* cell);
 auto lyra_rt_packed_cell_sampled_load(void* cell, void* out) -> void*;
@@ -842,17 +845,18 @@ void lyra_rt_assocarray_ref_set(void* reference, const void* value);
 void lyra_rt_assocarray_ref_arm_sampling(void* reference);
 auto lyra_rt_assocarray_ref_sampled_load(void* reference, void* out) -> void*;
 auto lyra_rt_string_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_string_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_string_cell_initialize(void* cell, const void* prototype) noexcept;
 void lyra_rt_string_cell_set(void* cell, const void* value);
 void lyra_rt_string_cell_arm_sampling(void* cell);
 auto lyra_rt_string_cell_sampled_load(void* cell, void* out) -> void*;
 auto lyra_rt_real_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_real_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_real_cell_initialize(void* cell, const void* prototype) noexcept;
 void lyra_rt_real_cell_set(void* cell, const void* value);
 void lyra_rt_real_cell_arm_sampling(void* cell);
 auto lyra_rt_real_cell_sampled_load(void* cell, void* out) -> void*;
 auto lyra_rt_shortreal_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_shortreal_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_shortreal_cell_initialize(
+    void* cell, const void* prototype) noexcept;
 void lyra_rt_shortreal_cell_set(void* cell, const void* value);
 void lyra_rt_shortreal_cell_arm_sampling(void* cell);
 auto lyra_rt_shortreal_cell_sampled_load(void* cell, void* out) -> void*;
@@ -970,12 +974,14 @@ void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects);
 // -- and `load` copies the current value out into storage the reader gives. No
 // runtime handle and no subscriber wakeup: a procedural local is not
 // observable.
-auto lyra_rt_packed_value_cell_alloc() -> void*;
-auto lyra_rt_string_value_cell_alloc() -> void*;
-void lyra_rt_packed_value_cell_store(void* cell, const void* value);
-void lyra_rt_string_value_cell_store(void* cell, const void* value);
-auto lyra_rt_packed_value_cell_load(const void* cell, void* out) -> void*;
-auto lyra_rt_string_value_cell_load(const void* cell, void* out) -> void*;
+auto lyra_rt_packed_value_cell_alloc() noexcept -> void*;
+auto lyra_rt_string_value_cell_alloc() noexcept -> void*;
+void lyra_rt_packed_value_cell_store(void* cell, const void* value) noexcept;
+void lyra_rt_string_value_cell_store(void* cell, const void* value) noexcept;
+auto lyra_rt_packed_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
+auto lyra_rt_string_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
 
 // A guard the language requires to run as part of evaluating an access rather
 // than ahead of it (LRM 11.3.5): it raises `message` unless `condition` is a
@@ -1225,9 +1231,10 @@ auto lyra_rt_real_const(double value, void* out) -> void*;
 auto lyra_rt_real_from_int(std::int64_t value, void* out) -> void*;
 auto lyra_rt_real_convert_from_shortreal(const void* value, void* out) -> void*;
 auto lyra_rt_real_convert_from_real(const void* value, void* out) -> void*;
-auto lyra_rt_real_value_cell_alloc() -> void*;
-void lyra_rt_real_value_cell_store(void* cell, const void* value);
-auto lyra_rt_real_value_cell_load(const void* cell, void* out) -> void*;
+auto lyra_rt_real_value_cell_alloc() noexcept -> void*;
+void lyra_rt_real_value_cell_store(void* cell, const void* value) noexcept;
+auto lyra_rt_real_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
 auto lyra_rt_real_make_print_value_item(
     const void* value, const void* spec, void* out) -> void*;
 auto lyra_rt_real_make_format_arg(const void* value, void* out) -> void*;
@@ -1261,9 +1268,10 @@ auto lyra_rt_shortreal_from_bits(std::int64_t bits, void* out) -> void*;
 auto lyra_rt_shortreal_const(float value, void* out) -> void*;
 auto lyra_rt_shortreal_from_int(std::int64_t value, void* out) -> void*;
 auto lyra_rt_shortreal_convert_from_real(const void* value, void* out) -> void*;
-auto lyra_rt_shortreal_value_cell_alloc() -> void*;
-void lyra_rt_shortreal_value_cell_store(void* cell, const void* value);
-auto lyra_rt_shortreal_value_cell_load(const void* cell, void* out) -> void*;
+auto lyra_rt_shortreal_value_cell_alloc() noexcept -> void*;
+void lyra_rt_shortreal_value_cell_store(void* cell, const void* value) noexcept;
+auto lyra_rt_shortreal_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
 auto lyra_rt_shortreal_make_print_value_item(
     const void* value, const void* spec, void* out) -> void*;
 auto lyra_rt_shortreal_make_format_arg(const void* value, void* out) -> void*;
@@ -1281,9 +1289,10 @@ auto lyra_rt_chandle_ne(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_chandle_case_equal(const void* lhs, const void* rhs, void* out)
     -> void*;
 auto lyra_rt_chandle_to_bool(const void* operand) -> bool;
-auto lyra_rt_chandle_value_cell_alloc() -> void*;
-void lyra_rt_chandle_value_cell_store(void* cell, const void* value);
-auto lyra_rt_chandle_value_cell_load(const void* cell, void* out) -> void*;
+auto lyra_rt_chandle_value_cell_alloc() noexcept -> void*;
+void lyra_rt_chandle_value_cell_store(void* cell, const void* value) noexcept;
+auto lyra_rt_chandle_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
 
 // The managed-reference domain (LRM 8.3, and the LRM 9.7 `process` a handle
 // names). What a handle carries is the object's address together with a share
@@ -1300,11 +1309,14 @@ auto lyra_rt_managedref_ne(const void* lhs, const void* rhs, void* out)
 auto lyra_rt_managedref_case_equal(const void* lhs, const void* rhs, void* out)
     -> void*;
 auto lyra_rt_managedref_to_bool(const void* operand) -> bool;
-auto lyra_rt_managedref_value_cell_alloc() -> void*;
-void lyra_rt_managedref_value_cell_store(void* cell, const void* value);
-auto lyra_rt_managedref_value_cell_load(const void* cell, void* out) -> void*;
+auto lyra_rt_managedref_value_cell_alloc() noexcept -> void*;
+void lyra_rt_managedref_value_cell_store(
+    void* cell, const void* value) noexcept;
+auto lyra_rt_managedref_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
 auto lyra_rt_managedref_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_managedref_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_managedref_cell_initialize(
+    void* cell, const void* prototype) noexcept;
 void lyra_rt_managedref_cell_set(void* cell, const void* value);
 void lyra_rt_managedref_cell_arm_sampling(void* cell);
 auto lyra_rt_managedref_cell_sampled_load(void* cell, void* out) -> void*;
@@ -1346,13 +1358,14 @@ auto lyra_rt_tuple_case_equal(const void* lhs, const void* rhs, void* out)
     -> void*;
 auto lyra_rt_tuple_is_unknown(const void* value, void* out) -> void*;
 auto lyra_rt_tuple_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_tuple_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_tuple_cell_initialize(void* cell, const void* prototype) noexcept;
 void lyra_rt_tuple_cell_set(void* cell, const void* value);
 void lyra_rt_tuple_cell_arm_sampling(void* cell);
 auto lyra_rt_tuple_cell_sampled_load(void* cell, void* out) -> void*;
-auto lyra_rt_tuple_value_cell_alloc() -> void*;
-void lyra_rt_tuple_value_cell_store(void* cell, const void* value);
-auto lyra_rt_tuple_value_cell_load(const void* cell, void* out) -> void*;
+auto lyra_rt_tuple_value_cell_alloc() noexcept -> void*;
+void lyra_rt_tuple_value_cell_store(void* cell, const void* value) noexcept;
+auto lyra_rt_tuple_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
 
 // The untagged-union domain (LRM 7.3), MIR's `UnionType`. An active-member
 // value carried behind an opaque handle: it stores the one live member and its
@@ -1374,13 +1387,14 @@ auto lyra_rt_union_case_equal(const void* lhs, const void* rhs, void* out)
     -> void*;
 auto lyra_rt_union_is_unknown(const void* value, void* out) -> void*;
 auto lyra_rt_union_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_union_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_union_cell_initialize(void* cell, const void* prototype) noexcept;
 void lyra_rt_union_cell_set(void* cell, const void* value);
 void lyra_rt_union_cell_arm_sampling(void* cell);
 auto lyra_rt_union_cell_sampled_load(void* cell, void* out) -> void*;
-auto lyra_rt_union_value_cell_alloc() -> void*;
-void lyra_rt_union_value_cell_store(void* cell, const void* value);
-auto lyra_rt_union_value_cell_load(const void* cell, void* out) -> void*;
+auto lyra_rt_union_value_cell_alloc() noexcept -> void*;
+void lyra_rt_union_value_cell_store(void* cell, const void* value) noexcept;
+auto lyra_rt_union_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
 
 // The tagged-union domain (LRM 7.3.2 / 11.9), MIR's `TaggedUnionType`. The
 // tagged sibling of the untagged union: the tag is observable, so `extract` and
@@ -1405,13 +1419,16 @@ auto lyra_rt_tagged_union_case_equal(
     const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_tagged_union_is_unknown(const void* value, void* out) -> void*;
 auto lyra_rt_tagged_union_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_tagged_union_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_tagged_union_cell_initialize(
+    void* cell, const void* prototype) noexcept;
 void lyra_rt_tagged_union_cell_set(void* cell, const void* value);
 void lyra_rt_tagged_union_cell_arm_sampling(void* cell);
 auto lyra_rt_tagged_union_cell_sampled_load(void* cell, void* out) -> void*;
-auto lyra_rt_tagged_union_value_cell_alloc() -> void*;
-void lyra_rt_tagged_union_value_cell_store(void* cell, const void* value);
-auto lyra_rt_tagged_union_value_cell_load(const void* cell, void* out) -> void*;
+auto lyra_rt_tagged_union_value_cell_alloc() noexcept -> void*;
+void lyra_rt_tagged_union_value_cell_store(
+    void* cell, const void* value) noexcept;
+auto lyra_rt_tagged_union_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
 
 // The empty domain: a tagged union's `void` member (LRM 7.3.2), a value with no
 // bits. `default` builds the one value it has; `value_box` erases it for a
@@ -1468,13 +1485,15 @@ auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs, void* out)
     -> void*;
 auto lyra_rt_dynarray_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_dynarray_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_dynarray_cell_initialize(
+    void* cell, const void* prototype) noexcept;
 void lyra_rt_dynarray_cell_set(void* cell, const void* value);
 void lyra_rt_dynarray_cell_arm_sampling(void* cell);
 auto lyra_rt_dynarray_cell_sampled_load(void* cell, void* out) -> void*;
-auto lyra_rt_dynarray_value_cell_alloc() -> void*;
-void lyra_rt_dynarray_value_cell_store(void* cell, const void* value);
-auto lyra_rt_dynarray_value_cell_load(const void* cell, void* out) -> void*;
+auto lyra_rt_dynarray_value_cell_alloc() noexcept -> void*;
+void lyra_rt_dynarray_value_cell_store(void* cell, const void* value) noexcept;
+auto lyra_rt_dynarray_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
 
 // A fixed-size unpacked array (LRM 7.4.2). Its payload is ordinal-only, and
 // every access names an element by its ordinal: the declared range is the
@@ -1519,13 +1538,15 @@ auto lyra_rt_unpackedarray_from_packed_array(
     -> void*;
 auto lyra_rt_unpackedarray_value_box(const void* value, void* out) -> void*;
 auto lyra_rt_unpackedarray_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_unpackedarray_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_unpackedarray_cell_initialize(
+    void* cell, const void* prototype) noexcept;
 void lyra_rt_unpackedarray_cell_set(void* cell, const void* value);
 void lyra_rt_unpackedarray_cell_arm_sampling(void* cell);
 auto lyra_rt_unpackedarray_cell_sampled_load(void* cell, void* out) -> void*;
-auto lyra_rt_unpackedarray_value_cell_alloc() -> void*;
-void lyra_rt_unpackedarray_value_cell_store(void* cell, const void* value);
-auto lyra_rt_unpackedarray_value_cell_load(const void* cell, void* out)
+auto lyra_rt_unpackedarray_value_cell_alloc() noexcept -> void*;
+void lyra_rt_unpackedarray_value_cell_store(
+    void* cell, const void* value) noexcept;
+auto lyra_rt_unpackedarray_value_cell_load(const void* cell, void* out) noexcept
     -> void*;
 
 // Nets and their drivers (LRM 6.5, 6.6). A net is storage of its own, like a
@@ -1686,13 +1707,14 @@ auto lyra_rt_queue_count_bits(
     const void* queue, const void* control_bits, void* out) -> void*;
 auto lyra_rt_queue_value_box(const void* value, void* out) -> void*;
 auto lyra_rt_queue_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_queue_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_queue_cell_initialize(void* cell, const void* prototype) noexcept;
 void lyra_rt_queue_cell_set(void* cell, const void* value);
 void lyra_rt_queue_cell_arm_sampling(void* cell);
 auto lyra_rt_queue_cell_sampled_load(void* cell, void* out) -> void*;
-auto lyra_rt_queue_value_cell_alloc() -> void*;
-void lyra_rt_queue_value_cell_store(void* cell, const void* value);
-auto lyra_rt_queue_value_cell_load(const void* cell, void* out) -> void*;
+auto lyra_rt_queue_value_cell_alloc() noexcept -> void*;
+void lyra_rt_queue_value_cell_store(void* cell, const void* value) noexcept;
+auto lyra_rt_queue_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
 
 // The associative-array domain (LRM 7.8): a sparse lookup table allocated entry
 // by entry and held in index order, carried behind an opaque handle. Its
@@ -1755,13 +1777,16 @@ auto lyra_rt_assocarray_count_bits(
     const void* array, const void* control_bits, void* out) -> void*;
 auto lyra_rt_assocarray_value_box(const void* value, void* out) -> void*;
 auto lyra_rt_assocarray_cell_get(void* cell, void* out) -> void*;
-void lyra_rt_assocarray_cell_initialize(void* cell, const void* prototype);
+void lyra_rt_assocarray_cell_initialize(
+    void* cell, const void* prototype) noexcept;
 void lyra_rt_assocarray_cell_set(void* cell, const void* value);
 void lyra_rt_assocarray_cell_arm_sampling(void* cell);
 auto lyra_rt_assocarray_cell_sampled_load(void* cell, void* out) -> void*;
-auto lyra_rt_assocarray_value_cell_alloc() -> void*;
-void lyra_rt_assocarray_value_cell_store(void* cell, const void* value);
-auto lyra_rt_assocarray_value_cell_load(const void* cell, void* out) -> void*;
+auto lyra_rt_assocarray_value_cell_alloc() noexcept -> void*;
+void lyra_rt_assocarray_value_cell_store(
+    void* cell, const void* value) noexcept;
+auto lyra_rt_assocarray_value_cell_load(const void* cell, void* out) noexcept
+    -> void*;
 
 // LRM 7.12 array manipulation. The body a `with` clause states is a closure run
 // over each of the receiver's entries, handed the element and that entry's

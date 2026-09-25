@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -37,6 +38,11 @@ namespace lyra::mir {
 // each call. A backend reads each binding's name and type from `locals`.
 struct CallableCode {
   std::vector<LocalId> params;
+  // The binding the body reaches its object through, absent for a body entered
+  // on no object -- a static method (LRM 8.10) or a function of the unit's
+  // namespace. Where it is a parameter it is the first; a closure's is its
+  // `locals[0]` and no parameter at all.
+  std::optional<LocalId> receiver;
   TypeId result_type;
   base::Arena<LocalDecl, LocalId> locals;
   // What the source called the locals it declared. A local the lowering added
@@ -71,14 +77,12 @@ struct CallableCode {
     return locals.Add(LocalDecl{.type = type});
   }
 
-  // Whether the signature declares a receiver: `params[0]`, if present, is
-  // typed as the enclosing class's self-pointer. The single structural check
-  // that both the code-declaration render and the call-site render read to
-  // pick between the instance form (with receiver) and the static form
-  // (without), without any side flag restating what the params list already
-  // fixes.
-  [[nodiscard]] auto HasReceiver(TypeId self_pointer_type) const -> bool {
-    return !params.empty() && locals.Get(params[0]).type == self_pointer_type;
+  // The parameters a caller supplies beyond the object the body is entered on:
+  // every parameter, less a receiver the signature takes.
+  [[nodiscard]] auto ParamsAfterReceiver() const -> std::span<const LocalId> {
+    const bool leads =
+        !params.empty() && receiver.has_value() && params.front() == *receiver;
+    return std::span(params).subspan(leads ? 1 : 0);
   }
 
   // The body of a callable this program defines. A builder that is filling a

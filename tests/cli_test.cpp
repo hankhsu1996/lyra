@@ -476,6 +476,60 @@ TEST(LyraTopSelection, RefusesATopWhosePortNeedsAnInstantiation) {
   }
 }
 
+// A construct Lyra does not yet carry out is refused by the compiler, in its
+// own words and with one answer whichever backend was asked for, and nothing is
+// written -- rather than a project written as text another compiler rejects, or
+// each backend failing in a vocabulary of its own. An event used as a handle
+// (LRM 15.5.5) is such a construct, in every position a program can put it; the
+// first of these once reached the source backend and came out as C++ the host
+// compiler would not accept.
+TEST(LyraEmit, AConstructNotYetSupportedIsRefusedBeforeAnythingIsWritten) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  struct Position {
+    std::string_view name;
+    std::string_view body;
+  };
+  static constexpr std::array<Position, 7> kPositions = {
+      {{.name = "assigned", .body = "  event e;\n  initial e = null;\n"},
+       {.name = "initialized", .body = "  event e = null;\n"},
+       {.name = "initialized-in-a-procedure",
+        .body = "  initial begin event e = null; end\n"},
+       {.name = "compared",
+        .body = "  event e;\n  initial if (e == null) $display(\"x\");\n"},
+       {.name = "tested",
+        .body = "  event e;\n  initial if (e) $display(\"x\");\n"},
+       {.name = "negated", .body = "  event e;\n  initial $display(!e);\n"},
+       {.name = "looped-on",
+        .body = "  event e;\n  initial while (e) $display(\"x\");\n"}}};
+
+  for (const Position& position : kPositions) {
+    const std::string source = std::format("{}.sv", position.name);
+    std::ofstream(*tmp_or / source) << "module Test;\n"
+                                    << position.body << "endmodule\n";
+    const std::string out = std::format("out-{}", position.name);
+
+    const auto emitted = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("emit cpp --top Test -o {} {}", out, source));
+    EXPECT_NE(emitted.exit_code, 0) << position.name;
+    EXPECT_NE(
+        emitted.stderr_text.find("is not yet supported"), std::string::npos)
+        << position.name << ": " << emitted.stderr_text;
+    EXPECT_FALSE(std::filesystem::exists(*tmp_or / out / "Test.cpp"))
+        << position.name << ": the refused unit was written anyway";
+
+    const auto ran = RunLyraFrom(
+        lyra, *tmp_or, std::format("run --backend llvm --top Test {}", source));
+    EXPECT_NE(ran.exit_code, 0) << position.name;
+    EXPECT_EQ(ran.stderr_text, emitted.stderr_text)
+        << position.name << ": the two backends answered differently";
+  }
+}
+
 // A command that names nothing says so, and says enough to act on. The two
 // ways of arriving there look identical without that: nothing declared
 // anywhere, or a declaration that itself named no sources -- and the
@@ -1006,6 +1060,217 @@ TEST(LyraRun, CallingInAfterTheRunEndedIsReportedAndRunsNothing) {
       << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("entered=1"), std::string::npos)
       << "stdout: " << run.stdout_text;
+}
+
+auto CountOccurrences(std::string_view text, std::string_view needle)
+    -> std::size_t {
+  std::size_t count = 0;
+  for (std::size_t at = text.find(needle); at != std::string_view::npos;
+       at = text.find(needle, at + needle.size())) {
+    ++count;
+  }
+  return count;
+}
+
+// A frame of another language ends only by returning (LRM 35.9), so a design's
+// run-time error raised below one stops where the foreign caller entered the
+// design: it is reported once and ends the run, and the foreign caller regains
+// control told that its caller will not continue. A foreign C++ caller that
+// catches everything around the call is the sharpest witness, since anything
+// that crossed would land in its handler instead of being reported. The error
+// is raised at each depth an exported subroutine can hold it -- in its own
+// body, in a function it calls, inside a named block that a `disable` names,
+// in an export reached through a second foreign frame, and in an exported task.
+// The corpus cannot state this: which way a run-time error ends the run is the
+// tool's to choose, and the run has to fail.
+TEST(LyraRun, AnErrorBelowAForeignCallerStopsWhereItEnteredTheDesign) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src)
+      << "module Test;\n"
+      << "  import \"DPI-C\" context function int ask(input int depth);\n"
+      << "  import \"DPI-C\" context function int relay();\n"
+      << "  import \"DPI-C\" context task ask_task();\n"
+      << "  export \"DPI-C\" function answer;\n"
+      << "  export \"DPI-C\" function deeper;\n"
+      << "  export \"DPI-C\" task work;\n"
+      << "  int dyn[];\n"
+      << "  int after;\n"
+      << "  function automatic int grow(input int n);\n"
+      << "    dyn = new[n];\n"
+      << "    return dyn.size();\n"
+      << "  endfunction\n"
+      << "  function int deeper();\n"
+      << "    dyn = new[-1];\n"
+      << "    return 3;\n"
+      << "  endfunction\n"
+      << "  function int answer(input int depth);\n"
+      << "    case (depth)\n"
+      << "      1: dyn = new[-1];\n"
+      << "      2: void'(grow(-1));\n"
+      << "      3: begin : blk\n"
+      << "        if (depth == 99) disable blk;\n"
+      << "        dyn = new[-1];\n"
+      << "      end\n"
+      << "      4: void'(relay());\n"
+      << "    endcase\n"
+      << "    return 7;\n"
+      << "  endfunction\n"
+      << "  task work();\n"
+      << "    dyn = new[-1];\n"
+      << "  endtask\n"
+      << "  initial begin\n"
+      << "    int depth;\n"
+      << "    after = 0;\n"
+      << "    void'($value$plusargs(\"depth=%d\", depth));\n"
+      << "    if (depth == 5) ask_task();\n"
+      << "    else void'(ask(depth));\n"
+      << "    after = 1;\n"
+      << "  end\n"
+      << "  final $display(\"after=%0d\", after);\n"
+      << "endmodule\n";
+  const auto foreign = *tmp_or / "foreign.cpp";
+  std::ofstream(foreign)
+      << "#include <cstdio>\n"
+      << "#include <svdpi.h>\n"
+      << "#include \"dpi.h\"\n"
+      << "static void settle(const char* who) {\n"
+      << "  std::printf(\"%s regained control\\n\", who);\n"
+      << "  if (svIsDisabledState() != 0) {\n"
+      << "    std::printf(\"%s saw the disabled state\\n\", who);\n"
+      << "    svAckDisabledState();\n"
+      << "  }\n"
+      << "}\n"
+      << "extern \"C\" int32_t ask(int32_t depth) {\n"
+      << "  int32_t got = -1;\n"
+      << "  try {\n"
+      << "    got = answer(depth);\n"
+      << "  } catch (...) {\n"
+      << "    std::printf(\"the foreign caller caught something\\n\");\n"
+      << "  }\n"
+      << "  settle(\"ask\");\n"
+      << "  return got;\n"
+      << "}\n"
+      << "extern \"C\" int32_t relay(void) {\n"
+      << "  int32_t got = -1;\n"
+      << "  try {\n"
+      << "    got = deeper();\n"
+      << "  } catch (...) {\n"
+      << "    std::printf(\"the foreign caller caught something\\n\");\n"
+      << "  }\n"
+      << "  settle(\"relay\");\n"
+      << "  return got;\n"
+      << "}\n"
+      << "extern \"C\" int32_t ask_task(void) {\n"
+      << "  int32_t answered = -1;\n"
+      << "  try {\n"
+      << "    answered = work();\n"
+      << "  } catch (...) {\n"
+      << "    std::printf(\"the foreign caller caught something\\n\");\n"
+      << "  }\n"
+      << "  std::printf(\"work answered %d\\n\", answered);\n"
+      << "  settle(\"ask_task\");\n"
+      << "  return 1;\n"
+      << "}\n";
+
+  for (const int depth : {1, 2, 3, 4, 5}) {
+    SCOPED_TRACE(std::format("+depth={}", depth));
+    const std::vector<std::string> args = {
+        "run",
+        "--backend",
+        "llvm",
+        "--top",
+        "Test",
+        "--dpi-link",
+        foreign.string(),
+        src.string(),
+        "--",
+        std::format("+depth={}", depth)};
+    const auto run = RunChildProcess(lyra, args, 120s);
+    EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
+        << run.stdout_text << run.stderr_text;
+    EXPECT_EQ(CountOccurrences(run.stderr_text, "size operand is negative"), 1U)
+        << run.stderr_text;
+    EXPECT_EQ(
+        run.stdout_text.find("the foreign caller caught something"),
+        std::string::npos)
+        << run.stdout_text;
+    const std::string_view entered = depth == 5 ? "ask_task" : "ask";
+    EXPECT_NE(
+        run.stdout_text.find(std::format("{} regained control", entered)),
+        std::string::npos)
+        << run.stdout_text;
+    if (depth == 4) {
+      EXPECT_NE(
+          run.stdout_text.find("relay saw the disabled state"),
+          std::string::npos)
+          << run.stdout_text;
+    }
+    if (depth == 5) {
+      EXPECT_NE(run.stdout_text.find("work answered 1"), std::string::npos)
+          << run.stdout_text;
+    } else {
+      EXPECT_NE(
+          run.stdout_text.find("ask saw the disabled state"), std::string::npos)
+          << run.stdout_text;
+    }
+    EXPECT_NE(run.stdout_text.find("after=0"), std::string::npos)
+        << run.stdout_text;
+  }
+}
+
+// LRM 35.9 names the disabled state for a `disable` only, because that is the
+// one way it lets an execution be stopped under a foreign call and handed back
+// to it. A `kill` stops it the same way as far as the foreign side can tell --
+// it must call in no further and return -- so Lyra tells it the same thing: the
+// exported task it was inside answers 1. A conforming tool may answer 0, which
+// is why this is Lyra's own answer and not the corpus's.
+TEST(LyraRun, AKilledProcessTellsItsForeignFramesTheyWereDisabled) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  import \"DPI-C\" context task advance();\n"
+                     << "  export \"DPI-C\" task step;\n"
+                     << "  task step();\n"
+                     << "    #10;\n"
+                     << "  endtask\n"
+                     << "  initial begin\n"
+                     << "    process branch;\n"
+                     << "    fork\n"
+                     << "      begin\n"
+                     << "        branch = process::self();\n"
+                     << "        advance();\n"
+                     << "      end\n"
+                     << "    join_none\n"
+                     << "    #5;\n"
+                     << "    branch.kill();\n"
+                     << "  end\n"
+                     << "endmodule\n";
+  const auto foreign = *tmp_or / "foreign.c";
+  std::ofstream(foreign) << "#include <stdio.h>\n"
+                         << "#include \"dpi.h\"\n"
+                         << "int32_t advance(void) {\n"
+                         << "  int32_t answered = step();\n"
+                         << "  printf(\"step answered %d\\n\", answered);\n"
+                         << "  return answered;\n"
+                         << "}\n";
+
+  const std::vector<std::string> args = {
+      "run",  "--backend",  "llvm",           "--top",
+      "Test", "--dpi-link", foreign.string(), src.string()};
+  const auto run = RunChildProcess(lyra, args, 120s);
+  EXPECT_EQ(run.termination, TerminationKind::kExitedNormally)
+      << run.stdout_text << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("step answered 1"), std::string::npos)
+      << run.stdout_text;
 }
 
 }  // namespace

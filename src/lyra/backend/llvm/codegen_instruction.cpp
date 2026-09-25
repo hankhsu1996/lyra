@@ -630,16 +630,17 @@ auto CodeGenFunction::LowerReceiveDeparture() -> diag::Result<llvm::Value*> {
                     llvm::FunctionType::get(builder_.getInt32Ty(), true))
                 .getCallee()));
   }
-  // The pad takes every departure that reaches it: which region may claim one
-  // is a question about the target it names, which the body already tests, so
+  // The pad takes whatever reaches it: which region may claim a departure is a
+  // question about the target it names, which the body already tests, so
   // selecting here on anything finer answers it twice in two vocabularies.
   //
   // It says so with a clause, which is what makes this frame one the platform
   // stops at while it works out where a raise is going -- and a landing has to
   // be such a frame, because a landing that is only reached afterwards is
   // reached only when somewhere else already stopped it. The clause matches
-  // anything, so it names no raised type; what is not a departure, claiming
-  // carries on before the body sees it.
+  // anything, so it names no raised type; receiving what arrived is what turns
+  // it into the departure the body tests, and what is not the design's is
+  // carried on from there before the body sees it.
   llvm::Type* const pad_type =
       llvm::StructType::get(module_->Types().Ptr(), builder_.getInt32Ty());
   llvm::LandingPadInst* const pad = builder_.CreateLandingPad(pad_type, 1);
@@ -648,8 +649,8 @@ auto CodeGenFunction::LowerReceiveDeparture() -> diag::Result<llvm::Value*> {
       builder_.CreateExtractValue(pad, 0)};
   return builder_.CreateCall(
       Entry(
-          RuntimeSymbol(RuntimeOp::kClaimDeparture), module_->Types().Ptr(),
-          carried),
+          RuntimeSymbol(support::BuiltinFn::kReceiveDeparture),
+          module_->Types().Ptr(), carried),
       carried);
 }
 
@@ -1421,7 +1422,7 @@ auto CodeGenFunction::LowerIntegralConstantRef(
 // runtime String is built from them by a constructor, not at the use site.
 auto CodeGenFunction::LowerStrConst(const lir::StrConst& constant)
     -> llvm::Value* {
-  return builder_.CreateGlobalStringPtr(constant.value);
+  return builder_.CreateGlobalString(constant.value);
 }
 
 // A real constant is a machine float, a native LLVM constant. A real-family

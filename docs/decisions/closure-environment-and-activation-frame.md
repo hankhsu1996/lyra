@@ -133,12 +133,13 @@ mir::Class          managed ref    methods / dispatch   nominal object identity
 
 ### Realization is a backend fact, not a MIR definition
 
-The current C++ backend realizes a `ClosureType` as an anonymous lambda and a scope `StructType` as
-a named nested `struct` reached through `shared_ptr`. That is one backend's realization, not the MIR
-definition. The MIR-level definition of a `ClosureType` is "an anonymous concrete callable value:
-capture fields plus one invoke body" -- another backend may realize it as an aggregate payload plus
-a direct invoke function (LLVM) or a runtime payload object plus a code pointer (a JIT). Do not fix
-"ClosureType is a lambda" as an invariant; the invariant is the capture-fields-plus-invoke shape.
+The current C++ backend realizes a `ClosureType` as a struct with a call operator and a scope
+`StructType` as a named nested `struct` reached through `shared_ptr`. That is one backend's
+realization, not the MIR definition. The MIR-level definition of a `ClosureType` is "an anonymous
+concrete callable value: capture fields plus one invoke body" -- another backend may realize it as
+an aggregate payload plus a direct invoke function (LLVM) or a runtime payload object plus a code
+pointer (a JIT). Do not fix "ClosureType is a lambda" as an invariant; the invariant is the
+capture-fields-plus-invoke shape.
 
 ### Why field identity is not the layout index (D6)
 

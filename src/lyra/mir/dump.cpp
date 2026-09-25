@@ -247,6 +247,9 @@ class MirDumper {
             },
             [](const RuntimeClassRef& e) -> std::string {
               return std::format(R"(Runtime("{}"))", e.symbol);
+            },
+            [](const ManagedObjectRootRef&) -> std::string {
+              return "ManagedObjectRoot";
             }},
         ref);
   }
@@ -736,8 +739,9 @@ class MirDumper {
             },
             [](const StaticConstantRef& r) -> std::string {
               return std::format(
-                  "StaticConstantRef constant=StaticConstant[{}]",
-                  r.constant.value);
+                  "StaticConstantRef owner=Class[{}] "
+                  "constant=StaticConstant[{}]",
+                  r.owner.value, r.constant.value);
             },
             [this](const ObjectRecordRef& r) -> std::string {
               return std::format("ObjectRecordRef of={}", FormatClassRef(r.of));
@@ -912,7 +916,11 @@ class MirDumper {
             },
             [](const AwaitExpr& a) -> std::string {
               return std::format(
-                  "AwaitExpr awaitable=Expr[{}]", a.awaitable.value);
+                  "AwaitExpr execution=Expr[{}]", a.execution.value);
+            },
+            [](const WaitExpr& w) -> std::string {
+              return std::format(
+                  "WaitExpr registration=Expr[{}]", w.registration.value);
             },
             [](const VectorGetExpr& g) -> std::string {
               return std::format(
@@ -1032,21 +1040,24 @@ class MirDumper {
       Dedent();
     }
 
-    Line("Constructor:");
-    Indent();
-    if (!s.constructor.base_args.empty()) {
-      Line("BaseArgs:");
+    if (s.constructor.has_value()) {
+      const ConstructorDecl& ctor = *s.constructor;
+      Line("Constructor:");
       Indent();
-      for (std::size_t i = 0; i < s.constructor.base_args.size(); ++i) {
-        Line(std::format("[{}] Expr[{}]", i, s.constructor.base_args[i].value));
+      if (!ctor.base_args.empty()) {
+        Line("BaseArgs:");
+        Indent();
+        for (std::size_t i = 0; i < ctor.base_args.size(); ++i) {
+          Line(std::format("[{}] Expr[{}]", i, ctor.base_args[i].value));
+        }
+        Dedent();
       }
+      Line("Body:");
+      Indent();
+      DumpCallableBody(ctor.code);
+      Dedent();
       Dedent();
     }
-    Line("Body:");
-    Indent();
-    DumpCallableBody(s.constructor.code);
-    Dedent();
-    Dedent();
 
     Dedent();
     scope_stack_.pop_back();

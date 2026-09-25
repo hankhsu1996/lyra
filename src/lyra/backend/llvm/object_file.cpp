@@ -23,6 +23,7 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/TargetParser/Host.h>
+#include <llvm/TargetParser/Triple.h>
 
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -36,7 +37,7 @@ namespace {
 // The kind of machine every object is compiled for, and the target that
 // compiles for it.
 struct NativeTarget {
-  std::string triple;
+  llvm::Triple triple;
   const llvm::Target* target;
 };
 
@@ -47,7 +48,7 @@ auto ThisMachine() -> const NativeTarget& {
   static const NativeTarget host = [] {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
-    std::string triple = llvm::sys::getProcessTriple();
+    llvm::Triple triple(llvm::sys::getProcessTriple());
     std::string lookup_error;
     const llvm::Target* target =
         llvm::TargetRegistry::lookupTarget(triple, lookup_error);
@@ -56,7 +57,7 @@ auto ThisMachine() -> const NativeTarget& {
           std::format(
               "llvm codegen: this compiler carries no target for the machine "
               "it runs on ({}): {}",
-              triple, lookup_error));
+              triple.str(), lookup_error));
     }
     return NativeTarget{.triple = std::move(triple), .target = target};
   }();
@@ -70,9 +71,9 @@ auto ThisMachine() -> const NativeTarget& {
 // the pipeline's level, as a C++ compiler's `-O` sets both.
 auto MachineFor(const NativeTarget& host, const llvm::OptimizationLevel& level)
     -> std::unique_ptr<llvm::TargetMachine> {
-  const llvm::CodeGenOpt::Level codegen = level == llvm::OptimizationLevel::O0
-                                              ? llvm::CodeGenOpt::None
-                                              : llvm::CodeGenOpt::Default;
+  const llvm::CodeGenOptLevel codegen = level == llvm::OptimizationLevel::O0
+                                            ? llvm::CodeGenOptLevel::None
+                                            : llvm::CodeGenOptLevel::Default;
   return std::unique_ptr<llvm::TargetMachine>(host.target->createTargetMachine(
       host.triple, "", "", llvm::TargetOptions{}, llvm::Reloc::PIC_,
       std::nullopt, codegen));
@@ -117,11 +118,11 @@ auto WriteObjectFile(
   }
   llvm::legacy::PassManager passes;
   if (machine->addPassesToEmitFile(
-          passes, out, nullptr, llvm::CodeGenFileType::CGFT_ObjectFile)) {
+          passes, out, nullptr, llvm::CodeGenFileType::ObjectFile)) {
     throw InternalError(
         std::format(
             "llvm codegen: the target for {} cannot write an object file",
-            host.triple));
+            host.triple.str()));
   }
   passes.run(*owned.module);
   out.close();

@@ -6,6 +6,7 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -59,6 +60,34 @@ struct CallableDecl {
   std::optional<VirtualDispatchRole> virtual_dispatch;
 };
 
+// What a callable declaration is, read off the facts above rather than stated
+// beside them: a body this program defines; a behavior a class declares and
+// leaves to what extends it (LRM 8.21), which is no body and a dispatch role;
+// or a function the foreign program defines (LRM 35.4), which is no body and a
+// foreign linkage. The forms fall out of the combination, and every consumer
+// reads them here.
+struct DefinedHere {};
+struct LeftAbstract {};
+struct DefinedByForeignCode {};
+
+using CallableForm =
+    std::variant<DefinedHere, LeftAbstract, DefinedByForeignCode>;
+
+[[nodiscard]] inline auto FormOf(const CallableDecl& callable) -> CallableForm {
+  if (callable.code.body.has_value()) {
+    return DefinedHere{};
+  }
+  if (callable.foreign.has_value()) {
+    return DefinedByForeignCode{};
+  }
+  if (callable.virtual_dispatch.has_value()) {
+    return LeftAbstract{};
+  }
+  throw InternalError(
+      "mir: a callable with no body is neither left abstract nor defined by "
+      "foreign code, so nothing defines it -- please report this as a bug");
+}
+
 // One entry of the relation between a name space and the bodies it answers: the
 // identifier written in the source, and the body it reaches. A class's methods
 // and a namespace's subroutines are each such a relation, held by the class or
@@ -107,9 +136,11 @@ struct UnpublishedEntry {
 // a hierarchical name that reaches it is resolved against the scope while the
 // design elaborates (LRM 23.6, 23.8.1). Every subroutine a scope declares
 // answers this way, because what reaches one is a name the declaring unit never
-// promised and so never knew to expect.
+// promised and so never knew to expect. `subroutine` is the body the name
+// reaches.
 struct SubroutineEntry {
   std::string name;
+  CallableId subroutine;
 
   auto operator==(const SubroutineEntry&) const -> bool = default;
 };

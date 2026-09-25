@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -225,9 +226,8 @@ auto RenderSection(
 }
 
 // Everything the unit states about the foreign name space. A name the unit
-// supplies a body for is an entry point the C side calls; one it only declares
-// is what the C side must define, and which of the two it is follows from
-// whether the callable has a body rather than from anything restating it. An
+// supplies a body for is an entry point the C side calls; one the foreign
+// program defines is what the C side must define. An
 // entry that sits on a scope is compiled once per specialization of that scope,
 // so it is not among the unit's callables and is walked separately.
 auto SurfaceOf(const mir::CompilationUnit& unit) -> ForeignSurface {
@@ -241,8 +241,21 @@ auto SurfaceOf(const mir::CompilationUnit& unit) -> ForeignSurface {
         .name = callable.foreign->foreign_name,
         .prototype = RenderPrototypeOfCallable(
             unit, callable.code, callable.foreign->foreign_name)};
-    (callable.code.body.has_value() ? surface.exports : surface.imports)
-        .push_back(std::move(entry));
+    std::vector<ForeignEntry>& side = std::visit(
+        Overloaded{
+            [&](mir::DefinedHere) -> std::vector<ForeignEntry>& {
+              return surface.exports;
+            },
+            [&](mir::DefinedByForeignCode) -> std::vector<ForeignEntry>& {
+              return surface.imports;
+            },
+            [](mir::LeftAbstract) -> std::vector<ForeignEntry>& {
+              throw InternalError(
+                  "dpi: a callable of a unit's namespace is left abstract, "
+                  "which only a class's can be -- please report this as a bug");
+            }},
+        mir::FormOf(callable));
+    side.push_back(std::move(entry));
   }
   for (const mir::ForeignScopeEntry& entry : unit.foreign_scope_entries) {
     if (AlreadyStated(surface, entry.linkage.foreign_name)) {

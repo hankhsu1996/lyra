@@ -97,6 +97,32 @@ cc_test(
 )
 
 cc_test(
+    name = "mir_to_lir_cleanup_test",
+    srcs = ["mir_to_lir/cleanup_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "//:diag",
+        "//:lir",
+        "//:mir",
+        "//:mir_to_lir",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "backend_cpp_refusal_test",
+    srcs = ["backend_cpp/refusal_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:backend_cpp",
+        "//:diag",
+        "//:mir",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "diag_render_tests",
     srcs = ["diag/render_test.cpp"],
     copts = LYRA_COPTS,

@@ -139,7 +139,7 @@ auto BindCompletion(
       unit.types.Get(body.exprs.Get(call_id).type).Is<mir::CoroutineType>()
           ? body.exprs.Add(
                 mir::Expr{
-                    .data = mir::AwaitExpr{.awaitable = call_id},
+                    .data = mir::AwaitExpr{.execution = call_id},
                     .type = payload_type})
           : call_id;
   const mir::LocalId completion =

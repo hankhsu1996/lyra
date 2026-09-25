@@ -200,7 +200,7 @@ auto BuildDelayWaitStmt(
                       {runtime_id, duration_id, unit_power_id,
                        precision_power_id}},
           .type = unit.builtins.machine_bool});
-  return BuildSuspendingCallStmt(process.Owner(), block, call_id);
+  return BuildWaitStmt(process.Owner(), block, call_id);
 }
 
 // LRM 15.5.1: triggering reaches RuntimeEffects to wake subscribers. The engine

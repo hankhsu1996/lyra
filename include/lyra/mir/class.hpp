@@ -87,7 +87,7 @@ struct NamedStaticProperty {
 // the body runs, so a consumer initializes the base first, then descends into
 // `code`.
 struct ConstructorDecl {
-  // A class always defines its own construction, so this code is always a
+  // A class that states a construction defines it, so this code is always a
   // definition; an empty body is a class that constructs nothing.
   CallableCode code = CallableCode::Defined();
   // What the base's constructor is entered with (LRM 8.7), each argument
@@ -149,7 +149,10 @@ struct Class {
   // a unit promises of its object, which states what may be reached and never
   // how it runs.
   std::optional<ObjectTreeProgram> tree_program;
-  ConstructorDecl constructor;
+  // How an object of this class is built, absent for a class no object is ever
+  // built of: an interface class (LRM 8.26) holds no storage and is never
+  // constructed, so it has no construction to state.
+  std::optional<ConstructorDecl> constructor;
   // The classes this one structurally owns -- the children it builds. Each
   // names a registry identity, in construction order. Ownership of the
   // declarations is the unit's registry; this is the containment relation over
@@ -157,8 +160,9 @@ struct Class {
   // affair and is not stated here.
   std::vector<ClassId> contained;
   // Every callable this class owns, in one pool: instance methods (LRM 8.6),
-  // process and lifecycle bodies, and the receiver-less static callables (a
-  // DPI-C import, LRM 35.4; a static method, LRM 8.10). An instance method
+  // process and lifecycle bodies, and the receiver-less static methods (LRM
+  // 8.10). A foreign function is never here: its name is program-global and
+  // belongs to no class (LRM 35.4), so the unit owns it. An instance method
   // carries `self` as its first parameter and a static callable omits it,
   // but both are one `CallableDecl` reached by one `CallableId` -- the
   // receiver is a property of the signature, not a separate declaration

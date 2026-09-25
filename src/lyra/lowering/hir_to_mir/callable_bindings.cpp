@@ -40,6 +40,7 @@ CallableBindings::CallableBindings(
           .ownership = mir::PointerOwnership::kBorrowed,
           .mutability = mir::Mutability::kReadOnly}});
   self_local_ = code_->AddLocal(self_ptr_type_);
+  code_->receiver = self_local_;
 }
 
 auto CallableBindings::DeclareNamed(
@@ -61,6 +62,11 @@ auto CallableBindings::Declare(BindingOriginId origin, mir::TypeId type)
     -> mir::LocalId {
   const mir::LocalId id = code_->AddLocal(type);
   available_.insert_or_assign(origin, BodyBindingRef{.ref = id});
+  // The object a body is entered on is its receiver by what it is, so the body
+  // says which binding that is where the binding is made.
+  if (origin == BindingOriginId::Receiver()) {
+    code_->receiver = id;
+  }
   return id;
 }
 

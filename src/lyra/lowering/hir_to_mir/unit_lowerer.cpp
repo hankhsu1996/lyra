@@ -823,10 +823,15 @@ auto UnitLowerer::TakeClassPromise(const hir::ExternalClass& published)
       .is_interface_class = published.is_interface_class,
       .fields = {},
       .behaviors = {}};
+  // What the declaring unit's class extends, stated the way that unit states
+  // it: the root every object extends where the source named no base, and
+  // nothing for an interface class (LRM 8.26).
   if (published.base.has_value()) {
     record.base = mir::ClassRef{mir::CrossUnitClassRef{
         .unit_name = published.base->unit_name,
         .class_name = published.base->class_name}};
+  } else if (!published.is_interface_class) {
+    record.base = mir::ClassRef{mir::ManagedObjectRootRef{}};
   }
   for (const hir::PublishedMemberId id : published.members.Ids()) {
     const hir::PublishedMember& member = published.members.Get(id);

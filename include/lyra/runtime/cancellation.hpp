@@ -98,11 +98,11 @@ struct CapturedTarget {
 // the activation settles as cancelled -- reported as KILLED (LRM 9.7).
 //
 // `target` says which region may claim it. A `disable` names the target it
-// disabled (LRM 9.6.2). A `kill`, a `disable` of the execution itself, and a
-// task that ends the run name nothing: no region can match `nullptr`, so the
-// effect is unclaimable by construction and the activation is the only thing
-// it can end. One type covers both forms because they differ only in whether
-// anyone is allowed to catch them.
+// disabled (LRM 9.6.2). A `kill`, a `disable` of the execution itself, a task
+// that ends the run, and a run-time error a landing has received name nothing:
+// no region can match `nullptr`, so the effect is unclaimable by construction
+// and the activation is the only thing it can end. One type covers every form
+// because they differ only in whether anyone is allowed to catch them.
 //
 // It deliberately does not derive from `std::exception`: an effect that escapes
 // its owner is a compiler defect, and staying outside that hierarchy keeps it
@@ -117,11 +117,10 @@ struct ControlEffect {
 // recorded.
 [[noreturn]] void RaiseUnclaimableEffect();
 
-// Raises the effect a body reported as its outcome instead of by leaving, so
-// the activation that drove that body settles cancelled (LRM 9.6.2, 9.7). Call
-// from the driver once the body has run its last statement. `target` is what
-// the reported effect named, which is null where no region may claim it.
-[[noreturn]] void RaiseControlEffect(CancellationTarget* target);
+// Raises again the departure a landing received and declines, so a landing
+// further out tests the target it names (LRM 9.6.2). What is raised is the
+// departure as received, which for a run-time error is the one it became.
+[[noreturn]] void RaiseDeclinedDeparture(ControlEffect effect);
 
 // What came out of a body that did not return: a control effect, or a run-time
 // error. A body left by unwinding delivers the two identically, so one shape
@@ -154,23 +153,30 @@ struct Unwound {
 // place it settles without having returned.
 [[nodiscard]] auto ClassifyUnwind() -> Unwound;
 
-// The target the control effect being handled names, which is what a region
-// tests before claiming it. A landing asks this of whatever reached it, and
-// what reaches one is not always a control effect: a run-time error travels the
-// same way, and so does the release of a suspended stack, which has to pass
-// through every frame untouched. Anything that is not a control effect is
-// raised again from here, unchanged, so it carries on as though no landing had
-// stopped it, and a landing names no type to tell them apart.
+// Makes a raised error the ending it is (LRM 20.10): reports it, ends the run,
+// and asks the running execution, if there is one, to stop. A design's error
+// is the fatal report and the run ends as `$fatal` ends it; a failure of the
+// tool ends the run without the design's final procedures. What remains is the
+// departure, which the caller states the way its own frame leaves.
+void SettleRaised(RuntimeEffects& effects, const std::exception_ptr& raised);
+
+// What a landing received, as the control effect it now carries. A landing
+// receives whatever unwinds into it: a control effect is carried as it is, and
+// a run-time error is settled here and carried on as the departure no region
+// may claim, so it is reported once, by the first landing it reaches, and
+// every cleanup it passes after that runs as for any departure. Anything else
+// -- the release of a suspended stack, which must pass every frame untouched --
+// is raised again from here, unchanged, so a landing names no raised type.
 //
 // Call only while an exception is being handled, as above.
-[[nodiscard]] auto ClaimableTarget() -> CancellationTarget*;
+[[nodiscard]] auto ReceiveDeparture() -> ControlEffect;
 
 // Runs `stretch`, a run of the design's code that no activation holds, as its
 // own landing, which settles it the way an activation's landing settles a
 // body: a departure no region claimed ends it there, and a run-time error that
-// left it is reported and ends the run, and either way the caller carries on
-// to the run's end. A claimable departure never arrives here: it names a
-// region the departing execution is inside, and that region claims it first.
+// left it is settled, and either way the caller carries on to the run's end. A
+// claimable departure never arrives here: it names a region the departing
+// execution is inside, and that region claims it first.
 void RunAsLanding(
     RuntimeEffects& effects, const std::function<void()>& stretch);
 

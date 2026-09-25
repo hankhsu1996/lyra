@@ -7,8 +7,8 @@
 
 namespace lyra::mir {
 
-// Construction of a closure value -- the lambda (`[caps](args){body}`).
-// `closure` names the declaration (its capture fields and its invoke body) in
+// Construction of a closure value. `closure` names the declaration (its capture
+// fields and its invoke body) in
 // the unit's closure registry; `field_inits` supplies each captured field's
 // value in evaluation order.
 //

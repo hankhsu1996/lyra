@@ -923,7 +923,7 @@ auto LowerForeignImportTask(
                           .target = support::BuiltinFn::kRunForeignTaskOnFiber},
                   .arguments = {runtime_id, fiber_id}},
           .type = unit.builtins.machine_bool});
-  body.AppendStmt(BuildSuspendingCallStmt(unit_lowerer, body, run_id));
+  body.AppendStmt(BuildWaitStmt(unit_lowerer, body, run_id));
   if (import.is_context) {
     CloseDpiScopeExtent(
         unit_lowerer, outer.Frame(), std::move(extent_body), declaring_scope);
@@ -979,6 +979,7 @@ auto MakeForeignSignature(
     support::DpiScalarAbi ret_abi, bool is_task) -> mir::CallableCode {
   mir::CallableCode code{
       .params = {},
+      .receiver = std::nullopt,
       .result_type = ForeignBoundaryReturnType(unit, ret_abi, is_task),
       .locals = {},
       .named_locals = {},

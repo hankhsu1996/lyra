@@ -100,9 +100,11 @@ class LirDumper {
     for (std::size_t i = 0; i < cls.members.size(); ++i) {
       Line(std::format("member[{}] : {}", i, FormatType(cls.members[i].type)));
     }
-    Line(
-        std::format(
-            "constructor: {}", unit_->functions.Get(cls.constructor).name));
+    if (cls.constructor.has_value()) {
+      Line(
+          std::format(
+              "constructor: {}", unit_->functions.Get(*cls.constructor).name));
+    }
     for (std::size_t i = 0; i < cls.introduces.size(); ++i) {
       const Introduction& introduced = cls.introduces[i];
       Line(
@@ -260,7 +262,9 @@ class LirDumper {
                   s.abandoned.value);
             },
             [](const AbandonTerm&) -> std::string { return "abandon"; },
-            [](const DepartTerm&) -> std::string { return "depart"; },
+            [&](const DepartTerm& depart) -> std::string {
+              return std::format("depart {}", FormatOperand(depart.departure));
+            },
             [](const UnreachableTerm&) -> std::string { return "unreachable"; },
             [&](const DepartingCallInstr& call) -> std::string {
               return std::format(
@@ -293,7 +297,10 @@ class LirDumper {
               return std::format(
                   "CrossUnit(\"{}::{}\")", e.unit_name, e.class_name);
             },
-            [](const ObjectTreeBase&) -> std::string { return "ObjectTree"; }},
+            [](const ObjectTreeBase&) -> std::string { return "ObjectTree"; },
+            [](const ManagedObjectBase&) -> std::string {
+              return "ManagedObject";
+            }},
         base);
   }
 

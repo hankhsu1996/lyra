@@ -48,6 +48,53 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view {
   throw InternalError("lir: unknown coroutine operation");
 }
 
+auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
+  using support::CallEnding;
+  return std::visit(
+      Overloaded{
+          [](const FunctionTarget&) { return CallEnding::kReturnsOrDeparts; },
+          [](const DispatchTarget&) { return CallEnding::kReturnsOrDeparts; },
+          [](const IndirectTarget&) { return CallEnding::kReturnsOrDeparts; },
+          [](const SymbolTarget&) { return CallEnding::kReturnsOrDeparts; },
+          [](const ForeignTarget&) { return CallEnding::kReturns; },
+          [](const BuiltinTarget& builtin) {
+            return support::RuntimeEntryOf(builtin.fn).ending;
+          },
+          [](const ConstructTarget&) { return CallEnding::kReturnsOrDeparts; },
+          [](const ValueCellTarget&) { return CallEnding::kReturns; },
+          [](const OpenVariablesTarget&) { return CallEnding::kReturns; },
+          [](const VariableAddressTarget&) { return CallEnding::kReturns; },
+          [](const CloseVariablesTarget&) { return CallEnding::kReturns; },
+          [](const EndValueTarget&) { return CallEnding::kReturns; },
+          [](const CopyValueTarget&) { return CallEnding::kReturns; },
+          [](const ControlEffectTarget& effect) {
+            switch (effect.op) {
+              case ControlEffectTarget::Op::kTakeDepartureIfDue:
+                return CallEnding::kReturnsOrDeparts;
+              case ControlEffectTarget::Op::kFinishDeparture:
+                return CallEnding::kReturns;
+              case ControlEffectTarget::Op::kDeclineDeparture:
+                return CallEnding::kDeparts;
+            }
+            throw InternalError("lir: unknown control-effect operation");
+          },
+          // Entering builds an execution out of a frame and stops before its
+          // first statement; awaiting runs the design's code, and releasing
+          // raises again whatever that code raised.
+          [](const CoroutineTarget& coroutine) {
+            switch (coroutine.op) {
+              case CoroutineTarget::Op::kEnterBorrowedEnvironment:
+              case CoroutineTarget::Op::kEnterOwnedEnvironment:
+                return CallEnding::kReturns;
+              case CoroutineTarget::Op::kAwait:
+              case CoroutineTarget::Op::kRelease:
+                return CallEnding::kReturnsOrDeparts;
+            }
+            throw InternalError("lir: unknown coroutine operation");
+          }},
+      target);
+}
+
 auto OperandType(const Function& fn, const Operand& operand)
     -> std::optional<TypeId> {
   return std::visit(

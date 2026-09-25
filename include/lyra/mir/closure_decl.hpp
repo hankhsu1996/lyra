@@ -15,9 +15,9 @@ namespace lyra::mir {
 // is always callable, so there is no flag.
 //
 // Closure and struct share only the field substrate (`FieldDecl` / `FieldId`).
-// A closure is not a `StructDecl` with a body: it has no name (it is
-// anonymous), it is never a pointee, and a backend realizes it as an anonymous
-// callable object (a C++ lambda), not a named nested struct.
+// A closure is not a `StructDecl` with a body: the source gives it no name, it
+// is a callable value rather than storage a scope's variables live in, and its
+// one body is part of what it is.
 struct ClosureDecl {
   base::Arena<FieldDecl, FieldId> fields;
   // A deterministic order over `fields` (a permutation of field ids) that a

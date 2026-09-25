@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <span>
@@ -35,8 +36,10 @@ class FunctionLowerer {
       UnitLowerer& unit, const mir::CallableCode& code, std::string name);
   // Lowers a class's constructor. The base is constructed before the body runs
   // (LRM 8.7), and what base that is belongs to the class rather than to the
-  // body, so the class comes with the code it constructs from.
-  FunctionLowerer(UnitLowerer& unit, const mir::Class& cls, std::string name);
+  // body, so the class comes with the constructor it builds from.
+  FunctionLowerer(
+      UnitLowerer& unit, const mir::Class& cls,
+      const mir::ConstructorDecl& constructor, std::string name);
   // Lowers a closure's invoke. Its signature leads with the receiver naming the
   // storage the captures live in, and the body reads each of them as a member
   // of it.
@@ -59,23 +62,21 @@ class FunctionLowerer {
 
   // The branch targets a `break` and a `continue` inside one loop transfer to.
   // A labeled loop is also the target of a labeled break from a nested loop.
-  // `cleanup_depth` is how many cleanups were owed where the loop began, so a
-  // branch out of it runs exactly the ones it leaves.
+  // `scope_depth` is how many scopes were open where the loop began, so a
+  // branch out of it runs the cleanups of exactly the ones it leaves.
   struct LoopTargets {
     std::optional<mir::LoopLabelId> label;
     lir::BlockId continue_target{};
     lir::BlockId break_target{};
-    std::size_t cleanup_depth{};
+    std::size_t scope_depth{};
   };
 
   // What is owed on every way out of the extent that incurred it: a cleanup a
   // guarded body states, with the block whose child scopes hold it; the end of
   // an owned value the extent made; and the end of the owned value a frame slot
-  // holds. Each is emitted afresh at each way out, because a CFG reaches an
-  // extent's end by as many edges as there are ways to leave it. A value whose
-  // end passed to a slot, or to the caller, leaves nothing where its own end
-  // stood.
-  struct GuardCleanup {
+  // holds. A value whose end passed to a slot, or to the caller, leaves nothing
+  // where its own end stood.
+  struct CleanupScope {
     const mir::Block* owner = nullptr;
     mir::BlockId cleanup{};
   };
@@ -86,16 +87,32 @@ class FunctionLowerer {
     lir::ValueId slot;
   };
   struct EndPassedOn {};
-  using PendingCleanup =
-      std::variant<GuardCleanup, ValueEnd, SlotEnd, EndPassedOn>;
 
-  // Where a control effect leaving a region's body lands: the block that runs
-  // the region's handler, the storage the effect is bound to for it to read,
-  // and how many cleanups were owed where the region began.
-  struct RegionTargets {
+  // A region a departure may be claimed at: the block that runs its handler,
+  // and the storage the departure is bound to for the handler to read.
+  struct RegionScope {
     lir::BlockId handler{};
     lir::ValueId caught{};
-    std::size_t cleanup_depth{};
+  };
+
+  // Stands over a cleanup's own code while it is lowered. A cleanup runs on
+  // every way out of its body, a departure included, so a departure starting
+  // inside one would have nowhere to go, and nothing under this scope may ask
+  // for a landing.
+  struct TerminateScope {};
+
+  // A scope a departure meets on its way out of the body, kept on one stack in
+  // the order they nest, which is the order a departure meets them.
+  // `unwind_entry` is where a departure continues once it reaches this scope
+  // -- what the scope owes, run once and passed outward, or the region's
+  // handler -- built the first time something needs it and shared by every
+  // landing and every scope nested inside after that.
+  using ScopeKind = std::variant<
+      CleanupScope, ValueEnd, SlotEnd, EndPassedOn, RegionScope,
+      TerminateScope>;
+  struct UnwindScope {
+    ScopeKind kind;
+    std::optional<lir::BlockId> unwind_entry;
   };
 
   // Where a source local's storage is. A local whose type the runtime holds
@@ -170,8 +187,9 @@ class FunctionLowerer {
   // passes its end along with it; one it was only lent is copied, so what is
   // handed on is always one this body owned.
   auto HandOn(lir::Operand value) -> lir::Operand;
-  // States the end of an owned value.
+  // States the end of an owned value, and of the one a frame slot holds.
   void EndValue(lir::Operand value);
+  void EndSlotValue(lir::ValueId slot);
   auto LowerIfInto(const mir::Block& block, const mir::IfStmt& stmt)
       -> diag::Result<void>;
   auto LowerForInto(const mir::Block& block, const mir::ForStmt& stmt)
@@ -187,21 +205,26 @@ class FunctionLowerer {
   auto LowerFinallyInto(const mir::Block& block, const mir::FinallyStmt& stmt)
       -> diag::Result<void>;
 
-  // Runs every cleanup owed between here and `depth`, innermost first. A way
-  // out of a guarded body runs the cleanups it leaves and no others, so the
-  // depth a loop or a region recorded is what bounds it.
+  // Opens a scope a departure meets on its way out, innermost.
+  void OpenScope(ScopeKind kind);
+  // Runs the cleanup of every scope open between here and `depth`, innermost
+  // first. A way out of a guarded body runs the cleanups it leaves and no
+  // others, so the depth a loop recorded is what bounds it.
   auto RunCleanupsDownTo(std::size_t depth) -> diag::Result<void>;
+  // Lowers a cleanup's own code, on whichever way out reached it, under a
+  // scope that refuses any landing inside it.
+  auto LowerCleanupInto(CleanupScope cleanup) -> diag::Result<void>;
   // Hands control back to the scheduler, leaving the body at `resume`. Being
   // ended rather than run again is a way out of every scope open here, so the
   // second way out runs all of their cleanups and then ends the body; the
   // source spells none of it, which is why it is built from what is owed
   // rather than from a statement.
   auto SuspendResumingAt(lir::BlockId resume) -> diag::Result<void>;
-  // Hands the departure this landing is holding back, to carry on outward: a
-  // region that declined it is not where it was going, and what a further
-  // landing tests is the target the same departure named. Reached only from a
-  // landing, which is the only place one is held.
-  auto LeaveCarrying() -> diag::Result<void>;
+  // Carries `effect`, the departure a landing received, on outward: a region
+  // that declined it is not where it was going, and what a further landing
+  // tests is the target it names. Reached only from a landing, which is the
+  // only place one is held.
+  auto LeaveCarrying(lir::Operand effect) -> diag::Result<void>;
   // Where an execution regains control: asks the runtime whether it has been
   // told to stop -- a target it is inside was disabled while it was away, or
   // its own termination is owed -- and leaves carrying the effect that names
@@ -222,11 +245,24 @@ class FunctionLowerer {
   auto EmitDepartingCall(
       lir::CallTarget target, std::vector<lir::Operand> args,
       lir::TypeId result_type) -> diag::Result<lir::Operand>;
-  // Builds the landing this point would use: it receives the departure, runs
-  // the cleanups owed between here and whatever claims it, and hands it to the
-  // innermost region's own test -- or, where no region encloses, gives it back
-  // to carry on outward.
-  auto BuildLanding() -> diag::Result<lir::BlockId>;
+  // The landing the call about to be made here unwinds to: it receives the
+  // departure into the frame's one slot for it and continues where the
+  // innermost open scope takes one. Each call has a landing of its own,
+  // because what a target owes on the way out of one call -- a temporary it
+  // made to pass an argument -- is that call's alone; what the scopes owe is
+  // built once and shared.
+  auto LandingHere() -> diag::Result<lir::BlockId>;
+  // Where a departure continues once it reaches the scope at `index` on the
+  // stack, or the frame's own edge below every scope: the cleanup run and
+  // passed on outward, the region's handler, or -- at the edge -- the body's
+  // variables ended and the departure carried out of the frame. Each is built
+  // once, and every landing and every scope nested inside reaches it.
+  auto UnwindEntryAt(std::size_t index) -> diag::Result<lir::BlockId>;
+  auto FrameEdge() -> lir::BlockId;
+  // The frame storage a landing receives a departure into and every scope it
+  // passes reads it from. One serves the whole frame, because a departure is
+  // received once and only one is in flight at a time.
+  auto DepartureSlot() -> lir::ValueId;
   auto CurrentRuntime() -> lir::Operand;
 
   // Reads a value out of an expression. An expression naming storage that has
@@ -457,9 +493,16 @@ class FunctionLowerer {
   // with, naming the storage its captures live in.
   void BindCaptureReceiver(mir::LocalId receiver);
 
+  // A class's constructor and the class it builds, held together because the
+  // base the one names is entered with what the other states.
+  struct Construction {
+    const mir::Class* cls;
+    const mir::ConstructorDecl* constructor;
+  };
+
   UnitLowerer* unit_;
   const mir::CallableCode* code_;
-  const mir::Class* constructed_class_;
+  std::optional<Construction> construction_;
   const mir::ClosureDecl* closure_;
   const mir::ValueBuild* build_;
   std::string name_;
@@ -478,8 +521,11 @@ class FunctionLowerer {
   std::vector<OpenBlock> blocks_;
   lir::BlockId current_{};
   std::vector<LoopTargets> loops_;
-  std::vector<PendingCleanup> cleanups_;
-  std::vector<RegionTargets> regions_;
+  std::vector<UnwindScope> scopes_;
+  // Where a departure goes once it has passed every scope, built the first
+  // time one is needed.
+  std::optional<lir::BlockId> frame_edge_;
+  std::optional<lir::ValueId> departure_slot_;
   // Which of the body's variables each local is, where its declared type gives
   // it one, and what each local has resolved to so far.
   std::vector<std::optional<std::uint32_t>> variable_slot_;

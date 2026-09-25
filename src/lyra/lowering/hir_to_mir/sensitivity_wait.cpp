@@ -168,7 +168,7 @@ auto BuildWaitStmt(
                   .arguments = {runtime_id, triggers_id}},
           .type = unit.builtins.machine_bool});
 
-  return BuildSuspendingCallStmt(lowerer.Owner(), target_block, call_id);
+  return BuildWaitStmt(lowerer.Owner(), target_block, call_id);
 }
 
 auto BuildValueChangeWaitStmt(

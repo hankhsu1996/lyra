@@ -352,30 +352,37 @@ cross-check predicts. This file owns only which instances are known and what is 
       [aggregate-names-are-type-content](../decisions/aggregate-names-are-type-content.md) holds the
       argument, and what the two superseded records keep.
 
-- [ ] T38 -- A member access states a receiver for every kind of member it reaches, and one kind
-      never reads it. A capture of a closure is reached by its own name in the enclosing scope, so
-      the source backend's arm for it writes no receiver at all -- which leaves the receiver an
-      operand that is built and whose text is never emitted. Nothing is wrong with the emitted
-      program today, because what the lowering puts there has no effect to lose; what is wrong is
-      that nothing says so, and an operand no consumer reads is one whose effect a later change can
-      drop with no test able to see the difference. Either the receiver belongs to the kinds that
-      have one, or a capture is not that kind of access. Found by a render review on 2026-09-23,
-      while converting every value-emission entry to write into the artifact.
+- [x] T38 -- A member access reads the receiver it states, for every kind of member it reaches. A
+      capture of a closure is a member of the closure reached through the closure its body runs
+      against, which is what the semantic layer and the execution backend already said; the source
+      backend had realized a closure as a lambda, where a capture is a plain name and the receiver
+      has nowhere to be written. It now realizes one as a type whose members are the captures and
+      whose one body names its receiver, so the capture arm is the same access every other member
+      is. Resolving it took one more fact to be stated rather than recovered: a static constant's
+      reference names the class that owns it, so no body has to know which class it sits in to spell
+      one, and a closure's body can be written apart from the class it was built in.
 
 ## Callable and assignment identity
 
-- [ ] T11 -- Callable identity is one space whose entries name a declaration carrying signature,
-      implementation form, receiver convention and per-backend spelling, so a call names one
-      identity and nothing branches on origin. Implementation form is the half already costing
-      something: with no field saying what a declaration is, four sites across the two backends read
-      an absent body and each attaches its own meaning -- one calls a class callable with none a
-      pure virtual and emits the marker that makes its class abstract, another concludes only that
-      no code identity is needed. They agree today because the inputs make both right. The same root
-      has a second half nobody has counted: two more sites read an absent **foreign linkage** rather
-      than an absent body -- one to pick a target storage class, one to decide a refusal -- while a
-      third answer to that same question already sits in the semantic layer as a closed set that
-      nothing obliges either of them to ask. **Gated on** the external callable form and a co-design
-      with the foreign-symbol contract, which needs the same declaration shape.
+- [x] T11 -- What a callable declaration is -- a body defined here, a behavior left abstract (LRM
+      8.21), or a function the foreign program defines (LRM 35.4) -- is read off the facts it states
+      in one place, and every consumer asks that one reading. Six sites across the two backends and
+      the foreign-interface header had each read an absent body and attached a meaning of their own:
+      one called it a pure virtual and wrote the marker that makes a class abstract, others
+      concluded only that no code identity was needed, one sorted an export from an import by it.
+      They agreed because the inputs made each right. The reading is a projection rather than a
+      stored field, because the settled callable model rejects a species beside the facts it
+      restates, on the ground that two facts that must agree drift; a combination read nowhere but
+      one place cannot. The storage class a namespace body is written with is asked of how the body
+      is reached, the closed set that already answered it, rather than of whether a linkage is
+      present.
+
+      The entry once also proposed one identity space for every callee, so that nothing branches on
+      a call's origin, gated on a foreign-symbol contract that no document holds. A call's target is
+      a closed set each backend consumes by one visit, and choosing a spelling from a stated kind is
+      what a render entry is for; nothing found reads a meaning into one, so that half is not a
+      defect under the contract and is not carried.
+
 - [x] T24 -- An operation a runtime library carries out is named in one namespace, whichever library
       class the source reaches it through. A second namespace had stood beside the shared one for
       the six methods of the imported `process` class (LRM 9.7), and what decides a namespace is the
@@ -557,106 +564,80 @@ cross-check predicts. This file owns only which instances are known and what is 
 
 ## What a declaration is
 
-- [ ] T30 -- A class states its own shape, so nothing works out what kind of class it is. Two facts
-      are carried as flags beside fields that are always there, and the source backend reads both to
-      decide something the program can tell apart. A class with no base gets one invented for it --
-      the target's own object-model root, named in an emitter, which is the one thing a value
-      emission entry may never name -- and whether it gets one at all is read off the
-      interface-class flag; the same flag decides whether a constructor is emitted, over a
-      construction protocol that is present whether or not the class has one. A class that commits
-      to a contract and declares no storage is not a class with a constructor nobody calls; it is a
-      class with none, and the way to say that is an absence rather than a flag beside a present
-      one. Target: every class names what it extends, including the root the object model puts under
-      one that extends nothing, and a class with no construction protocol carries none.
+- [x] T30 -- A class states its own shape, so nothing works out what kind of class it is. A class
+      the source wrote without an `extends` clause names the root every managed object extends, and
+      an interface class names no base and carries no construction at all -- an absence rather than
+      a flag beside a present one. The source backend had invented the root for a class with no base
+      and read the interface-class flag to decide both whether it did and whether a constructor was
+      written; both backends now read what the class states, and a promise another unit makes of its
+      class states the same.
 
-- [ ] T31 -- Whether a callable is entered on an object is stated, not recovered by comparing the
-      type of its first parameter against the class's own pointer type. The source backend asks that
-      question twice, in the declaration and in the definition, and the answer drives three separate
-      pieces of the emitted text. It is the receiver the callable contract already settles
-      (`../decisions/callable-receiver.md`), so the comparison is a second answer to a question that
-      has one.
+- [x] T31 -- Whether a callable is entered on an object is stated: a body names the binding it
+      reaches its object through, and names none where it is entered on no object. The binding is
+      recorded where it is made, so every body that declares a receiver says so without a site
+      remembering to; the parameters a caller supplies beyond it are one answer the source backend,
+      the forwarding entry and a promised behavior all read, where each had skipped a position of
+      its own. The closure invoke's receiver, which is no parameter, is read off the same statement
+      on both backends rather than off a position both assumed.
 
-- [ ] T32 -- A constructor is a callable, and what a target needs around one is that target's own
-      business. The source backend invents a second callable per class -- a static entry taking the
-      receiver, the forwarding argument list that calls it, and the literal receiver argument -- so
-      that a body-local receiver reference resolves the way it does everywhere else. None of it
-      exists in MIR, which makes it the canonical fabrication: a render composing declarations and
-      expressions rather than translating them, and a shape the execution backend neither has nor
-      needs. Either the shell is unnecessary once a constructor body states its receiver like every
-      other body, or it is a real construction step and belongs where every other one is stated.
+- [x] T32 -- A constructor is written as the one body it is. The source backend had invented a
+      second callable per class -- a static entry taking the receiver, and the forwarding call into
+      it -- so that the body's receiver would be a parameter as in every other method. Once a body
+      states its receiver, the constructor binds it the way every method and closure body does, as
+      its first line, and the shell has nothing left to do.
 
 ## Naming ownership
 
-- [ ] T28 -- Every name a render emits comes from something that owns naming, and re-viewing an
-      object reference has no owner. Three owners exist -- type mapping for a type, place access for
-      a wrapper's access protocol, the shared runtime-entry declaration for an operation -- and "the
-      same object, seen as another class" is stated as a cast node rather than a call, so a backend
-      that cannot spell it in target syntax alone writes the name itself. The source backend now
-      does. The obvious move, making it a call so the shared declaration owns the name the way
-      `this` already is owned, does not work as stated: the execution backend's naming set
-      classifies every entry as naming a library entry or as not realized, and it realizes this cast
-      with no instructions at all, so the move would force it to gain an entry it does not need or
-      to refuse one it answers today. Two things could be true and the item is which -- the list of
-      naming owners is short one owner, or a re-view should not be a cast.
+- [x] T28 -- Re-viewing an object reference -- the same object, seen as another class -- has an
+      owner for its name. A cast is a pair of types, and which conversion a pair needs is a question
+      a target answers about types, so it is answered where every other one is: the target's type
+      mapping, beside how a value of a type is constructed. The source backend gives every object
+      reference one type whatever class it is seen as, so its cast notation cannot pick this
+      conversion from the pair and the type mapping answers with the library function that does; the
+      execution backend maps every such reference to one machine type and answers with no
+      instructions at all. Neither the list of owners nor the node had to change -- the owner's own
+      remit had been written narrower than the questions it answers.
 
-      **A second instance, which says the same thing from the other side.** A class of the source
-      language states its own record under a name the allocation reads to hand a new object its
-      class. That name is the runtime's, and the emitter takes it from the source backend's own
-      naming header -- a fourth place, beside the three owners. It passes the check that reads the
-      emitters for library names, because the check reads emitters and this sits one file over. What
-      makes it the same item rather than a new one is that no owner fits it either: it is not a
-      type, not an access protocol, and not an operation, but a name two sides agree on by both
-      reading one spelling. Whatever answers the re-view answers this.
+- [ ] T40 -- A class of the source language states its own record under a name the allocation reads
+      to hand a new object its class. That name is the runtime's, and the emitter takes it from the
+      source backend's own naming header -- a place beside the three owners, not one of them. It
+      passes the check that reads the emitters for library names, because the check reads emitters
+      and this sits one file over. No owner fits it: it is not a question about a type, not an
+      access protocol, and not an operation, but a name two sides agree on by both reading one
+      spelling.
 
-- [ ] T39 -- Which of two operations an await is, is stated rather than worked out by each consumer
-      from what is being awaited. Awaiting an execution hands control to that body and waits for it
-      to reach its end; awaiting a registered wait suspends only where the call that registered it
-      answers that this execution must park. Those are different programs, and **both consumers say
-      so in their own comments** -- the execution lowering's reads "the two are different operations
-      rather than two readings of one", and the source backend's reads "what is awaited says which
-      of the two this is". Each then decides it alone, from the awaited operand's type, and nothing
-      holds the two in step; the execution side additionally matches on whether the awaited
-      expression is a call, which is a second input to the same question and disagrees with the
-      first wherever an execution is awaited through anything but a call.
+- [x] T39 -- Which of two operations a suspension is, is stated rather than worked out by each
+      consumer from what is being awaited. Awaiting an execution hands control to that body and
+      waits for it to reach its end; waiting on a registration suspends only where the call that
+      registered it answers that this execution must park. Those are two constructs the source
+      writes differently, so they are two nodes, and both backends translate each without testing
+      the operand's type -- where before each decided it alone, and the execution side also matched
+      on whether the operand was a call, a second input to the same question. The record that had
+      chosen one node is revised with its reason.
 
-      That is the canonical shape: a node that leaves the choice open makes every consumer decide
-      what the program means rather than how to represent it, and the consumer that decides
-      differently is a wrong answer nobody is positioned to see. The fix is that the node says
-      which, so both consumers translate. Which form it takes is not derived: the shape was created
-      by removing the type whose whole meaning was "something this target can await", and whether
-      the answer is two nodes or one node with a stated kind has to be settled against the reasoning
-      that removed it. Found by a render review on 2026-09-23.
+- [x] T36 -- Which object a call is entered on is answered by the type mapping, beside how a place
+      of a type is opened, and the call writes punctuation around its answer. It is a second
+      question rather than the member access's one, because a call's receiver can be a plain value
+      -- a library value whose own member function the call names -- where a member access's is
+      always a handle to storage: a pointer designates the object it addresses and is opened as any
+      place of it is, and a value of any other type is the object itself. The call had tested its
+      receiver's type and picked a member token of its own, the shortened form of the dereference
+      the type mapping already spells.
 
-- [ ] T36 -- How a member is reached through the object a call dispatches on is answered in two
-      places by two mechanisms. A member access asks the dispatch that owns a wrapper's access
-      protocol and then writes the target's own member token; a call tests whether its receiver's
-      type is a pointer and picks the token itself. Both arms of that test reach the member and
-      nothing the program does tells them apart, which is why it was once looked at and set aside --
-      but spelling-versus-operation is not the only test, and the one it fails is the other: which
-      question is answered in more than one place. It fails a second, since the token it picks is
-      the shortened form of what the dispatch already answers. What blocks it is that the two sites
-      do not see the same types: the dispatch refuses a type that stands for no storage, and a
-      call's receiver can be a plain value where a member access's apparently cannot. Settle that
-      first -- either a call's receiver is always a place, or reaching a member through a value is a
-      second question and has no owner yet.
+- [x] T37 -- How a value that names nothing is spelled is a question about its type, answered by the
+      type mapping. An object reference and a chandle are the type's own empty value, a pointer and
+      a code address the null address, and any other type has no such value on this target and is
+      refused as unsupported -- so a type variant added later is refused out loud rather than given
+      the null address silently, the same answer a cast gives a pair it does not realize. What
+      exposed it: a source `null` given to an `event` was written as the null address and rejected
+      by the host compiler; it is now refused, as the execution backend already refused it. It
+      waited on the source backend being able to refuse at all.
 
-- [ ] T37 -- How a value that names nothing is spelled is a per-type answer, not a list of the two
-      types that answer differently. The source backend names a managed reference and a chandle,
-      gives each the type's own empty braces, and gives every other type the target's null address.
-      It is a spelling and it does read a fact the type states, so it is admissible as written; what
-      it is not is a dispatch, so a type variant added later takes the null address silently and
-      nothing fails to compile. This is T28's question reached from a second side -- whether the
-      list of naming owners is short one owner -- and closes with it rather than beside it.
-
-- [ ] T35 -- Which of a scope's bodies a hierarchical name may end at is stated on that body, not
-      recovered by matching identifiers across two lists. A scope carries its callables in one pool
-      and the entries a foreign or by-name caller reaches in another, and the publication sits on
-      the second while what it publishes is a body in the first; the execution lowering therefore
-      collects the published identifiers and then re-joins them to the bodies by comparing strings.
-      The pairing is known where the entry was built, so the join answers a second time a question
-      already settled once, and it holds only while no two bodies of one scope can share an
-      identifier. Found while sweeping what a unit promises, which is the compile-time half of the
-      same question and does state its pairing.
+- [x] T35 -- Which of a scope's bodies a hierarchical name may end at is stated where the entry is
+      built, not recovered by matching identifiers across two lists. The entry a by-name caller
+      reaches names the body it publishes, so the execution lowering reads the pairing rather than
+      collecting the published identifiers and re-joining them to bodies by comparing strings -- a
+      join that held only while no two bodies of one scope could share an identifier.
 
 ## Cross-references
 

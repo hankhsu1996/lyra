@@ -1,9 +1,5 @@
 #pragma once
 
-#include <string_view>
-
-#include "lyra/base/simulation_error.hpp"
-#include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/dpi_scope_registry.hpp"
 #include "lyra/runtime/foreign_execution.hpp"
@@ -69,34 +65,18 @@ auto CurrentExportScope() -> Scope*;
 auto FindExportEntry(Scope* scope, const char* subroutine)
     -> ErasedScopeCallable;
 
-// What a design's run-time error does where it may not leave by unwinding,
-// which is any frame reached from foreign code. A fatal is a report, an end of
-// the run, and a departure (LRM 20.10); the first two happen here and the third
-// does not, so the caller states it in whatever way its own target leaves a
-// body. Asking this execution to stop is what makes both possible: it is what
-// the boundary answers the foreign side with (LRM 35.9), and what makes the
-// departure due at the next point one can be taken.
-//
-// The caller has already told the design's error from a defect of the tool,
-// which is what its own handler is: only the first of the two ends this way,
-// and the second travels as it did.
-void ReportFatalWithoutLeaving(std::string_view message);
-
 // Runs an exported SV task's body to completion and hands back its completion
 // payload. A foreign C caller of an exported task (LRM 35.8) is not a
 // coroutine, so it cannot `co_await` the body the way an SV enabler does; its
 // wrapper drives the body here instead, on the stack the foreign call is
 // running on. The body runs as the process that entered that call (LRM 9.5).
+// Whatever left the body leaves from here too, and the entry's own region
+// receives it before it can reach the foreign frame.
 template <class T>
 auto RunExportedTaskToCompletion(Coroutine<T> task) -> T {
   task.Handle().promise().process = &CurrentForeignProcess();
   DriveOnForeignStack(task.Token());
-  try {
-    return task.Handle().promise().Take();
-  } catch (const SimulationError& error) {
-    ReportFatalWithoutLeaving(error.what());
-    RaiseUnclaimableEffect();
-  }
+  return task.Handle().promise().Take();
 }
 
 }  // namespace lyra::runtime

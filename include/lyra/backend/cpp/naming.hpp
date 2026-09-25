@@ -16,6 +16,7 @@
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
@@ -395,12 +396,32 @@ void WriteOne(TargetText& out, UnitScope scope);
   return CppFieldNameOf(slot, std::nullopt);
 }
 
-// The name of a closure capture, `sv_capture_<n>`. A capture shares the
-// lambda's scope with its parameters and locals, which carry source names, so
-// it gets a name no source name can produce.
+// The name of a closure's type, `sv_closure_<n>`: a position in the unit's
+// list of closures, since the source names none.
+[[nodiscard]] inline auto CppClosureName(mir::ClosureId id) -> MintedName {
+  return MintedCppName("closure", id.value);
+}
+
+// The name of a closure capture, `sv_capture_<n>`. A capture is a member of
+// the closure's type, reached from its body through the closure itself, and
+// the body's parameters and locals carry source names, so it gets a name no
+// source name can produce.
 [[nodiscard]] inline auto CppClosureCaptureName(mir::FieldId slot)
     -> MintedName {
   return MintedCppName("capture", slot.value);
+}
+
+// The function a closure whose body completes as a coroutine is started
+// through, `sv_start`. It takes the closure by value, so the captures live in
+// the coroutine's own frame for as long as the execution does.
+[[nodiscard]] inline auto CppClosureStartName() -> MintedWord {
+  return MintedWord{.word = "start"};
+}
+
+// The closure that function is handed, `sv_closure`. The body's own locals
+// carry source names, so it gets a name no source name can produce.
+[[nodiscard]] inline auto CppStartedClosureName() -> MintedWord {
+  return MintedWord{.word = "closure"};
 }
 
 // The name of the run-time description of a type, `sv_type_<n>`: a position in

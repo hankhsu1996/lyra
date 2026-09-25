@@ -18,19 +18,22 @@ namespace lyra::mir {
 namespace {
 
 // A body of the unit's namespace named `f`, returning `result`, whose one
-// statement is a nested block awaiting something -- nested, because a lowering
-// writes most statements into a child scope rather than the body's top level.
+// statement is a nested block waiting on something -- nested, because a
+// lowering writes most statements into a child scope rather than the body's
+// top level.
 void AddAwaitingBody(CompilationUnit& unit, TypeId result) {
   CallableCode code = CallableCode::Defined();
   code.result_type = result;
   Block inner;
-  const ExprId awaited =
-      inner.exprs.Add(MakeStringLiteral(unit.builtins.string, "awaited"));
-  const ExprId await = inner.exprs.Add(
+  const ExprId registration = inner.exprs.Add(
       Expr{
-          .data = AwaitExpr{.awaitable = awaited},
+          .data = MachineBoolLiteral{.value = true},
+          .type = unit.builtins.machine_bool});
+  const ExprId wait = inner.exprs.Add(
+      Expr{
+          .data = WaitExpr{.registration = registration},
           .type = unit.builtins.void_type});
-  inner.AppendStmt(ExprStmt{.expr = await});
+  inner.AppendStmt(ExprStmt{.expr = wait});
   const BlockId scope = code.Body().child_scopes.Add(std::move(inner));
   code.Body().AppendStmt(BlockStmt{.scope = scope});
   const CallableId id = unit.callables.Add(
@@ -53,15 +56,46 @@ TEST(MirVerifyTest, ASuspensionIsRefusedOnlyWhereNothingCouldResumeIt) {
     Verify(function_unit);
     FAIL() << "a function body holding an await was accepted";
   } catch (const InternalError& error) {
-    EXPECT_NE(
-        std::string(error.what()).find("'f' of unit 'U'"), std::string::npos)
-        << error.what();
+    const std::string message = error.what();
+    EXPECT_NE(message.find("'f' of unit 'U'"), std::string::npos) << message;
+    EXPECT_NE(message.find("nothing could resume it"), std::string::npos)
+        << message;
   }
 
   CompilationUnit coroutine_unit;
   coroutine_unit.name = "U";
   AddAwaitingBody(coroutine_unit, coroutine_unit.builtins.coroutine_void);
   EXPECT_NO_THROW(Verify(coroutine_unit));
+}
+
+// Awaiting an execution and waiting on a registration end differently, so each
+// is refused where its operand is what the other waits on.
+TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
+  CompilationUnit unit;
+  unit.name = "U";
+  CallableCode code = CallableCode::Defined();
+  code.result_type = unit.builtins.coroutine_void;
+  const ExprId answer = code.Body().exprs.Add(
+      Expr{
+          .data = MachineBoolLiteral{.value = true},
+          .type = unit.builtins.machine_bool});
+  const ExprId await = code.Body().exprs.Add(
+      Expr{
+          .data = AwaitExpr{.execution = answer},
+          .type = unit.builtins.void_type});
+  code.Body().AppendStmt(ExprStmt{.expr = await});
+  unit.callables.Add(
+      CallableDecl{
+          .code = std::move(code),
+          .foreign = std::nullopt,
+          .virtual_dispatch = std::nullopt});
+  try {
+    Verify(unit);
+    FAIL() << "an await on a registration's answer was accepted";
+  } catch (const InternalError& error) {
+    const std::string message = error.what();
+    EXPECT_NE(message.find("not an execution"), std::string::npos) << message;
+  }
 }
 
 }  // namespace

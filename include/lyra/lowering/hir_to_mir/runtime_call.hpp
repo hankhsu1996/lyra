@@ -48,12 +48,17 @@ void AppendRuntimeEffectStmt(
     const UnitLowerer& unit_lowerer, mir::Block& block,
     support::BuiltinFn entry, std::vector<mir::ExprId> operands);
 
-// Builds the statement a call that may park its caller amounts to: awaiting
-// that call, which is what a source language writes and what each backend
-// realizes in its own terms. `call` is already interned into `block` and
+// Builds the statement a call that may park its caller amounts to: waiting for
+// what it registered. `registration` is already interned into `block` and
 // answers whether the caller must give up control.
-[[nodiscard]] auto BuildSuspendingCallStmt(
-    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId call)
+[[nodiscard]] auto BuildWaitStmt(
+    const UnitLowerer& unit_lowerer, mir::Block& block,
+    mir::ExprId registration) -> mir::Stmt;
+
+// Builds the statement enabling a task amounts to where nothing reads what it
+// completes with: awaiting the execution `execution` evaluates to (LRM 13.3).
+[[nodiscard]] auto BuildAwaitStmt(
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId execution)
     -> mir::Stmt;
 
 // Materializes compile-time text as a `value::String` operand and interns it:

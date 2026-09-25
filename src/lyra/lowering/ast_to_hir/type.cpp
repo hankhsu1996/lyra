@@ -32,6 +32,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
+#include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -1499,6 +1500,10 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     if (prop.getParentScope() != &cls) continue;
     const auto* init = prop.getInitializer();
     if (init == nullptr) continue;
+    if (auto refused = RefuseGivingAnEventAValue(prop.getType(), span);
+        !refused) {
+      return std::unexpected(std::move(refused.error()));
+    }
     if (prop.lifetime == slang::ast::VariableLifetime::Static) {
       auto init_expr = init_lowerer.LowerExpr(*init, static_init_frame);
       if (!init_expr) return std::unexpected(std::move(init_expr.error()));

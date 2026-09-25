@@ -36,8 +36,12 @@ bazel_dep(name = "nlohmann_json", version = "3.11.3")
 # TOML parsing for a design's declaration
 bazel_dep(name = "tomlplusplus", version = "3.4.0")
 
-# LLVM for code generation
-bazel_dep(name = "llvm-project", version = "17.0.3.bcr.4")
+# LLVM for code generation, as a library. The module also offers a hermetic
+# toolchain, which is not registered: only its `@llvm-project` is used.
+bazel_dep(name = "llvm", version = "0.8.23")
+
+llvm = use_extension("@llvm//extensions:llvm.bzl", "llvm")
+use_repo(llvm, "llvm-project")
 
 # Stackful fibers for suspending foreign (DPI) calls across simulation time
 bazel_dep(name = "boost.context", version = "1.89.0")

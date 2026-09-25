@@ -9,6 +9,7 @@
 #include <slang/ast/statements/LoopStatements.h>
 
 #include "lyra/hir/expr.hpp"
+#include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 
@@ -33,6 +34,10 @@ auto LowerForLoopStmt(
   }
   std::optional<hir::ExprId> cond_id;
   if (fs.stopExpr != nullptr) {
+    if (auto refused = RefuseReadingAnEventAsAValue(*fs.stopExpr->type, span);
+        !refused) {
+      return std::unexpected(std::move(refused.error()));
+    }
     auto cond_or = proc.LowerExpr(*fs.stopExpr, frame);
     if (!cond_or) return std::unexpected(std::move(cond_or.error()));
     cond_id = frame.Exprs().Add(*std::move(cond_or));
@@ -69,6 +74,10 @@ auto LowerWhileLoopStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::WhileLoopStatement& ws, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
+  if (auto refused = RefuseReadingAnEventAsAValue(*ws.cond.type, span);
+      !refused) {
+    return std::unexpected(std::move(refused.error()));
+  }
   auto cond_or = proc.LowerExpr(ws.cond, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_or));
@@ -107,6 +116,10 @@ auto LowerDoWhileLoopStmt(
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->stmts.Add(*std::move(body_or));
+  if (auto refused = RefuseReadingAnEventAsAValue(*ds.cond.type, span);
+      !refused) {
+    return std::unexpected(std::move(refused.error()));
+  }
   auto cond_or = proc.LowerExpr(ds.cond, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_or));

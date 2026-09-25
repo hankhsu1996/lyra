@@ -141,13 +141,13 @@ auto Emit(
 
   std::filesystem::create_directories(dir);
   lyra::driver::CppProjectSink project(
-      dir, lyra::driver::SourceFormatting::kOff);
+      dir, lyra::driver::SourceFormatting::kOff, sink);
   auto semantic = lyra::compiler::LowerToSemantic(
       *design, compilation.front.elaborated->diag_sources, sink, width,
       [&project](lyra::compiler::SemanticUnit unit) {
         return project.Write(unit.mir);
       },
-      [&project](lyra::driver::WrittenUnit unit) {
+      [&project](lyra::driver::EmittedUnit unit) {
         project.Collect(std::move(unit));
       });
   if (!semantic.has_value()) {

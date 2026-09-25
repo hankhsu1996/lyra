@@ -20,6 +20,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
@@ -80,6 +81,10 @@ auto LowerVariableDeclStmt(
   const auto local_id = proc.DeclareProceduralVar(frame, body, sym);
   std::optional<hir::ExprId> init_id;
   if (const auto* init_expr = sym.getInitializer()) {
+    if (auto refused = RefuseGivingAnEventAValue(sym.getType(), span);
+        !refused) {
+      return std::unexpected(std::move(refused.error()));
+    }
     auto init_or = proc.LowerExpr(*init_expr, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     init_id = frame.Exprs().Add(*std::move(init_or));

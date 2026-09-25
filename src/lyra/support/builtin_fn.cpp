@@ -403,7 +403,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kAtanh:
       return {.name = "atanh", .declaration = Method{"Atanh"}};
     case BuiltinFn::kInitialize:
-      return {.name = "initialize", .declaration = Method{"Initialize"}};
+      return {
+          .name = "initialize",
+          .declaration = Method{"Initialize"},
+          .ending = CallEnding::kReturns};
     case BuiltinFn::kNetInitializeTriState:
       return {
           .name = "net_initialize_tri_state",
@@ -443,7 +446,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kCurrentRuntime:
       return {
           .name = "current_runtime",
-          .declaration = FreeFunction{"lyra::runtime::current_runtime"}};
+          .declaration = FreeFunction{"lyra::runtime::current_runtime"},
+          .ending = CallEnding::kReturns};
     case BuiltinFn::kSubmitNba:
       return {
           .name = "submit_nba",
@@ -837,8 +841,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "disable",
           .declaration = FreeFunction{"lyra::runtime::Disable"},
-          .takes_the_runtime_handle = true,
-          .ending = CallEnding::kReturnsOrDeparts};
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kEnterTarget:
       return {
           .name = "enter_target",
@@ -848,11 +851,17 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "leave_target",
           .declaration = FreeFunction{"lyra::runtime::LeaveCancellationTarget"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .ending = CallEnding::kReturns};
     case BuiltinFn::kEffectNamesTarget:
       return {
           .name = "effect_names_target",
-          .declaration = FreeFunction{"lyra::runtime::EffectNamesTarget"}};
+          .declaration = FreeFunction{"lyra::runtime::EffectNamesTarget"},
+          .ending = CallEnding::kReturns};
+    case BuiltinFn::kReceiveDeparture:
+      return {
+          .name = "receive_departure",
+          .declaration = FreeFunction{"lyra::runtime::ReceiveDeparture"}};
     case BuiltinFn::kProcessSelf:
       return {
           .name = "process_self",
@@ -866,8 +875,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "process_kill",
           .declaration = FreeFunction{"lyra::runtime::ProcessKill"},
-          .takes_the_runtime_handle = true,
-          .ending = CallEnding::kReturnsOrDeparts};
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kProcessAwait:
       return {
           .name = "process_await",
@@ -907,7 +915,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "leave_static_init",
           .declaration = FreeFunction{"lyra::runtime::LeaveStaticInit"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .ending = CallEnding::kReturns};
     case BuiltinFn::kEnterDpiScope:
       return {
           .name = "enter_dpi_scope",
@@ -917,7 +926,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "leave_dpi_scope",
           .declaration = FreeFunction{"lyra::runtime::LeaveDpiScope"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .ending = CallEnding::kReturns};
     case BuiltinFn::kDisableIsActive:
       return {
           .name = "disable_is_active",
@@ -1012,8 +1022,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "run_exported_task_to_completion",
           .declaration =
-              FreeFunction{"lyra::runtime::RunExportedTaskToCompletion"},
-          .ending = CallEnding::kReturnsOrDeparts};
+              FreeFunction{"lyra::runtime::RunExportedTaskToCompletion"}};
     case BuiltinFn::kCurrentExportScope:
       return {
           .name = "current_export_scope",

@@ -1,6 +1,5 @@
 #include "lyra/mir/verify.hpp"
 
-#include <algorithm>
 #include <cstdint>
 #include <format>
 #include <optional>
@@ -29,13 +28,41 @@ auto BodyLabel(std::optional<std::string_view> name, std::uint32_t position)
                           : std::format("body {}", position);
 }
 
-auto HoldsSuspension(const Block& block) -> bool {
-  return std::ranges::any_of(
-             block.exprs,
-             [](const Expr& expr) {
-               return std::holds_alternative<AwaitExpr>(expr.data);
-             }) ||
-         std::ranges::any_of(block.child_scopes, HoldsSuspension);
+// Whether anything in `block` suspends, checking on the way that each
+// suspension waits on what its kind waits on: an await on an execution, a wait
+// on the answer a registration gives. The two differ in what ends them, so a
+// suspension whose operand is the other kind's is a program neither backend
+// could translate as written.
+auto Suspends(
+    const CompilationUnit& unit, const Block& block, const auto& describe)
+    -> bool {
+  bool suspends = false;
+  for (const Expr& expr : block.exprs) {
+    if (const auto* await = std::get_if<AwaitExpr>(&expr.data)) {
+      suspends = true;
+      if (!unit.types.Get(block.exprs.Get(await->execution).type)
+               .Is<CoroutineType>()) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} awaits something that is not an execution",
+                describe()));
+      }
+    } else if (const auto* wait = std::get_if<WaitExpr>(&expr.data)) {
+      suspends = true;
+      if (!unit.types.Get(block.exprs.Get(wait->registration).type)
+               .Is<MachineBoolType>()) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} waits on something that does not answer "
+                "whether it must park",
+                describe()));
+      }
+    }
+  }
+  for (const Block& child : block.child_scopes) {
+    suspends = Suspends(unit, child, describe) || suspends;
+  }
+  return suspends;
 }
 
 // `describe` names the body, and is asked only once there is something to
@@ -44,9 +71,8 @@ auto HoldsSuspension(const Block& block) -> bool {
 void VerifyCode(
     const CompilationUnit& unit, const CallableCode& code,
     const auto& describe) {
-  if (!code.body.has_value() ||
-      unit.types.Get(code.result_type).Is<CoroutineType>() ||
-      !HoldsSuspension(*code.body)) {
+  if (!code.body.has_value() || !Suspends(unit, *code.body, describe) ||
+      unit.types.Get(code.result_type).Is<CoroutineType>()) {
     return;
   }
   throw InternalError(
@@ -62,9 +88,11 @@ void VerifyClass(const CompilationUnit& unit, const Class& cls) {
                ? std::format("class '{}' in unit '{}'", *cls.name, unit.name)
                : std::format("a scope of unit '{}'", unit.name);
   };
-  VerifyCode(unit, cls.constructor.code, [&] {
-    return std::format("the constructor of {}", owner());
-  });
+  if (cls.constructor.has_value()) {
+    VerifyCode(unit, cls.constructor->code, [&] {
+      return std::format("the constructor of {}", owner());
+    });
+  }
   for (const CallableId id : cls.callables.Ids()) {
     VerifyCode(unit, cls.callables.Get(id).code, [&] {
       return std::format(

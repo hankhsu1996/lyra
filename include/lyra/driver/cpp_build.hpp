@@ -6,10 +6,12 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/sink.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
@@ -57,6 +59,15 @@ struct WrittenUnit {
   std::optional<std::string> dpi_fragment;
 };
 
+// A unit this target has no form for somewhere: every construct it refused,
+// and nothing written for it. Units are written side by side, so what one
+// refused travels back with it rather than into the run's report directly.
+struct RefusedUnit {
+  std::vector<diag::Diagnostic> refusals;
+};
+
+using EmittedUnit = std::variant<WrittenUnit, RefusedUnit>;
+
 // Writes the emitted C++ sources of a project into a directory. A unit's
 // rendered text is written and released as soon as it is rendered, so what an
 // emit holds is the units in flight rather than the design.
@@ -67,19 +78,25 @@ struct WrittenUnit {
 // reported produces nothing any later step carries forward.
 class CppProjectSink {
  public:
-  CppProjectSink(std::filesystem::path dir, SourceFormatting formatting)
-      : dir_(std::move(dir)), formatting_(formatting) {
+  // `refusals` is the run's sink: what a unit has no form for on this target is
+  // reported into it, and once anything has been, nothing more is written,
+  // because files short of the design are not a program.
+  CppProjectSink(
+      std::filesystem::path dir, SourceFormatting formatting,
+      diag::DiagnosticSink& refusals)
+      : dir_(std::move(dir)), formatting_(formatting), refusals_(&refusals) {
   }
 
-  // Writes the unit's declarations and the translation unit realizing them.
+  // Writes the unit's declarations and the translation unit realizing them, or
+  // nothing where the unit holds a construct this target has no form for.
   // Every file a unit writes is named for that unit, and this reads nothing
   // the sink collects, so several units may be written at once.
   [[nodiscard]] auto Write(const mir::CompilationUnit& unit) const
-      -> diag::Result<WrittenUnit>;
+      -> diag::Result<EmittedUnit>;
 
   // Collects what writing a unit left, in the order it is called, which is the
-  // order a build compiles the units in.
-  void Collect(WrittenUnit unit);
+  // order a build compiles the units in; what a unit refused is reported.
+  void Collect(EmittedUnit unit);
 
   // Closes the project: the design root's own files and the program entry,
   // none of which may be written until every unit has been collected.
@@ -98,6 +115,7 @@ class CppProjectSink {
 
   std::filesystem::path dir_;
   SourceFormatting formatting_;
+  diag::DiagnosticSink* refusals_;
   // Formatting runs one process over every file rather than one per file, so
   // what was written is remembered while the text itself is not.
   std::vector<std::string> written_;
