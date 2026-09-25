@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -10,26 +13,22 @@
 #include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/unit_signatures.hpp"
-#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/support/assertion_policy.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 // Driver-supplied facts threaded into AST-to-HIR lowering. `Compilation&` is
 // the slang elaboration root; `SourceMapper&` translates slang source
-// locations; `SensitivityAnalyzer&` is reused across modules so its read
-// cache survives. The assertion policy is what decides whether an assertion
+// locations. The assertion policy is what decides whether an assertion
 // construct is elided rather than refused.
 class LowerCompilationFacts {
  public:
   LowerCompilationFacts(
       slang::ast::Compilation& compilation,
       const frontend::SlangSourceMapper& source_mapper,
-      SensitivityAnalyzer& sensitivity_analyzer,
       support::AssertionPolicy assertion_policy)
       : compilation_(&compilation),
         source_mapper_(&source_mapper),
-        sensitivity_analyzer_(&sensitivity_analyzer),
         assertion_policy_(assertion_policy) {
   }
 
@@ -40,9 +39,6 @@ class LowerCompilationFacts {
       -> const frontend::SlangSourceMapper& {
     return *source_mapper_;
   }
-  [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
-    return *sensitivity_analyzer_;
-  }
   [[nodiscard]] auto AssertionPolicy() const -> support::AssertionPolicy {
     return assertion_policy_;
   }
@@ -50,36 +46,67 @@ class LowerCompilationFacts {
  private:
   slang::ast::Compilation* compilation_;
   const frontend::SlangSourceMapper* source_mapper_;
-  SensitivityAnalyzer* sensitivity_analyzer_;
   support::AssertionPolicy assertion_policy_;
 };
 
-// The two artifacts the design's units yield: what each unit is, and what each
-// publishes. They are separate because their readers are: a unit's own code is
-// read by the stage that lowers it further, while its signature is read by the
-// units that reference it, and by nothing else.
-struct HirCompilation {
-  std::vector<hir::CompilationUnit> units;
-  hir::UnitSignatures signatures;
-};
-
-// Lowers the whole compilation to its HIR units: every namespace the design
-// declares, then every distinct design-element body reachable from the tops,
-// each tagged with whether its instances exist as objects. Each unit is lowered
-// independently -- it reads
-// only its own scope, the shared frontend, and the signatures of the units its
-// own declarations name -- so the result is a flat set of self-contained units
-// with no cross-unit HIR references.
+// The design once every unit has declared itself and before any unit's bodies
+// are lowered: every namespace the design declares, then every distinct
+// design-element body reachable from the tops, each tagged with whether its
+// instances exist as objects, together with what each published. A unit reads
+// only its own scope, the frontend, and what the other units published -- never
+// their bodies -- so its bodies lower into a self-contained unit with no
+// cross-unit HIR references.
 //
-// A unit that cannot be lowered is reported and the remaining units are lowered
-// anyway, so one run accounts for every unit. What comes back is then the units
-// that did lower, which is not the design and which the caller is expected to
-// discard; whether that happened is the sink's answer, not a second one carried
-// here. Independence is what makes this sound: a unit reads its peers'
-// published signatures and never their bodies.
-auto LowerCompilationToHir(
-    const LowerCompilationFacts& facts, diag::DiagnosticSink& sink)
-    -> HirCompilation;
+// What each unit holds between the two steps is its declarations, so what is
+// resident until a unit is lowered is what it declared, and its bodies exist
+// only while it is being lowered and handed on. The elaborated AST they are
+// lowered from is held here as well, since the units are its only readers.
+//
+// The frontend is read by one unit at a time. It elaborates what a reader
+// first touches, without synchronizing that, and a unit's lowering reaches
+// past its own body -- a name walks the elaborated hierarchy to whatever
+// instance it lands on -- so what the units read cannot be elaborated in
+// advance short of elaborating every instance, which costs a design with
+// repeated instances several times the frontend's memory. A frontend that
+// synchronized its own first-read computation could be read by every unit at
+// once. What follows a unit's HIR reads no frontend, so it runs as wide as its
+// caller allows.
+class DeclaredDesign {
+ public:
+  // Declares every unit of `front_end`. A unit whose declarations fail is
+  // reported and the rest declare anyway, so one run accounts for every unit;
+  // nothing comes back after any such failure, because a body resolves names
+  // against what the units published and would fail for want of a promise
+  // nobody made, burying the account this step exists to give.
+  static auto Declare(
+      std::unique_ptr<slang::ast::Compilation> front_end,
+      const frontend::SlangSourceMapper& source_mapper,
+      support::AssertionPolicy assertion_policy, diag::DiagnosticSink& sink)
+      -> std::optional<DeclaredDesign>;
+
+  DeclaredDesign(DeclaredDesign&&) noexcept;
+  auto operator=(DeclaredDesign&&) noexcept -> DeclaredDesign&;
+  DeclaredDesign(const DeclaredDesign&) = delete;
+  auto operator=(const DeclaredDesign&) -> DeclaredDesign& = delete;
+  ~DeclaredDesign();
+
+  [[nodiscard]] auto UnitCount() const -> std::size_t;
+
+  // Lowers the bodies of the unit at `index`, once, and releases everything
+  // it held for them. Calls for different indices may come from several
+  // threads; they read the frontend one at a time.
+  auto LowerUnit(std::size_t index) -> diag::Result<hir::CompilationUnit>;
+
+  // What the design's units published, which is read by every unit's bodies
+  // and by whatever composes the design from its units.
+  [[nodiscard]] auto Signatures() const -> const hir::UnitSignatures&;
+
+ private:
+  struct Units;
+  explicit DeclaredDesign(std::unique_ptr<Units> units);
+
+  std::unique_ptr<Units> units_;
+};
 
 // A top-level block is an auto-promoted, uninstantiated module, named twice
 // because the two names answer different questions and coincide only when the

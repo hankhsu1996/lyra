@@ -1,7 +1,9 @@
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <format>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -20,9 +22,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/sink.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
+#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
@@ -209,39 +213,60 @@ auto WhyItMustBeConnected(PortConnectionRule rule) -> std::string_view {
 
 }  // namespace
 
-auto LowerCompilationToHir(
-    const LowerCompilationFacts& facts, diag::DiagnosticSink& sink)
-    -> HirCompilation {
-  const auto packages = CollectPackages(facts);
-  const auto compilation_units = CollectCompilationUnits(facts);
-  const auto units_to_compile = CollectUnits(facts);
-  const auto export_names = CollectForeignExportNames(facts);
-  const LoweringFacts unit_facts(
-      facts.SourceMapper(), facts.Sensitivity(), export_names,
-      facts.AssertionPolicy());
-
+// What the design's units hold between declaring and lowering their bodies.
+// Everything a unit reads is here and outlives the unit reading it: the AST is
+// declared first, so it is released after every lowerer pointing into it, and
+// the export names and the sensitivity analysis are built beside the facts
+// that point at them rather than handed in.
+struct DeclaredDesign::Units {
+  std::unique_ptr<slang::ast::Compilation> front_end;
+  ForeignExportNames export_names;
+  SensitivityAnalyzer sensitivity;
+  LoweringFacts facts;
   std::vector<std::unique_ptr<UnitLowerer>> lowerers;
-  lowerers.reserve(
-      packages.size() + compilation_units.size() + units_to_compile.size());
-  for (const auto* package : packages) {
-    lowerers.push_back(
+  hir::UnitSignatures signatures;
+  // Held while a unit reads the frontend, which elaborates on first read.
+  std::mutex reading_front_end;
+
+  Units(
+      std::unique_ptr<slang::ast::Compilation> elaborated,
+      const frontend::SlangSourceMapper& source_mapper,
+      support::AssertionPolicy assertion_policy)
+      : front_end(std::move(elaborated)),
+        facts(source_mapper, sensitivity, export_names, assertion_policy) {
+  }
+};
+
+auto DeclaredDesign::Declare(
+    std::unique_ptr<slang::ast::Compilation> front_end,
+    const frontend::SlangSourceMapper& source_mapper,
+    support::AssertionPolicy assertion_policy, diag::DiagnosticSink& sink)
+    -> std::optional<DeclaredDesign> {
+  auto units = std::make_unique<Units>(
+      std::move(front_end), source_mapper, assertion_policy);
+  const LowerCompilationFacts facts(
+      *units->front_end, source_mapper, assertion_policy);
+  units->export_names = CollectForeignExportNames(facts);
+
+  for (const auto* package : CollectPackages(facts)) {
+    units->lowerers.push_back(
         std::make_unique<UnitLowerer>(
-            unit_facts, *package, std::string{package->name},
+            units->facts, *package, std::string{package->name},
             hir::UnitRole::kNamespace));
   }
-  for (const auto* cu : compilation_units) {
+  for (const auto* cu : CollectCompilationUnits(facts)) {
     // A `$unit` scope is lowered, emitted, and initialized exactly as a package
     // is -- a rootless namespace unit -- so it carries the same unit kind;
     // nothing downstream distinguishes the two, so there is no separate kind.
-    lowerers.push_back(
+    units->lowerers.push_back(
         std::make_unique<UnitLowerer>(
-            unit_facts, *cu, CompilationUnitName(*cu),
+            units->facts, *cu, CompilationUnitName(*cu),
             hir::UnitRole::kNamespace));
   }
-  for (const CollectedUnit& unit : units_to_compile) {
-    lowerers.push_back(
+  for (const CollectedUnit& unit : CollectUnits(facts)) {
+    units->lowerers.push_back(
         std::make_unique<UnitLowerer>(
-            unit_facts, *unit.body, unit.name, hir::UnitRole::kObjectRoot));
+            units->facts, *unit.body, unit.name, hir::UnitRole::kObjectRoot));
   }
 
   // Every unit declares before any unit lowers a body, because a body may
@@ -249,44 +274,48 @@ auto LowerCompilationToHir(
   // This is the design-scope reading of the same ordering a single unit already
   // applies to its own declarations. A declaration reads only its own unit, so
   // nothing orders this pass and no cycle among units can arise.
-  //
-  // A unit whose declarations fail is reported and the rest declare anyway, so
-  // one run accounts for every unit. Bodies are not attempted after any such
-  // failure: a body resolves names against what the units published, so it
-  // would fail for want of a promise nobody made, and every one of those
-  // follow-on errors buries the account this pass exists to give.
-  hir::UnitSignatures signatures;
-  for (const auto& lowerer : lowerers) {
-    if (auto r = lowerer->Declare(); !r) {
-      sink.Report(std::move(r.error()));
+  for (const auto& lowerer : units->lowerers) {
+    if (auto declared = lowerer->Declare(); !declared) {
+      sink.Report(std::move(declared.error()));
       continue;
     }
-    signatures.Publish(lowerer->TakeSignature());
+    units->signatures.Publish(lowerer->TakeSignature());
   }
   if (sink.HasErrors()) {
-    return HirCompilation{.units = {}, .signatures = std::move(signatures)};
+    return std::nullopt;
   }
+  return DeclaredDesign(std::move(units));
+}
 
-  // Each unit's bodies lower against what the design's units published. Which
-  // of those promises a unit depends on is the set it reads: a name it first
-  // reaches from inside a body is reached after any set fixed in advance, and
-  // whether a name is on a promise does not depend on who asked.
-  // A unit whose bodies fail is reported and the rest lower anyway. Nothing
-  // here reads another unit's bodies, so a unit that stopped takes nothing
-  // with it -- which is the same property that lets the units lower in any
-  // order.
-  std::vector<hir::CompilationUnit> units;
-  units.reserve(lowerers.size());
-  for (const auto& lowerer : lowerers) {
-    auto unit = lowerer->LowerBodies(signatures);
-    if (!unit) {
-      sink.Report(std::move(unit.error()));
-      continue;
-    }
-    units.push_back(*std::move(unit));
+DeclaredDesign::DeclaredDesign(std::unique_ptr<Units> units)
+    : units_(std::move(units)) {
+}
+DeclaredDesign::DeclaredDesign(DeclaredDesign&&) noexcept = default;
+auto DeclaredDesign::operator=(DeclaredDesign&&) noexcept
+    -> DeclaredDesign& = default;
+DeclaredDesign::~DeclaredDesign() = default;
+
+auto DeclaredDesign::UnitCount() const -> std::size_t {
+  return units_->lowerers.size();
+}
+
+// Which of the published promises a unit depends on is the set its bodies
+// read: a name first reached from inside a body is reached after any set fixed
+// in advance, and whether a name is on a promise does not depend on who asked.
+auto DeclaredDesign::LowerUnit(std::size_t index)
+    -> diag::Result<hir::CompilationUnit> {
+  const std::scoped_lock reading(units_->reading_front_end);
+  std::unique_ptr<UnitLowerer> lowerer = std::move(units_->lowerers[index]);
+  if (lowerer == nullptr) {
+    throw InternalError(
+        "DeclaredDesign::LowerUnit: a unit's bodies are lowered once, and "
+        "this one has been");
   }
-  return HirCompilation{
-      .units = std::move(units), .signatures = std::move(signatures)};
+  return lowerer->LowerBodies(units_->signatures);
+}
+
+auto DeclaredDesign::Signatures() const -> const hir::UnitSignatures& {
+  return units_->signatures;
 }
 
 auto TopLevelUnits(const LowerCompilationFacts& facts)

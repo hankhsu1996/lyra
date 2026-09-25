@@ -12,7 +12,6 @@
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
-#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 
 namespace lyra::compiler {
 
@@ -37,32 +36,30 @@ auto RunFrontEnd(slang::driver::Driver& driver) -> FrontEndResult {
   return result;
 }
 
-auto LowerToHir(
+auto DeclareUnits(
     std::unique_ptr<slang::ast::Compilation> elaborated,
     const frontend::SlangSourceMapper& source_mapper, LoweringPolicy policy,
     diag::DiagnosticSink& sink) -> std::optional<ElaboratedDesign> {
-  // Taking the AST is what ends its life, so a run has exactly one of these to
-  // make and nothing to fall back on if it is asked for twice.
+  // Taking the AST is what hands it to the units, so a run has exactly one of
+  // these to make and nothing to fall back on if it is asked for twice.
   if (elaborated == nullptr) {
     throw InternalError(
-        "LowerToHir: the elaborated design has already been "
-        "taken, so there is none left to lower");
+        "DeclareUnits: the elaborated design has already been taken, so there "
+        "is none left to declare");
   }
-  lowering::ast_to_hir::SensitivityAnalyzer sensitivity_analyzer;
-  const lowering::ast_to_hir::LowerCompilationFacts facts(
-      *elaborated, source_mapper, sensitivity_analyzer, policy.assertions);
-  auto tops = lowering::ast_to_hir::TopLevelUnits(facts);
+  auto tops = lowering::ast_to_hir::TopLevelUnits(
+      lowering::ast_to_hir::LowerCompilationFacts(
+          *elaborated, source_mapper, policy.assertions));
   if (!tops) {
     sink.Report(std::move(tops.error()));
     return std::nullopt;
   }
-  ElaboratedDesign design{
-      .tops = *std::move(tops),
-      .hir = lowering::ast_to_hir::LowerCompilationToHir(facts, sink)};
-  if (sink.HasErrors()) {
+  auto units = lowering::ast_to_hir::DeclaredDesign::Declare(
+      std::move(elaborated), source_mapper, policy.assertions, sink);
+  if (!units) {
     return std::nullopt;
   }
-  return design;
+  return ElaboratedDesign{.tops = *std::move(tops), .units = *std::move(units)};
 }
 
 }  // namespace lyra::compiler

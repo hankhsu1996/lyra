@@ -47,10 +47,10 @@ flowchart TB
   SRC["SystemVerilog source, and the build's level and width"] --> FE["frontend elaboration<br/>one graph over the whole design"]
   FE --> SP["occurrences keyed into specializations<br/>a definition plus the arguments a parent fixed"]
 
-  SP --> D["per unit, as wide as the build allows:<br/>derive the signature from that unit's own declarations"]
+  SP --> D["per unit:<br/>derive the signature from that unit's own declarations"]
   D --> BAR{{"barrier: every unit's signature exists"}}
 
-  BAR --> U["per unit, as wide as the build allows, with no edge to any other:<br/>AST to HIR to MIR"]
+  BAR --> U["per unit, as wide as the build allows, with no edge to any other:<br/>AST to HIR to MIR, reading the AST one unit at a time"]
   U -->|"architectural target"| LIR["MIR to LIR to LLVM IR to an object<br/>at the build's level, kept by what built it"]
   U -->|"transitional"| CPP["MIR to C++ source to an object"]
   LIR --> COL["collected in the order the design lists its units"]
@@ -82,6 +82,13 @@ lists them, whichever finished first, so the program and every name it is kept u
 however many ran at once. And a foreign source includes the header composed from what every unit
 stated of the foreign name space, so it compiles once the last unit has been collected -- a
 collection of statements, as the link is a collection of objects.
+
+One thing on either side of the barrier is read by one unit at a time, and it is not a look at the
+design either: the frontend's elaborated AST. The frontend elaborates what a reader first touches,
+and a unit reaches past its own body into the elaborated hierarchy wherever one of its names lands,
+so what a unit reads cannot be elaborated in advance short of elaborating every instance the
+frontend shares. Each unit reads the AST in turn, and everything from its HIR onward runs beside the
+other units.
 
 ## Core Invariants
 

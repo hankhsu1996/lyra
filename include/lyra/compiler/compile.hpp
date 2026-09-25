@@ -16,12 +16,12 @@
 
 namespace lyra::compiler {
 
-// What reading the elaborated AST produces: which units the design begins at,
-// and the HIR of every unit. Neither member carries a front-end node, so the
-// AST is read by one call and has to outlive nothing but it.
+// The design once every unit has declared itself: which units the design
+// begins at, and what each unit declared and published, together with the
+// elaborated AST their bodies are lowered from.
 struct ElaboratedDesign {
   std::vector<lowering::ast_to_hir::TopLevelUnit> tops;
-  lowering::ast_to_hir::HirCompilation hir;
+  lowering::ast_to_hir::DeclaredDesign units;
 };
 
 // What the front end answered with, and its own account of answering. The
@@ -50,21 +50,21 @@ struct LoweringPolicy {
 // comes back.
 auto RunFrontEnd(slang::driver::Driver& driver) -> FrontEndResult;
 
-// Lowers the whole elaborated compilation to a flat set of self-contained HIR
-// units -- every package, then every module body -- each tagged with its kind.
-// Every unit is attempted, so what the sink holds afterwards is the whole
-// account of what this compilation cannot lower, and what comes back when any
-// of them failed is nothing.
+// Declares every unit of the elaborated compilation -- every package, then
+// every module body -- and settles which of them the design begins at. Every
+// unit is attempted, so what the sink holds afterwards is the whole account of
+// what this compilation cannot declare, and what comes back when any of them
+// failed is nothing.
 //
-// The elaborated AST is taken rather than borrowed because its lifetime ends
-// here: no IR carries a front-end node, and a diagnostic resolves its spans
-// through the source manager instead. A whole design's worth of AST is among
-// the largest things a run ever holds.
+// The elaborated AST is taken because the units read it from here on, until
+// the last of them has been lowered, and nothing else does. No IR carries a
+// front-end node, and a diagnostic resolves its spans through the source
+// manager instead.
 //
-// Everything below HIR is per unit and belongs to whoever consumes it, so it
-// is driven separately: a caller that wants MIR or an executable form asks for
-// that over what comes back here, and takes each unit as it is produced.
-auto LowerToHir(
+// Lowering each unit's bodies, and everything below HIR, is per unit and
+// belongs to whoever consumes it, so it is driven separately over what comes
+// back here.
+auto DeclareUnits(
     std::unique_ptr<slang::ast::Compilation> elaborated,
     const frontend::SlangSourceMapper& source_mapper, LoweringPolicy policy,
     diag::DiagnosticSink& sink) -> std::optional<ElaboratedDesign>;

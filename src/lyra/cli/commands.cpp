@@ -147,12 +147,12 @@ auto RunDumpAst(const CommandContext& ctx) -> int {
   return 0;
 }
 
-// The design every command below the front end drives from. Lowering to HIR is
-// where the elaborated AST's last reader finishes, so it is taken here, once
-// per run, and a whole design's worth of it stops being resident.
+// The design every command below the front end drives from. The elaborated
+// AST is handed to its units here, once per run, and every unit reads it until
+// the last of them has been lowered.
 auto DesignOf(const CommandContext& ctx)
     -> std::optional<compiler::ElaboratedDesign> {
-  return compiler::LowerToHir(
+  return compiler::DeclareUnits(
       std::move(ctx.elaborated->compilation), ctx.elaborated->source_mapper,
       compiler::LoweringPolicy{.assertions = ctx.args->assertions}, *ctx.sink);
 }
@@ -193,11 +193,13 @@ auto RunDumpHir(const CommandContext& ctx) -> int {
   if (!design) {
     return 1;
   }
-  for (hir::CompilationUnit& slot : design->hir.units) {
-    const hir::CompilationUnit unit = std::move(slot);
-    fmt::print("{}", hir::DumpHir(unit));
-  }
-  return 0;
+  compiler::LowerToHir(
+      *design, *ctx.sink, ctx.args->compile_width,
+      [](const hir::CompilationUnit& unit) -> diag::Result<std::string> {
+        return hir::DumpHir(unit);
+      },
+      [](const std::string& text) { fmt::print("{}", text); });
+  return ctx.sink->HasErrors() ? 1 : 0;
 }
 
 auto RunDumpMir(const CommandContext& ctx) -> int {
