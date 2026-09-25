@@ -52,4 +52,8 @@ auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool;
 // is an owned one, what made it owes its end.
 auto MakesValue(const Function& fn, const InstrData& instr) -> bool;
 
+// The same question of a call, which its target alone answers -- asked of a
+// call that may depart as much as of one that returns.
+auto CallMakesValue(const CallTarget& target) -> bool;
+
 }  // namespace lyra::lir

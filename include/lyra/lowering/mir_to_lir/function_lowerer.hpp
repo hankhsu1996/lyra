@@ -102,18 +102,16 @@ class FunctionLowerer {
   struct TerminateScope {};
 
   // A scope a departure meets on its way out of the body, kept on one stack in
-  // the order they nest, which is the order a departure meets them. Each is
-  // reached two ways, both built the first time something needs them and
-  // shared by everything after: `landing` is where a call made with this scope
-  // innermost unwinds to, and `unwind_entry` is where a departure continues
-  // when it reaches this scope from one nested inside it -- the cleanup run
-  // once and passed outward, or the region's handler.
+  // the order they nest, which is the order a departure meets them.
+  // `unwind_entry` is where a departure continues once it reaches this scope
+  // -- what the scope owes, run once and passed outward, or the region's
+  // handler -- built the first time something needs it and shared by every
+  // landing and every scope nested inside after that.
   using ScopeKind = std::variant<
       CleanupScope, ValueEnd, SlotEnd, EndPassedOn, RegionScope,
       TerminateScope>;
   struct UnwindScope {
     ScopeKind kind;
-    std::optional<lir::BlockId> landing;
     std::optional<lir::BlockId> unwind_entry;
   };
 
@@ -247,9 +245,12 @@ class FunctionLowerer {
   auto EmitDepartingCall(
       lir::CallTarget target, std::vector<lir::Operand> args,
       lir::TypeId result_type) -> diag::Result<lir::Operand>;
-  // The landing a call made here unwinds to: it receives the departure into
-  // the frame's one slot for it and continues where the innermost open scope
-  // takes one. Built the first time that scope needs it.
+  // The landing the call about to be made here unwinds to: it receives the
+  // departure into the frame's one slot for it and continues where the
+  // innermost open scope takes one. Each call has a landing of its own,
+  // because what a target owes on the way out of one call -- a temporary it
+  // made to pass an argument -- is that call's alone; what the scopes owe is
+  // built once and shared.
   auto LandingHere() -> diag::Result<lir::BlockId>;
   // Where a departure continues once it reaches the scope at `index` on the
   // stack, or the frame's own edge below every scope: the cleanup run and
@@ -521,9 +522,8 @@ class FunctionLowerer {
   lir::BlockId current_{};
   std::vector<LoopTargets> loops_;
   std::vector<UnwindScope> scopes_;
-  // The landing of a call made with no scope open, and where a departure goes
-  // once it has passed every scope; each built the first time one is needed.
-  std::optional<lir::BlockId> frame_landing_;
+  // Where a departure goes once it has passed every scope, built the first
+  // time one is needed.
   std::optional<lir::BlockId> frame_edge_;
   std::optional<lir::ValueId> departure_slot_;
   // Which of the body's variables each local is, where its declared type gives

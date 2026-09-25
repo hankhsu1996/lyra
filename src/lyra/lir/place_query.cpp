@@ -93,28 +93,30 @@ auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool {
   return use != nullptr && fn.values.Get(use->value).NamesStorage();
 }
 
+auto CallMakesValue(const CallTarget& target) -> bool {
+  // Allocating a value cell answers the cell, which is storage the running
+  // activation keeps, whatever type the cell is named by.
+  if (const auto* cell = std::get_if<ValueCellTarget>(&target)) {
+    return cell->op != ValueCellTarget::Op::kAllocate;
+  }
+  const auto* builtin = std::get_if<BuiltinTarget>(&target);
+  if (builtin == nullptr) {
+    return true;
+  }
+  switch (support::RuntimeEntryOf(builtin->fn).answer) {
+    case support::EntryAnswer::kNewValue:
+      return true;
+    case support::EntryAnswer::kTheReceiver:
+    case support::EntryAnswer::kPartOfTheReceiver:
+      return false;
+  }
+  throw InternalError("lir: unknown entry answer");
+}
+
 auto MakesValue(const Function& fn, const InstrData& instr) -> bool {
   return std::visit(
       Overloaded{
-          // Allocating a value cell answers the cell, which is storage the
-          // running activation keeps, whatever type the cell is named by.
-          [](const CallInstr& call) {
-            if (const auto* cell = std::get_if<ValueCellTarget>(&call.target)) {
-              return cell->op != ValueCellTarget::Op::kAllocate;
-            }
-            const auto* builtin = std::get_if<BuiltinTarget>(&call.target);
-            if (builtin == nullptr) {
-              return true;
-            }
-            switch (support::RuntimeEntryOf(builtin->fn).answer) {
-              case support::EntryAnswer::kNewValue:
-                return true;
-              case support::EntryAnswer::kTheReceiver:
-              case support::EntryAnswer::kPartOfTheReceiver:
-                return false;
-            }
-            throw InternalError("lir: unknown entry answer");
-          },
+          [](const CallInstr& call) { return CallMakesValue(call.target); },
           [&](const LoadInstr& load) {
             return !(
                 IsPlaceLocal(fn, load.place.base) && load.place.chain.empty());

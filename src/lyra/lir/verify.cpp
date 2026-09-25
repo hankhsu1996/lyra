@@ -126,17 +126,18 @@ void VerifyInstr(
       instr.data);
 }
 
-// A landing is a block some departing call names and that opens by receiving
+// A landing is a block one departing call names and that opens by receiving
 // what arrived. Neither half stands without the other: a body reaches a landing
 // no other way, and a departure has nowhere else to be read -- so a block that
 // opens this way and is named by nothing would never run, and one that is named
-// and does not would run with the departure unread.
+// and does not would run with the departure unread. It is one call's alone,
+// because what a target owes on the way out of that call is that call's.
 void VerifyLandings(const Function& fn) {
-  std::vector<bool> named(fn.blocks.size(), false);
+  std::vector<std::size_t> named(fn.blocks.size(), 0);
   for (const BasicBlock& block : fn.blocks) {
     if (const auto* call =
             std::get_if<DepartingCallInstr>(&block.terminator.data)) {
-      named[call->landing.value] = true;
+      ++named[call->landing.value];
     }
   }
   for (std::size_t index = 0; index < fn.blocks.size(); ++index) {
@@ -154,11 +155,15 @@ void VerifyLandings(const Function& fn) {
     const bool receives =
         !instrs.empty() &&
         std::holds_alternative<ReceiveDepartureInstr>(instrs[0].data);
-    if (receives != named[index]) {
+    if (receives != (named[index] != 0)) {
       throw InternalError(
           receives ? "lir verify: a landing no departing call names"
                    : "lir verify: a departing call names a block that receives "
                      "no departure");
+    }
+    if (named[index] > 1) {
+      throw InternalError(
+          "lir verify: a landing more than one departing call names");
     }
   }
 }

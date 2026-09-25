@@ -740,11 +740,6 @@ auto FunctionLowerer::DepartureSlot() -> lir::ValueId {
 }
 
 auto FunctionLowerer::LandingHere() -> diag::Result<lir::BlockId> {
-  std::optional<lir::BlockId>& cached =
-      scopes_.empty() ? frame_landing_ : scopes_.back().landing;
-  if (cached.has_value()) {
-    return *cached;
-  }
   const diag::Result<lir::BlockId> continued =
       scopes_.empty() ? diag::Result<lir::BlockId>{FrameEdge()}
                       : UnwindEntryAt(scopes_.size() - 1);
@@ -752,7 +747,6 @@ auto FunctionLowerer::LandingHere() -> diag::Result<lir::BlockId> {
     return std::unexpected(continued.error());
   }
   const lir::BlockId landing = NewBlock();
-  cached = landing;
   const lir::BlockId resumed = current_;
   SetCurrent(landing);
   const lir::Operand effect =
@@ -879,6 +873,8 @@ auto FunctionLowerer::EmitDepartingCall(
   const lir::ValueId result = fn_.values.Add(
       lir::Local{
           .name = {}, .type = result_type, .kind = lir::LocalKind::kTemp});
+  const bool owes_its_end = lir::CallMakesValue(target) &&
+                            unit_->Types().Get(result_type).IsOwnedValue();
   Terminate(
       lir::DepartingCallInstr{
           .result = result,
@@ -889,7 +885,7 @@ auto FunctionLowerer::EmitDepartingCall(
   SetCurrent(returned);
   // The value exists only where the call returned, so the landing, built
   // before it, owes nothing for it.
-  if (unit_->Types().Get(result_type).IsOwnedValue()) {
+  if (owes_its_end) {
     OpenScope(ValueEnd{.value = result});
   }
   return lir::Operand{lir::Use{.value = result}};
@@ -957,10 +953,7 @@ void FunctionLowerer::EndSlotValue(lir::ValueId slot) {
 
 void FunctionLowerer::OpenScope(ScopeKind kind) {
   scopes_.push_back(
-      UnwindScope{
-          .kind = std::move(kind),
-          .landing = std::nullopt,
-          .unwind_entry = std::nullopt});
+      UnwindScope{.kind = std::move(kind), .unwind_entry = std::nullopt});
 }
 
 auto FunctionLowerer::HandOn(lir::Operand value) -> lir::Operand {
@@ -979,7 +972,6 @@ auto FunctionLowerer::HandOn(lir::Operand value) -> lir::Operand {
       // right for the calls made then; what is built from here on must not,
       // so this scope and every one inside it build theirs afresh.
       for (std::size_t j = i; j < scopes_.size(); ++j) {
-        scopes_[j].landing = std::nullopt;
         scopes_[j].unwind_entry = std::nullopt;
       }
       return value;

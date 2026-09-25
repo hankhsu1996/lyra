@@ -23,6 +23,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/place_query.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
@@ -414,7 +415,9 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
           },
           [&](const lir::DepartingCallInstr& call) -> diag::Result<void> {
             const lir::TypeId result_type = fn_->values.Get(call.result).type;
-            llvm::Value* out = StorageFor(result_type);
+            llvm::Value* const out = lir::CallMakesValue(call.target)
+                                         ? StorageFor(result_type)
+                                         : nullptr;
             auto resolved = ResolveCall(
                 lir::CallInstr{.target = call.target, .args = call.args},
                 result_type, out);

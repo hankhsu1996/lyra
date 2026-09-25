@@ -102,6 +102,8 @@ cc_test(
     copts = LYRA_COPTS,
     deps = [
         "//:base",
+        "//:diag",
+        "//:lir",
         "//:mir",
         "//:mir_to_lir",
         "@googletest//:gtest_main",

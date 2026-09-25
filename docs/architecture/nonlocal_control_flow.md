@@ -200,14 +200,14 @@ exception it was handed whether the raise was its own.
 
 The execution backend keeps the scopes a departure can meet -- cleanups, the end of each value the
 body owns, and regions alike -- on one stack in the order they nest, as Clang's exception handling
-does. A call's landing belongs to the innermost scope open where it is made, so every call inside
-one scope unwinds to the same landing; the landing receives what arrived and passes it to that
-scope, whose cleanup runs once on the way out and passes it to the scope it is nested in, until a
-region's handler or the frame's own edge takes it. A cleanup's code therefore appears once on the
-unwinding path however many calls inside it can leave, while the ordinary ways out -- falling off
-the end, a return, a loop exit -- still copy it, as below. A value whose end passes to storage or to
-the caller stops being owed at that point, so the landings built while it was owed keep ending it
-and those built afterwards do not.
+does. Each call has a landing of its own, because what the target owes on the way out of one call --
+a temporary it made to pass an argument -- is that call's alone; the landing receives what arrived
+and passes it to the innermost scope open where the call was made, whose cleanup runs once on the
+way out and passes it to the scope it is nested in, until a region's handler or the frame's own edge
+takes it. A cleanup's code therefore appears once on the unwinding path however many calls inside it
+can leave, while the ordinary ways out -- falling off the end, a return, a loop exit -- still copy
+it, as below. A value whose end passes to storage or to the caller stops being owed at that point,
+so the paths built while it was owed keep ending it and those built afterwards do not.
 
 Enumerating a body's ways out is what every compiler targeting a control-flow graph or a stack
 machine does with a cleanup construct. JVM bytecode has no `finally`; the compiler copies the
