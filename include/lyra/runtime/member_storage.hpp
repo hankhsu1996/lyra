@@ -69,11 +69,6 @@ class MemberStorage {
   // Where this storage lives, which is what a member place resolves to.
   [[nodiscard]] auto Address() -> void*;
 
-  // What this storage holds, as the handle it crosses to generated code as.
-  // Nothing is copied out: the storage outlives every read of it, and a value
-  // handle is never written through.
-  [[nodiscard]] auto HeldValue() -> void*;
-
   // Takes a copy of what `handle` names, which is how a value reaches storage
   // that outlives the stretch the value was made in. Only storage its owner
   // fills at construction takes this; a cell is written through its own access,

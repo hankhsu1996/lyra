@@ -12,9 +12,9 @@ namespace lyra::support {
 
 // An object the runtime library defines that is not a value of the design:
 // what an entry builds for one use -- what a print is assembled from, what a
-// wait registers, the storage a closure captures into, a write in progress into
-// storage a wrapper stands for -- and what the generated side holds for a while
-// -- an execution, a hold on a promoted scope.
+// wait registers, a write in progress into storage a wrapper stands for -- and
+// what the generated side holds for a while -- the owner of a closure, an
+// execution, a hold on a promoted scope.
 enum class LibraryObject : std::uint8_t {
   kClosure,
   kPrintItem,
@@ -92,7 +92,7 @@ constexpr auto LayoutOf(ValueDomain domain) -> ObjectLayout {
 constexpr auto LayoutOf(LibraryObject object) -> ObjectLayout {
   switch (object) {
     case LibraryObject::kClosure:
-      return {.size = 32, .align = 8, .ends_with_nothing_to_do = false};
+      return {.size = 8, .align = 8, .ends_with_nothing_to_do = false};
     case LibraryObject::kPrintItem:
       return {.size = 56, .align = 8, .ends_with_nothing_to_do = true};
     case LibraryObject::kFormatSpec:

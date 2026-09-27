@@ -381,17 +381,6 @@ class CodeGenFunction {
   auto ContentsOf(
       support::ValueDomain domain, WrapperKind kind, llvm::Value* wrapper)
       -> llvm::Value*;
-  // A capture read: the closure value whose captures the place reaches, and
-  // which of them it names; nothing when the place reaches an instance's own
-  // members instead. A capture lives in storage the closure owns, so it is
-  // reached on the closure rather than through the instance member entry.
-  struct CapturePlace {
-    lir::Place closure;
-    std::uint32_t index{};
-  };
-  [[nodiscard]] auto CapturePlaceOf(const lir::Place& place) const
-      -> std::optional<CapturePlace>;
-
   // Whether a type is the sequence of handles a declaration standing for
   // several objects builds. It belongs to no value domain -- what it holds are
   // objects, not values -- so an operation over one is answered by the entry

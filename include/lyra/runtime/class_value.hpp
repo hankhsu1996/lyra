@@ -3,14 +3,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <new>
-#include <span>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/class_definition.hpp"
-#include "lyra/runtime/member_storage.hpp"
+#include "lyra/runtime/member_slots.hpp"
 #include "lyra/runtime/object_ref.hpp"
+#include "lyra/runtime/scope_program.hpp"
 
 namespace lyra::runtime {
 
@@ -43,8 +42,7 @@ class ClassValue : public GcObject {
   [[nodiscard]] static auto Make(
       const ObjectDefinition* definition, Args&&... args)
       -> std::unique_ptr<Holder> {
-    void* storage =
-        ::operator new(MembersAt(sizeof(Holder)) + MemberBytes(definition));
+    void* storage = MemberSlots::Allocate(sizeof(Holder), SchemaOf(definition));
     std::unique_ptr<Holder> made(::new (storage)
                                      Holder(std::forward<Args>(args)...));
     // The slots are placed from this base's address and generated code
@@ -53,13 +51,6 @@ class ClassValue : public GcObject {
       throw InternalError("ClassValue: a kind of value does not begin with it");
     }
     return made;
-  }
-
-  // Where the slots of a value of a kind `size` bytes long begin: at the first
-  // slot boundary after it.
-  static constexpr auto MembersAt(std::size_t size) -> std::size_t {
-    constexpr std::size_t kAlign = alignof(MemberStorage);
-    return (size + kAlign - 1) / kAlign * kAlign;
   }
 
   // Ending a value returns the whole allocation it was made in, whose size is
@@ -88,9 +79,10 @@ class ClassValue : public GcObject {
   ClassValue(const ObjectDefinition* definition, std::size_t holder_size);
 
  private:
-  static auto MemberBytes(const ObjectDefinition* definition) -> std::size_t;
+  static auto SchemaOf(const ObjectDefinition* definition)
+      -> MemberStorageSchema;
 
-  std::span<MemberStorage> members_;
+  MemberSlots members_;
 };
 
 }  // namespace lyra::runtime

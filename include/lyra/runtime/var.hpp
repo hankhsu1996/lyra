@@ -359,13 +359,19 @@ void SubscribeToLeaves(
     CoroutineHandle frame, std::span<const Trigger> triggers);
 
 // Which frame is waiting is the runtime's own to know, so nothing here is
-// handed one: both backends reach this the same way, with the same arguments,
-// and answer their caller with the same bool.
+// handed one: both backends reach this the same way and answer their caller
+// with the same bool. The wait keeps its own copy of each leaf, so the leaves
+// are only read here -- laid out in one array, or each where its builder left
+// it and named by address.
 auto WaitAny(RuntimeEffects& services, std::span<const Trigger> triggers)
+    -> bool;
+auto WaitAny(RuntimeEffects& services, std::span<const Trigger* const> triggers)
     -> bool;
 
 auto WaitUntil(RuntimeEffects& services, std::span<const Trigger> triggers)
     -> bool;
+auto WaitUntil(
+    RuntimeEffects& services, std::span<const Trigger* const> triggers) -> bool;
 
 // Reads one leaf's bits out of the values a change moved between, so a wait
 // that reads only bits this change left alone is passed over.

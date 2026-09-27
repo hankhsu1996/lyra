@@ -22,16 +22,4 @@ auto StorageBlock::Address(std::uint32_t index) -> void* {
   return slots_.at(index)->Address();
 }
 
-auto StorageBlock::Held(std::uint32_t index) -> void* {
-  return slots_.at(index)->HeldValue();
-}
-
-void StorageBlock::Adopt(std::uint32_t index, void* handle) {
-  slots_.at(index)->AdoptFrom(handle);
-}
-
-auto StorageBlock::Size() const -> std::uint32_t {
-  return static_cast<std::uint32_t>(slots_.size());
-}
-
 }  // namespace lyra::runtime

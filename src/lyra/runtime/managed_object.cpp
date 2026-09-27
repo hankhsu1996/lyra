@@ -5,6 +5,7 @@
 
 #include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/class_value.hpp"
+#include "lyra/runtime/member_slots.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/support/member_layout.hpp"
 #include "lyra/value/object_ref.hpp"
@@ -12,7 +13,7 @@
 namespace lyra::runtime {
 
 static_assert(
-    ClassValue::MembersAt(sizeof(ManagedObject)) ==
+    MemberSlots::At(sizeof(ManagedObject)) ==
     support::MembersAt(support::ValueHolder::kObject));
 
 auto MakeManagedObject(const ObjectDefinition* definition) -> value::ObjectRef {

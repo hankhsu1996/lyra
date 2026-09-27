@@ -2,11 +2,11 @@
 
 #include <boost/context/fiber.hpp>
 #include <boost/context/protected_fixedsize_stack.hpp>
-#include <functional>
 #include <memory>
 #include <utility>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 
@@ -44,7 +44,7 @@ auto ForeignProcessSlot() -> RuntimeProcess*& {
 // control is outside it, `home_` names the resumer while control is inside.
 class Fiber final : public ForeignExecution {
  public:
-  explicit Fiber(std::function<void()> entry)
+  explicit Fiber(OwnedCall entry)
       : entry_(std::move(entry)),
         fiber_(
             std::allocator_arg, ctx::protected_fixedsize_stack{},
@@ -72,7 +72,7 @@ class Fiber final : public ForeignExecution {
   }
 
  private:
-  std::function<void()> entry_;
+  OwnedCall entry_;
   ctx::fiber fiber_;
   ctx::fiber home_;
   bool done_ = false;
@@ -80,7 +80,7 @@ class Fiber final : public ForeignExecution {
 
 }  // namespace
 
-auto MakeForeignExecution(std::function<void()> entry)
+auto MakeForeignExecution(OwnedCall entry)
     -> std::unique_ptr<ForeignExecution> {
   return std::make_unique<Fiber>(std::move(entry));
 }
@@ -133,8 +133,8 @@ auto CurrentForeignProcess() -> RuntimeProcess& {
   return *ForeignProcessSlot();
 }
 
-auto RunForeignTaskOnFiber(
-    RuntimeEffects& effects, std::function<void()> foreign_call) -> bool {
+auto RunForeignTaskOnFiber(RuntimeEffects& effects, OwnedCall foreign_call)
+    -> bool {
   return !EnterForeignTask(
       effects, effects.CurrentProcess().CurrentLeaf(),
       MakeForeignExecution(std::move(foreign_call)));

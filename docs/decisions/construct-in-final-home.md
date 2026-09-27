@@ -1,6 +1,7 @@
 # Construct in the final home, never build and move
 
-Date: 2026-09-11 Status: accepted
+Date: 2026-09-11 Status: accepted; realized 2026-09-25 with D2, D4 and D5 revised (see the last
+section)
 
 ## Context
 
@@ -119,6 +120,35 @@ that built it, and never moves. It keeps the arena.
   own access, and nothing takes a capture slot's address. This decision does not give captures
   identity and is not motivated by their having it; if a reference is ever to bind one, the storage
   is already in the shape that would allow it.
+
+## Revised when realized, 2026-09-25
+
+The realization gives every closure the same home -- an allocation of its own, the closure first and
+its capture slots after it, which never moves -- and what the building body holds, and hands to
+whatever keeps the closure, is the closure's one owner. Three decisions above change with that.
+
+- **D2, and invariant 3.** The construction entry makes the allocation rather than filling one the
+  caller supplies. What invariant 3 guarded against was the runtime choosing a home per destination
+  and handing the object over, and "which entry supplies the home for each destination" was the part
+  this entry left open. With one home for every closure there is no destination to choose and
+  nothing to hand over but the owner: the object stays put and the hold on it moves, exactly as a
+  class handle does.
+- **D4.** A coroutine body's frame is built where the execution is entered, at once, rather than
+  deferred to the execution's first resume. The deferral existed only to survive the move. Without
+  it, an execution holds the same two things whichever way it was entered: a frame built and not yet
+  begun, and whatever that frame reads that nothing else keeps alive -- the closure's owner for a
+  spawned branch, nothing for a body reading a receiver -- ended after the frame. That is also where
+  the field puts it: a C++ coroutine's parameter copies end after its promise, and a Rust
+  `async move` future owns what it captured. The owner stays with the execution rather than
+  travelling into the frame, because a body takes its receiver as a borrow whatever it is.
+- **D5.** The `with` clause's closure lives in an allocation of its own like every other, borrowed
+  for the call and ended after it, rather than in the frame. One home serves every consumer with no
+  branch on which consumer it is, and the arena this entry kept for it had no other user.
+
+A fourth keeper is added to the three named above: an event control's observation, which runs its
+closure each time a change asks whether the watched expression moved (LRM 9.4.2), holds the owner
+the same way. Measured on the RISC-V core before this: 1.17 M closures built at about 800
+instructions each, 707 M of it building capture storage.
 
 ## Cross-references
 

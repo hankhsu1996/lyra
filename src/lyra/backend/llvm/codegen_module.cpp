@@ -344,8 +344,9 @@ auto CodeGenModule::StateClass(llvm::IRBuilderBase& builder, lir::ClassId id)
     }
   }
 
-  auto members =
-      DescribedStorage(cls.members, MemberSlotRole::kVariable, "a property");
+  auto members = DescribedStorage(
+      cls.members, MemberSlotRoleOf(lir::ObjectType{.class_id = id}),
+      "a property");
   if (!members) {
     return std::unexpected(std::move(members.error()));
   }
@@ -451,8 +452,9 @@ auto CodeGenModule::StateStruct(llvm::IRBuilderBase& builder, lir::StructId id)
   llvm::GlobalVariable* cell = DeclaredCell(symbol);
   cell->setInitializer(llvm::ConstantPointerNull::get(ptr_ty));
   builder.CreateStore(declared, cell);
-  auto fields =
-      DescribedStorage(record.fields, MemberSlotRole::kVariable, "a field");
+  auto fields = DescribedStorage(
+      record.fields, MemberSlotRoleOf(lir::StructType{.struct_id = id}),
+      "a field");
   if (!fields) {
     return std::unexpected(std::move(fields.error()));
   }
@@ -472,7 +474,8 @@ auto CodeGenModule::StateClosure(
   const std::string symbol = lir::ClosureDefinitionSymbol(
       unit_->name, lir::SymbolPart::Ordinal(id.value));
   auto described = DescribedStorage(
-      closure.captures, MemberSlotRole::kSnapshot, "a capture");
+      closure.captures, MemberSlotRoleOf(lir::ClosureType{.closure_id = id}),
+      "a capture");
   if (!described) {
     return std::unexpected(std::move(described.error()));
   }

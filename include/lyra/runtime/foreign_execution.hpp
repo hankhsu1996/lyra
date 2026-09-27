@@ -1,10 +1,10 @@
 #pragma once
 
-#include <functional>
 #include <memory>
 
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/generated_call_scope.hpp"
+#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 
@@ -59,8 +59,7 @@ class ForeignExecution {
 // Creates a foreign execution that runs `entry` -- the foreign call -- on its
 // own stack. It does not start: the first `Resume` enters it. `entry` returning
 // marks it done.
-auto MakeForeignExecution(std::function<void()> entry)
-    -> std::unique_ptr<ForeignExecution>;
+auto MakeForeignExecution(OwnedCall entry) -> std::unique_ptr<ForeignExecution>;
 
 // Suspends the foreign execution currently running on this thread, handing
 // control back to whoever last resumed it. Called from within the foreign call
@@ -124,7 +123,7 @@ auto EnterForeignTask(
 // the call actually suspended, since one that returns without consuming time is
 // over before this returns. What continues the import frame afterwards is the
 // vehicle rather than a wait, because the call is on a stack of its own.
-auto RunForeignTaskOnFiber(
-    RuntimeEffects& effects, std::function<void()> foreign_call) -> bool;
+auto RunForeignTaskOnFiber(RuntimeEffects& effects, OwnedCall foreign_call)
+    -> bool;
 
 }  // namespace lyra::runtime

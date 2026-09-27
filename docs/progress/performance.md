@@ -167,6 +167,16 @@ closed below.
       rather than decide one. Tracked with the construct it affects, in
       [processes.md](processes.md).
 
+- [x] A closure the execution backend builds -- the expression an event control watches, the effect
+      a nonblocking assignment defers -- is made once, with its captures in its own allocation, and
+      whatever keeps it takes its owner rather than a moved copy; a capture is read at a fixed
+      distance from the closure instead of through a runtime call. A wait reads its leaves where the
+      waiting body built them instead of copying them into a list first. Measured on the RISC-V core
+      (`hello_test`, `--release`, callgrind): 17.11 G to 14.99 G instructions, where the C++
+      backend's program runs 11.89 G; building a closure went from about 800 instructions to about
+      580, and the per-wait copy of the leaves is gone. Wall clock in one interleaved session, 15
+      runs each: 1.905 s to 1.733 s at the minimum.
+
 - [x] Converting a packed value between widths or between the two- and four-state domains no longer
       walks it one bit at a time. It was the single largest cost in both profiled programs, and the
       reason is that the front end inserts such a conversion wherever an expression's type differs

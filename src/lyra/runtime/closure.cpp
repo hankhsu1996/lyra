@@ -1,13 +1,16 @@
 #include "lyra/runtime/closure.hpp"
 
 #include <cstdint>
+#include <new>
 #include <span>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/erased_value.hpp"
+#include "lyra/runtime/member_slots.hpp"
 #include "lyra/runtime/scope_program.hpp"
+#include "lyra/support/member_layout.hpp"
 #include "lyra/value/runtime_value.hpp"
 
 namespace lyra::runtime {
@@ -36,20 +39,33 @@ auto CaptureSchemaOf(const ClosureDefinition* definition)
 
 }  // namespace
 
+static_assert(
+    MemberSlots::At(sizeof(ClosureValue)) ==
+    support::MembersAt(support::ValueHolder::kClosure));
+
+void ClosureValue::operator delete(void* address) {
+  MemberSlots::Release(address);
+}
+
+auto ClosureValue::Make(
+    const ClosureDefinition* definition, std::span<void* const> captures)
+    -> OwnedClosure {
+  void* storage =
+      MemberSlots::Allocate(sizeof(ClosureValue), CaptureSchemaOf(definition));
+  return OwnedClosure(::new (storage) ClosureValue(definition, captures));
+}
+
 ClosureValue::ClosureValue(
     const ClosureDefinition* definition, std::span<void* const> captures)
-    : definition_(definition), captures_(CaptureSchemaOf(definition)) {
+    : definition_(definition),
+      captures_(this, sizeof(ClosureValue), definition->captures) {
   if (captures.size() != captures_.Size()) {
     throw InternalError(
         "ClosureValue: the construction does not initialize every capture");
   }
   for (std::uint32_t i = 0; i < captures_.Size(); ++i) {
-    captures_.Adopt(i, captures[i]);
+    captures_[i].AdoptFrom(captures[i]);
   }
-}
-
-auto ClosureValue::Capture(std::uint32_t index) -> void* {
-  return captures_.Held(index);
 }
 
 void ClosureValue::Invoke() {
