@@ -11,12 +11,13 @@
 #include <vector>
 
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/runtime/member_slots.hpp"
 #include "lyra/support/member_layout.hpp"
 
 namespace lyra::runtime {
 
 static_assert(
-    ClassValue::MembersAt(sizeof(Scope)) ==
+    MemberSlots::At(sizeof(Scope)) ==
     support::MembersAt(support::ValueHolder::kScope));
 
 // The default scope-program entry: a scope with no work for a lifecycle phase

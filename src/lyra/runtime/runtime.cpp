@@ -19,6 +19,7 @@
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
+#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/process_kind.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -331,10 +332,10 @@ void Runtime::RunRegion(TimeSlot& slot, Region region) {
   // LRM 9.3.2: work arriving while this pass runs belongs to the next pass, so
   // both snapshots move out of the region and new arrivals accumulate behind
   // them. LRM 4.5 fixes no order between the events of one region.
-  std::vector<std::function<void()>> effects = std::move(queue.effects);
+  std::vector<OwnedCall> effects = std::move(queue.effects);
   queue.effects.clear();
   queue.activations.SpliceBackOnto(draining_);
-  for (const auto& effect : effects) {
+  for (OwnedCall& effect : effects) {
     effect();
   }
   while (Registration* queued = draining_.PopFront()) {

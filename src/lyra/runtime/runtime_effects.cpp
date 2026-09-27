@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <exception>
 #include <format>
-#include <functional>
 #include <new>
 #include <string>
 #include <string_view>
@@ -14,6 +13,7 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/observable.hpp"
+#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -127,18 +127,17 @@ void RuntimeEffects::Wake(CoroutineHandle activation) {
   Schedule(Now(), Region::kActive, activation);
 }
 
-void RuntimeEffects::Submit(
-    SimTime when, Region region, std::function<void()> effect) {
+void RuntimeEffects::Submit(SimTime when, Region region, OwnedCall effect) {
   AsRuntime(*this).SlotAt(when)[region].effects.push_back(std::move(effect));
 }
 
-void RuntimeEffects::SubmitNba(std::function<void()> closure) {
+void RuntimeEffects::SubmitNba(OwnedCall closure) {
   Submit(Now(), Region::kNba, std::move(closure));
 }
 
 void RuntimeEffects::SubmitNbaAfter(
     const value::PackedArray& duration, const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power, std::function<void()> closure) {
+    const value::PackedArray& precision_power, OwnedCall closure) {
   const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
   const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
   Submit(
@@ -148,7 +147,7 @@ void RuntimeEffects::SubmitNbaAfter(
 
 void RuntimeEffects::SubmitNbaAfterReal(
     const value::Real& duration, const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power, std::function<void()> closure) {
+    const value::PackedArray& precision_power, OwnedCall closure) {
   const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
   const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
   Submit(
@@ -157,7 +156,7 @@ void RuntimeEffects::SubmitNbaAfterReal(
       Region::kNba, std::move(closure));
 }
 
-void RuntimeEffects::SubmitPostponed(std::function<void()> closure) {
+void RuntimeEffects::SubmitPostponed(OwnedCall closure) {
   Submit(Now(), Region::kPostponed, std::move(closure));
 }
 
@@ -165,11 +164,11 @@ void RuntimeEffects::RegisterConcurrentAssertion(EvaluationAttempts& attempts) {
   AsRuntime(*this).concurrent_assertions_.push_back(&attempts);
 }
 
-void RuntimeEffects::SubmitObserved(std::function<void()> effect) {
+void RuntimeEffects::SubmitObserved(OwnedCall effect) {
   Submit(Now(), Region::kObserved, std::move(effect));
 }
 
-void RuntimeEffects::SubmitViolationReport(std::function<void()> report) {
+void RuntimeEffects::SubmitViolationReport(OwnedCall report) {
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     // A check that fires before any procedure runs -- a static variable's
@@ -182,7 +181,7 @@ void RuntimeEffects::SubmitViolationReport(std::function<void()> report) {
   Submit(
       Now(), Region::kObserved,
       [validity = ViolationReportValidity(*process),
-       report = std::move(report)] {
+       report = std::move(report)]() mutable {
         // LRM 12.4.2.1: a pass that no longer stands is a flush point the
         // process reached before this report could mature.
         if (validity.Holds()) {
@@ -191,7 +190,7 @@ void RuntimeEffects::SubmitViolationReport(std::function<void()> report) {
       });
 }
 
-void RuntimeEffects::SubmitDeferredObserved(std::function<void()> action) {
+void RuntimeEffects::SubmitDeferredObserved(OwnedCall action) {
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     // A deferred assertion outside any process (a static variable's
@@ -213,7 +212,7 @@ void RuntimeEffects::SubmitDeferredObserved(std::function<void()> action) {
       });
 }
 
-void RuntimeEffects::SubmitDeferredFinal(std::function<void()> action) {
+void RuntimeEffects::SubmitDeferredFinal(OwnedCall action) {
   RuntimeProcess* process = AsRuntime(*this).current_process_;
   if (process == nullptr) {
     Submit(Now(), Region::kPostponed, std::move(action));
@@ -226,7 +225,7 @@ void RuntimeEffects::SubmitDeferredFinal(std::function<void()> action) {
   Submit(
       Now(), Region::kPostponed,
       [validity = AssertionReportValidity(*process),
-       action = std::move(action)] {
+       action = std::move(action)]() mutable {
         if (validity.Holds()) action();
       });
 }

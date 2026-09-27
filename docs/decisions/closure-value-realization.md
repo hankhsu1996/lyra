@@ -84,10 +84,10 @@ D6. A closure's linkage name is qualified by its declaring unit. Its ordinal is 
 - A capture whose type the runtime has no storage realization for is refused where any unrealized
   member is, and the refusal names the type. The set is the same set an object member draws from, so
   a capture cannot reach a storage kind an instance could not.
-- The deferred-effect submits take a built closure and move it into the region, which is the
-  established consumption of a handle that must outlive the call it was built in
-  ([jit-value-realization](jit-value-realization.md) invariant 2). The engine's own surface is
-  unchanged; it still holds one callable per submitted effect.
+- The deferred-effect submits take a built closure into the region. This entry had them move the
+  value there; [construct-in-final-home](construct-in-final-home.md) replaced that: the closure is
+  made once in an allocation of its own, captures included, and the region takes its owner. The
+  engine's own surface is unchanged; it still holds one callable per submitted effect.
 - A closure whose body completes as a coroutine takes all of this and differs only in what becomes
   of the value it builds: entering it as a coroutine owns the captures from there, because the
   execution outlives the stretch that built them and nothing else holds them. The schema, the

@@ -2,8 +2,10 @@
 
 Date: 2026-09-11 Status: accepted; D2 realized by
 [a-member-is-reached-at-a-derived-offset](a-member-is-reached-at-a-derived-offset.md), which puts an
-object's and a scope's slots in the value's own allocation rather than in a block beside it, so
-invariant 3's one block type now serves the owners that move and a body's variables.
+object's and a scope's slots in the value's own allocation rather than in a block beside it; D3
+lifted by [construct-in-final-home](construct-in-final-home.md) as realized, which stops a closure
+moving and puts its captures in its own allocation the same way. The separately allocated block now
+serves only a body's variables.
 
 ## Context
 

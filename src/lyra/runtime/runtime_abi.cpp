@@ -20,7 +20,6 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
@@ -127,47 +126,31 @@ class GeneratedCoroutine {
   std::coroutine_handle<> handle_;
 };
 
-// The environment a callable value binds, held for as long as the body it was
-// bound for can read it. Both alternatives are that one concept: a process, a
-// spawned branch and an enabled task are each a body run by a site that does
-// not stay to supply the environment per invocation.
-//
-// Which alternative one takes is how long the environment outlives the body,
-// never what construct it came from. A body reaching its members through a
-// receiver borrows one that outlives every activation reading it, so the frame
-// carries it and there is nothing to hold here; a branch reads captures copied
-// where the `fork` ran, which outlive nothing on their own, so they are owned
-// here and die with this frame.
-class GeneratedEnvironment {
+// A body run by a site that does not stay to supply its environment per
+// invocation -- a process, a spawned branch, an enabled task: its frame, built
+// and not yet begun, and whatever that frame reads that nothing else keeps
+// alive. A body reaching its members through a receiver reads storage that
+// outlives every activation reading it, so it keeps nothing here; a branch
+// reads captures copied where the `fork` ran, which outlive nothing on their
+// own, so the closure holding them is kept here and ends after the frame does.
+class GeneratedBody {
  public:
-  static auto Borrowing(void* frame) -> GeneratedEnvironment {
-    return GeneratedEnvironment{Borrowed{.frame = frame}};
-  }
-  static auto Owning(ClosureValue closure) -> GeneratedEnvironment {
-    return GeneratedEnvironment{std::move(closure)};
+  GeneratedBody(void* frame, OwnedClosure captures)
+      : captures_(std::move(captures)), frame_(frame) {
   }
 
-  // The body's own frame, built and not yet begun, handed over once. Where the
-  // captures are held here, building the frame is what binds the body to their
-  // address, so it cannot happen until this environment is where it will stay.
-  auto TakeFrame() -> void* {
-    return std::visit(
-        Overloaded{
-            [](Borrowed& b) { return b.frame; },
-            [](ClosureValue& c) { return c.Start(); }},
-        held_);
+  [[nodiscard]] auto Done() const -> bool {
+    return frame_.Done();
+  }
+  void Resume() const {
+    frame_.Resume();
   }
 
  private:
-  struct Borrowed {
-    void* frame = nullptr;
-  };
-  using Held = std::variant<Borrowed, ClosureValue>;
-
-  explicit GeneratedEnvironment(Held held) : held_(std::move(held)) {
-  }
-
-  Held held_;
+  // Declared ahead of the frame so it is destroyed after it: the frame reads
+  // the captures until it ends.
+  OwnedClosure captures_;
+  GeneratedCoroutine frame_;
 };
 
 // Reaches the running coroutine's own record without suspending, which is how a
@@ -201,17 +184,15 @@ struct RunningExecution {
 // resumes this rather than the generated body.
 //
 // This is the activation. It holds what the generated body needs and cannot
-// hold itself -- that body's own coroutine, the environment it was entered on,
-// and this execution's value store -- so all are released together, on every
-// path this leaves.
-auto RunGeneratedProcess(GeneratedEnvironment environment) -> Coroutine<void> {
+// hold itself -- that body's own coroutine, what it reads that nothing else
+// keeps alive, and this execution's value store -- so all are released
+// together, on every path this leaves. The ramp laid the body's frame out and
+// stopped before its first statement, so no generated code has run yet and
+// nothing has reached for the store.
+auto RunGeneratedProcess(GeneratedBody generated) -> Coroutine<void> {
   PromiseBase& execution = *(co_await RunningExecution{});
   execution.activation_values = std::make_unique<ActivationValueStore>();
   ActivationValueStore& values = *execution.activation_values;
-
-  // The ramp lays out the body's frame and stops before its first statement, so
-  // no generated code has run yet and nothing has reached for the store.
-  GeneratedCoroutine generated{environment.TakeFrame()};
 
   // Every stretch of the body runs in a scope of its own naming this store, and
   // the parking between two of them holds none: a scope open across a park
@@ -241,11 +222,9 @@ auto RunGeneratedProcess(GeneratedEnvironment environment) -> Coroutine<void> {
 // statement, in the storage the enabling body gave it. Whoever enables it hands
 // it straight to the engine or to an awaiting frame, either of which takes it
 // from there, so nothing is left in that storage to end.
-auto StartGeneratedProcess(void* out, GeneratedEnvironment environment)
-    -> void* {
+auto StartGeneratedProcess(void* out, GeneratedBody body) -> void* {
   return std::construct_at(
-      static_cast<Coroutine<void>*>(out),
-      RunGeneratedProcess(std::move(environment)));
+      static_cast<Coroutine<void>*>(out), RunGeneratedProcess(std::move(body)));
 }
 
 // The branches one `fork` spawned, taken out of the storage the spawning body
@@ -537,33 +516,39 @@ auto ValuesOf(LyraSpan values) -> std::vector<T> {
   return resolved;
 }
 
+// What a body holding a closure hands over when something longer-lived takes
+// it: the closure's one owner. The closure itself stays where it was made.
+auto TakeOwner(void* closure) -> OwnedClosure {
+  return std::move(*static_cast<OwnedClosure*>(closure));
+}
+
 // A submitted closure runs after the body that built it has returned, so the
-// region takes the value out of that body's frame rather than borrowing it.
-// The region holds what it takes by a shared handle because a region queue
-// holds copyable callables, while a closure value owns its captures and is
-// therefore only movable.
-auto TakeClosure(void* closure) -> std::function<void()> {
-  return [held = std::make_shared<ClosureValue>(std::move(
-              *static_cast<ClosureValue*>(closure)))] { held->Invoke(); };
+// region takes it rather than borrowing it.
+auto TakeClosure(void* closure) -> OwnedCall {
+  return [held = TakeOwner(closure)] { held->Invoke(); };
+}
+
+// A closure kept and handed to a region again each time it is due -- a
+// concurrent assertion's action, submitted once per attempt that settles --
+// so every submission shares it rather than one of them owning it.
+auto ShareClosure(void* closure) -> std::function<void()> {
+  return [held = std::shared_ptr<ClosureValue>(TakeOwner(closure))] {
+    held->Invoke();
+  };
 }
 
 // A closure an observation keeps and runs each time it is asked -- what the
 // watched expression is worth now, or whether an `iff` qualifier holds. The
-// observation outlives the body that built the closure, so it takes it, and
-// holds it by a shared handle because an observation is copied to each leaf of
-// the expression while a closure value owns its captures and is only movable.
+// observation outlives the body that built the closure, so it takes it.
 auto TakeEvaluator(void* closure) {
-  return [held = std::make_shared<ClosureValue>(
-              std::move(*static_cast<ClosureValue*>(closure)))] {
-    return held->RunValue();
-  };
+  return [held = TakeOwner(closure)] { return held->RunValue(); };
 }
 
 // The body an LRM 7.12 method runs, as the value layer takes it. The closure is
 // borrowed rather than taken: the method runs it to completion before
 // returning, so the frame that built it is still alive for the whole walk.
 auto ArrayBody(void* body) -> value::ArrayMethodBody {
-  return [closure = static_cast<ClosureValue*>(body)](
+  return [closure = Read<OwnedClosure>(body).get()](
              const value::RuntimeValue& item,
              const value::RuntimeValue& index) -> value::RuntimeValue {
     return closure->RunPerElement(item, index);
@@ -654,17 +639,9 @@ auto EmplaceBoth(void* out, const value::Tuple<First, Second>& completion)
 }
 
 // An event control's leaves cross as a span of pointers to values this call
-// does not own, so what the wait is built from is gathered here. What the wait
-// itself is, is decided by the one function both backends call.
-auto TriggersOf(LyraSpan triggers) -> std::vector<Trigger> {
-  const std::span<Trigger* const> handles(
-      static_cast<Trigger* const*>(triggers.data), triggers.count);
-  std::vector<Trigger> collected;
-  collected.reserve(triggers.count);
-  for (const Trigger* handle : handles) {
-    collected.push_back(*handle);
-  }
-  return collected;
+// does not own, and the wait reads them there.
+auto TriggerHandles(LyraSpan triggers) -> std::span<const Trigger* const> {
+  return {static_cast<const Trigger* const*>(triggers.data), triggers.count};
 }
 
 }  // namespace
@@ -736,6 +713,7 @@ using lyra::runtime::OpenCellWrite;
 using lyra::runtime::OpenDriverWrite;
 using lyra::runtime::OpenRefWrite;
 using lyra::runtime::OpenWrite;
+using lyra::runtime::OwnedClosure;
 using lyra::runtime::ProcessAwait;
 using lyra::runtime::ProcessKill;
 using lyra::runtime::ProcessOf;
@@ -765,6 +743,7 @@ using lyra::runtime::RuntimeProcess;
 using lyra::runtime::SampledHistory;
 using lyra::runtime::Scope;
 using lyra::runtime::ScopeDefinition;
+using lyra::runtime::ShareClosure;
 using lyra::runtime::SimTimeInUnit;
 using lyra::runtime::SpawnAll;
 using lyra::runtime::STimeInUnit;
@@ -773,9 +752,10 @@ using lyra::runtime::SubscribeToLeaves;
 using lyra::runtime::TakeBranches;
 using lyra::runtime::TakeClosure;
 using lyra::runtime::TakeEvaluator;
+using lyra::runtime::TakeOwner;
 using lyra::runtime::TestPlusargs;
 using lyra::runtime::Trigger;
-using lyra::runtime::TriggersOf;
+using lyra::runtime::TriggerHandles;
 using lyra::runtime::ValuesOf;
 using lyra::runtime::Var;
 using lyra::runtime::WaitAny;
@@ -1071,14 +1051,18 @@ void lyra_rt_record_coverage(void* runtime, const void* site, bool succeeded) {
 auto lyra_rt_enter_coroutine_borrowed_environment(
     void* frame, void* out) noexcept -> void* {
   return lyra::runtime::StartGeneratedProcess(
-      out, lyra::runtime::GeneratedEnvironment::Borrowing(frame));
+      out, lyra::runtime::GeneratedBody(frame, nullptr));
 }
 
+// The site holds only the closure's owner, which generated code cannot see
+// through, so the frame is built here, and the owner is kept for as long as
+// that frame can run.
 auto lyra_rt_enter_coroutine_owned_environment(
     void* closure, void* out) noexcept -> void* {
+  OwnedClosure captures = TakeOwner(closure);
+  void* frame = captures->Start();
   return lyra::runtime::StartGeneratedProcess(
-      out, lyra::runtime::GeneratedEnvironment::Owning(
-               std::move(*static_cast<ClosureValue*>(closure))));
+      out, lyra::runtime::GeneratedBody(frame, std::move(captures)));
 }
 
 auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool {
@@ -1166,15 +1150,11 @@ void lyra_rt_process_resume(const void* self, void* runtime) {
 
 auto lyra_rt_closure_make(const void* definition, LyraSpan captures, void* out)
     -> void* {
-  return std::construct_at(
-      static_cast<ClosureValue*>(out),
-      static_cast<const ClosureDefinition*>(definition),
-      std::span<void* const>(
-          static_cast<void* const*>(captures.data), captures.count));
-}
-
-auto lyra_rt_closure_capture(void* self, std::uint32_t index) -> void* {
-  return static_cast<ClosureValue*>(self)->Capture(index);
+  return Emplace(
+      out, ClosureValue::Make(
+               static_cast<const ClosureDefinition*>(definition),
+               std::span<void* const>(
+                   static_cast<void* const*>(captures.data), captures.count)));
 }
 
 auto lyra_rt_object_make(const void* definition, void* out) -> void* {
@@ -1295,12 +1275,13 @@ auto lyra_rt_observation_qualified(void* condition, void* out) -> void* {
 }
 
 auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool {
-  return WaitAny(*static_cast<RuntimeEffects*>(runtime), TriggersOf(triggers));
+  return WaitAny(
+      *static_cast<RuntimeEffects*>(runtime), TriggerHandles(triggers));
 }
 
 auto lyra_rt_wait_until(void* runtime, LyraSpan triggers) -> bool {
   return WaitUntil(
-      *static_cast<RuntimeEffects*>(runtime), TriggersOf(triggers));
+      *static_cast<RuntimeEffects*>(runtime), TriggerHandles(triggers));
 }
 
 auto lyra_rt_resume_in_nba_region(void* runtime) -> bool {
@@ -2530,7 +2511,7 @@ void lyra_rt_evaluation_attempts_install(
     void* pass_action, void* fail_action) {
   static_cast<EvaluationAttempts*>(attempts)->Install(
       *static_cast<RuntimeEffects*>(effects), words, pending_holds,
-      TakeClosure(pass_action), TakeClosure(fail_action));
+      ShareClosure(pass_action), ShareClosure(fail_action));
 }
 
 void lyra_rt_evaluation_attempts_seed_word(
@@ -5992,7 +5973,7 @@ void lyra_rt_managedref_destroy(void* object) {
   std::destroy_at(static_cast<ManagedRef*>(object));
 }
 void lyra_rt_closure_destroy(void* object) {
-  std::destroy_at(static_cast<ClosureValue*>(object));
+  std::destroy_at(static_cast<OwnedClosure*>(object));
 }
 void lyra_rt_hierarchy_segment_destroy(void* object) {
   std::destroy_at(static_cast<HierarchySegment*>(object));
@@ -6151,7 +6132,7 @@ auto lyra_rt_managedref_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<ManagedRef*>(value)));
 }
 auto lyra_rt_closure_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<ClosureValue*>(value)));
+  return Emplace(out, TakeOwner(value));
 }
 auto lyra_rt_promoted_scope_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<PromotedScopeRef*>(value)));
@@ -6223,7 +6204,7 @@ static_assert(LaidOutAs<value::RuntimeQueue>(ValueDomain::kQueue));
 static_assert(
     LaidOutAs<value::RuntimeAssociativeArray>(ValueDomain::kAssocArray));
 static_assert(LaidOutAs<value::ManagedRef>(ValueDomain::kManagedRef));
-static_assert(LaidOutAs<ClosureValue>(LibraryObject::kClosure));
+static_assert(LaidOutAs<OwnedClosure>(LibraryObject::kClosure));
 static_assert(LaidOutAs<value::PrintItem>(LibraryObject::kPrintItem));
 static_assert(LaidOutAs<value::FormatSpec>(LibraryObject::kFormatSpec));
 static_assert(LaidOutAs<value::FormatArg>(LibraryObject::kFormatArg));

@@ -240,10 +240,12 @@ void lyra_rt_process_resume(const void* self, void* runtime);
 // cross-artifact reference naming both the body and the storage its captures
 // need, and `captures` supplies one handle per capture in declaration order,
 // each taken into that storage as the schema says -- a pointer held, a value
-// copied. It is built in storage the caller gives, and something that outlives
-// the caller's statement takes it from there: a region a deferred effect is
-// submitted to, the coroutine a spawned branch is entered as, or the array
-// method that runs a per-element body over its receiver.
+// copied. The closure is made once, with its captures in its own allocation,
+// and never moves; what the caller's storage receives is its owner, which is
+// what something outliving the caller's statement takes from there: a region a
+// deferred effect is submitted to, the coroutine a spawned branch is entered
+// as, or an observation of the value it answers. An array method running a
+// per-element body borrows it for the call.
 auto lyra_rt_closure_make(const void* definition, LyraSpan captures, void* out)
     -> void*;
 
@@ -333,13 +335,6 @@ auto lyra_rt_enumeration_next(
 auto lyra_rt_enumeration_prev(
     const void* enumeration, const void* value, const void* count, void* out)
     -> void*;
-
-// The handle one capture crosses back to the body as, by declaration index. A
-// captured pointer answers the pointer it holds; a captured value answers the
-// storage the closure owns, which outlives every read of it. A body reaches its
-// captures the same way whatever it is called with, so this is one entry for
-// every body.
-auto lyra_rt_closure_capture(void* self, std::uint32_t index) -> void*;
 
 // Hands a callable to the region that will run it (LRM 4.4): the write a
 // non-blocking assignment defers, the print a `$strobe` postpones, and the

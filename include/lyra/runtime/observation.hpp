@@ -169,7 +169,7 @@ class ValueWatch {
     return packed->Lsb();
   }
 
-  std::function<value::RuntimeValue()> evaluate_;
+  std::move_only_function<value::RuntimeValue()> evaluate_;
   value::RuntimeValue baseline_;
   support::EventEdge edge_ = support::EventEdge::kAnyChange;
 };
@@ -249,7 +249,7 @@ class ArmedObservation {
   // is compiled rather than here.
   template <std::invocable Condition>
   [[nodiscard]] static auto WrapCondition(Condition condition)
-      -> std::function<bool()> {
+      -> std::move_only_function<bool()> {
     return [condition = std::move(condition)]() -> bool {
       const value::RuntimeValue held{condition()};
       const auto* packed = std::get_if<value::PackedArray>(&held.value);
@@ -263,7 +263,7 @@ class ArmedObservation {
   }
 
   std::optional<ValueWatch> watch_;
-  std::function<bool()> condition_;
+  std::move_only_function<bool()> condition_;
 };
 
 // What a wait carries an observation as. One event expression has one

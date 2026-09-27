@@ -29,6 +29,9 @@ states the figures it depends on, each asserted against its own types.
 - Which kind of value holds a class's values follows from its lineage: a class standing in the
   design hierarchy is held by a scope, every other class by a plain object. Each kind has a fixed
   size, so where members begin is a figure per kind.
+- A closure is the third kind of value, and its captures are its members: it extends nothing, so a
+  capture's place is its position among the captures. A capture read is the same address computation
+  as a property read, where it was a runtime call.
 - How many members a lineage carries ahead of a class's own is a constant wherever the lineage is
   this unit's classes down to a root the runtime provides. Where it passes through another unit's
   class it is not this unit's to know, and the step reads the count the runtime recorded when it

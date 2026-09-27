@@ -39,15 +39,27 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
 }
 
-// Where the members of a value of some class sit, as far as this unit can say:
-// which kind of value holds them, and how many members the lineage carries
-// ahead of the ones that class declares itself. The count is a sum over the
+// Where the members a declaration gives its values sit, as far as this unit can
+// say: which kind of value holds them, and how many members the lineage carries
+// ahead of the ones the declaration states itself. The count is a sum over the
 // lineage, and a lineage passing through another unit's class includes storage
 // that unit keeps to itself, so there the count is not this unit's to know.
 struct MemberPlacement {
   support::ValueHolder holder{};
   std::optional<std::uint32_t> ahead;
 };
+
+// The declaration a member step names as the one that gave the member.
+auto DeclarationOf(const lir::CompilationUnit& unit, lir::TypeId declared_by)
+    -> lir::TypeDeclaration {
+  std::optional<lir::TypeDeclaration> declaration =
+      unit.types.Get(declared_by).Declaration();
+  if (!declaration.has_value()) {
+    throw InternalError(
+        "llvm codegen: a member step names a type that declares nothing");
+  }
+  return *std::move(declaration);
+}
 
 auto HolderOf(
     const lir::CompilationUnit& unit, const std::optional<lir::Base>& extends)
@@ -87,12 +99,6 @@ auto MembersAhead(
 
 auto PlacementOf(const lir::CompilationUnit& unit, lir::TypeId declared_by)
     -> MemberPlacement {
-  const std::optional<lir::TypeDeclaration> declaration =
-      unit.types.Get(declared_by).Declaration();
-  if (!declaration.has_value()) {
-    throw InternalError(
-        "llvm codegen: a member step names a type that declares nothing");
-  }
   return std::visit(
       Overloaded{
           [&](const lir::ObjectType& object) -> MemberPlacement {
@@ -116,17 +122,17 @@ auto PlacementOf(const lir::CompilationUnit& unit, lir::TypeId declared_by)
           [](const lir::StructType&) -> MemberPlacement {
             return {.holder = support::ValueHolder::kObject, .ahead = 0};
           },
+          // A closure extends nothing, so a capture's place is its position
+          // among the captures.
           [](const lir::ClosureType&) -> MemberPlacement {
-            throw InternalError(
-                "llvm codegen: a capture is reached through its closure's own "
-                "access, never by a member step");
+            return {.holder = support::ValueHolder::kClosure, .ahead = 0};
           },
           [](const lir::ExternalUnitObjectType&) -> MemberPlacement {
             throw InternalError(
                 "llvm codegen: another unit's object is reached through what "
                 "it promised, never by a member step");
           }},
-      *declaration);
+      DeclarationOf(unit, declared_by));
 }
 
 // The signature a call is made under: the result the instruction defines, over
@@ -242,25 +248,13 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
 }
 
 // Reading a place answers with the value it holds, where it lies, whatever
-// storage that is: a cell's contents and a capture's storage are asked of the
-// cell and the closure, and anything else is its own address. A value of a
-// type held as itself is read out of that address.
+// storage that is: a cell's contents are asked of the cell, and anything else
+// is its own address. A value of a type held as itself is read out of that
+// address.
 auto CodeGenFunction::LowerLoad(
     const lir::LoadInstr& load, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
   llvm::Type* const result = module_->Types().Map(result_type);
-  if (const std::optional<CapturePlace> capture = CapturePlaceOf(load.place)) {
-    auto closure = ResolvePlaceAddress(capture->closure, Access::kRead);
-    if (!closure) {
-      return std::unexpected(std::move(closure.error()));
-    }
-    const std::array<llvm::Value*, 2> args{
-        *closure,
-        llvm::ConstantInt::get(
-            llvm::Type::getInt32Ty(module_->Context()), capture->index)};
-    return builder_.CreateCall(
-        Entry(RuntimeSymbol(RuntimeOp::kClosureCapture), result, args), args);
-  }
   auto wrapper = WrapperPlaceOf(load.place);
   if (!wrapper) {
     return std::unexpected(std::move(wrapper.error()));
@@ -1707,30 +1701,6 @@ auto CodeGenFunction::WrapperPlaceOf(const lir::Place& place) const
       .domain = *domain, .kind = reached->first, .wrapper = std::move(wrapper)};
 }
 
-auto CodeGenFunction::CapturePlaceOf(const lir::Place& place) const
-    -> std::optional<CapturePlace> {
-  // The last step names storage inside whatever the chain had reached, and only
-  // a member step reaches a capture.
-  const auto* member =
-      place.chain.empty()
-          ? nullptr
-          : std::get_if<lir::MemberProjection>(&place.chain.back());
-  if (member == nullptr) {
-    return std::nullopt;
-  }
-  lir::Place holder{
-      .base = place.base,
-      .chain = {place.chain.begin(), std::prev(place.chain.end())}};
-  const lir::TypeId reached = ReachedType(place, std::ssize(place.chain) - 1);
-  if (!module_->Unit().types.Get(reached).Is<lir::ClosureType>()) {
-    return std::nullopt;
-  }
-  // A closure extends nothing, so the slot its declaration gave a capture is
-  // already where that capture sits in the value.
-  return CapturePlace{
-      .closure = std::move(holder), .index = member->member.slot.value};
-}
-
 auto CodeGenFunction::StorageReached(lir::TypeId operand) const
     -> const lir::Type& {
   const lir::TypePool& types = module_->Unit().types;
@@ -1783,20 +1753,33 @@ auto CodeGenFunction::PlaceValueCellDomain(
   if (place.chain.empty()) {
     return std::nullopt;
   }
-  const bool reaches_a_cell = std::visit(
+  // The role of the slot a step reaches, where the step can reach a cell at
+  // all: a member's is its declaration's, and a pointer arriving at storage
+  // arrives at a variable.
+  const std::optional<MemberSlotRole> role = std::visit(
       Overloaded{
-          [](const lir::MemberProjection&) { return true; },
-          [&](const lir::DerefProjection&) {
-            return module_->Unit()
-                .types.Get(ReachedType(place, std::ssize(place.chain) - 1))
-                .Is<lir::PointerType>();
+          [&](const lir::MemberProjection& step)
+              -> std::optional<MemberSlotRole> {
+            return MemberSlotRoleOf(
+                DeclarationOf(module_->Unit(), step.member.declared_by));
           },
-          [](const lir::ElementProjection&) { return false; },
-          [](const lir::PartProjection&) { return false; }},
+          [&](const lir::DerefProjection&) -> std::optional<MemberSlotRole> {
+            if (!module_->Unit()
+                     .types.Get(ReachedType(place, std::ssize(place.chain) - 1))
+                     .Is<lir::PointerType>()) {
+              return std::nullopt;
+            }
+            return MemberSlotRole::kVariable;
+          },
+          [](const lir::ElementProjection&) -> std::optional<MemberSlotRole> {
+            return std::nullopt;
+          },
+          [](const lir::PartProjection&) -> std::optional<MemberSlotRole> {
+            return std::nullopt;
+          }},
       place.chain.back());
-  if (!reaches_a_cell ||
-      MemberStorageKindOf(module_->Unit(), value, MemberSlotRole::kVariable) !=
-          support::MemberStorageKind::kValueCell) {
+  if (!role.has_value() || MemberStorageKindOf(module_->Unit(), value, *role) !=
+                               support::MemberStorageKind::kValueCell) {
     return std::nullopt;
   }
   return ValueDomainOf(module_->Unit(), value);

@@ -1,11 +1,11 @@
 #pragma once
 
-#include <cstdint>
+#include <memory>
 #include <span>
 #include <variant>
 
+#include "lyra/runtime/member_slots.hpp"
 #include "lyra/runtime/scope_program.hpp"
-#include "lyra/runtime/storage_block.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/runtime_value.hpp"
 
@@ -47,6 +47,12 @@ struct ClosureDefinition {
   MemberStorageSchema captures;
 };
 
+class ClosureValue;
+
+// A closure value as whoever holds it carries it: the one owner of the closure,
+// which stays where it was made while the owner is handed on.
+using OwnedClosure = std::unique_ptr<ClosureValue>;
+
 // A callable the runtime runs on the program's behalf -- a non-blocking
 // assignment, a postponed print, a deferred assertion's action, the branch a
 // `fork` spawns, the `with` expression an array method evaluates per entry, the
@@ -54,23 +60,34 @@ struct ClosureDefinition {
 // owns one storage object per capture, so a captured value is a copy taken
 // where the closure was built and released with the closure, never a handle
 // into the body that built it, which may be gone by the time this one runs.
+//
+// The captures follow the value in its own allocation, so a body reaches one at
+// a fixed distance from the value it was entered on. The value never moves: a
+// coroutine body's frame reads the captures through that address for as long
+// as it runs, and whatever keeps the closure is handed its owner instead.
 class ClosureValue {
  public:
   // `captures` supplies one handle per capture, in declaration order. Each is
   // taken as the schema says: a pointer is held, a value is copied.
-  ClosureValue(
-      const ClosureDefinition* definition, std::span<void* const> captures);
+  [[nodiscard]] static auto Make(
+      const ClosureDefinition* definition, std::span<void* const> captures)
+      -> OwnedClosure;
 
-  // The handle capture `index` crosses back to the body as.
-  [[nodiscard]] auto Capture(std::uint32_t index) -> void*;
+  ClosureValue(const ClosureValue&) = delete;
+  auto operator=(const ClosureValue&) -> ClosureValue& = delete;
+  ClosureValue(ClosureValue&&) = delete;
+  auto operator=(ClosureValue&&) -> ClosureValue& = delete;
+  ~ClosureValue() = default;
+
+  // Ending a closure returns the whole allocation it was made in, whose size is
+  // not the value's own, so the release takes the address alone.
+  static void operator delete(void* address);
 
   // Runs an ordinary body to completion.
   void Invoke();
 
   // Builds a coroutine body's frame over these captures and answers its handle,
-  // having run no statement of it; the caller drives it from there. The body
-  // reads its captures through this value's address for as long as it runs, so
-  // this may only be called once this value is where it will stay.
+  // having run no statement of it; the caller drives it from there.
   [[nodiscard]] auto Start() -> void*;
 
   // Runs a per-element body on one entry (LRM 7.12.4) and answers the value it
@@ -83,8 +100,11 @@ class ClosureValue {
   [[nodiscard]] auto RunValue() -> value::RuntimeValue;
 
  private:
+  ClosureValue(
+      const ClosureDefinition* definition, std::span<void* const> captures);
+
   const ClosureDefinition* definition_;
-  StorageBlock captures_;
+  MemberSlots captures_;
 };
 
 }  // namespace lyra::runtime

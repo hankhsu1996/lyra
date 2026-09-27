@@ -2,11 +2,11 @@
 
 #include <cstdint>
 #include <exception>
-#include <functional>
 #include <string_view>
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/trigger.hpp"
@@ -69,32 +69,32 @@ class RuntimeEffects {
 
   // LRM 4.4: place `effect` in `region` of the time slot at `when`. A deferred
   // effect runs where it is placed and never suspends whoever submitted it.
-  void Submit(SimTime when, Region region, std::function<void()> effect);
+  void Submit(SimTime when, Region region, OwnedCall effect);
 
   // The regions a deferred effect is written into, one entry each: the
   // construct that writes it fixes the region, and the slot is the current one
   // unless the entry takes a delay.
-  void SubmitNba(std::function<void()> closure);
+  void SubmitNba(OwnedCall closure);
   // LRM 9.4.5: a nonblocking effect carrying a delay control schedules its
   // update into the NBA region of the slot that delay names (LRM 4.4.2.4).
   // `duration` is an amount in the scope's time unit, read exactly as a delay
   // control reads one.
   void SubmitNbaAfter(
       const value::PackedArray& duration, const value::PackedArray& unit_power,
-      const value::PackedArray& precision_power, std::function<void()> closure);
+      const value::PackedArray& precision_power, OwnedCall closure);
   void SubmitNbaAfterReal(
       const value::Real& duration, const value::PackedArray& unit_power,
-      const value::PackedArray& precision_power, std::function<void()> closure);
-  void SubmitPostponed(std::function<void()> closure);
+      const value::PackedArray& precision_power, OwnedCall closure);
+  void SubmitPostponed(OwnedCall closure);
   // LRM 16.5: a concurrent assertion is evaluated in the Observed region of the
   // tick's own time step, once every region in which that step settles the
   // values it reads has run. Nothing withdraws it: what an attempt reads is
   // sampled, so no flush point of the process that submitted it can change the
   // answer.
-  void SubmitObserved(std::function<void()> effect);
+  void SubmitObserved(OwnedCall effect);
   // LRM 12.4.2.1: a violation report matures in the Observed region unless the
   // process that raised it reaches a flush point first.
-  void SubmitViolationReport(std::function<void()> report);
+  void SubmitViolationReport(OwnedCall report);
   // LRM 16.4: a deferred immediate assertion's action is queued where the
   // statement is reached and acts later only if every source that could
   // withdraw it still stands -- the executing process's pass, and the disable
@@ -103,8 +103,8 @@ class RuntimeEffects {
   // a final one matures and acts in Postponed. Maturing discards what it
   // validated, which is why a matured report can no longer be withdrawn
   // (16.4.1).
-  void SubmitDeferredObserved(std::function<void()> action);
-  void SubmitDeferredFinal(std::function<void()> action);
+  void SubmitDeferredObserved(OwnedCall action);
+  void SubmitDeferredFinal(OwnedCall action);
 
   // LRM 16.14.5: a concurrent assertion's attempts outlive the tick that
   // started them, so an attempt can still be in flight when the run ends. What

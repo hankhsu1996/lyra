@@ -9,6 +9,7 @@
 
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/operator.hpp"
+#include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/member_storage_kind.hpp"
@@ -106,7 +107,6 @@ enum class RuntimeOp : std::uint8_t {
   kMethod,
   kClassFindProperty,
   kClassFindBehavior,
-  kClosureCapture,
   kConst,
   kToBool,
   kValueBox,
@@ -154,6 +154,12 @@ enum class RuntimeOp : std::uint8_t {
 // long as its owner lives, and a snapshot is filled once where its owner is
 // built and only read afterwards.
 enum class MemberSlotRole : std::uint8_t { kVariable, kSnapshot };
+
+// What the members a declaration gives its values are for. A closure's are
+// copies taken where it is built and only read after; every other
+// declaration's are variables of the value that holds them.
+auto MemberSlotRoleOf(const lir::TypeDeclaration& declaration)
+    -> MemberSlotRole;
 
 // The storage kind a member of `type` needs, or nothing where this backend has
 // no realization for such a member. One arm per LIR type and no catch-all,

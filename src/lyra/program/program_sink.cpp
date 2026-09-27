@@ -260,7 +260,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_enumeration_name", &lyra_rt_enumeration_name);
   add("lyra_rt_enumeration_next", &lyra_rt_enumeration_next);
   add("lyra_rt_enumeration_prev", &lyra_rt_enumeration_prev);
-  add("lyra_rt_closure_capture", &lyra_rt_closure_capture);
   add("lyra_rt_submit_nba", &lyra_rt_submit_nba);
   add("lyra_rt_submit_nba_after", &lyra_rt_submit_nba_after);
   add("lyra_rt_submit_nba_after_real", &lyra_rt_submit_nba_after_real);

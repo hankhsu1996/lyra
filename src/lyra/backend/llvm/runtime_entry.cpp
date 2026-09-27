@@ -107,8 +107,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "class_find_property";
     case RuntimeOp::kClassFindBehavior:
       return "class_find_behavior";
-    case RuntimeOp::kClosureCapture:
-      return "closure_capture";
     case RuntimeOp::kConst:
       return "const";
     case RuntimeOp::kToBool:
@@ -237,6 +235,22 @@ auto RuntimeSymbol(lir::ControlEffectTarget::Op op) -> std::string {
 
 auto RuntimeSymbol(lir::CoroutineTarget::Op op) -> std::string {
   return Symbol(lir::CoroutineOpName(op));
+}
+
+auto MemberSlotRoleOf(const lir::TypeDeclaration& declaration)
+    -> MemberSlotRole {
+  return std::visit(
+      Overloaded{
+          [](const lir::ObjectType&) { return MemberSlotRole::kVariable; },
+          [](const lir::ExternalUnitObjectType&) {
+            return MemberSlotRole::kVariable;
+          },
+          [](const lir::CrossUnitClassType&) {
+            return MemberSlotRole::kVariable;
+          },
+          [](const lir::StructType&) { return MemberSlotRole::kVariable; },
+          [](const lir::ClosureType&) { return MemberSlotRole::kSnapshot; }},
+      declaration);
 }
 
 auto MemberStorageKindOf(

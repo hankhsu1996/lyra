@@ -2,10 +2,10 @@
 
 #include <array>
 #include <cstddef>
-#include <functional>
 #include <optional>
 #include <vector>
 
+#include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/registration.hpp"
 
@@ -19,7 +19,7 @@ namespace lyra::runtime {
 // the region runs.
 struct RegionQueue {
   RegistrationList activations;
-  std::vector<std::function<void()>> effects;
+  std::vector<OwnedCall> effects;
 
   [[nodiscard]] auto Empty() const noexcept -> bool {
     return activations.Empty() && effects.empty();

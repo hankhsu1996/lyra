@@ -27,6 +27,13 @@ class EventControlWait : public Wait {
       : triggers_(triggers.begin(), triggers.end()) {
   }
 
+  explicit EventControlWait(std::span<const Trigger* const> triggers) {
+    triggers_.reserve(triggers.size());
+    for (const Trigger* trigger : triggers) {
+      triggers_.push_back(*trigger);
+    }
+  }
+
   // NOLINTNEXTLINE(readability-named-parameter)
   auto Begin(RuntimeEffects&, CoroutineHandle leaf) -> WaitOutcome override {
     SubscribeToLeaves(leaf, triggers_);
@@ -98,6 +105,18 @@ auto WaitAny(RuntimeEffects& services, std::span<const Trigger> triggers)
 }
 
 auto WaitUntil(RuntimeEffects& services, std::span<const Trigger> triggers)
+    -> bool {
+  return services.CurrentProcess().ParkOn<LevelConditionWait>(
+      services, triggers);
+}
+
+auto WaitAny(RuntimeEffects& services, std::span<const Trigger* const> triggers)
+    -> bool {
+  return services.CurrentProcess().ParkOn<EventControlWait>(services, triggers);
+}
+
+auto WaitUntil(
+    RuntimeEffects& services, std::span<const Trigger* const> triggers)
     -> bool {
   return services.CurrentProcess().ParkOn<LevelConditionWait>(
       services, triggers);
