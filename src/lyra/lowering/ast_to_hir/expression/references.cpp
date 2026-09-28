@@ -12,6 +12,7 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
+#include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
@@ -26,27 +27,18 @@
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/primary.hpp"
-#include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/expression/selects.hpp"
+#include "lyra/lowering/ast_to_hir/expression/view_names.hpp"
+#include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
-#include "lyra/lowering/ast_to_hir/published_projection.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// What a value reference to a symbol lowers to, independent of whether the
-// reference is written by simple name or by a hierarchical path (LRM 6, 8.4,
-// 8.11, 23.6). A parameter or enum value is a compile-time constant whose value
-// does not depend on the path used to reach it; a variable or net binds to a
-// runtime storage cell; a class property reaches the invoking object's field;
-// `this` is that object itself, which is no cell at all. One classification
-// serves every consumer of a name -- including the reads a process is sensitive
-// to, which build no expression at all -- so a symbol cannot be read as a
-// constant by one of them and turned away by another.
 // True when the symbol is the `this` handle (LRM 8.11) of the scope that
 // declares it. The front end synthesizes one such variable per scope that can
 // name the current instance -- a non-static method, a constraint block, and
@@ -484,151 +476,6 @@ auto LowerInterfacePortValue(
   return ValueTargetRefExpr(hir::ValueTarget{*route}, *type_id, span);
 }
 
-// LRM 25.5: a name the modport an interface port selected defined for itself.
-// The identifier belongs to the view rather than to the interface's
-// declarations (LRM 25.5.4), so what it means is read out of the view the
-// interface published -- it names no declaration and could not be found among
-// the members.
-//
-// The route is kept beside the meaning because the two answers need different
-// things from it: a place is reached over it member by member, while a call is
-// made on the object it ends at. The meaning is copied rather than pointed at,
-// since reaching the object may grow the arena it lives in.
-struct OfferedName {
-  ScopeRoute route;
-  hir::ExternalUnitObjectId object;
-  hir::ViewDefinedName meaning;
-};
-
-auto ResolveOfferedName(
-    UnitLowerer& unit_lowerer, WalkFrame frame,
-    const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
-    -> diag::Result<OfferedName> {
-  // The view offering the name is the scope the port identifier is declared in
-  // (LRM 25.5.4).
-  const auto& selected =
-      hve.symbol.getParentScope()->asSymbol().as<slang::ast::ModportSymbol>();
-  // The object the view sits on is reached the way this unit reaches that
-  // interface instance -- through the port a connection bound it to, or by a
-  // route down to an instance the design declares inside this unit. Which of
-  // the two is a fact about the object and not about the name, so it is the
-  // same question a name reaching an ordinary member of that instance asks.
-  auto through =
-      hve.ref.isViaIfacePort()
-          ? unit_lowerer.ReachOneThroughInterfacePort(frame, hve.ref)
-          : unit_lowerer.RouteToScope(frame, *selected.getParentScope());
-  if (!through.has_value() || !through->unit_name.has_value()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a name a view offers, reached past what the interface promised, is "
-        "not yet supported");
-  }
-  const hir::ExternalUnitObjectId object =
-      unit_lowerer.ExternalUnitObjectOf(*through->unit_name);
-  // The record is an arena entry, so what this reference needs comes out of it
-  // before anything else can grow the arena.
-  const hir::PublishedModport* view = hir::FindModport(
-      unit_lowerer.Unit().external_unit_objects.Get(object).modports,
-      selected.name);
-  const hir::PublishedModportPort* offered =
-      view == nullptr ? nullptr : view->Find(hve.symbol.name);
-  if (offered == nullptr) {
-    throw InternalError(
-        "ResolveOfferedName: an interface publishes every name each of its "
-        "views defines, and the front end has refused any other");
-  }
-  return OfferedName{
-      .route = *std::move(through),
-      .object = object,
-      .meaning = offered->meaning};
-}
-
-// The storage a name a view defines designates, as a place this unit reaches:
-// each part routed to the member the interface published and descended by the
-// path it stated, then joined. A concatenation of places is itself a place (LRM
-// 11.4.12), so what comes back is written, read, driven and taken over exactly
-// as any other place is.
-auto ViewDefinedPlaceExpr(
-    UnitLowerer& unit_lowerer, WalkFrame frame, const OfferedName& offered,
-    const hir::ViewDefinedPlace& place, diag::SourceSpan span) -> hir::Expr {
-  std::vector<hir::ExprId> parts;
-  parts.reserve(place.parts.size());
-  for (const hir::MemberProjection& part : place.parts) {
-    const hir::PublishedMember member =
-        unit_lowerer.Unit()
-            .external_unit_objects.Get(offered.object)
-            .members.Get(part.member);
-    hir::Expr base = unit_lowerer.MakeRoutedMemberRef(
-        frame.Current(),
-        hir::ValueRoute{
-            .head = offered.route.head,
-            .steps = offered.route.steps,
-            .leaf =
-                hir::SignatureMemberLeaf{
-                    .object = offered.object,
-                    .member = part.member,
-                    .storage = member.storage,
-                    .type = member.type}},
-        span);
-    parts.push_back(frame.Exprs().Add(ProjectPublishedPath(
-        unit_lowerer, frame, part.path, std::move(base), span)));
-  }
-  // Joining is what gives the name a type its parts do not have, so a single
-  // part already carrying the name's type is the name -- and one that does not
-  // was joined by the view and is joined here too.
-  if (parts.size() == 1 &&
-      frame.Exprs().Get(parts.front()).type == place.type) {
-    return frame.Exprs().Get(parts.front());
-  }
-  return hir::Expr{
-      .type = place.type,
-      .data = hir::ConcatExpr{.operands = std::move(parts)},
-      .span = span};
-}
-
-// LRM 25.5.4: a name a view defines is either the storage its expression
-// designates or, where the view offers it only for reading, a value this
-// interface computes. The first is reached as a place, which is what makes
-// every form of write to it an ordinary write; the second is a call on the
-// instance the port carries, because the expression names declarations this
-// unit never sees.
-auto LowerViewDefinedName(
-    UnitLowerer& unit_lowerer, WalkFrame frame,
-    const slang::ast::HierarchicalValueExpression& hve, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
-  auto resolved = ResolveOfferedName(unit_lowerer, frame, hve, span);
-  if (!resolved) return std::unexpected(std::move(resolved.error()));
-  return std::visit(
-      Overloaded{
-          [&](const hir::ViewDefinedPlace& place) -> hir::Expr {
-            return ViewDefinedPlaceExpr(
-                unit_lowerer, frame, *resolved, place, span);
-          },
-          [&](const hir::ViewComputedValue& computed) -> hir::Expr {
-            const hir::ExternalUnitObject& promised =
-                unit_lowerer.Unit().external_unit_objects.Get(resolved->object);
-            const hir::TypeId result_type =
-                promised.callables.Get(computed.evaluate).result_type;
-            const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-                hir::Type{
-                    hir::UnitObjectType{.unit_name = promised.unit_name}});
-            return hir::Expr{
-                .type = result_type,
-                .data =
-                    hir::CallExpr{
-                        .callee =
-                            hir::ExternalUnitMethodRef{
-                                .receiver = unit_lowerer.MakeRoutedObjectRef(
-                                    frame.Current(), resolved->route,
-                                    object_type),
-                                .object = resolved->object,
-                                .callable = computed.evaluate},
-                        .arguments = {}},
-                .span = span};
-          }},
-      resolved->meaning);
-}
-
 }  // namespace
 
 auto NamesCurrentInstance(const slang::ast::Expression& expr) -> bool {
@@ -756,7 +603,7 @@ auto LowerHierarchicalValue(
     // view named without an expression is the interface's own item, and is
     // reached the way every other name on that instance is.
     case Referent::kViewDefinedName:
-      return LowerViewDefinedName(unit_lowerer, frame, hve, span);
+      return LowerRoutedViewName(unit_lowerer, frame, hve, span);
     // A hierarchically reached constant folds to its value; the path is not
     // navigated because the value is fixed at elaboration.
     case Referent::kParameterConstant:
@@ -870,6 +717,39 @@ auto LowerNamedValueStructural(
           "that denotes no value");
   }
   throw InternalError("LowerNamedValueStructural: unknown Referent");
+}
+
+auto LowerInterfaceInstanceValue(
+    UnitLowerer& unit_lowerer, WalkFrame frame,
+    const slang::ast::ArbitrarySymbolExpression& named, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  const auto* handle_type =
+      named.type->getCanonicalType().as_if<slang::ast::VirtualInterfaceType>();
+  if (handle_type == nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a name that denotes no value is not yet supported here");
+  }
+  // The type names the instance the name reached, whether it was written
+  // directly, through a port bound to it, or with a modport selected; a
+  // modport narrows what is reached through the value and not which instance
+  // it is.
+  auto route = unit_lowerer.RouteToUnitObject(
+      frame, handle_type->iface.body, named.hierRef, span);
+  if (!route) return std::unexpected(std::move(route.error()));
+  auto type_id = unit_lowerer.InternType(*named.type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  const hir::ExternalUnitObjectId object =
+      InterfaceObjectOf(unit_lowerer, handle_type->iface);
+  const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
+      hir::Type{hir::UnitObjectType{
+          .unit_name = unit_lowerer.Unit()
+                           .external_unit_objects.Get(object)
+                           .unit_name}});
+  return hir::MakeRefExpr(
+      unit_lowerer.MakeRoutedObjectRef(
+          frame.Current(), *std::move(route), object_type),
+      *type_id, span);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

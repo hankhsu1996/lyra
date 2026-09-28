@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -68,8 +69,16 @@ struct CalledObject {
 struct SealedObject {
   hir::RoutedObjectRef reference;
 };
+
+// An interface instance reached through a virtual interface (LRM 25.9) -- the
+// one it holds, or one declared inside that -- which is evaluated when the call
+// runs and fails the simulation when the handle is null.
+struct HeldInterface {
+  hir::InterfaceInstanceAccessExpr access;
+};
 using AmbientHandle = std::variant<
-    EnclosingScopeReceiver, DeclaringScopeArgument, CalledObject, SealedObject>;
+    EnclosingScopeReceiver, DeclaringScopeArgument, CalledObject, SealedObject,
+    HeldInterface>;
 
 // Whether the value an origin names is the object the callee dispatches on. A
 // scope, a called object, and a sealed endpoint each name one; the declaring
@@ -80,6 +89,7 @@ auto BindsAsReceiver(const AmbientHandle& handle) -> bool {
           [](const EnclosingScopeReceiver&) { return true; },
           [](const CalledObject&) { return true; },
           [](const SealedObject&) { return true; },
+          [](const HeldInterface&) { return true; },
           [](const DeclaringScopeArgument&) { return false; }},
       handle);
 }
@@ -430,8 +440,16 @@ auto PlanSubroutineCall(
                         .kind = promised.kind, .params = promised.params}),
                 result_type);
             plan.form = DispatchedCallee{
-                .receiver =
-                    AmbientHandle{SealedObject{.reference = ref.receiver}},
+                .receiver = std::visit(
+                    Overloaded{
+                        [](const hir::RoutedObjectRef& routed) {
+                          return AmbientHandle{
+                              SealedObject{.reference = routed}};
+                        },
+                        [](const hir::InterfaceInstanceAccessExpr& held) {
+                          return AmbientHandle{HeldInterface{.access = held}};
+                        }},
+                    ref.receiver),
                 .slot =
                     mir::VirtualSlot{unit_lowerer.MakeExternalUnitMethodSlot(
                         ref.object, ref.callable)}};
@@ -649,6 +667,9 @@ auto BuildAmbientHandle(
           },
           [&](const SealedObject& s) -> diag::Result<mir::ExprId> {
             return lowerer.RouteEnd(frame, s.reference.id);
+          },
+          [&](const HeldInterface& h) -> diag::Result<mir::ExprId> {
+            return HeldInterfaceObject(lowerer, frame, h.access);
           }},
       handle);
 }

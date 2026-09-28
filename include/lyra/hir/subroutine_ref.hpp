@@ -11,6 +11,7 @@
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
+#include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/owned_child_ref.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/sampled_history.hpp"
@@ -227,17 +228,23 @@ struct ExternalUnitSubroutineRef {
   auto operator==(const ExternalUnitSubroutineRef&) const -> bool = default;
 };
 
+// The object a call on another unit's instance is made on: one a route reaches,
+// which elaboration bound, or one reached through a virtual interface, which is
+// whatever the handle holds when the call runs (LRM 25.9) and fails there if
+// it holds nothing.
+using UnitObjectReceiver =
+    std::variant<RoutedObjectRef, InterfaceInstanceAccessExpr>;
+
 // Calls a subroutine another compilation unit declares in its own body, enabled
 // on one instance of that unit (LRM 25.7): an interface's task or function,
-// reached through a port bound to the instance or through a hierarchical name
-// that reaches it. `receiver` is the route to that object, sealed like every
-// other reference across an instance boundary and passed as the callable's
-// first argument. `object` is this unit's record of what the other unit
-// published, and `callable` the entry the name resolved to, so what the call
-// passes and what it awaits come from the promise rather than from the
-// declaration behind it.
+// reached through a port bound to the instance, through a hierarchical name
+// that reaches it, or through a virtual interface holding it. `receiver` is how
+// that object is reached, and it is passed as the callable's first argument.
+// `object` is this unit's record of what the other unit published, and
+// `callable` the entry the name resolved to, so what the call passes and what
+// it awaits come from the promise rather than from the declaration behind it.
 struct ExternalUnitMethodRef {
-  RoutedObjectRef receiver;
+  UnitObjectReceiver receiver;
   ExternalUnitObjectId object;
   PublishedCallableId callable;
 

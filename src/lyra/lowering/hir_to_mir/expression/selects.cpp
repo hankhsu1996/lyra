@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -666,6 +667,32 @@ auto LowerHirClassPropertyAccessExprLhs(
       lowerer, frame, base_id, sel.target, result_type);
 }
 
+template <ExprLowerer Lowerer>
+auto LowerHirInterfaceMemberAccessExpr(
+    Lowerer& lowerer, WalkFrame frame,
+    const hir::InterfaceMemberAccessExpr& sel) -> diag::Result<mir::Expr> {
+  auto storage = HeldInterfaceMember(lowerer, frame, sel);
+  if (!storage) return std::unexpected(std::move(storage.error()));
+  return mir::Expr{
+      .data = mir::DerefExpr{.pointer = *storage},
+      .type = lowerer.Owner()
+                  .Unit()
+                  .types.Get(frame.current_block->exprs.Get(*storage).type)
+                  .template Get<mir::PointerType>()
+                  .pointee};
+}
+
+template <ExprLowerer Lowerer>
+auto LowerHirInterfaceInstanceAccessExpr(
+    Lowerer& lowerer, WalkFrame frame,
+    const hir::InterfaceInstanceAccessExpr& sel, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
+  auto object = HeldInterfaceObject(lowerer, frame, sel);
+  if (!object) return std::unexpected(std::move(object.error()));
+  return InterfaceValueOf(
+      lowerer.Owner().Unit(), *frame.current_block, *object, result_type);
+}
+
 // One concrete instantiation per pass class. The handler templates are defined
 // in this file rather than the header so the file-local helpers stay private,
 // so the dispatchers in process_lowerer.cpp / structural_scope_lowerer.cpp link
@@ -719,6 +746,19 @@ template auto LowerHirClassPropertyAccessExprLhs(
 template auto LowerHirClassPropertyAccessExprLhs(
     const StructuralScopeLowerer&, WalkFrame,
     const hir::ClassPropertyAccessExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirInterfaceMemberAccessExpr(
+    ProcessLowerer&, WalkFrame, const hir::InterfaceMemberAccessExpr&)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirInterfaceMemberAccessExpr(
+    const StructuralScopeLowerer&, WalkFrame,
+    const hir::InterfaceMemberAccessExpr&) -> diag::Result<mir::Expr>;
+template auto LowerHirInterfaceInstanceAccessExpr(
+    ProcessLowerer&, WalkFrame, const hir::InterfaceInstanceAccessExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirInterfaceInstanceAccessExpr(
+    const StructuralScopeLowerer&, WalkFrame,
+    const hir::InterfaceInstanceAccessExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

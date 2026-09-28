@@ -15,6 +15,7 @@
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
+#include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
@@ -455,6 +456,12 @@ auto TranslateType(
       if (!u) return std::unexpected(std::move(u.error()));
       return hir::Type{*std::move(u)};
     }
+    // LRM 25.9: the type names the interface together with the parameters it
+    // was given, which is exactly what names the unit an instance of it is.
+    case slang::ast::SymbolKind::VirtualInterfaceType:
+      return hir::Type{hir::VirtualInterfaceType{
+          .unit_name = SpecializationName(
+              canonical.as<slang::ast::VirtualInterfaceType>().iface)}};
     default:
       return diag::Fail(
           decl_span, diag::DiagCode::kUnsupportedTypeKind,

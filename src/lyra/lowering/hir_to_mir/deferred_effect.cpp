@@ -104,9 +104,7 @@ auto BuildDueSlotWaitStmt(
   return std::visit(
       Overloaded{
           [&](const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
-            return BuildEventWaitStmt(
-                process, process.EnclosingScopeLowerer(), carrier_frame, body,
-                ec);
+            return BuildEventWaitStmt(process, carrier_frame, body, ec);
           },
           [&](const hir::NamedEventControl& nec) -> diag::Result<mir::Stmt> {
             return BuildNamedEventWaitStmt(process, carrier_frame, body, nec);

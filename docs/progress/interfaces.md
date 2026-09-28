@@ -273,29 +273,34 @@ asymmetry is the whole of what separates the two.
 
 ### Stage E -- Virtual interfaces
 
-- [ ] E1 -- A virtual interface variable holds an interface instance (LRM 25.9). It is the same
+- [x] E1 -- A virtual interface variable holds an interface instance (LRM 25.9). It is the same
       non-owning handle the interface port carries, held in a variable rather than a port member, so
       it is assignable during simulation and holds `null` until it is assigned. Assignment accepts
-      an interface instance of the same type, another virtual interface of the same type, and
+      an interface instance of the same type -- named directly, reached through an interface port,
+      or one element of an array of instances -- another virtual interface of the same type, and
       `null`; equality and inequality compare against the same three. Using a null virtual interface
-      is a failure of the simulated design and is reported as one.
-- [ ] E2 -- A member access through a virtual interface resolves against the handle the variable
-      currently holds. This is the one reference whose target is not fixed during elaboration --
-      selecting the instance at run time is the construct's purpose -- so it resolves by name at
-      access rather than reading an endpoint sealed once. LRM 25.9 confines such access to
-      procedural statements: a virtual interface member appears in no continuous assignment and no
-      sensitivity list, and a net is driven through one only by a procedural means the interface
-      itself provides.
-- [ ] E3 -- A virtual interface's type includes the interface's actual parameter values and,
+      is a fatal run-time error, reported as a failure of the simulated design.
+- [x] E2 -- A member access through a virtual interface reaches the instance the variable holds when
+      the access runs. What is chosen at run time is only the instance: the type names the interface
+      and its parameters, so which member a name is, and where it sits, is settled when the code
+      compiles, exactly as through a port. Every component of the instance is reachable -- a
+      variable, a net read, a subroutine call, a name a modport defines over storage or computes,
+      and an interface the instance itself instantiates, whether reached into, called on, or held as
+      a value itself. A wait whose expression reaches a variable through a virtual interface, or a
+      name its modport defines, watches what that reaches in the instance held when the wait begins,
+      which is how a class-based transactor waits on a design signal (the standard's own
+      `@(posedge bus.grant)`).
+- [x] E3 -- A virtual interface's type includes the interface's actual parameter values and,
       optionally, a selected modport (LRM 25.9). Assignment requires the parameter values to match;
       an instance or virtual interface with no modport selected may be assigned to one with a
-      modport selected, and never the reverse. An interface carrying hierarchical references outside
-      its own body, or ports that reference other interfaces, may not be used in a virtual interface
-      declaration.
-- [ ] E4 -- A virtual interface is passed as a subroutine argument, declared as a class property,
-      and initialized from a constructor argument, which is what lets one transactor drive any
-      instance conforming to the interface (LRM 25.9). It is never a port, an interface item, or a
-      union member.
+      modport selected, and never the reverse -- the front end enforces all of it, as it does that
+      an interface carrying hierarchical references outside its own body, or ports that reference
+      other interfaces, is not used in a virtual interface declaration. A declaration whose
+      parameters no instance in the design has is legal and compiles; it can only ever hold null.
+- [x] E4 -- A virtual interface is passed as a subroutine argument, returned from a function,
+      declared as a class property, held in an array or a structure, and initialized from a
+      constructor argument, which is what lets one transactor drive any instance conforming to the
+      interface (LRM 25.9). It is never a port, an interface item, or a union member.
 
 ## Open questions
 
@@ -325,9 +330,14 @@ asymmetry is the whole of what separates the two.
   interface ends at the object, which is an endpoint that already exists, with the callable named
   against what that unit published. Both are recorded in `../decisions/interface-port-binding.md`
   and `../decisions/calling-a-subroutine-on-another-units-object.md`.
-- Stage E's access resolves per access rather than against an endpoint sealed once, because the
-  target is chosen at run time. Whether the resolution memoizes per handle and name, and where such
-  a cache lives so that it is a cache and not a second authority, is open.
+- A wait that reaches a variable through a virtual interface watches the instance the handle held
+  when the wait began. Assigning the handle while the wait is under way does not move the wait onto
+  the new instance, which LRM 9.4.2 asks for of a handle an event expression reads. Noticing that
+  assignment needs the handle's own storage to wake the waiter, and where the handle is a class
+  property that is the object event source `../decisions/object-is-an-event-source.md` defines and
+  nothing yet realizes. The same missing wake-up is why a wait on which instance a handle holds
+  (`@(vif)`, `@(vif.sub)`) is refused, and why a process whose implicit sensitivity reads a handle
+  (LRM 9.2.2.2.1) does not run again when the handle is assigned.
 - A port expression written as a concatenation or an assignment pattern in an ANSI header (LRM
   23.2.2.2) states one port over several pieces of the unit's storage, and it is refused. The
   non-ANSI form of the same thing is not open: LRM 23.2.2.1 makes it several bundled names, which is
@@ -353,9 +363,9 @@ asymmetry is the whole of what separates the two.
   nor delivers it.
 - Interfaces used as terminals in specify blocks (LRM 25.6). Specify blocks belong to the timing
   domain, which has no support in any scope.
-- `defparam` reaching a parameter of an interface instance or its hierarchy. LRM 25.3 and 25.9 both
-  carve out restrictions for it; `defparam` itself is unsupported, so the restrictions have nothing
-  to constrain.
+- The restrictions LRM 25.3 and 25.9 place on a `defparam` reaching a parameter of an interface
+  instance or its hierarchy. They are the front end's to enforce; whether an instance is built as a
+  `defparam` reaching it describes is a question about `defparam` itself, not about interfaces.
 - An interface port on the module a simulation is run from. An interface port may not be left
   unconnected (LRM 23.3.3.4) and an interface is never implicitly instantiated (LRM 25.3), so
   nothing instantiates a top to connect one and the simulation has nowhere to begin. The module

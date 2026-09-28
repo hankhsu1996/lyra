@@ -167,6 +167,7 @@ auto TypeImporter::Import(const Type& type) -> Type {
           [](const OpaqueObjectHandleType& t) -> Type { return Type{t}; },
           [](const ImportedClassHandleType& t) -> Type { return Type{t}; },
           [](const UnitObjectType& t) -> Type { return Type{t}; },
+          [](const VirtualInterfaceType& t) -> Type { return Type{t}; },
           [](const OpaqueScopeType& t) -> Type { return Type{t}; },
           [](const NullType& t) -> Type { return Type{t}; },
           [](const VoidType& t) -> Type { return Type{t}; }});

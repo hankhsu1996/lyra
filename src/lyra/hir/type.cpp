@@ -141,6 +141,9 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [seed](const UnitObjectType& t) {
             return Combine(seed, t.unit_name);
           },
+          [seed](const VirtualInterfaceType& t) {
+            return Combine(seed, t.unit_name);
+          },
           // A type carrying nothing beyond being itself is separated by its arm
           // alone, which the seed already holds.
           [seed](const OpaqueScopeType&) { return seed; },
@@ -183,6 +186,7 @@ auto Type::IsIntegral() const -> bool {
           [](const OpaqueObjectHandleType&) { return false; },
           [](const ImportedClassHandleType&) { return false; },
           [](const UnitObjectType&) { return false; },
+          [](const VirtualInterfaceType&) { return false; },
           [](const OpaqueScopeType&) { return false; },
           [](const NullType&) { return false; },
           [](const VoidType&) { return false; },
@@ -223,6 +227,10 @@ auto Type::IsValueChangeObservable() const -> bool {
           // to change, which needs the domain to carry its value the way every
           // other one does.
           [](const ChandleType&) { return false; },
+          // LRM 25.9 allows a virtual interface only to be assigned and
+          // compared, so no event expression waits on one itself; a wait
+          // reaches through it to a member, whose own storage is what changes.
+          [](const VirtualInterfaceType&) { return false; },
           [](const WildcardIndexType&) { return false; },
           [](const EventType&) { return false; },
           [](const UnitObjectType&) { return false; },
@@ -277,6 +285,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
             return std::nullopt;
           },
           [](const UnitObjectType&) -> Element { return std::nullopt; },
+          [](const VirtualInterfaceType&) -> Element { return std::nullopt; },
           [](const OpaqueScopeType&) -> Element { return std::nullopt; },
           [](const NullType&) -> Element { return std::nullopt; },
           [](const VoidType&) -> Element { return std::nullopt; },

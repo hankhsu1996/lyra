@@ -275,6 +275,16 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           [&](const hir::UnitObjectType& src) -> mir::Type {
             return UnitObjectNamed(src.unit_name);
           },
+          // What a virtual interface holds is which instance it names, or none
+          // (LRM 25.9): a host pointer compared by identity and null until
+          // assigned, which the instance's lifetime -- the simulation's --
+          // lets it hold without owning anything. That is the chandle's value
+          // exactly, so it is held, copied, compared and stored in containers
+          // as one; an access turns it into a pointer to the unit's object
+          // there, where the access names that unit.
+          [](const hir::VirtualInterfaceType&) -> mir::Type {
+            return mir::Type{mir::ChandleType{}};
+          },
           [](const hir::OpaqueScopeType&) -> mir::Type {
             // Nothing was published about the scope, so what names it is what
             // every scope is: the runtime's own, with no member of it reachable

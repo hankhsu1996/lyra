@@ -18,6 +18,8 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
+#include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -68,9 +70,47 @@ struct CollectedUnit {
 // Two keys reaching one name would silently make two units into one, so the
 // name a unit is known by is checked against the key it came from rather than
 // standing in for it.
+//
+// A virtual interface's type names an interface together with its parameters
+// (LRM 25.9), and code reaching through one compiles against that unit's
+// promise whether or not any instance of it exists -- a declaration of a
+// parameterization no instance has is legal, only never assignable. So the
+// interface a declared type names is collected as an instantiated one is. Only
+// declarations are read for it, which is what the walk reaches anyway.
 struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
   std::unordered_map<std::string, SpecializationKey> seen;
   std::vector<CollectedUnit> order;
+
+  // Every declared variable, class property and subroutine argument.
+  void handle(const slang::ast::VariableSymbol& variable) {
+    CollectInterfacesNamedBy(variable.getType());
+  }
+
+  // A function's result is declared by its return type, which no variable
+  // carries.
+  void handle(const slang::ast::SubroutineSymbol& subroutine) {
+    CollectInterfacesNamedBy(subroutine.getReturnType());
+    visitDefault(subroutine);
+  }
+
+  void CollectInterfacesNamedBy(const slang::ast::Type& type) {
+    const slang::ast::Type& canonical = type.getCanonicalType();
+    if (const auto* handle_type =
+            canonical.as_if<slang::ast::VirtualInterfaceType>()) {
+      handle(handle_type->iface);
+      return;
+    }
+    if (canonical.isUnpackedArray()) {
+      CollectInterfacesNamedBy(*canonical.getArrayElementType());
+      return;
+    }
+    if (const auto* record =
+            canonical.as_if<slang::ast::UnpackedStructType>()) {
+      for (const slang::ast::FieldSymbol* field : record->fields) {
+        CollectInterfacesNamedBy(field->getType());
+      }
+    }
+  }
 
   void handle(const slang::ast::InstanceSymbol& inst) {
     SpecializationKey key = SpecializationKeyOf(inst);
@@ -95,6 +135,14 @@ auto CollectUnits(const LowerCompilationFacts& facts)
   UnitCollector collector;
   for (const auto* top : root.topInstances) {
     top->visit(collector);
+  }
+  // A class a package or the `$unit` scope declares is under no instance, and
+  // what it declares may name an interface too.
+  for (const auto* package : facts.Compilation().getPackages()) {
+    package->visit(collector);
+  }
+  for (const auto* cu : root.compilationUnits) {
+    cu->visit(collector);
   }
   return std::move(collector.order);
 }

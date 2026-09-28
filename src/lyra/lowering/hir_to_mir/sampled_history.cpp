@@ -151,8 +151,8 @@ auto LowerSampledHistorySampler(
   // wait because it owes a value at time zero; a history owes none, because it
   // was installed full of the default sampled value the standard asks for until
   // a tick has happened (LRM 16.9.3).
-  auto wait_or = BuildEventWaitStmt(
-      lowerer, lowerer, body_frame, body_block, history.clock);
+  auto wait_or =
+      BuildEventWaitStmt(lowerer, body_frame, body_block, history.clock);
   if (!wait_or) return std::unexpected(std::move(wait_or.error()));
   body_block.AppendStmt(*std::move(wait_or));
 

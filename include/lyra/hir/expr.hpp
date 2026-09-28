@@ -13,6 +13,7 @@
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
+#include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/range_bounds.hpp"
@@ -429,7 +430,8 @@ struct AssignmentPatternKeyedExpr {
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
     CallExpr, ConversionExpr, ValueRangeExpr, InsideExpr, ElementSelectExpr,
-    RangeSelectExpr, MemberAccessExpr, ClassPropertyAccessExpr, ConcatExpr,
+    RangeSelectExpr, MemberAccessExpr, ClassPropertyAccessExpr,
+    InterfaceMemberAccessExpr, InterfaceInstanceAccessExpr, ConcatExpr,
     StreamingConcatExpr, ReplicationExpr, AssignmentPatternExpr,
     AssignmentPatternReplicationExpr, DynamicArrayNewExpr, ClassNewExpr,
     AssociativeAssignmentPatternExpr, AssignmentPatternKeyedExpr,

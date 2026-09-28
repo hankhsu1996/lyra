@@ -297,6 +297,7 @@ auto Renderer::BuildBody(
           [&](const hir::OpaqueObjectHandleType& t) { return none(t); },
           [&](const hir::ImportedClassHandleType& t) { return none(t); },
           [&](const hir::UnitObjectType& t) { return none(t); },
+          [&](const hir::VirtualInterfaceType& t) { return none(t); },
           [&](const hir::OpaqueScopeType& t) { return none(t); },
           [&](const hir::NullType& t) { return none(t); },
           [&](const hir::VoidType& t) { return none(t); },
@@ -821,6 +822,7 @@ auto PatternReadingOf(const hir::CompilationUnit& hir, hir::TypeId type)
             return value_answers(t);
           },
           [&](const hir::NullType& t) { return value_answers(t); },
+          [&](const hir::VirtualInterfaceType& t) { return value_answers(t); },
           // An index of no declared type is a place a key of any integral width
           // is stored under, never a type a value has (LRM 7.8.1).
           [&](const hir::WildcardIndexType& t) { return not_a_value(t); },

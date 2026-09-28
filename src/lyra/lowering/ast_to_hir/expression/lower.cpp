@@ -341,9 +341,9 @@ auto LowerExprImpl(
           "a data type in an expression position is not yet supported");
 
     case slang::ast::ExpressionKind::ArbitrarySymbol:
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "a name that denotes no value is not yet supported here");
+      return LowerInterfaceInstanceValue(
+          lowerer.Owner(), frame,
+          expr.as<slang::ast::ArbitrarySymbolExpression>(), span);
 
     case slang::ast::ExpressionKind::EmptyArgument:
       return diag::Fail(

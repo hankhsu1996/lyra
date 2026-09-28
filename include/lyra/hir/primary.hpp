@@ -42,6 +42,10 @@ struct ThisHandle {
   auto operator==(const ThisHandle&) const -> bool = default;
 };
 
+// The routed reference to an object is a primary where an interface instance is
+// named as a value (LRM 25.9): the name stands for the instance itself, which a
+// virtual interface may then hold, rather than for a member of it.
+//
 // Primary mirrors LRM 11.2.1 - the atomic leaf level of the expression
 // grammar. Refs are listed directly here so the same reference value appears
 // identically when the expression is read and when it is written. Read vs write
@@ -51,6 +55,6 @@ struct ThisHandle {
 using Primary = std::variant<
     IntegerLiteral, StringLiteral, RealLiteral, NullLiteral, ThisHandle,
     ProceduralVarRef, ClassPropertyRef, StaticPropertyRef, RoutedValueRef,
-    IterationBindingRef, PatternVarRef, ExternalUnitValueRef>;
+    RoutedObjectRef, IterationBindingRef, PatternVarRef, ExternalUnitValueRef>;
 
 }  // namespace lyra::hir

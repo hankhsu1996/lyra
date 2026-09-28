@@ -42,6 +42,7 @@
 #include "lyra/lowering/ast_to_hir/expression/query.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
+#include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -567,394 +568,381 @@ auto LowerObjectSubroutineCall(
   };
 }
 
-}  // namespace
-
+// A subroutine of the interface instance a virtual interface holds, or of an
+// interface that instance instantiates (LRM 25.9). The front end carries the
+// virtual interface where a method call carries its handle and resolves the
+// name in the interface declaring the subroutine, so the call is made on that
+// instance and what it passes and awaits is counted out of what its interface
+// published.
 template <ExprLowerer Lowerer>
-auto LowerCallExpr(
+auto LowerHeldInterfaceCall(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression& held,
+    const slang::ast::VirtualInterfaceType& handle_type,
+    const slang::ast::SubroutineSymbol& sym,
+    std::vector<std::optional<hir::ExprId>> arguments, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto& unit_lowerer = lowerer.Owner();
+  auto handle = lowerer.LowerExpr(held, frame);
+  if (!handle) return std::unexpected(std::move(handle.error()));
+  auto descent = DescendThroughHandle(
+      unit_lowerer, frame.Exprs().Add(*std::move(handle)), handle_type,
+      *sym.getParentScope(), span);
+  if (!descent) return std::unexpected(std::move(descent.error()));
+  const hir::ExternalUnitObject& promised =
+      unit_lowerer.Unit().external_unit_objects.Get(descent->landed);
+  const auto callable = promised.FindCallable(sym.name);
+  if (!callable.has_value()) {
+    throw InternalError(
+        "LowerHeldInterfaceCall: an interface promises every subroutine it "
+        "declares, and this one is not on its promise");
+  }
+  return hir::Expr{
+      .type = promised.callables.Get(*callable).result_type,
+      .data =
+          hir::CallExpr{
+              .callee =
+                  hir::ExternalUnitMethodRef{
+                      .receiver = std::move(descent->instance),
+                      .object = descent->landed,
+                      .callable = *callable},
+              .arguments = std::move(arguments)},
+      .span = span};
+}
+
+// A call to a system task or function (LRM 20, 21), or to a method the
+// language defines on a value of a built-in type, which the front end spells
+// as a system call on that value. `receiver_type` is the type of the first
+// operand where it has one, which is what picks a built-in type's method.
+template <ExprLowerer Lowerer>
+auto LowerSystemCall(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
-    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+    std::vector<std::optional<hir::ExprId>> arg_ids,
+    std::optional<hir::TypeId> receiver_type, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   const hir::TypePool& types = unit_lowerer.Unit().types;
+  const auto& info =
+      std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
+  const std::string_view name = info.subroutine->name;
 
-  // The LRM 20.6 / 20.7 queries are resolved before the argument loop: their
-  // operand is never evaluated and may be a data type, which has no value form
-  // to lower.
-  auto query = LowerQueryExpr(lowerer, frame, call, span);
-  if (!query) return std::unexpected(std::move(query.error()));
-  if (query->has_value()) return *std::move(*query);
-
-  auto sampled = LowerSampledHistoryExpr(lowerer, frame, call, span);
-  if (!sampled) return std::unexpected(std::move(sampled.error()));
-  if (sampled->has_value()) return *std::move(*sampled);
-
-  // LRM 6.24.2: the first actual of a dynamic cast is the destination rather
-  // than an operand, so it is resolved before the argument loop. Reached as an
-  // expression the call is the function spelling, whose answer is the whole of
-  // what an invalid assignment produces; the task spelling is recognized where
-  // the statement is.
-  if (IsDynamicCast(call)) {
-    return LowerDynamicCastExpr(
-        lowerer, frame, call, hir::InvalidAssignmentHandling::kAnswered, span);
+  if (receiver_type.has_value() &&
+      types.Get(*receiver_type).Is<hir::EnumType>()) {
+    if (auto enum_method = LowerEnumMethodName(name); enum_method.has_value()) {
+      // `next` / `prev` have an optional `int unsigned step = 1` (LRM
+      // 6.19.5.3/4). When the user omits the step, the call keeps the one
+      // argument the source wrote and the default is supplied where the
+      // method is answered, so no literal is injected here.
+      auto type_id = unit_lowerer.InternType(*call.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              hir::CallExpr{
+                  .callee = hir::EnumMethodRef{.method = *enum_method},
+                  .arguments = std::move(arg_ids),
+              },
+          .span = span,
+      };
+    }
   }
 
-  std::vector<std::optional<hir::ExprId>> arg_ids;
-  arg_ids.reserve(call.arguments().size());
-  std::optional<hir::TypeId> receiver_type;
-  for (std::size_t i = 0; i < call.arguments().size(); ++i) {
-    // LRM 13.5: slang models an `output` / `inout` actual as an
-    // AssignmentExpression whose right side is an EmptyArgument placeholder;
-    // the actual lvalue is the left side. HIR carries just that lvalue -- the
-    // copy-in / copy-out is synthesized at HIR-to-MIR from the formal's
-    // direction.
-    const slang::ast::Expression* arg = call.arguments()[i];
-    if (arg->kind == slang::ast::ExpressionKind::Assignment) {
-      const auto& as = arg->as<slang::ast::AssignmentExpression>();
-      if (as.right().kind == slang::ast::ExpressionKind::EmptyArgument) {
-        arg = &as.left();
-      }
+  if (receiver_type.has_value() &&
+      types.Get(*receiver_type).Is<hir::StringType>()) {
+    if (auto kind = LowerStringMethodName(name); kind.has_value()) {
+      // LRM 6.16.1 through 6.16.15 -- string intrinsic methods, each acting
+      // on the string; the remaining operands are the SV method parameters
+      // (e.g. substr's `i, j`).
+      auto type_id = unit_lowerer.InternType(*call.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
+          .span = span,
+      };
     }
-    // LRM 21.3.4.4 form 2d: a standalone EmptyArgument marks a positional
-    // elision (`$fread(mem, fd, , count)`). Surface as `std::nullopt` so the
-    // per-subroutine HIR-to-MIR handler can decide whether elision is valid
-    // at this position; positions stay aligned with slang's arg list.
-    if (arg->kind == slang::ast::ExpressionKind::EmptyArgument) {
-      arg_ids.emplace_back(std::nullopt);
-      continue;
-    }
-    // A clocking event names an event rather than standing for a value, so
-    // there is nothing here to read (LRM 16.9.3). What it settles -- which
-    // event's ticks a sampled value function counts -- is taken from the call
-    // itself, where the rest of the rule for finding it also applies.
-    if (arg->kind == slang::ast::ExpressionKind::ClockingEvent) {
-      arg_ids.emplace_back(std::nullopt);
-      continue;
-    }
-    auto arg_or = lowerer.LowerExpr(*arg, frame);
-    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    if (i == 0) {
-      receiver_type = arg_or->type;
-    }
-    arg_ids.emplace_back(frame.Exprs().Add(*std::move(arg_or)));
   }
 
-  if (call.isSystemCall()) {
-    const auto& info =
-        std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine);
-    const std::string_view name = info.subroutine->name;
-
-    if (receiver_type.has_value() &&
-        types.Get(*receiver_type).Is<hir::EnumType>()) {
-      if (auto enum_method = LowerEnumMethodName(name);
-          enum_method.has_value()) {
-        // `next` / `prev` have an optional `int unsigned step = 1` (LRM
-        // 6.19.5.3/4). When the user omits the step, the call keeps the one
-        // argument the source wrote and the default is supplied where the
-        // method is answered, so no literal is injected here.
-        auto type_id = unit_lowerer.InternType(*call.type, span);
-        if (!type_id) return std::unexpected(std::move(type_id.error()));
-        return hir::Expr{
-            .type = *type_id,
-            .data =
-                hir::CallExpr{
-                    .callee = hir::EnumMethodRef{.method = *enum_method},
-                    .arguments = std::move(arg_ids),
-                },
-            .span = span,
-        };
-      }
-    }
-
-    if (receiver_type.has_value() &&
-        types.Get(*receiver_type).Is<hir::StringType>()) {
-      if (auto kind = LowerStringMethodName(name); kind.has_value()) {
-        // LRM 6.16.1 through 6.16.15 -- string intrinsic methods, each acting
-        // on the string; the remaining operands are the SV method parameters
-        // (e.g. substr's `i, j`).
-        auto type_id = unit_lowerer.InternType(*call.type, span);
-        if (!type_id) return std::unexpected(std::move(type_id.error()));
-        return hir::Expr{
-            .type = *type_id,
-            .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
-            .span = span,
-        };
-      }
-    }
-
-    if (receiver_type.has_value() &&
-        types.Get(*receiver_type).Is<hir::EventType>() && name == "triggered") {
-      // LRM 15.5.3: `e.triggered` returns true for the duration of the time
-      // slot in which the event was last triggered. Result type is bit (1'b0
-      // / 1'b1) -- slang already typed the expression; we just route the
-      // call through the named-event method.
-      auto type_id = unit_lowerer.InternType(*call.type, span);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data = BuiltinCall(
-              support::BuiltinFn::kTriggered, std::move(arg_ids), std::nullopt),
-          .span = span,
-      };
-    }
-
-    if (receiver_type.has_value() &&
-        types.Get(*receiver_type).Is<hir::QueueType>()) {
-      // LRM 7.10.2 queue-native methods, each acting on the queue; the method
-      // parameters (insert's index and item, push's item) follow. These take no
-      // `with` clause and are tried before the array-manipulation family so
-      // `size` / `delete` resolve to the queue-native form rather than the LRM
-      // 7.12 one.
-      if (auto kind = LowerQueueMethodName(name, arg_ids.size() - 1);
-          kind.has_value()) {
-        auto type_id = unit_lowerer.InternType(*call.type, span);
-        if (!type_id) return std::unexpected(std::move(type_id.error()));
-        return hir::Expr{
-            .type = *type_id,
-            .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
-            .span = span,
-        };
-      }
-    }
-
-    // LRM 7.9 associative-array native methods, each acting on the array; the
-    // index (`exists`, the delete that names one entry) follows. Like the
-    // queue's, these are tried before the LRM 7.12 family so a name both define
-    // resolves to the one the receiver's own clause states.
-    if (receiver_type.has_value() &&
-        unit_lowerer.Unit()
-            .types.Get(*receiver_type)
-            .template Is<hir::AssociativeArrayType>()) {
-      if (auto kind = LowerAssociativeMethodName(name, arg_ids.size() - 1);
-          kind.has_value()) {
-        auto type_id = unit_lowerer.InternType(*call.type, span);
-        if (!type_id) return std::unexpected(std::move(type_id.error()));
-        return hir::Expr{
-            .type = *type_id,
-            .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
-            .span = span,
-        };
-      }
-    }
-
-    // LRM 7.12 array-manipulation family, defined for any unpacked array: a
-    // fixed-size unpacked array (LRM 7.12.1 / 7.12.2 operate on "any unpacked
-    // array"), a dynamic array, a queue (LRM 7.10.1 gives it the same
-    // operations as an unpacked array), and an associative array (LRM 7.12.1 /
-    // 7.12.3 / 7.12.5 reduction / locator / map; the ordering family is
-    // rejected on it by slang). A receiver whose own clause names a method --
-    // the queue's LRM 7.10.2 set, the associative array's LRM 7.9 set --
-    // resolved it above, so only the 7.12 names reach this dispatch. The
-    // no-`with` form takes only the receiver; the `with` form (LRM 7.12.4)
-    // binds an iterator and a body expression carried as the optional
-    // `WithClause`, which HIR -> MIR turns into a closure argument.
-    const auto receives_array_method = [&] {
-      if (!receiver_type.has_value()) return false;
-      const hir::Type& ty = unit_lowerer.Unit().types.Get(*receiver_type);
-      return ty.Is<hir::UnpackedArrayType>() ||
-             ty.Is<hir::DynamicArrayType>() || ty.Is<hir::QueueType>() ||
-             ty.Is<hir::AssociativeArrayType>();
-    };
-    if (receives_array_method()) {
-      if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
-        auto type_id = unit_lowerer.InternType(*call.type, span);
-        if (!type_id) return std::unexpected(std::move(type_id.error()));
-        std::optional<hir::WithClause> with_clause;
-        if (std::holds_alternative<
-                slang::ast::CallExpression::IteratorCallInfo>(info.extraInfo)) {
-          const auto& iter_info =
-              std::get<slang::ast::CallExpression::IteratorCallInfo>(
-                  info.extraInfo);
-          const auto& iter_var =
-              iter_info.iterVar->as<slang::ast::VariableSymbol>();
-          // The clause's element and index references resolve to this id while
-          // the body is lowered; marking the iterator by identity on the frame
-          // distinguishes it from a foreach loop variable (also a slang
-          // Iterator symbol) and lets a clause nested in the body name this
-          // outer one.
-          const hir::WithClauseId clause_id = unit_lowerer.NextWithClauseId();
-          auto body_or = lowerer.LowerExpr(
-              *iter_info.iterExpr,
-              frame.WithIterationClause(iter_var, clause_id));
-          if (!body_or) return std::unexpected(std::move(body_or.error()));
-          const auto body_expr_id = frame.Exprs().Add(*std::move(body_or));
-          with_clause = hir::WithClause{
-              .id = clause_id,
-              .element_name = std::string{iter_var.name},
-              .expr = body_expr_id};
-        }
-        return hir::Expr{
-            .type = *type_id,
-            .data =
-                BuiltinCall(*kind, std::move(arg_ids), std::move(with_clause)),
-            .span = span,
-        };
-      }
-    }
-
-    // LRM 20.8.1 `$clog2`: ceil(log2) of the operand read as unsigned. A
-    // type-agnostic value query -- every value type exposes it -- so it lowers
-    // to the generic instance builtin call on its operand. A constant argument
-    // is folded by the downstream optimizer, never in lowering.
-    if (info.subroutine != nullptr &&
-        info.subroutine->knownNameId ==
-            slang::parsing::KnownSystemName::Clog2) {
-      auto type_id = unit_lowerer.InternType(*call.type, span);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data = BuiltinCall(
-              support::BuiltinFn::kClog2, std::move(arg_ids), std::nullopt),
-          .span = span,
-      };
-    }
-
-    // LRM 20.8.2 real mathematics and the LRM 20.5 conversions that read a
-    // real's bits or truncate its value. Both families are operations on the
-    // operand, so they lower to the generic instance builtin call on it; the
-    // result type is slang's, which is what fixes the width a bit pattern
-    // lands in and the precision a pattern is read back as. A constant
-    // argument is folded before lowering sees the call at all.
-    if (info.subroutine != nullptr) {
-      const auto known = info.subroutine->knownNameId;
-      auto real_fn = LowerRealMathName(known);
-      if (!real_fn.has_value()) real_fn = LowerRealConversionName(known);
-      if (real_fn.has_value()) {
-        auto type_id = unit_lowerer.InternType(*call.type, span);
-        if (!type_id) return std::unexpected(std::move(type_id.error()));
-        return hir::Expr{
-            .type = *type_id,
-            .data = BuiltinCall(*real_fn, std::move(arg_ids), std::nullopt),
-            .span = span,
-        };
-      }
-    }
-
-    // LRM 20.5 `$itor` asks for the LRM 6.12.1 integral-to-real conversion the
-    // result type already names, so it is a value conversion rather than a
-    // runtime call.
-    if (info.subroutine != nullptr &&
-        info.subroutine->knownNameId == slang::parsing::KnownSystemName::Itor) {
-      auto type_id = unit_lowerer.InternType(*call.type, span);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::ConversionExpr{
-                  .kind = hir::ConversionKind::kExplicit,
-                  .operand = *arg_ids.front()},
-          .span = span,
-      };
-    }
-
-    // LRM 7.12.4 `item.index`: slang dresses the iteration index as a method on
-    // the iterator (a SystemSubroutine with `KnownSystemName::Index`) whose
-    // receiver value is discarded. It is the index iteration parameter -- a
-    // value co-equal with the element -- so it lowers to an
-    // `IterationBindingRef` value reference, not a call. Its clause is the one
-    // whose iterator is the receiver, so a nested clause's `item.index` still
-    // names the right clause.
-    if (info.subroutine != nullptr &&
-        info.subroutine->knownNameId ==
-            slang::parsing::KnownSystemName::Index) {
-      const auto& receiver = *call.arguments()[0];
-      if (receiver.kind != slang::ast::ExpressionKind::NamedValue) {
-        throw InternalError("item.index receiver is not a named iterator");
-      }
-      const auto clause = frame.FindIterationClause(
-          receiver.as<slang::ast::NamedValueExpression>().symbol);
-      if (!clause) {
-        throw InternalError(
-            "item.index receiver is not an active with-clause iterator");
-      }
-      auto type_id = unit_lowerer.InternType(*call.type, span);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::PrimaryExpr{
-                  .data =
-                      hir::IterationBindingRef{
-                          .clause = *clause,
-                          .role = hir::IterationBindingRole::kIndex}},
-          .span = span,
-      };
-    }
-
-    // `$signed` / `$unsigned` reinterpret the operand under the named
-    // signedness. The result type already carries that signedness, so this is a
-    // value conversion to the result type, not a runtime call.
-    if (info.subroutine != nullptr &&
-        (info.subroutine->knownNameId ==
-             slang::parsing::KnownSystemName::Signed ||
-         info.subroutine->knownNameId ==
-             slang::parsing::KnownSystemName::Unsigned)) {
-      auto type_id = unit_lowerer.InternType(*call.type, span);
-      if (!type_id) return std::unexpected(std::move(type_id.error()));
-      return hir::Expr{
-          .type = *type_id,
-          .data =
-              hir::ConversionExpr{
-                  .kind = hir::ConversionKind::kImplicit,
-                  .operand = *arg_ids.front()},
-          .span = span,
-      };
-    }
-
-    const auto* desc = support::FindSystemSubroutine(name);
-    if (desc == nullptr) {
-      // slang resolved a system task / function that Lyra's registry does not
-      // carry: a legitimate but unimplemented construct, not a compiler bug.
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          std::string{"system task / function '"} + std::string{name} +
-              "' is not yet supported");
-    }
-    const auto frontend_kind = FromSlangSubroutineKind(info.subroutine->kind);
-    if (desc->kind != frontend_kind) {
-      throw InternalError(
-          std::string{"AST->HIR call: registry/frontend kind mismatch for '"} +
-          std::string{name} + "'");
-    }
-    if (!desc->arg_policy.Accepts(arg_ids.size())) {
-      throw InternalError(
-          std::string{
-              "AST->HIR call: arg count outside descriptor policy for '"} +
-          std::string{name} + "'");
-    }
-
-    if (std::holds_alternative<support::SampledValueSystemSubroutineInfo>(
-            desc->semantic)) {
-      if (auto recorded = RecordSampledCells(lowerer, frame, call, span);
-          !recorded) {
-        return std::unexpected(std::move(recorded.error()));
-      }
-    }
-
-    // A result that follows its operand reads its type off that operand rather
-    // than off a builtin, which is what lets one entry serve every type its
-    // argument may have (LRM 16.9.3 `$sampled`).
-    const auto result_type = [&] {
-      if (desc->result_conv != support::ReturnConvention::kOperandType) {
-        return MakeReturnConventionType(
-            unit_lowerer.Unit().builtins, desc->result_conv);
-      }
-      if (arg_ids.empty() || !arg_ids.front().has_value()) {
-        throw InternalError(
-            std::string{"AST->HIR call: '"} + std::string{name} +
-            "' takes its result type from an operand it was not given");
-      }
-      return frame.Exprs().Get(*arg_ids.front()).type;
-    }();
+  if (receiver_type.has_value() &&
+      types.Get(*receiver_type).Is<hir::EventType>() && name == "triggered") {
+    // LRM 15.5.3: `e.triggered` returns true for the duration of the time
+    // slot in which the event was last triggered. Result type is bit (1'b0
+    // / 1'b1) -- slang already typed the expression; we just route the
+    // call through the named-event method.
+    auto type_id = unit_lowerer.InternType(*call.type, span);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
     return hir::Expr{
-        .type = result_type,
-        .data =
-            hir::CallExpr{
-                .callee = hir::SystemSubroutineRef{.id = desc->id},
-                .arguments = std::move(arg_ids),
-            },
+        .type = *type_id,
+        .data = BuiltinCall(
+            support::BuiltinFn::kTriggered, std::move(arg_ids), std::nullopt),
         .span = span,
     };
   }
 
+  if (receiver_type.has_value() &&
+      types.Get(*receiver_type).Is<hir::QueueType>()) {
+    // LRM 7.10.2 queue-native methods, each acting on the queue; the method
+    // parameters (insert's index and item, push's item) follow. These take no
+    // `with` clause and are tried before the array-manipulation family so
+    // `size` / `delete` resolve to the queue-native form rather than the LRM
+    // 7.12 one.
+    if (auto kind = LowerQueueMethodName(name, arg_ids.size() - 1);
+        kind.has_value()) {
+      auto type_id = unit_lowerer.InternType(*call.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
+          .span = span,
+      };
+    }
+  }
+
+  // LRM 7.9 associative-array native methods, each acting on the array; the
+  // index (`exists`, the delete that names one entry) follows. Like the
+  // queue's, these are tried before the LRM 7.12 family so a name both define
+  // resolves to the one the receiver's own clause states.
+  if (receiver_type.has_value() &&
+      unit_lowerer.Unit()
+          .types.Get(*receiver_type)
+          .template Is<hir::AssociativeArrayType>()) {
+    if (auto kind = LowerAssociativeMethodName(name, arg_ids.size() - 1);
+        kind.has_value()) {
+      auto type_id = unit_lowerer.InternType(*call.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data = BuiltinCall(*kind, std::move(arg_ids), std::nullopt),
+          .span = span,
+      };
+    }
+  }
+
+  // LRM 7.12 array-manipulation family, defined for any unpacked array: a
+  // fixed-size unpacked array (LRM 7.12.1 / 7.12.2 operate on "any unpacked
+  // array"), a dynamic array, a queue (LRM 7.10.1 gives it the same
+  // operations as an unpacked array), and an associative array (LRM 7.12.1 /
+  // 7.12.3 / 7.12.5 reduction / locator / map; the ordering family is
+  // rejected on it by slang). A receiver whose own clause names a method --
+  // the queue's LRM 7.10.2 set, the associative array's LRM 7.9 set --
+  // resolved it above, so only the 7.12 names reach this dispatch. The
+  // no-`with` form takes only the receiver; the `with` form (LRM 7.12.4)
+  // binds an iterator and a body expression carried as the optional
+  // `WithClause`, which HIR -> MIR turns into a closure argument.
+  const auto receives_array_method = [&] {
+    if (!receiver_type.has_value()) return false;
+    const hir::Type& ty = unit_lowerer.Unit().types.Get(*receiver_type);
+    return ty.Is<hir::UnpackedArrayType>() || ty.Is<hir::DynamicArrayType>() ||
+           ty.Is<hir::QueueType>() || ty.Is<hir::AssociativeArrayType>();
+  };
+  if (receives_array_method()) {
+    if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
+      auto type_id = unit_lowerer.InternType(*call.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      std::optional<hir::WithClause> with_clause;
+      if (std::holds_alternative<slang::ast::CallExpression::IteratorCallInfo>(
+              info.extraInfo)) {
+        const auto& iter_info =
+            std::get<slang::ast::CallExpression::IteratorCallInfo>(
+                info.extraInfo);
+        const auto& iter_var =
+            iter_info.iterVar->as<slang::ast::VariableSymbol>();
+        // The clause's element and index references resolve to this id while
+        // the body is lowered; marking the iterator by identity on the frame
+        // distinguishes it from a foreach loop variable (also a slang
+        // Iterator symbol) and lets a clause nested in the body name this
+        // outer one.
+        const hir::WithClauseId clause_id = unit_lowerer.NextWithClauseId();
+        auto body_or = lowerer.LowerExpr(
+            *iter_info.iterExpr,
+            frame.WithIterationClause(iter_var, clause_id));
+        if (!body_or) return std::unexpected(std::move(body_or.error()));
+        const auto body_expr_id = frame.Exprs().Add(*std::move(body_or));
+        with_clause = hir::WithClause{
+            .id = clause_id,
+            .element_name = std::string{iter_var.name},
+            .expr = body_expr_id};
+      }
+      return hir::Expr{
+          .type = *type_id,
+          .data =
+              BuiltinCall(*kind, std::move(arg_ids), std::move(with_clause)),
+          .span = span,
+      };
+    }
+  }
+
+  // LRM 20.8.1 `$clog2`: ceil(log2) of the operand read as unsigned. A
+  // type-agnostic value query -- every value type exposes it -- so it lowers
+  // to the generic instance builtin call on its operand. A constant argument
+  // is folded by the downstream optimizer, never in lowering.
+  if (info.subroutine != nullptr &&
+      info.subroutine->knownNameId == slang::parsing::KnownSystemName::Clog2) {
+    auto type_id = unit_lowerer.InternType(*call.type, span);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    return hir::Expr{
+        .type = *type_id,
+        .data = BuiltinCall(
+            support::BuiltinFn::kClog2, std::move(arg_ids), std::nullopt),
+        .span = span,
+    };
+  }
+
+  // LRM 20.8.2 real mathematics and the LRM 20.5 conversions that read a
+  // real's bits or truncate its value. Both families are operations on the
+  // operand, so they lower to the generic instance builtin call on it; the
+  // result type is slang's, which is what fixes the width a bit pattern
+  // lands in and the precision a pattern is read back as. A constant
+  // argument is folded before lowering sees the call at all.
+  if (info.subroutine != nullptr) {
+    const auto known = info.subroutine->knownNameId;
+    auto real_fn = LowerRealMathName(known);
+    if (!real_fn.has_value()) real_fn = LowerRealConversionName(known);
+    if (real_fn.has_value()) {
+      auto type_id = unit_lowerer.InternType(*call.type, span);
+      if (!type_id) return std::unexpected(std::move(type_id.error()));
+      return hir::Expr{
+          .type = *type_id,
+          .data = BuiltinCall(*real_fn, std::move(arg_ids), std::nullopt),
+          .span = span,
+      };
+    }
+  }
+
+  // LRM 20.5 `$itor` asks for the LRM 6.12.1 integral-to-real conversion the
+  // result type already names, so it is a value conversion rather than a
+  // runtime call.
+  if (info.subroutine != nullptr &&
+      info.subroutine->knownNameId == slang::parsing::KnownSystemName::Itor) {
+    auto type_id = unit_lowerer.InternType(*call.type, span);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    return hir::Expr{
+        .type = *type_id,
+        .data =
+            hir::ConversionExpr{
+                .kind = hir::ConversionKind::kExplicit,
+                .operand = *arg_ids.front()},
+        .span = span,
+    };
+  }
+
+  // LRM 7.12.4 `item.index`: slang dresses the iteration index as a method on
+  // the iterator (a SystemSubroutine with `KnownSystemName::Index`) whose
+  // receiver value is discarded. It is the index iteration parameter -- a
+  // value co-equal with the element -- so it lowers to an
+  // `IterationBindingRef` value reference, not a call. Its clause is the one
+  // whose iterator is the receiver, so a nested clause's `item.index` still
+  // names the right clause.
+  if (info.subroutine != nullptr &&
+      info.subroutine->knownNameId == slang::parsing::KnownSystemName::Index) {
+    const auto& receiver = *call.arguments()[0];
+    if (receiver.kind != slang::ast::ExpressionKind::NamedValue) {
+      throw InternalError("item.index receiver is not a named iterator");
+    }
+    const auto clause = frame.FindIterationClause(
+        receiver.as<slang::ast::NamedValueExpression>().symbol);
+    if (!clause) {
+      throw InternalError(
+          "item.index receiver is not an active with-clause iterator");
+    }
+    auto type_id = unit_lowerer.InternType(*call.type, span);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    return hir::Expr{
+        .type = *type_id,
+        .data =
+            hir::PrimaryExpr{
+                .data =
+                    hir::IterationBindingRef{
+                        .clause = *clause,
+                        .role = hir::IterationBindingRole::kIndex}},
+        .span = span,
+    };
+  }
+
+  // `$signed` / `$unsigned` reinterpret the operand under the named
+  // signedness. The result type already carries that signedness, so this is a
+  // value conversion to the result type, not a runtime call.
+  if (info.subroutine != nullptr &&
+      (info.subroutine->knownNameId ==
+           slang::parsing::KnownSystemName::Signed ||
+       info.subroutine->knownNameId ==
+           slang::parsing::KnownSystemName::Unsigned)) {
+    auto type_id = unit_lowerer.InternType(*call.type, span);
+    if (!type_id) return std::unexpected(std::move(type_id.error()));
+    return hir::Expr{
+        .type = *type_id,
+        .data =
+            hir::ConversionExpr{
+                .kind = hir::ConversionKind::kImplicit,
+                .operand = *arg_ids.front()},
+        .span = span,
+    };
+  }
+
+  const auto* desc = support::FindSystemSubroutine(name);
+  if (desc == nullptr) {
+    // slang resolved a system task / function that Lyra's registry does not
+    // carry: a legitimate but unimplemented construct, not a compiler bug.
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        std::string{"system task / function '"} + std::string{name} +
+            "' is not yet supported");
+  }
+  const auto frontend_kind = FromSlangSubroutineKind(info.subroutine->kind);
+  if (desc->kind != frontend_kind) {
+    throw InternalError(
+        std::string{"AST->HIR call: registry/frontend kind mismatch for '"} +
+        std::string{name} + "'");
+  }
+  if (!desc->arg_policy.Accepts(arg_ids.size())) {
+    throw InternalError(
+        std::string{
+            "AST->HIR call: arg count outside descriptor policy for '"} +
+        std::string{name} + "'");
+  }
+
+  if (std::holds_alternative<support::SampledValueSystemSubroutineInfo>(
+          desc->semantic)) {
+    if (auto recorded = RecordSampledCells(lowerer, frame, call, span);
+        !recorded) {
+      return std::unexpected(std::move(recorded.error()));
+    }
+  }
+
+  // A result that follows its operand reads its type off that operand rather
+  // than off a builtin, which is what lets one entry serve every type its
+  // argument may have (LRM 16.9.3 `$sampled`).
+  const auto result_type = [&] {
+    if (desc->result_conv != support::ReturnConvention::kOperandType) {
+      return MakeReturnConventionType(
+          unit_lowerer.Unit().builtins, desc->result_conv);
+    }
+    if (arg_ids.empty() || !arg_ids.front().has_value()) {
+      throw InternalError(
+          std::string{"AST->HIR call: '"} + std::string{name} +
+          "' takes its result type from an operand it was not given");
+    }
+    return frame.Exprs().Get(*arg_ids.front()).type;
+  }();
+  return hir::Expr{
+      .type = result_type,
+      .data =
+          hir::CallExpr{
+              .callee = hir::SystemSubroutineRef{.id = desc->id},
+              .arguments = std::move(arg_ids),
+          },
+      .span = span,
+  };
+}
+
+// A call to a subroutine the source declared: a method of a class or of an
+// imported runtime-library class, one of an interface instance, a DPI-C
+// import, one another unit's namespace declares, or one of this unit's scopes.
+template <ExprLowerer Lowerer>
+auto LowerSubroutineCall(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
+    std::vector<std::optional<hir::ExprId>> arg_ids, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto& unit_lowerer = lowerer.Owner();
   const auto* sym =
       std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
   if (sym == nullptr) {
@@ -1025,6 +1013,17 @@ auto LowerCallExpr(
             },
         .span = span,
     };
+  }
+
+  if (const slang::ast::Expression* this_class = call.thisClass();
+      this_class != nullptr) {
+    if (const auto* handle_type =
+            this_class->type->getCanonicalType()
+                .as_if<slang::ast::VirtualInterfaceType>()) {
+      return LowerHeldInterfaceCall(
+          lowerer, frame, *this_class, *handle_type, *sym, std::move(arg_ids),
+          span);
+    }
   }
 
   // Instance-method call (LRM 8.6): every source shape -- `h.foo()`, an
@@ -1154,6 +1153,80 @@ auto LowerCallExpr(
           },
       .span = span,
   };
+}
+
+}  // namespace
+
+template <ExprLowerer Lowerer>
+auto LowerCallExpr(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::CallExpression& call,
+    diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  // The LRM 20.6 / 20.7 queries are resolved before the argument loop: their
+  // operand is never evaluated and may be a data type, which has no value form
+  // to lower.
+  auto query = LowerQueryExpr(lowerer, frame, call, span);
+  if (!query) return std::unexpected(std::move(query.error()));
+  if (query->has_value()) return *std::move(*query);
+
+  auto sampled = LowerSampledHistoryExpr(lowerer, frame, call, span);
+  if (!sampled) return std::unexpected(std::move(sampled.error()));
+  if (sampled->has_value()) return *std::move(*sampled);
+
+  // LRM 6.24.2: the first actual of a dynamic cast is the destination rather
+  // than an operand, so it is resolved before the argument loop. Reached as an
+  // expression the call is the function spelling, whose answer is the whole of
+  // what an invalid assignment produces; the task spelling is recognized where
+  // the statement is.
+  if (IsDynamicCast(call)) {
+    return LowerDynamicCastExpr(
+        lowerer, frame, call, hir::InvalidAssignmentHandling::kAnswered, span);
+  }
+
+  std::vector<std::optional<hir::ExprId>> arg_ids;
+  arg_ids.reserve(call.arguments().size());
+  std::optional<hir::TypeId> receiver_type;
+  for (std::size_t i = 0; i < call.arguments().size(); ++i) {
+    // LRM 13.5: slang models an `output` / `inout` actual as an
+    // AssignmentExpression whose right side is an EmptyArgument placeholder;
+    // the actual lvalue is the left side. HIR carries just that lvalue -- the
+    // copy-in / copy-out is synthesized at HIR-to-MIR from the formal's
+    // direction.
+    const slang::ast::Expression* arg = call.arguments()[i];
+    if (arg->kind == slang::ast::ExpressionKind::Assignment) {
+      const auto& as = arg->as<slang::ast::AssignmentExpression>();
+      if (as.right().kind == slang::ast::ExpressionKind::EmptyArgument) {
+        arg = &as.left();
+      }
+    }
+    // LRM 21.3.4.4 form 2d: a standalone EmptyArgument marks a positional
+    // elision (`$fread(mem, fd, , count)`). Surface as `std::nullopt` so the
+    // per-subroutine HIR-to-MIR handler can decide whether elision is valid
+    // at this position; positions stay aligned with slang's arg list.
+    if (arg->kind == slang::ast::ExpressionKind::EmptyArgument) {
+      arg_ids.emplace_back(std::nullopt);
+      continue;
+    }
+    // A clocking event names an event rather than standing for a value, so
+    // there is nothing here to read (LRM 16.9.3). What it settles -- which
+    // event's ticks a sampled value function counts -- is taken from the call
+    // itself, where the rest of the rule for finding it also applies.
+    if (arg->kind == slang::ast::ExpressionKind::ClockingEvent) {
+      arg_ids.emplace_back(std::nullopt);
+      continue;
+    }
+    auto arg_or = lowerer.LowerExpr(*arg, frame);
+    if (!arg_or) return std::unexpected(std::move(arg_or.error()));
+    if (i == 0) {
+      receiver_type = arg_or->type;
+    }
+    arg_ids.emplace_back(frame.Exprs().Add(*std::move(arg_or)));
+  }
+
+  if (call.isSystemCall()) {
+    return LowerSystemCall(
+        lowerer, frame, call, std::move(arg_ids), receiver_type, span);
+  }
+  return LowerSubroutineCall(lowerer, frame, call, std::move(arg_ids), span);
 }
 
 template auto LowerCallExpr(

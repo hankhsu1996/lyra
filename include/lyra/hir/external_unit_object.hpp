@@ -37,6 +37,16 @@ struct ExternalUnitObject {
   base::Arena<PublishedCallable, PublishedCallableId> callables;
   std::vector<PublishedModport> modports;
 
+  // The member published under `name`, or nothing when the unit published no
+  // such name.
+  [[nodiscard]] auto FindMember(std::string_view name) const
+      -> std::optional<PublishedMemberId> {
+    for (const PublishedMemberId id : members.Ids()) {
+      if (members.Get(id).name == name) return id;
+    }
+    return std::nullopt;
+  }
+
   // The callable published under `name`, or nothing when the unit published no
   // such name. A name with no answer here is one the unit never promised, so a
   // call on it has nothing to compile against.
