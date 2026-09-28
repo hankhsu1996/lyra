@@ -356,7 +356,7 @@ auto UnpackedMemberReach(
     mir::TypeId member_type) -> std::optional<mir::Expr> {
   if (base_ty.Is<hir::UnpackedStructType>() ||
       base_ty.Is<hir::UnpackedUnionType>()) {
-    return mir::MakePartAccessExpr(base_id, index, member_type);
+    return mir::MakeComponentExpr(base_id, index, member_type);
   }
   return std::nullopt;
 }
@@ -614,13 +614,14 @@ auto LowerHirMemberAccessExprLhs(
   if (base_ty.Is<hir::UnpackedStructType>() ||
       base_ty.Is<hir::UnpackedUnionType>()) {
     return DescendInto(
-        *std::move(base_or), DescentStep{
-                                 .value_entry = support::BuiltinFn::kPart,
-                                 .part_entry = support::BuiltinFn::kPartRef,
-                                 .position = sel.field_index,
-                                 .operands = {},
-                                 .count = std::nullopt,
-                                 .part_type = result_type});
+        *std::move(base_or),
+        DescentStep{
+            .value_entry = support::BuiltinFn::kComponent,
+            .part_entry = support::BuiltinFn::kComponentRef,
+            .position = sel.field_index,
+            .operands = {},
+            .count = std::nullopt,
+            .part_type = result_type});
   }
   const PackedProjection projection =
       ProjectPackedAggregate(unit_lowerer, base_ty);

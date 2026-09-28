@@ -483,10 +483,19 @@ An assignment whose target descends into a value -- a container element, a struc
 member, a fixed-width range -- states an abstract update of the owning value: which owner, which
 levels the descent reaches through, how many times each evaluates, the value written and its
 coercion, and that the owning value is the value updated. The owner is a place; the descent is a run
-of calls, each naming the entry the lowering settled for it. Nothing about the target asserts how
-the part is reached: whether it is storage of its own is the language's fact about the type it is
-part of (`storage.md`), which MIR-to-LIR reads to state a part that is storage as a step of the
-owner's place and a part that is a view as an extract and an insert (`lir.md`). A construct that
-binds the designated part rather than writing it -- a reference actual, an output pack component, a
-nonblocking update -- binds the same statement of owner and descent; it is owner-relative, so it
-names no interior pointer and aliases nothing the owner does not already own.
+of calls, each naming the entry the lowering settled for it. Where the owner is a capability
+wrapper, the write is opened on it, the whole of the wrapper's contents is designated within it, and
+each step into a part that is storage of its own is taken within the write in progress rather than
+on the storage, so the write hears what forming each part did -- an element made by being written,
+an index naming none -- and it lands where what those steps designate is dereferenced; a step into a
+part that is a view is taken after that, on the value landed on. The write and a place designated
+within it are two types: the write is held by the writer, ended with the full-expression, which is
+when it reports, and names no place itself, while a designation borrows the write and ends with
+nothing to do. The variable learns whether the write changed it from what it heard and from the part
+it landed on (LRM 4.3). Nothing about the target asserts how the part is reached: whether it is
+storage of its own is the language's fact about the type it is part of (`storage.md`), which
+MIR-to-LIR reads to state a part that is storage as a step of the owner's place and a part that is a
+view as an extract and an insert (`lir.md`). A construct that binds the designated part rather than
+writing it -- a reference actual, an output pack component, a nonblocking update -- binds the same
+statement of owner and descent; it is owner-relative, so it names no interior pointer and aliases
+nothing the owner does not already own.

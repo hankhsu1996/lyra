@@ -359,6 +359,83 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_run_program", &lyra_rt_run_program);
 }
 
+// What a write in progress publishes: opening one on each wrapper that takes
+// one, the steps taken within it, and where it lands (LRM 11.5.1, 4.3).
+void BindWriteEntries(const auto& add) {
+  add("lyra_rt_packed_cell_open_for_write",
+      &lyra_rt_packed_cell_open_for_write);
+  add("lyra_rt_string_cell_open_for_write",
+      &lyra_rt_string_cell_open_for_write);
+  add("lyra_rt_real_cell_open_for_write", &lyra_rt_real_cell_open_for_write);
+  add("lyra_rt_shortreal_cell_open_for_write",
+      &lyra_rt_shortreal_cell_open_for_write);
+  add("lyra_rt_managedref_cell_open_for_write",
+      &lyra_rt_managedref_cell_open_for_write);
+  add("lyra_rt_tuple_cell_open_for_write", &lyra_rt_tuple_cell_open_for_write);
+  add("lyra_rt_union_cell_open_for_write", &lyra_rt_union_cell_open_for_write);
+  add("lyra_rt_tagged_union_cell_open_for_write",
+      &lyra_rt_tagged_union_cell_open_for_write);
+  add("lyra_rt_dynarray_cell_open_for_write",
+      &lyra_rt_dynarray_cell_open_for_write);
+  add("lyra_rt_unpackedarray_cell_open_for_write",
+      &lyra_rt_unpackedarray_cell_open_for_write);
+  add("lyra_rt_queue_cell_open_for_write", &lyra_rt_queue_cell_open_for_write);
+  add("lyra_rt_assocarray_cell_open_for_write",
+      &lyra_rt_assocarray_cell_open_for_write);
+  add("lyra_rt_packed_ref_open_for_write", &lyra_rt_packed_ref_open_for_write);
+  add("lyra_rt_string_ref_open_for_write", &lyra_rt_string_ref_open_for_write);
+  add("lyra_rt_real_ref_open_for_write", &lyra_rt_real_ref_open_for_write);
+  add("lyra_rt_shortreal_ref_open_for_write",
+      &lyra_rt_shortreal_ref_open_for_write);
+  add("lyra_rt_managedref_ref_open_for_write",
+      &lyra_rt_managedref_ref_open_for_write);
+  add("lyra_rt_tuple_ref_open_for_write", &lyra_rt_tuple_ref_open_for_write);
+  add("lyra_rt_union_ref_open_for_write", &lyra_rt_union_ref_open_for_write);
+  add("lyra_rt_tagged_union_ref_open_for_write",
+      &lyra_rt_tagged_union_ref_open_for_write);
+  add("lyra_rt_dynarray_ref_open_for_write",
+      &lyra_rt_dynarray_ref_open_for_write);
+  add("lyra_rt_unpackedarray_ref_open_for_write",
+      &lyra_rt_unpackedarray_ref_open_for_write);
+  add("lyra_rt_queue_ref_open_for_write", &lyra_rt_queue_ref_open_for_write);
+  add("lyra_rt_assocarray_ref_open_for_write",
+      &lyra_rt_assocarray_ref_open_for_write);
+  add("lyra_rt_packed_driver_open_for_write",
+      &lyra_rt_packed_driver_open_for_write);
+  add("lyra_rt_tuple_driver_open_for_write",
+      &lyra_rt_tuple_driver_open_for_write);
+  add("lyra_rt_union_driver_open_for_write",
+      &lyra_rt_union_driver_open_for_write);
+  add("lyra_rt_unpackedarray_driver_open_for_write",
+      &lyra_rt_unpackedarray_driver_open_for_write);
+  add("lyra_rt_designate_whole", &lyra_rt_designate_whole);
+  add("lyra_rt_dynarray_designate_element",
+      &lyra_rt_dynarray_designate_element);
+  add("lyra_rt_unpackedarray_designate_element",
+      &lyra_rt_unpackedarray_designate_element);
+  add("lyra_rt_queue_designate_element", &lyra_rt_queue_designate_element);
+  add("lyra_rt_assocarray_designate_element",
+      &lyra_rt_assocarray_designate_element);
+  add("lyra_rt_tuple_designate_component", &lyra_rt_tuple_designate_component);
+  add("lyra_rt_dynarray_assign_slice", &lyra_rt_dynarray_assign_slice);
+  add("lyra_rt_unpackedarray_assign_slice",
+      &lyra_rt_unpackedarray_assign_slice);
+  add("lyra_rt_packed_land", &lyra_rt_packed_land);
+  add("lyra_rt_string_land", &lyra_rt_string_land);
+  add("lyra_rt_real_land", &lyra_rt_real_land);
+  add("lyra_rt_shortreal_land", &lyra_rt_shortreal_land);
+  add("lyra_rt_chandle_land", &lyra_rt_chandle_land);
+  add("lyra_rt_empty_land", &lyra_rt_empty_land);
+  add("lyra_rt_tuple_land", &lyra_rt_tuple_land);
+  add("lyra_rt_union_land", &lyra_rt_union_land);
+  add("lyra_rt_tagged_union_land", &lyra_rt_tagged_union_land);
+  add("lyra_rt_dynarray_land", &lyra_rt_dynarray_land);
+  add("lyra_rt_unpackedarray_land", &lyra_rt_unpackedarray_land);
+  add("lyra_rt_queue_land", &lyra_rt_queue_land);
+  add("lyra_rt_assocarray_land", &lyra_rt_assocarray_land);
+  add("lyra_rt_managedref_land", &lyra_rt_managedref_land);
+}
+
 // What a value publishes: every entry named for a value domain, which is the
 // storage a value of it lives in and the operations the language defines over
 // it. An entry here names its domain, so gaining a domain adds entries rather
@@ -701,53 +778,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_erased_value_destroy", &lyra_rt_erased_value_destroy);
   add("lyra_rt_promoted_scope_destroy", &lyra_rt_promoted_scope_destroy);
   add("lyra_rt_open_write_destroy", &lyra_rt_open_write_destroy);
-  add("lyra_rt_packed_cell_open_for_write",
-      &lyra_rt_packed_cell_open_for_write);
-  add("lyra_rt_string_cell_open_for_write",
-      &lyra_rt_string_cell_open_for_write);
-  add("lyra_rt_real_cell_open_for_write", &lyra_rt_real_cell_open_for_write);
-  add("lyra_rt_shortreal_cell_open_for_write",
-      &lyra_rt_shortreal_cell_open_for_write);
-  add("lyra_rt_managedref_cell_open_for_write",
-      &lyra_rt_managedref_cell_open_for_write);
-  add("lyra_rt_tuple_cell_open_for_write", &lyra_rt_tuple_cell_open_for_write);
-  add("lyra_rt_union_cell_open_for_write", &lyra_rt_union_cell_open_for_write);
-  add("lyra_rt_tagged_union_cell_open_for_write",
-      &lyra_rt_tagged_union_cell_open_for_write);
-  add("lyra_rt_dynarray_cell_open_for_write",
-      &lyra_rt_dynarray_cell_open_for_write);
-  add("lyra_rt_unpackedarray_cell_open_for_write",
-      &lyra_rt_unpackedarray_cell_open_for_write);
-  add("lyra_rt_queue_cell_open_for_write", &lyra_rt_queue_cell_open_for_write);
-  add("lyra_rt_assocarray_cell_open_for_write",
-      &lyra_rt_assocarray_cell_open_for_write);
-  add("lyra_rt_packed_ref_open_for_write", &lyra_rt_packed_ref_open_for_write);
-  add("lyra_rt_string_ref_open_for_write", &lyra_rt_string_ref_open_for_write);
-  add("lyra_rt_real_ref_open_for_write", &lyra_rt_real_ref_open_for_write);
-  add("lyra_rt_shortreal_ref_open_for_write",
-      &lyra_rt_shortreal_ref_open_for_write);
-  add("lyra_rt_managedref_ref_open_for_write",
-      &lyra_rt_managedref_ref_open_for_write);
-  add("lyra_rt_tuple_ref_open_for_write", &lyra_rt_tuple_ref_open_for_write);
-  add("lyra_rt_union_ref_open_for_write", &lyra_rt_union_ref_open_for_write);
-  add("lyra_rt_tagged_union_ref_open_for_write",
-      &lyra_rt_tagged_union_ref_open_for_write);
-  add("lyra_rt_dynarray_ref_open_for_write",
-      &lyra_rt_dynarray_ref_open_for_write);
-  add("lyra_rt_unpackedarray_ref_open_for_write",
-      &lyra_rt_unpackedarray_ref_open_for_write);
-  add("lyra_rt_queue_ref_open_for_write", &lyra_rt_queue_ref_open_for_write);
-  add("lyra_rt_assocarray_ref_open_for_write",
-      &lyra_rt_assocarray_ref_open_for_write);
-  add("lyra_rt_packed_driver_open_for_write",
-      &lyra_rt_packed_driver_open_for_write);
-  add("lyra_rt_tuple_driver_open_for_write",
-      &lyra_rt_tuple_driver_open_for_write);
-  add("lyra_rt_union_driver_open_for_write",
-      &lyra_rt_union_driver_open_for_write);
-  add("lyra_rt_unpackedarray_driver_open_for_write",
-      &lyra_rt_unpackedarray_driver_open_for_write);
-  add("lyra_rt_open_write_storage", &lyra_rt_open_write_storage);
   add("lyra_rt_packed_assign", &lyra_rt_packed_assign);
   add("lyra_rt_string_assign", &lyra_rt_string_assign);
   add("lyra_rt_real_assign", &lyra_rt_real_assign);
@@ -941,9 +971,9 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_tuple_value_box", &lyra_rt_tuple_value_box);
   add("lyra_rt_dynarray_value_box", &lyra_rt_dynarray_value_box);
   add("lyra_rt_tuple_make", &lyra_rt_tuple_make);
-  add("lyra_rt_tuple_extract", &lyra_rt_tuple_extract);
+  add("lyra_rt_tuple_component", &lyra_rt_tuple_component);
   add("lyra_rt_tuple_count_bits", &lyra_rt_tuple_count_bits);
-  add("lyra_rt_tuple_part_ref", &lyra_rt_tuple_part_ref);
+  add("lyra_rt_tuple_component_ref", &lyra_rt_tuple_component_ref);
   add("lyra_rt_tuple_eq", &lyra_rt_tuple_eq);
   add("lyra_rt_tuple_ne", &lyra_rt_tuple_ne);
   add("lyra_rt_tuple_case_equal", &lyra_rt_tuple_case_equal);
@@ -958,8 +988,8 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_tuple_value_cell_load", &lyra_rt_tuple_value_cell_load);
   add("lyra_rt_union_value_box", &lyra_rt_union_value_box);
   add("lyra_rt_union_make", &lyra_rt_union_make);
-  add("lyra_rt_union_extract", &lyra_rt_union_extract);
-  add("lyra_rt_union_update", &lyra_rt_union_update);
+  add("lyra_rt_union_component", &lyra_rt_union_component);
+  add("lyra_rt_union_with_component", &lyra_rt_union_with_component);
   add("lyra_rt_union_eq", &lyra_rt_union_eq);
   add("lyra_rt_union_ne", &lyra_rt_union_ne);
   add("lyra_rt_union_case_equal", &lyra_rt_union_case_equal);
@@ -974,8 +1004,9 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_union_value_cell_load", &lyra_rt_union_value_cell_load);
   add("lyra_rt_tagged_union_value_box", &lyra_rt_tagged_union_value_box);
   add("lyra_rt_tagged_union_make", &lyra_rt_tagged_union_make);
-  add("lyra_rt_tagged_union_extract", &lyra_rt_tagged_union_extract);
-  add("lyra_rt_tagged_union_update", &lyra_rt_tagged_union_update);
+  add("lyra_rt_tagged_union_component", &lyra_rt_tagged_union_component);
+  add("lyra_rt_tagged_union_with_component",
+      &lyra_rt_tagged_union_with_component);
   add("lyra_rt_tagged_union_tag_matches", &lyra_rt_tagged_union_tag_matches);
   add("lyra_rt_tagged_union_eq", &lyra_rt_tagged_union_eq);
   add("lyra_rt_tagged_union_ne", &lyra_rt_tagged_union_ne);
@@ -1326,6 +1357,7 @@ auto PublishedEntries() -> const std::map<std::string, AbiSignature>& {
     };
     BindEngineEntries(add);
     BindValueEntries(add);
+    BindWriteEntries(add);
     return listed;
   }();
   return published;

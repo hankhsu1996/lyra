@@ -5,7 +5,9 @@ is superseded for value interiors by [value-projection-write](value-projection-w
 interior write is an owner-relative value projection, not a location). The evaluate-once goal
 remains in force, and genuine places keep the store model. Decision point 4 -- "MIR carries one
 compound shape" -- is revised below: the node is uniform over every **target**, which is what this
-entry was arguing, and not over every **operator**.
+entry was arguing, and not over every **operator**. The `Get` / `GetRef` spelling below is
+superseded by [a-part-is-named-by-how-it-is-selected](a-part-is-named-by-how-it-is-selected.md): a
+component is read with `Component<I>` and reached with `ComponentRef<I>`.
 
 ## Context
 

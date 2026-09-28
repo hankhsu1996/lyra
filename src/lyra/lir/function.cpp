@@ -22,6 +22,16 @@ auto ValueCellOpName(ValueCellTarget::Op op) -> std::string_view {
   throw InternalError("lir: unknown value-cell operation");
 }
 
+auto OpenWriteOpName(OpenWriteTarget::Op op) -> std::string_view {
+  switch (op) {
+    case OpenWriteTarget::Op::kLand:
+      return "land";
+    case OpenWriteTarget::Op::kAssignSlice:
+      return "assign_slice";
+  }
+  throw InternalError("lir: unknown open-write operation");
+}
+
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view {
   switch (op) {
     case ControlEffectTarget::Op::kTakeDepartureIfDue:
@@ -62,6 +72,17 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
           },
           [](const ConstructTarget&) { return CallEnding::kReturnsOrDeparts; },
           [](const ValueCellTarget&) { return CallEnding::kReturns; },
+          // Keeping a part's value only moves memory; writing a slice is the
+          // slice write any storage takes, which can raise.
+          [](const OpenWriteTarget& write) {
+            switch (write.op) {
+              case OpenWriteTarget::Op::kLand:
+                return CallEnding::kReturns;
+              case OpenWriteTarget::Op::kAssignSlice:
+                return CallEnding::kReturnsOrDeparts;
+            }
+            throw InternalError("lir: unknown open-write operation");
+          },
           [](const OpenVariablesTarget&) { return CallEnding::kReturns; },
           [](const VariableAddressTarget&) { return CallEnding::kReturns; },
           [](const CloseVariablesTarget&) { return CallEnding::kReturns; },

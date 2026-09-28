@@ -36,8 +36,8 @@ enum class BuiltinFn : std::uint16_t {
   // that is -- all of which is the value's own semantics, reached through the
   // domain its type names, exactly as a coordinate step reaches a queue's rules
   // or an associative array's.
-  kPart,
-  kPartRef,
+  kComponent,
+  kComponentRef,
   // Which member an active-member value holds, and building one that holds a
   // given member. Only a value carrying an observable tag has the first, and a
   // product has no counterpart for either.
@@ -271,13 +271,29 @@ enum class BuiltinFn : std::uint16_t {
   // 16.5.1). A cell nothing samples is never armed and carries neither the
   // storage nor the work of maintaining it.
   kArmSampling,
-  // Asking a cell for its storage as somewhere to write, which is an operation
-  // on the wrapper for the same reason the two above are: which storage it
-  // currently stands for is a fact about the wrapper, not about the place
-  // naming it. It answers with a borrowed pointer, so the ordinary dereference
-  // names the storage through it and a write that reaches one part of a value
-  // costs that part rather than the whole.
+  // Opening a cell's storage for a write, which is an operation on the wrapper
+  // for the same reason the two above are: which storage it currently stands
+  // for is a fact about the wrapper, not about the place naming it. It answers
+  // with the write in progress, which ends with the full-expression and names
+  // no place itself.
   kOpenForWrite,
+  // The whole of what a write in progress was opened on, designated within
+  // it: where the steps into parts start, and, dereferenced, where a write of
+  // the whole lands.
+  kDesignateWhole,
+  // A step taken within a write in progress, into a part of what it designates
+  // that is storage of its own: an element, a component, a slice of elements.
+  // It answers with the part designated within the same write -- a value of its
+  // own that borrows the write -- which is not what the step answering with
+  // the part alone answers. The write hears what the step did to the variable
+  // where the part cannot say so itself -- an element made by being written,
+  // an index naming none (LRM 7.8.7, 7.10.1, 7.4.6), a slice some element of
+  // which the write moved; a component is formed by nothing, so its step has
+  // nothing to tell. Dereferencing what the steps designate is where the write
+  // lands.
+  kDesignateElement,
+  kDesignateComponent,
+  kDesignateSlice,
   // Attaching a driver to a net (LRM 6.5), at the strength its source drives at
   // (LRM 28.11): a `ResolvedNet` method returning the driver handle the drive
   // capability is reached through. The strength is fixed when the driver
@@ -1013,13 +1029,13 @@ enum class EntryAnswer : std::uint8_t {
 
 // How an entry that reaches one part of the value it acts on names that part:
 // by a coordinate the program computes (LRM 7.4.5, 7.8, 7.10.1), by a
-// declaration-order position (LRM 7.2, 7.3), or by a window of consecutive
+// declaration-order position (LRM 7.2, 7.3), or as a slice of consecutive
 // elements (LRM 7.4.6). Reading the part and writing into it name it the same
 // way, so the entry for each shares the answer.
 enum class PartSelection : std::uint8_t {
   kElement,
   kComponent,
-  kWindow,
+  kSlice,
 };
 
 // Every property of one runtime entry: what the library calls it, how a call

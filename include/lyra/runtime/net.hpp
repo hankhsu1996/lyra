@@ -507,14 +507,20 @@ class ResolvedNet : public Observable {
   void UpdateContribution(
       RuntimeEffects& runtime, std::size_t index, const T& value) {
     ContributionOf(index).value = value;
-    ReresolveJoint(runtime);
+    ReresolveJoint(runtime, MakeWholeValueProjectionTest());
   }
 
   // A driver writes wherever this net's own positions are, so every resolution
-  // any run of it takes part in recomputes. A net no connection split reaches
-  // one, which is the same walk over one.
-  void ReresolveJoint(RuntimeEffects& runtime) {
+  // a run of it takes part in recomputes -- except a run whose positions
+  // `unchanged` shows the driver's write left alone, where a contribution that
+  // did not move leaves the resolution over it where it was. A net no
+  // connection split reaches one run, which is the same walk over one.
+  void ReresolveJoint(
+      RuntimeEffects& runtime, const ProjectionUnchanged& unchanged) {
     for (const NetReach<T>& reach : reaches_) {
+      if (unchanged(reach.net_offset, reach.width)) {
+        continue;
+      }
       reach.physical->Reresolve(runtime);
     }
   }
@@ -751,7 +757,6 @@ template <value::NetResolvable T>
 class Driver {
  public:
   using ValueType = T;
-  using TransitionBase = T;
 
   Driver();
   Driver(ResolvedNet<T>& net, std::size_t contribution)
@@ -778,21 +783,17 @@ class Driver {
   }
 
   // The `MutationSink` surface: this driver's own contribution as storage, and
-  // the re-resolution that follows a write to it. What is held from before the
-  // write is the contribution as it stood, because a chain that leaves it
-  // bit-identical leaves the resolution over it unchanged too, and there is
-  // then nothing to redo.
+  // the re-resolution that follows a write to it. The net always reads what a
+  // write did, but only positions whose contribution moved move the resolution
+  // over them, so those are the ones that resolve again.
   [[nodiscard]] auto MutationStorage() const -> T& {
     return Net().ContributionOf(contribution_).value;
   }
-  [[nodiscard]] auto CaptureTransitionBase() const -> T {
-    return MutationStorage();
+  [[nodiscard]] static auto Watched() -> bool {
+    return true;
   }
-  void PublishTransition(const T& before) const {
-    if (before.IsBitIdentical(MutationStorage())) {
-      return;
-    }
-    Net().ReresolveJoint(current_runtime());
+  void PublishTransition(const ProjectionUnchanged& unchanged) const {
+    Net().ReresolveJoint(current_runtime(), unchanged);
   }
 
  private:

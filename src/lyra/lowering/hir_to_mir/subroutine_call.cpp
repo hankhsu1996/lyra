@@ -985,7 +985,7 @@ auto LowerSubroutineCall(
   }
   mir::Block& block = *frame.current_block;
   const mir::ExprId completion = block.exprs.Add(std::move(emitted->call));
-  return diag::Result<mir::Expr>{mir::MakePartAccessExpr(
+  return diag::Result<mir::Expr>{mir::MakeComponentExpr(
       completion, kCompletionResult, *callee.result_type)};
 }
 

@@ -1312,13 +1312,13 @@ auto lyra_rt_dynarray_value_box(const void* value, void* out) -> void*;
 // construction copies each component in.
 //
 // `make` collects the boxed components into the product value. A component is
-// storage of its own (LRM 7.2): `extract` answers with component `index` where
-// it lies, for reading, and `part_ref` with the same storage for a write to
-// land in.
+// storage of its own (LRM 7.2): `component` answers with component `index`
+// where it lies, for reading, and `component_ref` with the same storage for a
+// write to land in.
 auto lyra_rt_tuple_make(LyraSpan components, void* out) -> void*;
-auto lyra_rt_tuple_extract(const void* tuple, std::int64_t index) -> const
+auto lyra_rt_tuple_component(const void* tuple, std::int64_t index) -> const
     void*;
-auto lyra_rt_tuple_part_ref(void* tuple, std::int64_t index) -> void*;
+auto lyra_rt_tuple_component_ref(void* tuple, std::int64_t index) -> void*;
 auto lyra_rt_tuple_eq(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_tuple_ne(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_tuple_case_equal(const void* lhs, const void* rhs, void* out)
@@ -1335,17 +1335,17 @@ auto lyra_rt_tuple_value_cell_load(void* cell) noexcept -> void*;
 
 // The untagged-union domain (LRM 7.3), MIR's `UnionType`. An active-member
 // value carried behind an opaque handle: it stores the one live member and its
-// index. `make` builds it from an index and a boxed member value; `extract`
+// index. `make` builds it from an index and a boxed member value; `component`
 // returns the member at `index`, which must be the live one -- a cross-member
 // read is undefined (LRM 7.3) and, since only the active member is stored,
-// reported rather than defaulted on this backend; `update` returns a copy whose
-// live member is `index` carrying the boxed replacement. All are value
-// operations, never in-place writes.
+// reported rather than defaulted on this backend; `with_component` returns a
+// copy whose live member is `index` carrying the boxed replacement. All are
+// value operations, never in-place writes.
 auto lyra_rt_union_value_box(const void* value, void* out) -> void*;
 auto lyra_rt_union_make(std::int64_t index, void* value, void* out) -> void*;
-auto lyra_rt_union_extract(const void* value, std::int64_t index, void* out)
+auto lyra_rt_union_component(const void* value, std::int64_t index, void* out)
     -> void*;
-auto lyra_rt_union_update(
+auto lyra_rt_union_with_component(
     const void* value, std::int64_t index, void* member, void* out) -> void*;
 auto lyra_rt_union_eq(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_union_ne(const void* lhs, const void* rhs, void* out) -> void*;
@@ -1362,17 +1362,18 @@ void lyra_rt_union_value_cell_store(void* cell, const void* value) noexcept;
 auto lyra_rt_union_value_cell_load(void* cell) noexcept -> void*;
 
 // The tagged-union domain (LRM 7.3.2 / 11.9), MIR's `TaggedUnionType`. The
-// tagged sibling of the untagged union: the tag is observable, so `extract` and
-// `update` fault when `index` is not the live tag rather than returning a
-// fallback, and `tag_matches` answers whether the active tag is a given one,
-// the packed guard a pattern match tests (LRM 12.6). `make` builds it from a
-// tag and a boxed payload; re-tagging goes through `make`, never `update`.
+// tagged sibling of the untagged union: the tag is observable, so `component`
+// and `with_component` fault when `index` is not the live tag rather than
+// returning a fallback, and `tag_matches` answers whether the active tag is a
+// given one, the packed guard a pattern match tests (LRM 12.6). `make` builds
+// it from a tag and a boxed payload; re-tagging goes through `make`, never
+// `with_component`.
 auto lyra_rt_tagged_union_value_box(const void* value, void* out) -> void*;
 auto lyra_rt_tagged_union_make(std::int64_t tag, void* payload, void* out)
     -> void*;
-auto lyra_rt_tagged_union_extract(
+auto lyra_rt_tagged_union_component(
     const void* value, std::int64_t index, void* out) -> void*;
-auto lyra_rt_tagged_union_update(
+auto lyra_rt_tagged_union_with_component(
     const void* value, std::int64_t index, void* member, void* out) -> void*;
 auto lyra_rt_tagged_union_tag_matches(const void* value, std::int64_t index)
     -> bool;
@@ -2097,9 +2098,10 @@ auto lyra_rt_dpi_open_array_value(const void* image, void* prototype, void* out)
     -> void*;
 
 // A write into the storage a wrapper stands for (LRM 11.5.1), opened in storage
-// the writing body gives: the body reaches the wrapper's contents through it,
-// writes the parts it writes where they lie, and ends it once the write is
-// over, which is when the wrapper learns what the write did.
+// the writing body gives. The body designates the wrapper's contents within
+// it, takes its steps from there, writes the parts it writes where they lie,
+// and ends it once the write is over, which is when the wrapper learns what
+// the write did.
 auto lyra_rt_packed_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_string_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_real_cell_open_for_write(void* cell, void* out) -> void*;
@@ -2131,7 +2133,49 @@ auto lyra_rt_tuple_driver_open_for_write(void* driver, void* out) -> void*;
 auto lyra_rt_union_driver_open_for_write(void* driver, void* out) -> void*;
 auto lyra_rt_unpackedarray_driver_open_for_write(void* driver, void* out)
     -> void*;
-auto lyra_rt_open_write_storage(void* write) -> void*;
+// The whole of what a write in progress was opened on, designated within it and
+// built in `out`.
+auto lyra_rt_designate_whole(void* write, void* out) -> void*;
+// A step within a write in progress, taken on a place designated within it and
+// answering with the part it reaches, designated within the same write, built
+// in `out`. An element step tells the write what forming the element did (LRM
+// 7.8.7, 7.10.1, 7.4.6); a component is formed by nothing.
+auto lyra_rt_dynarray_designate_element(
+    const void* designation, const void* index, void* out) -> void*;
+auto lyra_rt_unpackedarray_designate_element(
+    const void* designation, const void* position, void* out) -> void*;
+auto lyra_rt_queue_designate_element(
+    const void* designation, const void* index, void* out) -> void*;
+auto lyra_rt_assocarray_designate_element(
+    const void* designation, const void* index, void* out) -> void*;
+auto lyra_rt_tuple_designate_component(
+    const void* designation, std::int64_t index, void* out) -> void*;
+// A slice of what a write designates, written within it (LRM 7.6), telling the
+// write whether an element moved.
+void lyra_rt_dynarray_assign_slice(
+    const void* designation, const void* start, std::int64_t count,
+    const void* replacement);
+void lyra_rt_unpackedarray_assign_slice(
+    const void* designation, const void* start, std::int64_t count,
+    const void* replacement);
+// Where a write in progress lands: the part a designation names, whose value
+// from before the write the write keeps where anything will ask whether the
+// write changed what it was opened on (LRM 4.3). Answers with where the part
+// lies, which is what is then written.
+auto lyra_rt_packed_land(const void* designation) noexcept -> void*;
+auto lyra_rt_string_land(const void* designation) noexcept -> void*;
+auto lyra_rt_real_land(const void* designation) noexcept -> void*;
+auto lyra_rt_shortreal_land(const void* designation) noexcept -> void*;
+auto lyra_rt_chandle_land(const void* designation) noexcept -> void*;
+auto lyra_rt_empty_land(const void* designation) noexcept -> void*;
+auto lyra_rt_tuple_land(const void* designation) noexcept -> void*;
+auto lyra_rt_union_land(const void* designation) noexcept -> void*;
+auto lyra_rt_tagged_union_land(const void* designation) noexcept -> void*;
+auto lyra_rt_dynarray_land(const void* designation) noexcept -> void*;
+auto lyra_rt_unpackedarray_land(const void* designation) noexcept -> void*;
+auto lyra_rt_queue_land(const void* designation) noexcept -> void*;
+auto lyra_rt_assocarray_land(const void* designation) noexcept -> void*;
+auto lyra_rt_managedref_land(const void* designation) noexcept -> void*;
 
 // A value written into storage that already holds one of its domain -- an
 // element, a member, the contents a write opened -- which takes it where it

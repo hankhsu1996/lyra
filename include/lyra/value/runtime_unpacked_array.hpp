@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -114,7 +115,9 @@ class RuntimeUnpackedArray {
 
   // LRM 7.4.5: the element `position` names, as storage a write lands in. A
   // position that names no element here yields storage nothing reads, so a
-  // write there is discarded.
+  // write there is discarded, and `formed` says which of the two it was.
+  [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
+      -> RuntimeValue&;
   [[nodiscard]] auto ElementRef(const PackedArray& position) -> RuntimeValue&;
 
   // The element at storage position `position`, counted from the first in the
@@ -134,10 +137,11 @@ class RuntimeUnpackedArray {
   // element, into the elements already there. The same places that read the
   // default write nothing -- an element outside the array is skipped, and a
   // start that names no position writes no element at all. Assignment
-  // compatibility gives the two the same element count.
-  void AssignSlice(
+  // compatibility gives the two the same element count. Answers whether any
+  // element took a different value.
+  auto AssignSlice(
       const PackedArray& start, std::int64_t count,
-      const RuntimeUnpackedArray& replacement);
+      const RuntimeUnpackedArray& replacement) -> bool;
 
   // LRM 11.4.5 `==` / `!=` (Any data type): an element-wise reduction that
   // propagates X / Z through each element's own equality.

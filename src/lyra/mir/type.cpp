@@ -197,7 +197,8 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ObservableType& t) { HashId(seed, t.value); },
           [&](const ResolvedType& t) { HashId(seed, t.value); },
           [&](const DriverType& t) { HashId(seed, t.value); },
-          [&](const OpenWriteType& t) { HashId(seed, t.wrapper); },
+          [&](const OpenWriteType& t) { HashId(seed, t.value); },
+          [&](const DesignationType& t) { HashId(seed, t.value); },
           [&](const SampledHistoryType& t) { HashId(seed, t.value); },
           [](const EvaluationAttemptsType&) {},
           [&](const StructType& t) { HashField(seed, t.struct_id.value); },
@@ -352,6 +353,7 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const ObservableType&) { return false; },
           [](const ResolvedType&) { return false; },
           [](const OpenWriteType&) { return false; },
+          [](const DesignationType&) { return false; },
           [](const SampledHistoryType&) { return false; },
           [](const EvaluationAttemptsType&) { return false; },
           [](const EventType&) { return false; },
@@ -364,6 +366,72 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           // admits rather than a type any value has, and `void` and a tagged
           // union's empty payload (LRM 7.3.2) are values no declaration holds
           // on its own.
+          [](const WildcardIndexType&) { return false; },
+          [](const EmptyType&) { return false; },
+          [](const VoidType&) { return false; }});
+}
+
+auto Type::PartsAreStorage() const -> bool {
+  return Visit(
+      Overloaded{
+          // Each element of an unpacked array, and each member of an unpacked
+          // structure, is a place of its own that a reference can bind (LRM
+          // 7.4, 7.8, 7.10, 13.5.2); a product the lowering composes is laid
+          // out the same way.
+          [](const UnpackedArrayType&) { return true; },
+          [](const DynamicArrayType&) { return true; },
+          [](const QueueType&) { return true; },
+          [](const AssociativeArrayType&) { return true; },
+          [](const TupleType&) { return true; },
+          [](const UnpackedStructType&) { return true; },
+
+          // A packed value is one vector however its bits are named (LRM
+          // 7.4.1), a string one sequence of characters (LRM 6.16), and a union
+          // holds one member at a time over storage its members share (LRM
+          // 7.3), so a part of any of them is a view of the whole.
+          [](const PackedArrayType&) { return false; },
+          [](const EnumType&) { return false; },
+          [](const PackedStructType&) { return false; },
+          [](const PackedUnionType&) { return false; },
+          [](const StringType&) { return false; },
+          [](const UnionType&) { return false; },
+          [](const TaggedUnionType&) { return false; },
+
+          // Everything else has no parts a write reaches.
+          [](const RealType&) { return false; },
+          [](const ShortRealType&) { return false; },
+          [](const RealTimeType&) { return false; },
+          [](const ManagedRefType&) { return false; },
+          [](const ChandleType&) { return false; },
+          [](const MachineCStringType&) { return false; },
+          [](const MachineBoolType&) { return false; },
+          [](const MachineIntType&) { return false; },
+          [](const MachineFloatType&) { return false; },
+          [](const MachineArrayType&) { return false; },
+          [](const MachineFunctionType&) { return false; },
+          [](const RefType&) { return false; },
+          [](const PointerType&) { return false; },
+          [](const VectorType&) { return false; },
+          [](const DriverType&) { return false; },
+          [](const CoroutineType&) { return false; },
+          [](const ObjectType&) { return false; },
+          [](const ExternalUnitObjectType&) { return false; },
+          [](const CrossUnitClassType&) { return false; },
+          [](const OpaqueObjectType&) { return false; },
+          [](const RuntimeClassType&) { return false; },
+          [](const StructType&) { return false; },
+          [](const ClosureType&) { return false; },
+          [](const ObservableType&) { return false; },
+          [](const ResolvedType&) { return false; },
+          [](const OpenWriteType&) { return false; },
+          [](const DesignationType&) { return false; },
+          [](const SampledHistoryType&) { return false; },
+          [](const EvaluationAttemptsType&) { return false; },
+          [](const EventType&) { return false; },
+          [](const RuntimeEffectsType&) { return false; },
+          [](const FilesType&) { return false; },
+          [](const DiagnosticType&) { return false; },
+          [](const RuntimeLibraryType&) { return false; },
           [](const WildcardIndexType&) { return false; },
           [](const EmptyType&) { return false; },
           [](const VoidType&) { return false; }});
@@ -424,6 +492,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const ResolvedType&) -> Element { return std::nullopt; },
           [](const DriverType&) -> Element { return std::nullopt; },
           [](const OpenWriteType&) -> Element { return std::nullopt; },
+          [](const DesignationType&) -> Element { return std::nullopt; },
           [](const SampledHistoryType&) -> Element { return std::nullopt; },
           [](const EvaluationAttemptsType&) -> Element { return std::nullopt; },
 

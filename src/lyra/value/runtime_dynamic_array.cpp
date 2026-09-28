@@ -11,6 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/position.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
@@ -110,14 +111,22 @@ auto RuntimeDynamicArray::ElementAt(std::size_t position) const
   return data_[position];
 }
 
-auto RuntimeDynamicArray::ElementRef(const PackedArray& position)
-    -> RuntimeValue& {
+auto RuntimeDynamicArray::ElementRef(
+    const PackedArray& position, Formation& formed) -> RuntimeValue& {
   const std::optional<std::size_t> ordinal =
       ElementOrdinal(position, data_.size());
   if (!ordinal) {
+    formed = Formation::kNowhere;
     return DiscardTarget(*element_default_);
   }
+  formed = Formation::kExisting;
   return data_[*ordinal];
+}
+
+auto RuntimeDynamicArray::ElementRef(const PackedArray& position)
+    -> RuntimeValue& {
+  Formation formed{};
+  return ElementRef(position, formed);
 }
 
 void RuntimeDynamicArray::Delete() {
@@ -132,16 +141,16 @@ auto RuntimeDynamicArray::Slice(const PackedArray& start, std::int64_t count)
           data_, *element_default_, ReadPosition(start), SliceCount(count)));
 }
 
-void RuntimeDynamicArray::AssignSlice(
+auto RuntimeDynamicArray::AssignSlice(
     const PackedArray& start, std::int64_t count,
-    const RuntimeUnpackedArray& replacement) {
+    const RuntimeUnpackedArray& replacement) -> bool {
   const std::size_t window = SliceCount(count);
   std::vector<RuntimeValue> replacement_values;
   replacement_values.reserve(window);
   for (std::size_t i = 0; i < window; ++i) {
     replacement_values.push_back(replacement.ElementAt(i));
   }
-  detail::ArraySliceScatter(
+  return detail::ArraySliceScatter(
       data_, ReadPosition(start), window, replacement_values);
 }
 

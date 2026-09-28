@@ -34,20 +34,14 @@ class Tuple {
       : data_(std::move(values)...) {
   }
 
-  // Component access by declaration-order index. The reference qualifier tracks
-  // the receiver's value category: a const receiver yields a const reference (a
-  // member read), a mutable one a mutable reference (a member write), and an
-  // rvalue one a movable reference.
+  // Component `I`'s value, by declaration-order index: a reference to read it
+  // through, or, from an expiring product, one to move it out of.
   template <std::size_t I>
-  [[nodiscard]] auto Get() & -> decltype(auto) {
+  [[nodiscard]] auto Component() const& -> decltype(auto) {
     return std::get<I>(data_);
   }
   template <std::size_t I>
-  [[nodiscard]] auto Get() const& -> decltype(auto) {
-    return std::get<I>(data_);
-  }
-  template <std::size_t I>
-  [[nodiscard]] auto Get() && -> decltype(auto) {
+  [[nodiscard]] auto Component() && -> decltype(auto) {
     return std::get<I>(std::move(data_));
   }
 
@@ -57,7 +51,7 @@ class Tuple {
   // answers the same request by settling which member that is, which is why
   // reaching a part is spelled apart from reading its value at all.
   template <std::size_t I>
-  [[nodiscard]] auto GetRef() -> decltype(auto) {
+  [[nodiscard]] auto ComponentRef() -> decltype(auto) {
     return std::get<I>(data_);
   }
 
@@ -175,7 +169,8 @@ class Tuple {
     Tuple result = prototype;
     std::uint64_t consumed = 0;
     [&]<std::size_t... I>(std::index_sequence<I...>) {
-      ((result.template GetRef<I>() = TakeMember<I>(bits, consumed, prototype)),
+      ((result.template ComponentRef<I>() =
+            TakeMember<I>(bits, consumed, prototype)),
        ...);
     }(std::index_sequence_for<Ts...>{});
     return result;

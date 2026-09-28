@@ -280,12 +280,20 @@ where the whole lives (the aggregate peers of LLVM's `extractvalue` / `insertval
 and one update carry every such view, and the selector says only which subvalue is named -- the one
 member an active-member value holds at a time, a runtime coordinate, a fixed-width window. A step's
 direction is the access's: reading a missing element reads the default, and writing one allocates or
-discards it by the container's own rule, which the library applies when the step is realized. Which
-library entry realizes a step, and whether it is an instruction or a call at all, is a realization
-question answered below LIR; it never decides which node the step is expressed as. A mutating method
-on a receiver -- a container's `delete`, a queue's `push` -- changes the storage the receiver names
-in place; where the receiver is a view, it is read out, changed, and written back as any write to a
-view is.
+discards it by the container's own rule, which the library applies when the step is realized. A
+write in progress is not a place but a value: the write itself, which the writer owns and ends and
+which names no place, and each place designated within it -- the whole of what it was opened on, and
+each part reached from there -- which borrows the write. Each step MIR takes within a write is one
+call on a designation answering with the next, and what the step does to the write -- an element
+step tells it what forming the element did -- is the library's, as it is in the C++ rendering of the
+same MIR. Where the write lands is a call on a designation, stated before anything is written there,
+that answers with the part's address; the part is then storage like any other. A slice written
+within a write is a call on the container's designation. That is how the variable learns whether the
+write changed it (LRM 4.3). Which library entry realizes a step, and whether it is an instruction or
+a call at all, is a realization question answered below LIR; it never decides which node the step is
+expressed as. A mutating method on a receiver -- a container's `delete`, a queue's `push` -- changes
+the storage the receiver names in place; where the receiver is a view, it is read out, changed, and
+written back as any write to a view is.
 
 LIR carries the fact that a packed value is two-state or four-state; it does not carry how a
 four-state value is stored. The canonical encoding of a four-state value -- value bits plus a state

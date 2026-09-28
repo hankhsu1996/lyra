@@ -14,6 +14,7 @@
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/position.hpp"
@@ -283,9 +284,12 @@ class Queue {
   // slot and returns it. An x/z, negative, or beyond-`$+1` index lands on
   // the discard sink so the write is ignored. The backend routes here
   // only for an element-write lvalue, so a read of `index == size` still
-  // sees the default rather than growing the queue.
-  [[nodiscard]] auto ElementRef(const PackedArray& position) -> T& {
+  // sees the default rather than growing the queue. An append a bounded queue
+  // cannot keep (LRM 7.10.5) leaves the queue as it was.
+  [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
+      -> T& {
     if (const auto ordinal = ElementOrdinal(position, data_.size())) {
+      formed = Formation::kExisting;
       return data_[*ordinal];
     }
     const std::optional<std::int64_t> at = ReadPosition(position);
@@ -293,10 +297,16 @@ class Queue {
       data_.push_back(shield_.Default());
       EnforceBound();
       if (static_cast<std::uint64_t>(*at) < data_.size()) {
+        formed = Formation::kMade;
         return data_[static_cast<std::size_t>(*at)];
       }
     }
+    formed = Formation::kNowhere;
     return shield_.DiscardTarget();
+  }
+  [[nodiscard]] auto ElementRef(const PackedArray& position) -> T& {
+    Formation formed{};
+    return ElementRef(position, formed);
   }
 
   // LRM 7.10.1 queue slice: the elements from position `lo` through `hi`. A

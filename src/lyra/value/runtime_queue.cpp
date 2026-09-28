@@ -137,9 +137,11 @@ auto RuntimeQueue::ElementAt(std::size_t position) const
   return data_[position];
 }
 
-auto RuntimeQueue::ElementRef(const PackedArray& position) -> RuntimeValue& {
+auto RuntimeQueue::ElementRef(const PackedArray& position, Formation& formed)
+    -> RuntimeValue& {
   if (const std::optional<std::size_t> ordinal =
           ElementOrdinal(position, data_.size())) {
+    formed = Formation::kExisting;
     return data_[*ordinal];
   }
   const std::optional<std::int64_t> at = ReadPosition(position);
@@ -147,10 +149,17 @@ auto RuntimeQueue::ElementRef(const PackedArray& position) -> RuntimeValue& {
     data_.push_back(*element_default_);
     EnforceBound();
     if (static_cast<std::uint64_t>(*at) < data_.size()) {
+      formed = Formation::kMade;
       return data_[static_cast<std::size_t>(*at)];
     }
   }
+  formed = Formation::kNowhere;
   return DiscardTarget(*element_default_);
+}
+
+auto RuntimeQueue::ElementRef(const PackedArray& position) -> RuntimeValue& {
+  Formation formed{};
+  return ElementRef(position, formed);
 }
 
 auto RuntimeQueue::Slice(const PackedArray& lo, const PackedArray& hi) const

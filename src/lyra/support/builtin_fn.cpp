@@ -16,28 +16,29 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "slice",
           .declaration = Method{"Slice"},
-          .selects = PartSelection::kWindow};
+          .selects = PartSelection::kSlice};
     case BuiltinFn::kElementRef:
       return {
           .name = "element_ref",
           .declaration = Method{"ElementRef"},
           .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kElement};
+          .selects = PartSelection::kElement,
+          .index_operand = 1};
     case BuiltinFn::kSliceRef:
       return {
           .name = "slice_ref",
           .declaration = Method{"SliceRef"},
           .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kWindow};
-    case BuiltinFn::kPart:
+          .selects = PartSelection::kSlice};
+    case BuiltinFn::kComponent:
       return {
-          .name = "extract",
-          .declaration = Method{"Get"},
+          .name = "component",
+          .declaration = Method{"Component"},
           .selects = PartSelection::kComponent};
-    case BuiltinFn::kPartRef:
+    case BuiltinFn::kComponentRef:
       return {
-          .name = "part_ref",
-          .declaration = Method{"GetRef"},
+          .name = "component_ref",
+          .declaration = Method{"ComponentRef"},
           .answer = EntryAnswer::kPartOfTheReceiver,
           .selects = PartSelection::kComponent};
     case BuiltinFn::kTagMatches:
@@ -443,6 +444,24 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "arm_sampling", .declaration = Method{"ArmSampling"}};
     case BuiltinFn::kOpenForWrite:
       return {.name = "open_for_write", .declaration = Method{"Mutate"}};
+    case BuiltinFn::kDesignateWhole:
+      return {.name = "designate_whole", .declaration = Method{"WholeRef"}};
+    case BuiltinFn::kDesignateElement:
+      return {
+          .name = "designate_element",
+          .declaration = Method{"ElementRef"},
+          .selects = PartSelection::kElement,
+          .index_operand = 1};
+    case BuiltinFn::kDesignateComponent:
+      return {
+          .name = "designate_component",
+          .declaration = Method{"ComponentRef"},
+          .selects = PartSelection::kComponent};
+    case BuiltinFn::kDesignateSlice:
+      return {
+          .name = "designate_slice",
+          .declaration = Method{"SliceRef"},
+          .selects = PartSelection::kSlice};
     case BuiltinFn::kAttachDriver:
       return {.name = "attach_driver", .declaration = Method{"AttachDriver"}};
     case BuiltinFn::kNetJoin:

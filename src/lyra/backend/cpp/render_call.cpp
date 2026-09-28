@@ -61,13 +61,13 @@ void WriteReceiverObject(
 }
 
 // Whether a templated method name follows a value or a type. After a value,
-// `v.template Get<2>()` needs the `template` keyword, because C++ cannot yet
-// tell whether `<` starts an argument list or a comparison; after a type,
+// `v.template Component<2>()` needs the `template` keyword, because C++ cannot
+// yet tell whether `<` starts an argument list or a comparison; after a type,
 // `T::Make<2>()` does not.
 enum class NameReachedThrough : std::uint8_t { kAValue, kAType };
 
 // A runtime function name, with the component position as a template argument
-// where the call names one: `Get<2>`. The position is a template argument
+// where the call names one: `Component<2>`. The position is a template argument
 // because each component has a type of its own.
 struct OperationName {
   std::string_view identifier;

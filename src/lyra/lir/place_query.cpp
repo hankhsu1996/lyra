@@ -106,6 +106,17 @@ auto CallMakesValue(const CallTarget& target) -> bool {
     }
     throw InternalError("lir: unknown value cell operation");
   }
+  // Landing a write keeps what the part held, inside the write, and answers
+  // with where the part lies; writing a slice lands it in the elements already
+  // there. Neither answers with a value of its own.
+  if (const auto* write = std::get_if<OpenWriteTarget>(&target)) {
+    switch (write->op) {
+      case OpenWriteTarget::Op::kLand:
+      case OpenWriteTarget::Op::kAssignSlice:
+        return false;
+    }
+    throw InternalError("lir: unknown open-write operation");
+  }
   const auto* builtin = std::get_if<BuiltinTarget>(&target);
   if (builtin == nullptr) {
     return true;
@@ -184,16 +195,16 @@ auto PlaceType(
               }
               current = *element;
             },
-            [&](const PartProjection& projection) {
+            [&](const ComponentProjection& projection) {
               const Type& product = unit.types.Get(current);
               if (!product.IsProduct()) {
                 throw InternalError(
-                    "lir: a part step over a type that is not a product");
+                    "lir: a component step over a type that is not a product");
               }
               const std::vector<TypeId> components =
                   product.ProductComponentTypes();
               if (projection.index.value >= components.size()) {
-                throw InternalError("lir: part step out of range");
+                throw InternalError("lir: component step out of range");
               }
               current = components[projection.index.value];
             }},

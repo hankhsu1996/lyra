@@ -2596,14 +2596,15 @@ enough to warrant its own focused review.
       holds, and an automatic's storage in the execution's store was already addressable. The copy
       was in how an access to a part was lowered.
 
-- [ ] R149 -- A write to part of a variable something waits on copies the whole variable first, on
-      both backends. The write captures a before-image of the whole value so that, when it ends, the
-      variable can say whether it changed (LRM 4.3); for an unpacked array that is every element,
-      however few the write touched. Nothing is copied when nothing waits and nothing samples the
-      variable, which is the common case and the one the compute block measures. What changed is
-      answerable at the part written, so the capture belongs with the part rather than with the
-      whole -- which means the write's place steps tell the variable which parts they reached. Not
-      blocked.
+- [x] R149 -- A write to part of a variable something waits on copied the whole variable first, on
+      both backends, so that when it ended the variable could say whether it changed (LRM 4.3); for
+      an unpacked array that is every element, however few the write touched.
+
+      Done: the write keeps the part it lands on, and an element or slice step taken within the
+      write tells it what forming the part did
+      (`decisions/a-write-compares-what-it-reached.md`). A clocked 4096-entry memory read by an
+      `always_comb`, 200,000 cycles, `--release`, 2026-09-25: 0.39 s on the execution backend and
+      0.25 s on the C++ backend, from 8.7 s and 3.07 s.
 
 ## Out of Scope
 

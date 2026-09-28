@@ -65,6 +65,13 @@ template <typename K>
   }
 }
 
+// Whether two elements hold the same bits (LRM 4.3's change of state), for an
+// element type that answers for itself.
+template <typename E>
+[[nodiscard]] auto ElementBitIdentical(const E& a, const E& b) -> bool {
+  return a.IsBitIdentical(b);
+}
+
 template <typename K>
 [[nodiscard]] auto SeenContains(const std::vector<K>& seen, const K& k)
     -> bool {
@@ -300,22 +307,31 @@ template <typename T>
 // LRM 7.6 + 7.4.5 whole-slice scatter. Each of the `count` values lands at
 // ordinal `start + i`; an element outside the array is skipped, and a start
 // that names no position performs no operation, matching the invalid-index
-// write contract.
+// write contract. Answers whether any element took a different value, which is
+// whether the write changed the array (LRM 4.3); an element already holding
+// its value is left alone, so the answer costs the slice and not the array.
 template <typename T>
 auto ArraySliceScatter(
     std::vector<T>& data, std::optional<std::int64_t> start, std::size_t count,
-    const std::vector<T>& values) -> void {
+    const std::vector<T>& values) -> bool {
   if (!start) {
-    return;
+    return false;
   }
   const auto size = static_cast<std::int64_t>(data.size());
+  bool moved = false;
   for (std::size_t i = 0; i < count; ++i) {
     const auto pos = *start + static_cast<std::int64_t>(i);
     if (pos < 0 || pos >= size) {
       continue;
     }
-    data[static_cast<std::size_t>(pos)] = values[i];
+    T& element = data[static_cast<std::size_t>(pos)];
+    if (ElementBitIdentical(element, values[i])) {
+      continue;
+    }
+    element = values[i];
+    moved = true;
   }
+  return moved;
 }
 
 }  // namespace lyra::value::detail

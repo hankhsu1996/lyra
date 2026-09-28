@@ -807,17 +807,30 @@ struct DriverType {
   auto operator==(const DriverType&) const -> bool = default;
 };
 
-// A write in progress into the storage the capability wrapper `wrapper` stands
-// for (LRM 11.5.1): what opening that storage for a write answers with. It is
-// an object the writer holds, not an address: dereferencing it reaches the
-// contents the write's parts land in, and it ends with the full-expression
-// that opened it, which is when the wrapper learns once what the write did
-// (LRM 4.3). The wrapper is part of the type because which one was opened is
-// what the end reports to.
+// A write in progress into what a capability wrapper stands for (LRM 11.5.1),
+// whose contents hold a value of type `value`. It is an object the writer
+// holds, not an address, and it ends with the full-expression that opened it,
+// which is when the wrapper learns once whether the write changed it (LRM 4.3).
+// It names no place itself: the whole of those contents is designated within
+// it, and the steps into parts start there.
 struct OpenWriteType {
-  TypeId wrapper;
+  TypeId value;
 
   auto operator==(const OpenWriteType&) const -> bool = default;
+};
+
+// A place designated within a write in progress, holding a value of type
+// `value`: the whole of what the write was opened on, or a part of it that is
+// storage of its own, reached by a step taken within the write. It borrows the
+// write rather than holding it, so it ends with nothing to do. A step to an
+// element reports what forming it did to the variable -- an element made by
+// being written, or an index naming none (LRM 7.8.7, 7.10.1, 7.4.6) -- and
+// dereferencing it is where the write lands, so that part's value before the
+// write is what its value after is compared with.
+struct DesignationType {
+  TypeId value;
+
+  auto operator==(const DesignationType&) const -> bool = default;
 };
 
 // A type one MIR compilation unit names, and the vocabulary for asking what it
@@ -842,7 +855,8 @@ class Type {
       RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
       VectorType, TupleType, UnpackedStructType, UnionType, TaggedUnionType,
       EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
-      SampledHistoryType, EvaluationAttemptsType, StructType, ClosureType>;
+      DesignationType, SampledHistoryType, EvaluationAttemptsType, StructType,
+      ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -896,6 +910,11 @@ class Type {
   // chandle also is: its value is the pointer it carries, and the pointer is in
   // the holder's own hands.
   [[nodiscard]] auto IsRuntimeStoredValue() const -> bool;
+
+  // True for a value whose parts are each storage of its own, so a write to one
+  // lands in it where it lies. A part of any other value is a view, written by
+  // writing the whole it is a view of.
+  [[nodiscard]] auto PartsAreStorage() const -> bool;
 
   // The value a capability wrapper wraps; throws where there is none.
   [[nodiscard]] auto WrappedValueType() const -> TypeId;

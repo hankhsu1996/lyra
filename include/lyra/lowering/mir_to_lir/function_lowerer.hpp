@@ -285,6 +285,10 @@ class FunctionLowerer {
   // without an explicit address-of in the source IR.
   auto LowerArgument(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
+  // Where a place holding a value of `type` is, reached the way a write reaches
+  // it: an element a write makes by being written is made here, where a read
+  // would find none.
+  auto AddressOf(lir::Place place, lir::TypeId type) -> lir::Operand;
   // Every operand a call carries, in the order the boundary takes them. The
   // object the call dispatches on leads, because that boundary takes what an
   // operation acts on as its first parameter, whichever way the library
@@ -330,16 +334,19 @@ class FunctionLowerer {
   // the contents live.
   auto WrapperContentsPlace(const mir::Block& block, mir::ExprId wrapper)
       -> diag::Result<lir::Place>;
-  // Opens a write into what a wrapper stands for: an object held for the rest
-  // of the full-expression, whose end tells the wrapper what the write did,
-  // and whose dereference names the storage the write lands in. `handle`
-  // reaches the wrapper, and `value` is the type of what it holds.
+  // Opens a write into what a wrapper stands for -- an object held for the rest
+  // of the full-expression, whose end tells the wrapper what the write did --
+  // and answers with the whole of what the wrapper holds, designated within
+  // it. `handle` reaches the wrapper, and `value` is the type of what it holds.
   auto OpenWrite(lir::Operand handle, lir::TypeId value)
+      -> diag::Result<lir::Operand>;
+  // Where a write lands: the part `designation` names, whose value from before
+  // the write the write keeps (LRM 4.3), named as the storage a store writes
+  // into. `value` is what the part holds.
+  auto Land(lir::Operand designation, lir::TypeId value)
       -> diag::Result<lir::Place>;
-  // Whether a value of `container` holds each of its parts as storage of its
-  // own, so a part is a step of the place holding the value rather than a
-  // position in it.
-  [[nodiscard]] auto PartsAreStorageIn(lir::TypeId container) const -> bool;
+  // The address of storage holding a value of `value`.
+  auto AddressType(lir::TypeId value) -> lir::TypeId;
   // How an expression names a part of a value that holds its parts as storage
   // of their own, where it names one.
   [[nodiscard]] auto StorageSelection(const mir::Block& block, mir::ExprId id)
@@ -487,16 +494,27 @@ class FunctionLowerer {
   auto UpdateThroughView(
       const mir::Block& block, mir::ExprId target, const ValueChange& change)
       -> diag::Result<lir::Operand>;
-  // The window of elements a target names, where it is a window over a
-  // container that holds its elements as storage of their own.
-  [[nodiscard]] auto StorageWindow(const mir::Block& block, mir::ExprId target)
+  // The slice of elements a target names, where it is a slice of a container
+  // that holds its elements as storage of their own.
+  [[nodiscard]] auto StorageSlice(const mir::Block& block, mir::ExprId target)
       const -> const mir::CallExpr*;
-  // Updating a window of elements: the elements it spans, read as one value,
+  // Updating a slice of elements: the elements it spans, read as one value,
   // and what that value is changed to written into the elements already there
   // (LRM 7.6).
-  auto LowerWindowUpdate(
-      const mir::Block& block, const mir::CallExpr& window, mir::ExprId target,
+  auto LowerSliceUpdate(
+      const mir::Block& block, const mir::CallExpr& slice, mir::ExprId target,
       const ValueChange& change) -> diag::Result<lir::Operand>;
+  // The slice write itself: `writer` is handed `container` -- the container's
+  // storage, or what a write in progress designates of it -- then the slice's
+  // bounds and what the slice is changed to. `read` answers with the slice's
+  // value at those bounds, where the change reads one.
+  using SliceReader = std::function<diag::Result<lir::Operand>(
+      const std::vector<lir::Operand>& bounds)>;
+  auto WriteSlice(
+      const mir::Block& block, const mir::CallExpr& slice,
+      const ValueChange& change, const lir::Operand& container,
+      lir::TypeId slice_type, lir::CallTarget writer, const SliceReader& read)
+      -> diag::Result<lir::Operand>;
   // Which subvalue one reaching call names, in the vocabulary this layer's
   // aggregate instructions take.
   auto LowerValuePartSelector(

@@ -229,9 +229,11 @@ reason it rests on, and is narrowed to the shape the reason describes.
 
 **The proxy does not survive as a destination.** No scoped handle stands for a place a consumer must
 decode back: a whole replacement names the wrapper among its operands, and a partial write names a
-designation. What a backend does behind the designation, including a scoped handle that publishes
-when the descent ends, is its own realization and is recognized by nobody above it
-([value-projection-designator](value-projection-designator.md) D8).
+designation. The write in progress that designation is built on is not a proxy in that sense: it is
+opened by a call, each step into a part is a call on it, and where it lands is a dereference, so
+nothing is decoded back and every node names what it does. It is stated in MIR rather than left to a
+backend because where a write lands decides what the write compares, and both backends have to do
+that same work ([a-write-compares-what-it-reached](a-write-compares-what-it-reached.md)).
 
 **What stands unchanged.** That entry's D1 -- a wrapper's place and the storage it represents are
 distinct, so rebinding and writing-through are different programs -- stands and is sharpened:
@@ -243,9 +245,9 @@ dividing question of what an operation acts on, is what decides this case.
 D5 held that the two are one operation at different path lengths. Under D3's dividing question they
 are not: replacing the whole of what a wrapper holds acts on the wrapper, while writing a part acts
 on the value the wrapper holds and reaches the wrapper only to name where that value lives. So they
-are two node kinds -- a call, and an assignment to a designation whose owner is a dereference -- and
-the unity that entry claimed is given up rather than kept. What is gained for it is that the first
-no longer needs a place-access answer of its own.
+are two node kinds -- a call, and an assignment to a designation built on a write opened on the
+wrapper -- and the unity that entry claimed is given up rather than kept. What is gained for it is
+that the first no longer needs a place-access answer of its own.
 
 **Consequence for a backend.** The C++ spelling of a load and of a whole store comes from the same
 table every other call's spelling comes from, reached through the one call render; no per-access

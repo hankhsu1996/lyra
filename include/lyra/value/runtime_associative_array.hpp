@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -115,7 +116,9 @@ class RuntimeAssociativeArray {
   // LRM 7.8.7: the entry under `index`, as storage a write lands in, allocated
   // from the value an absent index reads if there was none. An index carrying x
   // or z is invalid whatever it names, so it yields storage nothing reads and a
-  // write there is discarded.
+  // write there is discarded. `formed` says which of the three it was.
+  [[nodiscard]] auto ElementRef(const RuntimeValue& index, Formation& formed)
+      -> RuntimeValue&;
   [[nodiscard]] auto ElementRef(const RuntimeValue& index) -> RuntimeValue&;
 
   // Writes under many indices as one operation: `entries` applied in order, so

@@ -5,21 +5,34 @@
 #include <memory>
 
 #include "lyra/runtime/var.hpp"
+#include "lyra/value/formation.hpp"
 
 namespace lyra::runtime {
 
+class OpenWrite;
+
+// A place designated within a write in progress, in a form a caller that names
+// no C++ type can hold: the write, and where the place lies. It borrows the
+// write, so it ends with nothing to do. The steps a write takes, and landing
+// it, are handed one; each step answers with the next.
+struct ErasedDesignation {
+  OpenWrite* write;
+  void* part;
+};
+
 // A write in progress into the storage a capability wrapper stands for (LRM
 // 11.5.1), held by whoever writes for as long as the write lasts. It is the
-// partial-write bracket a wrapper opens, in a form a caller that names no C++
-// type can hold: the caller gives it storage, reaches the wrapper's contents
-// through it, writes whatever parts it writes in place, and ends it once the
-// write is over -- which is when the wrapper is told, once, what the write
-// did.
+// write bracket a wrapper opens, in a form a caller that names no C++ type can
+// hold: the caller gives it storage, designates the whole of the wrapper's
+// contents within it, takes steps into parts from there, lands it, writes
+// whatever it writes there, and ends it once the write is over -- which is
+// when the wrapper is told, once, whether the write changed it.
 //
-// Which wrapper it is, and what that wrapper keeps from before the write, is
-// the bracket's own business and is held inside it. So one object serves every
-// wrapper and every value, and what it costs is what the bracket costs: a
-// before-image only where something is armed to read the answer.
+// Which wrapper it is, and the value the write lands on as it was before, are
+// the bracket's own business and held inside it. So one object serves every
+// wrapper and every value, and what it costs is what the bracket costs: a copy
+// of the part landed on, only where something reads the answer and no step has
+// given it already.
 class OpenWrite {
  public:
   template <MutationSink Sink>
@@ -33,39 +46,123 @@ class OpenWrite {
   auto operator=(OpenWrite&&) -> OpenWrite& = delete;
 
   ~OpenWrite() {
+    if (landing_of_ != nullptr) {
+      landing_of_->end(landing_.data(), *bracket_of_, bracket_.data());
+    }
     bracket_of_->end(bracket_.data());
   }
 
-  // The wrapper's contents, as storage a part of the write lands in.
-  [[nodiscard]] auto Storage() -> void* {
-    return bracket_of_->storage(bracket_.data());
+  // The whole of the wrapper's contents, designated within this write.
+  [[nodiscard]] auto Whole() -> ErasedDesignation {
+    return ErasedDesignation{
+        .write = this, .part = bracket_of_->storage(bracket_.data())};
+  }
+
+  void Formed(value::Formation formed) {
+    bracket_of_->formed(bracket_.data(), formed);
+  }
+
+  // A slice write moved at least one element.
+  void Moved() {
+    bracket_of_->moved(bracket_.data());
+  }
+
+  // The write lands on `part`, whose value from before the write is kept where
+  // the answer is still wanted.
+  template <typename Part>
+  void Land(Part& part) {
+    if (!bracket_of_->undecided(bracket_.data())) {
+      return;
+    }
+    std::construct_at(Landing<Part>(landing_.data()), part);
+    landing_of_ = &kLandingOf<Part>;
   }
 
  private:
-  // Room for the largest bracket any wrapper opens: a reference to the storage,
-  // the wrapper, and the value it held before the write.
-  static constexpr std::size_t kCapacity = 136;
+  // Room for the largest bracket any wrapper opens: the wrapper, a reference
+  // to its storage, and what the write has learned.
+  static constexpr std::size_t kBracketCapacity = 32;
+  // Room for the largest part a write lands on, beside where it lies.
+  static constexpr std::size_t kLandingCapacity = 112;
 
   // What the room holds, asked of the bracket one wrapper opened there.
   struct BracketOf {
     void* (*storage)(void* room);
+    bool (*undecided)(void* room);
+    void (*formed)(void* room, value::Formation formed);
+    void (*moved)(void* room);
+    void (*landed)(void* room, const ProjectionUnchanged& unchanged);
     void (*end)(void* room);
   };
 
   template <MutationSink Sink>
-  static auto Bracket(void* room) -> ScopedMutation<Sink>* {
-    static_assert(sizeof(ScopedMutation<Sink>) <= kCapacity);
-    static_assert(alignof(ScopedMutation<Sink>) <= alignof(void*));
-    return static_cast<ScopedMutation<Sink>*>(room);
+  static auto Bracket(void* room) -> WriteBracket<Sink>* {
+    static_assert(sizeof(WriteBracket<Sink>) <= kBracketCapacity);
+    static_assert(alignof(WriteBracket<Sink>) <= alignof(void*));
+    return static_cast<WriteBracket<Sink>*>(room);
   }
 
   template <MutationSink Sink>
   static constexpr BracketOf kBracketOf{
-      .storage = [](void* room) -> void* { return &**Bracket<Sink>(room); },
-      .end = [](void* room) { std::destroy_at(Bracket<Sink>(room)); }};
+      .storage = [](void* room) -> void* {
+        return &Bracket<Sink>(room)->Storage();
+      },
+      .undecided = [](void* room) -> bool {
+        return Bracket<Sink>(room)->Undecided();
+      },
+      .formed =
+          [](void* room, value::Formation formed) {
+            Bracket<Sink>(room)->Formed(formed);
+          },
+      .moved = [](void* room) { Bracket<Sink>(room)->Moved(); },
+      .landed =
+          [](void* room, const ProjectionUnchanged& unchanged) {
+            Bracket<Sink>(room)->Landed(unchanged);
+          },
+      .end =
+          [](void* room) {
+            WriteBracket<Sink>* bracket = Bracket<Sink>(room);
+            bracket->End();
+            std::destroy_at(bracket);
+          }};
 
-  alignas(void*) std::array<std::byte, kCapacity> bracket_{};
+  // The part a write landed on, and its value from before the write.
+  template <typename Part>
+  struct PartLanding {
+    explicit PartLanding(Part& landed) : part(&landed), before(landed) {
+    }
+    Part* part;
+    Part before;
+  };
+
+  // What the landing room holds, asked of the part one write landed on. Ending
+  // it tells the bracket what the landing found.
+  struct LandingOf {
+    void (*end)(void* room, const BracketOf& bracket_of, void* bracket);
+  };
+
+  template <typename Part>
+  static auto Landing(void* room) -> PartLanding<Part>* {
+    static_assert(sizeof(PartLanding<Part>) <= kLandingCapacity);
+    static_assert(alignof(PartLanding<Part>) <= alignof(void*));
+    return static_cast<PartLanding<Part>*>(room);
+  }
+
+  template <typename Part>
+  static constexpr LandingOf kLandingOf{
+      .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
+        PartLanding<Part>* landing = Landing<Part>(room);
+        if (!landing->before.IsBitIdentical(*landing->part)) {
+          bracket_of.landed(
+              bracket, LandedChange(landing->before, *landing->part));
+        }
+        std::destroy_at(landing);
+      }};
+
+  alignas(void*) std::array<std::byte, kBracketCapacity> bracket_{};
+  alignas(void*) std::array<std::byte, kLandingCapacity> landing_{};
   const BracketOf* bracket_of_;
+  const LandingOf* landing_of_ = nullptr;
 };
 
 }  // namespace lyra::runtime

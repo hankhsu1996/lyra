@@ -28,7 +28,7 @@ auto RuntimeTaggedUnion::Tag() const -> std::size_t {
   return tag_index_;
 }
 
-auto RuntimeTaggedUnion::Member(std::size_t index) const -> RuntimeValue {
+auto RuntimeTaggedUnion::Component(std::size_t index) const -> RuntimeValue {
   if (index != tag_index_) {
     throw SimulationError(
         "read of a tagged union member inconsistent with the current tag "
@@ -37,7 +37,7 @@ auto RuntimeTaggedUnion::Member(std::size_t index) const -> RuntimeValue {
   return payload_.front();
 }
 
-void RuntimeTaggedUnion::SetMember(std::size_t index, RuntimeValue value) {
+void RuntimeTaggedUnion::SetComponent(std::size_t index, RuntimeValue value) {
   if (index != tag_index_) {
     throw SimulationError(
         "write to a tagged union member inconsistent with the current tag "

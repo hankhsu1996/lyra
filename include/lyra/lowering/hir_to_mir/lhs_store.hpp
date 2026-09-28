@@ -48,7 +48,7 @@ struct DescentStep {
     const mir::CompilationUnit& unit, mir::Block& block,
     const DescentStep& step) -> std::vector<mir::ExprId>;
 
-// Where a write lands: the place that owns the whole value, and the descent
+// What a write targets: the place that owns the whole value, and the descent
 // that reaches the part written. A target that designates no part descends
 // nowhere and is its own place.
 //
@@ -75,18 +75,16 @@ struct WriteTarget {
     const mir::CompilationUnit& unit, const mir::Block& block,
     const WriteTarget& target) -> mir::TypeId;
 
-// The place a write reaches through a capability wrapper: asking one which
-// storage it currently stands for is an operation on it, so the answer is a
-// call and the storage is named by dereferencing it. A place that is not a
-// wrapper already names its own storage.
-[[nodiscard]] auto OpenedPlace(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId place)
-    -> mir::ExprId;
-
 // The place the target designates: the owner's own storage, then one reaching
 // call per step. Storing into the result writes the part, reading it reads the
 // part, and handing it to a by-reference formal lends it, because a place is
 // what all three take.
+//
+// An owner that is a capability wrapper is opened for a write, since asking one
+// which storage it stands for is an operation on it. The steps into parts that
+// are storage of their own are then taken within the write in progress,
+// starting from the whole of what it designates, which is how it learns what
+// forming each did, and the place is where the last of them is dereferenced.
 [[nodiscard]] auto TargetPlace(
     mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
     -> mir::ExprId;
