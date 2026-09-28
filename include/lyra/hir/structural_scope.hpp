@@ -213,12 +213,12 @@ struct ScopeLeaf {
 
 // The route ends past a signature too, at a subroutine no unit promised: a
 // hierarchical name reaches a module's task or function (LRM 23.6, 23.8.1), and
-// a module's signature is its parameters and ports. The name is all that
-// crosses, and the scope answers it with an entry the way it answers one with a
-// cell. `interface` is what the call passes and awaits, recomputed from the
-// callee's declaration: nothing was published to shape the call, and the entry
-// the scope publishes is generated from that same declaration, so the two
-// cannot disagree.
+// a module's signature is its ports. The name is all that crosses, and the
+// scope answers it with an entry the way it answers one with a cell.
+// `interface` is what the call passes and awaits, recomputed from the callee's
+// declaration: nothing was published to shape the call, and the entry the scope
+// publishes is generated from that same declaration, so the two cannot
+// disagree.
 struct OpaqueCallableLeaf {
   std::string name;
   ExternalCalleeInterface interface;
@@ -364,10 +364,18 @@ struct ConcurrentAssertionDecl {
 // of the object that unit's instances are. `array_dims` is empty for a scalar
 // instance and holds one element count per dimension, outermost first, for an
 // instance array (`Child c[2][3]` is `{2, 3}`).
+//
+// `arguments` are what the instantiation passes the child's constructor, one
+// per parameter the child takes at construction, in the order the child
+// declares them -- the expression this scope wrote for it (LRM 23.10.2),
+// evaluated where the child is built, so instances handed different values are
+// one unit and, where nothing else differs, this scope states the same thing
+// for each of them.
 struct InstanceMemberDecl {
   std::string instance_name;
   ExternalUnitObjectId object;
   std::vector<std::uint32_t> array_dims;
+  std::vector<ExprId> arguments;
 
   auto operator==(const InstanceMemberDecl&) const -> bool = default;
 };
@@ -492,19 +500,18 @@ struct BlocksStandAlone {
 
 // The one scope is built once at every index the loop counts out (LRM 27.4).
 // What makes one scope enough is that the index reaches the block as a value
-// construction supplies rather than as a constant folded into its body, so
-// `index` is that block's own declaration of it. `variable` is the loop's
-// index, declared by the scope holding the generate, and the three expressions
-// are the loop's own: where the index starts, whether a block stands at it,
-// and how it reaches the next one. The first two are values the loop reads;
-// the step is written for its effect on the index and its own value is
-// discarded, the same way a loop written among statements states its step.
+// construction supplies rather than as a constant folded into its body.
+// `variable` is the loop's index, declared by the scope holding the generate,
+// and the three expressions are the loop's own: where the index starts,
+// whether a block stands at it, and how it reaches the next one. The first two
+// are values the loop reads; the step is written for its effect on the index
+// and its own value is discarded, the same way a loop written among statements
+// states its step.
 struct BlocksRepeat {
   StructuralDataObjectId variable;
   ExprId initial;
   ExprId condition;
   ExprId step;
-  StructuralDataObjectId index;
 
   auto operator==(const BlocksRepeat&) const -> bool = default;
 };
@@ -600,11 +607,13 @@ struct BlocksChoose {
   auto operator==(const BlocksChoose&) const -> bool = default;
 };
 
+struct GenerateBlock;
+
 // The lowered form of every generate construct (LRM 27). A block's position in
-// `child_scopes` is its identity, so nothing restates which block a scope is,
-// and how many objects a scope stands for is what `counting` says.
+// `blocks` is its identity, so nothing restates which block a scope is, and
+// how many objects a scope stands for is what `counting` says.
 struct Generate {
-  base::Arena<StructuralScope, StructuralScopeId> child_scopes;
+  base::Arena<GenerateBlock, StructuralScopeId> blocks;
   std::variant<BlocksStandAlone, BlocksRepeat, BlocksChoose> counting =
       BlocksStandAlone{};
 
@@ -774,6 +783,19 @@ struct StructuralScope {
   // this has to fail in, because a comparison that misses something answers
   // "the same" about two things that are not.
   auto operator==(const StructuralScope&) const -> bool = default;
+};
+
+// One block of a generate, and the arguments its construction passes the
+// block's constructor: one expression per value the block receives, in the
+// order it receives them. A loop's block receives its index (LRM 27.4); a block
+// has no parameter ports (Syntax 27-1), so any other block receives nothing.
+// The expressions belong to the scope holding the generate, because that
+// scope's construction evaluates them, the way an instance's are.
+struct GenerateBlock {
+  StructuralScope scope;
+  std::vector<ExprId> arguments;
+
+  auto operator==(const GenerateBlock&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

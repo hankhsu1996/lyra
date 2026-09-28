@@ -353,9 +353,12 @@ void PublishNamespaceStorageBringUp(
 // instead of making one, and the construction it would otherwise have written
 // sits on the side that knows the answer. The party that builds the design's
 // tops asks the same way, having no more than any other referrer.
+//
+// Beside where the object hangs, it takes the values an instance is handed at
+// construction and passes them on.
 auto PublishObjectEntry(
-    mir::CompilationUnit& unit, mir::ClassId root, mir::ClassId promise)
-    -> mir::CallableId {
+    mir::CompilationUnit& unit, mir::ClassId root, mir::ClassId promise,
+    std::span<const ConstructionValue> handed) -> mir::CallableId {
   const auto owning_pointer = [&](mir::ClassId cls) {
     return unit.types.Intern(
         mir::Type{mir::PointerType{
@@ -375,18 +378,22 @@ auto PublishObjectEntry(
   code.result_type = owning;
 
   mir::Block& body = code.Body();
+  std::vector<mir::ExprId> arguments{
+      body.exprs.Add(mir::MakeLocalRefExpr(parent, unit.builtins.scope_ptr)),
+      body.exprs.Add(
+          mir::MakeLocalRefExpr(segment, unit.builtins.hierarchy_segment))};
+  for (const ConstructionValue& value : handed) {
+    const mir::LocalId param = code.AddLocal(value.type);
+    code.params.push_back(param);
+    arguments.push_back(
+        body.exprs.Add(mir::MakeLocalRefExpr(param, value.type)));
+  }
   const mir::ExprId built = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Construct{},
-                  .arguments =
-                      {body.exprs.Add(
-                           mir::MakeLocalRefExpr(
-                               parent, unit.builtins.scope_ptr)),
-                       body.exprs.Add(
-                           mir::MakeLocalRefExpr(
-                               segment, unit.builtins.hierarchy_segment))}},
+                  .arguments = std::move(arguments)},
           .type = made});
   body.AppendStmt(
       mir::ReturnStmt{
@@ -631,7 +638,8 @@ auto UnitLowerer::PopulateModuleRoot(DesignNamespaces namespaces)
   unit_.content = mir::RootedTree{
       .promise = *promise,
       .root = *top_r,
-      .object_entry = PublishObjectEntry(unit_, *top_r, *promise)};
+      .object_entry = PublishObjectEntry(
+          unit_, *top_r, *promise, root.ConstructionValues())};
   return {};
 }
 

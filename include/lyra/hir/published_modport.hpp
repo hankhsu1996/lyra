@@ -31,6 +31,8 @@ struct ViewDefinedPlace {
   // part does not have, and a referrer that reached only the part would read a
   // different value.
   TypeId type;
+
+  auto operator==(const ViewDefinedPlace&) const -> bool = default;
 };
 
 // The value a name a view offers only for reading stands for. Nothing bounds
@@ -47,6 +49,8 @@ struct ViewDefinedPlace {
 struct ViewComputedValue {
   PublishedCallableId evaluate;
   std::vector<PublishedMemberId> observes;
+
+  auto operator==(const ViewComputedValue&) const -> bool = default;
 };
 
 // What one port identifier of a modport means (LRM 25.5). Which of the two it
@@ -81,6 +85,8 @@ using ViewDefinedName = std::variant<ViewDefinedPlace, ViewComputedValue>;
 struct PublishedModportPort {
   std::string name;
   ViewDefinedName meaning;
+
+  auto operator==(const PublishedModportPort&) const -> bool = default;
 };
 
 // A named view of what an interface publishes (LRM 25.5). It narrows which
@@ -101,6 +107,8 @@ struct PublishedModport {
     }
     return nullptr;
   }
+
+  auto operator==(const PublishedModport&) const -> bool = default;
 };
 
 // The view published under `name`, or nothing when the unit declares no such

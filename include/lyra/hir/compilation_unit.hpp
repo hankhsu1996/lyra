@@ -41,6 +41,8 @@ struct BuiltinHirTypes {
   TypeId time;
   TypeId realtime;
   TypeId wildcard_index;
+
+  auto operator==(const BuiltinHirTypes&) const -> bool = default;
 };
 
 struct CompilationUnit {
@@ -70,6 +72,10 @@ struct CompilationUnit {
   explicit CompilationUnit(std::string name)
       : name(std::move(name)), builtins(MakeBuiltins(types)) {
   }
+
+  // Two units are one when every node below them is, which is what decides
+  // that instances lowered apart can share one artifact.
+  auto operator==(const CompilationUnit&) const -> bool = default;
 
  private:
   // The single-bit leaves and the predefined-width integers are the primitive

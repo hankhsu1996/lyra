@@ -3,7 +3,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include <slang/ast/Compilation.h>
 #include <slang/driver/Driver.h>
@@ -20,7 +19,6 @@ namespace lyra::compiler {
 // begins at, and what each unit declared and published, together with the
 // elaborated AST their bodies are lowered from.
 struct ElaboratedDesign {
-  std::vector<lowering::ast_to_hir::TopLevelUnit> tops;
   lowering::ast_to_hir::DeclaredDesign units;
 };
 

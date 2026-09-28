@@ -4,6 +4,7 @@
 #include <variant>
 
 #include "lyra/hir/integral_constant.hpp"
+#include "lyra/hir/real_bits.hpp"
 #include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
@@ -21,7 +22,7 @@ struct StringLiteral {
 };
 
 struct RealLiteral {
-  double value;
+  RealBits value;
 
   auto operator==(const RealLiteral&) const -> bool = default;
 };

@@ -89,21 +89,28 @@ auto ReservedInstanceMember(
 // instance of. What the child is comes off this unit's record of that unit's
 // object, never from the unit's own name; `dims` carries the element counts of
 // an array, a scalar instance being the empty case rather than a shape of its
-// own.
+// own. The constructor arguments are stored among this scope's expressions,
+// which is where the construction reads them.
 auto BuildInstanceMember(
-    UnitLowerer& owner, std::string_view instance_name,
-    const slang::ast::InstanceSymbol& leaf, std::vector<std::uint32_t> dims)
-    -> hir::InstanceMemberDecl {
+    UnitLowerer& owner, WalkFrame frame, std::string_view instance_name,
+    const slang::ast::InstanceSymbol& leaf, std::vector<std::uint32_t> dims,
+    std::vector<hir::Expr> arguments) -> hir::InstanceMemberDecl {
+  std::vector<hir::ExprId> stored;
+  stored.reserve(arguments.size());
+  for (hir::Expr& value : arguments) {
+    stored.push_back(frame.Exprs().Add(std::move(value)));
+  }
   return hir::InstanceMemberDecl{
       .instance_name = std::string{instance_name},
-      .object = owner.ExternalUnitObjectOf(SpecializationName(leaf)),
-      .array_dims = std::move(dims)};
+      .object = owner.ExternalUnitObjectOf(
+          SpecializationName(leaf, owner.Specialization())),
+      .array_dims = std::move(dims),
+      .arguments = std::move(stored)};
 }
 
 }  // namespace
 
-auto StructuralScopeLowerer::Run(
-    WalkFrame parent_frame, ConstructionValue* construction_value)
+auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     -> diag::Result<hir::StructuralScope> {
   hir::StructuralScope scope;
   // Filling a declaration is defining the identity a peer may already hold,
@@ -119,36 +126,11 @@ auto StructuralScopeLowerer::Run(
           .WithProceduralScopeOwner(slang_scope_, &scope.procedural_scopes);
   scope.time_resolution = ResolveTimeResolution(slang_scope_->getTimeScale());
 
-  // Declared before anything else so that a name reaching it during the walk
+  // Declared before anything else so that a name reaching one during the walk
   // below resolves to the declaration rather than folding to what one
   // elaboration gave it.
-  if (construction_value != nullptr) {
-    const slang::ast::ValueSymbol& parameter = *construction_value->parameter;
-    auto type_or = owner_->InternType(
-        parameter.getType(),
-        owner_->SourceMapper().PointSpanOf(parameter.location));
-    if (!type_or) return std::unexpected(std::move(type_or.error()));
-    construction_value->declared = scope.structural_data_objects.Add(
-        hir::StructuralDataObjectDecl{
-            .name = std::string{parameter.name},
-            .type = *type_or,
-            .kind = hir::StructuralConstructionValueDecl{}});
-    owner_->MapStructuralDataObjectBinding(
-        parameter, frame_, construction_value->declared, *type_or);
-  }
-
-  // A parameter the block itself declares is settled the same way, one step
-  // further along: the scope works its value out instead of being handed it.
-  // Declared before the walk for the same reason, and in member order, so a
-  // parameter written from an earlier one reaches a declaration that exists.
-  //
-  // Only a generate block's. A unit's own parameter varies with the unit's
-  // parameterization, and a parameterization is already an artifact of its own,
-  // so reading its value cannot cost a second one.
-  if (slang_scope_->asSymbol().kind == slang::ast::SymbolKind::GenerateBlock) {
-    auto declared = DeclareBlockParameters(scope, frame);
-    if (!declared) return std::unexpected(std::move(declared.error()));
-  }
+  auto parameters = DeclareDifferingParameters(scope, frame);
+  if (!parameters) return std::unexpected(std::move(parameters.error()));
 
   // A `disable` names a block or task by static identity (LRM 9.6.2), so it can
   // name one whose body lowers later, or lives in another process entirely.
@@ -217,47 +199,70 @@ auto StructuralScopeLowerer::Run(
   return scope;
 }
 
-// The constants a generate block declares, as declarations of it holding the
-// expressions the source assigned them. The index the block was built at is
-// left out: no expression of the block settles that one, so it is supplied.
+// The parameters of this scope whose values differ between the objects built
+// from it, each a declaration of the scope. One supplied at construction -- a
+// unit's overridden parameter, or the index a loop's block was built at -- is a
+// value the construction fills, and the scope declares them in the order a
+// construction supplies them. One computed from those holds the expression the
+// source wrote for it. Every other parameter's value is fixed by the scope's
+// specialization, so reading that value costs no second artifact.
 //
 // An expression naming the index resolves to the declaration the construction
 // fills, so every block a loop counts out states the same thing whatever index
 // it was built at.
-auto StructuralScopeLowerer::DeclareBlockParameters(
+auto StructuralScopeLowerer::DeclareDifferingParameters(
     hir::StructuralScope& scope, WalkFrame frame) -> diag::Result<void> {
   for (const auto& member : slang_scope_->members()) {
     const auto* parameter = member.as_if<slang::ast::ParameterSymbol>();
-    if (parameter == nullptr || parameter->isFromGenvar()) {
-      continue;
+    if (parameter == nullptr) continue;
+    switch (owner_->ValueSourceOf(*parameter)) {
+      case ParameterValueSource::kFixedBySpecialization:
+        break;
+      case ParameterValueSource::kSuppliedAtConstruction: {
+        auto declared = DeclareSettledValue(
+            scope, *parameter, hir::StructuralConstructionValueDecl{});
+        if (!declared) return std::unexpected(std::move(declared.error()));
+        break;
+      }
+      case ParameterValueSource::kComputedAtConstruction: {
+        // Only a parameter a declaration writes is computed, so there is
+        // always the expression it was written with.
+        const slang::ast::Expression* initializer = parameter->getInitializer();
+        if (initializer == nullptr) {
+          throw InternalError(
+              "StructuralScopeLowerer::DeclareDifferingParameters: a parameter "
+              "its declaration writes states no expression");
+        }
+        auto lowered = LowerExpr(*initializer, frame);
+        if (!lowered) return std::unexpected(std::move(lowered.error()));
+        auto declared = DeclareSettledValue(
+            scope, *parameter,
+            hir::StructuralParameterDecl{
+                .initializer = frame.Exprs().Add(*std::move(lowered))});
+        if (!declared) return std::unexpected(std::move(declared.error()));
+        break;
+      }
     }
-    const auto span = owner_->SourceMapper().PointSpanOf(parameter->location);
-    auto type_or = owner_->InternType(parameter->getType(), span);
-    if (!type_or) return std::unexpected(std::move(type_or.error()));
-
-    // LRM 6.20.4 makes `parameter` a synonym for `localparam` in a generate
-    // block, and a local parameter is assigned where it is declared, so the
-    // only parameter of one that states no expression is the implicit index,
-    // which this does not reach.
-    const slang::ast::Expression* initializer = parameter->getInitializer();
-    if (initializer == nullptr) {
-      throw InternalError(
-          "StructuralScopeLowerer::DeclareBlockParameters: a generate block's "
-          "parameter states no expression");
-    }
-    auto lowered = LowerExpr(*initializer, frame);
-    if (!lowered) return std::unexpected(std::move(lowered.error()));
-
-    const hir::StructuralDataObjectId declared =
-        scope.structural_data_objects.Add(
-            hir::StructuralDataObjectDecl{
-                .name = std::string{parameter->name},
-                .type = *type_or,
-                .kind = hir::StructuralParameterDecl{
-                    .initializer = frame.Exprs().Add(*std::move(lowered))}});
-    owner_->MapStructuralDataObjectBinding(
-        *parameter, frame_, declared, *type_or);
   }
+  return {};
+}
+
+// Declares a value the scope settles before its walk begins, and binds the
+// symbol to it so every name reaching the symbol resolves to the declaration
+// rather than to what one elaboration gave it.
+auto StructuralScopeLowerer::DeclareSettledValue(
+    hir::StructuralScope& scope, const slang::ast::ValueSymbol& value,
+    hir::StructuralDataObjectKind kind) -> diag::Result<void> {
+  auto type_or = owner_->InternType(
+      value.getType(), owner_->SourceMapper().PointSpanOf(value.location));
+  if (!type_or) return std::unexpected(std::move(type_or.error()));
+  const hir::StructuralDataObjectId declared =
+      scope.structural_data_objects.Add(
+          hir::StructuralDataObjectDecl{
+              .name = std::string{value.name},
+              .type = *type_or,
+              .kind = std::move(kind)});
+  owner_->MapStructuralDataObjectBinding(value, frame_, declared, *type_or);
   return {};
 }
 
@@ -386,11 +391,12 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::GenericClassDef:
       return {};
 
-    // Nothing to build at the walk. A generate block's parameters are already
-    // declarations of it, settled before this walk began so that the members
-    // below reach them; every other scope's parameter belongs to that scope's
-    // own artifact, which makes reading its value cost nothing. A genvar and an
-    // import contribute to the members that read them and nothing of their own.
+    // Nothing to build at the walk. A parameter that varies per block or per
+    // instance is already a declaration, settled before this walk began so that
+    // the members below reach it; any other is part of the scope's own
+    // specialization, which makes reading its value cost nothing. A genvar and
+    // an import contribute to the members that read them and nothing of their
+    // own.
     case SymbolKind::Parameter:
     case SymbolKind::Specparam:
     case SymbolKind::DefParam:
@@ -409,9 +415,11 @@ auto StructuralScopeLowerer::PopulateMember(
       return PopulateInterfacePortMember(
           member.as<slang::ast::InterfacePortSymbol>(), frame);
 
+    case SymbolKind::Port:
+      return PopulatePortMember(member.as<slang::ast::PortSymbol>(), frame);
+
     // The scope's own boundary and its enclosing containers, reached as
     // members but describing where this scope sits rather than what it does.
-    case SymbolKind::Port:
     case SymbolKind::MultiPort:
     case SymbolKind::ModportPort:
     case SymbolKind::ModportClocking:
@@ -608,12 +616,57 @@ auto StructuralScopeLowerer::PopulateNetMember(
   return {};
 }
 
-// The subroutine an interface evaluates one name a view offers only for reading
-// in (LRM 25.5.4). Nothing bounds such a name to an lvalue, so what crosses to
-// a module written against the view is this rather than the expression, which
-// names declarations that would mean nothing where the signature is read; it is
-// lowered here, in the scope that wrote it. Every other name a view offers
-// designates storage the referrer reaches, so it has nothing to build here.
+// The subroutine this scope evaluates `holder`'s expression in, for another
+// unit that asks for the value: the expression names declarations that would
+// mean nothing where that unit's signature is read, so what crosses is the call
+// and the expression is lowered here, in the scope that wrote it. It is one
+// return of the expression and takes no formals.
+auto StructuralScopeLowerer::DefineEvaluator(
+    const slang::ast::Symbol& holder, std::string name,
+    const slang::ast::Expression& expr, WalkFrame frame) -> diag::Result<void> {
+  const auto span = owner_->SourceMapper().PointSpanOf(holder.location);
+  auto result_type = owner_->InternType(*expr.type, span);
+  if (!result_type) return std::unexpected(std::move(result_type.error()));
+
+  hir::ProceduralBody body;
+  OpenProceduralScope root{
+      frame.ProceduralScopes().Declare(),
+      hir::ProceduralScopeKind::kSubroutineRoot, name};
+  const hir::ProceduralVarId result_var = body.procedural_vars.Declare();
+  body.procedural_vars.Define(
+      result_var,
+      hir::ProceduralVarDecl{.name = std::nullopt, .type = *result_type});
+  root.declarations.push_back(result_var);
+  ProcessLowerer lowerer(*owner_, holder);
+  auto value = lowerer.LowerExpr(
+      expr, frame.WithProceduralBody(&body).WithOpenScope(&root));
+  if (!value) return std::unexpected(std::move(value.error()));
+  const hir::StmtId root_stmt = body.stmts.Add(
+      hir::Stmt{
+          .label = std::nullopt,
+          .data = hir::ReturnStmt{.value = body.exprs.Add(*std::move(value))},
+          .span = span});
+  body.root_scope = frame.SealScope(std::move(root));
+  frame.current_structural_scope->structural_subroutines.Define(
+      owner_->EvaluatorOf(holder), hir::SubroutineDecl{
+                                       .name = std::move(name),
+                                       .kind = hir::SubroutineKind::kFunction,
+                                       .result_type = *result_type,
+                                       .params = {},
+                                       .result_var = result_var,
+                                       .body = std::move(body),
+                                       .root_stmt = root_stmt,
+                                       .is_virtual = false,
+                                       .is_prototype = false,
+                                       .is_static = false,
+                                       .overrides = std::nullopt});
+  return {};
+}
+
+// A name a view offers only for reading (LRM 25.5.4): nothing bounds it to an
+// lvalue, so a module written against the view asks this interface for its
+// value. Every other name a view offers designates storage the referrer
+// reaches, so it has nothing to build here.
 auto StructuralScopeLowerer::PopulateModportMember(
     const slang::ast::ModportSymbol& modport, WalkFrame frame)
     -> diag::Result<void> {
@@ -627,51 +680,21 @@ auto StructuralScopeLowerer::PopulateModportMember(
           "PopulateModportMember: a name the view defines is the expression it "
           "was written with");
     }
-    const auto span = owner_->SourceMapper().PointSpanOf(port->location);
-    auto crossing = owner_->InternType(*connection->type, span);
-    if (!crossing) return std::unexpected(std::move(crossing.error()));
-    const hir::StructuralSubroutineId evaluator =
-        owner_->ModportEvaluatorOf(*port);
-
-    // One return of the expression the view bound the name to.
-    const std::string read_name = ModportReadName(modport.name, port->name);
-    hir::ProceduralBody read_body;
-    OpenProceduralScope read_root{
-        frame.ProceduralScopes().Declare(),
-        hir::ProceduralScopeKind::kSubroutineRoot, read_name};
-    const hir::ProceduralVarId result_var = read_body.procedural_vars.Declare();
-    read_body.procedural_vars.Define(
-        result_var,
-        hir::ProceduralVarDecl{.name = std::nullopt, .type = *crossing});
-    read_root.declarations.push_back(result_var);
-    ProcessLowerer read_lowerer(*owner_, *port);
-    auto value = read_lowerer.LowerExpr(
-        *connection,
-        frame.WithProceduralBody(&read_body).WithOpenScope(&read_root));
-    if (!value) return std::unexpected(std::move(value.error()));
-    const hir::StmtId read_root_stmt = read_body.stmts.Add(
-        hir::Stmt{
-            .label = std::nullopt,
-            .data =
-                hir::ReturnStmt{
-                    .value = read_body.exprs.Add(*std::move(value))},
-            .span = span});
-    read_body.root_scope = frame.SealScope(std::move(read_root));
-    frame.current_structural_scope->structural_subroutines.Define(
-        evaluator, hir::SubroutineDecl{
-                       .name = read_name,
-                       .kind = hir::SubroutineKind::kFunction,
-                       .result_type = *crossing,
-                       .params = {},
-                       .result_var = result_var,
-                       .body = std::move(read_body),
-                       .root_stmt = read_root_stmt,
-                       .is_virtual = false,
-                       .is_prototype = false,
-                       .is_static = false,
-                       .overrides = std::nullopt});
+    auto defined = DefineEvaluator(
+        *port, ModportReadName(modport.name, port->name), *connection, frame);
+    if (!defined) return std::unexpected(std::move(defined.error()));
   }
   return {};
+}
+
+// A port's default (LRM 23.2.2.4) is evaluated in this scope, not in the
+// instantiator's, so an instance leaving the port unconnected asks this unit
+// for it. A port with no default has nothing to build here.
+auto StructuralScopeLowerer::PopulatePortMember(
+    const slang::ast::PortSymbol& port, WalkFrame frame) -> diag::Result<void> {
+  const slang::ast::Expression* initializer = port.getInitializer();
+  if (initializer == nullptr) return {};
+  return DefineEvaluator(port, PortDefaultName(port.name), *initializer, frame);
 }
 
 auto StructuralScopeLowerer::PopulateSubroutineMember(
@@ -812,10 +835,36 @@ auto StructuralScopeLowerer::PopulateGenerateBlockMember(
 auto StructuralScopeLowerer::PopulateInstanceMember(
     const slang::ast::InstanceSymbol& inst, WalkFrame frame)
     -> diag::Result<void> {
+  auto arguments = LowerConstructorArguments(inst, frame);
+  if (!arguments) return std::unexpected(std::move(arguments.error()));
   frame.current_structural_scope->instance_members.Define(
       ReservedInstanceMember(*owner_, inst),
-      BuildInstanceMember(*owner_, inst.name, inst, {}));
+      BuildInstanceMember(
+          *owner_, frame, inst.name, inst, {}, *std::move(arguments)));
   return {};
+}
+
+// The arguments `child`'s constructor is passed: the expression this scope
+// wrote for each parameter the child takes at construction, in the child's own
+// order. The front end binds an override where the instantiation is written
+// (LRM 23.10.2), so it is lowered here, against this scope's names.
+auto StructuralScopeLowerer::LowerConstructorArguments(
+    const slang::ast::InstanceSymbol& child, WalkFrame frame)
+    -> diag::Result<std::vector<hir::Expr>> {
+  std::vector<hir::Expr> arguments;
+  for (const slang::ast::ParameterSymbol* param :
+       owner_->Specialization().SuppliedParametersOf(child)) {
+    const slang::ast::Expression* given = param->getInitializer();
+    if (given == nullptr) {
+      throw InternalError(
+          "StructuralScopeLowerer::LowerConstructorArguments: a parameter the "
+          "instantiation supplies states no expression");
+    }
+    auto lowered = LowerExpr(*given, frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    arguments.push_back(*std::move(lowered));
+  }
+  return arguments;
 }
 
 auto StructuralScopeLowerer::PopulateInstanceArrayMember(
@@ -832,10 +881,16 @@ auto StructuralScopeLowerer::PopulateInstanceArrayMember(
   for (const slang::ConstantRange& dim : shape->ranges) {
     counts.push_back(dim.width());
   }
+  // Every element is instantiated with the one parameter assignment the
+  // instantiation wrote (LRM 23.3.2), so the first one's constructor arguments
+  // are every element's.
+  auto arguments = LowerConstructorArguments(*shape->leaf, frame);
+  if (!arguments) return std::unexpected(std::move(arguments.error()));
   frame.current_structural_scope->instance_members.Define(
       ReservedInstanceMember(*owner_, array),
       BuildInstanceMember(
-          *owner_, array.name, *shape->leaf, std::move(counts)));
+          *owner_, frame, array.name, *shape->leaf, std::move(counts),
+          *std::move(arguments)));
   return {};
 }
 

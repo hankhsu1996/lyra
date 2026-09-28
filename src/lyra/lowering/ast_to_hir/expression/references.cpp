@@ -317,12 +317,18 @@ auto MakeEnumValueExpr(
   return MakeIntegralLiteralExpr(cv.integer(), type, span);
 }
 
-// What this value varies with is the parameterization of the unit, package or
-// class that declares it, and a parameterization is already an artifact of its
-// own -- so reading the answer here cannot cost a second one. A parameter a
-// generate block declares varies with the index instead, which is no artifact's
-// axis, and it never reaches this: it is a declaration of the block by the time
-// any name resolves to it.
+// A parameter read here is folded to the value one elaboration gave it. That
+// holds where the value varies only with the parameterization of the unit,
+// package or class declaring it, since a parameterization is an artifact of its
+// own. Some parameters vary with something else, and a simple name reaching
+// one resolves to its declaration instead: one a generate block declares,
+// which varies with the index; one a unit's instance is handed when it is built
+// (LRM 23.10.2), or works out from such a value, which varies per instance; and
+// a constant a subroutine or a procedural block declares from either, which its
+// body holds. A hierarchical name still folds them. Inside the unit, a
+// parameter read that way is kept in its specialization; from outside it, a
+// unit whose instances would read different values here lowers apart and is
+// not shared.
 auto MakeParameterConstantExpr(
     UnitLowerer& unit_lowerer, WalkFrame frame, const slang::ast::Symbol& sym,
     const slang::ast::Type& type, diag::SourceSpan span)
@@ -529,7 +535,15 @@ auto LowerNamedValueProc(
       throw InternalError(
           "LowerNamedValueProc: a plain identifier does not reach a name a "
           "view offers");
+    // A constant the body holds because its value differs between the objects
+    // built from this unit is read from the body's own cell; any other folds.
     case Referent::kParameterConstant:
+      if (auto held = proc.LookupProceduralVar(target)) {
+        const hir::TypeId type =
+            frame.current_procedural_body->procedural_vars.Get(*held).type;
+        return hir::MakeRefExpr(
+            hir::ProceduralVarRef{.var = *held}, type, span);
+      }
       return MakeParameterConstantExpr(
           unit_lowerer, frame, target, *named.type, span);
     case Referent::kEnumConstant:

@@ -97,8 +97,8 @@ auto LowerToSemantic(
     return std::nullopt;
   }
 
-  auto root =
-      SynthesizeDesignRoot(design.tops, design.units.Signatures(), sources);
+  auto root = SynthesizeDesignRoot(
+      design.units.Tops(), design.units.Signatures(), sources);
   if (!root) {
     sink.Report(std::move(root.error()));
     return std::nullopt;

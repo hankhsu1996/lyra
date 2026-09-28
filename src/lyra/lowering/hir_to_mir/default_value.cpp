@@ -15,6 +15,7 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/real_bits.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
@@ -155,9 +156,9 @@ auto MaterializeConstant(
                 unit_lowerer.Unit(), block, mir_type,
                 LowerHirIntegralConstant(c)));
           },
-          [&](double real) -> mir::Expr {
-            return block.exprs.Get(
-                BuildRealLiteral(unit_lowerer.Unit(), block, mir_type, real));
+          [&](hir::RealBits real) -> mir::Expr {
+            return block.exprs.Get(BuildRealLiteral(
+                unit_lowerer.Unit(), block, mir_type, real.Value()));
           },
           [&](const std::string& text) -> mir::Expr {
             const mir::ExprId literal = block.exprs.Add(

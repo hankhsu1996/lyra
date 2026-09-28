@@ -78,10 +78,11 @@ Two filters reduce that list, and both have reasons rather than preferences:
 - **Drop what faces inward.** A package import list decides how names resolve inside the body, and a
   default lifetime governs subroutines defined within the module -- LRM 23.2.1 says so in the item
   itself. An instantiator observes neither.
-- **Drop what specialization already consumed.** Distinct parameter bindings are distinct
-  specializations with distinct identities, so a parameter's value reaches a referrer through the
-  unit's identity rather than through its signature. A changed default yields a different
-  specialization, so the dependency still holds.
+- **Drop what specialization already consumed.** A parameter's value reaches a referrer either
+  through the unit's identity, where the value decides what is compiled, or as a value handed to the
+  instance when it is built, where it is only read; neither is a signature's business. A changed
+  default yields a different specialization or a different handed value, so the dependency still
+  holds.
 
 What survives is the name plus, per port, its direction, size, and data type. A module header is
 therefore the source-level shape of the same idea, and the right way to explain a signature to a

@@ -57,16 +57,13 @@ C  Non-local access substrate
       scheduler on one shared time axis -- there is no single "main" block. This is end-to-end
       testable with no instantiation edge: two independent top modules each run their own processes
       under the shared schedule.
-- [x] A2 -- A module instantiated with different parameter values yields distinct specializations
-      that each behave according to their own values. Distinct parameter bindings produce distinct
-      compiled artifacts with distinct identity (see `docs/decisions/specialization-identity.md`),
-      so several specializations of one module no longer collapse onto one artifact. Covers scalar
-      value parameters (LRM 6.20.2) and type parameters (LRM 6.20.3); an aggregate value parameter
-      gets a distinct identity too, but its end-to-end emit waits on aggregate type support
-      (`datatypes.md`). Sharing one artifact across bindings whose generated code is identical --
-      classifying non-code-shape parameters as constructor inputs that flow in at construction
-      rather than baking a distinct artifact per binding -- is a compile-performance optimization,
-      not a functional requirement, and lives in `performance.md`.
+- [x] A2 -- A module instantiated with different parameter values behaves according to each
+      instance's own values. A binding that decides what is compiled produces a distinct compiled
+      artifact, so several specializations of one module no longer collapse onto one; a value only
+      read as a value is handed to each instance when it is built, and those instances share one
+      artifact. Covers scalar value parameters (LRM 6.20.2) and type parameters (LRM 6.20.3); an
+      aggregate value parameter gets a distinct identity too, but its end-to-end emit waits on
+      aggregate type support.
 
 Unlocks the runtime side of `instantiation/param_slots`.
 
@@ -84,6 +81,11 @@ Unlocks the runtime side of `instantiation/param_slots`.
       as part of the object tree.
 - [x] B6 -- An instance array (`Child c[3]()`) is one named member that expands to a vector of
       independent child objects.
+- [ ] B7 -- An instance array whose elements are elaborated differently -- a `defparam` reaching one
+      element (LRM 23.10.1), as in `defparam c[1].K = 9` -- builds each element as its own
+      elaboration describes. Today every element is built as the first one is, so the overridden
+      element reads the value the others hold: a wrong answer, not a refusal. The same override on a
+      single instance, or on one iteration's instance in a loop generate, is right.
 
 Unlocks `instantiation/multiple_instances`, `instantiation/nested_hierarchy`,
 `instantiation/local_variables`, the runtime side of `instantiation/param_slots`, and
@@ -294,8 +296,8 @@ at.
 
       What differs between them is only what answers the name. An interface promises its whole
       declared surface, so a call against one compiles against that promise. A module promises its
-      parameters and ports, so a subroutine of one was promised to nobody: the route reaches the
-      object and the scope answers the name with its own entry while the design elaborates, from the
+      ports, so a subroutine of one was promised to nobody: the route reaches the object and the
+      scope answers the name with its own entry while the design elaborates, from the
       same record it already answers a signal query from. **Promising it instead is not the
       answer** -- an upward enable would make a child depend on its parent while the parent already
       depends on the child, and the dependency between units has to stay acyclic, so both directions

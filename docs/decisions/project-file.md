@@ -117,9 +117,10 @@ true of this invocation, or of this machine      -> the command line
 Lyra's spelling of it: **does the option change what program is elaborated and lowered, or how this
 run produces and executes it?** Sources, include directories, defines, library search, the top, the
 compilation-unit model, the language version and the assertion policy all change the program. `-o`,
-`--backend`, `--release`, `--rebuild`, `--no-pch`, `--format`, `--color`, `--cxx` and `--cache-dir`
-change only how this run produces or executes it -- and `--backend` cannot change the program at
-all, since North Star invariant 3 makes correctness independent of which path lowers it.
+`--backend`, `--release`, `--rebuild`, `--no-pch`, `--format`, `--color`, `--jobs`, `--remarks`,
+`--cxx` and `--cache-dir` change only how this run produces, executes or reports on it -- and
+`--backend` cannot change the program at all, since North Star invariant 3 makes correctness
+independent of which path lowers it.
 
 Every established manifest format draws the same line, and draws it as a file boundary: Cargo splits
 `Cargo.toml` from `.cargo/config.toml`, npm splits `package.json` from `.npmrc`. A manifest is
@@ -136,8 +137,9 @@ D1. `lyra.toml` declares a design: a named object whose parts are its sources, i
     failure.
 
 D2. A field is admitted only if it is true of the design for everyone who builds it. An invocation
-    property (`-o`, `--release`, `--rebuild`, `--backend`, `--format`) and a machine property
-    (`--cxx`, `--cache-dir`, `--no-pch`) are refused by name.
+    property (`-o`, `--release`, `--rebuild`, `--backend`, `--format`, `--color` / `--no-color`,
+    `--remarks`) and a machine property (`--cxx`, `--cache-dir`, `--no-pch`, `--jobs`) are refused
+    by name.
 
 D3. Every relative path resolves against the directory of the manifest that declares it, never
     against the process's working directory. A path Lyra reports is shown resolved, so the base it

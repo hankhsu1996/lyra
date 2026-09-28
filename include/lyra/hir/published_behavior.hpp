@@ -25,6 +25,8 @@ struct PublishedBehaviorId {
 // whatever class a value turns out to be, so nothing about a body is here.
 struct PublishedBehavior {
   std::string name;
+
+  auto operator==(const PublishedBehavior&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

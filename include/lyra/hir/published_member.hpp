@@ -64,6 +64,8 @@ struct PublishedMember {
   std::string name;
   TypeId type;
   PublishedStorage storage;
+
+  auto operator==(const PublishedMember&) const -> bool = default;
 };
 
 // A unit states a declaration's storage on its signature and builds its own
@@ -90,7 +92,9 @@ struct PublishedMember {
           // What differs among them is who may name one, which is a separate
           // question from what the storage is. A loop's index does not exist at
           // simulation time so nothing answers its name at all; the other two
-          // answer a hierarchical name reaching into the block (LRM 27.4).
+          // answer the names the declaring scope and the scopes inside it read,
+          // while a hierarchical name reaching one from elsewhere folds to the
+          // value one elaboration gave it.
           [](const StructuralGenvarDecl&) -> PublishedStorage {
             return VariableStorage{};
           },

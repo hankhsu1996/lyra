@@ -48,6 +48,16 @@ struct ChildStructuralScopeBinding {
   // The child's own lowerer, which carries the class it lowers to and resolves
   // the identities a route step past this child names.
   const StructuralScopeLowerer* lowerer = nullptr;
+  // The arguments building the child passes its constructor, as expressions of
+  // the scope building it.
+  std::span<const hir::ExprId> arguments;
+};
+
+// A value whoever builds a scope hands it: the declaration it fills, and the
+// type the constructor takes it as.
+struct ConstructionValue {
+  hir::StructuralDataObjectId declared;
+  mir::TypeId type;
 };
 
 // One member a unit published, as the promise offers it: the identifier a
@@ -168,6 +178,13 @@ class StructuralScopeLowerer {
   // reaches and so nothing was promised of.
   [[nodiscard]] auto PromiseId() const -> std::optional<mir::ClassId> {
     return promise_id_;
+  }
+
+  // The values whoever builds this scope hands it, in the order they are
+  // handed.
+  [[nodiscard]] auto ConstructionValues() const
+      -> std::span<const ConstructionValue> {
+    return construction_values_;
   }
 
   // Lowers every body and every install statement against the already-
@@ -541,10 +558,9 @@ class StructuralScopeLowerer {
   // a whole declared callable.
   base::Translation<hir::ProcessId, StaticVarBindings> process_static_bindings_;
   mir::ClassId class_id_{};
-  // The declaration whose value whoever constructs this scope supplies, where
-  // the scope has one: it takes the last constructor parameter and is filled
-  // from it before anything the construction does can read it.
-  std::optional<hir::StructuralDataObjectId> construction_value_;
+  // Each is a constructor parameter after the prefix every scope takes, and is
+  // filled from it before anything the construction does can read it.
+  std::vector<ConstructionValue> construction_values_;
   // What the unit promised of the object this scope is, for the one scope that
   // is a unit's object: a behavior per published member and no storage, which
   // the class above realizes. A referrer compiles against it and holds nothing

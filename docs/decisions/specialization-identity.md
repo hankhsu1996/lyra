@@ -10,12 +10,13 @@ Accepted
 
 ## Why this decision matters
 
-A parameterized module instantiated with different bindings must compile to distinct artifacts that
-each behave according to their own parameters. Today a compiled unit's identity is the bare module
-name, so two specializations of one module (e.g. `Reg #(.INIT(3))` and `Reg #(.INIT(7))`) carry the
-same name; emitting more than one collapses them and the last one wins. This record fixes how a
-specialization is identified, named, and reached across the unit boundary. It binds every
-parameterized instantiation and constrains the deferred specialization-dedup optimization.
+A parameterized module instantiated with different bindings must behave according to each one's own
+parameters, and where a binding decides what is compiled, compile to distinct artifacts that do.
+Today a compiled unit's identity is the bare module name, so two specializations of one module (e.g.
+`Reg #(.INIT(3))` and `Reg #(.INIT(7))`) carry the same name; emitting more than one collapses them
+and the last one wins. This record fixes how a specialization is identified, named, and reached
+across the unit boundary. It binds every parameterized instantiation and constrains how instances
+handed different values share one unit.
 
 ## Findings that shaped the design
 
@@ -118,12 +119,33 @@ Rust cannot.
    normalized so the result does not depend on traversal or enumeration order
    (`specialization_model.md` inv 6).
 
-3. **The serializer is subset-agnostic; which selections feed it is policy.** Functional
-   specialization (the current requirement) feeds all parameters. The deferred dedup optimization
-   feeds only code-shape-affecting bindings and demotes value-only parameters to constructor inputs
-   resolved at construction. The identity mechanism does not change across that shift; only the
-   input subset does. An interface-port connection is not on that axis: what it selects is the set
-   of types and positions the module compiles against, which no constructor input can carry.
+   **A value is held as one spelling that is both its identity and what the name is folded from.**
+   The name is a hash of the key's bytes, so those bytes have to tell every two values apart
+   whatever else holds them; once they do, comparing them is exact equality, and a second,
+   structural comparison would be a second function that has to be exact too. What makes a spelling
+   an identity is that each value's ends where it can be seen to end, so one joined into an
+   aggregate never runs into its neighbour: a real is its bits in fixed-length hex, a string its
+   length and its text, an aggregate its elements between brackets, and an integral its width,
+   signedness and every bit, unknowns included. The front end's own `==` is not this equality -- it
+   compares reals as numbers, calling 0.0 and -0.0 one value, and integrals after extending to a
+   common width.
+
+   This is how C++ and Rust spell a value argument in a symbol. The Itanium ABI encodes a literal by
+   its type and value, a floating-point one as "a fixed-length lowercase hexadecimal string
+   corresponding to the internal representation" (section 5.1.6.1), and prefixes every name with its
+   length (`<source-name>`); Rust's v0 mangling ends each constant with `_`. Where the conditions
+   differ is strings: Itanium spells a string literal "using their type, but not their value",
+   because a C++ string literal is no template argument, while a SystemVerilog string is a value a
+   parameter holds (LRM 6.20), so its text is part of the identity.
+
+3. **The serializer is subset-agnostic; which selections feed it is policy.** A parameter every
+   reference reads as a value enters only as being supplied, and its value reaches the instance at
+   construction; one whose declaration writes it from such a parameter does not enter at all, since
+   its value follows from theirs; every other parameter enters with its value
+   ([a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)).
+   The identity mechanism is the same for both; only the input differs. An interface-port connection
+   is not on that axis: what it selects is the set of types and positions the module compiles
+   against, which no constructor input can carry.
 
 4. **The identity is computed at AST-to-HIR and carried by name thereafter.** HIR owns identity and
    frontend ids end there (`hir.md`); the cross-unit reference and the construct carry the name, and
@@ -137,8 +159,8 @@ Rust cannot.
 6. **Every selection is read where the parent fixed it, and the frontend's own grouping is not read
    at all.** Which instances the frontend elaborated into one body is a classification with a
    different purpose, so it may inform how much work is done and never which artifact an instance
-   belongs to. An instance whose selections differ from the ones an artifact was built from does not
-   belong to that artifact, whatever the frontend grouped it with.
+   belongs to. An instance whose key differs from the one an artifact was built from does not belong
+   to that artifact, whatever the frontend grouped it with.
 
    **The body an artifact compiles is the one belonging to an instance its key was computed from.**
    A body elaborated for another application states different types at the same positions, so it is
@@ -146,9 +168,14 @@ Rust cannot.
    about its own work and not about which artifact any of them belongs to. Compiling one of the
    separated sets for all of them is the merging error F4 names.
 
+   Instances handed different values of a supplied parameter share one key, so one of their bodies
+   is compiled for all of them. What admits that is not the frontend's grouping but this compiler's
+   own: each of the others is lowered and compared with the unit, and one that differs keeps its
+   definition out of the sharing.
+
 ## Consequences
 
-- Distinct selections produce distinct names, hence distinct artifacts; the current name-collision
+- Distinct keys produce distinct names, hence distinct artifacts; the current name-collision
   collapse is fixed, including value parameters of any type (unpacked aggregates included), type
   parameters, and a module bound to different interfaces through one unparameterized header.
 - Two instances agreeing on every selection share one artifact. Which instances the frontend
@@ -156,8 +183,8 @@ Rust cannot.
   derivable from the other, so the two are compared rather than assumed to coincide.
 - The hash's only failure mode is collision; a wide content hash makes it not a practical concern,
   and no global view is needed to guarantee that the producer and consumer agree.
-- The deferred dedup optimization reuses the same serializer with a narrower input subset, so it
-  does not discard this work.
+- Sharing one unit across instances handed different values reuses the same serializer with a
+  narrower input, so it discarded none of this work.
 - Type-parameter identity reuses the recursive data-type structure already produced by type
   lowering; no parallel structure is introduced.
 
@@ -169,16 +196,16 @@ result to a frontend-internal algorithm; identity is owned past AST-to-HIR (`hir
 specialization hash is computed here, over content, with a fixed algorithm that is stable across
 sessions (`incremental_build.md` forbids a pointer-derived or process-seeded key).
 
-The first implementation feeds the hash a textual rendering of each binding (the value's and type's
-`toString`). This is deterministic and session-stable, but it is not yet an incremental-grade
-fingerprint: a type rendering can carry source spelling (a typedef name), so a rename would shift
-the key even though the meaning is unchanged, which `incremental_build.md` invariant 3 rules out;
-and a value rendering can be lossy. When aggressive incremental build lands, the encoding is
-hardened to a structural fingerprint that mirrors slang's `==` / `isMatching` equivalence and
-excludes source spelling, so the key changes only when the compiled meaning does. The hash being
-self-owned and the identity being `f(def, bindings)` do not change; only what is fed to the hash
-does. Deferred until incremental build exists, because the encoding's exact obligations are fixed by
-that machinery.
+A value is spelled as item 2 of the decision says. A type is spelled from its parts only where it is
+a class or an unpacked form that can hold one; every other kind is still fed as the front end's
+rendering of it (its `toString`). That is deterministic and session-stable, but it is not yet an
+incremental-grade fingerprint: a type rendering can carry source spelling (a typedef name), so a
+rename would shift the key even though the meaning is unchanged, which `incremental_build.md`
+invariant 3 rules out. When aggressive incremental build lands, the type's encoding is hardened to a
+structural fingerprint that mirrors slang's `isMatching` equivalence and excludes source spelling,
+so the key changes only when the compiled meaning does. The hash being self-owned and the identity
+being `f(def, bindings)` do not change; only what is fed to the hash does. Deferred until
+incremental build exists, because the encoding's exact obligations are fixed by that machinery.
 
 ## Alternatives considered
 
@@ -195,8 +222,9 @@ cannot see the child's body under independent compilation (F1).
 **Opaque key carried in a design-global map (the previous iteration's `ModuleSpecId`).** Rejected.
 It resolves cross-unit references through a design-global table rather than by name, which
 `compilation_unit_model.md` and `emission_model.md` forbid. The previous iteration's classification
-insight -- fingerprint only code-shape facts, value parameters flow in as runtime data -- is
-retained as the deferred dedup policy, but its mechanism is not.
+insight -- fingerprint only code-shape facts, value parameters flow in as runtime data -- is what
+[a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
+does, but its mechanism is not.
 
 **A readable name with scalar values baked in (e.g. `Reg__INIT_3`).** Rejected. It is specialized to
 scalar value parameters and cannot express an aggregate value or a type parameter, so it breaks the

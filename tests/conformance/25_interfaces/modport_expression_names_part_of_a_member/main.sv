@@ -9,11 +9,16 @@
 // context, and it is optional (`.Nowhere()` below), so a port may connect to
 // nothing internal at all and a view declaring one is still a legal interface.
 // A name standing for an expression re-evaluates whenever any storage that
-// expression reads changes.
+// expression reads changes. The interface's own names stay its own, whatever
+// they are spelled as.
 interface Nibbles;
   logic [7:0] r;
   const int   one = 1;
   bit         flag;
+
+  function automatic int modport_read_watch_Doubled();
+    return 77;
+  endfunction
 
   modport low(output .Part(r[3:0]), input .Value(one), flag);
   modport high(output .Part(r[7:4]), input .Value(2), flag);
@@ -99,6 +104,9 @@ module Top;
     if (loc.own.r !== 8'h51) $fatal(1, "loc.own.r was %h, expected 51", loc.own.r);
     if (loc.doubled !== 9'h0a2)
       $fatal(1, "loc.doubled was %h, expected 0a2", loc.doubled);
+    if (n.modport_read_watch_Doubled() !== 77)
+      $fatal(1, "the interface's own function answered %0d",
+             n.modport_read_watch_Doubled());
     $display("All checks passed");
   end
 endmodule

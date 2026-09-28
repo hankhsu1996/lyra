@@ -21,6 +21,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/real_bits.hpp"
 #include "lyra/lowering/ast_to_hir/expression/aggregates.hpp"
 #include "lyra/lowering/ast_to_hir/expression/assignment.hpp"
 #include "lyra/lowering/ast_to_hir/expression/calls.hpp"
@@ -86,7 +87,9 @@ auto MakeRealLiteralExpr(double value, hir::TypeId type, diag::SourceSpan span)
     -> hir::Expr {
   return hir::Expr{
       .type = type,
-      .data = hir::PrimaryExpr{.data = hir::RealLiteral{.value = value}},
+      .data =
+          hir::PrimaryExpr{
+              .data = hir::RealLiteral{.value = hir::RealBits::Of(value)}},
       .span = span,
   };
 }

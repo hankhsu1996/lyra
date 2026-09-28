@@ -54,6 +54,8 @@ class ClassRegistry {
     return decls_.size();
   }
 
+  auto operator==(const ClassRegistry&) const -> bool = default;
+
  private:
   base::Registry<ClassDecl, ClassId> decls_;
   std::vector<std::string> names_;

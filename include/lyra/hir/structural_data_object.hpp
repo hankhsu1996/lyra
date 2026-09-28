@@ -87,8 +87,12 @@ struct StructuralGenvarDecl {
 // of the run. The implicit localparam a loop generate's index name denotes
 // inside a block is one (LRM 27.4): an integer parameter usable anywhere a
 // normal one is, whose value in each block is the index that block elaborated
-// at. No expression of the scope settles it, because whoever constructs the
-// scope supplies it -- which is what lets one block serve every index.
+// at. A unit's parameter its instantiation overrides with a value the unit only
+// reads is another (LRM 23.10.2). No expression of the scope settles either,
+// because whoever constructs the scope supplies it -- which is what lets one
+// block serve every index, and one unit every instance. A scope receives its
+// values in the order it declares them, which is the order a construction
+// states its arguments in.
 struct StructuralConstructionValueDecl {
   auto operator==(const StructuralConstructionValueDecl&) const
       -> bool = default;

@@ -107,7 +107,7 @@ auto LowerHirRealLiteral(
     const hir::RealLiteral& r, mir::TypeId type) -> mir::Expr {
   mir::Block& block = *frame.current_block;
   return block.exprs.Get(
-      BuildRealLiteral(unit_lowerer.Unit(), block, type, r.value));
+      BuildRealLiteral(unit_lowerer.Unit(), block, type, r.value.Value()));
 }
 
 // A value reference reaches its endpoint's observable cell as an lvalue; the

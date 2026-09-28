@@ -71,9 +71,9 @@ variable is not a routed reference either.
 
 ### D3. A module's subroutine is opaque in both directions, and publishing it is forbidden
 
-A module's signature is its parameters and ports. A subroutine of one was promised to nobody, so a
-name reaching it takes the opaque arm -- the same arm the same module's internal variable already
-takes, which is why reading `c.count` works today and calling `c.tick()` does not.
+A module's signature is its ports. A subroutine of one was promised to nobody, so a name reaching it
+takes the opaque arm -- the same arm the same module's internal variable already takes, which is why
+reading `c.count` works today and calling `c.tick()` does not.
 
 **Promising it instead is not a smaller version of this decision; it is excluded.** An upward enable
 (`Top.bump()` from inside a child) would make the child depend on its parent while the parent

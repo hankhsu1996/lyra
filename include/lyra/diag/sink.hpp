@@ -10,10 +10,16 @@ namespace lyra::diag {
 class DiagnosticSink {
  public:
   void Report(Diagnostic diag) {
-    if (diag.primary.kind == DiagKind::kError ||
-        diag.primary.kind == DiagKind::kUnsupported ||
-        diag.primary.kind == DiagKind::kHostError) {
-      has_errors_ = true;
+    switch (diag.primary.kind) {
+      case DiagKind::kError:
+      case DiagKind::kUnsupported:
+      case DiagKind::kHostError:
+        has_errors_ = true;
+        break;
+      case DiagKind::kWarning:
+      case DiagKind::kNote:
+      case DiagKind::kRemark:
+        break;
     }
     diagnostics_.push_back(std::move(diag));
   }

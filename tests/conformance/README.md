@@ -225,7 +225,9 @@ absence cannot tell "this path refuses the construct" from "nobody has tagged it
 
 A compiler bug is neither. A run that reports one fails whatever the records say, because "not
 implemented yet" and "implemented wrongly" recorded the same way would leave nothing able to report
-coverage.
+coverage. So does a run that remarks it lost sharing: the program is right, but a definition was
+compiled once per parameter value because its instances lowered apart after they were predicted to
+share one unit, and nothing the case checks can see that.
 
 ## Where a path answers wrongly
 

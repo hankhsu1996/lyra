@@ -356,8 +356,8 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       return refuse("an unconnected interface port is not yet supported");
     }
     hir::TypeId own = unit_.types.Intern(
-        hir::Type{
-            hir::UnitObjectType{.unit_name = SpecializationName(*instance)}});
+        hir::Type{hir::UnitObjectType{
+            .unit_name = SpecializationName(*instance, Specialization())}});
     // A port carrying a range stands for as many instances as the range has
     // elements (LRM 25.3), which is a fact about what the member is and so
     // travels on its type. The innermost dimension is wrapped first, so the
@@ -398,7 +398,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       [&](const slang::ast::Symbol& member,
           const slang::ast::InstanceSymbol& leaf,
           std::span<const slang::ConstantRange> ranges) {
-        std::string instance_unit = SpecializationName(leaf);
+        std::string instance_unit = SpecializationName(leaf, Specialization());
         hir::TypeId own = unit_.types.Intern(
             hir::Type{
                 hir::UnitObjectType{.unit_name = std::move(instance_unit)}});
@@ -530,13 +530,37 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
             .run = RunOfPortExpression(*peeled->base, written)}}};
   };
 
+  // The subroutine this unit evaluates a port's default in, for a port that has
+  // one. The default names this unit's own declarations (LRM 23.2.2.4), so an
+  // instantiator leaving the port unconnected asks for it rather than reading
+  // it.
+  const auto publish_default = [&](const slang::ast::PortSymbol& port)
+      -> diag::Result<std::optional<hir::PublishedCallableId>> {
+    if (port.getInitializer() == nullptr) return std::nullopt;
+    const auto span = SourceMapper().PointSpanOf(port.location);
+    auto interned = InternType(port.getType(), span);
+    if (!interned) return std::unexpected(std::move(interned.error()));
+    return instance_class.callables.Add(
+        hir::PublishedCallable{
+            .name = PortDefaultName(port.name),
+            .kind = hir::SubroutineKind::kFunction,
+            .result_type = publish_type(*interned),
+            .params = {}});
+  };
+
   for (const auto* member : body->getPortList()) {
     if (const auto* port = member->as_if<slang::ast::PortSymbol>()) {
       auto part = publish_part(*port);
       if (!part) return std::unexpected(std::move(part.error()));
+      auto default_value = publish_default(*port);
+      if (!default_value) {
+        return std::unexpected(std::move(default_value.error()));
+      }
       signature_.ports.push_back(
           hir::PortDecl{
-              .name = std::string{port->name}, .parts = {*std::move(part)}});
+              .name = std::string{port->name},
+              .parts = {*std::move(part)},
+              .default_value = *default_value});
       continue;
     }
     if (const auto* multi = member->as_if<slang::ast::MultiPortSymbol>()) {
@@ -553,7 +577,9 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       }
       signature_.ports.push_back(
           hir::PortDecl{
-              .name = std::string{multi->name}, .parts = std::move(parts)});
+              .name = std::string{multi->name},
+              .parts = std::move(parts),
+              .default_value = std::nullopt});
       continue;
     }
     // A connection reaches an interface port as one point like any other, so it
@@ -564,8 +590,9 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     signature_.ports.push_back(
         hir::PortDecl{
             .name = std::string{member->name},
-            .parts = {
-                hir::PortPart{hir::InterfacePortPart{.member = *published}}}});
+            .parts = {hir::PortPart{
+                hir::InterfacePortPart{.member = *published}}},
+            .default_value = std::nullopt});
   }
 
   // An interface port names the interface's scope rather than a point data

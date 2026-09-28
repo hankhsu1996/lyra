@@ -9,6 +9,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/real_bits.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 
@@ -33,7 +34,7 @@ auto MaterializeConstantExpr(
               -> diag::Result<hir::Expr> {
             return MakeIntegerLiteralFromConstant(integral, type, span);
           },
-          [&](double real) -> diag::Result<hir::Expr> {
+          [&](hir::RealBits real) -> diag::Result<hir::Expr> {
             return hir::Expr{
                 .type = type,
                 .data =
@@ -87,10 +88,11 @@ auto MakeConstantValue(const slang::ConstantValue& cv, diag::SourceSpan span)
         .data = LowerSVIntToIntegralConstant(cv.integer())};
   }
   if (cv.isReal()) {
-    return hir::ConstantValue{.data = cv.real()};
+    return hir::ConstantValue{.data = hir::RealBits::Of(cv.real())};
   }
   if (cv.isShortReal()) {
-    return hir::ConstantValue{.data = static_cast<double>(cv.shortReal())};
+    return hir::ConstantValue{
+        .data = hir::RealBits::Of(static_cast<double>(cv.shortReal()))};
   }
   if (cv.isString()) {
     return hir::ConstantValue{.data = cv.str()};

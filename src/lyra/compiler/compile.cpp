@@ -47,19 +47,12 @@ auto DeclareUnits(
         "DeclareUnits: the elaborated design has already been taken, so there "
         "is none left to declare");
   }
-  auto tops = lowering::ast_to_hir::TopLevelUnits(
-      lowering::ast_to_hir::LowerCompilationFacts(
-          *elaborated, source_mapper, policy.assertions));
-  if (!tops) {
-    sink.Report(std::move(tops.error()));
-    return std::nullopt;
-  }
   auto units = lowering::ast_to_hir::DeclaredDesign::Declare(
       std::move(elaborated), source_mapper, policy.assertions, sink);
   if (!units) {
     return std::nullopt;
   }
-  return ElaboratedDesign{.tops = *std::move(tops), .units = *std::move(units)};
+  return ElaboratedDesign{.units = *std::move(units)};
 }
 
 }  // namespace lyra::compiler

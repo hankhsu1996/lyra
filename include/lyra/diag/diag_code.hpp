@@ -52,6 +52,8 @@ enum class DiagCode : std::uint32_t {
   kHostBuildFailed,
 
   kWarningPedantic,
+
+  kRemarkLostSharing,
 };
 
 struct DiagCodeInfo {

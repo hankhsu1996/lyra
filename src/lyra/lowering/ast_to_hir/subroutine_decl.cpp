@@ -55,7 +55,11 @@ auto ViewDefinesTheName(const slang::ast::Symbol& item) -> bool {
 
 auto ModportReadName(std::string_view modport, std::string_view port)
     -> std::string {
-  return std::format("modport_read_{}_{}", modport, port);
+  return std::format("modport read {} {}", modport, port);
+}
+
+auto PortDefaultName(std::string_view port) -> std::string {
+  return std::format("port default {}", port);
 }
 
 namespace {
@@ -333,6 +337,9 @@ auto LowerSubroutineDeclImpl(
     result_var = lowerer.AddProceduralVar(
         body_frame, body, *sym.returnValVar, *return_type_or);
   }
+
+  auto constants = lowerer.DeclarePerObjectConstants(sym, body_frame);
+  if (!constants) return std::unexpected(std::move(constants.error()));
 
   // Base-call args (LRM 8.7) evaluate in the constructor's own frame and can
   // reference formals -- for example `super.new(a * 2)` where `a` is the

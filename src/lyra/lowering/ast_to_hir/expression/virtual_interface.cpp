@@ -83,7 +83,8 @@ auto ReachThroughHandle(
   if (instance != nullptr) {
     return HeldInstance{
         .access = std::move(descent->instance),
-        .unit_name = SpecializationName(*instance)};
+        .unit_name =
+            SpecializationName(*instance, unit_lowerer.Specialization())};
   }
 
   const hir::ExternalUnitObject& promised =
@@ -107,7 +108,8 @@ auto ReachThroughHandle(
 auto InterfaceObjectOf(
     UnitLowerer& unit_lowerer, const slang::ast::InstanceSymbol& instance)
     -> hir::ExternalUnitObjectId {
-  const std::string unit_name = SpecializationName(instance);
+  const std::string unit_name =
+      SpecializationName(instance, unit_lowerer.Specialization());
   if (unit_lowerer.Signatures().Find(unit_name) == nullptr) {
     throw InternalError(
         "InterfaceObjectOf: every interface a declared type names or an "
