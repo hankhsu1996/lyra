@@ -32,6 +32,8 @@ struct ClassField {
   // through the class or through an extension of it, and an extension may be
   // declared anywhere.
   bool is_published = true;
+
+  auto operator==(const ClassField&) const -> bool = default;
 };
 
 // A class static property (LRM 8.9): a named type-associated storage cell
@@ -45,6 +47,8 @@ struct ClassField {
 struct ClassStaticProperty {
   std::string name;
   TypeId type;
+
+  auto operator==(const ClassStaticProperty&) const -> bool = default;
 };
 
 // A source-written property initializer (LRM 8.7): the assignment that
@@ -56,6 +60,8 @@ struct ClassStaticProperty {
 struct FieldInit {
   FieldId target;
   ExprId value;
+
+  auto operator==(const FieldInit&) const -> bool = default;
 };
 
 // A source-written static property initializer (LRM 8.9 / 10.5): the
@@ -68,6 +74,8 @@ struct FieldInit {
 struct StaticPropertyInit {
   StaticPropertyId target;
   ExprId value;
+
+  auto operator==(const StaticPropertyInit&) const -> bool = default;
 };
 
 // A construction-protocol fact (LRM 8.7): the arguments the base class's
@@ -88,6 +96,8 @@ struct StaticPropertyInit {
 struct BaseCall {
   std::optional<StructuralHops> declaring_scope_hops;
   std::vector<ExprId> arguments;
+
+  auto operator==(const BaseCall&) const -> bool = default;
 };
 
 // A SystemVerilog class declaration (LRM 8). The class's properties and its
@@ -189,6 +199,8 @@ struct ClassDecl {
   ProceduralBody static_init;
   std::vector<StaticPropertyInit> static_property_inits;
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
+
+  auto operator==(const ClassDecl&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

@@ -6,7 +6,11 @@
 
 ## Status
 
-Accepted
+Accepted; superseded for value parameters by
+[a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md).
+F1's vehicle now exists -- a generate block's index and constants are declarations its construction
+fills -- and a value parameter read only as a value rides it. What stays as written here: a type
+parameter, and a value parameter whose value reaches something a class settles.
 
 ## Why this decision matters
 

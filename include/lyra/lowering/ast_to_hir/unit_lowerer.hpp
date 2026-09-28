@@ -34,6 +34,7 @@
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 #include "lyra/support/assertion_policy.hpp"
 
@@ -45,6 +46,7 @@ class HierarchicalReference;
 class GenerateBlockArraySymbol;
 class InterfacePortSymbol;
 class ModportPortSymbol;
+class ModportSymbol;
 class Scope;
 class TimingControl;
 }  // namespace slang::ast
@@ -285,8 +287,9 @@ struct ScopeDeclarations {
 
 // What every unit's lowering reads and none of them changes: where a
 // construct was written, the shared sensitivity analysis (one cache across the
-// design), whether assertions are elided rather than rejected, and the foreign
-// export names, which are resolved design-wide before any unit is walked.
+// design), whether assertions are elided rather than rejected, the foreign
+// export names, which are resolved design-wide before any unit is walked, and
+// what decides the name of every unit, which every party naming one reads.
 // The slang compilation itself is deliberately absent: walking top instances is
 // the driver's job, and a unit lowering that could reach it would be able to
 // read another unit.
@@ -296,11 +299,13 @@ class LoweringFacts {
       const frontend::SlangSourceMapper& source_mapper,
       SensitivityAnalyzer& sensitivity_analyzer,
       const ForeignExportNames& foreign_export_names,
-      support::AssertionPolicy assertion_policy)
+      support::AssertionPolicy assertion_policy,
+      const SpecializationPolicy& specialization)
       : source_mapper_(&source_mapper),
         sensitivity_analyzer_(&sensitivity_analyzer),
         foreign_export_names_(&foreign_export_names),
-        assertion_policy_(assertion_policy) {
+        assertion_policy_(assertion_policy),
+        specialization_(&specialization) {
   }
 
   [[nodiscard]] auto SourceMapper() const
@@ -327,11 +332,16 @@ class LoweringFacts {
     return assertion_policy_;
   }
 
+  [[nodiscard]] auto Specialization() const -> const SpecializationPolicy& {
+    return *specialization_;
+  }
+
  private:
   const frontend::SlangSourceMapper* source_mapper_;
   SensitivityAnalyzer* sensitivity_analyzer_;
   const ForeignExportNames* foreign_export_names_;
   support::AssertionPolicy assertion_policy_;
+  const SpecializationPolicy* specialization_;
 };
 
 // Per-unit lowerer, over a module instance body or a package. It holds the
@@ -562,10 +572,6 @@ class UnitLowerer {
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
       -> diag::Result<hir::MethodCallee>;
 
-  // The interface a call recomputes for a callee in another compilation unit:
-  // its call protocol and each formal's direction and type (LRM 13.5). Both
-  // sides derive it from the callee's own declaration, so no table is shared
-  // and neither can state an interface the other does not have.
   // Which behavior a method overriding `overridden` takes over, with the
   // introducing class named the way the boundary it sits on names one.
   auto MakeOverriddenBehavior(
@@ -581,6 +587,10 @@ class UnitLowerer {
       const hir::ExternalClassRef& cls, std::string_view method_name,
       diag::SourceSpan span) -> diag::Result<hir::ExternalDispatchSlot>;
 
+  // The interface a call recomputes for a callee in another compilation unit:
+  // its call protocol and each formal's direction and type (LRM 13.5). Both
+  // sides derive it from the callee's own declaration, so no table is shared
+  // and neither can state an interface the other does not have.
   auto MakeExternalCalleeInterface(
       const slang::ast::SubroutineSymbol& sym, diag::SourceSpan span)
       -> diag::Result<hir::ExternalCalleeInterface>;
@@ -704,6 +714,17 @@ class UnitLowerer {
     return facts_.AssertionPolicy();
   }
 
+  [[nodiscard]] auto Specialization() const -> const SpecializationPolicy& {
+    return facts_.Specialization();
+  }
+
+  // Where the value of a parameter this unit's scopes declare comes from, for
+  // the objects built from the scope declaring it. Only a design element is
+  // built once per instance, so a package's parameters are all fixed by its
+  // specialization.
+  [[nodiscard]] auto ValueSourceOf(
+      const slang::ast::ParameterSymbol& param) const -> ParameterValueSource;
+
   void MapStructuralDataObjectBinding(
       const slang::ast::ValueSymbol& var, ScopeFrameId home_frame,
       hir::StructuralDataObjectId local, hir::TypeId type);
@@ -724,14 +745,15 @@ class UnitLowerer {
       const slang::ast::SubroutineSymbol& sym) const
       -> std::optional<SubroutineBinding>;
 
-  // The subroutine this interface evaluates one name a view offers only for
-  // reading in (LRM 25.5.4). Only such a name has one: every other direction
-  // designates storage, which a referrer reaches rather than asks for. The
-  // identity is minted with every other structural identity so the signature
-  // can name it before any body is lowered.
-  void MapModportEvaluator(
-      const slang::ast::Symbol& port, hir::StructuralSubroutineId evaluator);
-  [[nodiscard]] auto ModportEvaluatorOf(const slang::ast::Symbol& port) const
+  // The subroutine this unit evaluates a declaration's expression in, for
+  // another unit that asks for the value because the expression names
+  // declarations it cannot see: a name a view offers only for reading (LRM
+  // 25.5.4), and a port's default (LRM 23.2.2.4). The identity is minted with
+  // every other structural identity so the signature can name it before any
+  // body is lowered.
+  void MapEvaluator(
+      const slang::ast::Symbol& holder, hir::StructuralSubroutineId evaluator);
+  [[nodiscard]] auto EvaluatorOf(const slang::ast::Symbol& holder) const
       -> hir::StructuralSubroutineId;
 
   // Interns this unit's record of a DPI-C import (LRM 35.4), classifying its
@@ -815,8 +837,7 @@ class UnitLowerer {
   // its frame along the way. A body or sensitivity read then resolves any of
   // them regardless of which sibling scope or body lowered first. Registers no
   // executable HIR.
-  auto DeclareStructuralIdentities(const slang::ast::Scope& scope)
-      -> diag::Result<void>;
+  void DeclareStructuralIdentities(const slang::ast::Scope& scope);
 
   // The frame assigned to `scope` by the declaration pass. Every scope a
   // structural lowerer is built for was assigned one, so absence is a
@@ -1006,14 +1027,13 @@ class UnitLowerer {
       diag::SourceSpan span) -> diag::Result<hir::ValueTarget>;
 
   // The value a name denotes, where elaboration fills that value rather than
-  // having folded it: the index a loop generate counts with, and the implicit
-  // localparam each of its blocks holds that index in (LRM 27.4). The front end
-  // spells both as constants -- a genvar does not exist at simulation time and
-  // a localparam has a value -- so what separates them from an ordinary
-  // constant is that this unit declared somewhere to put one, which it does
-  // exactly where one block stands for every index it is built at. Absent for
-  // every other name, including one of another unit, whose own lowering
-  // answered this for itself.
+  // having folded it: a loop generate's index (LRM 27.4), and a parameter
+  // whose value differs between the objects built from one scope -- a
+  // generate block's, or a unit's that its instance is handed or works out
+  // from what it is handed (LRM 23.10.2). The front end spells each as a
+  // constant, so what separates them from an ordinary one is that this unit
+  // declared somewhere to put it. Absent for every other name, including one of
+  // another unit, whose own lowering answered this for itself.
   [[nodiscard]] auto NameFilledDuringElaboration(
       const slang::ast::Symbol& named) const -> const slang::ast::ValueSymbol*;
 
@@ -1165,7 +1185,9 @@ class UnitLowerer {
       -> std::optional<hir::DataLeaf>;
 
   // Reserves an identity for each static-lifetime local one procedural block
-  // subtree of `body` declares, and recurses into the blocks nested in it.
+  // subtree of `body` declares, and for each constant it declares whose value
+  // differs between the objects built from this unit, and recurses into the
+  // blocks nested in it.
   // Every scope is walked the same way and contributes however many statics it
   // holds, none excluded: whether a hierarchical path can reach a given one is
   // the frontend's question, already answered before any reference gets here,
@@ -1175,6 +1197,32 @@ class UnitLowerer {
   void DeclareProceduralStatics(
       const slang::ast::Scope& block, const slang::ast::Symbol& body_symbol,
       hir::ProceduralBodyRef body, ScopeFrameId frame);
+
+  // The identities one member of a scope brings, minted into `decls`, the
+  // scope's own, at `frame`, the scope's frame.
+  void DeclareMemberIdentities(
+      const slang::ast::Symbol& member, ScopeDeclarations& decls,
+      ScopeFrameId frame);
+  void DeclareConditionalGenerate(
+      const slang::ast::GenerateBlockSymbol& block, ScopeDeclarations& decls,
+      ScopeFrameId frame);
+  void DeclareLoopGenerate(
+      const slang::ast::GenerateBlockArraySymbol& array,
+      ScopeDeclarations& decls, ScopeFrameId frame);
+  void DeclareSubroutine(
+      const slang::ast::SubroutineSymbol& sub, ScopeDeclarations& decls,
+      ScopeFrameId frame);
+  void DeclareModportEvaluators(
+      const slang::ast::ModportSymbol& modport, ScopeDeclarations& decls);
+  void DeclareProcess(
+      const slang::ast::ProceduralBlockSymbol& proc, ScopeDeclarations& decls,
+      ScopeFrameId frame);
+
+  // Whether a parameter's value differs between the objects built from the
+  // scope declaring it: supplied or computed at construction, rather than fixed
+  // by the specialization.
+  [[nodiscard]] auto DiffersPerObject(
+      const slang::ast::ParameterSymbol& param) const -> bool;
 
   LoweringFacts facts_;
   const slang::ast::Scope* scope_;
@@ -1245,7 +1293,7 @@ class UnitLowerer {
       interface_port_bindings_;
   SubroutineBindings subroutine_bindings_;
   std::unordered_map<const slang::ast::Symbol*, hir::StructuralSubroutineId>
-      modport_evaluators_;
+      evaluators_;
   ForeignImportBindings foreign_import_bindings_;
   ForeignImportScopes foreign_import_scopes_;
   OwnedChildBindings owned_child_bindings_;

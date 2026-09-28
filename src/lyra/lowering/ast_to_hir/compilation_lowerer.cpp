@@ -5,9 +5,12 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -47,6 +50,38 @@ struct CollectedUnit {
   std::string name;
 };
 
+// One application of a unit: the unit, and the value of each argument its
+// constructor is passed, in declaration order. Two instances that are one
+// application are alike in every respect, so this is what tells a witness worth
+// lowering from one that would repeat work already done.
+struct Application {
+  std::string unit;
+  std::vector<std::string> arguments;
+
+  auto operator<=>(const Application&) const = default;
+};
+
+auto ApplicationOf(
+    const slang::ast::InstanceSymbol& inst, std::string unit,
+    const SpecializationPolicy& policy) -> Application {
+  Application application{.unit = std::move(unit), .arguments = {}};
+  for (const slang::ast::ParameterSymbol* param :
+       policy.SuppliedParametersOf(inst)) {
+    application.arguments.push_back(ValueIdentity(param->getValue()));
+  }
+  return application;
+}
+
+// What the collection found: the distinct units, and the instances that share
+// a unit while being handed values none of its earlier instances was. A unit
+// compiles one body for every instance handed any value, and that is sound only
+// if those instances lower to what the unit lowers to; the witnesses are what
+// that is checked against.
+struct Collected {
+  std::vector<CollectedUnit> units;
+  std::vector<CollectedUnit> witnesses;
+};
+
 // Collects the distinct units reachable from the tops. slang owns the
 // structural descent: visiting an instance recurses into its body, and every
 // container (generate blocks, instance arrays) is a Scope the visitor walks
@@ -62,10 +97,9 @@ struct CollectedUnit {
 // never inside the unit, so the unit itself is the same.
 //
 // Descending reaches each occurrence's own body, so a child is collected under
-// what its own parent fixed for it. Descending happens once per key rather than
-// once per occurrence, because an occurrence whose key is already held stops
-// here, so reaching every body costs nothing beyond what telling the
-// specializations apart requires.
+// what its own parent fixed for it. An occurrence whose key and whose supplied
+// values are both already held stops here, so reaching every body costs one
+// visit per distinct application and nothing more.
 //
 // Two keys reaching one name would silently make two units into one, so the
 // name a unit is known by is checked against the key it came from rather than
@@ -78,8 +112,13 @@ struct CollectedUnit {
 // interface a declared type names is collected as an instantiated one is. Only
 // declarations are read for it, which is what the walk reaches anyway.
 struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
+  explicit UnitCollector(const SpecializationPolicy& policy) : policy(&policy) {
+  }
+
+  const SpecializationPolicy* policy;
   std::unordered_map<std::string, SpecializationKey> seen;
-  std::vector<CollectedUnit> order;
+  std::set<Application> applications;
+  Collected found;
 
   // Every declared variable, class property and subroutine argument.
   void handle(const slang::ast::VariableSymbol& variable) {
@@ -113,26 +152,28 @@ struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
   }
 
   void handle(const slang::ast::InstanceSymbol& inst) {
-    SpecializationKey key = SpecializationKeyOf(inst);
+    SpecializationKey key = SpecializationKeyOf(inst, *policy);
     std::string name = SpecializationName(key);
     const auto [entry, fresh] = seen.try_emplace(name, key);
-    if (!fresh) {
-      if (entry->second != key) {
-        throw InternalError(
-            "UnitCollector: two specializations reached one name, so the name "
-            "no longer tells the units apart");
-      }
+    if (!fresh && entry->second != key) {
+      throw InternalError(
+          "UnitCollector: two specializations reached one name, so the name "
+          "no longer tells the units apart");
+    }
+    if (!applications.insert(ApplicationOf(inst, name, *policy)).second) {
       return;
     }
-    order.push_back(CollectedUnit{.body = &inst.body, .name = std::move(name)});
+    (fresh ? found.units : found.witnesses)
+        .push_back(CollectedUnit{.body = &inst.body, .name = std::move(name)});
     visitDefault(inst);
   }
 };
 
-auto CollectUnits(const LowerCompilationFacts& facts)
-    -> std::vector<CollectedUnit> {
+auto CollectUnits(
+    const LowerCompilationFacts& facts, const SpecializationPolicy& policy)
+    -> Collected {
   const auto& root = facts.Compilation().getRoot();
-  UnitCollector collector;
+  UnitCollector collector(policy);
   for (const auto* top : root.topInstances) {
     top->visit(collector);
   }
@@ -144,7 +185,7 @@ auto CollectUnits(const LowerCompilationFacts& facts)
   for (const auto* cu : root.compilationUnits) {
     cu->visit(collector);
   }
-  return std::move(collector.order);
+  return std::move(collector.found);
 }
 
 // Indexes the frontend's resolution of every `export "DPI-C"` directive (LRM
@@ -259,114 +300,11 @@ auto WhyItMustBeConnected(PortConnectionRule rule) -> std::string_view {
       "state");
 }
 
-}  // namespace
-
-// What the design's units hold between declaring and lowering their bodies.
-// Everything a unit reads is here and outlives the unit reading it: the AST is
-// declared first, so it is released after every lowerer pointing into it, and
-// the export names and the sensitivity analysis are built beside the facts
-// that point at them rather than handed in.
-struct DeclaredDesign::Units {
-  std::unique_ptr<slang::ast::Compilation> front_end;
-  ForeignExportNames export_names;
-  SensitivityAnalyzer sensitivity;
-  LoweringFacts facts;
-  std::vector<std::unique_ptr<UnitLowerer>> lowerers;
-  hir::UnitSignatures signatures;
-  // Held while a unit reads the frontend, which elaborates on first read.
-  std::mutex reading_front_end;
-
-  Units(
-      std::unique_ptr<slang::ast::Compilation> elaborated,
-      const frontend::SlangSourceMapper& source_mapper,
-      support::AssertionPolicy assertion_policy)
-      : front_end(std::move(elaborated)),
-        facts(source_mapper, sensitivity, export_names, assertion_policy) {
-  }
-};
-
-auto DeclaredDesign::Declare(
-    std::unique_ptr<slang::ast::Compilation> front_end,
-    const frontend::SlangSourceMapper& source_mapper,
-    support::AssertionPolicy assertion_policy, diag::DiagnosticSink& sink)
-    -> std::optional<DeclaredDesign> {
-  auto units = std::make_unique<Units>(
-      std::move(front_end), source_mapper, assertion_policy);
-  const LowerCompilationFacts facts(
-      *units->front_end, source_mapper, assertion_policy);
-  units->export_names = CollectForeignExportNames(facts);
-
-  for (const auto* package : CollectPackages(facts)) {
-    units->lowerers.push_back(
-        std::make_unique<UnitLowerer>(
-            units->facts, *package, std::string{package->name},
-            hir::UnitRole::kNamespace));
-  }
-  for (const auto* cu : CollectCompilationUnits(facts)) {
-    // A `$unit` scope is lowered, emitted, and initialized exactly as a package
-    // is -- a rootless namespace unit -- so it carries the same unit kind;
-    // nothing downstream distinguishes the two, so there is no separate kind.
-    units->lowerers.push_back(
-        std::make_unique<UnitLowerer>(
-            units->facts, *cu, CompilationUnitName(*cu),
-            hir::UnitRole::kNamespace));
-  }
-  for (const CollectedUnit& unit : CollectUnits(facts)) {
-    units->lowerers.push_back(
-        std::make_unique<UnitLowerer>(
-            units->facts, *unit.body, unit.name, hir::UnitRole::kObjectRoot));
-  }
-
-  // Every unit declares before any unit lowers a body, because a body may
-  // reference another unit and cannot reference what has not been declared.
-  // This is the design-scope reading of the same ordering a single unit already
-  // applies to its own declarations. A declaration reads only its own unit, so
-  // nothing orders this pass and no cycle among units can arise.
-  for (const auto& lowerer : units->lowerers) {
-    if (auto declared = lowerer->Declare(); !declared) {
-      sink.Report(std::move(declared.error()));
-      continue;
-    }
-    units->signatures.Publish(lowerer->TakeSignature());
-  }
-  if (sink.HasErrors()) {
-    return std::nullopt;
-  }
-  return DeclaredDesign(std::move(units));
-}
-
-DeclaredDesign::DeclaredDesign(std::unique_ptr<Units> units)
-    : units_(std::move(units)) {
-}
-DeclaredDesign::DeclaredDesign(DeclaredDesign&&) noexcept = default;
-auto DeclaredDesign::operator=(DeclaredDesign&&) noexcept
-    -> DeclaredDesign& = default;
-DeclaredDesign::~DeclaredDesign() = default;
-
-auto DeclaredDesign::UnitCount() const -> std::size_t {
-  return units_->lowerers.size();
-}
-
-// Which of the published promises a unit depends on is the set its bodies
-// read: a name first reached from inside a body is reached after any set fixed
-// in advance, and whether a name is on a promise does not depend on who asked.
-auto DeclaredDesign::LowerUnit(std::size_t index)
-    -> diag::Result<hir::CompilationUnit> {
-  const std::scoped_lock reading(units_->reading_front_end);
-  std::unique_ptr<UnitLowerer> lowerer = std::move(units_->lowerers[index]);
-  if (lowerer == nullptr) {
-    throw InternalError(
-        "DeclaredDesign::LowerUnit: a unit's bodies are lowered once, and "
-        "this one has been");
-  }
-  return lowerer->LowerBodies(units_->signatures);
-}
-
-auto DeclaredDesign::Signatures() const -> const hir::UnitSignatures& {
-  return units_->signatures;
-}
-
-auto TopLevelUnits(const LowerCompilationFacts& facts)
+// The design's tops. A top is where the design begins, so nothing instantiates
+// it and its ports are connected to nothing, which two kinds of port may not
+// be.
+auto TopLevelUnits(
+    const LowerCompilationFacts& facts, const SpecializationPolicy& policy)
     -> diag::Result<std::vector<TopLevelUnit>> {
   const auto& root = facts.Compilation().getRoot();
   std::vector<TopLevelUnit> tops;
@@ -390,9 +328,229 @@ auto TopLevelUnits(const LowerCompilationFacts& facts)
     tops.emplace_back(
         TopLevelUnit{
             .instance_name = std::string{inst->name},
-            .unit_name = SpecializationName(*inst)});
+            .unit_name = SpecializationName(*inst, policy)});
   }
   return tops;
+}
+
+using Definitions = std::unordered_set<const slang::ast::DefinitionSymbol*>;
+
+// The bodies of `unit` lowered exactly as a unit of its own would be, against
+// what the design's units published.
+auto LowerBodiesOf(
+    const LoweringFacts& facts, const CollectedUnit& unit,
+    const hir::UnitSignatures& signatures)
+    -> diag::Result<hir::CompilationUnit> {
+  UnitLowerer lowerer(facts, *unit.body, unit.name, hir::UnitRole::kObjectRoot);
+  if (auto declared = lowerer.Declare(); !declared) {
+    return std::unexpected(std::move(declared.error()));
+  }
+  return lowerer.LowerBodies(signatures);
+}
+
+// The definitions a witness of which lowered apart from the unit it shares.
+// Each unit with witnesses is lowered once here and each of its witnesses
+// beside it, one at a time and dropped after, so only one unit and one witness
+// are ever resident; the unit is lowered again in its own turn.
+//
+// Where a witness does not come out as its unit, something in its body held a
+// value it was handed, and the definition is declared again with every
+// parameter in its key, each value its own unit -- so the program is the one
+// each instance describes and only the sharing is lost, which is said as a
+// remark against the definition. A failure to lower is left to the unit's own
+// turn to report: a unit that fails has nothing to hold a witness against, and
+// a witness that fails where its unit did not has lowered apart, so its
+// definition is kept whole and the witness reports in a turn of its own.
+auto DefinitionsLoweredApart(
+    const LoweringFacts& facts, const Collected& collected,
+    const hir::UnitSignatures& signatures, diag::DiagnosticSink& sink)
+    -> Definitions {
+  std::unordered_map<std::string_view, std::vector<const CollectedUnit*>>
+      witnesses_of;
+  for (const CollectedUnit& witness : collected.witnesses) {
+    witnesses_of[witness.name].push_back(&witness);
+  }
+  Definitions apart;
+  for (const CollectedUnit& unit : collected.units) {
+    const auto witnesses = witnesses_of.find(unit.name);
+    if (witnesses == witnesses_of.end()) continue;
+    const auto shared = LowerBodiesOf(facts, unit, signatures);
+    if (!shared) continue;
+    for (const CollectedUnit* witness : witnesses->second) {
+      const auto lowered = LowerBodiesOf(facts, *witness, signatures);
+      if (lowered && *lowered == *shared) continue;
+      const auto& definition = witness->body->getDefinition();
+      if (apart.insert(&definition).second) {
+        sink.Report(
+            diag::Make(
+                facts.SourceMapper().PointSpanOf(definition.location),
+                diag::DiagCode::kRemarkLostSharing,
+                std::format(
+                    "sharing lost: '{}' is compiled once per parameter value, "
+                    "because instances handed different values lowered apart",
+                    definition.name)));
+      }
+      break;
+    }
+  }
+  return apart;
+}
+
+}  // namespace
+
+// What the design's units hold between declaring and lowering their bodies.
+// Everything a unit reads is here and outlives the unit reading it: the AST is
+// declared first, so it is released after every lowerer pointing into it, and
+// the export names, the sensitivity analysis and the specialization policy are
+// built beside the facts that point at them rather than handed in.
+struct DeclaredDesign::Units {
+  std::unique_ptr<slang::ast::Compilation> front_end;
+  ForeignExportNames export_names;
+  SensitivityAnalyzer sensitivity;
+  SpecializationPolicy specialization;
+  LoweringFacts facts;
+  std::vector<TopLevelUnit> tops;
+  std::vector<std::unique_ptr<UnitLowerer>> lowerers;
+  hir::UnitSignatures signatures;
+  // Held while a unit reads the frontend, which elaborates on first read.
+  std::mutex reading_front_end;
+
+  Units(
+      std::unique_ptr<slang::ast::Compilation> elaborated,
+      const frontend::SlangSourceMapper& source_mapper,
+      support::AssertionPolicy assertion_policy)
+      : front_end(std::move(elaborated)),
+        facts(
+            source_mapper, sensitivity, export_names, assertion_policy,
+            specialization) {
+  }
+
+  // Declares every unit the design has under the specialization policy held
+  // here, replacing whatever an earlier policy declared. Whether any failed is
+  // the sink's answer.
+  void DeclareEveryUnit(
+      const LowerCompilationFacts& front_end_facts, const Collected& collected,
+      diag::DiagnosticSink& sink) {
+    lowerers.clear();
+    signatures = hir::UnitSignatures{};
+    for (const auto* package : CollectPackages(front_end_facts)) {
+      lowerers.push_back(
+          std::make_unique<UnitLowerer>(
+              facts, *package, std::string{package->name},
+              hir::UnitRole::kNamespace));
+    }
+    for (const auto* cu : CollectCompilationUnits(front_end_facts)) {
+      // A `$unit` scope is lowered, emitted, and initialized exactly as a
+      // package is -- a rootless namespace unit -- so it carries the same unit
+      // kind; nothing downstream distinguishes the two, so there is no
+      // separate kind.
+      lowerers.push_back(
+          std::make_unique<UnitLowerer>(
+              facts, *cu, CompilationUnitName(*cu, specialization),
+              hir::UnitRole::kNamespace));
+    }
+    for (const CollectedUnit& unit : collected.units) {
+      lowerers.push_back(
+          std::make_unique<UnitLowerer>(
+              facts, *unit.body, unit.name, hir::UnitRole::kObjectRoot));
+    }
+
+    // Every unit declares before any unit lowers a body, because a body may
+    // reference another unit and cannot reference what has not been declared.
+    // This is the design-scope reading of the same ordering a single unit
+    // already applies to its own declarations. A declaration reads only its own
+    // unit, so nothing orders this pass and no cycle among units can arise.
+    for (const auto& lowerer : lowerers) {
+      if (auto declared = lowerer->Declare(); !declared) {
+        sink.Report(std::move(declared.error()));
+        continue;
+      }
+      signatures.Publish(lowerer->TakeSignature());
+    }
+  }
+};
+
+// A definition whose instances lowered apart is declared again kept whole. A
+// definition kept whole is supplied nothing at construction, so none of its
+// instances can lower apart again, and the set grows every time round: at
+// worst every definition is kept whole and each parameter value is its own
+// unit. Nothing else reads the frontend until this returns, so the check reads
+// it without taking turns.
+auto DeclaredDesign::Declare(
+    std::unique_ptr<slang::ast::Compilation> front_end,
+    const frontend::SlangSourceMapper& source_mapper,
+    support::AssertionPolicy assertion_policy, diag::DiagnosticSink& sink)
+    -> std::optional<DeclaredDesign> {
+  auto units = std::make_unique<Units>(
+      std::move(front_end), source_mapper, assertion_policy);
+  const LowerCompilationFacts facts(
+      *units->front_end, source_mapper, assertion_policy);
+  units->export_names = CollectForeignExportNames(facts);
+
+  Definitions kept_whole;
+  for (;;) {
+    units->specialization = SpecializationPolicy(kept_whole);
+    auto tops = TopLevelUnits(facts, units->specialization);
+    if (!tops) {
+      sink.Report(std::move(tops.error()));
+      return std::nullopt;
+    }
+    const Collected collected = CollectUnits(facts, units->specialization);
+    units->DeclareEveryUnit(facts, collected, sink);
+    if (sink.HasErrors()) {
+      return std::nullopt;
+    }
+    const Definitions apart = DefinitionsLoweredApart(
+        units->facts, collected, units->signatures, sink);
+    if (apart.empty()) {
+      units->tops = *std::move(tops);
+      return DeclaredDesign(std::move(units));
+    }
+    for (const slang::ast::DefinitionSymbol* definition : apart) {
+      if (!kept_whole.insert(definition).second) {
+        throw InternalError(
+            std::format(
+                "DeclaredDesign::Declare: '{}' was kept whole and still "
+                "lowered apart, so declaring it once more cannot settle it",
+                definition->name));
+      }
+    }
+  }
+}
+
+DeclaredDesign::DeclaredDesign(std::unique_ptr<Units> units)
+    : units_(std::move(units)) {
+}
+DeclaredDesign::DeclaredDesign(DeclaredDesign&&) noexcept = default;
+auto DeclaredDesign::operator=(DeclaredDesign&&) noexcept
+    -> DeclaredDesign& = default;
+DeclaredDesign::~DeclaredDesign() = default;
+
+auto DeclaredDesign::Tops() const -> std::span<const TopLevelUnit> {
+  return units_->tops;
+}
+
+auto DeclaredDesign::UnitCount() const -> std::size_t {
+  return units_->lowerers.size();
+}
+
+// Which of the published promises a unit depends on is the set its bodies
+// read: a name first reached from inside a body is reached after any set fixed
+// in advance, and whether a name is on a promise does not depend on who asked.
+auto DeclaredDesign::LowerUnit(std::size_t index)
+    -> diag::Result<hir::CompilationUnit> {
+  const std::scoped_lock reading(units_->reading_front_end);
+  std::unique_ptr<UnitLowerer> lowerer = std::move(units_->lowerers[index]);
+  if (lowerer == nullptr) {
+    throw InternalError(
+        "DeclaredDesign::LowerUnit: a unit's bodies are lowered once, and "
+        "this one has been");
+  }
+  return lowerer->LowerBodies(units_->signatures);
+}
+
+auto DeclaredDesign::Signatures() const -> const hir::UnitSignatures& {
+  return units_->signatures;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

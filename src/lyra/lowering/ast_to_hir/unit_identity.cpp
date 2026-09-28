@@ -1,8 +1,10 @@
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <format>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -61,15 +63,17 @@ auto Fnv1a64(std::string_view bytes) -> std::uint64_t {
 // Every arm answers with an identity rather than adding to one under
 // construction, so a form this does not spell cannot contribute nothing and
 // leave two types looking alike.
-auto TypeIdentity(const slang::ast::Type& type) -> std::string {
+auto TypeIdentity(
+    const slang::ast::Type& type, const SpecializationPolicy& policy)
+    -> std::string {
   using slang::ast::SymbolKind;
   const slang::ast::Type& canonical = type.getCanonicalType();
-  const auto field_identities = [](const slang::ast::Scope& scope) {
+  const auto field_identities = [&](const slang::ast::Scope& scope) {
     std::string out{'{'};
     for (const auto& field : scope.members()) {
       if (const auto* value = field.as_if<slang::ast::ValueSymbol>()) {
-        out +=
-            std::format("{}:{};", value->name, TypeIdentity(value->getType()));
+        out += std::format(
+            "{}:{};", value->name, TypeIdentity(value->getType(), policy));
       }
     }
     return out + '}';
@@ -79,31 +83,33 @@ auto TypeIdentity(const slang::ast::Type& type) -> std::string {
     case SymbolKind::ClassType: {
       const auto& cls = canonical.as<slang::ast::ClassType>();
       return std::format(
-          "{}::{}", CompilationUnitName(DeclaringCompilationUnit(cls)),
-          SpecializationName(cls));
+          "{}::{}", CompilationUnitName(DeclaringCompilationUnit(cls), policy),
+          SpecializationName(cls, policy));
     }
     case SymbolKind::FixedSizeUnpackedArrayType: {
       const auto& array =
           canonical.as<slang::ast::FixedSizeUnpackedArrayType>();
       return std::format(
           "[{}:{}]{}", array.range.left, array.range.right,
-          TypeIdentity(array.elementType));
+          TypeIdentity(array.elementType, policy));
     }
     case SymbolKind::DynamicArrayType:
       return "[]" +
              TypeIdentity(
-                 canonical.as<slang::ast::DynamicArrayType>().elementType);
+                 canonical.as<slang::ast::DynamicArrayType>().elementType,
+                 policy);
     case SymbolKind::QueueType: {
       const auto& queue = canonical.as<slang::ast::QueueType>();
       return std::format(
-          "[${}]{}", queue.maxBound, TypeIdentity(queue.elementType));
+          "[${}]{}", queue.maxBound, TypeIdentity(queue.elementType, policy));
     }
     case SymbolKind::AssociativeArrayType: {
       const auto& assoc = canonical.as<slang::ast::AssociativeArrayType>();
       const std::string index = assoc.indexType == nullptr
                                     ? std::string{"*"}
-                                    : TypeIdentity(*assoc.indexType);
-      return std::format("[{}]{}", index, TypeIdentity(assoc.elementType));
+                                    : TypeIdentity(*assoc.indexType, policy);
+      return std::format(
+          "[{}]{}", index, TypeIdentity(assoc.elementType, policy));
     }
     case SymbolKind::UnpackedStructType:
       return "struct" +
@@ -117,6 +123,63 @@ auto TypeIdentity(const slang::ast::Type& type) -> std::string {
   }
 }
 
+}  // namespace
+
+// Every spelling ends where it can be seen to end, so one joined into an
+// aggregate cannot run into its neighbour. A real is spelled by its bits,
+// because a decimal rendering spells every NaN alike; a string by its length
+// and its text, because a quote and a comma are ordinary characters in one; an
+// aggregate through its elements, so each of those holds inside it too.
+auto ValueIdentity(const slang::ConstantValue& value) -> std::string {
+  if (value.isString()) {
+    return std::format("t{}:{}", value.str().size(), value.str());
+  }
+  if (value.isReal()) {
+    return std::format(
+        "r{:016x}", std::bit_cast<std::uint64_t>(double{value.real()}));
+  }
+  if (value.isShortReal()) {
+    return std::format(
+        "s{:08x}", std::bit_cast<std::uint32_t>(float{value.shortReal()}));
+  }
+  const auto elements = [](const auto& values) {
+    std::string out{'['};
+    for (const slang::ConstantValue& element : values) {
+      out += ValueIdentity(element);
+      out += ',';
+    }
+    return out + ']';
+  };
+  if (value.isUnpacked()) {
+    return elements(value.elements());
+  }
+  if (value.isQueue()) {
+    return "q" + elements(*value.queue());
+  }
+  if (value.isMap()) {
+    std::string out{"m["};
+    for (const auto& [key, element] : *value.map()) {
+      out += std::format("{}:{},", ValueIdentity(key), ValueIdentity(element));
+    }
+    if (value.map()->defaultValue) {
+      out += "default:" + ValueIdentity(value.map()->defaultValue);
+    }
+    return out + ']';
+  }
+  if (value.isUnion()) {
+    const auto& u = *value.unionVal();
+    return u.activeMember.has_value()
+               ? std::format("u{}:{}", *u.activeMember, ValueIdentity(u.value))
+               : std::string{"u-"};
+  }
+  constexpr slang::bitwidth_t kNeverShortened =
+      std::numeric_limits<slang::bitwidth_t>::max();
+  constexpr bool kExactUnknowns = true;
+  return value.toString(kNeverShortened, kExactUnknowns);
+}
+
+namespace {
+
 // What one parameter was fixed to. A parameter is fixed to a value or to a type
 // (LRM 6.20.2, 6.20.3), and that is the whole of the split. The parameter
 // arrives as its concrete Symbol so this serves both spaces the frontend
@@ -126,20 +189,22 @@ auto TypeIdentity(const slang::ast::Type& type) -> std::string {
 // Reading the settled value is not a choice about where it enters the artifact
 // here: what the value varies with is the specialization, and the
 // specialization is what this computes.
-auto ParameterInput(const slang::ast::Symbol& symbol) -> SpecializationInput {
+auto ParameterInput(
+    const slang::ast::Symbol& symbol, const SpecializationPolicy& policy)
+    -> SpecializationInput {
   if (symbol.kind == slang::ast::SymbolKind::Parameter) {
     return SpecializationInput{
         .name = std::string{symbol.name},
         .kind = FixedValue{
-            .value = symbol.as<slang::ast::ParameterSymbol>()
-                         .getValue()
-                         .toString()}};
+            .value = ValueIdentity(
+                symbol.as<slang::ast::ParameterSymbol>().getValue())}};
   }
   return SpecializationInput{
       .name = std::string{symbol.name},
       .kind = FixedType{
-          .type = TypeIdentity(symbol.as<slang::ast::TypeParameterSymbol>()
-                                   .targetType.getType())}};
+          .type = TypeIdentity(
+              symbol.as<slang::ast::TypeParameterSymbol>().targetType.getType(),
+              policy)}};
 }
 
 // Which interface an interface port carries (LRM 25.3), named the way the unit
@@ -150,31 +215,19 @@ auto ParameterInput(const slang::ast::Symbol& symbol) -> SpecializationInput {
 // because it narrows: a view also names things of its own (LRM 25.5.4), and two
 // views may give one name different storage, so a unit bound through each
 // reaches a different place under the same spelling.
-auto InterfacePortInput(const slang::ast::PortConnection& connection)
-    -> SpecializationInput {
+auto InterfacePortInput(
+    const slang::ast::PortConnection& connection,
+    const SpecializationPolicy& policy) -> SpecializationInput {
   const auto [instance, modport] =
       ConnectedInterfaceOf(connection.getIfaceConn());
   return SpecializationInput{
       .name = std::string{connection.port.name},
       .kind = FixedInterface{
-          .unit_name = instance == nullptr ? std::string{}
-                                           : SpecializationName(*instance),
+          .unit_name = instance == nullptr
+                           ? std::string{}
+                           : SpecializationName(*instance, policy),
           .modport =
               modport == nullptr ? std::string{} : std::string{modport->name}}};
-}
-
-// The instantiation a body was elaborated for. A body is what one application
-// of a definition produced and states no bindings apart from that application,
-// so it belongs to exactly one and is never asked what it is a specialization
-// of on its own.
-auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
-    -> const slang::ast::InstanceSymbol& {
-  if (body.parentInstance == nullptr) {
-    throw InternalError(
-        "InstantiationOf: a body is elaborated for an application of a "
-        "definition, so one that belongs to none was never built");
-  }
-  return *body.parentInstance;
 }
 
 // The generate blocks (LRM 27.6) between a declaration and the compilation unit
@@ -229,6 +282,9 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
               return v.modport.empty()
                          ? v.unit_name
                          : std::format("{}.{}", v.unit_name, v.modport);
+            },
+            [](const SuppliedAtConstruction&) {
+              return std::string{"<supplied>"};
             }},
         input.kind);
     bytes += ';';
@@ -238,16 +294,46 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
 
 }  // namespace
 
-auto SpecializationKeyOf(const slang::ast::InstanceSymbol& inst)
+auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
+    -> const slang::ast::InstanceSymbol& {
+  if (body.parentInstance == nullptr) {
+    throw InternalError(
+        "InstantiationOf: a body is elaborated for an application of a "
+        "definition, so one that belongs to none was never built");
+  }
+  return *body.parentInstance;
+}
+
+auto SpecializationKeyOf(
+    const slang::ast::InstanceSymbol& inst, const SpecializationPolicy& policy)
     -> SpecializationKey {
   SpecializationKey key{
       .definition = std::string{inst.getDefinition().name}, .inputs = {}};
   for (const auto* param : inst.body.getParameters()) {
-    key.inputs.push_back(ParameterInput(param->symbol));
+    const auto* value = param->symbol.as_if<slang::ast::ParameterSymbol>();
+    if (value == nullptr) {
+      key.inputs.push_back(ParameterInput(param->symbol, policy));
+      continue;
+    }
+    switch (policy.ValueSourceOf(inst, *value)) {
+      case ParameterValueSource::kFixedBySpecialization:
+        key.inputs.push_back(ParameterInput(*value, policy));
+        break;
+      case ParameterValueSource::kSuppliedAtConstruction:
+        key.inputs.push_back(
+            SpecializationInput{
+                .name = std::string{value->name},
+                .kind = SuppliedAtConstruction{}});
+        break;
+      // Its value follows from what is supplied and its own declaration, which
+      // the definition already names.
+      case ParameterValueSource::kComputedAtConstruction:
+        break;
+    }
   }
   for (const auto* connection : inst.getPortConnections()) {
     if (connection->port.kind == slang::ast::SymbolKind::InterfacePort) {
-      key.inputs.push_back(InterfacePortInput(*connection));
+      key.inputs.push_back(InterfacePortInput(*connection, policy));
     }
   }
   return key;
@@ -260,11 +346,14 @@ auto SpecializationName(const SpecializationKey& key) -> std::string {
   return std::format("{}__{:016x}", key.definition, Fnv1a64(KeyBytes(key)));
 }
 
-auto SpecializationName(const slang::ast::InstanceSymbol& inst) -> std::string {
-  return SpecializationName(SpecializationKeyOf(inst));
+auto SpecializationName(
+    const slang::ast::InstanceSymbol& inst, const SpecializationPolicy& policy)
+    -> std::string {
+  return SpecializationName(SpecializationKeyOf(inst, policy));
 }
 
-auto SpecializationKeyOf(const slang::ast::ClassType& cls)
+auto SpecializationKeyOf(
+    const slang::ast::ClassType& cls, const SpecializationPolicy& policy)
     -> SpecializationKey {
   // A class carries one identifier through compilation, and a compilation unit
   // holds every class it declares in one flat name space, so the identifier has
@@ -282,13 +371,15 @@ auto SpecializationKeyOf(const slang::ast::ClassType& cls)
     return key;
   }
   for (const auto* sym : cls.genericParameters) {
-    key.inputs.push_back(ParameterInput(*sym));
+    key.inputs.push_back(ParameterInput(*sym, policy));
   }
   return key;
 }
 
-auto SpecializationName(const slang::ast::ClassType& cls) -> std::string {
-  return SpecializationName(SpecializationKeyOf(cls));
+auto SpecializationName(
+    const slang::ast::ClassType& cls, const SpecializationPolicy& policy)
+    -> std::string {
+  return SpecializationName(SpecializationKeyOf(cls, policy));
 }
 
 auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
@@ -311,14 +402,16 @@ auto IsDesignElement(const slang::ast::Symbol& unit) -> bool {
   return unit.kind == slang::ast::SymbolKind::InstanceBody;
 }
 
-auto CompilationUnitName(const slang::ast::Symbol& unit) -> std::string {
+auto CompilationUnitName(
+    const slang::ast::Symbol& unit, const SpecializationPolicy& policy)
+    -> std::string {
   using slang::ast::SymbolKind;
   if (unit.kind == SymbolKind::Package) {
     return std::string(unit.name);
   }
   if (unit.kind == SymbolKind::InstanceBody) {
     return SpecializationName(
-        InstantiationOf(unit.as<slang::ast::InstanceBodySymbol>()));
+        InstantiationOf(unit.as<slang::ast::InstanceBodySymbol>()), policy);
   }
   if (unit.kind == SymbolKind::CompilationUnit) {
     // The anonymous $unit scope has no source name; its distinguishing identity

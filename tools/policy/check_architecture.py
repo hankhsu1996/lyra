@@ -214,9 +214,11 @@ Rules:
         is one compiled artifact per elaboration, which is the cost this
         compiler exists to avoid. A clause requiring a constant expression is
         not a reason to read one: it says the value is known, not that the
-        artifact has to hold it. A unit's header and a type declaration are
-        exempt: a parameterization is already its own artifact, so an
-        expression written there cannot cost a second one.
+        artifact has to hold it. What a unit publishes about its ports and
+        what a type is are exempt: both are part of the unit's identity, so a
+        value deciding either is already one artifact per value. A port's
+        default is not among them -- it is evaluated for each instance that
+        leaves the port unconnected (LRM 23.2.2.4).
         Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
         include/lyra/lowering/ast_to_hir.
 
@@ -233,6 +235,17 @@ Rules:
         into a value of its own.
         Scope: every .cpp/.hpp under src/lyra/backend/cpp and
         include/lyra/backend/cpp.
+
+  A025  HIR equality is derived and exact. Whether two instances handed
+        different values may share one unit is decided by comparing the HIR
+        each lowers to, so the comparison is what keeps the program right. A
+        hand-written `operator==` can leave a field out, and a floating-point
+        member compares as a number, which calls 0.0 and -0.0 one value and
+        two identical NaNs two; either way two different programs compare
+        equal, or one program compares unequal to itself. So every
+        `operator==` a HIR node declares is `= default`, and a real value is
+        held as the bits that represent it.
+        Scope: include/lyra/hir/**.
 
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
@@ -1030,14 +1043,14 @@ A022_ADMITTED: dict[str, str] = {}
 # take the value it cached on the expression, or evaluate the expression again.
 A023_PATTERN = re.compile(r"(?:->|\.)\s*(?:getConstant|eval)\s*\(")
 
-# Where reading one is not the lowering of a body. A unit's header and a type
-# declaration are elaborated once per parameterization, and a parameterization
-# is already its own artifact, so an expression written there cannot name the
-# index of a structure being repeated and cannot cost a second artifact. A body
-# is the opposite case, which is what the rule is for, and it has no exception:
-# no position a body states is read for the value the elaboration settled.
+# Where reading one is not the lowering of a body. What a unit publishes about
+# its ports and what a type is are part of the unit's identity: a value that
+# decides either is one a parameter keeps in the key, so the artifact is already
+# one per value and reading the value costs no second one. Everything else is
+# the case the rule is for, a port's default included -- it is written in the
+# header, but it is evaluated for each instance that leaves the port
+# unconnected (LRM 23.2.2.4), and so is a body's expression like any other.
 A023_EXEMPT = (
-    "src/lyra/lowering/ast_to_hir/port_connection.cpp",
     "src/lyra/lowering/ast_to_hir/publish_signature.cpp",
     "src/lyra/lowering/ast_to_hir/type.cpp",
 )
@@ -1153,6 +1166,79 @@ def check_a021(repo_root: Path) -> list[str]:
                     f"itself -- answers for every one of them, the alternative "
                     f"nobody has written yet included"
                 )
+    return errors
+
+
+# Rule A025
+# An equality or inequality declaration up to where it ends: a `;` for one
+# declared here, a `{` for one written out.
+EQUALITY_DECL_PATTERN = re.compile(r"\boperator\s*[!=]=\s*\([^;{]*[;{]", re.DOTALL)
+DERIVED_EQUALITY_PATTERN = re.compile(r"=\s*default\s*;$")
+FLOATING_TYPE_PATTERN = re.compile(r"\b(?:double|float)\b")
+BLOCK_COMMENT_PATTERN = re.compile(r"/\*.*?\*/", re.DOTALL)
+# Where a function's body opens: its parameter list's close, then qualifiers or
+# a trailing return type, then the brace. An innermost parenthesized group, and
+# a trailing return type up to where its declaration goes on.
+FUNCTION_BODY_OPEN_PATTERN = re.compile(r"\)[^;{}()=]*\{")
+PAREN_GROUP_PATTERN = re.compile(r"\([^()]*\)")
+TRAILING_RETURN_PATTERN = re.compile(r"->[^;{=]*")
+
+
+def blank_keeping_lines(match: re.Match) -> str:
+    """The match's text reduced to its line breaks, so a line number still
+    points at the source."""
+    return "\n" * match.group(0).count("\n")
+
+
+def blank_function_bodies(code: str) -> str:
+    """`code` with every function body reduced to its line breaks."""
+    at = 0
+    while m := FUNCTION_BODY_OPEN_PATTERN.search(code, at):
+        start = m.end() - 1
+        depth = 0
+        for end in range(start, len(code)):
+            depth += {"{": 1, "}": -1}.get(code[end], 0)
+            if depth == 0:
+                break
+        body = code[start:end + 1]
+        code = code[:start] + "\n" * body.count("\n") + code[end + 1:]
+        at = start
+    return code
+
+
+def a025_violations(text: str) -> list[tuple[int, str]]:
+    """Each (line, reason) in `text` where HIR equality is not derived exactly."""
+    found = []
+    text = BLOCK_COMMENT_PATTERN.sub(blank_keeping_lines, text)
+    code = "\n".join(strip_comment(line) for line in text.splitlines())
+    for m in EQUALITY_DECL_PATTERN.finditer(code):
+        if not DERIVED_EQUALITY_PATTERN.search(m.group(0)):
+            found.append((
+                code.count("\n", 0, m.start()) + 1,
+                "declares an equality that is not derived"))
+    # A floating-point type named outside every function's body, parameter list
+    # and return type: a member, an alternative a member may hold, or an
+    # element of one.
+    outside = blank_function_bodies(code)
+    while (inner := PAREN_GROUP_PATTERN.sub(blank_keeping_lines, outside)) != outside:
+        outside = inner
+    outside = TRAILING_RETURN_PATTERN.sub(blank_keeping_lines, outside)
+    for lineno, line in enumerate(outside.splitlines(), 1):
+        if FLOATING_TYPE_PATTERN.search(line):
+            found.append((lineno, "holds a floating-point value"))
+    return found
+
+
+def check_a025(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_files(repo_root, "include/lyra/hir"):
+        for lineno, reason in a025_violations(path.read_text()):
+            errors.append(
+                f"  {rel}:{lineno}: A025 {reason}; whether two instances share "
+                f"a unit is decided by comparing their HIR, so the comparison "
+                f"has to be derived and exact -- default it, and hold a real "
+                f"value as its bits"
+            )
     return errors
 
 
@@ -1632,6 +1718,66 @@ def run_self_tests() -> bool:
             strip_comment('  // std::format("{}", x) is what this replaced')),
         "A024 a comment naming the shape is not the shape")
 
+    # A025
+    ok &= expect(
+        not a025_violations(
+            "struct A {\n  int x;\n"
+            "  auto operator==(const A&) const -> bool = default;\n};\n"),
+        "A025 a derived equality is clean")
+    ok &= expect(
+        not a025_violations(
+            "struct Long {\n"
+            "  auto operator==(const Long&) const\n"
+            "      -> bool = default;\n};\n"),
+        "A025 a derived equality wrapped over two lines is clean")
+    ok &= expect(
+        len(a025_violations(
+            "struct B {\n  int x;\n"
+            "  auto operator==(const B& o) const -> bool {\n"
+            "    return x == o.x;\n  }\n};\n")) == 1,
+        "A025 an equality written out is reported")
+    ok &= expect(
+        len(a025_violations("struct C {\n  double value;\n};\n")) == 1,
+        "A025 a floating-point member is reported")
+    ok &= expect(
+        not a025_violations(
+            "struct D {\n"
+            "  static auto Of(double value) -> D;\n"
+            "  auto Value() const -> double;\n};\n"),
+        "A025 a double in a signature is not a member")
+    ok &= expect(
+        len(a025_violations(
+            "struct E {\n  bool operator == (const E& o) const {\n"
+            "    return true;\n  }\n};\n")) == 1,
+        "A025 an equality spelled with spaces is reported")
+    ok &= expect(
+        len(a025_violations(
+            "struct F {\n  auto operator!=(const F&) const -> bool;\n};\n")) == 1,
+        "A025 a written-out inequality is reported")
+    ok &= expect(
+        len(a025_violations(
+            "struct G {\n  double a{};\n  std::optional<float> b;\n};\n"
+            "using V = std::variant<\n    int, double>;\n")) == 3,
+        "A025 a real held by initializer, wrapper or alternative is reported")
+    ok &= expect(
+        not a025_violations("/* holds a\n  double value; */\nstruct H {};\n"),
+        "A025 a block comment naming a double is not a member")
+    ok &= expect(
+        [line for line, _ in a025_violations(
+            "struct I {\n  double a = Default();\n  double b{Default()};\n};\n")]
+        == [2, 3],
+        "A025 a real whose initializer calls something is reported")
+    ok &= expect(
+        not a025_violations(
+            "struct J {\n  static auto Of(\n      double value)\n"
+            "      -> double;\n};\n"),
+        "A025 a signature wrapped over lines names no member")
+    ok &= expect(
+        not a025_violations(
+            "struct K {\n  auto Value() const -> double {\n"
+            "    return std::bit_cast<double>(bits);\n  }\n};\n"),
+        "A025 a function body naming a double names no member")
+
     return ok
 
 
@@ -1662,6 +1808,7 @@ CHECKS = [
     ("A022 holds a sequence of compilation units", check_a022),
     ("A023 expression taken for its folded value", check_a023),
     ("A024 backend text composed as a value", check_a024),
+    ("A025 HIR equality not derived exactly", check_a025),
 ]
 
 

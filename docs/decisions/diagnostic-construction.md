@@ -94,10 +94,10 @@ Two call-site distinctions look like they encode kind but do not need to:
   `UnknownSpan`; everything else carries a `SourceSpan`. This is an overload of one entry, not a
   separate kind.
 
-The severity kind itself (`error` / `unsupported` / `host error` / `warning`) is fully determined by
-the code and is surfaced at the call site by the code name. The production code emits no warning
-today; the only warning code is unreferenced outside tests, confirming that the per-kind factory
-surface was modeling distinctions the call sites do not actually make.
+The severity kind itself (`error` / `unsupported` / `host error` / `warning` / `remark`) is fully
+determined by the code and is surfaced at the call site by the code name. The production code emits
+no warning today; the only warning code is unreferenced outside tests, confirming that the per-kind
+factory surface was modeling distinctions the call sites do not actually make.
 
 **Consequence:** the construction surface collapses to two kind-neutral helpers split by control
 flow, not four split by severity.

@@ -128,6 +128,11 @@ auto LowerForkStmt(
   ProceduralScope scope(
       proc, frame, block.blockSymbol, hir::ProceduralScopeKind::kFork);
   const WalkFrame& fork_scope_frame = scope.Frame();
+  if (block.blockSymbol != nullptr) {
+    auto constants =
+        proc.DeclarePerObjectConstants(*block.blockSymbol, fork_scope_frame);
+    if (!constants) return std::unexpected(std::move(constants.error()));
+  }
 
   std::vector<hir::StmtId> locals;
   std::vector<const slang::ast::Statement*> branch_stmts;
@@ -207,6 +212,11 @@ auto LowerBlockStmt(
   ProceduralScope scope(
       proc, frame, block.blockSymbol, hir::ProceduralScopeKind::kBlock);
   const WalkFrame& body_frame = scope.Frame();
+  if (block.blockSymbol != nullptr) {
+    auto constants =
+        proc.DeclarePerObjectConstants(*block.blockSymbol, body_frame);
+    if (!constants) return std::unexpected(std::move(constants.error()));
+  }
 
   std::vector<hir::StmtId> kids;
   if (block.body.kind == slang::ast::StatementKind::List) {

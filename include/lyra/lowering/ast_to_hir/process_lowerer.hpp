@@ -5,10 +5,12 @@
 #include <unordered_set>
 
 #include <slang/ast/Expression.h>
+#include <slang/ast/Scope.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/diag/diagnostic.hpp"
@@ -79,16 +81,17 @@ class ProcessLowerer {
   // declaration is created rather than back-patched at a later reference.
   void AnalyzeLifetimeExtended(const slang::ast::Statement& body);
 
-  // Mints the local's identity and registers it: the slang-to-HIR binding for
-  // `var`, and membership in the lexical scope the walk frame is building. A
-  // static a hierarchical path can name already has an identity from the
-  // compilation unit's declaration pass, so the body binds that one rather than
-  // minting a second. The declaration's content is filled in a second step,
-  // because the initializer is an expression of this body that may name this
-  // very identity -- so the identity has to exist before its content does.
+  // Mints the identity of a name the body declares -- a local, or a constant
+  // it holds -- and registers it: the slang-to-HIR binding for `var`, and
+  // membership in the lexical scope the walk frame is building. A static and a
+  // held constant already have an identity from the compilation unit's
+  // declaration pass, so the body binds that one rather than minting a second.
+  // The declaration's content is filled in a second step, because the
+  // initializer is an expression of this body that may name this very identity
+  // -- so the identity has to exist before its content does.
   auto DeclareProceduralVar(
       const WalkFrame& frame, hir::ProceduralBody& body,
-      const slang::ast::VariableSymbol& var) -> hir::ProceduralVarId;
+      const slang::ast::ValueSymbol& var) -> hir::ProceduralVarId;
 
   void DefineProceduralVar(
       hir::ProceduralBody& body, hir::ProceduralVarId id,
@@ -103,7 +106,16 @@ class ProcessLowerer {
       const slang::ast::VariableSymbol& var, hir::TypeId type,
       std::optional<hir::ExprId> init = std::nullopt) -> hir::ProceduralVarId;
 
-  [[nodiscard]] auto LookupProceduralVar(const slang::ast::VariableSymbol& var)
+  // The constants `scope` declares whose value differs between the objects
+  // built from this unit, each a declaration of the scope the walk frame is
+  // building, holding its initializer and reached by name like any local. A
+  // constant has no statement to be declared at, so it is declared where its
+  // scope opens.
+  auto DeclarePerObjectConstants(
+      const slang::ast::Scope& scope, const WalkFrame& frame)
+      -> diag::Result<void>;
+
+  [[nodiscard]] auto LookupProceduralVar(const slang::ast::ValueSymbol& var)
       const -> std::optional<hir::ProceduralVarId>;
 
   [[nodiscard]] auto Owner() -> UnitLowerer& {
@@ -138,7 +150,7 @@ class ProcessLowerer {
   const slang::ast::Symbol* containing_symbol_;
   ConsumedBodyExpressions consumed_body_exprs_;
 
-  std::unordered_map<const slang::ast::VariableSymbol*, hir::ProceduralVarId>
+  std::unordered_map<const slang::ast::ValueSymbol*, hir::ProceduralVarId>
       procedural_var_bindings_;
   std::unordered_set<const slang::ast::VariableSymbol*> lifetime_extended_;
 };

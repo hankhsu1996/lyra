@@ -1,10 +1,16 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
+#include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
+#include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
@@ -34,25 +40,11 @@ class StructuralScopeLowerer {
         frame_(unit_lowerer.LookupScopeFrame(slang_scope)) {
   }
 
-  // A parameter of the scope whose value whoever constructs the scope supplies,
-  // rather than one folded to what a single elaboration gave it (LRM 27.4). It
-  // is declared before any member is walked, so a name reaching it resolves to
-  // the declaration; `declared` comes back so the construction can say which
-  // declaration it fills.
-  struct ConstructionValue {
-    const slang::ast::ValueSymbol* parameter = nullptr;
-    hir::StructuralDataObjectId declared{};
-  };
-
   // Stack-allocates the output `hir::StructuralScope`, walks every member of
   // `slang_scope_` into it, and returns it. `parent_frame` is the caller's walk
   // frame; this scope's own ScopeFrameId and `&scope` are pushed by Run before
   // dispatching to per-member helpers.
-  auto Run(WalkFrame parent_frame, ConstructionValue* construction_value)
-      -> diag::Result<hir::StructuralScope>;
-  auto Run(WalkFrame parent_frame) -> diag::Result<hir::StructuralScope> {
-    return Run(parent_frame, nullptr);
-  }
+  auto Run(WalkFrame parent_frame) -> diag::Result<hir::StructuralScope>;
 
   // This scope's identity on the walk, which a declaration added to it is
   // bound against.
@@ -73,8 +65,14 @@ class StructuralScopeLowerer {
       -> diag::Result<hir::Expr>;
 
  private:
-  auto DeclareBlockParameters(hir::StructuralScope& scope, WalkFrame frame)
+  auto DeclareDifferingParameters(hir::StructuralScope& scope, WalkFrame frame)
       -> diag::Result<void>;
+  auto DeclareSettledValue(
+      hir::StructuralScope& scope, const slang::ast::ValueSymbol& value,
+      hir::StructuralDataObjectKind kind) -> diag::Result<void>;
+  auto LowerConstructorArguments(
+      const slang::ast::InstanceSymbol& child, WalkFrame frame)
+      -> diag::Result<std::vector<hir::Expr>>;
   auto PopulateMember(const slang::ast::Symbol& member, WalkFrame frame)
       -> diag::Result<void>;
   auto PopulateInterfacePortMember(
@@ -90,8 +88,14 @@ class StructuralScopeLowerer {
       -> diag::Result<void>;
   auto PopulateForeignImportMember(const slang::ast::SubroutineSymbol& sym)
       -> diag::Result<void>;
+  auto DefineEvaluator(
+      const slang::ast::Symbol& holder, std::string name,
+      const slang::ast::Expression& expr, WalkFrame frame)
+      -> diag::Result<void>;
   auto PopulateModportMember(
       const slang::ast::ModportSymbol& modport, WalkFrame frame)
+      -> diag::Result<void>;
+  auto PopulatePortMember(const slang::ast::PortSymbol& port, WalkFrame frame)
       -> diag::Result<void>;
   auto PopulateProceduralBlockMember(
       const slang::ast::ProceduralBlockSymbol& proc, WalkFrame frame)

@@ -42,6 +42,7 @@ enum class LyraOption : std::uint8_t {
   kNoColor,
   kFormat,
   kAssertions,
+  kRemarks,
   kConfig,
   kRelease,
   kNoPch,
@@ -90,9 +91,9 @@ class OptionSet {
 constexpr OptionSet kReadsADesign = {
     LyraOption::kColor, LyraOption::kNoColor, LyraOption::kConfig};
 // What every command lowering the design acts on besides: the policy lowering
-// follows.
+// follows, and whether what it could have done better reaches the report.
 constexpr OptionSet kLowersADesign =
-    kReadsADesign | OptionSet{LyraOption::kAssertions};
+    kReadsADesign | OptionSet{LyraOption::kAssertions, LyraOption::kRemarks};
 // What building the design's program acts on besides.
 constexpr OptionSet kBuildsAProgram =
     kLowersADesign | OptionSet{LyraOption::kRelease,  LyraOption::kNoPch,
@@ -187,6 +188,8 @@ auto Spelling(LyraOption option) -> std::string_view {
       return "--format";
     case LyraOption::kAssertions:
       return "--assertions";
+    case LyraOption::kRemarks:
+      return "--remarks";
     case LyraOption::kConfig:
       return "--config";
     case LyraOption::kRelease:
@@ -226,6 +229,8 @@ auto IsGiven(
       return opts.format.has_value();
     case LyraOption::kAssertions:
       return opts.assertions.has_value();
+    case LyraOption::kRemarks:
+      return opts.remarks.has_value();
     case LyraOption::kConfig:
       return opts.config.has_value();
     case LyraOption::kRelease:
@@ -404,6 +409,10 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "--assertions", opts.assertions,
       "hold the design to its assertions, or elide them during lowering",
       "check|skip");
+  cmd.add(
+      "--remarks", opts.remarks,
+      "report what the compiler could have done better and did not; the "
+      "program is right either way");
   cmd.add(
       "--config", opts.config,
       "read this design declaration instead of searching for one", "<file>",

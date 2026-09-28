@@ -461,7 +461,8 @@ auto TranslateType(
     case slang::ast::SymbolKind::VirtualInterfaceType:
       return hir::Type{hir::VirtualInterfaceType{
           .unit_name = SpecializationName(
-              canonical.as<slang::ast::VirtualInterfaceType>().iface)}};
+              canonical.as<slang::ast::VirtualInterfaceType>().iface,
+              unit_lowerer.Specialization())}};
     default:
       return diag::Fail(
           decl_span, diag::DiagCode::kUnsupportedTypeKind,
@@ -1070,8 +1071,8 @@ auto UnitLowerer::ResolveClassRef(
   if (&decl_unit != &scope_->asSymbol()) {
     const auto [it, _] = class_cache_.emplace(
         &cls, hir::ClassRef{hir::ExternalClassRef{
-                  .unit_name = CompilationUnitName(decl_unit),
-                  .class_name = SpecializationName(cls)}});
+                  .unit_name = CompilationUnitName(decl_unit, Specialization()),
+                  .class_name = SpecializationName(cls, Specialization())}});
     return it->second;
   }
   // A local class not yet minted (e.g. a class nested inside a generate
@@ -1094,7 +1095,8 @@ auto UnitLowerer::InternLocalClass(
   if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
     return std::get<hir::LocalClassRef>(it->second).class_id;
   }
-  const hir::ClassId id = unit_.classes.Declare(SpecializationName(cls));
+  const hir::ClassId id =
+      unit_.classes.Declare(SpecializationName(cls, Specialization()));
   class_cache_.emplace(&cls, hir::ClassRef{hir::LocalClassRef{.class_id = id}});
 
   auto decl_owner = std::make_unique<hir::ClassDecl>();

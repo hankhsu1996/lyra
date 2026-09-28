@@ -57,6 +57,8 @@ struct ExternalUnitObject {
     }
     return std::nullopt;
   }
+
+  auto operator==(const ExternalUnitObject&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

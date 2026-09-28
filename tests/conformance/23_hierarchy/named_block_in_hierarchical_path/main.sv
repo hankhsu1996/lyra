@@ -10,11 +10,13 @@
 module Child;
   int intra_outer;
   int intra_inner;
+  int intra_deep;
 
   initial begin
     #1;
     intra_outer = outer.x;
     intra_inner = outer.inner.y;
+    intra_deep = deep.d;
   end
 
   initial begin : outer
@@ -58,6 +60,8 @@ module Top;
       $fatal(1, "c.intra_outer was %0d, expected 7", c.intra_outer);
     if (c.intra_inner !== 13)
       $fatal(1, "c.intra_inner was %0d, expected 13", c.intra_inner);
+    if (c.intra_deep !== 42)
+      $fatal(1, "c.intra_deep was %0d, expected 42", c.intra_deep);
     if (from_unnamed !== 116)
       $fatal(1, "from_unnamed was %0d, expected 116", from_unnamed);
     if (own.v !== 55) $fatal(1, "own.v was %0d, expected 55", own.v);

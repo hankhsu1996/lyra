@@ -31,8 +31,8 @@ namespace lyra::base {
 //
 // Interning names a value; it does not change the program. A request for an
 // entity already interned is indistinguishable from the first request, so the
-// storage and the index are a memo kept behind an observationally pure surface
-// and a `const` pool still answers.
+// pool grows behind an observationally pure surface and a `const` pool still
+// answers.
 //
 // `base::Arena` is the counterpart that confers instead: it mints one id per
 // append, so two equal values there are two entities. Reach for this one only
@@ -79,6 +79,15 @@ class Interner {
 
   [[nodiscard]] auto end() const {
     return storage_.end();
+  }
+
+  // Two pools are one when they hold the same values under the same ids, each
+  // compared whole rather than by `Equal`: what a pool holds may carry more
+  // than what it tells entities apart by, and a comparison of pools answers
+  // for all of it. The index is a memo of the storage and says nothing the
+  // storage does not.
+  [[nodiscard]] auto operator==(const Interner& other) const -> bool {
+    return storage_ == other.storage_;
   }
 
  private:

@@ -32,6 +32,8 @@ struct PublishedCallable {
   SubroutineKind kind;
   TypeId result_type;
   std::vector<ExternalCalleeParam> params;
+
+  auto operator==(const PublishedCallable&) const -> bool = default;
 };
 
 }  // namespace lyra::hir

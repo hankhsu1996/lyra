@@ -87,6 +87,7 @@ struct CliOptions {
   std::optional<std::string> config;
   std::optional<std::string> cache_dir;
   std::optional<bool> rebuild;
+  std::optional<bool> remarks;
   std::optional<std::string> cxx;
   std::optional<int32_t> jobs;
   std::optional<std::string> out;

@@ -17,6 +17,7 @@
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
+#include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -48,9 +49,7 @@ UnitLowerer::UnitLowerer(
 }
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
-  if (auto r = DeclareStructuralIdentities(*scope_); !r) {
-    return std::unexpected(std::move(r.error()));
-  }
+  DeclareStructuralIdentities(*scope_);
   if (auto r = InternOwnClassDeclarations(*scope_); !r) {
     return std::unexpected(std::move(r.error()));
   }
@@ -150,133 +149,268 @@ auto UnitLowerer::NextWithClauseId() -> hir::WithClauseId {
   return hir::WithClauseId{.value = next_with_clause_++};
 }
 
-auto UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope)
-    -> diag::Result<void> {
+// Each id minted here is the source-order position of what it names among its
+// own kind in this scope, which is the arena index the body pass assigns, so a
+// call or a hierarchical reference resolves regardless of source order
+// (LRM 13.4.2, 23.9).
+void UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope) {
   const ScopeFrameId frame = NextScopeFrameId();
   scope_frames_.emplace(&scope, frame);
-  // A generate or instance owned-child id is the source-order position of that
-  // child among its own kind in this scope, matching the arena index the body
-  // pass assigns. A generate id counts constructs rather than blocks: a
-  // conditional is one construct however many alternatives it holds and
-  // whichever of them this elaboration selected (LRM 27.5), so it consumes one
-  // id. An instance-member id counts instances and non-empty
-  // instance arrays -- a zero-element array (LRM 23.3.2) constructs nothing and
-  // consumes no id. A subroutine id counts body-bearing subroutines, so a
-  // bodyless DPI-C import consumes none; a process id counts procedural
-  // blocks. Both match the arena index the body pass assigns, and both are
-  // minted here so a call or a hierarchical reference resolves regardless of
-  // source order (LRM 13.4.2 / 23.9).
   ScopeDeclarations& decls = scope_declarations_[&scope];
   for (const auto& member : scope.members()) {
-    if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
-      const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
-      // A conditional generate is one construct however many alternatives it
-      // holds (LRM 27.5), so the identity is minted once, where the first of
-      // them stands, and every alternative reads it back. An alternative this
-      // elaboration did not select carries no runtime object and so declares
-      // nothing of its own, but it is still one of the construct's and is
-      // named as such.
-      if (!OpensItsConstruct(block)) continue;
-      const auto arms = AlternativesOfConstruct(block);
-      const hir::GenerateId generate = decls.generates.Declare();
-      std::uint32_t position = 0;
-      for (const auto* arm : arms) {
-        MapOwnedChildBinding(
-            *arm, frame,
-            hir::GenerateChildRef{
-                .generate = generate, .block = NamedBlockOf(*arm, position)});
-        ++position;
-        if (arm->isUninstantiated) continue;
-        if (auto r = DeclareStructuralIdentities(*arm); !r) {
-          return std::unexpected(std::move(r.error()));
-        }
-      }
-    } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
-      const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
-      if (array.entries.empty()) continue;
-      // A loop generate elaborates each iteration into a block of its own
-      // (LRM 27.4), and a name reaching one means that block. How many scopes
-      // the construct compiles to belongs to where its bodies are built, so a
-      // name resolves here without it.
-      const hir::GenerateId generate = decls.generates.Declare();
-      std::uint32_t block = 0;
-      for (const auto* entry : array.entries) {
-        MapOwnedChildBinding(
-            *entry, frame,
-            hir::GenerateChildRef{
-                .generate = generate, .block = hir::BlockAtIndex{block}});
-        ++block;
-        if (auto r = DeclareStructuralIdentities(*entry); !r) {
-          return std::unexpected(std::move(r.error()));
-        }
-      }
-    } else if (member.kind == slang::ast::SymbolKind::Instance) {
-      MapOwnedChildBinding(member, frame, decls.instance_members.Declare());
-    } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
-      const auto shape = ResolveInstanceArrayShape(
-          member.as<slang::ast::InstanceArraySymbol>());
-      if (!shape.has_value()) {
-        continue;
-      }
-      MapOwnedChildBinding(member, frame, decls.instance_members.Declare());
-    } else if (member.kind == slang::ast::SymbolKind::Subroutine) {
-      const auto& sub = member.as<slang::ast::SubroutineSymbol>();
-      // A DPI-C import declares no body and reserves no subroutine id; the
-      // unit interns its record on first sight from either side. What it does
-      // record here is the scope it is declared in, which a `context` import
-      // observes during its foreign call (LRM 35.5.3) -- and only an
-      // instantiated scope is one. A namespace is never instantiated, so its
-      // declarations name none and a call to one observes no scope, whether it
-      // is made from inside the namespace or from a unit that imported the
-      // name.
-      if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
-        if (unit_.role != hir::UnitRole::kNamespace) {
-          MapForeignImportScope(sub, frame);
-        }
-        continue;
-      }
-      const hir::StructuralSubroutineId id =
-          decls.structural_subroutines.Declare();
-      MapSubroutineBinding(sub, frame, id);
-      DeclareProceduralStatics(sub, sub, hir::ProceduralBodyRef{id}, frame);
-    } else if (member.kind == slang::ast::SymbolKind::Modport) {
-      // A name a view defines and offers only for reading stands for an
-      // expression this unit evaluates (LRM 25.5.4), which is a subroutine of
-      // this scope and takes its identity here with every other, so the
-      // signature can name it before any body is lowered. Every other name a
-      // view offers designates storage -- an item the view wrote no expression
-      // for is the interface's own, and every direction but `input` bounds the
-      // expression to an lvalue -- and storage is reached rather than asked
-      // for.
-      for (const auto& item : member.as<slang::ast::Scope>().members()) {
-        const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
-        if (port == nullptr || !ViewDefinesTheName(*port)) continue;
-        if (port->direction != slang::ast::ArgumentDirection::In) continue;
-        MapModportEvaluator(*port, decls.structural_subroutines.Declare());
-      }
-    } else if (member.kind == slang::ast::SymbolKind::ProceduralBlock) {
-      const auto& proc = member.as<slang::ast::ProceduralBlockSymbol>();
-      if (!Contains(proc)) continue;
-      // An assertion whose enabling condition is 1 is not a procedure the
-      // design runs (LRM 16.14.5): what starts its attempts is the clock. So it
-      // takes no process identity and nothing reaches into it by a hierarchical
-      // name.
-      if (StaticConcurrentAssertionOf(proc).assertion != nullptr) continue;
-      const hir::ProcessId id = decls.processes.Declare();
-      MapProcessBinding(proc, id);
-      // The frontend hoists a process's outermost block into this scope's
-      // member list, so the process is the only place that says which of those
-      // blocks is its body.
-      const auto* body_block =
-          proc.getBody().as_if<slang::ast::BlockStatement>();
-      if (body_block == nullptr || body_block->blockSymbol == nullptr) {
-        continue;
-      }
-      DeclareProceduralStatics(
-          *body_block->blockSymbol, proc, hir::ProceduralBodyRef{id}, frame);
-    }
+    DeclareMemberIdentities(member, decls, frame);
   }
-  return {};
+}
+
+// Every slang symbol kind is listed and there is no `default`, so a kind a
+// newer front end adds fails to compile here instead of silently getting no
+// identity.
+void UnitLowerer::DeclareMemberIdentities(
+    const slang::ast::Symbol& member, ScopeDeclarations& decls,
+    ScopeFrameId frame) {
+  using slang::ast::SymbolKind;
+  switch (member.kind) {
+    case SymbolKind::GenerateBlock:
+      DeclareConditionalGenerate(
+          member.as<slang::ast::GenerateBlockSymbol>(), decls, frame);
+      return;
+    case SymbolKind::GenerateBlockArray:
+      DeclareLoopGenerate(
+          member.as<slang::ast::GenerateBlockArraySymbol>(), decls, frame);
+      return;
+    case SymbolKind::Instance:
+      MapOwnedChildBinding(member, frame, decls.instance_members.Declare());
+      return;
+    // A zero-element array (LRM 23.3.2) constructs nothing, so it is no member
+    // and takes no id.
+    case SymbolKind::InstanceArray:
+      if (ResolveInstanceArrayShape(
+              member.as<slang::ast::InstanceArraySymbol>())
+              .has_value()) {
+        MapOwnedChildBinding(member, frame, decls.instance_members.Declare());
+      }
+      return;
+    case SymbolKind::Subroutine:
+      DeclareSubroutine(
+          member.as<slang::ast::SubroutineSymbol>(), decls, frame);
+      return;
+    case SymbolKind::Modport:
+      DeclareModportEvaluators(member.as<slang::ast::ModportSymbol>(), decls);
+      return;
+    // A port's default is an expression of this unit, evaluated in its scope
+    // for an instance that leaves the port unconnected (LRM 23.2.2.4), so it
+    // is a subroutine of this scope the instantiator asks for.
+    case SymbolKind::Port:
+      if (member.as<slang::ast::PortSymbol>().getInitializer() != nullptr) {
+        MapEvaluator(member, decls.structural_subroutines.Declare());
+      }
+      return;
+    case SymbolKind::ProceduralBlock:
+      DeclareProcess(
+          member.as<slang::ast::ProceduralBlockSymbol>(), decls, frame);
+      return;
+
+    // Nothing a body names before it lowers: storage and connections take
+    // their identity where the member walk builds them, a type or a class is
+    // interned where it is declared or used, and the rest belongs to another
+    // scope or brings no structure of its own.
+    case SymbolKind::Variable:
+    case SymbolKind::Net:
+    case SymbolKind::ContinuousAssign:
+    case SymbolKind::NetAlias:
+    case SymbolKind::Sequence:
+    case SymbolKind::Property:
+    case SymbolKind::AssertionPort:
+    case SymbolKind::LocalAssertionVar:
+    case SymbolKind::Checker:
+    case SymbolKind::CheckerInstance:
+    case SymbolKind::CheckerInstanceBody:
+    case SymbolKind::PrimitiveInstance:
+    case SymbolKind::RandSeqProduction:
+    case SymbolKind::AnonymousProgram:
+    case SymbolKind::UninstantiatedDef:
+    case SymbolKind::PredefinedIntegerType:
+    case SymbolKind::ScalarType:
+    case SymbolKind::FloatingType:
+    case SymbolKind::EnumType:
+    case SymbolKind::EnumValue:
+    case SymbolKind::PackedArrayType:
+    case SymbolKind::FixedSizeUnpackedArrayType:
+    case SymbolKind::DynamicArrayType:
+    case SymbolKind::DPIOpenArrayType:
+    case SymbolKind::AssociativeArrayType:
+    case SymbolKind::QueueType:
+    case SymbolKind::PackedStructType:
+    case SymbolKind::UnpackedStructType:
+    case SymbolKind::PackedUnionType:
+    case SymbolKind::UnpackedUnionType:
+    case SymbolKind::ClassType:
+    case SymbolKind::CovergroupType:
+    case SymbolKind::VoidType:
+    case SymbolKind::NullType:
+    case SymbolKind::CHandleType:
+    case SymbolKind::StringType:
+    case SymbolKind::EventType:
+    case SymbolKind::UnboundedType:
+    case SymbolKind::TypeRefType:
+    case SymbolKind::UntypedType:
+    case SymbolKind::SequenceType:
+    case SymbolKind::PropertyType:
+    case SymbolKind::VirtualInterfaceType:
+    case SymbolKind::TypeAlias:
+    case SymbolKind::ErrorType:
+    case SymbolKind::ForwardingTypedef:
+    case SymbolKind::NetType:
+    case SymbolKind::TypeParameter:
+    case SymbolKind::GenericClassDef:
+    case SymbolKind::Parameter:
+    case SymbolKind::Specparam:
+    case SymbolKind::DefParam:
+    case SymbolKind::Genvar:
+    case SymbolKind::ExplicitImport:
+    case SymbolKind::WildcardImport:
+    case SymbolKind::Attribute:
+    case SymbolKind::ConfigBlock:
+    case SymbolKind::ElabSystemTask:
+    case SymbolKind::InterfacePort:
+    case SymbolKind::MultiPort:
+    case SymbolKind::ModportPort:
+    case SymbolKind::ModportClocking:
+    case SymbolKind::InstanceBody:
+    case SymbolKind::Package:
+    case SymbolKind::CompilationUnit:
+    case SymbolKind::Root:
+    case SymbolKind::Definition:
+    case SymbolKind::Unknown:
+    case SymbolKind::DeferredMember:
+    case SymbolKind::TransparentMember:
+    case SymbolKind::EmptyMember:
+    case SymbolKind::StatementBlock:
+    case SymbolKind::FormalArgument:
+    case SymbolKind::Field:
+    case SymbolKind::ClassProperty:
+    case SymbolKind::MethodPrototype:
+    case SymbolKind::Iterator:
+    case SymbolKind::PatternVar:
+    case SymbolKind::ConstraintBlock:
+    case SymbolKind::CovergroupBody:
+    case SymbolKind::Coverpoint:
+    case SymbolKind::CoverCross:
+    case SymbolKind::CoverCrossBody:
+    case SymbolKind::CoverageBin:
+    case SymbolKind::Primitive:
+    case SymbolKind::PrimitivePort:
+    case SymbolKind::SpecifyBlock:
+    case SymbolKind::TimingPath:
+    case SymbolKind::PulseStyle:
+    case SymbolKind::SystemTimingCheck:
+    case SymbolKind::ClockingBlock:
+    case SymbolKind::ClockVar:
+    case SymbolKind::LetDecl:
+      return;
+  }
+  throw InternalError(
+      "UnitLowerer::DeclareMemberIdentities: unknown slang SymbolKind");
+}
+
+// A conditional generate is one construct however many alternatives it holds
+// and whichever of them this elaboration selected (LRM 27.5), so it takes one
+// generate id, minted where the first alternative stands, and every
+// alternative reads it back. An alternative this elaboration did not select
+// carries no runtime object and so declares nothing of its own, but it is
+// still one of the construct's and is named as such.
+void UnitLowerer::DeclareConditionalGenerate(
+    const slang::ast::GenerateBlockSymbol& block, ScopeDeclarations& decls,
+    ScopeFrameId frame) {
+  if (!OpensItsConstruct(block)) return;
+  const hir::GenerateId generate = decls.generates.Declare();
+  std::uint32_t position = 0;
+  for (const auto* arm : AlternativesOfConstruct(block)) {
+    MapOwnedChildBinding(
+        *arm, frame,
+        hir::GenerateChildRef{
+            .generate = generate, .block = NamedBlockOf(*arm, position)});
+    ++position;
+    if (!arm->isUninstantiated) DeclareStructuralIdentities(*arm);
+  }
+}
+
+// A loop generate elaborates each iteration into a block of its own
+// (LRM 27.4), and a name reaching one means that block. How many scopes the
+// construct compiles to belongs to where its bodies are built, so a name
+// resolves here without it. A loop that ran no iteration constructs nothing
+// and takes no id.
+void UnitLowerer::DeclareLoopGenerate(
+    const slang::ast::GenerateBlockArraySymbol& array, ScopeDeclarations& decls,
+    ScopeFrameId frame) {
+  if (array.entries.empty()) return;
+  const hir::GenerateId generate = decls.generates.Declare();
+  std::uint32_t block = 0;
+  for (const auto* entry : array.entries) {
+    MapOwnedChildBinding(
+        *entry, frame,
+        hir::GenerateChildRef{
+            .generate = generate, .block = hir::BlockAtIndex{block}});
+    ++block;
+    DeclareStructuralIdentities(*entry);
+  }
+}
+
+// A DPI-C import declares no body and takes no subroutine id; the unit interns
+// its record on first sight from either side. What it does record here is the
+// scope it is declared in, which a `context` import observes during its
+// foreign call (LRM 35.5.3) -- and only an instantiated scope is one. A
+// namespace is never instantiated, so its declarations name none and a call to
+// one observes no scope, whether it is made from inside the namespace or from
+// a unit that imported the name.
+void UnitLowerer::DeclareSubroutine(
+    const slang::ast::SubroutineSymbol& sub, ScopeDeclarations& decls,
+    ScopeFrameId frame) {
+  if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
+    if (unit_.role != hir::UnitRole::kNamespace) {
+      MapForeignImportScope(sub, frame);
+    }
+    return;
+  }
+  const hir::StructuralSubroutineId id = decls.structural_subroutines.Declare();
+  MapSubroutineBinding(sub, frame, id);
+  DeclareProceduralStatics(sub, sub, hir::ProceduralBodyRef{id}, frame);
+}
+
+// A name a view defines and offers only for reading stands for an expression
+// this unit evaluates (LRM 25.5.4), which is a subroutine of this scope and
+// takes its identity here with every other, so the signature can name it
+// before any body is lowered. Every other name a view offers designates
+// storage -- an item the view wrote no expression for is the interface's own,
+// and every direction but `input` bounds the expression to an lvalue -- and
+// storage is reached rather than asked for.
+void UnitLowerer::DeclareModportEvaluators(
+    const slang::ast::ModportSymbol& modport, ScopeDeclarations& decls) {
+  for (const auto& item : modport.members()) {
+    const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
+    if (port == nullptr || !ViewDefinesTheName(*port)) continue;
+    if (port->direction != slang::ast::ArgumentDirection::In) continue;
+    MapEvaluator(*port, decls.structural_subroutines.Declare());
+  }
+}
+
+// An assertion whose enabling condition is 1 is not a procedure the design
+// runs (LRM 16.14.5): what starts its attempts is the clock. So it takes no
+// process identity and nothing reaches into it by a hierarchical name.
+void UnitLowerer::DeclareProcess(
+    const slang::ast::ProceduralBlockSymbol& proc, ScopeDeclarations& decls,
+    ScopeFrameId frame) {
+  if (!Contains(proc)) return;
+  if (StaticConcurrentAssertionOf(proc).assertion != nullptr) return;
+  const hir::ProcessId id = decls.processes.Declare();
+  MapProcessBinding(proc, id);
+  // The frontend hoists a process's outermost blocks into this scope's member
+  // list -- its body, or where the body opens no scope of its own, each block
+  // written directly inside it -- so the process is the only place that says
+  // which of those blocks are its own.
+  for (const auto* block : proc.getBlocks()) {
+    DeclareProceduralStatics(*block, proc, hir::ProceduralBodyRef{id}, frame);
+  }
 }
 
 void UnitLowerer::DeclareProceduralStatics(
@@ -289,14 +423,21 @@ void UnitLowerer::DeclareProceduralStatics(
           frame);
       continue;
     }
-    if (member.kind != slang::ast::SymbolKind::Variable) continue;
-    const auto& var = member.as<slang::ast::VariableSymbol>();
-    if (var.lifetime != slang::ast::VariableLifetime::Static) continue;
+    // A static-lifetime variable is storage of the object the body runs on
+    // (LRM 6.21), and so is a constant whose value differs between the objects
+    // built from this unit: it is read there rather than folded to the value
+    // one elaboration gave it.
+    const auto* var = member.as_if<slang::ast::VariableSymbol>();
+    const auto* constant = member.as_if<slang::ast::ParameterSymbol>();
+    const bool held = (var != nullptr &&
+                       var->lifetime == slang::ast::VariableLifetime::Static) ||
+                      (constant != nullptr && DiffersPerObject(*constant));
+    if (!held) continue;
 
     const hir::ProceduralVarId id =
         procedural_static_vars_[&body_symbol].Declare();
     const auto [_, inserted] = procedural_static_bindings_.emplace(
-        &var,
+        &member,
         ProceduralStaticBinding{.home_frame = frame, .body = body, .var = id});
     if (!inserted) {
       throw InternalError(
@@ -304,6 +445,26 @@ void UnitLowerer::DeclareProceduralStatics(
           "mapped");
     }
   }
+}
+
+auto UnitLowerer::ValueSourceOf(const slang::ast::ParameterSymbol& param) const
+    -> ParameterValueSource {
+  const auto* body = scope_->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
+  if (body == nullptr) return ParameterValueSource::kFixedBySpecialization;
+  return Specialization().ValueSourceOf(InstantiationOf(*body), param);
+}
+
+auto UnitLowerer::DiffersPerObject(
+    const slang::ast::ParameterSymbol& param) const -> bool {
+  switch (ValueSourceOf(param)) {
+    case ParameterValueSource::kFixedBySpecialization:
+      return false;
+    case ParameterValueSource::kSuppliedAtConstruction:
+    case ParameterValueSource::kComputedAtConstruction:
+      return true;
+  }
+  throw InternalError(
+      "UnitLowerer::DiffersPerObject: unknown ParameterValueSource");
 }
 
 auto UnitLowerer::MakeProceduralBody(const slang::ast::Symbol& body_symbol)
@@ -465,24 +626,23 @@ auto UnitLowerer::LookupStructuralDataObjectBinding(
   return it->second;
 }
 
-void UnitLowerer::MapModportEvaluator(
-    const slang::ast::Symbol& port, hir::StructuralSubroutineId evaluator) {
-  const auto [_, inserted] = modport_evaluators_.emplace(&port, evaluator);
+void UnitLowerer::MapEvaluator(
+    const slang::ast::Symbol& holder, hir::StructuralSubroutineId evaluator) {
+  const auto [_, inserted] = evaluators_.emplace(&holder, evaluator);
   if (!inserted) {
     throw InternalError(
-        "UnitLowerer::MapModportEvaluator: a name a modport offers is declared "
-        "once");
+        "UnitLowerer::MapEvaluator: a declaration's expression is evaluated in "
+        "one subroutine");
   }
 }
 
-auto UnitLowerer::ModportEvaluatorOf(const slang::ast::Symbol& port) const
+auto UnitLowerer::EvaluatorOf(const slang::ast::Symbol& holder) const
     -> hir::StructuralSubroutineId {
-  const auto it = modport_evaluators_.find(&port);
-  if (it == modport_evaluators_.end()) {
+  const auto it = evaluators_.find(&holder);
+  if (it == evaluators_.end()) {
     throw InternalError(
-        "UnitLowerer::ModportEvaluatorOf: every name a view offers only for "
-        "reading takes its identity with the unit's other structural "
-        "declarations");
+        "UnitLowerer::EvaluatorOf: an expression another unit asks for takes "
+        "its identity with the unit's other structural declarations");
   }
   return it->second;
 }

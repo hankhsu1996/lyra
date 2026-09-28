@@ -26,6 +26,11 @@ namespace {
 // library to learn it.
 constexpr std::string_view kInternalErrorReport = "lyra: internal error:";
 
+// How lyra remarks on a definition it compiled once per parameter value because
+// instances handed different values lowered apart. The program is right, so the
+// run's own outcome says nothing; the remark is the only sign of the defect.
+constexpr std::string_view kLostSharingReport = "remark: sharing lost:";
+
 // How long one case may take before it is called stuck. It is a guard against a
 // run that never ends, not a budget for how fast a case builds: a case builds
 // its program with whatever compiler the executing machine has, and one with no
@@ -110,6 +115,10 @@ auto BuildArgv(const ConformancePath& path, const ConformanceCase& test_case)
   // failed for. Both want the diagnostic as it was written rather than wrapped
   // in the escape sequences that colour it for a terminal.
   argv.emplace_back("--no-color");
+  // A definition compiled once per parameter value where it could have been
+  // compiled once is a defect in Lyra, and nothing a case checks can see it, so
+  // the run is asked for its remarks.
+  argv.emplace_back("--remarks");
   if (const char* scratch = std::getenv("TEST_TMPDIR");
       scratch != nullptr && *scratch != '\0') {
     // Keeping what a run builds beside the shard's other scratch lets one
@@ -289,6 +298,13 @@ auto RunConformanceCase(
   // implemented yet" and "implemented wrongly" answerable apart.
   if (mentions(kInternalErrorReport)) {
     return report("the run reported a compiler bug");
+  }
+  // The same holds for sharing lost: it is a defect in Lyra whatever the case
+  // is recorded as, and no record of a path excuses it.
+  if (mentions(kLostSharingReport)) {
+    return report(
+        "the run compiled a definition once per parameter value because its "
+        "instances lowered apart after they were predicted to share one unit");
   }
 
   // A program IEEE 1800 requires a tool to reject makes no checks, so what it

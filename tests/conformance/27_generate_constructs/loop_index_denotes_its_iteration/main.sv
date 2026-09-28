@@ -9,6 +9,11 @@
 // The clause names that last position twice over: a declaration of the block is
 // reached that way, and so is the implicit localparam itself, which LRM 27.4
 // says "can be referenced with a hierarchical name".
+//
+// The localparam also has "the same name and type as the loop index", and a
+// genvar is an integer (LRM 27.4, 6.11): 32 bits and signed, which a loop
+// counting up from a negative index shows. That holds in a loop whose blocks
+// declare a type sized by the index and in one whose blocks only read it.
 module Top;
   localparam int N = 8;
 
@@ -37,6 +42,24 @@ module Top;
     reached_index = g[5].i;
   end
 
+  int sized_bits [4];
+  bit sized_negative [4];
+  int read_bits [4];
+  bit read_negative [4];
+  for (genvar i = -2; i < 2; i++) begin : sized_by_index
+    logic [i + 3:0] differs;
+    initial begin
+      sized_bits[i + 2] = $bits(i);
+      sized_negative[i + 2] = i < 0;
+    end
+  end
+  for (genvar i = -2; i < 2; i++) begin : index_only_read
+    initial begin
+      read_bits[i + 2] = $bits(i);
+      read_negative[i + 2] = i < 0;
+    end
+  end
+
   final begin
     for (int k = 0; k < N; k++) begin
       if (seen[k] !== k)
@@ -55,6 +78,14 @@ module Top;
       $fatal(1, "g[5].slice is %0d bits, expected 6", reached);
     if (reached_index !== 5)
       $fatal(1, "g[5].i is %0d, expected 5", reached_index);
+    for (int k = 0; k < 4; k++) begin
+      if (sized_bits[k] !== 32 || read_bits[k] !== 32)
+        $fatal(1, "index %0d is %0d and %0d bits wide, expected 32", k - 2,
+               sized_bits[k], read_bits[k]);
+      if (sized_negative[k] !== (k < 2) || read_negative[k] !== (k < 2))
+        $fatal(1, "index %0d compares below zero as %0d and %0d", k - 2,
+               sized_negative[k], read_negative[k]);
+    end
     $display("All checks passed");
   end
 endmodule

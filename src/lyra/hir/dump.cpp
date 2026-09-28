@@ -5,6 +5,7 @@
 #include <format>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -119,6 +120,15 @@ auto ProceduralScopeKindLabel(ProceduralScopeKind kind) -> std::string_view {
 
 auto ReferenceBindingLabel(ReferenceBinding binding) -> std::string_view {
   return binding == ReferenceBinding::kConstRef ? " const ref" : " ref";
+}
+
+auto FormatArguments(std::span<const ExprId> arguments) -> std::string {
+  std::string out;
+  for (std::size_t i = 0; i < arguments.size(); ++i) {
+    if (i != 0) out += ", ";
+    out += std::format("Expr[{}]", arguments[i].value);
+  }
+  return std::format("arguments({})", out);
 }
 
 // The identifier a declaration answers to, quoted, or nothing at all where the
@@ -588,7 +598,7 @@ class HirDumper {
               return std::format("StringLiteral(\"{}\")", lit.value);
             },
             [](const RealLiteral& lit) -> std::string {
-              return std::format("RealLiteral({})", lit.value);
+              return std::format("RealLiteral({})", lit.value.Value());
             },
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
             [](const ThisHandle&) -> std::string { return "ThisHandle"; },
@@ -881,7 +891,7 @@ class HirDumper {
                     FormatIndices(step.indices));
                 const Generate& gen = owner->generates.Get(generate->generate);
                 owner =
-                    &gen.child_scopes.Get(ChildScopeOf(gen, generate->block));
+                    &gen.blocks.Get(ChildScopeOf(gen, generate->block)).scope;
               }
               const auto& decl =
                   owner->structural_subroutines.Get(u.subroutine);
@@ -1009,8 +1019,8 @@ class HirDumper {
       class_scope_chains_.emplace(id, scope_stack_);
     }
     for (const auto& g : scope.generates) {
-      for (const auto& child : g.child_scopes) {
-        RecordClassScopeChainsIn(child);
+      for (const auto& block : g.blocks) {
+        RecordClassScopeChainsIn(block.scope);
       }
     }
     scope_stack_.pop_back();
@@ -1336,11 +1346,6 @@ class HirDumper {
   [[nodiscard]] auto FormatProcExpr(const ProceduralBody& p, ExprId id) const
       -> std::string {
     return FormatExpr(p.exprs.Get(id));
-  }
-
-  [[nodiscard]] auto FormatScopeExpr(const StructuralScope& s, ExprId id) const
-      -> std::string {
-    return FormatExpr(s.exprs.Get(id));
   }
 
   void DumpUnit(const CompilationUnit& u) {
@@ -1721,8 +1726,9 @@ class HirDumper {
       }
       Line(
           std::format(
-              "InstanceMember[{}] \"{}\"{} : ExternalUnitObject[{}]", id.value,
-              im.instance_name, array_suffix, im.object.value));
+              "InstanceMember[{}] \"{}\"{} : ExternalUnitObject[{}] {}",
+              id.value, im.instance_name, array_suffix, im.object.value,
+              FormatArguments(im.arguments)));
     }
     DumpTable("RoutedValueRef", s.routes.values);
     DumpTable("RoutedObjectRef", s.routes.objects);
@@ -2619,10 +2625,9 @@ class HirDumper {
             [](const BlocksRepeat& r) {
               return std::format(
                   "repeated var=StructuralDataObject[{}] initial=Expr[{}] "
-                  "condition=Expr[{}] step=Expr[{}] index="
-                  "StructuralDataObject[{}]",
+                  "condition=Expr[{}] step=Expr[{}]",
                   r.variable.value, r.initial.value, r.condition.value,
-                  r.step.value, r.index.value);
+                  r.step.value);
             },
             [](const BlocksChoose& c) {
               std::string chosen =
@@ -2637,12 +2642,13 @@ class HirDumper {
             },
         },
         g.counting);
-    Line(std::format("Generate blocks={} {}", g.child_scopes.size(), form));
+    Line(std::format("Generate blocks={} {}", g.blocks.size(), form));
     Indent();
-    for (const auto& scope : g.child_scopes) {
+    for (const auto& block : g.blocks) {
+      const StructuralScope& scope = block.scope;
       const std::string idx =
           scope.index.has_value() ? std::format("[{}]", *scope.index) : "[-]";
-      Line(std::format("{}:", idx));
+      Line(std::format("{} {}:", idx, FormatArguments(block.arguments)));
       Indent();
       DumpScope(scope);
       Dedent();

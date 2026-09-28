@@ -44,12 +44,16 @@ auto ParamDirectionOf(const slang::ast::FormalArgumentSymbol& formal)
 // defines.
 auto ViewDefinesTheName(const slang::ast::Symbol& item) -> bool;
 
-// The subroutine an interface evaluates one name a view offers only for reading
-// in (LRM 25.5.4), named from the view and the name. The declaring unit both
-// promises it and builds it, so the two are spelled through one function and
-// cannot describe different subroutines.
+// The subroutines a unit makes up to evaluate an expression of its own for
+// another unit: one name a view offers only for reading (LRM 25.5.4), and one
+// port's default (LRM 23.2.2.4). The declaring unit both promises each and
+// builds it, so the two are spelled through one function and cannot describe
+// different subroutines. Each name holds a space, which no identifier can,
+// escaped ones included (LRM 5.6.1), so it cannot be the name of anything the
+// unit itself declares.
 auto ModportReadName(std::string_view modport, std::string_view port)
     -> std::string;
+auto PortDefaultName(std::string_view port) -> std::string;
 
 // Lowers a slang subroutine (LRM 13) into a hir::SubroutineDecl: its result
 // type, its formals as body-local procedural vars carrying their direction, the

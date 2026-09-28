@@ -1,7 +1,6 @@
 #include "lyra/compiler/design_root.hpp"
 
 #include <expected>
-#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -31,7 +30,8 @@ auto BuildDesignRootHir(
   hir::CompilationUnit root{std::string{kDesignRootUnitName}};
   for (const lowering::ast_to_hir::TopLevelUnit& top : tops) {
     // The root reaches a top the way any parent reaches a child it builds:
-    // through its own record of the object that unit's signature promised.
+    // through its own record of the object that unit's signature promised. A
+    // top is handed nothing, since nothing instantiates it.
     const hir::ExternalUnitObjectId object = root.external_unit_objects.Add(
         hir::ImportExternalUnitObject(
             signatures.Instantiated(top.unit_name), root.types));
@@ -40,7 +40,8 @@ auto BuildDesignRootHir(
         hir::InstanceMemberDecl{
             .instance_name = top.instance_name,
             .object = object,
-            .array_dims = {}});
+            .array_dims = {},
+            .arguments = {}});
   }
   return root;
 }

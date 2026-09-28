@@ -66,6 +66,8 @@ struct ExternalClass {
     }
     return std::nullopt;
   }
+
+  auto operator==(const ExternalClass&) const -> bool = default;
 };
 
 // The record kept of the class `class_name` of unit `unit_name`, or nothing

@@ -40,11 +40,13 @@ situation: an elaboration-time value of unproven effect.
 
 ### F2. Today the two are handled oppositely
 
-A module parameter is conservatively resolved to a concrete value -- every distinct binding is its
-own specialization, which is always correct (`parameter-code-shape-over-approximation.md`). The
-`generate for` genvar is the opposite: it is unconditionally demoted to a runtime induction value
-and the body is lowered once, never per iteration. That demotion is sound only for a genvar that
-shapes neither static representation nor structure a shared body cannot carry; applied
+A module parameter was conservatively resolved to a concrete value -- every distinct binding its own
+specialization, which is always correct (`parameter-code-shape-over-approximation.md`); a value
+parameter read only as a value is now supplied at construction instead
+([a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)).
+The `generate for` genvar is the opposite: it is unconditionally demoted to a runtime induction
+value and the body is lowered once, never per iteration. That demotion is sound only for a genvar
+that shapes neither static representation nor structure a shared body cannot carry; applied
 unconditionally it is unsound.
 
 ### F3. What an elaboration-time value can determine splits into two kinds
@@ -78,8 +80,9 @@ static shape but can carry runtime construction control flow.
    the domain) and their differences are constructor-time structure (F3, second kind) that the Build
    program expresses with runtime `for` / `if` / `case`. The runtime value then controls
    construction, never static representation. This is the same optimization
-   `parameter-code-shape-over-approximation.md` defers for parameters; the generate variable rides
-   the same mechanism (a specialization key when exploded, a constructor input when demoted).
+   [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
+   makes for parameters; the generate variable rides the same mechanism (a specialization key when
+   exploded, a constructor input when demoted).
 
 3. **The admission criterion is expressibility, not identity.** The question is not "are all
    concrete bodies identical" but "does one generic Build program reproduce them all." A

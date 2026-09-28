@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
-#include <vector>
 
 #include <slang/ast/Compilation.h>
 
@@ -49,13 +49,26 @@ class LowerCompilationFacts {
   support::AssertionPolicy assertion_policy_;
 };
 
+// A top-level block is an auto-promoted, uninstantiated module, named twice
+// because the two names answer different questions and coincide only when no
+// parameter decides which unit it is.
+struct TopLevelUnit {
+  // What the design's hierarchy shows for this top. Nothing instantiates a
+  // top, so it stands under its own module identifier (LRM 23.3), and that is
+  // the name `%m` prints and an upward hierarchical name matches.
+  std::string instance_name;
+  // The compiled unit it is an instance of. One module compiles to one unit
+  // per specialization, so this is the artifact's name.
+  std::string unit_name;
+};
+
 // The design once every unit has declared itself and before any unit's bodies
-// are lowered: every namespace the design declares, then every distinct
-// design-element body reachable from the tops, each tagged with whether its
-// instances exist as objects, together with what each published. A unit reads
-// only its own scope, the frontend, and what the other units published -- never
-// their bodies -- so its bodies lower into a self-contained unit with no
-// cross-unit HIR references.
+// are lowered: where the design begins, every namespace the design declares,
+// then every distinct design-element body reachable from the tops, each tagged
+// with whether its instances exist as objects, together with what each
+// published. A unit reads only its own scope, the frontend, and what the other
+// units published -- never their bodies -- so its bodies lower into a
+// self-contained unit with no cross-unit HIR references.
 //
 // What each unit holds between the two steps is its declarations, so what is
 // resident until a unit is lowered is what it declared, and its bodies exist
@@ -78,6 +91,18 @@ class DeclaredDesign {
   // nothing comes back after any such failure, because a body resolves names
   // against what the units published and would fail for want of a promise
   // nobody made, burying the account this step exists to give.
+  //
+  // A top is where the design begins, so nothing instantiates it and its ports
+  // are connected to nothing. Two kinds of port may not be left unconnected --
+  // an interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) -- so a
+  // module declaring either is a design element and not a design, and is
+  // reported.
+  //
+  // Instances handed different values of a parameter share one unit only
+  // where each lowers to what the unit lowers to, which is checked here, one
+  // instance beside its unit at a time. A definition where one does not is
+  // declared again with every parameter deciding its unit, and a remark says
+  // so; what comes back is always the design each instance describes.
   static auto Declare(
       std::unique_ptr<slang::ast::Compilation> front_end,
       const frontend::SlangSourceMapper& source_mapper,
@@ -89,6 +114,10 @@ class DeclaredDesign {
   DeclaredDesign(const DeclaredDesign&) = delete;
   auto operator=(const DeclaredDesign&) -> DeclaredDesign& = delete;
   ~DeclaredDesign();
+
+  // Where the design begins, a subset of the compiled units: a unit reached
+  // only through instantiation is compiled but is not a top.
+  [[nodiscard]] auto Tops() const -> std::span<const TopLevelUnit>;
 
   [[nodiscard]] auto UnitCount() const -> std::size_t;
 
@@ -107,28 +136,5 @@ class DeclaredDesign {
 
   std::unique_ptr<Units> units_;
 };
-
-// A top-level block is an auto-promoted, uninstantiated module, named twice
-// because the two names answer different questions and coincide only when the
-// module carries no parameters.
-struct TopLevelUnit {
-  // What the design's hierarchy shows for this top. Nothing instantiates a
-  // top, so it stands under its own module identifier (LRM 23.3), and that is
-  // the name `%m` prints and an upward hierarchical name matches.
-  std::string instance_name;
-  // The compiled unit it is an instance of. One module compiles to one unit
-  // per distinct parameterization, so this is the artifact's name.
-  std::string unit_name;
-};
-
-// The design's tops, a subset of the compiled units: a unit reached only
-// through instantiation is compiled but is not a top.
-//
-// A top is where the design begins, so nothing instantiates it and its ports
-// are connected to nothing. Two kinds of port may not be left unconnected -- an
-// interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) -- so a module
-// declaring either is a design element and not a design.
-auto TopLevelUnits(const LowerCompilationFacts& facts)
-    -> diag::Result<std::vector<TopLevelUnit>>;
 
 }  // namespace lyra::lowering::ast_to_hir

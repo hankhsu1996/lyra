@@ -345,18 +345,35 @@ The cost of producing compiled artifacts and of building the object graph at tim
 constraint is `north_star.md`: compile-time work scales with the number of distinct unit
 specializations, not with instance count.
 
-- [ ] Specialization dedup. Today every distinct parameter binding produces its own compiled
-      artifact, because unit identity is keyed on the frontend's per-parameter-set elaboration. This
-      over-forks: two instances whose generated code is identical except for a folded constant
-      compile twice. The target is `specialization_model.md`: classify each parameter as a
-      code-shape-affecting input (enters the specialization key) or a constructor/config input
-      (flows in at construction), emit one artifact per distinct code shape, and let value-only
-      parameters differ per instance without forking the artifact (LRM 23.10). Functionality does
-      not depend on this -- a correctly-identified per-binding artifact already behaves correctly
-      (see `hierarchy.md` Stage A); dedup only reduces how many artifacts exist. The identity
-      mechanism is unchanged from the functional case: the same canonical binding serializer
-      (`docs/decisions/specialization-identity.md`) is fed only the code-shape-affecting subset, and
-      value-only parameters are demoted to constructor inputs.
+- [x] Specialization dedup for a value parameter read only as a value. Instances of a module handed
+      different values of such a parameter are one unit, and the value reaches each instance when it
+      is built (LRM 23.10). Measured on a loop generate handing a child its index at 256 iterations:
+      33.7 KB of design C++ against about 4.4 MB, one child unit against 256.
+      [../decisions/a-parameter-read-as-a-value-is-supplied-at-construction.md](../decisions/a-parameter-read-as-a-value-is-supplied-at-construction.md)
+      holds how a parameter qualifies and why a miss costs sharing and never correctness.
+
+- [ ] What stays in the key although it might not. A parameter read by a conditional generate's
+      condition, because the alternatives an instance did not select have no body in its
+      elaboration; a parameter choosing which element a hierarchical name reaches, or read through
+      its own hierarchical name, because either is settled when the unit is lowered rather than when
+      the instance is built; a parameter an instantiation may override declared with no type, whose
+      type is the type of the value it is given. Each still compiles once per value, as every
+      parameter did before.
+
+- [ ] Where the prediction misses, sharing is lost and said so. The lowering compares every instance
+      handed a new value with the unit it shares and keeps the definition whole where they differ,
+      with a remark, so the program stays right and only compiles once per value. The front end
+      keeps the expression behind every constant it settles while binding that can decide what a
+      module compiles to, found by going through each place it evaluates one. The misses known: a
+      parent that reads a value it handed its child back through the child's name folds it, and
+      nothing the parent wrote refers to its own parameter there; a constant a method of a class
+      declared in the module writes from the module's parameter is folded, since a class's methods
+      are not bodies of the unit's objects; and an elaboration-time message (`$info`, LRM 20.11)
+      naming a parameter is formatted once by the front end, which keeps the text and not the
+      arguments, so its text differs per value. A parameter handed to a virtual interface
+      (`virtual bus_if #(.W(W)) vif`) is read by the prediction, but virtual interfaces are not yet
+      supported, so no case has exercised it; it needs one once they are. The same holds for the
+      instance a `bind` directive names, since `bind` is not yet supported.
 
 - [x] The generate axis of that same sharing. A `generate for` used to lower concretely: N
       iterations became N scope classes and N construction statements, so the artifact grew

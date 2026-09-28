@@ -36,6 +36,13 @@ class Reporter {
     fmt::print(stderr, "{}", diag::RenderDiagnostics(sink, mgr, opts_));
   }
 
+  // The same rendering with warnings left out.
+  [[nodiscard]] auto WithoutWarnings() const -> Reporter {
+    diag::RenderOptions opts = opts_;
+    opts.show_warnings = false;
+    return Reporter{opts};
+  }
+
  private:
   diag::RenderOptions opts_;
 };
@@ -57,7 +64,7 @@ struct Invocation {
 auto RunCommand(const Invocation& invocation) -> int;
 
 // What a command that reads a design receives: the request, what the front end
-// elaborated from it, and the channel for anything that goes wrong. A command
+// elaborated from it, and the channel for anything it has to report. A command
 // reads this and returns the process exit code; nothing else about the
 // invocation is visible to it.
 //
@@ -66,12 +73,12 @@ auto RunCommand(const Invocation& invocation) -> int;
 // account of the design stops being read. How far past it a command goes is
 // the command's own business.
 //
-// A command writes what went wrong into the sink and renders nothing. Every
-// stage above it already writes there, so one account covers the whole run and
-// what reaches the terminal is decided in one place -- which is also why a
-// command answering with nothing always means the same thing.
-// Members are non-owning pointers rather than references: this outlives
-// nothing, and a reference member would make the type unassignable for no gain.
+// A command writes what it has to report into the sink and renders nothing.
+// Every stage above it already writes there, so one account covers the whole
+// run and what reaches the terminal is decided in one place -- which is also
+// why a command answering with nothing always means the same thing. Members are
+// non-owning pointers rather than references: this outlives nothing, and a
+// reference member would make the type unassignable for no gain.
 struct CommandContext {
   const ParsedArgs* args;
   frontend::ParseResult* elaborated;

@@ -595,7 +595,7 @@ auto UnitLowerer::RouteToScope(
       const auto* inst =
           owned->as<slang::ast::InstanceBodySymbol>().parentInstance;
       if (inst == nullptr) return std::nullopt;
-      declared_unit = SpecializationName(*inst);
+      declared_unit = SpecializationName(*inst, Specialization());
       // The head is the member the unit registered for the instance, which is
       // the whole array where it is an element of one.
       indices.assign(inst->arrayPath.begin(), inst->arrayPath.end());
@@ -805,7 +805,7 @@ auto UnitLowerer::ResolveValueTarget(
     auto value_type = InternType(value.getType(), span);
     if (!value_type) return std::unexpected(std::move(value_type.error()));
     return hir::ValueTarget{hir::ExternalUnitValueRef{
-        .unit_name = CompilationUnitName(*unit),
+        .unit_name = CompilationUnitName(*unit, Specialization()),
         .variable_name = std::string{value.name},
         .value_type = *value_type}};
   }

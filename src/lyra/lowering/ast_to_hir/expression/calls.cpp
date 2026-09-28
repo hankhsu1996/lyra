@@ -473,9 +473,8 @@ auto DeclaringUnitOfSubroutine(const slang::ast::SubroutineSymbol& sym)
 // 23.6). The route to that object is the same walk a read of a declaration
 // there takes; what the declaring unit promised decides only what answers the
 // name at the end of it. An interface promises its whole declared surface, so
-// the name resolves against that promise; a module promises its parameters and
-// its ports, so the name is answered by the scope itself while the design
-// elaborates.
+// the name resolves against that promise; a module promises its ports, so the
+// name is answered by the scope itself while the design elaborates.
 auto LowerObjectSubroutineCall(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::CallExpression& call,
@@ -508,9 +507,10 @@ auto LowerObjectSubroutineCall(
   // to, so a unit this one never declared has no record here and nothing was
   // promised to compile against. Where a record does exist, the name still has
   // to be on it: an interface promises its whole declared surface, a module
-  // promises its parameters and ports.
+  // promises its ports.
   if (body != nullptr) {
-    const std::string unit_name = CompilationUnitName(*body);
+    const std::string unit_name =
+        CompilationUnitName(*body, unit_lowerer.Specialization());
     if (unit_lowerer.Signatures().Find(unit_name) != nullptr) {
       const hir::ExternalUnitObjectId object =
           unit_lowerer.ExternalUnitObjectOf(unit_name);
@@ -1114,7 +1114,8 @@ auto LowerSubroutineCall(
             hir::CallExpr{
                 .callee =
                     hir::ExternalUnitSubroutineRef{
-                        .unit_name = CompilationUnitName(*unit),
+                        .unit_name = CompilationUnitName(
+                            *unit, unit_lowerer.Specialization()),
                         .subroutine_name = std::string{sym->name},
                         .interface = *std::move(interface)},
                 .arguments = std::move(arg_ids)},

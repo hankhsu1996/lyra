@@ -837,7 +837,16 @@ the detail lives in the entry itself.
   refusing an uninstantiated parameterization are rejected.
 - [parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) -- every
   parameter is treated as code-shape-affecting for now (conservative over-approximation);
-  classification and constructor-input threading are deferred.
+  classification and constructor-input threading are deferred. Superseded for value parameters by
+  [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md).
+- [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
+  -- a value parameter every reference reads as a value is handed to the instance when it is built
+  and left out of the key, so instances handed different values are one unit. Read it for why a
+  module boundary forces a prediction the loop record could decline -- the parent names the child
+  without reading the child's body -- and for how the prediction is kept from deciding correctness:
+  it denies by default, and every instance handed new values is lowered and compared, a difference
+  keeping the definition whole. It rejects naming a child by its body's hash, grouping by comparing
+  across the design, declaring every parameter, and reporting a miss as an error.
 - [generate-variable-specialization](generate-variable-specialization.md) -- a generate variable is
   a specialization input like a parameter; demoting it to a runtime input is a proof-gated
   optimization. Its conservative default is superseded on the loop axis by the next entry.
@@ -849,7 +858,8 @@ the detail lives in the entry itself.
   hole in the first costs a build rather than a wrong program -- and for why a question asked of the
   source can never be completed. The measurement that removed speed from the argument is there too,
   as is what a scope's construction receives: one entry for every class, because the constructing
-  site may hold only the definition.
+  site may hold only the definition -- except a unit's own entry, which takes its values typed,
+  since a parent works out that prototype from the child's instantiation.
 - [a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
   -- the entry above completed for the commonest reason a loop's blocks differ, which is a
   conditional written inside it: the construct holds the conditionals the source wrote, nested as

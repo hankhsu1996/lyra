@@ -21,7 +21,9 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -35,16 +37,12 @@ namespace {
 // settled here, on the scope itself; the hierarchy index is not, because a
 // loop's blocks differ in it by definition and the scopes are compared with
 // each other before anything knows which of them survives.
-// `construction_value`, when present, is the block's own index, declared so
-// that a name reaching it reads what construction supplied instead of folding
-// to one block's value.
 auto LowerGenerateScope(
     UnitLowerer& unit_lowerer, const slang::ast::GenerateBlockSymbol& block,
-    std::string_view source_name, WalkFrame frame,
-    StructuralScopeLowerer::ConstructionValue* construction_value = nullptr)
+    std::string_view source_name, WalkFrame frame)
     -> diag::Result<hir::StructuralScope> {
   StructuralScopeLowerer child(unit_lowerer, block);
-  auto scope_or = child.Run(frame, construction_value);
+  auto scope_or = child.Run(frame);
   if (!scope_or) return std::unexpected(std::move(scope_or.error()));
   scope_or->source_name = std::string{source_name};
   return scope_or;
@@ -85,8 +83,8 @@ auto LoopSurvivedElaboration(const slang::ast::GenerateBlockArraySymbol& array)
 // it, the step writing it.
 auto BuildTheLoop(
     StructuralScopeLowerer& lowerer,
-    const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame,
-    hir::StructuralDataObjectId body_index) -> diag::Result<hir::BlocksRepeat> {
+    const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
+    -> diag::Result<hir::BlocksRepeat> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   const slang::ast::ValueSymbol& loop_variable = *array.loopVariable;
   const auto span =
@@ -120,8 +118,7 @@ auto BuildTheLoop(
       .variable = variable,
       .initial = *initial,
       .condition = *condition,
-      .step = *step,
-      .index = body_index};
+      .step = *step};
 }
 
 // The choices of one conditional generate while the tree of them is still
@@ -371,10 +368,12 @@ auto MergeGenerates(const hir::Generate& a, const hir::Generate& b)
     const std::optional<hir::StructuralScopeId> from_b =
         chosen_b->alternatives[at];
 
+    // An alternative receives nothing (Syntax 27-1), so its scope is the
+    // whole of what the two blocks can disagree on.
     std::optional<hir::StructuralScope> body;
-    if (from_a.has_value()) body = a.child_scopes.Get(*from_a);
+    if (from_a.has_value()) body = a.blocks.Get(*from_a).scope;
     if (from_b.has_value()) {
-      const hir::StructuralScope& theirs = b.child_scopes.Get(*from_b);
+      const hir::StructuralScope& theirs = b.blocks.Get(*from_b).scope;
       if (!body.has_value()) {
         body = theirs;
       } else {
@@ -383,7 +382,10 @@ auto MergeGenerates(const hir::Generate& a, const hir::Generate& b)
       }
     }
     std::optional<hir::StructuralScopeId> block;
-    if (body.has_value()) block = merged.child_scopes.Add(*std::move(body));
+    if (body.has_value()) {
+      block = merged.blocks.Add(
+          hir::GenerateBlock{.scope = *std::move(body), .arguments = {}});
+    }
     chosen.alternatives.push_back(block);
   }
   merged.counting = std::move(chosen);
@@ -428,28 +430,22 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
   // Every block is lowered, and the index reaches each one as a value its
   // construction supplies rather than as a constant folded into it. That is
   // what makes one body possible at all, and it is also what makes the blocks
-  // comparable: two that differ in nothing else then lower to the same scope.
-  //
-  // Whether one scope serves them all is what the lowered scopes say, and the
-  // comparison is derived from the node definitions rather than written, so a
-  // field added anywhere below is compared without anyone remembering to.
+  // comparable: two that differ in nothing else then lower to the same scope,
+  // and whether one scope serves them all is what the lowered scopes say.
   std::vector<hir::StructuralScope> blocks;
   blocks.reserve(array.entries.size());
-  std::optional<hir::StructuralDataObjectId> first_index;
+  std::vector<const slang::ast::ParameterSymbol*> indices;
+  indices.reserve(array.entries.size());
   for (const auto* entry : array.entries) {
-    ConstructionValue index{.parameter = BlockIndexParameter(*entry)};
-    auto scope_or = LowerGenerateScope(
-        *owner_, *entry, array.name, frame,
-        index.parameter == nullptr ? nullptr : &index);
+    const slang::ast::ParameterSymbol* index = BlockIndexParameter(*entry);
+    auto scope_or = LowerGenerateScope(*owner_, *entry, array.name, frame);
     if (!scope_or) return std::unexpected(std::move(scope_or.error()));
-    if (blocks.empty() && index.parameter != nullptr) {
-      first_index = index.declared;
-    }
     blocks.push_back(*std::move(scope_or));
+    indices.push_back(index);
   }
 
   std::optional<hir::StructuralScope> one_body;
-  if (LoopSurvivedElaboration(array) && first_index.has_value()) {
+  if (LoopSurvivedElaboration(array) && indices.front() != nullptr) {
     one_body = blocks.front();
     for (std::size_t at = 1; one_body.has_value() && at < blocks.size(); ++at) {
       one_body = MergeBlocks(*one_body, blocks[at]);
@@ -458,9 +454,29 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
 
   hir::Generate gen{};
   if (one_body.has_value()) {
-    auto counting = BuildTheLoop(*this, array, frame, *first_index);
+    auto counting = BuildTheLoop(*this, array, frame);
     if (!counting) return std::unexpected(std::move(counting.error()));
-    gen.child_scopes.Add(*std::move(one_body));
+    // The one body is built at every index the loop counts out, and each time
+    // it receives the loop's index as it then stands. The variable is this
+    // scope's own, so the read reaches it over the route that climbs no edges.
+    const hir::StructuralDataObjectDecl& variable =
+        frame.current_structural_scope->structural_data_objects.Get(
+            counting->variable);
+    auto index_ref = owner_->MakeRoutedValueRef(
+        *array.loopVariable, frame_,
+        ScopeRoute{
+            .head = hir::InUnitHead{.hops = {}},
+            .steps = {},
+            .unit_name = std::nullopt,
+            .open = {}});
+    if (!index_ref) return std::unexpected(std::move(index_ref.error()));
+    const hir::ExprId index_read = frame.Exprs().Add(
+        hir::MakeRefExpr(
+            *index_ref, variable.type,
+            owner_->SourceMapper().PointSpanOf(array.loopVariable->location)));
+    gen.blocks.Add(
+        hir::GenerateBlock{
+            .scope = *std::move(one_body), .arguments = {index_read}});
     gen.counting = *std::move(counting);
     return gen;
   }
@@ -468,7 +484,7 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
   // Blocks that disagree are children in their own right, and the hierarchy
   // index each was elaborated at is what tells them apart -- which is why it
   // takes no part in the comparison above and is stamped on only once the
-  // comparison is over.
+  // comparison is over. Each receives the value its own index holds.
   for (std::size_t at = 0; at < blocks.size(); ++at) {
     const slang::SVInt* array_index = array.entries[at]->getArrayIndex();
     if (array_index == nullptr) {
@@ -477,7 +493,19 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
           "entry carries no array index");
     }
     blocks[at].index = array_index->as<std::int64_t>().value_or(0);
-    gen.child_scopes.Add(std::move(blocks[at]));
+    std::vector<hir::ExprId> arguments;
+    if (const slang::ast::ParameterSymbol* index = indices[at]) {
+      const auto span = owner_->SourceMapper().PointSpanOf(index->location);
+      auto type = owner_->InternType(index->getType(), span);
+      if (!type) return std::unexpected(std::move(type.error()));
+      auto value = MakeConstantValueExpr(
+          owner_->Unit(), frame, index->getValue(), *type, span);
+      if (!value) return std::unexpected(std::move(value.error()));
+      arguments.push_back(frame.Exprs().Add(*std::move(value)));
+    }
+    gen.blocks.Add(
+        hir::GenerateBlock{
+            .scope = std::move(blocks[at]), .arguments = std::move(arguments)});
   }
   return gen;
 }
@@ -491,7 +519,8 @@ auto StructuralScopeLowerer::BuildGenerateFromBlock(
     hir::Generate gen{};
     auto scope_or = LowerGenerateScope(*owner_, block, block.name, frame);
     if (!scope_or) return std::unexpected(std::move(scope_or.error()));
-    gen.child_scopes.Add(*std::move(scope_or));
+    gen.blocks.Add(
+        hir::GenerateBlock{.scope = *std::move(scope_or), .arguments = {}});
     return gen;
   }
 
@@ -512,7 +541,8 @@ auto StructuralScopeLowerer::BuildGenerateFromBlock(
     if (!arm->isUninstantiated) {
       auto scope_or = LowerGenerateScope(*owner_, *arm, arm->name, frame);
       if (!scope_or) return std::unexpected(std::move(scope_or.error()));
-      body = gen.child_scopes.Add(*std::move(scope_or));
+      body = gen.blocks.Add(
+          hir::GenerateBlock{.scope = *std::move(scope_or), .arguments = {}});
     }
     chosen.alternatives.push_back(body);
   }

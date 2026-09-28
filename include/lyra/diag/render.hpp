@@ -12,6 +12,8 @@ namespace lyra::diag {
 struct RenderOptions {
   bool use_color = true;
   bool show_source_snippet = true;
+  bool show_warnings = true;
+  bool show_remarks = false;
 };
 
 auto RenderDiagnostic(

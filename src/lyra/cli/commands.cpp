@@ -592,10 +592,11 @@ auto RunProgram(const CommandContext& ctx) -> int {
   return *exit_code;
 }
 
-// Whether the front end's warnings reach the terminal. A program that is run
-// owns its streams, so what the compiler had to say about the source stays out
-// of them unless it refused the source outright.
-enum class FrontEndWarnings : std::uint8_t { kShown, kWithheld };
+// Whether the compiler's warnings reach the terminal, the front end's and its
+// own alike. A program that is run owns its streams, so what the compiler had
+// to say about the source stays out of them unless it refused the source
+// outright. A remark was asked for, so it is not withheld.
+enum class CompilerWarnings : std::uint8_t { kShown, kWithheld };
 
 // A design found and elaborated, with the request resolved against its
 // declaration.
@@ -608,7 +609,7 @@ struct LoadedDesign {
 // Finds the design the command line and its declaration describe and
 // elaborates it, reporting whatever stops that. Arriving at a design is the
 // whole of what `check` asks.
-auto LoadDesign(const Invocation& invocation, FrontEndWarnings warnings)
+auto LoadDesign(const Invocation& invocation, CompilerWarnings warnings)
     -> std::optional<LoadedDesign> {
   const Reporter& report = *invocation.report;
   slang::driver::Driver& driver = *invocation.driver;
@@ -682,7 +683,7 @@ auto LoadDesign(const Invocation& invocation, FrontEndWarnings warnings)
   // An account that refuses the source is printed whatever the command is,
   // because then there is no program whose streams need protecting.
   const bool shows_warnings =
-      warnings == FrontEndWarnings::kShown || !front_end.elaborated;
+      warnings == CompilerWarnings::kShown || !front_end.elaborated;
   if (shows_warnings && !front_end.diagnostics.empty()) {
     fmt::print(stderr, "{}", front_end.diagnostics);
   }
@@ -700,7 +701,7 @@ using DesignCommand = auto (*)(const CommandContext&) -> int;
 // Loads the design and hands it to `command`. Everything the command reports
 // goes into one sink, which is rendered here once the command is done.
 auto RunOnDesign(
-    const Invocation& invocation, FrontEndWarnings warnings,
+    const Invocation& invocation, CompilerWarnings warnings,
     DesignCommand command) -> int {
   auto design = LoadDesign(invocation, warnings);
   if (!design) {
@@ -714,8 +715,11 @@ auto RunOnDesign(
           .sink = &sink,
           .dpi_inputs = design->dpi_inputs,
           .program_path = invocation.program_path});
-  if (sink.HasErrors()) {
-    (*invocation.report)(sink, &design->elaborated.diag_sources);
+  const Reporter& report = *invocation.report;
+  if (warnings == CompilerWarnings::kWithheld && !sink.HasErrors()) {
+    report.WithoutWarnings()(sink, &design->elaborated.diag_sources);
+  } else {
+    report(sink, &design->elaborated.diag_sources);
   }
   return exit_code;
 }
@@ -751,23 +755,23 @@ auto RunCacheClear(const Invocation& invocation) -> int {
 auto RunCommand(const Invocation& invocation) -> int {
   switch (invocation.command) {
     case CommandKind::kCheck:
-      return LoadDesign(invocation, FrontEndWarnings::kShown) ? 0 : 1;
+      return LoadDesign(invocation, CompilerWarnings::kShown) ? 0 : 1;
     case CommandKind::kDumpAst:
-      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunDumpAst);
+      return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpAst);
     case CommandKind::kDumpHir:
-      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunDumpHir);
+      return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpHir);
     case CommandKind::kDumpMir:
-      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunDumpMir);
+      return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpMir);
     case CommandKind::kDumpLir:
-      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunDumpLir);
+      return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpLir);
     case CommandKind::kDumpLlvm:
-      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunDumpLlvm);
+      return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpLlvm);
     case CommandKind::kEmitCpp:
-      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunEmitCpp);
+      return RunOnDesign(invocation, CompilerWarnings::kShown, RunEmitCpp);
     case CommandKind::kBuild:
-      return RunOnDesign(invocation, FrontEndWarnings::kShown, RunBuild);
+      return RunOnDesign(invocation, CompilerWarnings::kShown, RunBuild);
     case CommandKind::kRun:
-      return RunOnDesign(invocation, FrontEndWarnings::kWithheld, RunProgram);
+      return RunOnDesign(invocation, CompilerWarnings::kWithheld, RunProgram);
     case CommandKind::kCacheClear:
       return RunCacheClear(invocation);
   }

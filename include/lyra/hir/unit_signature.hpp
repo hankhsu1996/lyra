@@ -58,6 +58,11 @@ struct PortDecl {
   // written the most significant bits and a connection reaches them in bit
   // order.
   std::vector<PortPart> parts;
+  // What an instance leaving the port unconnected receives (LRM 23.2.2.4). The
+  // default is an expression of this unit, evaluated in its own scope and not
+  // in the instantiator's, so what crosses is the subroutine that evaluates it.
+  // Only an input port declared in the header may have one.
+  std::optional<PublishedCallableId> default_value;
 };
 
 // The object an instance of this unit is: the class's own name, the members

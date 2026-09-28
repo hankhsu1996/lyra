@@ -38,6 +38,8 @@ auto KindLabel(DiagKind kind) -> std::string_view {
       return "warning:";
     case DiagKind::kNote:
       return "note:";
+    case DiagKind::kRemark:
+      return "remark:";
   }
   throw InternalError("diag::KindLabel: invalid DiagKind");
 }
@@ -51,9 +53,25 @@ auto KindStyle(DiagKind kind) -> fmt::text_style {
     case DiagKind::kWarning:
       return fmt::fg(fmt::terminal_color::bright_magenta) | fmt::emphasis::bold;
     case DiagKind::kNote:
+    case DiagKind::kRemark:
       return fmt::fg(fmt::terminal_color::bright_cyan) | fmt::emphasis::bold;
   }
   throw InternalError("diag::KindStyle: invalid DiagKind");
+}
+
+auto IsShown(DiagKind kind, const RenderOptions& opts) -> bool {
+  switch (kind) {
+    case DiagKind::kError:
+    case DiagKind::kUnsupported:
+    case DiagKind::kHostError:
+    case DiagKind::kNote:
+      return true;
+    case DiagKind::kWarning:
+      return opts.show_warnings;
+    case DiagKind::kRemark:
+      return opts.show_remarks;
+  }
+  throw InternalError("diag::IsShown: invalid DiagKind");
 }
 
 auto Style(const RenderOptions& opts, fmt::text_style s) -> fmt::text_style {
@@ -196,6 +214,9 @@ auto RenderDiagnostic(
     const Diagnostic& diag, const SourceManager* source_manager,
     const RenderOptions& opts) -> std::string {
   std::string out;
+  if (!IsShown(diag.primary.kind, opts)) {
+    return out;
+  }
   AppendPrimary(out, diag.primary, source_manager, opts);
   for (const auto& note : diag.notes) {
     AppendNote(out, note, source_manager, opts);
@@ -210,6 +231,9 @@ auto RenderDiagnostics(
   std::uint32_t error_count = 0;
   std::uint32_t warning_count = 0;
   for (const auto& d : sink.Diagnostics()) {
+    if (!IsShown(d.primary.kind, opts)) {
+      continue;
+    }
     switch (d.primary.kind) {
       case DiagKind::kError:
       case DiagKind::kUnsupported:
@@ -220,6 +244,7 @@ auto RenderDiagnostics(
         ++warning_count;
         break;
       case DiagKind::kNote:
+      case DiagKind::kRemark:
         break;
     }
     out += RenderDiagnostic(d, source_manager, opts);
