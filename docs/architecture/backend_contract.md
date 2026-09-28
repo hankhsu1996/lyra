@@ -137,18 +137,18 @@ two ways.
    (`mir.md` invariant 14); it does not state what that costs in a target. Each backend supplies it
    from the place's type through a single dispatch, sibling to type mapping, answering one question:
    how the storage behind a place of that type is named as an lvalue. Two things compose onto that
-   answer -- a by-reference binding, and the owner of a write that descends into the value -- and
-   they are the same step, which is why there is one entry rather than one per consumer. Value
-   emission asks that dispatch and never inspects the wrapper kind itself. Reading a wrapper's own
-   value, rebinding it, and taking its address name the bare place and reach no protocol, so they
-   have no entry here.
+   answer -- a by-reference binding, and the place a write lands on -- and they are the same step,
+   which is why there is one entry rather than one per consumer. Value emission asks that dispatch
+   and never inspects the wrapper kind itself. Reading a wrapper's own value, rebinding it, and
+   taking its address name the bare place and reach no protocol, so they have no entry here.
 
    Replacing the whole of what a wrapper holds, and reading it, reach no entry here either, for the
    opposite reason: each acts on the wrapper rather than naming its storage, so each is a call in
    MIR and is realized by the same entries that realize every other call. Their target-language
    spelling comes from where every call's spelling comes from, which is what keeps one runtime
-   method named at one site (invariant 3). A write that descends is not among them: what descends is
-   a run of calls, and only the owner they start from reaches this dispatch.
+   method named at one site (invariant 3). A write that descends is not among them: opening the
+   wrapper for the write, and each step the write takes into a part, are calls, and only where the
+   write lands -- the dereference of what those steps designate -- reaches this dispatch.
 
 5. **Member declaration is a type at a position -- nothing else reaches member render.** A member's
    target-language declaration form is determined by its type and by what its class answers for that
@@ -281,9 +281,10 @@ the way it composes every other call, so each method's spelling comes from the o
 runtime entry's spelling comes from, and no access entry writes a second copy of it. Neither render
 knows the wrapper's name or which wrapper kind it is.
 
-Writing part of what it holds descends through it: one call per level, each naming the entry the
-lowering settled and taking the level above it as its receiver, with an ordinary assignment at the
-end. Only the owner those calls start from reaches the place-access dispatch. How a target realizes
+Writing part of what it holds descends through it: the wrapper is opened for the write by a call,
+then one call per level, each naming the entry the lowering settled and taking the level above it as
+its receiver, and the write lands where what those calls designate is dereferenced, with an ordinary
+assignment there. Only that dereference reaches the place-access dispatch. How a target realizes
 such a call is its own answer -- reaching into the storage in place, or reading the whole value,
 rebuilding it and storing that back -- and it is a property of that target's value representation
 rather than a decision taken per site, so neither form is visible above render and neither is chosen
@@ -291,7 +292,7 @@ by an emitter.
 
 Naming that storage as an lvalue is not a call: it names storage rather than operating on it, and it
 is the one question the place-access dispatch answers. Two things ask it and both compose onto the
-same answer -- a by-reference binding, and the owner of a write that descends.
+same answer -- a by-reference binding, and the place a write lands on.
 
 Rebinding a wrapper renders as an ordinary assignment to the bare place, reaching no protocol and no
 call, because MIR states rebinding and writing-through as different nodes.

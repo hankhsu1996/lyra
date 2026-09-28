@@ -56,10 +56,10 @@ class TaggedUnion {
   }
 
   // Read component `I`. LRM 11.9: reading a member whose type is inconsistent
-  // with the current tag results in a run-time error. `Union<Ts...>::Get`
-  // returns the component default; this throws instead.
+  // with the current tag results in a run-time error, where an untagged union
+  // answers with the component's default.
   template <std::size_t I>
-  [[nodiscard]] auto Get() const
+  [[nodiscard]] auto Component() const
       -> const std::variant_alternative_t<I, std::variant<Ts...>>& {
     const auto* active = std::get_if<I>(&data_);
     if (active == nullptr) {
@@ -71,12 +71,12 @@ class TaggedUnion {
   }
 
   // The writable location of component `I`. LRM 11.9: assigning a member whose
-  // type is inconsistent with the current tag is a run-time error. Unlike
-  // `Union<Ts...>::GetRef`, which activates the member on write, this throws
-  // if `I` is not the current tag -- re-tagging must go through a whole-value
-  // `tagged` construction.
+  // type is inconsistent with the current tag is a run-time error. Where an
+  // untagged union activates the member a write targets, this throws if `I` is
+  // not the current tag -- re-tagging must go through a whole-value `tagged`
+  // construction.
   template <std::size_t I>
-  [[nodiscard]] auto GetRef()
+  [[nodiscard]] auto ComponentRef()
       -> std::variant_alternative_t<I, std::variant<Ts...>>& {
     auto* active = std::get_if<I>(&data_);
     if (active == nullptr) {

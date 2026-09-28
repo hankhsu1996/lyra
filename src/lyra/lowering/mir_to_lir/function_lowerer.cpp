@@ -189,6 +189,7 @@ auto ObjectClassOf(const mir::TypePool& types, mir::TypeId handle)
           [&](const mir::ResolvedType&) { return not_an_object(); },
           [&](const mir::DriverType&) { return not_an_object(); },
           [&](const mir::OpenWriteType&) { return not_an_object(); },
+          [&](const mir::DesignationType&) { return not_an_object(); },
           [&](const mir::SampledHistoryType&) { return not_an_object(); },
           [&](const mir::EvaluationAttemptsType&) { return not_an_object(); },
           [&](const mir::StructType&) { return not_an_object(); },
@@ -1810,14 +1811,6 @@ auto PositionOf(const mir::CallExpr& call) -> base::ComponentIndex {
 
 }  // namespace
 
-auto FunctionLowerer::PartsAreStorageIn(lir::TypeId container) const -> bool {
-  const std::optional<support::RuntimeObject> held =
-      unit_->Types().Get(container).HeldObject();
-  const auto* domain =
-      held.has_value() ? std::get_if<support::ValueDomain>(&*held) : nullptr;
-  return domain != nullptr && support::PartsAreStorage(*domain);
-}
-
 auto FunctionLowerer::StorageSelection(const mir::Block& block, mir::ExprId id)
     const -> std::optional<support::PartSelection> {
   const auto* call = std::get_if<mir::CallExpr>(&block.exprs.Get(id).data);
@@ -1827,8 +1820,9 @@ auto FunctionLowerer::StorageSelection(const mir::Block& block, mir::ExprId id)
   const std::optional<support::PartSelection> selects = SelectionOf(*call);
   const std::optional<mir::ExprId> receiver = mir::CalleeReceiver(call->callee);
   if (!selects.has_value() || !receiver.has_value() ||
-      !PartsAreStorageIn(
-          unit_->TranslateType(block.exprs.Get(*receiver).type))) {
+      !unit_->Mir()
+           .types.Get(block.exprs.Get(*receiver).type)
+           .PartsAreStorage()) {
     return std::nullopt;
   }
   return selects;
@@ -1845,8 +1839,8 @@ auto FunctionLowerer::StoragePartAccess(
     case support::PartSelection::kElement:
     case support::PartSelection::kComponent:
       return &std::get<mir::CallExpr>(block.exprs.Get(id).data);
-    // A window is several elements rather than one storage.
-    case support::PartSelection::kWindow:
+    // A slice is several elements rather than one storage.
+    case support::PartSelection::kSlice:
       return nullptr;
   }
   throw InternalError("mir_to_lir: unknown part selection");
@@ -1906,7 +1900,8 @@ auto FunctionLowerer::PartStep(
   }
   switch (*selects) {
     case support::PartSelection::kComponent:
-      return lir::Projection{lir::PartProjection{.index = PositionOf(part)}};
+      return lir::Projection{
+          lir::ComponentProjection{.index = PositionOf(part)}};
     case support::PartSelection::kElement: {
       auto coordinates = LowerEachExpr(block, part.arguments);
       if (!coordinates) {
@@ -1915,9 +1910,9 @@ auto FunctionLowerer::PartStep(
       return lir::Projection{
           lir::ElementProjection{.coordinates = *std::move(coordinates)}};
     }
-    case support::PartSelection::kWindow:
+    case support::PartSelection::kSlice:
       throw InternalError(
-          "mir_to_lir: a window is several elements and never one step of a "
+          "mir_to_lir: a slice is several elements and never one step of a "
           "place -- please report this as a bug");
   }
   throw InternalError("mir_to_lir: unknown part selection");
@@ -1979,7 +1974,7 @@ auto FunctionLowerer::NamesStorage(
 }
 
 auto FunctionLowerer::OpenWrite(lir::Operand handle, lir::TypeId value)
-    -> diag::Result<lir::Place> {
+    -> diag::Result<lir::Operand> {
   auto write = EmitCallTo(
       lir::BuiltinTarget{.fn = support::BuiltinFn::kOpenForWrite},
       {std::move(handle)},
@@ -1987,21 +1982,50 @@ auto FunctionLowerer::OpenWrite(lir::Operand handle, lir::TypeId value)
   if (!write) {
     return std::unexpected(std::move(write.error()));
   }
-  return lir::Place{
-      .base = *std::move(write),
-      .chain = {lir::Projection{lir::DerefProjection{}}}};
+  return EmitCallTo(
+      lir::BuiltinTarget{.fn = support::BuiltinFn::kDesignateWhole},
+      {*std::move(write)},
+      unit_->Types().Intern(lir::Type{lir::DesignationType{.value = value}}));
+}
+
+auto FunctionLowerer::Land(lir::Operand designation, lir::TypeId value)
+    -> diag::Result<lir::Place> {
+  auto part = EmitCallTo(
+      lir::OpenWriteTarget{
+          .op = lir::OpenWriteTarget::Op::kLand, .value = value},
+      {std::move(designation)}, AddressType(value));
+  if (!part) {
+    return std::unexpected(std::move(part.error()));
+  }
+  return StorageAt(*std::move(part));
+}
+
+auto FunctionLowerer::AddressType(lir::TypeId value) -> lir::TypeId {
+  return unit_->Types().Intern(
+      lir::Type{lir::PointerType{
+          .pointee = value,
+          .ownership = lir::PointerOwnership::kBorrowed,
+          .mutability = lir::Mutability::kMutable}});
 }
 
 auto FunctionLowerer::WrapperContentsPlace(
     const mir::Block& block, mir::ExprId wrapper) -> diag::Result<lir::Place> {
   const mir::Type& wrapper_ty =
       unit_->Mir().types.Get(block.exprs.Get(wrapper).type);
+  // Dereferencing a place designated within a write lands the write there.
+  if (const auto* designated = wrapper_ty.As<mir::DesignationType>()) {
+    auto designation = LowerExpr(block, wrapper);
+    if (!designation) {
+      return std::unexpected(std::move(designation.error()));
+    }
+    return Land(
+        *std::move(designation), unit_->TranslateType(designated->value));
+  }
   // A wrapper that is itself storage -- an observable cell, a net's resolved
   // value -- is storage the chain has already reached, so naming what it
   // represents extends that chain by one step. Everything else here refers to
-  // storage elsewhere: a pointer, a reference, the driver handle a net issued,
-  // and a write opened on a wrapper are values, and a value opens a chain
-  // rather than continuing one.
+  // storage elsewhere: a pointer, a reference, the driver handle a net issued
+  // are values, and a value opens a chain rather than continuing one.
   if (wrapper_ty.Is<mir::ObservableType>() ||
       wrapper_ty.Is<mir::ResolvedType>()) {
     auto place = LowerPlace(block, wrapper, Reach::kWhole);
@@ -2133,12 +2157,16 @@ auto FunctionLowerer::ReferencePlace(
                     // variable does not say, so a write into part of it is
                     // opened on the cell here.
                     [&](const CellBinding& cell) -> diag::Result<lir::Place> {
-                      if (WritesInto(reach)) {
-                        return OpenWrite(
-                            cell.cell, unit_->TranslateType(
-                                           code_->locals.Get(ref.var).type));
+                      if (!WritesInto(reach)) {
+                        return ValueAt(cell.cell);
                       }
-                      return ValueAt(cell.cell);
+                      const lir::TypeId value =
+                          unit_->TranslateType(code_->locals.Get(ref.var).type);
+                      auto opened = OpenWrite(cell.cell, value);
+                      if (!opened) {
+                        return std::unexpected(std::move(opened.error()));
+                      }
+                      return Land(*std::move(opened), value);
                     }},
                 *binding);
           },
@@ -2374,13 +2402,12 @@ auto FunctionLowerer::LowerArgument(const mir::Block& block, mir::ExprId id)
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
-  return Emit(
-      unit_->Types().Intern(
-          lir::Type{lir::PointerType{
-              .pointee = type,
-              .ownership = lir::PointerOwnership::kBorrowed,
-              .mutability = lir::Mutability::kMutable}}),
-      lir::AddrOfInstr{.place = *std::move(place)});
+  return AddressOf(*std::move(place), type);
+}
+
+auto FunctionLowerer::AddressOf(lir::Place place, lir::TypeId type)
+    -> lir::Operand {
+  return Emit(AddressType(type), lir::AddrOfInstr{.place = std::move(place)});
 }
 
 auto FunctionLowerer::LowerEachExpr(
@@ -2836,10 +2863,10 @@ auto FunctionLowerer::LowerAssign(
 auto FunctionLowerer::UpdateTarget(
     const mir::Block& block, mir::ExprId target, const ValueChange& change)
     -> diag::Result<lir::Operand> {
-  // A window of elements is several of them rather than storage of its own, so
+  // A slice of elements is several of them rather than storage of its own, so
   // what it is changed to is written into the elements already there.
-  if (const mir::CallExpr* window = StorageWindow(block, target)) {
-    return LowerWindowUpdate(block, *window, target, change);
+  if (const mir::CallExpr* slice = StorageSlice(block, target)) {
+    return LowerSliceUpdate(block, *slice, target, change);
   }
   // A target that reaches into a view of a value -- a bit or slice of a packed
   // value, a character of a string, a member of a union, or any composition of
@@ -2872,7 +2899,7 @@ auto FunctionLowerer::LowerValuePartSelector(
   }
   switch (*selects) {
     case support::PartSelection::kComponent:
-      return lir::AggregateSelector{lir::Part{.index = PositionOf(call)}};
+      return lir::AggregateSelector{lir::Component{.index = PositionOf(call)}};
     case support::PartSelection::kElement: {
       auto operands = LowerEachExpr(block, call.arguments);
       if (!operands) {
@@ -2881,7 +2908,7 @@ auto FunctionLowerer::LowerValuePartSelector(
       return lir::AggregateSelector{
           lir::ContainerElement{.operands = *std::move(operands)}};
     }
-    case support::PartSelection::kWindow: {
+    case support::PartSelection::kSlice: {
       auto operands = LowerEachExpr(block, call.arguments);
       if (!operands) {
         return std::unexpected(std::move(operands.error()));
@@ -2906,15 +2933,34 @@ auto FunctionLowerer::ReachesViewedPart(
   return false;
 }
 
-auto FunctionLowerer::StorageWindow(
+auto FunctionLowerer::StorageSlice(
     const mir::Block& block, mir::ExprId target) const -> const mir::CallExpr* {
+  // A slice designated within a write is where that write lands.
+  if (const auto* landed =
+          std::get_if<mir::DerefExpr>(&block.exprs.Get(target).data)) {
+    const auto* call =
+        std::get_if<mir::CallExpr>(&block.exprs.Get(landed->pointer).data);
+    const std::optional<support::PartSelection> selects =
+        call == nullptr ? std::nullopt : SelectionOf(*call);
+    if (!selects.has_value()) {
+      return nullptr;
+    }
+    switch (*selects) {
+      case support::PartSelection::kSlice:
+        return call;
+      case support::PartSelection::kElement:
+      case support::PartSelection::kComponent:
+        return nullptr;
+    }
+    throw InternalError("mir_to_lir: unknown part selection");
+  }
   const std::optional<support::PartSelection> selects =
       StorageSelection(block, target);
   if (!selects.has_value()) {
     return nullptr;
   }
   switch (*selects) {
-    case support::PartSelection::kWindow:
+    case support::PartSelection::kSlice:
       return &std::get<mir::CallExpr>(block.exprs.Get(target).data);
     case support::PartSelection::kElement:
     case support::PartSelection::kComponent:
@@ -2923,44 +2969,74 @@ auto FunctionLowerer::StorageWindow(
   throw InternalError("mir_to_lir: unknown part selection");
 }
 
-auto FunctionLowerer::LowerWindowUpdate(
-    const mir::Block& block, const mir::CallExpr& window, mir::ExprId target,
+auto FunctionLowerer::LowerSliceUpdate(
+    const mir::Block& block, const mir::CallExpr& slice, mir::ExprId target,
     const ValueChange& change) -> diag::Result<lir::Operand> {
-  const mir::ExprId receiver = *mir::CalleeReceiver(window.callee);
-  auto container = LowerPlace(block, receiver, Reach::kInto);
-  if (!container) {
-    return std::unexpected(std::move(container.error()));
+  const mir::ExprId receiver = *mir::CalleeReceiver(slice.callee);
+  const mir::Type& receiver_ty =
+      unit_->Mir().types.Get(block.exprs.Get(receiver).type);
+  const lir::TypeId slice_type =
+      unit_->TranslateType(block.exprs.Get(target).type);
+  // A slice of what a write in progress designates is written within that
+  // write, which hears whether an element moved. Nothing reads it first: an
+  // assignment operator applies to an integral or real operand (LRM 11.4.1),
+  // and a slice is neither.
+  if (const auto* designated = receiver_ty.As<mir::DesignationType>()) {
+    auto designation = LowerExpr(block, receiver);
+    if (!designation) {
+      return std::unexpected(std::move(designation.error()));
+    }
+    return WriteSlice(
+        block, slice, change, *std::move(designation), slice_type,
+        lir::OpenWriteTarget{
+            .op = lir::OpenWriteTarget::Op::kAssignSlice,
+            .value = unit_->TranslateType(designated->value)},
+        [](const std::vector<lir::Operand>&) -> diag::Result<lir::Operand> {
+          throw InternalError(
+              "mir_to_lir: a slice holds no value an assignment operator "
+              "applies to (LRM 11.4.1), so nothing reads one it writes -- "
+              "please report this as a bug");
+        });
   }
-  const lir::TypeId container_type =
-      unit_->TranslateType(block.exprs.Get(receiver).type);
-  auto bounds = LowerEachExpr(block, window.arguments);
+  auto place = LowerPlace(block, receiver, Reach::kInto);
+  if (!place) {
+    return std::unexpected(std::move(place.error()));
+  }
+  const lir::Operand container = Load(
+      *std::move(place), unit_->TranslateType(block.exprs.Get(receiver).type));
+  return WriteSlice(
+      block, slice, change, container, slice_type,
+      lir::BuiltinTarget{.fn = support::BuiltinFn::kSliceRef},
+      [&](const std::vector<lir::Operand>& bounds)
+          -> diag::Result<lir::Operand> {
+        std::vector<lir::Operand> args{container};
+        args.insert(args.end(), bounds.begin(), bounds.end());
+        return EmitCallTo(
+            lir::BuiltinTarget{.fn = support::BuiltinFn::kSlice},
+            std::move(args), slice_type);
+      });
+}
+
+auto FunctionLowerer::WriteSlice(
+    const mir::Block& block, const mir::CallExpr& slice,
+    const ValueChange& change, const lir::Operand& container,
+    lir::TypeId slice_type, lir::CallTarget writer, const SliceReader& read)
+    -> diag::Result<lir::Operand> {
+  auto bounds = LowerEachExpr(block, slice.arguments);
   if (!bounds) {
     return std::unexpected(std::move(bounds.error()));
   }
-  const lir::TypeId window_type =
-      unit_->TranslateType(block.exprs.Get(target).type);
-  const auto with_container = [&](std::vector<lir::Operand> rest) {
-    std::vector<lir::Operand> args{Load(*container, container_type)};
-    args.insert(
-        args.end(), std::make_move_iterator(rest.begin()),
-        std::make_move_iterator(rest.end()));
-    return args;
-  };
-  auto changed = change(
-      [&]() -> diag::Result<lir::Operand> {
-        return EmitCallTo(
-            lir::BuiltinTarget{.fn = support::BuiltinFn::kSlice},
-            with_container(*bounds), window_type);
-      },
-      window_type);
+  auto changed = change([&] { return read(*bounds); }, slice_type);
   if (!changed) {
     return std::unexpected(std::move(changed.error()));
   }
-  std::vector<lir::Operand> written = *bounds;
-  written.push_back(*std::move(changed));
+  std::vector<lir::Operand> args{container};
+  args.insert(
+      args.end(), std::make_move_iterator(bounds->begin()),
+      std::make_move_iterator(bounds->end()));
+  args.push_back(*std::move(changed));
   return EmitCallTo(
-      lir::BuiltinTarget{.fn = support::BuiltinFn::kSliceRef},
-      with_container(std::move(written)),
+      std::move(writer), std::move(args),
       unit_->TranslateType(unit_->Mir().builtins.void_type));
 }
 

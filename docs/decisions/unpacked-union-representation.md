@@ -4,6 +4,8 @@ Date: 2026-06-27 Status: accepted; the write encoding is superseded by
 [value-descent-as-named-calls](value-descent-as-named-calls.md), under which reading a member and
 reaching one are the same pair of entries a product component uses, differing only in which value
 domain realizes them. The representation this entry settles, an active-member value, is unchanged.
+The `Get` / `GetRef` spelling of point 4 is superseded by
+[a-part-is-named-by-how-it-is-selected](a-part-is-named-by-how-it-is-selected.md).
 
 ## Why this decision matters
 

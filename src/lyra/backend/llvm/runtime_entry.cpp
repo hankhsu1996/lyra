@@ -99,8 +99,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_promoted_scope";
     case RuntimeOp::kPromotedScopeDeref:
       return "promoted_scope_deref";
-    case RuntimeOp::kOpenWriteStorage:
-      return "open_write_storage";
     case RuntimeOp::kMethod:
       return "method";
     case RuntimeOp::kClassFindProperty:
@@ -115,12 +113,10 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "value_box";
     case RuntimeOp::kMake:
       return "make";
-    case RuntimeOp::kExtract:
-      return "extract";
-    case RuntimeOp::kUpdate:
-      return "update";
     case RuntimeOp::kTagMatches:
       return "tag_matches";
+    case RuntimeOp::kWithComponent:
+      return "with_component";
     case RuntimeOp::kWithElement:
       return "with_element";
     case RuntimeOp::kWithSlice:
@@ -437,8 +433,9 @@ auto MemberStorageKindOf(
           [&](const lir::DiagnosticType& t) { return none(t); },
           [&](const lir::CoroutineType& t) { return none(t); },
           // A write is open for the length of the full-expression doing it,
-          // which no owner outlasts.
-          [&](const lir::OpenWriteType& t) { return none(t); }});
+          // which no owner outlasts, and so is a part designated within it.
+          [&](const lir::OpenWriteType& t) { return none(t); },
+          [&](const lir::DesignationType& t) { return none(t); }});
 }
 
 auto DeclaredStorageOf(
@@ -490,6 +487,11 @@ auto DeclaredStorageOf(
 auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
     -> std::string {
   return Symbol(domain, lir::ValueCellOpName(op));
+}
+
+auto RuntimeSymbol(support::ValueDomain domain, lir::OpenWriteTarget::Op op)
+    -> std::string {
+  return Symbol(domain, lir::OpenWriteOpName(op));
 }
 
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string {
@@ -576,13 +578,16 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   constexpr std::string_view kLeavesByUnwinding =
       "leaves a body by unwinding it, where this target's bodies leave by "
       "branching";
+  constexpr std::string_view kWrittenByTheSliceWrite =
+      "designates a slice within a write, which this target writes by the "
+      "write's own slice write";
   switch (fn) {
     case support::BuiltinFn::kElement:
     case support::BuiltinFn::kSlice:
     case support::BuiltinFn::kElementRef:
     case support::BuiltinFn::kSliceRef:
-    case support::BuiltinFn::kPart:
-    case support::BuiltinFn::kPartRef:
+    case support::BuiltinFn::kComponent:
+    case support::BuiltinFn::kComponentRef:
     case support::BuiltinFn::kTagMatches:
     case support::BuiltinFn::kSize:
     case support::BuiltinFn::kLen:
@@ -759,6 +764,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSampledHistoryInstall:
     case support::BuiltinFn::kSampledHistoryPush:
     case support::BuiltinFn::kSampledHistoryAt:
+    // A step within a write is taken on a designation, and named by the
+    // representation of the value designated there.
+    case support::BuiltinFn::kDesignateElement:
+    case support::BuiltinFn::kDesignateComponent:
       return NamedByStorageDomain{};
 
     case support::BuiltinFn::kSelfHandle:
@@ -770,6 +779,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // its own.
     case support::BuiltinFn::kTakeDepartureIfDue:
       return NotRealized{.shape = kLeavesByUnwinding};
+
+    // A slice is several elements rather than one place, so a slice designated
+    // within a write is written by the write's own slice write, which the
+    // lowering reaches in place of this call.
+    case support::BuiltinFn::kDesignateSlice:
+      return NotRealized{.shape = kWrittenByTheSliceWrite};
 
     // The runtime, then the user string, then the destination whose
     // representation names the entry.
@@ -784,6 +799,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kWriteMemWithin:
       return NamedByValue{.operand = 1};
 
+    // Designating the whole of what a write was opened on reads nothing of the
+    // value there, so the library realizes it once.
+    case support::BuiltinFn::kDesignateWhole:
     case support::BuiltinFn::kTrigger:
     case support::BuiltinFn::kTriggered:
     case support::BuiltinFn::kCurrentRuntime:

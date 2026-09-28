@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 
@@ -76,7 +77,9 @@ class RuntimeDynamicArray {
 
   // LRM 7.4.6: the element `position` names, as storage a write lands in. A
   // position that names no element here yields storage nothing reads, so a
-  // write there is discarded.
+  // write there is discarded, and `formed` says which of the two it was.
+  [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
+      -> RuntimeValue&;
   [[nodiscard]] auto ElementRef(const PackedArray& position) -> RuntimeValue&;
 
   // The element at storage position `position`, counted from the first in the
@@ -98,10 +101,11 @@ class RuntimeDynamicArray {
   // element, into the elements already there. An element outside the array is
   // skipped and a start that names no position writes no element, matching the
   // invalid-index write contract; assignment compatibility gives the
-  // replacement the window's element count.
-  void AssignSlice(
+  // replacement the window's element count. Answers whether any element took a
+  // different value.
+  auto AssignSlice(
       const PackedArray& start, std::int64_t count,
-      const RuntimeUnpackedArray& replacement);
+      const RuntimeUnpackedArray& replacement) -> bool;
 
   // LRM 10.10 unpacked concatenation, as the two-operand steps a join folds to:
   // this array with one element appended, or with every element of a spread

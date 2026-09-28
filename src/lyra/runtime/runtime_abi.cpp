@@ -64,6 +64,7 @@
 #include "lyra/value/empty.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/managed_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
@@ -440,6 +441,48 @@ auto HeldIn(value::RuntimeValue& part) -> void* {
   return std::visit([](auto& value) -> void* { return &value; }, part.value);
 }
 
+// A place designated within a write in progress, behind the address the ABI
+// carries it as.
+auto DesignationAt(const void* designation) -> const ErasedDesignation& {
+  return *static_cast<const ErasedDesignation*>(designation);
+}
+
+// The steps and the landing a write in progress takes, each over the value a
+// designation names; they do what a designation's own methods do where the
+// value's type is known.
+template <typename Container, typename Index>
+auto DesignateElement(const void* designation, const Index& index, void* out)
+    -> void* {
+  const ErasedDesignation& within = DesignationAt(designation);
+  value::Formation formed{};
+  void* element =
+      HeldIn(static_cast<Container*>(within.part)->ElementRef(index, formed));
+  within.write->Formed(formed);
+  return std::construct_at(
+      static_cast<ErasedDesignation*>(out),
+      ErasedDesignation{.write = within.write, .part = element});
+}
+
+template <typename Container>
+void AssignDesignatedSlice(
+    const void* designation, const void* start, std::int64_t count,
+    const void* replacement) {
+  const ErasedDesignation& within = DesignationAt(designation);
+  if (static_cast<Container*>(within.part)
+          ->AssignSlice(
+              Read<value::PackedArray>(start), count,
+              Read<value::RuntimeUnpackedArray>(replacement))) {
+    within.write->Moved();
+  }
+}
+
+template <typename Part>
+auto LandDesignation(const void* designation) noexcept -> void* {
+  const ErasedDesignation& landed = DesignationAt(designation);
+  landed.write->Land(*static_cast<Part*>(landed.part));
+  return landed.part;
+}
+
 // Builds a copy of one element, as a value of the element's own domain, in the
 // storage the call handed over.
 auto ElementInto(void* out, const value::RuntimeValue& element) -> void* {
@@ -634,8 +677,8 @@ auto EmplaceBoth(void* out, const value::Tuple<First, Second>& completion)
     -> void* {
   return EmplaceCompletion(
       out, std::vector<value::RuntimeValue>{
-               value::RuntimeValue{completion.template Get<0>()},
-               value::RuntimeValue{completion.template Get<1>()}});
+               value::RuntimeValue{completion.template Component<0>()},
+               value::RuntimeValue{completion.template Component<1>()}});
 }
 
 // An event control's leaves cross as a span of pointers to values this call
@@ -650,6 +693,7 @@ auto TriggerHandles(LyraSpan triggers) -> std::span<const Trigger* const> {
 
 using lyra::runtime::AbiStringRef;
 using lyra::runtime::ActivationValueCell;
+using lyra::runtime::AssignDesignatedSlice;
 using lyra::runtime::BehaviorAt;
 using lyra::runtime::BehaviorCoordinate;
 using lyra::runtime::CancellationTarget;
@@ -681,12 +725,15 @@ using lyra::runtime::DeclareTakeover;
 using lyra::runtime::DeclareVariableSchema;
 using lyra::runtime::Delay;
 using lyra::runtime::DelayReal;
+using lyra::runtime::DesignateElement;
+using lyra::runtime::DesignationAt;
 using lyra::runtime::DiagnosticDispatcher;
 using lyra::runtime::DriveOnForeignStack;
 using lyra::runtime::DriverOf;
 using lyra::runtime::Emplace;
 using lyra::runtime::EnterCancellationTarget;
 using lyra::runtime::EnterForeignTask;
+using lyra::runtime::ErasedDesignation;
 using lyra::runtime::EvaluationAttempts;
 using lyra::runtime::FileTable;
 using lyra::runtime::FindBehavior;
@@ -697,6 +744,7 @@ using lyra::runtime::ForkWaitFirst;
 using lyra::runtime::GcObject;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::HierarchySegment;
+using lyra::runtime::LandDesignation;
 using lyra::runtime::LeaveCancellationTarget;
 using lyra::runtime::LentStorage;
 using lyra::runtime::MakeForeignExecution;
@@ -766,6 +814,7 @@ using lyra::value::Chandle;
 using lyra::value::DpiBitBuffer;
 using lyra::value::DpiLogicBuffer;
 using lyra::value::DpiOpenArray;
+using lyra::value::Empty;
 using lyra::value::Enumeration;
 using lyra::value::Format;
 using lyra::value::FormatArg;
@@ -3618,13 +3667,13 @@ auto lyra_rt_tuple_make(LyraSpan components, void* out) -> void* {
   return Emplace(out, RuntimeTuple(std::move(collected)));
 }
 
-auto lyra_rt_tuple_extract(const void* tuple, std::int64_t index) -> const
+auto lyra_rt_tuple_component(const void* tuple, std::int64_t index) -> const
     void* {
   return lyra::runtime::HeldIn(
       Read<RuntimeTuple>(tuple).Component(static_cast<std::size_t>(index)));
 }
 
-auto lyra_rt_tuple_part_ref(void* tuple, std::int64_t index) -> void* {
+auto lyra_rt_tuple_component_ref(void* tuple, std::int64_t index) -> void* {
   return lyra::runtime::HeldIn(
       static_cast<RuntimeTuple*>(tuple)->ComponentRef(
           static_cast<std::size_t>(index)));
@@ -3691,16 +3740,17 @@ auto lyra_rt_union_make(std::int64_t index, void* value, void* out) -> void* {
           static_cast<std::size_t>(index), lyra::runtime::ErasedValue(value)));
 }
 
-auto lyra_rt_union_extract(const void* value, std::int64_t index, void* out)
+auto lyra_rt_union_component(const void* value, std::int64_t index, void* out)
     -> void* {
   return lyra::runtime::ElementInto(
-      out, Read<RuntimeUnion>(value).Member(static_cast<std::size_t>(index)));
+      out,
+      Read<RuntimeUnion>(value).Component(static_cast<std::size_t>(index)));
 }
 
-auto lyra_rt_union_update(
+auto lyra_rt_union_with_component(
     const void* value, std::int64_t index, void* member, void* out) -> void* {
   RuntimeUnion result = Read<RuntimeUnion>(value);
-  result.SetActive(
+  result.SetComponent(
       static_cast<std::size_t>(index), lyra::runtime::ErasedValue(member));
   return Emplace(out, std::move(result));
 }
@@ -3771,17 +3821,17 @@ auto lyra_rt_tagged_union_make(std::int64_t tag, void* payload, void* out)
           static_cast<std::size_t>(tag), lyra::runtime::ErasedValue(payload)));
 }
 
-auto lyra_rt_tagged_union_extract(
+auto lyra_rt_tagged_union_component(
     const void* value, std::int64_t index, void* out) -> void* {
   return lyra::runtime::ElementInto(
-      out,
-      Read<RuntimeTaggedUnion>(value).Member(static_cast<std::size_t>(index)));
+      out, Read<RuntimeTaggedUnion>(value).Component(
+               static_cast<std::size_t>(index)));
 }
 
-auto lyra_rt_tagged_union_update(
+auto lyra_rt_tagged_union_with_component(
     const void* value, std::int64_t index, void* member, void* out) -> void* {
   RuntimeTaggedUnion result = Read<RuntimeTaggedUnion>(value);
-  result.SetMember(
+  result.SetComponent(
       static_cast<std::size_t>(index), lyra::runtime::ErasedValue(member));
   return Emplace(out, std::move(result));
 }
@@ -5885,8 +5935,103 @@ auto lyra_rt_unpackedarray_driver_open_for_write(void* driver, void* out)
   return OpenDriverWrite<RuntimeUnpackedArray>(driver, out);
 }
 
-auto lyra_rt_open_write_storage(void* write) -> void* {
-  return static_cast<OpenWrite*>(write)->Storage();
+auto lyra_rt_designate_whole(void* write, void* out) -> void* {
+  return std::construct_at(
+      static_cast<ErasedDesignation*>(out),
+      static_cast<OpenWrite*>(write)->Whole());
+}
+
+auto lyra_rt_dynarray_designate_element(
+    const void* designation, const void* index, void* out) -> void* {
+  return DesignateElement<RuntimeDynamicArray>(
+      designation, Read<PackedArray>(index), out);
+}
+
+auto lyra_rt_unpackedarray_designate_element(
+    const void* designation, const void* position, void* out) -> void* {
+  return DesignateElement<RuntimeUnpackedArray>(
+      designation, Read<PackedArray>(position), out);
+}
+
+auto lyra_rt_queue_designate_element(
+    const void* designation, const void* index, void* out) -> void* {
+  return DesignateElement<RuntimeQueue>(
+      designation, Read<PackedArray>(index), out);
+}
+
+auto lyra_rt_assocarray_designate_element(
+    const void* designation, const void* index, void* out) -> void* {
+  return DesignateElement<RuntimeAssociativeArray>(
+      designation, Read<RuntimeValue>(index), out);
+}
+
+auto lyra_rt_tuple_designate_component(
+    const void* designation, std::int64_t index, void* out) -> void* {
+  const ErasedDesignation& within = DesignationAt(designation);
+  return std::construct_at(
+      static_cast<ErasedDesignation*>(out),
+      ErasedDesignation{
+          .write = within.write,
+          .part = lyra::runtime::HeldIn(
+              static_cast<RuntimeTuple*>(within.part)
+                  ->ComponentRef(static_cast<std::size_t>(index)))});
+}
+
+void lyra_rt_dynarray_assign_slice(
+    const void* designation, const void* start, std::int64_t count,
+    const void* replacement) {
+  AssignDesignatedSlice<RuntimeDynamicArray>(
+      designation, start, count, replacement);
+}
+
+void lyra_rt_unpackedarray_assign_slice(
+    const void* designation, const void* start, std::int64_t count,
+    const void* replacement) {
+  AssignDesignatedSlice<RuntimeUnpackedArray>(
+      designation, start, count, replacement);
+}
+
+auto lyra_rt_packed_land(const void* designation) noexcept -> void* {
+  return LandDesignation<PackedArray>(designation);
+}
+auto lyra_rt_string_land(const void* designation) noexcept -> void* {
+  return LandDesignation<String>(designation);
+}
+auto lyra_rt_real_land(const void* designation) noexcept -> void* {
+  return LandDesignation<Real>(designation);
+}
+auto lyra_rt_shortreal_land(const void* designation) noexcept -> void* {
+  return LandDesignation<ShortReal>(designation);
+}
+auto lyra_rt_chandle_land(const void* designation) noexcept -> void* {
+  return LandDesignation<Chandle>(designation);
+}
+auto lyra_rt_empty_land(const void* designation) noexcept -> void* {
+  return LandDesignation<Empty>(designation);
+}
+auto lyra_rt_tuple_land(const void* designation) noexcept -> void* {
+  return LandDesignation<RuntimeTuple>(designation);
+}
+auto lyra_rt_union_land(const void* designation) noexcept -> void* {
+  return LandDesignation<RuntimeUnion>(designation);
+}
+auto lyra_rt_tagged_union_land(const void* designation) noexcept -> void* {
+  return LandDesignation<RuntimeTaggedUnion>(designation);
+}
+auto lyra_rt_dynarray_land(const void* designation) noexcept -> void* {
+  return LandDesignation<RuntimeDynamicArray>(designation);
+}
+auto lyra_rt_unpackedarray_land(const void* designation) noexcept -> void* {
+  return LandDesignation<RuntimeUnpackedArray>(designation);
+}
+auto lyra_rt_queue_land(const void* designation) noexcept -> void* {
+  return LandDesignation<RuntimeQueue>(designation);
+}
+auto lyra_rt_assocarray_land(const void* designation) noexcept -> void* {
+  return LandDesignation<RuntimeAssociativeArray>(designation);
+}
+auto lyra_rt_managedref_land(const void* designation) noexcept -> void* {
+  return LandDesignation<ManagedRef>(designation);
 }
 
 // A value written into storage that already holds one of its domain -- an
@@ -6220,6 +6365,7 @@ static_assert(LaidOutAs<value::RuntimeValue>(LibraryObject::kErasedValue));
 static_assert(LaidOutAs<Coroutine<void>>(LibraryObject::kExecution));
 static_assert(LaidOutAs<PromotedScopeRef>(LibraryObject::kPromotedScope));
 static_assert(LaidOutAs<OpenWrite>(LibraryObject::kOpenWrite));
+static_assert(LaidOutAs<ErasedDesignation>(LibraryObject::kDesignation));
 
 }  // namespace
 

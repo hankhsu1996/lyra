@@ -49,6 +49,34 @@ void RefuseNetCell(const mir::Type& place_ty) {
   }
 }
 
+// A step of a write's descent taken within the write in progress: the entry
+// that takes it, and whether the write lands where it leads -- a slice is
+// several elements rather than one place, so nothing steps further within the
+// write from one.
+struct DesignatingStep {
+  support::BuiltinFn entry;
+  bool lands;
+};
+
+auto DesignatingStepOf(const DescentStep& step) -> DesignatingStep {
+  const std::optional<support::PartSelection> selects =
+      support::RuntimeEntryOf(step.part_entry).selects;
+  if (!selects.has_value()) {
+    throw InternalError(
+        "lhs_store: a step of a write's descent reaches a part, and this one "
+        "names an entry that reaches none");
+  }
+  switch (*selects) {
+    case support::PartSelection::kElement:
+      return {.entry = support::BuiltinFn::kDesignateElement, .lands = false};
+    case support::PartSelection::kComponent:
+      return {.entry = support::BuiltinFn::kDesignateComponent, .lands = false};
+    case support::PartSelection::kSlice:
+      return {.entry = support::BuiltinFn::kDesignateSlice, .lands = true};
+  }
+  throw InternalError("lhs_store: unknown part selection");
+}
+
 // `lhs op= rhs`, at an operator whose two forms are the whole of what an
 // assignment may apply. An operator the target applies to two values of one
 // type rides the store, which reaches the place once; one it does not is
@@ -113,38 +141,60 @@ auto TargetValueType(
                                         : owner_type;
 }
 
-auto OpenedPlace(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId place)
-    -> mir::ExprId {
-  const mir::Type& place_ty = unit.types.Get(block.exprs.Get(place).type);
-  if (!place_ty.IsCapabilityWrapper()) {
-    return place;
-  }
-  RefuseNetCell(place_ty);
-  const mir::TypeId value_type = place_ty.WrappedValueType();
-  const mir::ExprId opened = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kOpenForWrite,
-                          .receiver = place},
-                  .arguments = {}},
-          .type = unit.types.Intern(
-              mir::Type{mir::OpenWriteType{
-                  .wrapper = block.exprs.Get(place).type}})});
-  return block.exprs.Add(mir::MakeDerefExpr(opened, value_type));
-}
-
 auto TargetPlace(
     mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
     -> mir::ExprId {
-  mir::ExprId reached = OpenedPlace(unit, block, target.owner);
-  for (const DescentStep& step : target.descent) {
-    reached = CallEntry(
-        block, step.part_entry, step.position, reached,
-        StepArguments(unit, block, step), step.part_type);
+  const auto reach = [&](support::BuiltinFn entry, mir::ExprId from,
+                         const DescentStep& step, mir::TypeId type) {
+    return CallEntry(
+        block, entry, step.position, from, StepArguments(unit, block, step),
+        type);
+  };
+  const mir::Type& owner_ty =
+      unit.types.Get(block.exprs.Get(target.owner).type);
+  auto step = target.descent.begin();
+  mir::ExprId reached = target.owner;
+  if (owner_ty.IsCapabilityWrapper()) {
+    RefuseNetCell(owner_ty);
+    // The write is opened on the wrapper, the whole of what the wrapper holds
+    // is designated within it, and each step into a part that is storage of its
+    // own designates that part within the same write, so the write knows what
+    // forming each one did. Where the value stepped into has no such parts --
+    // or the step reached a slice, several elements rather than one place --
+    // the write lands, and any step left reaches into the value landed on.
+    mir::TypeId value = owner_ty.WrappedValueType();
+    const auto designated = [&](mir::TypeId part) {
+      return unit.types.Intern(mir::Type{mir::DesignationType{.value = part}});
+    };
+    const mir::ExprId write = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target = support::BuiltinFn::kOpenForWrite,
+                            .receiver = target.owner},
+                    .arguments = {}},
+            .type = unit.types.Intern(
+                mir::Type{mir::OpenWriteType{.value = value}})});
+    mir::ExprId designation = CallEntry(
+        block, support::BuiltinFn::kDesignateWhole, std::nullopt, write, {},
+        designated(value));
+    while (step != target.descent.end() &&
+           unit.types.Get(value).PartsAreStorage()) {
+      const DescentStep& taken = *step++;
+      const DesignatingStep designating = DesignatingStepOf(taken);
+      value = taken.part_type;
+      designation =
+          reach(designating.entry, designation, taken, designated(value));
+      if (designating.lands) {
+        break;
+      }
+    }
+    reached = block.exprs.Add(mir::MakeDerefExpr(designation, value));
+  }
+  for (; step != target.descent.end(); ++step) {
+    reached = reach(step->part_entry, reached, *step, step->part_type);
   }
   return reached;
 }

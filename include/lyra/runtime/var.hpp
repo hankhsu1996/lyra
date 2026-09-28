@@ -1,10 +1,12 @@
 #pragma once
 
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
@@ -17,50 +19,54 @@
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
-// What a partial-write chain writes through (LRM 11.5.1). The chain reaches
-// the owner's storage and lands its part there directly; the owner is told
-// once, when the chain is over, and works out then what to publish. Two things
+// What a write into part of an owner's storage writes through (LRM 11.5.1).
+// The write reaches the owner's storage and lands its part there directly; the
+// owner is told once, when the write is over, whether it changed. Three things
 // that takes, named for the role rather than for either owner's vocabulary.
 //
 // `MutationStorage` is the storage itself, so a write reaches the part it
-// names and disturbs nothing else. Two things follow: a chain cannot lose a
-// write performed through another chain while it was open, and what writing
-// one element costs does not scale with the size of the whole value.
+// names and disturbs nothing else. Two things follow: a write cannot lose one
+// performed through another while it was open, and what writing one element
+// costs does not scale with the size of the whole value.
 //
-// `TransitionBase` is whatever the owner must hold from before the write to
-// decide afterwards what the write meant, captured at the start and handed
-// back at the end. What that is differs by owner. A variable cell holds a
-// before-image of its contents, and holds one only while something is armed to
-// read the answer. A net driver holds its own contribution, because the
-// transition that matters there is the resolved value's and a chain leaving
-// the contribution bit-identical leaves the resolution over it unchanged
-// (LRM 6.5).
+// `Watched` is whether anything reads the answer. A variable cell with nothing
+// waiting on it has no one to tell (LRM 4.3), so the write keeps nothing from
+// before it; a net driver always has its net, which resolves again only where
+// the driver's own contribution moved (LRM 6.5).
+//
+// `PublishTransition` tells the owner the write changed it, with what can be
+// said about which of its bits moved.
 //
 // Each sink claims the contract with a `static_assert(MutationSink<...>)`
 // beside its own definition, the way a value type claims its `lyra::value`
-// concepts; `ScopedMutation` itself takes the sink unconstrained, because a
-// sink names the handle in its own partial-write entry's return type and
-// checking the constraint there would depend on the sink being complete.
+// concepts; the bracket itself takes the sink unconstrained, because a sink
+// names the handle in its own partial-write entry's return type and checking
+// the constraint there would depend on the sink being complete.
 template <class S>
-concept MutationSink =
-    requires(S sink, const typename S::TransitionBase& base) {
-      typename S::ValueType;
-      { sink.MutationStorage() } -> std::same_as<typename S::ValueType&>;
-      {
-        sink.CaptureTransitionBase()
-      } -> std::same_as<typename S::TransitionBase>;
-      sink.PublishTransition(base);
-    };
+concept MutationSink = requires(S sink, const ProjectionUnchanged& unchanged) {
+  typename S::ValueType;
+  { sink.MutationStorage() } -> std::same_as<typename S::ValueType&>;
+  { sink.Watched() } -> std::same_as<bool>;
+  sink.PublishTransition(unchanged);
+};
 
 template <class Sink>
 class ScopedMutation;
 
 template <value::LyraValue T>
 class Ref;
+
+// Reads one leaf's bits out of the values a change moved between, so a wait
+// that reads only bits this change left alone is passed over. Defined in the
+// library: a unit writing a packed cell reaches it, and no design shapes it.
+[[nodiscard]] auto MakePackedProjectionTest(
+    const value::PackedArray& old_val, const value::PackedArray& new_val)
+    -> ProjectionUnchanged;
 
 template <value::LyraValue T>
 class Var : public Observable, public ValueStorageCore<T> {
@@ -91,8 +97,6 @@ class Var : public Observable, public ValueStorageCore<T> {
   // Commits a whole-variable write and, on a real change (LRM 4.3 update
   // event), wakes whoever waits through the engine. The engine is the ambient
   // one: it has the standing of a stack pointer, so a store does not carry it.
-  // Defined out of line below, where the per-value-family test it reports
-  // through is in scope.
   //
   // A procedural continuous assignment overrides the procedural writes a cell
   // takes on its own (LRM 10.6), so while one is in effect the value arriving
@@ -122,16 +126,11 @@ class Var : public Observable, public ValueStorageCore<T> {
   // 10.6.2).
   void EndTakeover(const value::PackedArray& level);
 
-  // The before-image a transition is computed against, held only where
-  // something will read the answer: a wait parked here, or a retained sampled
-  // value the current time slot has not moved away from yet (LRM 16.5.1). With
-  // neither there is no question to answer, which is what lets an unobserved
-  // cell take a plain store.
-  [[nodiscard]] auto CaptureTransitionBase() const -> std::optional<T> {
-    if (!this->HasWaiter() && !retained_.has_value()) {
-      return std::nullopt;
-    }
-    return this->Get();
+  // Whether a write into the cell has anyone to tell what it did: a wait parked
+  // here (LRM 4.3). Under a procedural continuous assignment a write lands
+  // where nothing reads it (LRM 10.6), so it has nothing to tell either.
+  [[nodiscard]] auto Watched() const -> bool {
+    return this->HasWaiter() && !TakenOver();
   }
 
   // Arms the cell to answer for its sampled value (LRM 16.5.1) and installs the
@@ -169,37 +168,41 @@ class Var : public Observable, public ValueStorageCore<T> {
     return this->Get();
   }
 
-  // Reports what the write between the capture and here did to the cell, waking
-  // whoever the change is an event for. Defined out of line below, where the
-  // per-value-family test it reports through is in scope.
-  void PublishTransition(const std::optional<T>& before);
+  // Tells whoever waits here that a write changed the cell (LRM 4.3), passing
+  // over a wait whose bits `unchanged` shows the write left alone.
+  void PublishTransition(const ProjectionUnchanged& unchanged) {
+    current_runtime().WakeWaitersOf(*this, unchanged);
+  }
 
   // Where a write reaching part of the cell lands: the cell's own storage, or,
   // while a procedural continuous assignment is in effect (LRM 10.6), storage
   // nothing reads -- the partial write is overridden exactly as a whole-value
-  // write through `Set` is.
+  // write through `Set` is. Opening one is the first write of the slot at the
+  // latest, so the slot's sampled value is kept here.
   [[nodiscard]] auto PartialWriteTarget() -> T& {
-    if (takeovers_ != nullptr && takeovers_->Highest() != nullptr) {
+    KeepPreponed();
+    if (TakenOver()) {
       return takeovers_->Discarded(this->Get());
     }
     return this->Storage();
   }
 
-  // RAII entry to partial-write context. Construct via `var.Mutate()` at the
-  // start of a chain; the returned handle names the cell's own storage, so a
-  // partial write expressed as a single selector chain (e.g. ending in a
-  // `SliceRef = v`) lands in the cell as it is written, and reports the
-  // transition once in its destructor. Lifetime is C++ standard
-  // full-expression temporary lifetime -- the handle is non-copyable and
-  // non-movable, so storing it past the statement is rejected at compile time.
+  // Opens a write into the cell for the full-expression that writes. The cell's
+  // own storage is designated within it, the steps into parts are taken from
+  // there, and the write lands where they are dereferenced, so a part is
+  // written in the cell as it lies and the cell is told once whether it
+  // changed. The write is non-copyable and non-movable, so keeping it past the
+  // statement is rejected at compile time.
   auto Mutate() -> ScopedMutation<Ref<T>>;
 
  private:
-  // The one path a value reaches the cell's storage by, whoever sent it: state
-  // what the transition is computed against, write, report. It is the
-  // whole-value case of the same bracket a partial write uses; what it adds is
-  // the representation match, which only a whole value can be checked for --
-  // a chain writes a part and never restates the whole.
+  // The one path a whole value reaches the cell's storage by, whoever sent it.
+  // What it adds over a partial write is the representation match, which only
+  // a whole value can be checked for -- a partial write lands a part and never
+  // restates the whole. The value arriving is compared with the one it would
+  // replace before anything is written, so telling whoever waits keeps no copy
+  // of the old value, except the old bits a packed value's waits are passed
+  // over by.
   void Store(const T& new_val) {
     if constexpr (std::same_as<T, value::PackedArray>) {
       if (!this->IsInstalled()) {
@@ -207,16 +210,30 @@ class Var : public Observable, public ValueStorageCore<T> {
             "Var<PackedArray>: store into a cell that was never initialized");
       }
     }
-    const std::optional<T> before = this->CaptureTransitionBase();
-    this->Overwrite(new_val);
-    this->PublishTransition(before);
+    KeepPreponed();
+    if (!this->HasWaiter()) {
+      this->Overwrite(new_val);
+      return;
+    }
+    if (this->Get().IsBitIdentical(new_val)) {
+      return;
+    }
+    if constexpr (std::same_as<T, value::PackedArray>) {
+      const T before = this->Get();
+      this->Overwrite(new_val);
+      PublishTransition(MakePackedProjectionTest(before, this->Get()));
+    } else {
+      this->Overwrite(new_val);
+      PublishTransition(MakeWholeValueProjectionTest());
+    }
   }
 
-  // Keeps the value a slot is about to move away from, once per slot. The first
-  // change in a slot is the one whose before-image is that slot's Preponed
-  // value (LRM 4.4.2.1); every later change moves away from a value the slot
-  // itself produced.
-  void RetainPreponed(const T& before) {
+  // Keeps what the cell held in the Preponed region of the current slot, the
+  // first time a write reaches the cell in that slot (LRM 4.4.2.1, 16.5.1).
+  // Nothing in the slot has changed the cell before its first write, so what
+  // it holds then is that value, whether or not the write goes on to change
+  // it.
+  void KeepPreponed() {
     if (!retained_.has_value()) {
       return;
     }
@@ -224,8 +241,14 @@ class Var : public Observable, public ValueStorageCore<T> {
     if (retained_slot_ == now) {
       return;
     }
-    retained_ = before;
+    retained_ = this->Get();
     retained_slot_ = now;
+  }
+
+  // Whether a procedural continuous assignment shows through the cell (LRM
+  // 10.6).
+  [[nodiscard]] auto TakenOver() const -> bool {
+    return takeovers_ != nullptr && takeovers_->Highest() != nullptr;
   }
 
   // The sampled value (LRM 16.5.1) and the time slot it belongs to. Engaged
@@ -250,7 +273,6 @@ template <value::LyraValue T>
 class Ref {
  public:
   using ValueType = T;
-  using TransitionBase = std::optional<T>;
 
   // A null view, default-constructed as a member and bound before first use:
   // a `ref` port's child-side member is declared with the child and filled by
@@ -278,27 +300,22 @@ class Ref {
     }
   }
 
-  // Opens a partial-write bracket, as an observable cell itself does: the
-  // returned handle names the referenced cell's own storage, so a selector
-  // chain lands in that cell as it is written, and reports the transition in
-  // its destructor (waking observations when the backing is observable).
+  // Opens a write into the referenced storage, as an observable cell itself
+  // does; only an observable backing has anyone to tell what the write did.
   [[nodiscard]] auto Mutate() const -> ScopedMutation<Ref<T>>;
 
   // The `MutationSink` surface. A plain backing has no observation at all, so
-  // it states no before-image and reports nothing; that is the same answer an
-  // observable backing gives while nothing is armed on it, reached by a
-  // shorter route.
+  // nothing reads what a write did to it; that is the same answer an
+  // observable backing gives while nothing waits on it, reached by a shorter
+  // route.
   [[nodiscard]] auto MutationStorage() const -> T& {
     if (signal_ != nullptr) {
       return signal_->PartialWriteTarget();
     }
     return *plain_;
   }
-  [[nodiscard]] auto CaptureTransitionBase() const -> std::optional<T> {
-    if (signal_ == nullptr) {
-      return std::nullopt;
-    }
-    return signal_->CaptureTransitionBase();
+  [[nodiscard]] auto Watched() const -> bool {
+    return signal_ != nullptr && signal_->Watched();
   }
 
   // A reference denotes the storage it binds (LRM 23.3.3.2), so the operations
@@ -333,9 +350,9 @@ class Ref {
     return *signal_;
   }
 
-  void PublishTransition(const std::optional<T>& before) const {
+  void PublishTransition(const ProjectionUnchanged& unchanged) const {
     if (signal_ != nullptr) {
-      signal_->PublishTransition(before);
+      signal_->PublishTransition(unchanged);
     }
   }
 
@@ -373,18 +390,6 @@ auto WaitUntil(RuntimeEffects& services, std::span<const Trigger> triggers)
 auto WaitUntil(
     RuntimeEffects& services, std::span<const Trigger* const> triggers) -> bool;
 
-// Reads one leaf's bits out of the values a change moved between, so a wait
-// that reads only bits this change left alone is passed over.
-inline auto MakePackedProjectionTest(
-    const value::PackedArray& old_val, const value::PackedArray& new_val)
-    -> ProjectionUnchanged {
-  return [&old_val, &new_val](std::uint64_t lsb, std::uint64_t width) -> bool {
-    const auto start = static_cast<std::int64_t>(lsb);
-    return old_val.ExtractRun(start, width)
-        .IsBitIdentical(new_val.ExtractRun(start, width));
-  };
-}
-
 // Defaulted here rather than where they are declared: a constructor or
 // destructor defaulted on its first declaration is not user-provided, so a unit
 // constructing a cell would define it itself with everything it reaches, and a
@@ -396,25 +401,11 @@ template <value::LyraValue T>
 Var<T>::~Var() = default;
 
 template <value::LyraValue T>
-void Var<T>::PublishTransition(const std::optional<T>& before) {
-  if (!before || before->IsBitIdentical(this->Get())) {
-    return;
-  }
-  this->RetainPreponed(*before);
-  if constexpr (std::same_as<T, value::PackedArray>) {
-    current_runtime().WakeWaitersOf(
-        *this, MakePackedProjectionTest(*before, this->Get()));
-  } else {
-    current_runtime().WakeWaitersOf(*this, MakeWholeValueProjectionTest());
-  }
-}
-
-template <value::LyraValue T>
 void Var<T>::Set(const T& new_val) {
   // A procedural write is discarded outright while any takeover shows through
   // this cell (LRM 10.6). A cell nobody has ever taken over holds no record at
   // all, so the ordinary write pays one null test.
-  if (takeovers_ != nullptr && takeovers_->Highest() != nullptr) {
+  if (TakenOver()) {
     return;
   }
   Store(new_val);
@@ -462,28 +453,247 @@ void Var<T>::EndTakeover(const value::PackedArray& level) {
   }
 }
 
-// RAII handle bracketing one partial-write expression: it names the sink's
-// storage for the duration, and on the way out hands back what the sink stated
-// beforehand so the sink can report what the write did. Non-copyable and
-// non-movable: the contract is that it lives only until the end of the
-// constructing full expression. Returning it by value from the entry that
-// opens one relies on C++17 mandatory copy elision (prvalues are materialized
-// in the caller's storage with no copy/move).
+// One write in progress into what a sink stands for, and what it has learned
+// so far about whether the write changed it (LRM 4.3). The write reaches the
+// sink's storage and lands where its steps lead; what it did there is learned
+// in three ways, whichever comes first settling the answer:
 //
-// `operator*` is the single access point -- all chain methods, operators, and
-// selectors are reached through the deref'd storage directly. That storage is
-// the owner's own, so a write is visible to everything reading the owner from
-// the moment it lands (LRM 13.5.2), and a second chain open over the same
-// owner cannot be overwritten by this one closing.
+//   - a step that forms the part it reaches can change the owner by forming it
+//     -- an element made by being written (LRM 7.8.7, 7.10.1) -- or reach no
+//     part of it at all, where an invalid index makes the write ignored
+//     (LRM 7.4.6), and either answers the question whatever is written;
+//   - a slice write compares each element before writing it, so it says
+//     whether it moved one;
+//   - otherwise the part landed on is compared with its value from before the
+//     write, kept only while something reads the answer.
+//
+// The answer reaches the sink once. It is the owner's own storage the write
+// lands in, so a write is visible to everything reading the owner from the
+// moment it lands (LRM 13.5.2), and a second write open over the same owner
+// cannot be overwritten by this one ending.
+template <class Sink>
+class WriteBracket {
+ public:
+  using ValueType = typename Sink::ValueType;
+
+  explicit WriteBracket(Sink sink)
+      : sink_(sink),
+        storage_(&sink_.MutationStorage()),
+        watched_(sink_.Watched()) {
+  }
+
+  [[nodiscard]] auto Storage() const -> ValueType& {
+    return *storage_;
+  }
+
+  // Whether the part a write lands on is worth keeping from before the write:
+  // something reads the answer, and no step has given it already.
+  [[nodiscard]] auto Undecided() const -> bool {
+    return watched_ && Open();
+  }
+
+  void Formed(value::Formation formed) {
+    if (!Open()) {
+      return;
+    }
+    switch (formed) {
+      case value::Formation::kExisting:
+        return;
+      case value::Formation::kMade:
+        outcome_ = Outcome::kChanged;
+        return;
+      case value::Formation::kNowhere:
+        outcome_ = Outcome::kSettled;
+        return;
+    }
+    throw InternalError("WriteBracket: unknown formation");
+  }
+
+  // A slice write moved at least one element.
+  void Moved() {
+    if (Open()) {
+      outcome_ = Outcome::kChanged;
+    }
+  }
+
+  // The part landed on is not what it was, and `unchanged` says which of its
+  // bits moved. A packed value has no parts that are storage of their own, so
+  // a write into one lands on the whole and the bits it moved are the whole's;
+  // the waits on any other value are not bit-addressed.
+  void Landed(const ProjectionUnchanged& unchanged) {
+    if (!Open()) {
+      return;
+    }
+    outcome_ = Outcome::kSettled;
+    if constexpr (std::same_as<ValueType, value::PackedArray>) {
+      sink_.PublishTransition(unchanged);
+    } else {
+      sink_.PublishTransition(MakeWholeValueProjectionTest());
+    }
+  }
+
+  // The end of the write, with the full-expression that opened it.
+  void End() {
+    switch (outcome_) {
+      case Outcome::kUndecided:
+      case Outcome::kSettled:
+        return;
+      case Outcome::kChanged:
+        if (watched_) {
+          sink_.PublishTransition(MakeWholeValueProjectionTest());
+        }
+        return;
+    }
+    throw InternalError("WriteBracket: unknown outcome");
+  }
+
+ private:
+  enum class Outcome : std::uint8_t { kUndecided, kChanged, kSettled };
+
+  // Whether nothing has yet settled what the write did.
+  [[nodiscard]] auto Open() const -> bool {
+    switch (outcome_) {
+      case Outcome::kUndecided:
+        return true;
+      case Outcome::kChanged:
+      case Outcome::kSettled:
+        return false;
+    }
+    throw InternalError("WriteBracket: unknown outcome");
+  }
+
+  Sink sink_;
+  ValueType* storage_;
+  bool watched_;
+  Outcome outcome_ = Outcome::kUndecided;
+};
+
+// Which bits of a part landed on a change between the two values left alone:
+// a packed value's by position, and nothing that can be shown of any other.
+template <class Part>
+auto LandedChange(const Part& before, const Part& after)
+    -> ProjectionUnchanged {
+  if constexpr (std::same_as<Part, value::PackedArray>) {
+    return MakePackedProjectionTest(before, after);
+  } else {
+    return MakeWholeValueProjectionTest();
+  }
+}
+
+// A packed part is what no design shapes, so it is compiled once, in the
+// library.
+extern template auto LandedChange<value::PackedArray>(
+    const value::PackedArray& before, const value::PackedArray& after)
+    -> ProjectionUnchanged;
+
+template <class Sink, class Slice>
+class DesignatedSlice;
+
+// A place designated within a write: the whole of what the write was opened
+// on, or a part of it reached by the steps below. It borrows the write. The
+// steps reach the parts that are storage of their own (LRM 13.5.2) -- an
+// element, reported to the write as it is formed, a component, and a slice of
+// elements -- each answering with the part designated within the same write.
+// Dereferencing it is where the write lands, which is when the value from
+// before the write is kept.
+template <class Sink, class Part>
+class Designation {
+ public:
+  Designation(WriteBracket<Sink>& write, Part& part)
+      : write_(&write), part_(&part) {
+  }
+
+  Designation(const Designation&) = delete;
+  auto operator=(const Designation&) -> Designation& = delete;
+  Designation(Designation&&) = delete;
+  auto operator=(Designation&&) -> Designation& = delete;
+
+  ~Designation() {
+    if (before_.has_value() && !before_->IsBitIdentical(*part_)) {
+      write_->Landed(LandedChange(*before_, *part_));
+    }
+  }
+
+  template <typename Key>
+  auto ElementRef(const Key& key) {
+    value::Formation formed{};
+    auto& element = part_->ElementRef(key, formed);
+    write_->Formed(formed);
+    return Designation<Sink, std::remove_reference_t<decltype(element)>>{
+        *write_, element};
+  }
+
+  template <std::size_t I>
+  auto ComponentRef() {
+    auto& component = part_->template ComponentRef<I>();
+    return Designation<Sink, std::remove_reference_t<decltype(component)>>{
+        *write_, component};
+  }
+
+  template <typename... Bounds>
+  auto SliceRef(const Bounds&... bounds) {
+    auto slice = part_->SliceRef(bounds...);
+    return DesignatedSlice<Sink, decltype(slice)>{*write_, std::move(slice)};
+  }
+
+  auto operator*() -> Part& {
+    if (write_->Undecided()) {
+      before_.emplace(*part_);
+    }
+    return *part_;
+  }
+
+ private:
+  WriteBracket<Sink>* write_;
+  Part* part_;
+  std::optional<Part> before_;
+};
+
+// A slice of elements designated within a write (LRM 7.6). It is several
+// elements rather than one place, so what the write learns comes from the
+// assignment into it, which compares each element before writing it.
+template <class Sink, class Slice>
+class DesignatedSlice {
+ public:
+  DesignatedSlice(WriteBracket<Sink>& write, Slice slice)
+      : write_(&write), slice_(std::move(slice)) {
+  }
+
+  DesignatedSlice(const DesignatedSlice&) = delete;
+  auto operator=(const DesignatedSlice&) -> DesignatedSlice& = delete;
+  DesignatedSlice(DesignatedSlice&&) = delete;
+  auto operator=(DesignatedSlice&&) -> DesignatedSlice& = delete;
+  ~DesignatedSlice() = default;
+
+  auto operator*() -> DesignatedSlice& {
+    return *this;
+  }
+
+  template <typename Value>
+  auto operator=(const Value& value) -> DesignatedSlice& {
+    if (slice_.Assign(value)) {
+      write_->Moved();
+    }
+    return *this;
+  }
+
+ private:
+  WriteBracket<Sink>* write_;
+  Slice slice_;
+};
+
+// A write opened in the full-expression that writes, and ended with it, which
+// is when the sink is told once whether the write changed it. It names no
+// place itself: the whole of what the sink stands for is designated within it,
+// and the steps into parts start there. Non-copyable and non-movable:
+// returning it by value from the entry that opens one relies on C++17
+// mandatory copy elision.
 template <class Sink>
 class ScopedMutation {
  public:
   using ValueType = typename Sink::ValueType;
 
-  explicit ScopedMutation(Sink sink)
-      : sink_(sink),
-        storage_(sink_.MutationStorage()),
-        before_(sink_.CaptureTransitionBase()) {
+  explicit ScopedMutation(Sink sink) : write_(sink) {
   }
 
   ScopedMutation(const ScopedMutation&) = delete;
@@ -492,17 +702,15 @@ class ScopedMutation {
   auto operator=(ScopedMutation&&) -> ScopedMutation& = delete;
 
   ~ScopedMutation() {
-    sink_.PublishTransition(before_);
+    write_.End();
   }
 
-  auto operator*() -> ValueType& {
-    return storage_;
+  auto WholeRef() -> Designation<Sink, ValueType> {
+    return Designation<Sink, ValueType>{write_, write_.Storage()};
   }
 
  private:
-  Sink sink_;
-  ValueType& storage_;
-  typename Sink::TransitionBase before_;
+  WriteBracket<Sink> write_;
 };
 
 template <value::LyraValue T>

@@ -176,18 +176,27 @@ auto RuntimeAssociativeArray::ElementAt(std::size_t position) const
   return data_[position].element;
 }
 
-auto RuntimeAssociativeArray::ElementRef(const RuntimeValue& index)
-    -> RuntimeValue& {
+auto RuntimeAssociativeArray::ElementRef(
+    const RuntimeValue& index, Formation& formed) -> RuntimeValue& {
   if (const std::optional<std::size_t> position = Find(index)) {
+    formed = Formation::kExisting;
     return data_[*position].element;
   }
   if (NamesNoEntry(index)) {
+    formed = Formation::kNowhere;
     return DiscardTarget(*element_default_);
   }
   const auto inserted = data_.insert(
       data_.begin() + static_cast<std::ptrdiff_t>(LowerBound(index)),
       RuntimeAssociativeEntry{.index = index, .element = *user_default_});
+  formed = Formation::kMade;
   return inserted->element;
+}
+
+auto RuntimeAssociativeArray::ElementRef(const RuntimeValue& index)
+    -> RuntimeValue& {
+  Formation formed{};
+  return ElementRef(index, formed);
 }
 
 auto RuntimeAssociativeArray::WithEntries(

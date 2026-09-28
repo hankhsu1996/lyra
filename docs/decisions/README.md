@@ -579,6 +579,17 @@ the detail lives in the entry itself.
   lies, a write into what a wrapper holds is an open write ended with the full-expression, and a
   store through a part assigns into the object there. A call answering the part's address is
   rejected, because a dereferenced pointer to a value already means a value cell.
+- [a-write-compares-what-it-reached](a-write-compares-what-it-reached.md) -- a write through a
+  wrapper keeps the value of the part it lands on rather than of the variable: MIR takes each step
+  into a storage part on the write in progress, an element or slice step tells the write what
+  forming it did (an element made, an index naming none, an element moved), and a whole-value store
+  compares before writing. Observers keeping their own copies, and notifying without comparing, are
+  rejected, because an implicit sensitivity has nothing of its own to compare with.
+- [a-part-is-named-by-how-it-is-selected](a-part-is-named-by-how-it-is-selected.md) -- an element, a
+  component and a slice are each named for how they are selected, and every operation on one is that
+  name plus a fixed suffix in every layer (`component` / `component_ref` / `designate_component` /
+  `with_component`). `Get` / `GetRef` after `std::get` is rejected, because it names the realization
+  and is also every wrapper's whole-value read.
 - [runtime-entry-naming](runtime-entry-naming.md) -- a runtime entry is named by the operation it
   performs and typed by the call that reaches it, so neither its symbol nor its signature is written
   down a second time; the symbol has one form, what the library does not realize is stated per

@@ -53,6 +53,13 @@ struct RuntimeValue {
 [[nodiscard]] auto RuntimeValueBitIdentical(
     const RuntimeValue& a, const RuntimeValue& b) -> bool;
 
+// The same predicate under the name the shared container algorithms reach an
+// element's by, so an erased element answers where a monomorphized one does.
+[[nodiscard]] inline auto ElementBitIdentical(
+    const RuntimeValue& a, const RuntimeValue& b) -> bool {
+  return RuntimeValueBitIdentical(a, b);
+}
+
 // Two drivers' contributions folded into one under the truth table `fold`
 // names -- tri-state, wired-and, or wired-or (LRM 6.6.1 Table 6-2, LRM 6.6.3
 // Tables 6-3 and 6-4); high-impedance defers under every fold. LRM 6.7.1 admits

@@ -40,11 +40,11 @@ class RuntimeUnion {
   // undefined in SV (LRM 7.3); this backend stores only the active member and
   // does not yet synthesize an inactive member's default, so it reports the
   // read rather than inventing a value of that member's domain.
-  [[nodiscard]] auto Member(std::size_t index) const -> RuntimeValue;
+  [[nodiscard]] auto Component(std::size_t index) const -> RuntimeValue;
 
   // Makes `index` the live member, carrying `value` (the activating write of a
   // member, and the whole-value rebuild a build primitive produces).
-  void SetActive(std::size_t index, RuntimeValue value);
+  void SetComponent(std::size_t index, RuntimeValue value);
 
   // LRM 11.4.5 `==` / `!=` (Any data type): equal only when the same member is
   // active and its values compare equal, never a cross-member comparison.

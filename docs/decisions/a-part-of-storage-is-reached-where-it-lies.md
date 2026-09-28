@@ -45,7 +45,8 @@ there.**
   opening a wrapper answers with as that object rather than as an address, so the layer that gives a
   value its end reads it off the type instead of recognizing the write. It is ended with the
   full-expression and on every departure, which is when the wrapper is told once what the write did
-  (LRM 4.3). It holds a before-image only while something observes the cell. While a procedural
+  (LRM 4.3); what it keeps to say so is the part it lands on
+  ([a-write-compares-what-it-reached](a-write-compares-what-it-reached.md)). While a procedural
   continuous assignment is in effect, the write lands where nothing reads it (LRM 10.6), as a
   whole-value write is discarded. A local whose storage is a cell of the execution's store is opened
   the same way when a part of it is written, since the cell reports its writes whether or not the
@@ -79,11 +80,8 @@ there.**
 
 - compute-block, `--release`, 2026-09-24: **2,870 table passes a second on the execution backend,
   4,340 on the C++ backend** the same day.
-- An observed variable still copies its whole value for the before-image of each write, on both
-  backends, where what changed is answerable at the part written. That is not yet done.
-- Lending a component to a `ref` formal is still refused. A write through such a reference into a
-  component of a subscribable variable has to reach the variable as well, and a reference carries no
-  way to say that yet. The place step and the assignment are what lending would use, so closing it
-  does not change this decision.
+- What a write into an observed variable keeps, and lending a component out of one, are settled by
+  [a-write-compares-what-it-reached](a-write-compares-what-it-reached.md) over the place step and
+  the assignment this entry decides.
 - A queue's and an associative array's element identity across insertion and removal is a matter of
   their representation, and is not settled here.

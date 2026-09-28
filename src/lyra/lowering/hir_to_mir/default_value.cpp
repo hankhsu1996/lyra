@@ -452,6 +452,9 @@ auto BuildDefaultValueExpr(
           [&](const mir::OpenWriteType&) -> mir::Expr {
             return holds_no_declared_value("a write in progress");
           },
+          [&](const mir::DesignationType&) -> mir::Expr {
+            return holds_no_declared_value("a part a write designates");
+          },
           [&](const mir::SampledHistoryType&) -> mir::Expr {
             return holds_no_declared_value("a sampled value's history");
           },

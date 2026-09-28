@@ -23,7 +23,7 @@ auto RuntimeUnion::operator=(RuntimeUnion&&) noexcept
     -> RuntimeUnion& = default;
 RuntimeUnion::~RuntimeUnion() = default;
 
-auto RuntimeUnion::Member(std::size_t index) const -> RuntimeValue {
+auto RuntimeUnion::Component(std::size_t index) const -> RuntimeValue {
   if (index != active_index_) {
     throw SimulationError(
         "reading an unpacked-union member other than the one last written is "
@@ -33,7 +33,7 @@ auto RuntimeUnion::Member(std::size_t index) const -> RuntimeValue {
   return active_.front();
 }
 
-void RuntimeUnion::SetActive(std::size_t index, RuntimeValue value) {
+void RuntimeUnion::SetComponent(std::size_t index, RuntimeValue value) {
   active_index_ = index;
   active_.front() = std::move(value);
 }

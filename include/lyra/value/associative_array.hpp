@@ -17,6 +17,7 @@
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -179,7 +180,8 @@ class AssociativeArray {
       : shield_(std::move(element_default)),
         user_default_(std::move(user_default)) {
     for (const auto& entry : entries) {
-      data_.insert_or_assign(entry.template Get<0>(), entry.template Get<1>());
+      data_.insert_or_assign(
+          entry.template Component<0>(), entry.template Component<1>());
     }
   }
 
@@ -241,15 +243,18 @@ class AssociativeArray {
   // the user-specified default if one was set, otherwise the element-type
   // default, then yields a reference the caller stores into. An invalid key
   // (LRM 7.8.6) yields the discard sink instead, so the write is discarded.
-  [[nodiscard]] auto ElementRef(const K& key) -> V& {
+  [[nodiscard]] auto ElementRef(const K& key, Formation& formed) -> V& {
     if (IsInvalidKey(key)) {
+      formed = Formation::kNowhere;
       return shield_.DiscardTarget();
     }
-    auto it = data_.find(key);
-    if (it == data_.end()) {
-      it = data_.emplace(key, user_default_).first;
-    }
+    auto [it, made] = data_.try_emplace(key, user_default_);
+    formed = made ? Formation::kMade : Formation::kExisting;
     return it->second;
+  }
+  [[nodiscard]] auto ElementRef(const K& key) -> V& {
+    Formation formed{};
+    return ElementRef(key, formed);
   }
 
   template <typename Fn>

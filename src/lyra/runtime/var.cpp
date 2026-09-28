@@ -1,5 +1,6 @@
 #include "lyra/runtime/var.hpp"
 
+#include <cstdint>
 #include <span>
 #include <vector>
 
@@ -10,6 +11,7 @@
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/wait.hpp"
+#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
@@ -87,6 +89,20 @@ class LevelConditionWait : public EventControlWait {
 };
 
 }  // namespace
+
+auto MakePackedProjectionTest(
+    const value::PackedArray& old_val, const value::PackedArray& new_val)
+    -> ProjectionUnchanged {
+  return [&old_val, &new_val](std::uint64_t lsb, std::uint64_t width) -> bool {
+    const auto start = static_cast<std::int64_t>(lsb);
+    return old_val.ExtractRun(start, width)
+        .IsBitIdentical(new_val.ExtractRun(start, width));
+  };
+}
+
+template auto LandedChange<value::PackedArray>(
+    const value::PackedArray& before, const value::PackedArray& after)
+    -> ProjectionUnchanged;
 
 void SubscribeToLeaves(
     CoroutineHandle frame, std::span<const Trigger> triggers) {

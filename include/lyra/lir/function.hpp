@@ -263,6 +263,23 @@ struct ValueCellTarget {
   TypeId value;
 };
 
+// An operation on what a write in progress designates -- the write, or a part
+// designated within it. `kLand` is where the write lands: the part designated,
+// whose value from before the write the write keeps where anything will ask
+// whether the write changed the variable (LRM 4.3); it answers with where the
+// part lies. `kAssignSlice` writes a slice of the designated container's
+// elements within the write (LRM 7.6), telling it whether an element moved.
+// `value` is what the part or the container holds, and the domain it is
+// realized in names the runtime entry.
+// A LIR-only target with no MIR twin: MIR states the landing as a dereference
+// and the slice write as an assignment into a designated slice, and a place is
+// named by an address here, so both are calls on the designation.
+struct OpenWriteTarget {
+  enum class Op : std::uint8_t { kLand, kAssignSlice };
+  Op op;
+  TypeId value;
+};
+
 // The storage a body's declared variables live in: opened whole from what the
 // body states its variables are, each of them reached by the position that
 // statement gave it, and ended on every way out -- which is what ends every
@@ -357,6 +374,7 @@ struct CoroutineTarget {
 // linked symbol. Change it only to correct the operation's identity, never to
 // improve how a dump reads.
 auto ValueCellOpName(ValueCellTarget::Op op) -> std::string_view;
+auto OpenWriteOpName(OpenWriteTarget::Op op) -> std::string_view;
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view;
 auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 
@@ -369,8 +387,9 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
     ConstructTarget, SymbolTarget, ForeignTarget, ValueCellTarget,
-    OpenVariablesTarget, VariableAddressTarget, CloseVariablesTarget,
-    EndValueTarget, CopyValueTarget, ControlEffectTarget, CoroutineTarget>;
+    OpenWriteTarget, OpenVariablesTarget, VariableAddressTarget,
+    CloseVariablesTarget, EndValueTarget, CopyValueTarget, ControlEffectTarget,
+    CoroutineTarget>;
 
 // How a call to `target` ends, which is a property of the callee and never of
 // what it happens to do. The design's own code can depart, wherever it stands
@@ -419,7 +438,7 @@ struct UnionInstr {
 // read of a member that is not live answers with, and whether an update settles
 // which member is live, follow from the aggregate's type, the same way the
 // entry realizing a coordinate step does.
-struct Part {
+struct Component {
   base::ComponentIndex index;
 };
 
@@ -437,7 +456,8 @@ struct ContainerSlice {
   std::vector<Operand> operands;
 };
 
-using AggregateSelector = std::variant<Part, ContainerElement, ContainerSlice>;
+using AggregateSelector =
+    std::variant<Component, ContainerElement, ContainerSlice>;
 
 // Extracts a subvalue of an aggregate value, named by `selector`: a part that
 // is a view of the whole it belongs to rather than storage of its own -- a bit
@@ -524,14 +544,14 @@ struct ElementProjection {
 
 // Selects one component of whatever product the projection has reached, by its
 // declaration-order position. A component is storage of its own (LRM 7.2).
-struct PartProjection {
+struct ComponentProjection {
   base::ComponentIndex index;
 };
 
 // One step of a place's projection chain: each names storage reached from the
 // storage the chain has arrived at, never a byte offset from it.
 using Projection = std::variant<
-    DerefProjection, MemberProjection, ElementProjection, PartProjection>;
+    DerefProjection, MemberProjection, ElementProjection, ComponentProjection>;
 
 // Storage named by logical identity: a base plus a projection chain. The base
 // is either a place local, whose storage the chain starts at, or a

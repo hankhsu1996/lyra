@@ -13,6 +13,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/position.hpp"
 #include "lyra/value/runtime_value.hpp"
@@ -104,14 +105,22 @@ auto RuntimeUnpackedArray::ElementAt(std::size_t position) const
   return data_[position];
 }
 
-auto RuntimeUnpackedArray::ElementRef(const PackedArray& position)
-    -> RuntimeValue& {
+auto RuntimeUnpackedArray::ElementRef(
+    const PackedArray& position, Formation& formed) -> RuntimeValue& {
   const std::optional<std::size_t> ordinal =
       ElementOrdinal(position, data_.size());
   if (!ordinal) {
+    formed = Formation::kNowhere;
     return DiscardTarget(*element_default_);
   }
+  formed = Formation::kExisting;
   return data_[*ordinal];
+}
+
+auto RuntimeUnpackedArray::ElementRef(const PackedArray& position)
+    -> RuntimeValue& {
+  Formation formed{};
+  return ElementRef(position, formed);
 }
 
 auto RuntimeUnpackedArray::FromString(
@@ -193,10 +202,10 @@ auto RuntimeUnpackedArray::Slice(const PackedArray& start, std::int64_t count)
           data_, *element_default_, ReadPosition(start), SliceCount(count)));
 }
 
-void RuntimeUnpackedArray::AssignSlice(
+auto RuntimeUnpackedArray::AssignSlice(
     const PackedArray& start, std::int64_t count,
-    const RuntimeUnpackedArray& replacement) {
-  detail::ArraySliceScatter(
+    const RuntimeUnpackedArray& replacement) -> bool {
+  return detail::ArraySliceScatter(
       data_, ReadPosition(start), SliceCount(count), replacement.data_);
 }
 

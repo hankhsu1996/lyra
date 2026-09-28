@@ -753,23 +753,23 @@ struct Expr {
   return Expr{.data = DerefExpr{.pointer = place}, .type = referent_type};
 }
 
-// `subject.index` -- the part a value holds at a declaration-order position: a
-// component of a product, or the member an active-member value holds. One
-// operation for both, because what separates them -- whether every part is live
-// at once, and what a read of one that is not answers with -- is the value's
-// own semantics and reaches the call through the domain its type names.
-[[nodiscard]] inline auto MakePartAccessExpr(
-    ExprId subject, base::ComponentIndex index, TypeId part) -> Expr {
+// `subject.index` -- the component a value holds at a declaration-order
+// position: one of a product's, or the member an active-member value holds. One
+// operation for both, because what separates them -- whether every component is
+// live at once, and what a read of one that is not answers with -- is the
+// value's own semantics and reaches the call through the domain its type names.
+[[nodiscard]] inline auto MakeComponentExpr(
+    ExprId subject, base::ComponentIndex index, TypeId component) -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee =
                   Direct{
-                      .target = support::BuiltinFn::kPart,
+                      .target = support::BuiltinFn::kComponent,
                       .receiver = subject,
                       .position = index},
               .arguments = {}},
-      .type = part};
+      .type = component};
 }
 
 // Whether the member an active-member value holds is the one at `index`. Only a

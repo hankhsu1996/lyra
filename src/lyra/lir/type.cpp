@@ -226,7 +226,8 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ObservableType& t) { Combine(seed, t.value); },
           [&](const SampledHistoryType& t) { Combine(seed, t.value); },
           [](const EvaluationAttemptsType&) {},
-          [&](const OpenWriteType& t) { Combine(seed, t.value); }});
+          [&](const OpenWriteType& t) { Combine(seed, t.value); },
+          [&](const DesignationType& t) { Combine(seed, t.value); }});
   return seed;
 }
 
@@ -284,7 +285,8 @@ auto Type::KindName() const -> std::string_view {
           [](const EvaluationAttemptsType&) {
             return "concurrent assertion attempts";
           },
-          [](const OpenWriteType&) { return "open write"; }});
+          [](const OpenWriteType&) { return "open write"; },
+          [](const DesignationType&) { return "designation"; }});
 }
 
 auto Type::Declaration() const -> std::optional<TypeDeclaration> {
@@ -346,6 +348,7 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const SampledHistoryType&) { return names_none(); },
           [&](const EvaluationAttemptsType&) { return names_none(); },
           [&](const OpenWriteType&) { return names_none(); },
+          [&](const DesignationType&) { return names_none(); },
           [&](const EventType&) { return names_none(); },
           [&](const RuntimeEffectsType&) { return names_none(); },
           [&](const FilesType&) { return names_none(); },
@@ -414,6 +417,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const SampledHistoryType&) -> Element { return std::nullopt; },
           [](const EvaluationAttemptsType&) -> Element { return std::nullopt; },
           [](const OpenWriteType&) -> Element { return std::nullopt; },
+          [](const DesignationType&) -> Element { return std::nullopt; },
 
           // These refer to a value living elsewhere rather than holding one,
           // so a container reached through one is reached by dereferencing it
@@ -474,9 +478,6 @@ auto Type::DerefTarget() const -> std::optional<TypeId> {
   }
   if (const auto* driver = As<DriverType>()) {
     return driver->value;
-  }
-  if (const auto* write = As<OpenWriteType>()) {
-    return write->value;
   }
   return Pointee();
 }
@@ -648,9 +649,13 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
           // made, so nothing is left for its maker to hold.
           [](const CoroutineType&) -> Held { return std::nullopt; },
           // Held by the writer for as long as the write lasts; ending it is
-          // what reports the write.
+          // what reports the write. A part designated within it is built by
+          // the step that reaches it and borrows the write.
           [](const OpenWriteType&) -> Held {
             return LibraryObject::kOpenWrite;
+          },
+          [](const DesignationType&) -> Held {
+            return LibraryObject::kDesignation;
           }});
 }
 

@@ -60,11 +60,11 @@ auto SubjectMember(
   };
   if (const auto* s = ty.As<hir::UnpackedStructType>()) {
     return block.exprs.Add(
-        mir::MakePartAccessExpr(subject, index, member_type(s->fields)));
+        mir::MakeComponentExpr(subject, index, member_type(s->fields)));
   }
   if (const auto* u = ty.As<hir::UnpackedUnionType>()) {
     return block.exprs.Add(
-        mir::MakePartAccessExpr(subject, index, member_type(u->fields)));
+        mir::MakeComponentExpr(subject, index, member_type(u->fields)));
   }
   const PackedProjection projection = ProjectPackedAggregate(owner, ty);
   if (index.value >= projection.members.size()) {

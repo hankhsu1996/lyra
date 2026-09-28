@@ -43,12 +43,12 @@ class RuntimeTaggedUnion {
   // Reads member `index`. LRM 11.9: a read whose tag does not match the current
   // one is a run-time error, not the component default an untagged union
   // returns.
-  [[nodiscard]] auto Member(std::size_t index) const -> RuntimeValue;
+  [[nodiscard]] auto Component(std::size_t index) const -> RuntimeValue;
 
   // Replaces the payload of member `index`. LRM 11.9: a write whose tag does
   // not match the current one is a run-time error; re-tagging goes through a
   // whole-value build, never here.
-  void SetMember(std::size_t index, RuntimeValue value);
+  void SetComponent(std::size_t index, RuntimeValue value);
 
   // LRM 11.4.5 `==` / `!=` (Any data type): equal only when the same member is
   // active and its values compare equal.

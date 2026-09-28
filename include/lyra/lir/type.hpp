@@ -437,14 +437,24 @@ struct EvaluationAttemptsType {
 
 // A write in progress into the storage a capability wrapper stands for, whose
 // contents are values of `value` (LRM 11.5.1). It is an object the writer holds
-// and owes the end of: dereferencing it reaches those contents, which the
-// write's parts land in, and ending it -- with the full-expression, or on any
-// way out of it -- is the end of the write, when the wrapper learns once what
-// the write did (LRM 4.3).
+// and owes the end of, and it names no place itself: the whole of those
+// contents is designated within it. Ending it -- with the full-expression, or
+// on any way out of it -- is the end of the write, when the wrapper learns once
+// what the write did (LRM 4.3).
 struct OpenWriteType {
   TypeId value;
 
   auto operator==(const OpenWriteType&) const -> bool = default;
+};
+
+// A place holding a value of `value`, designated within a write in progress --
+// the whole of what the write was opened on, or a part of it: the write and
+// where the place lies. It borrows the write, so ending it does nothing; a
+// further step is taken on it, and landing it is where the write lands.
+struct DesignationType {
+  TypeId value;
+
+  auto operator==(const DesignationType&) const -> bool = default;
 };
 
 // The declaration a type names: a class this unit compiles, an object or a
@@ -479,7 +489,8 @@ class Type {
       DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
       ManagedRefType, VectorType, TupleType, UnpackedStructType, UnionType,
       TaggedUnionType, ResolvedType, DriverType, ObservableType,
-      SampledHistoryType, EvaluationAttemptsType, OpenWriteType>;
+      SampledHistoryType, EvaluationAttemptsType, OpenWriteType,
+      DesignationType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

@@ -13,6 +13,7 @@
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/position.hpp"
@@ -168,13 +169,21 @@ class DynamicArray {
     data_.clear();
   }
 
-  // LRM 7.4.5: an invalid-index write lands on the shield's discard target.
-  [[nodiscard]] auto ElementRef(const PackedArray& position) -> T& {
+  // LRM 7.4.5: an invalid-index write lands on the shield's discard target,
+  // which is no element of the array.
+  [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
+      -> T& {
     const auto ordinal = ElementOrdinal(position, data_.size());
     if (!ordinal) {
+      formed = Formation::kNowhere;
       return shield_.DiscardTarget();
     }
+    formed = Formation::kExisting;
     return data_[*ordinal];
+  }
+  [[nodiscard]] auto ElementRef(const PackedArray& position) -> T& {
+    Formation formed{};
+    return ElementRef(position, formed);
   }
 
   // LRM 7.4.5: an invalid-index read returns the element default (LRM Table

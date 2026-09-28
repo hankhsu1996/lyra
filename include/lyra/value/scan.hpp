@@ -46,11 +46,12 @@ auto ScanInto(
   return [&]<std::size_t... I>(std::index_sequence<I...>) {
     Tuple<PackedArray, PackedArray, Targets...> completion{
         PackedArray::Integer(0), PackedArray::Int(0),
-        std::move(prototypes).template Get<I>()...};
+        std::move(prototypes).template Component<I>()...};
     const std::array<ScanTarget, sizeof...(Targets)> targets{
-        MakeScanTarget(completion.template Get<I + 2>())...};
-    completion.template Get<0>() = ScanImpl(
-        input, format, null_byte, completion.template Get<1>(), targets);
+        MakeScanTarget(completion.template ComponentRef<I + 2>())...};
+    completion.template ComponentRef<0>() = ScanImpl(
+        input, format, null_byte, completion.template ComponentRef<1>(),
+        targets);
     return completion;
   }(std::index_sequence_for<Targets...>{});
 }

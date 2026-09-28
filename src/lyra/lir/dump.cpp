@@ -331,6 +331,9 @@ class LirDumper {
             [](const ValueCellTarget& f) -> std::string {
               return std::string{ValueCellOpName(f.op)};
             },
+            [](const OpenWriteTarget& w) -> std::string {
+              return std::string{OpenWriteOpName(w.op)};
+            },
             [](const OpenVariablesTarget&) -> std::string {
               return "variables_open";
             },
@@ -378,8 +381,8 @@ class LirDumper {
                 out +=
                     std::format(".element({})", FormatOperands(e.coordinates));
               },
-              [&](const PartProjection& p) {
-                out += std::format(".part({})", p.index.value);
+              [&](const ComponentProjection& c) {
+                out += std::format(".component({})", c.index.value);
               }},
           step);
     }
@@ -390,8 +393,8 @@ class LirDumper {
       -> std::string {
     return std::visit(
         Overloaded{
-            [](const Part& p) -> std::string {
-              return std::format("part {}", p.index.value);
+            [](const Component& c) -> std::string {
+              return std::format("component {}", c.index.value);
             },
             [&](const ContainerElement& e) -> std::string {
               return std::format("element({})", FormatOperands(e.operands));

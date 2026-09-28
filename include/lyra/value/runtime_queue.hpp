@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -89,7 +90,10 @@ class RuntimeQueue {
   // position one past the last appends an element there first, trimmed to the
   // bound, and every other position naming none -- negative, past the append
   // position, or unknown -- yields storage nothing reads, so a write there is
-  // discarded.
+  // discarded. `formed` says which of the three it was; an append the bound
+  // trims away leaves the queue as it was.
+  [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
+      -> RuntimeValue&;
   [[nodiscard]] auto ElementRef(const PackedArray& position) -> RuntimeValue&;
 
   // The element at storage position `position`, counted from the first in the

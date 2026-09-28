@@ -315,7 +315,7 @@ auto Renderer::UnpackedMember(
   mir::Block& block = *frame.current_block;
   const mir::ExprId subject = Read(frame, value, mir_type);
   const mir::ExprId member = block.exprs.Add(
-      mir::MakePartAccessExpr(
+      mir::MakeComponentExpr(
           subject, index, Owner().TranslateType(field.type)));
   return Named(frame, field.name, Render(frame, member, field.type));
 }
@@ -633,12 +633,12 @@ auto Renderer::TraversalStep(
   body.AppendStmt(mir::LocalDeclStmt{.target = visit, .init = visited});
 
   const mir::ExprId index = body.exprs.Add(
-      mir::MakePartAccessExpr(
+      mir::MakeComponentExpr(
           Read(inner, visit, visit_type), kVisitedIndex, key_type));
   body.AppendStmt(mir::ExprStmt{.expr = Assign(inner, key, key_type, index)});
 
   const mir::ExprId more = body.exprs.Add(
-      mir::MakePartAccessExpr(
+      mir::MakeComponentExpr(
           Read(inner, visit, visit_type), kCompletionResult, IntType()));
   return frame.current_block->exprs.Add(step.Build(more));
 }

@@ -103,7 +103,6 @@ enum class RuntimeOp : std::uint8_t {
   kObjectDeref,
   kMakePromotedScope,
   kPromotedScopeDeref,
-  kOpenWriteStorage,
   kMethod,
   kClassFindProperty,
   kClassFindBehavior,
@@ -111,9 +110,8 @@ enum class RuntimeOp : std::uint8_t {
   kToBool,
   kValueBox,
   kMake,
-  kExtract,
-  kUpdate,
   kTagMatches,
+  kWithComponent,
   kWithElement,
   kWithSlice,
   kDefault,
@@ -264,6 +262,8 @@ auto RuntimeSymbol(support::ValueDomain domain, lir::UnaryOp op) -> std::string;
 auto RuntimeSymbol(lir::ControlEffectTarget::Op op) -> std::string;
 auto RuntimeSymbol(lir::CoroutineTarget::Op op) -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
+    -> std::string;
+auto RuntimeSymbol(support::ValueDomain domain, lir::OpenWriteTarget::Op op)
     -> std::string;
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, support::BuiltinFn fn)

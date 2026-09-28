@@ -292,12 +292,13 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [&](const mir::DriverType& d) -> lir::Type {
             return lir::Type{lir::DriverType{.value = TranslateType(d.value)}};
           },
-          // Which wrapper was opened is the runtime object's to remember, so
-          // what crosses is the value the write lands in.
           [&](const mir::OpenWriteType& w) -> lir::Type {
-            return lir::Type{lir::OpenWriteType{
-                .value = TranslateType(
-                    mir_->types.Get(w.wrapper).WrappedValueType())}};
+            return lir::Type{
+                lir::OpenWriteType{.value = TranslateType(w.value)}};
+          },
+          [&](const mir::DesignationType& d) -> lir::Type {
+            return lir::Type{
+                lir::DesignationType{.value = TranslateType(d.value)}};
           },
           [&](const mir::ObservableType& ob) -> lir::Type {
             return lir::Type{

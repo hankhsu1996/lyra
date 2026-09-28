@@ -331,13 +331,20 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::DriverType& d) {
             Write(out, "lyra::runtime::Driver<", type(d.value), ">");
           },
-          // A write is dereferenced in the expression that opens it and ends
-          // with that expression, so nothing ever holds one under a name.
+          // A write, and a place designated within it, live and end within
+          // the expression that opens the write, so nothing ever holds one
+          // under a name.
           [](const mir::OpenWriteType&) {
             throw InternalError(
-                "backend::cpp: a write in progress is dereferenced where it is "
-                "opened, so nothing names its type -- please report this as a "
-                "bug");
+                "backend::cpp: a write in progress ends with the expression "
+                "that opens it, so nothing names its type -- please report "
+                "this as a bug");
+          },
+          [](const mir::DesignationType&) {
+            throw InternalError(
+                "backend::cpp: a place designated within a write ends with "
+                "the expression that opens the write, so nothing names its "
+                "type -- please report this as a bug");
           },
           [&](const mir::SampledHistoryType& h) {
             Write(out, "lyra::runtime::SampledHistory<", type(h.value), ">");
@@ -377,11 +384,13 @@ auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::RefType&) -> PlaceAccess {
             return OpenedByDereference{};
           },
-          // A write opened on a wrapper is dereferenced like a pointer, which
-          // reaches the contents the write lands in.
-          [&](const mir::OpenWriteType&) -> PlaceAccess {
+          // A place designated within a write is dereferenced like a pointer,
+          // which reaches it, where the write lands. The write itself names no
+          // place.
+          [&](const mir::DesignationType&) -> PlaceAccess {
             return OpenedByDereference{};
           },
+          [&](const mir::OpenWriteType&) { return opens_no_storage(); },
           [&](const mir::ManagedRefType& m) -> PlaceAccess {
             return OpenedThroughView{.pointee = m.pointee};
           },
@@ -612,6 +621,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::ResolvedType& t) { by_naming_itself(t); },
           [&](const mir::DriverType& t) { by_naming_itself(t); },
           [&](const mir::OpenWriteType& t) { by_naming_itself(t); },
+          [&](const mir::DesignationType& t) { by_naming_itself(t); },
           [&](const mir::SampledHistoryType& t) { by_naming_itself(t); },
           [&](const mir::EvaluationAttemptsType& t) { by_naming_itself(t); },
           [&](const mir::ClosureType& t) { by_naming_itself(t); },
