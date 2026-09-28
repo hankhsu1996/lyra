@@ -8,6 +8,7 @@
 #include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
@@ -17,6 +18,7 @@
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
+#include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -181,6 +183,13 @@ auto LowerMemberAccessExpr(
   auto base_or = lowerer.LowerExpr(sel.value(), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const hir::ExprId base_id = frame.Exprs().Add(*std::move(base_or));
+  if (const auto* handle_type =
+          sel.value()
+              .type->getCanonicalType()
+              .as_if<slang::ast::VirtualInterfaceType>()) {
+    return LowerVirtualInterfaceMember(
+        lowerer.Owner(), frame, base_id, *handle_type, sel.member, span);
+  }
   auto type_id = lowerer.Owner().InternType(*sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   if (sel.member.kind == slang::ast::SymbolKind::Field) {

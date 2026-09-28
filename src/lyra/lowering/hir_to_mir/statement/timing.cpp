@@ -143,8 +143,7 @@ auto BuildImplicitEventWaitStmt(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
     const hir::ImplicitEventControl& ie) -> mir::Stmt {
   return BuildValueChangeWaitStmt(
-      block, frame, process.EnclosingScopeLowerer(), ie.sensitivity_list,
-      support::BuiltinFn::kWaitAny);
+      block, frame, process, ie.sensitivity_list, support::BuiltinFn::kWaitAny);
 }
 
 // LRM 9.4.1 `#N`. The wait lowers to a coroutine-suspending free-function
@@ -227,8 +226,8 @@ auto BuildTriggerCallExpr(
 
 template <ExprLowerer Lowerer>
 auto BuildEventWaitStmt(
-    Lowerer& lowerer, const StructuralScopeLowerer& scope, WalkFrame frame,
-    mir::Block& block, const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
+    Lowerer& lowerer, WalkFrame frame, mir::Block& block,
+    const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
   std::vector<ObservedLeaf> leaves;
   for (const hir::EventTrigger& trigger : ec.triggers) {
     auto observation = BuildObservationLocal(lowerer, frame, block, trigger);
@@ -241,15 +240,15 @@ auto BuildEventWaitStmt(
     }
   }
   return BuildWaitStmt(
-      block, frame, scope, leaves, support::BuiltinFn::kWaitAny);
+      block, frame, lowerer, leaves, support::BuiltinFn::kWaitAny);
 }
 
 template auto BuildEventWaitStmt(
-    ProcessLowerer&, const StructuralScopeLowerer&, WalkFrame, mir::Block&,
-    const hir::EventControl&) -> diag::Result<mir::Stmt>;
+    ProcessLowerer&, WalkFrame, mir::Block&, const hir::EventControl&)
+    -> diag::Result<mir::Stmt>;
 template auto BuildEventWaitStmt(
-    const StructuralScopeLowerer&, const StructuralScopeLowerer&, WalkFrame,
-    mir::Block&, const hir::EventControl&) -> diag::Result<mir::Stmt>;
+    const StructuralScopeLowerer&, WalkFrame, mir::Block&,
+    const hir::EventControl&) -> diag::Result<mir::Stmt>;
 
 auto BuildNamedEventWaitStmt(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
@@ -262,8 +261,7 @@ auto BuildNamedEventWaitStmt(
   const std::array<ObservedLeaf, 1> leaves{
       ObservedLeaf{.entry = nec.event, .observation = *observation}};
   return BuildWaitStmt(
-      block, frame, process.EnclosingScopeLowerer(), leaves,
-      support::BuiltinFn::kWaitAny);
+      block, frame, process, leaves, support::BuiltinFn::kWaitAny);
 }
 
 auto BuildAnyEventWaitStmt(
@@ -272,8 +270,7 @@ auto BuildAnyEventWaitStmt(
   return std::visit(
       Overloaded{
           [&](const hir::EventControl& ec) {
-            return BuildEventWaitStmt(
-                process, process.EnclosingScopeLowerer(), frame, block, ec);
+            return BuildEventWaitStmt(process, frame, block, ec);
           },
           [&](const hir::NamedEventControl& nec) {
             return BuildNamedEventWaitStmt(process, frame, block, nec);
@@ -293,9 +290,7 @@ auto LowerTimedStmt(
                   return BuildDelayWaitStmt(process, inner, block, d);
                 },
                 [&](const hir::EventControl& ec) {
-                  return BuildEventWaitStmt(
-                      process, process.EnclosingScopeLowerer(), inner, block,
-                      ec);
+                  return BuildEventWaitStmt(process, inner, block, ec);
                 },
                 [&](const hir::NamedEventControl& nec) {
                   return BuildNamedEventWaitStmt(process, inner, block, nec);
@@ -390,7 +385,7 @@ auto LowerWaitStmt(
   // that is started after being stopped, and why it is not the wait an event
   // control makes over the same reads.
   inner_block.AppendStmt(BuildValueChangeWaitStmt(
-      inner_block, inner_frame, process.EnclosingScopeLowerer(), reads,
+      inner_block, inner_frame, process, reads,
       support::BuiltinFn::kWaitUntil));
 
   const mir::BlockId inner_scope_id =

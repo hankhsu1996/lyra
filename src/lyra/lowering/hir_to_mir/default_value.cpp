@@ -597,6 +597,7 @@ auto BuildDefaultValueFromHir(
             return type_default(t);
           },
           [&](const hir::UnitObjectType& t) { return type_default(t); },
+          [&](const hir::VirtualInterfaceType& t) { return type_default(t); },
           [&](const hir::OpaqueScopeType& t) { return type_default(t); },
           [&](const hir::NullType& t) { return type_default(t); },
           [&](const hir::VoidType& t) { return type_default(t); },

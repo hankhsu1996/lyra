@@ -157,6 +157,12 @@ under each item, and the conformance gaps at the end.
         other value domain does.
   - [ ] A value-change event control on any other operand whose change is not watched (LRM 9.4.2):
         an operand that is no value at all, and one whose value nothing yet compares.
+  - [ ] A wait on a property of a class object -- reached through a handle, the standard's own
+        `@(p.status)`, or named bare inside a method -- by an event control or `wait (cond)` (LRM
+        9.4.2). Nothing publishes a write to a property yet, so such a wait is refused rather than
+        left waiting for an event that never comes. `../decisions/object-is-an-event-source.md`
+        holds the model it waits on. A variable reached through a virtual interface is not this: it
+        is an interface's variable, watched in the instance held when the wait begins.
   - [ ] A nested timing control inside an event-list entry: only signal events compose in a list
         today.
 - [x] T6 -- The non-blocking event trigger `->> e` (LRM 15.5.1), with and without a control. The

@@ -13,8 +13,6 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-class StructuralScopeLowerer;
-
 // One leaf of a wait: the storage watched, and what decides whether reaching it
 // is an event for the wait. The leaves watching for one event name one
 // observation between them, since what is being watched for is one thing.
@@ -23,15 +21,20 @@ struct ObservedLeaf {
   mir::LocalId observation;
 };
 
+// Each builder below is templated over the lowering the wait is built in -- a
+// procedural body's or a scope's own. Only a leaf that is a route asks it for
+// the scope that route is counted from, so a body sitting inside no scope, a
+// class method of a package, builds a wait over the leaves it can have.
+
 // The observable storage one leaf names, as the place an operation on the cell
 // acts through. A leaf reaches either a cell of this design through its route,
 // or the one program-global cell a unit's namespace owns (LRM 26.2); the two
 // are told apart here rather than by everything that needs to name what a leaf
 // watches.
+template <typename Lowerer>
 [[nodiscard]] auto BuildObservableCellExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    const StructuralScopeLowerer& lowerer, const hir::SensitivityEntry& entry)
-    -> mir::ExprId;
+    Lowerer& lowerer, const hir::SensitivityEntry& entry) -> mir::ExprId;
 
 // Materialises an observation into a local of `block`, so every leaf watching
 // for one event names one value rather than one each. `entry` says which of the
@@ -59,18 +62,19 @@ struct ObservedLeaf {
 // leaves this is -- one for the next occurrence, or one for a condition the
 // body re-tests -- since the two ask the same leaves and part company only
 // where a stopped process is started again (LRM 9.7).
+template <typename Lowerer>
 auto BuildWaitStmt(
-    mir::Block& target_block, const WalkFrame& frame,
-    const StructuralScopeLowerer& lowerer, std::span<const ObservedLeaf> leaves,
-    support::BuiltinFn entry) -> mir::Stmt;
+    mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
+    std::span<const ObservedLeaf> leaves, support::BuiltinFn entry)
+    -> mir::Stmt;
 
 // The wait of a construct the standard makes sensitive to the variables it
 // reads, where a change to any of them is the event (LRM 9.2.2.2.1). Being
 // reached is the whole condition, so its leaves share the one observation that
 // says so.
+template <typename Lowerer>
 auto BuildValueChangeWaitStmt(
-    mir::Block& target_block, const WalkFrame& frame,
-    const StructuralScopeLowerer& lowerer,
+    mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list,
     support::BuiltinFn entry) -> mir::Stmt;
 

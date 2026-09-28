@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/support/event_edge.hpp"
 
@@ -18,11 +19,17 @@ struct DelayControl {
   auto operator==(const DelayControl&) const -> bool = default;
 };
 
+// The cell a wait's leaf watches: one elaboration sealed, or a variable a
+// virtual interface reaches in the instance it holds when the wait begins.
+using SensitivityTarget = std::variant<
+    RoutedValueRef, ExternalUnitValueRef, StaticPropertyRef,
+    InterfaceMemberAccessExpr>;
+
 // One leaf entry of a wait's read set. Identity-only: which cell, and the
 // flat-bit footprint of its packed encoding the leaf reads. An absent footprint
 // means the whole signal is read.
 struct SensitivityEntry {
-  ValueTarget ref;
+  SensitivityTarget ref;
   std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
 
   auto operator==(const SensitivityEntry&) const -> bool = default;

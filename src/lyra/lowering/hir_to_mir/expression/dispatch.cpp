@@ -110,6 +110,15 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return LowerHirClassPropertyAccessExpr(
                 lowerer, frame, sel, result_type);
           },
+          [&](const hir::InterfaceMemberAccessExpr& sel)
+              -> diag::Result<mir::Expr> {
+            return LowerHirInterfaceMemberAccessExpr(lowerer, frame, sel);
+          },
+          [&](const hir::InterfaceInstanceAccessExpr& sel)
+              -> diag::Result<mir::Expr> {
+            return LowerHirInterfaceInstanceAccessExpr(
+                lowerer, frame, sel, result_type);
+          },
           [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
             return LowerHirConcatExpr(
                 lowerer, frame, c, expr.type, result_type);
@@ -251,6 +260,11 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return as_place(LowerHirClassPropertyAccessExprLhs(
                 lowerer, frame, sel, result_type));
           },
+          [&](const hir::InterfaceMemberAccessExpr& sel)
+              -> diag::Result<WriteTarget> {
+            return as_place(
+                LowerHirInterfaceMemberAccessExpr(lowerer, frame, sel));
+          },
           // A destructuring target is written as a whole: the join stands for
           // the run of destinations the source spelled, and each run reaches
           // its own place from inside it.
@@ -281,6 +295,9 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::IncDecExpr&) { return not_a_write_target(); },
           [&](const hir::CallExpr&) { return not_a_write_target(); },
           [&](const hir::ConversionExpr&) { return not_a_write_target(); },
+          [&](const hir::InterfaceInstanceAccessExpr&) {
+            return not_a_write_target();
+          },
           [&](const hir::ValueRangeExpr&) { return not_a_write_target(); },
           [&](const hir::InsideExpr&) { return not_a_write_target(); },
           [&](const hir::ReplicationExpr&) { return not_a_write_target(); },

@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_target.hpp"
@@ -53,6 +54,25 @@ struct ViewComputedValue {
 // itself is on no signature: a referrer never asks for it, it asks what the
 // name is, and that is this.
 using ViewDefinedName = std::variant<ViewDefinedPlace, ViewComputedValue>;
+
+// What a change to a name a view defines is a change to, and so what a process
+// waiting on the name waits on: a place is watched at the members it
+// designates, and a computed value at every member its expression reads.
+[[nodiscard]] inline auto WatchedMembers(const ViewDefinedName& meaning)
+    -> std::vector<PublishedMemberId> {
+  return std::visit(
+      Overloaded{
+          [](const ViewDefinedPlace& place) {
+            std::vector<PublishedMemberId> members;
+            members.reserve(place.parts.size());
+            for (const MemberProjection& part : place.parts) {
+              members.push_back(part.member);
+            }
+            return members;
+          },
+          [](const ViewComputedValue& computed) { return computed.observes; }},
+      meaning);
+}
 
 // One port identifier a modport defined for itself (LRM 25.5.4). An identifier
 // the view wrote no expression for is absent here: that one is the interface

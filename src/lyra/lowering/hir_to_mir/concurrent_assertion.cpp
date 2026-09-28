@@ -604,8 +604,7 @@ auto LowerProcess(
   // The clock's own expression lives in the assertion's body, beside the
   // Booleans the property reads, so it is that body's lowering that resolves
   // it.
-  auto wait =
-      BuildEventWaitStmt(action, lowerer, body_frame, body_block, clock);
+  auto wait = BuildEventWaitStmt(action, body_frame, body_block, clock);
   if (!wait) return std::unexpected(std::move(wait.error()));
   body_block.AppendStmt(*std::move(wait));
 

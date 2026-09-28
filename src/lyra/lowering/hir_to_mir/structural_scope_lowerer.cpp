@@ -43,8 +43,8 @@
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -740,63 +740,15 @@ auto StepThroughInterfacePort(
   return RouteReceiver{.expr = object.expr, .target = ExternalObject{}};
 }
 
-// A member another unit published, reached the way that unit offers it: the
-// behavior of the promise that answers with the storage behind the member,
-// dispatched on the object the route has descended to. Which behavior it is is
-// counted out of the order the promise published its members in, and the
-// storage it answers with is the only thing this side learns about the object.
-auto ReadPublishedMember(
-    mir::CompilationUnit& unit, mir::Block& block,
-    const RouteReceiver& receiver, hir::PublishedMemberId member)
-    -> mir::ExprId {
-  const mir::TypeId pointee =
-      unit.types.Get(block.exprs.Get(receiver.expr).type)
-          .Get<mir::PointerType>()
-          .pointee;
-  const mir::ExternalUnitObject& promised = unit.external_unit_objects.Get(
-      unit.types.Get(pointee).Get<mir::ExternalUnitObjectType>().object);
-  const mir::FieldId slot = UnitLowerer::TranslatePublishedMember(member);
-  const mir::PromisedField& field = promised.fields.Get(slot);
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Virtual{
-                          .receiver = receiver.expr,
-                          .slot =
-                              mir::ExternalVirtualSlot{
-                                  .unit_name = promised.unit_name,
-                                  .class_name = promised.class_name,
-                                  .ordinal = mir::BehaviorOrdinal{slot.value}}},
-                  .arguments = {}},
-          .type = unit.types.Intern(
-              mir::Type{mir::PointerType{
-                  .pointee = field.type,
-                  .ownership = mir::PointerOwnership::kBorrowed}})});
-}
-
-// Descends one step onto a member another unit published whose type makes it an
-// object of a third unit (LRM 25.3, 25.10): the member access at the position
-// that unit's signature gave it, then one index per coordinate the step names.
+// Descends one step onto an instance another unit published (LRM 25.3, 25.10).
+// What it reaches belongs to that unit, so the route has left this artifact.
 auto StepToSignatureMember(
     UnitLowerer& unit_lowerer, mir::Block& block, const RouteReceiver& receiver,
     const hir::SignatureMemberStep& step) -> RouteReceiver {
-  const mir::ExprId storage =
-      ReadPublishedMember(unit_lowerer.Unit(), block, receiver, step.member);
-  const mir::TypeId reached = unit_lowerer.Unit()
-                                  .types.Get(block.exprs.Get(storage).type)
-                                  .Get<mir::PointerType>()
-                                  .pointee;
-  const ReachedObject object = IndexCoordinates(
-      unit_lowerer, block,
-      ReachedObject{
-          .expr = block.exprs.Add(
-              mir::Expr{
-                  .data = mir::DerefExpr{.pointer = storage}, .type = reached}),
-          .type = reached},
-      step.indices);
-  return RouteReceiver{.expr = object.expr, .target = ExternalObject{}};
+  return RouteReceiver{
+      .expr =
+          StepThroughPublishedMember(unit_lowerer, block, receiver.expr, step),
+      .target = ExternalObject{}};
 }
 
 // Projects the borrowed-pointer value the slot takes out of a typed receiver:
@@ -850,7 +802,7 @@ auto MaterializeLeaf(
           // object, whose pointer the step before it produced.
           [&](const hir::SignatureMemberLeaf& l) {
             return ReadPublishedMember(
-                unit_lowerer.Unit(), block, receiver, l.member);
+                unit_lowerer.Unit(), block, receiver.expr, l.member);
           },
           [&](const hir::OpaqueLeaf& l) {
             const mir::ExprId raw = block.exprs.Add(
@@ -3425,7 +3377,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // scope cannot order itself against.
   for (const hir::SensitivityEntry& sampled : hir_scope.sampled_cells) {
     const mir::ExprId cell = BuildObservableCellExpr(
-        activate_block, activate_frame, unit_lowerer.Unit(), *this, sampled);
+        activate_block, activate_frame, unit_lowerer.Unit(),
+        std::as_const(*this), sampled);
     activate_block.AppendStmt(
         mir::ExprStmt{
             .expr = activate_block.exprs.Add(

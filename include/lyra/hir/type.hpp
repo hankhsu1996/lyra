@@ -268,6 +268,19 @@ struct UnitObjectType {
   auto operator==(const UnitObjectType&) const -> bool = default;
 };
 
+// LRM 25.9 virtual interface: a variable's type that holds an instance of the
+// interface unit `unit_name`, or null. The unit is fixed by the type, which
+// includes the interface's parameters, so what an access through it reaches is
+// counted out of that unit's signature where this unit compiles; only the
+// instance is chosen while the simulation runs. A selected modport is not part
+// of it: which names a view offers is settled where an access is resolved, and
+// which assignments it admits is settled by the front end.
+struct VirtualInterfaceType {
+  std::string unit_name;
+
+  auto operator==(const VirtualInterfaceType&) const -> bool = default;
+};
+
 // A scope on the object tree that this unit holds no promise about: what a
 // hierarchical name lands on when the declaring unit published nothing to reach
 // through (LRM 23.6). It names no unit, because naming one is what a consumed
@@ -301,7 +314,8 @@ class Type {
       DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
       StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
       ClassHandleType, OpaqueObjectHandleType, ImportedClassHandleType,
-      UnitObjectType, OpaqueScopeType, NullType, VoidType>;
+      UnitObjectType, VirtualInterfaceType, OpaqueScopeType, NullType,
+      VoidType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

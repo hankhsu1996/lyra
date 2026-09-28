@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -118,6 +119,14 @@ auto LowerRoutedValueRefExpr(
     const hir::RoutedValueRef& reference) -> mir::Expr {
   return EndpointCellExpr(
       frame, lowerer.Owner().Unit(), BindEndpoint(lowerer, frame, reference));
+}
+
+auto LowerRoutedObjectRefExpr(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const hir::RoutedObjectRef& reference, mir::TypeId type) -> mir::Expr {
+  return InterfaceValueOf(
+      lowerer.Owner().Unit(), *frame.current_block,
+      lowerer.RouteEnd(frame, reference.id), type);
 }
 
 // The pattern that declares the identifier is its binding origin, so the read
@@ -317,6 +326,10 @@ auto LowerHirPrimaryExprProc(
             return LowerRoutedValueRefExpr(
                 process.EnclosingScopeLowerer(), frame, c);
           },
+          [&](const hir::RoutedObjectRef& o) -> mir::Expr {
+            return LowerRoutedObjectRefExpr(
+                process.EnclosingScopeLowerer(), frame, o, result_type);
+          },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);
           },
@@ -369,6 +382,9 @@ auto LowerHirPrimaryExprStructural(
           },
           [&](const hir::RoutedValueRef& c) -> mir::Expr {
             return LowerRoutedValueRefExpr(lowerer, frame, c);
+          },
+          [&](const hir::RoutedObjectRef& o) -> mir::Expr {
+            return LowerRoutedObjectRefExpr(lowerer, frame, o, result_type);
           },
           [&](const hir::IterationBindingRef& r) -> mir::Expr {
             return LowerIterationBindingRefExpr(r, frame);

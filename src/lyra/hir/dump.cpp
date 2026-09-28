@@ -459,6 +459,9 @@ class HirDumper {
             [](const UnitObjectType& u) -> std::string {
               return std::format("UnitObjectType(unit={})", u.unit_name);
             },
+            [](const VirtualInterfaceType& v) -> std::string {
+              return std::format("VirtualInterfaceType(unit={})", v.unit_name);
+            },
             [](const NullType&) -> std::string { return "NullType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
         });
@@ -603,6 +606,9 @@ class HirDumper {
             [](const RoutedValueRef& r) -> std::string {
               return std::format("RoutedValueRef[{}]", r.id.value);
             },
+            [](const RoutedObjectRef& r) -> std::string {
+              return std::format("RoutedObjectRef[{}]", r.id.value);
+            },
             [](const IterationBindingRef& r) -> std::string {
               const char* role = r.role == IterationBindingRole::kElement
                                      ? "Element"
@@ -620,7 +626,8 @@ class HirDumper {
         p);
   }
 
-  static auto FormatValueTarget(const ValueTarget& target) -> std::string {
+  static auto FormatSensitivityTarget(const SensitivityTarget& target)
+      -> std::string {
     return std::visit(
         Overloaded{
             [](const RoutedValueRef& r) -> std::string {
@@ -633,6 +640,11 @@ class HirDumper {
               return std::format(
                   "var=StaticProperty[{}]",
                   FormatStaticPropertyTarget(r.target));
+            },
+            [](const InterfaceMemberAccessExpr& c) -> std::string {
+              return std::format(
+                  "held=Expr[{}] steps={} member[{}]", c.instance.handle.value,
+                  c.instance.steps.size(), c.member.value);
             },
         },
         target);
@@ -684,7 +696,7 @@ class HirDumper {
         if (j != 0) out += ", ";
         const auto& r = e.triggers[i].sensitivity_list[j];
         out += std::format(
-            "{{{} bits={}}}", FormatValueTarget(r.ref),
+            "{{{} bits={}}}", FormatSensitivityTarget(r.ref),
             FormatFootprint(r.footprint));
       }
       out += "]}";
@@ -697,8 +709,8 @@ class HirDumper {
       -> std::string {
     return std::format(
         "NamedEventControl event={{{} bits={}}}{}",
-        FormatValueTarget(n.event.ref), FormatFootprint(n.event.footprint),
-        FormatCondition(n.condition));
+        FormatSensitivityTarget(n.event.ref),
+        FormatFootprint(n.event.footprint), FormatCondition(n.condition));
   }
 
   static auto FormatAnyEventControl(const AnyEventControl& event)
@@ -724,7 +736,7 @@ class HirDumper {
                 if (i != 0) out += ", ";
                 const auto& r = ie.sensitivity_list[i];
                 out += std::format(
-                    "{{{} bits={}}}", FormatValueTarget(r.ref),
+                    "{{{} bits={}}}", FormatSensitivityTarget(r.ref),
                     FormatFootprint(r.footprint));
               }
               out += "]";
@@ -942,10 +954,21 @@ class HirDumper {
                   unit_->external_unit_objects.Get(e.object);
               const PublishedCallable& callable =
                   promised.callables.Get(e.callable);
+              const std::string receiver = std::visit(
+                  Overloaded{
+                      [](const RoutedObjectRef& r) -> std::string {
+                        return std::format("RoutedObjectRef[{}]", r.id.value);
+                      },
+                      [](const InterfaceInstanceAccessExpr& r) -> std::string {
+                        return std::format(
+                            "held=Expr[{}] steps={}", r.handle.value,
+                            r.steps.size());
+                      }},
+                  e.receiver);
               return std::format(
-                  "ExternalUnitMethod {} \"{}::{}\" recv=RoutedObjectRef[{}]",
+                  "ExternalUnitMethod {} \"{}::{}\" recv={}",
                   callable.kind == SubroutineKind::kTask ? "task" : "function",
-                  promised.class_name, callable.name, e.receiver.id.value);
+                  promised.class_name, callable.name, receiver);
             },
             [](const OpaqueUnitMethodRef& e) -> std::string {
               return std::format(
@@ -1164,6 +1187,23 @@ class HirDumper {
               return std::format(
                   "ClassPropertyAccessExpr base=Expr[{}] target={}",
                   sel.base_value.value, FormatClassPropertyTarget(sel.target));
+            },
+            [this](const InterfaceInstanceAccessExpr& sel) -> std::string {
+              return std::format(
+                  "InterfaceInstanceAccessExpr handle=Expr[{}] interface={} "
+                  "steps={}",
+                  sel.handle.value,
+                  unit_->external_unit_objects.Get(sel.object).unit_name,
+                  sel.steps.size());
+            },
+            [this](const InterfaceMemberAccessExpr& sel) -> std::string {
+              return std::format(
+                  "InterfaceMemberAccessExpr handle=Expr[{}] interface={} "
+                  "steps={} member[{}]",
+                  sel.instance.handle.value,
+                  unit_->external_unit_objects.Get(sel.instance.object)
+                      .unit_name,
+                  sel.instance.steps.size(), sel.member.value);
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
@@ -1852,7 +1892,7 @@ class HirDumper {
       for (const auto& r : p.implicit_sensitivity_list) {
         Line(
             std::format(
-                "{} bits={}", FormatValueTarget(r.ref),
+                "{} bits={}", FormatSensitivityTarget(r.ref),
                 FormatFootprint(r.footprint)));
       }
       Dedent();
@@ -1997,7 +2037,7 @@ class HirDumper {
       for (const auto& r : ca.sensitivity_list) {
         Line(
             std::format(
-                "{} bits={}", FormatValueTarget(r.ref),
+                "{} bits={}", FormatSensitivityTarget(r.ref),
                 FormatFootprint(r.footprint)));
       }
       Dedent();
@@ -2506,7 +2546,7 @@ class HirDumper {
                 if (i != 0) sens += ", ";
                 const auto& r = w.sensitivity_list[i];
                 sens += std::format(
-                    "{{{} bits={}}}", FormatValueTarget(r.ref),
+                    "{{{} bits={}}}", FormatSensitivityTarget(r.ref),
                     FormatFootprint(r.footprint));
               }
               sens += "]";
@@ -2549,7 +2589,7 @@ class HirDumper {
                 if (i != 0) sens += ", ";
                 const auto& r = pca.sensitivity_list[i];
                 sens += std::format(
-                    "{{{} bits={}}}", FormatValueTarget(r.ref),
+                    "{{{} bits={}}}", FormatSensitivityTarget(r.ref),
                     FormatFootprint(r.footprint));
               }
               sens += "]";

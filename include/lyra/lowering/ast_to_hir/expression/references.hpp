@@ -16,6 +16,7 @@
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
+class ArbitrarySymbolExpression;
 class HierarchicalValueExpression;
 class NamedValueExpression;
 class Symbol;
@@ -120,5 +121,14 @@ auto LowerHierarchicalValue(
 auto LowerNamedValueStructural(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr>;
+
+// An interface instance named where a value is expected (LRM 25.9): the name
+// stands for the instance itself, which is what a virtual interface is assigned
+// and compared against. The instance is reached the way a call on it reaches
+// it, and the value is the object that reach ends at.
+auto LowerInterfaceInstanceValue(
+    UnitLowerer& unit_lowerer, WalkFrame frame,
+    const slang::ast::ArbitrarySymbolExpression& named, diag::SourceSpan span)
+    -> diag::Result<hir::Expr>;
 
 }  // namespace lyra::lowering::ast_to_hir

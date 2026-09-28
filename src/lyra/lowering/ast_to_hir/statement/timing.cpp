@@ -6,10 +6,15 @@
 #include <variant>
 #include <vector>
 
+#include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/MiscExpressions.h>
+#include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/statements/MiscStatements.h>
+#include <slang/ast/symbols/ClassSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
@@ -17,7 +22,9 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
+#include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -52,6 +59,99 @@ auto LowerEventCondition(
   auto cond_or = proc.LowerExpr(*sig.iffCondition, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   return std::optional<hir::Expr>{*std::move(cond_or)};
+}
+
+// A property of a class object, which is reached through an object and not
+// declared in any scope (LRM 8.4). A static one is the one copy its class
+// shares (LRM 8.9) and is a variable like any other.
+auto IsObjectMember(const slang::ast::Symbol& symbol) -> bool {
+  const auto* property = symbol.as_if<slang::ast::ClassPropertySymbol>();
+  return property != nullptr &&
+         property->lifetime != slang::ast::VariableLifetime::Static;
+}
+
+// What a waited-on expression reads through a handle. Which instance a
+// virtual interface holds, or which object a class handle names, is settled
+// only when the wait begins, so no read set computed ahead of it names that
+// storage (LRM 9.4.2, 25.9). An access through a virtual interface is kept
+// whole: the handle part is what the wait evaluates to find the cell, so what
+// the handle itself reads is not a leaf. A virtual interface read for its own
+// value is kept apart: which instance it holds changes only by an assignment
+// to it, and nothing yet publishes that to a waiter.
+struct ReadsThroughHandles
+    : slang::ast::ASTVisitor<
+          ReadsThroughHandles, slang::ast::VisitFlags::Expressions> {
+  std::vector<const slang::ast::MemberAccessExpression*> interface_members;
+  const slang::ast::Expression* object_member = nullptr;
+  const slang::ast::Expression* held_instance = nullptr;
+
+  void handle(const slang::ast::MemberAccessExpression& access) {
+    if (access.type->getCanonicalType().isVirtualInterface()) {
+      held_instance = &access;
+      return;
+    }
+    if (access.value().type->getCanonicalType().isVirtualInterface()) {
+      interface_members.push_back(&access);
+      return;
+    }
+    if (IsObjectMember(access.member)) {
+      object_member = &access;
+      return;
+    }
+    visitDefault(access);
+  }
+
+  void handle(const slang::ast::NamedValueExpression& named) {
+    if (IsObjectMember(named.symbol)) {
+      object_member = &named;
+    } else if (named.type->getCanonicalType().isVirtualInterface()) {
+      held_instance = &named;
+    }
+  }
+};
+
+// The leaves a wait on `expr` has beyond the variables it names: each variable
+// of an interface instance it reaches through a virtual interface, watched in
+// whichever instance the handle holds when the wait begins. A member of a
+// class object is refused rather than left out: nothing yet publishes a write
+// to one, so a wait on it would never end (LRM 9.4.2).
+auto LeavesThroughHandles(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::Expression& expr,
+    diag::SourceSpan span) -> diag::Result<std::vector<hir::SensitivityEntry>> {
+  ReadsThroughHandles reads;
+  expr.visit(reads);
+  if (reads.object_member != nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "waiting on a property of a class object is not yet supported: a "
+        "write to one does not yet wake a waiter (LRM 9.4.2)");
+  }
+  if (reads.held_instance != nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedEventTriggerForm,
+        "waiting on which instance a virtual interface holds is not yet "
+        "supported: assigning one does not yet wake a waiter (LRM 9.4.2)");
+  }
+  std::vector<hir::SensitivityEntry> leaves;
+  leaves.reserve(reads.interface_members.size());
+  for (const slang::ast::MemberAccessExpression* access :
+       reads.interface_members) {
+    auto handle = proc.LowerExpr(access->value(), frame);
+    if (!handle) return std::unexpected(std::move(handle.error()));
+    auto watched = WatchedThroughHandle(
+        proc.Owner(), frame.Exprs().Add(*std::move(handle)),
+        access->value()
+            .type->getCanonicalType()
+            .as<slang::ast::VirtualInterfaceType>(),
+        access->member, span);
+    if (!watched) return std::unexpected(std::move(watched.error()));
+    for (hir::InterfaceMemberAccessExpr& member : *watched) {
+      leaves.push_back(
+          hir::SensitivityEntry{
+              .ref = std::move(member), .footprint = std::nullopt});
+    }
+  }
+  return leaves;
 }
 
 auto AddEventCondition(WalkFrame frame, std::optional<hir::Expr> condition)
@@ -94,6 +194,10 @@ auto LowerSignalEventTrigger(
   if (!sensitivity_list) {
     return std::unexpected(std::move(sensitivity_list.error()));
   }
+  auto through = LeavesThroughHandles(proc, frame, sig.expr, span);
+  if (!through) return std::unexpected(std::move(through.error()));
+  sensitivity_list->insert(
+      sensitivity_list->end(), through->begin(), through->end());
 
   auto condition = LowerEventCondition(proc, frame, sig);
   if (!condition) return std::unexpected(std::move(condition.error()));
@@ -508,6 +612,9 @@ auto LowerWaitStmt(
       proc.Owner().Sensitivity().AnalyzeReads(w.cond, proc.ContainingSymbol());
   auto sensitivity = proc.Owner().TranslateSensitivityReads(reads, frame);
   if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
+  auto through = LeavesThroughHandles(proc, frame, w.cond, span);
+  if (!through) return std::unexpected(std::move(through.error()));
+  sensitivity->insert(sensitivity->end(), through->begin(), through->end());
   return hir::Stmt{
       .label = std::nullopt,
       .data =

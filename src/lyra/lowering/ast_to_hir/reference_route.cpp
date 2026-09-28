@@ -30,6 +30,7 @@
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
+#include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -595,21 +596,10 @@ auto UnitLowerer::RouteToScope(
           owned->as<slang::ast::InstanceBodySymbol>().parentInstance;
       if (inst == nullptr) return std::nullopt;
       declared_unit = SpecializationName(*inst);
-      if (inst->arrayPath.empty()) {
-        owned = inst;
-      } else {
-        // A multi-dimensional instance array nests one InstanceArray symbol per
-        // dimension, but the unit registers a single array member spanning all
-        // dimensions and `arrayPath` already carries every index. Climb to the
-        // outermost array symbol so the head is that registered member.
-        indices.assign(inst->arrayPath.begin(), inst->arrayPath.end());
-        owned = &inst->getParentScope()->asSymbol();
-        while (owned->getParentScope() != nullptr &&
-               owned->getParentScope()->asSymbol().kind ==
-                   slang::ast::SymbolKind::InstanceArray) {
-          owned = &owned->getParentScope()->asSymbol();
-        }
-      }
+      // The head is the member the unit registered for the instance, which is
+      // the whole array where it is an element of one.
+      indices.assign(inst->arrayPath.begin(), inst->arrayPath.end());
+      owned = &OwnerOfInstance(*inst);
       next = owned->getHierarchicalParent();
     } else if (const auto* gb = owned->as_if<slang::ast::GenerateBlockSymbol>();
                gb != nullptr && gb->getArrayIndex() != nullptr) {
@@ -928,25 +918,8 @@ auto UnitLowerer::ObservedThroughModport(
         "view it declares and every name each view defines");
   }
 
-  // What a change to the name is a change to. A name designating storage is
-  // watched at the members it designates; one this interface computes is
-  // watched at every member its expression reads, since a call shows nothing to
-  // wait on.
-  const std::vector<hir::PublishedMemberId> watched = std::visit(
-      Overloaded{
-          [](const hir::ViewDefinedPlace& place) {
-            std::vector<hir::PublishedMemberId> members;
-            members.reserve(place.parts.size());
-            for (const hir::MemberProjection& part : place.parts) {
-              members.push_back(part.member);
-            }
-            return members;
-          },
-          [](const hir::ViewComputedValue& computed) {
-            return computed.observes;
-          }},
-      name->meaning);
-
+  const std::vector<hir::PublishedMemberId> watched =
+      hir::WatchedMembers(name->meaning);
   std::vector<hir::SensitivityEntry> out;
   out.reserve(watched.size());
   for (const hir::PublishedMemberId id : watched) {
@@ -963,7 +936,7 @@ auto UnitLowerer::ObservedThroughModport(
                                                   .type = member.type}});
     out.push_back(
         hir::SensitivityEntry{
-            .ref = hir::ValueTarget{hir::RoutedValueRef{.id = reference}},
+            .ref = hir::RoutedValueRef{.id = reference},
             .footprint = std::nullopt});
   }
   return out;
@@ -986,11 +959,19 @@ auto UnitLowerer::TranslateSensitivityReads(
     // runtime observes the whole signal on any change, so the read carries no
     // footprint regardless of the flat-bit view the DFA computed over its own
     // encoding.
-    const auto observe = [&](hir::ValueTarget cell) {
+    const auto observe = [&](const hir::ValueTarget& cell) {
       const slang::ast::Type& read_type = target.getType();
       out.push_back(
           hir::SensitivityEntry{
-              .ref = std::move(cell),
+              .ref = std::visit(
+                  Overloaded{
+                      [](const hir::RoutedValueRef& r)
+                          -> hir::SensitivityTarget { return r; },
+                      [](const hir::ExternalUnitValueRef& r)
+                          -> hir::SensitivityTarget { return r; },
+                      [](const hir::StaticPropertyRef& r)
+                          -> hir::SensitivityTarget { return r; }},
+                  cell),
               .footprint = read_type.isIntegral() && !read_type.isEnum()
                                ? read.footprint
                                : std::nullopt});
@@ -1038,6 +1019,11 @@ auto UnitLowerer::TranslateSensitivityReads(
       }
       case Referent::kVariableStorage:
       case Referent::kNetStorage: {
+        // A virtual interface read here is one the expression reaches through,
+        // and what it reaches is watched where the wait begins. A wait does not
+        // yet notice the handle being assigned while it waits, which needs the
+        // handle's own storage to publish its writes.
+        if (target.getType().getCanonicalType().isVirtualInterface()) break;
         auto cell = ResolveValueTarget(frame, target, span);
         if (!cell) return std::unexpected(std::move(cell.error()));
         observe(*std::move(cell));

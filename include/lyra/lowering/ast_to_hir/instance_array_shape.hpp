@@ -44,4 +44,19 @@ inline auto ResolveInstanceArrayShape(
       .leaf = &level->as<slang::ast::InstanceSymbol>()};
 }
 
+// What the scope declaring `instance` declared for it: the instance itself, or
+// the whole array it is an element of. A multi-dimensional array nests one
+// array symbol per dimension, but the declaration is one member spanning them
+// all, and the instance's `arrayPath` carries every index.
+inline auto OwnerOfInstance(const slang::ast::InstanceSymbol& instance)
+    -> const slang::ast::Symbol& {
+  const slang::ast::Symbol* owner = &instance;
+  while (owner->getParentScope() != nullptr &&
+         owner->getParentScope()->asSymbol().kind ==
+             slang::ast::SymbolKind::InstanceArray) {
+    owner = &owner->getParentScope()->asSymbol();
+  }
+  return *owner;
+}
+
 }  // namespace lyra::lowering::ast_to_hir

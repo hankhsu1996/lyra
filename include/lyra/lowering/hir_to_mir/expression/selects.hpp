@@ -108,4 +108,20 @@ auto LowerHirClassPropertyAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
+// A member of the interface instance a virtual interface holds (LRM 25.9), as
+// the member's own storage, in either context: a read takes the value it holds
+// and a write lands in it, the way a member reached through a port is.
+template <ExprLowerer Lowerer>
+auto LowerHirInterfaceMemberAccessExpr(
+    Lowerer& lowerer, WalkFrame frame,
+    const hir::InterfaceMemberAccessExpr& sel) -> diag::Result<mir::Expr>;
+
+// An interface instance declared inside the one a virtual interface holds, as
+// the value a virtual interface of its own type would hold (LRM 25.9).
+template <ExprLowerer Lowerer>
+auto LowerHirInterfaceInstanceAccessExpr(
+    Lowerer& lowerer, WalkFrame frame,
+    const hir::InterfaceInstanceAccessExpr& sel, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
+
 }  // namespace lyra::lowering::hir_to_mir

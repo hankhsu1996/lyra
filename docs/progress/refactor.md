@@ -2606,6 +2606,15 @@ enough to warrant its own focused review.
       `always_comb`, 200,000 cycles, `--release`, 2026-09-25: 0.39 s on the execution backend and
       0.25 s on the C++ backend, from 8.7 s and 3.07 s.
 
+- [ ] R150 -- What a system task, a system function, or a method the language defines on a built-in
+      type means is decided by a chain of tests in the call lowering, one per receiver type and per
+      recognized name, beside a registry that already describes every system subroutine. Adding one
+      lengthens the chain in a place the registry does not see, and the order between a name a
+      receiver's own clause defines and the same name in the array-manipulation family (LRM 7.10.2,
+      7.9 against 7.12) is kept by where each test sits. A call's meaning belongs in the registry,
+      looked up once by name and receiver, with the lowering building what the entry says. Not
+      blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,
