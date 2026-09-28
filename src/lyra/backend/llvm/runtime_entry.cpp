@@ -353,8 +353,9 @@ auto MemberStorageKindOf(
               // The rest are transients of one call -- one dimension a
               // description is assembled from, what a print or a format is
               // assembled from, what a boundary object images an argument in,
-              // what a wait registers and what another entry answers with. An
-              // owner holds none of them past the call that made one.
+              // what a wait registers, a write in progress, and what another
+              // entry answers with. An owner holds none of them past the call
+              // that made one.
               case lir::RuntimeLibraryKind::kPackedRange:
               case lir::RuntimeLibraryKind::kPrintItem:
               case lir::RuntimeLibraryKind::kPrintLiteralItem:
@@ -371,6 +372,7 @@ auto MemberStorageKindOf(
               case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
               case lir::RuntimeLibraryKind::kTrigger:
               case lir::RuntimeLibraryKind::kObservation:
+              case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kControlEffect:
                 return std::nullopt;
             }
@@ -858,8 +860,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObservationOfValue:
     case support::BuiltinFn::kObservationOfValueQualified:
     case support::BuiltinFn::kObservationQualified:
+    case support::BuiltinFn::kObservationTookEvent:
     case support::BuiltinFn::kWaitAny:
     case support::BuiltinFn::kWaitUntil:
+    case support::BuiltinFn::kWaitRecollecting:
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:
     case support::BuiltinFn::kRealTime:
@@ -897,6 +901,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kBehaviorAt:
     case support::BuiltinFn::kObjectOf:
     case support::BuiltinFn::kObjectIsOfClass:
+    // What reports a change to an object's properties, one library function
+    // each for every class.
+    case support::BuiltinFn::kObjectRootOf:
+    case support::BuiltinFn::kObjectEventSource:
+    case support::BuiltinFn::kOpenObjectWrite:
+    case support::BuiltinFn::kObjectWriteThrough:
     // What an enumeration's member list answers about a value. One routine
     // serves every enumeration, because the list is the receiver and every
     // member is a packed value.

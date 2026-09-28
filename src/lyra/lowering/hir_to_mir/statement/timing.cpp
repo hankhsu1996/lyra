@@ -1,9 +1,11 @@
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -224,20 +226,89 @@ auto BuildTriggerCallExpr(
 
 }  // namespace
 
+// A wait some of whose leaves are found by evaluating a handle (LRM 9.4.2):
+// which storage the expression reaches can move while the process waits, so the
+// leaves are collected again on every candidacy, and the wait ends once one of
+// its observations says the candidacy was an event. The observations are armed
+// once, where the control is reached, so a candidacy that moves only which
+// storage is watched is compared against the value the expression had then.
+template <ExprLowerer Lowerer>
+auto BuildRecollectingWaitStmt(
+    Lowerer& lowerer, WalkFrame frame, mir::Block& block,
+    std::span<const ObservedLeaf> leaves,
+    std::span<const mir::LocalId> observations) -> mir::Stmt {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  // Each observation answers one or zero, so their union is nonzero exactly
+  // where one of them took an event.
+  const auto took_event = [&](mir::LocalId observation) {
+    return block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target = support::BuiltinFn::kObservationTookEvent,
+                            .receiver = block.exprs.Add(
+                                mir::MakeLocalRefExpr(
+                                    observation, unit.builtins.observation))},
+                    .arguments = {}},
+            .type = unit.builtins.machine_int64});
+  };
+  mir::ExprId ended = took_event(observations.front());
+  for (const mir::LocalId observation : observations.subspan(1)) {
+    ended = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::BinaryExpr{
+                    .op = mir::BinaryOp::kBitwiseOr,
+                    .lhs = ended,
+                    .rhs = took_event(observation)},
+            .type = unit.builtins.machine_int64});
+  }
+  const mir::ExprId waiting = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kEquality,
+                  .lhs = ended,
+                  .rhs = BuildMachineIntLiteral(unit, block, 0)},
+          .type = unit.builtins.machine_bool});
+
+  mir::Block collect;
+  const WalkFrame collect_frame = frame.WithBlock(&collect);
+  collect.AppendStmt(BuildWaitStmt(
+      collect, collect_frame, lowerer, leaves,
+      support::BuiltinFn::kWaitRecollecting));
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data = mir::WhileStmt{
+          .condition = waiting,
+          .scope = block.child_scopes.Add(std::move(collect))}};
+}
+
 template <ExprLowerer Lowerer>
 auto BuildEventWaitStmt(
     Lowerer& lowerer, WalkFrame frame, mir::Block& block,
     const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
   std::vector<ObservedLeaf> leaves;
+  std::vector<mir::LocalId> observations;
+  observations.reserve(ec.triggers.size());
   for (const hir::EventTrigger& trigger : ec.triggers) {
     auto observation = BuildObservationLocal(lowerer, frame, block, trigger);
     if (!observation) {
       return std::unexpected(std::move(observation.error()));
     }
+    observations.push_back(*observation);
     for (const hir::SensitivityEntry& leaf : trigger.sensitivity_list) {
       leaves.push_back(
           ObservedLeaf{.entry = leaf, .observation = *observation});
     }
+  }
+  if (std::ranges::any_of(leaves, [](const ObservedLeaf& leaf) {
+        return IsFoundThroughAHandle(leaf.entry.ref);
+      })) {
+    return BuildRecollectingWaitStmt(
+        lowerer, frame, block, leaves, observations);
   }
   return BuildWaitStmt(
       block, frame, lowerer, leaves, support::BuiltinFn::kWaitAny);

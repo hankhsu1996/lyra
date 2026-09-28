@@ -49,11 +49,12 @@ class Observable {
     reg.observation = std::move(observation);
   }
 
-  // Claims and returns the activations this occurrence is an event for; the
-  // rest stay parked. A wait whose bits it left alone is passed over without
-  // being asked, and every other one answers for itself -- an event control by
-  // what its expression is worth now, an implicit sensitivity or a named-event
-  // wait by having been reached at all (LRM 9.2.2.2.1, 9.4.2, 15.5.1).
+  // Claims and returns the activations this occurrence is an event for, or is
+  // a candidacy for where their wait resumes on every one; the rest stay
+  // parked. A wait whose bits it left alone is passed over without being asked,
+  // and every other one answers for itself -- an event control by what its
+  // expression is worth now, an implicit sensitivity or a named-event wait by
+  // having been reached at all (LRM 9.2.2.2.1, 9.4.2, 15.5.1).
   [[nodiscard]] auto TakeFiringWaiters(const ProjectionUnchanged& unchanged)
       -> std::vector<CoroutineHandle> {
     std::vector<CoroutineHandle> woken;
@@ -61,7 +62,7 @@ class Observable {
       if (reg.bit_width != 0 && unchanged(reg.lsb_bit_offset, reg.bit_width)) {
         return;
       }
-      if (!reg.FiresNow()) {
+      if (!reg.FiresNow() && !reg.activation->wait->ResumesOnEveryCandidacy()) {
         return;
       }
       reg.Unlink();

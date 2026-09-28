@@ -32,6 +32,7 @@ enum class LibraryObject : std::uint8_t {
   kPromotedScope,
   kOpenWrite,
   kDesignation,
+  kObjectWrite,
 };
 
 // An object generated code holds by value: it gives the object storage in its
@@ -124,6 +125,8 @@ constexpr auto LayoutOf(LibraryObject object) -> ObjectLayout {
       return {.size = 160, .align = 8, .ends_with_nothing_to_do = false};
     case LibraryObject::kDesignation:
       return {.size = 16, .align = 8, .ends_with_nothing_to_do = true};
+    case LibraryObject::kObjectWrite:
+      return {.size = 16, .align = 8, .ends_with_nothing_to_do = false};
   }
   throw InternalError("runtime object: unknown library object");
 }

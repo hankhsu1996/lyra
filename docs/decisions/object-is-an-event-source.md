@@ -160,9 +160,21 @@ the subscription must represent. A virtual interface is stricter -- LRM 25.9 mak
 - **`@(p.status)` becomes expressible, and it is not expressible at all today.** So does the virtual
   interface form, which is how a class-based testbench reaches design signals.
 
-- **Every object either carries a source or acquires one when first subscribed to.** Which of the
-  two is a performance question this entry deliberately leaves open, alongside where a subscriber
-  list physically lives and which variables need one.
+- **An object acquires its source when a wait first reaches it.** Most objects are never waited on,
+  so an object holds only the room to point at a source, and a write to one of its properties asks
+  that first. Where a subscriber list physically lives otherwise, and which variables need one, stay
+  performance questions.
+- **A write to a property is a write opened on the object**, the way a write to a variable is one
+  opened on the variable: ending it is what reports to the source, so every form of write reaches
+  the object without any of them saying so -- an assignment, a nonblocking one when it lands, a
+  built-in method changing the property, and a task writing through a `ref` bound to it, which
+  reports when the call ends as a variable lent the same way does.
+- **Collecting the sources an evaluation reached (D3, D4) is done by the waiting process.** A wait
+  whose expression reaches anything through a handle resumes on every candidacy, evaluates the
+  handles again to find what it now reaches, and waits anew; before waiting it compares the
+  expression once more, so a change made while it was not subscribed is not lost. What a non-virtual
+  method in the expression reaches (D7) is not collected, so such a wait is refused rather than left
+  missing a source.
 
 - **A write to any property wakes every waiter on that object, and each filters.** That is the
   permission being spent, and it is where a per-property source would earn its keep once something

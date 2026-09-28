@@ -32,7 +32,7 @@ struct InterfaceInstanceAccessExpr {
 //
 // An expression reads and writes the member through it, and a wait watches the
 // member through the same designation: which instance's variable that is, is
-// known once the handle is evaluated where the wait begins.
+// known each time the wait evaluates the handle.
 struct InterfaceMemberAccessExpr {
   InterfaceInstanceAccessExpr instance;
   PublishedMemberId member;

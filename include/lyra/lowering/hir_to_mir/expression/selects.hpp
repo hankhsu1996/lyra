@@ -103,10 +103,17 @@ template <ExprLowerer Lowerer>
 auto LowerHirMemberAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<WriteTarget>;
+// A property of the object `receiver` reaches, as the target of a write: the
+// property's own place, lying in that object, which the write is opened on.
+template <ExprLowerer Lowerer>
+auto PropertyWriteTarget(
+    Lowerer& lowerer, const WalkFrame& frame, mir::ExprId receiver,
+    const hir::ClassPropertyTarget& target, mir::TypeId result_type)
+    -> WriteTarget;
 template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    mir::TypeId result_type) -> diag::Result<WriteTarget>;
 
 // A member of the interface instance a virtual interface holds (LRM 25.9), as
 // the member's own storage, in either context: a read takes the value it holds

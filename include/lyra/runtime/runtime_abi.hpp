@@ -314,6 +314,17 @@ auto lyra_rt_behavior_at(const void* handle, const void* coordinate)
 // asking side already holds.
 auto lyra_rt_object_of(const void* handle) -> void*;
 
+// What reports a change to an object's properties (LRM 9.4.2), each taking the
+// object as the root every object shares: that root of the object a handle
+// names, the source a wait on the object subscribes to, and a write into one
+// of its properties, opened in storage the writing body gives, through which
+// the place written is reached and whose end tells the object.
+auto lyra_rt_object_root_of(const void* handle) -> void*;
+auto lyra_rt_object_event_source(void* object) -> void*;
+auto lyra_rt_open_object_write(void* object, const void* place, void* out)
+    -> void*;
+auto lyra_rt_object_write_through(const void* write) -> const void*;
+
 // Whether a handle refers to an object a variable of the named class may hold.
 // The set of classes extending one is open across compilation units, so the
 // object's own class is what answers and nothing the asking side holds could.
@@ -429,6 +440,10 @@ auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool;
 // part company where a stopped process is started again: this one lets the body
 // read the condition, and that one waits for the next occurrence (LRM 9.7).
 auto lyra_rt_wait_until(void* runtime, LyraSpan triggers) -> bool;
+auto lyra_rt_wait_recollecting(void* runtime, LyraSpan triggers) -> bool;
+// The answer crosses as the machine integer every computed answer crosses as;
+// a host `bool` here would say the call parks its caller.
+auto lyra_rt_observation_took_event(const void* observation) -> std::int64_t;
 
 // A named event (LRM 15.5). Triggering records the instant and ends the wait of
 // every process the trigger is an event for; waiting for one is an ordinary
@@ -798,6 +813,10 @@ auto lyra_rt_shortreal_ref_get(void* reference) -> const void*;
 void lyra_rt_shortreal_ref_set(void* reference, const void* value);
 void lyra_rt_shortreal_ref_arm_sampling(void* reference);
 auto lyra_rt_shortreal_ref_sampled_load(void* reference, void* out) -> void*;
+auto lyra_rt_chandle_ref_get(void* reference) -> const void*;
+void lyra_rt_chandle_ref_set(void* reference, const void* value);
+void lyra_rt_chandle_ref_arm_sampling(void* reference);
+auto lyra_rt_chandle_ref_sampled_load(void* reference, void* out) -> void*;
 auto lyra_rt_managedref_ref_get(void* reference) -> const void*;
 void lyra_rt_managedref_ref_set(void* reference, const void* value);
 void lyra_rt_managedref_ref_arm_sampling(void* reference);
@@ -1263,6 +1282,12 @@ auto lyra_rt_chandle_to_bool(const void* operand) -> bool;
 auto lyra_rt_chandle_value_cell_alloc() noexcept -> void*;
 void lyra_rt_chandle_value_cell_store(void* cell, const void* value) noexcept;
 auto lyra_rt_chandle_value_cell_load(void* cell) noexcept -> void*;
+auto lyra_rt_chandle_cell_get(void* cell) -> const void*;
+void lyra_rt_chandle_cell_initialize(
+    void* cell, const void* prototype) noexcept;
+void lyra_rt_chandle_cell_set(void* cell, const void* value);
+void lyra_rt_chandle_cell_arm_sampling(void* cell);
+auto lyra_rt_chandle_cell_sampled_load(void* cell, void* out) -> void*;
 
 // The managed-reference domain (LRM 8.3, and the LRM 9.7 `process` a handle
 // names). What a handle carries is the object's address together with a share
@@ -2106,6 +2131,7 @@ auto lyra_rt_packed_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_string_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_real_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_shortreal_cell_open_for_write(void* cell, void* out) -> void*;
+auto lyra_rt_chandle_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_managedref_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_tuple_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_union_cell_open_for_write(void* cell, void* out) -> void*;
@@ -2118,6 +2144,7 @@ auto lyra_rt_packed_ref_open_for_write(void* reference, void* out) -> void*;
 auto lyra_rt_string_ref_open_for_write(void* reference, void* out) -> void*;
 auto lyra_rt_real_ref_open_for_write(void* reference, void* out) -> void*;
 auto lyra_rt_shortreal_ref_open_for_write(void* reference, void* out) -> void*;
+auto lyra_rt_chandle_ref_open_for_write(void* reference, void* out) -> void*;
 auto lyra_rt_managedref_ref_open_for_write(void* reference, void* out) -> void*;
 auto lyra_rt_tuple_ref_open_for_write(void* reference, void* out) -> void*;
 auto lyra_rt_union_ref_open_for_write(void* reference, void* out) -> void*;
@@ -2222,6 +2249,7 @@ void lyra_rt_channel_cancellation_destroy(void* object);
 void lyra_rt_erased_value_destroy(void* object);
 void lyra_rt_promoted_scope_destroy(void* object);
 void lyra_rt_open_write_destroy(void* object);
+void lyra_rt_object_write_destroy(void* object);
 auto lyra_rt_packed_copy(const void* value, void* out) -> void*;
 auto lyra_rt_string_copy(const void* value, void* out) -> void*;
 auto lyra_rt_real_copy(const void* value, void* out) -> void*;

@@ -1,11 +1,30 @@
 #include "lyra/runtime/object_ref.hpp"
 
+#include <memory>
+
+#include "lyra/runtime/observable.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
+
 namespace lyra::runtime {
 
 GcObject::GcObject() = default;
 GcObject::~GcObject() = default;
-GcObject::GcObject(const GcObject&) = default;
-auto GcObject::operator=(const GcObject&) -> GcObject& = default;
+
+GcObject::GcObject(const GcObject& other)
+    : std::enable_shared_from_this<GcObject>(other),
+      identity_(other.identity_),
+      class_(other.class_) {
+}
+
+auto GcObject::operator=(const GcObject& other) -> GcObject& {
+  if (this == &other) {
+    return *this;
+  }
+  std::enable_shared_from_this<GcObject>::operator=(other);
+  identity_ = other.identity_;
+  class_ = other.class_;
+  return *this;
+}
 
 void GcObject::AdoptIdentity(void* address) {
   identity_ = address;
@@ -21,6 +40,20 @@ void GcObject::AdoptClass(const ObjectDefinition* of) {
 
 auto GcObject::Class() const -> const ObjectDefinition* {
   return class_;
+}
+
+auto GcObject::EventSource() -> Observable& {
+  if (event_source_ == nullptr) {
+    event_source_ = std::make_unique<Observable>();
+  }
+  return *event_source_;
+}
+
+void GcObject::PublishChange() {
+  if (event_source_ != nullptr && event_source_->HasWaiter()) {
+    current_runtime().WakeWaitersOf(
+        *event_source_, MakeWholeValueProjectionTest());
+  }
 }
 
 }  // namespace lyra::runtime

@@ -8,6 +8,7 @@
 
 namespace lyra::runtime {
 
+class Observable;
 struct ObjectDefinition;
 
 // The base an object carries so a body running on it can name the reference
@@ -65,9 +66,21 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
 
   [[nodiscard]] auto Class() const -> const ObjectDefinition*;
 
+  // The one event source every property of this object shares (LRM 9.4.2): a
+  // write to any of them reevaluates every expression that reached the object,
+  // and what that expression is worth decides whether it was an event. It is
+  // made when a wait first reaches the object, since most objects are never
+  // waited on. A copy of an object starts with none: what waits on the one it
+  // was copied from waits on that one.
+  [[nodiscard]] auto EventSource() -> Observable&;
+
+  // A write to one of this object's properties is over.
+  void PublishChange();
+
  private:
   void* identity_ = nullptr;
   const ObjectDefinition* class_ = nullptr;
+  std::unique_ptr<Observable> event_source_;
 };
 
 // A reference to an object whose typed owner is already in hand. The share

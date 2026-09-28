@@ -440,6 +440,11 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // the event and the value it had when the wait began. The leaves of one
   // event expression name one of these between them.
   kObservation,
+  // A write in progress into a property of an object (LRM 8.4):
+  // `lyra::runtime::ObjectWrite`, through which the place written is reached,
+  // and which tells the object it was written when the full-expression doing
+  // the write ends (LRM 9.4.2).
+  kObjectWrite,
   // LRM 23.3.3.5 / 27.6 elaborated hierarchy segment:
   // `lyra::runtime::HierarchySegment`, the per-scope structured identity each
   // child carries from construction (base name plus per-dimension indices).

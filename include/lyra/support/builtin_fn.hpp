@@ -517,6 +517,10 @@ enum class BuiltinFn : std::uint16_t {
   kObservationOfValue,
   kObservationOfValueQualified,
   kObservationQualified,
+  // Whether the candidacy that last reached a wait watching through an
+  // observation was an event for it, asked by a wait that resumes on every
+  // candidacy (`kWaitRecollecting`).
+  kObservationTookEvent,
   // LRM 9.4.2 / 9.4.2.2 value-change wait. The runtime free function a wait on
   // a signal suspends on -- an `@(...)`, an `@*`, an `always_comb` /
   // `always_latch` body, a continuous assignment. The call takes the runtime
@@ -530,6 +534,12 @@ enum class BuiltinFn : std::uint16_t {
   // the next occurrence, while a condition is read by the body, so this one
   // lets the body's own loop test it.
   kWaitUntil,
+  // LRM 9.4.2 value-change wait for an event control some of whose leaves are
+  // found by evaluating a handle. Which storage those are can move while the
+  // wait is under way, so the caller resumes on every candidacy, asks its
+  // observations whether it was an event, and otherwise collects the leaves
+  // again and waits anew.
+  kWaitRecollecting,
   // LRM 20.3 simulation-time read functions. Each takes the runtime handle
   // and the calling scope's unit power; the runtime scales the design-global
   // tick down to that unit. `$time` rounds and yields a 64-bit `time`,
@@ -640,6 +650,16 @@ enum class BuiltinFn : std::uint16_t {
   // reference to it, and a handle refers to one without being one, so a call
   // entering a body of a class it cannot name asks for the object here.
   kObjectOf,
+  // What reports a change to an object's properties (LRM 9.4.2), each taking
+  // the object as the root every object shares: that root of the object a
+  // handle names; the event source a wait reaching the object subscribes to; a
+  // write into one of its properties, opened for the place written, open while
+  // the full-expression doing it lasts and telling the object when it ends;
+  // and that place, reached through the write.
+  kObjectRootOf,
+  kObjectEventSource,
+  kOpenObjectWrite,
+  kObjectWriteThrough,
   // Whether a handle refers to an object a variable of the named class may hold
   // (LRM 8.16). The classes extending one are open across compilation units, so
   // the set no unit can hold is the object's own class to answer -- which is

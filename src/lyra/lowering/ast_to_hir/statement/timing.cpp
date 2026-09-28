@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 
+#include <algorithm>
 #include <expected>
 #include <optional>
 #include <utility>
@@ -10,6 +11,7 @@
 #include <slang/ast/Statement.h>
 #include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
+#include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/statements/MiscStatements.h>
@@ -70,24 +72,42 @@ auto IsObjectMember(const slang::ast::Symbol& symbol) -> bool {
          property->lifetime != slang::ast::VariableLifetime::Static;
 }
 
-// What a waited-on expression reads through a handle. Which instance a
-// virtual interface holds, or which object a class handle names, is settled
-// only when the wait begins, so no read set computed ahead of it names that
-// storage (LRM 9.4.2, 25.9). An access through a virtual interface is kept
-// whole: the handle part is what the wait evaluates to find the cell, so what
-// the handle itself reads is not a leaf. A virtual interface read for its own
-// value is kept apart: which instance it holds changes only by an assignment
-// to it, and nothing yet publishes that to a waiter.
+// Whether a call may reach an object the expression calling it does not name: a
+// method of one, or a subroutine handed a class handle.
+auto ReachesObjectsItDoesNotName(const slang::ast::CallExpression& call)
+    -> bool {
+  if (call.isSystemCall()) {
+    return false;
+  }
+  if (call.thisClass() != nullptr) {
+    return true;
+  }
+  return std::ranges::any_of(
+      call.arguments(), [](const slang::ast::Expression* argument) {
+        return argument->type->getCanonicalType().isClass();
+      });
+}
+
+// What a waited-on expression reaches through a handle. Which instance a
+// virtual interface holds, and which object a class handle names, is settled
+// only by evaluating the handle, so no read set computed ahead of the wait
+// names that storage (LRM 9.4.2, 25.9); the handle itself is a variable the
+// read set does name, and the wait collects its leaves again when it is
+// written. An access through a virtual interface is kept whole, the handle part
+// being what the wait evaluates to find the cell. A property of an object is
+// watched as the object, which every property of it reports to -- the one a
+// handle names, or the method's own where the property is named bare -- and
+// what reaches the object is read on.
 struct ReadsThroughHandles
     : slang::ast::ASTVisitor<
           ReadsThroughHandles, slang::ast::VisitFlags::Expressions> {
   std::vector<const slang::ast::MemberAccessExpression*> interface_members;
-  const slang::ast::Expression* object_member = nullptr;
-  const slang::ast::Expression* held_instance = nullptr;
+  std::vector<std::variant<const slang::ast::Expression*, hir::ReceiverObject>>
+      objects;
+  const slang::ast::CallExpression* call_reaching_objects = nullptr;
 
   void handle(const slang::ast::MemberAccessExpression& access) {
     if (access.type->getCanonicalType().isVirtualInterface()) {
-      held_instance = &access;
       return;
     }
     if (access.value().type->getCanonicalType().isVirtualInterface()) {
@@ -95,45 +115,66 @@ struct ReadsThroughHandles
       return;
     }
     if (IsObjectMember(access.member)) {
-      object_member = &access;
-      return;
+      objects.emplace_back(&access.value());
     }
     visitDefault(access);
   }
 
   void handle(const slang::ast::NamedValueExpression& named) {
     if (IsObjectMember(named.symbol)) {
-      object_member = &named;
-    } else if (named.type->getCanonicalType().isVirtualInterface()) {
-      held_instance = &named;
+      objects.emplace_back(hir::ReceiverObject{});
     }
+  }
+
+  void handle(const slang::ast::CallExpression& call) {
+    if (ReachesObjectsItDoesNotName(call)) {
+      call_reaching_objects = &call;
+    }
+    visitDefault(call);
   }
 };
 
-// The leaves a wait on `expr` has beyond the variables it names: each variable
-// of an interface instance it reaches through a virtual interface, watched in
-// whichever instance the handle holds when the wait begins. A member of a
-// class object is refused rather than left out: nothing yet publishes a write
-// to one, so a wait on it would never end (LRM 9.4.2).
+// The leaves a wait on `expr` has beyond the variables it names, each found by
+// evaluating a handle when the wait collects its leaves: a variable of the
+// interface instance a virtual interface holds, and an object whose property
+// the expression reads (LRM 9.4.2). A call that may reach an object the
+// expression does not name is refused rather than left out, because which
+// objects it reached is not collected, and a wait missing one would not end
+// when that object changes.
 auto LeavesThroughHandles(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::Expression& expr,
     diag::SourceSpan span) -> diag::Result<std::vector<hir::SensitivityEntry>> {
   ReadsThroughHandles reads;
   expr.visit(reads);
-  if (reads.object_member != nullptr) {
+  if (reads.call_reaching_objects != nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "waiting on a property of a class object is not yet supported: a "
-        "write to one does not yet wake a waiter (LRM 9.4.2)");
-  }
-  if (reads.held_instance != nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "waiting on which instance a virtual interface holds is not yet "
-        "supported: assigning one does not yet wake a waiter (LRM 9.4.2)");
+        "waiting on an expression that calls a method of a class object, or "
+        "hands a subroutine a class handle, is not yet supported: which "
+        "objects the call reaches is not collected (LRM 9.4.2)");
   }
   std::vector<hir::SensitivityEntry> leaves;
-  leaves.reserve(reads.interface_members.size());
+  leaves.reserve(reads.interface_members.size() + reads.objects.size());
+  for (const auto& object : reads.objects) {
+    auto source = std::visit(
+        Overloaded{
+            [&](const slang::ast::Expression* handle)
+                -> diag::Result<hir::ObjectEventSource> {
+              auto lowered = proc.LowerExpr(*handle, frame);
+              if (!lowered) return std::unexpected(std::move(lowered.error()));
+              return hir::ObjectEventSource{
+                  .object = frame.Exprs().Add(*std::move(lowered))};
+            },
+            [](const hir::ReceiverObject& receiver)
+                -> diag::Result<hir::ObjectEventSource> {
+              return hir::ObjectEventSource{.object = receiver};
+            }},
+        object);
+    if (!source) return std::unexpected(std::move(source.error()));
+    leaves.push_back(
+        hir::SensitivityEntry{
+            .ref = *std::move(source), .footprint = std::nullopt});
+  }
   for (const slang::ast::MemberAccessExpression* access :
        reads.interface_members) {
     auto handle = proc.LowerExpr(access->value(), frame);

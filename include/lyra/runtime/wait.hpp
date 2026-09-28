@@ -60,6 +60,15 @@ class Wait {
   // passing is not one of them, so each construct answers for its own
   // suspension rather than the resume path guessing from the queue it came off.
   [[nodiscard]] virtual auto IsReportFlushPoint() const -> bool = 0;
+
+  // Whether a candidacy that is no event still resumes the execution. A wait
+  // whose leaves are found by evaluating a handle collects them again after
+  // each candidacy, because the candidacy may be the handle moving (LRM 9.4.2),
+  // and asks afterwards whether it was an event; every other wait stays parked
+  // until one is.
+  [[nodiscard]] virtual auto ResumesOnEveryCandidacy() const -> bool {
+    return false;
+  }
 };
 
 // The dual of parking on a wait: `activation` is runnable now, so it holds no

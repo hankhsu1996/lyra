@@ -225,6 +225,7 @@ class ArmedObservation {
     if (watch_.has_value()) {
       watch_->Arm();
     }
+    took_event_ = false;
   }
 
   // Whether the change that made this a candidate is an event for it.
@@ -234,10 +235,15 @@ class ArmedObservation {
   // still a change, and the baseline has to advance to it or the wait goes on
   // comparing against a value the design has left behind.
   [[nodiscard]] auto Fires() -> bool {
-    if (watch_.has_value() && !watch_->TakeTransition()) {
-      return false;
-    }
-    return !condition_ || condition_();
+    took_event_ = (!watch_.has_value() || watch_->TakeTransition()) &&
+                  (!condition_ || condition_());
+    return took_event_;
+  }
+
+  // What the last candidacy asked of it answered, for a wait that resumes on
+  // every candidacy and asks afterwards whether it was an event.
+  [[nodiscard]] auto TookEvent() const -> bool {
+    return took_event_;
   }
 
  private:
@@ -264,6 +270,7 @@ class ArmedObservation {
 
   std::optional<ValueWatch> watch_;
   std::move_only_function<bool()> condition_;
+  bool took_event_ = false;
 };
 
 // What a wait carries an observation as. One event expression has one
@@ -319,6 +326,10 @@ class Observation {
   [[nodiscard]] auto Get() const -> ArmedObservation* {
     return held_.get();
   }
+
+  // Whether the candidacy that last reached a wait watching through this was an
+  // event for it. Being reached is the whole condition where nothing is armed.
+  [[nodiscard]] auto TookEvent() const -> bool;
 
  private:
   explicit Observation(std::shared_ptr<ArmedObservation> held);

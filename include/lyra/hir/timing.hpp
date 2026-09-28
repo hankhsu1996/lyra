@@ -19,15 +19,32 @@ struct DelayControl {
   auto operator==(const DelayControl&) const -> bool = default;
 };
 
-// The cell a wait's leaf watches: one elaboration sealed, or a variable a
-// virtual interface reaches in the instance it holds when the wait begins.
+// The object the running method was called on, which a property named bare
+// inside the method belongs to (LRM 8.4).
+struct ReceiverObject {
+  auto operator<=>(const ReceiverObject&) const = default;
+};
+
+// An object an expression reached, watched as one source covering every
+// property it has: a change to any of them reevaluates the expression (LRM
+// 9.4.2). It is the object a class handle names, found by evaluating the handle
+// each time the wait collects its leaves, or the method's own object.
+struct ObjectEventSource {
+  std::variant<ExprId, ReceiverObject> object;
+
+  auto operator<=>(const ObjectEventSource&) const = default;
+};
+
+// What a wait's leaf watches: a cell elaboration sealed; or, found by
+// evaluating a handle each time the wait collects its leaves, a variable of the
+// instance a virtual interface holds or the object a class handle names.
 using SensitivityTarget = std::variant<
     RoutedValueRef, ExternalUnitValueRef, StaticPropertyRef,
-    InterfaceMemberAccessExpr>;
+    InterfaceMemberAccessExpr, ObjectEventSource>;
 
-// One leaf entry of a wait's read set. Identity-only: which cell, and the
+// One leaf entry of a wait's read set. Identity-only: what it watches, and the
 // flat-bit footprint of its packed encoding the leaf reads. An absent footprint
-// means the whole signal is read.
+// means the whole of it is read.
 struct SensitivityEntry {
   SensitivityTarget ref;
   std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
@@ -38,8 +55,8 @@ struct SensitivityEntry {
 // One entry of an explicit `@(...)` event control (LRM 9.4.2). `signal` is the
 // expression the event is a change in the value of, `edge` the direction its
 // least significant bit must take where one was written, and
-// `sensitivity_list` the variables that expression reads -- a change to one of
-// which is a candidacy for the event rather than the event itself.
+// `sensitivity_list` what that expression reads -- a change to any of which is
+// a candidacy for the event rather than the event itself.
 //
 // `condition` is the LRM 9.4.2.3 `iff` qualifier: a value change is an event
 // only while it holds. It is read where the change happens, and what it reads

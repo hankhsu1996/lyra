@@ -2615,6 +2615,14 @@ enough to warrant its own focused review.
       looked up once by name and receiver, with the lowering building what the entry says. Not
       blocked.
 
+- [ ] R151 -- The cells a scope arms for sampled values are recorded as a wait's leaves, a type
+      wider than what they are: a leaf may be found by evaluating a handle -- a variable of the
+      instance a virtual interface holds, or an object's event source -- while a sampled cell is
+      always one elaboration sealed. The widening shows as a branch that throws where a leaf is
+      turned into a cell, for the object source, which holds no value to arm. What a read set names
+      is the sealed cell and the bits it reads; a wait's leaf is that or one of the handle-found
+      forms, and a sampled cell is only the first. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

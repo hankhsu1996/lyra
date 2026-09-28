@@ -62,7 +62,7 @@ auto LowerVirtualInterfaceMember(
 // waits on (LRM 9.4.2): the variable itself, or, for a name a view defines,
 // every member of the instance a change to that name is a change to -- the same
 // members a wait on the name through an interface port watches. Which instance
-// they sit in is known once the handle is evaluated where the wait begins.
+// they sit in is known each time the wait evaluates the handle.
 auto WatchedThroughHandle(
     UnitLowerer& unit_lowerer, hir::ExprId handle,
     const slang::ast::VirtualInterfaceType& handle_type,

@@ -62,11 +62,10 @@ previous value." The clause's own example places a wait on a property beside a w
 naming it to say they are two different waits, and a write naming the object already named is no
 event.
 
-The chandle half of that sentence is not carried out, for a reason of its own rather than a
-preference: a chandle's value is the pointer it carries, so a null chandle is a null pointer, and
-the boundary a synthesized body answers across reads a null answer as no answer. Waiting on one
-needs the domain to cross the way every other value domain does, which is a change to what a chandle
-is rather than to what a wait reaches.
+The chandle half of that sentence holds too: a variable of that type is storage publishing its
+changes like any other, and a wait on it compares the pointer it holds. A body answers by building
+its value in storage it is handed, so a null chandle crosses as the value it is rather than as no
+answer at all.
 
 ## Survey
 

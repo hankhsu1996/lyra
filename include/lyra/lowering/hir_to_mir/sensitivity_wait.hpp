@@ -36,6 +36,13 @@ template <typename Lowerer>
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::SensitivityEntry& entry) -> mir::ExprId;
 
+// Whether what a leaf watches is found by evaluating a handle when the wait
+// collects its leaves -- a variable of the instance a virtual interface holds,
+// or an object -- so that it may be different storage by the time the wait
+// ends (LRM 9.4.2).
+[[nodiscard]] auto IsFoundThroughAHandle(const hir::SensitivityTarget& target)
+    -> bool;
+
 // Materialises an observation into a local of `block`, so every leaf watching
 // for one event names one value rather than one each. `entry` says which of the
 // four forms (LRM 9.4.2, 9.4.2.3, 15.5) it is, because an absent half has no

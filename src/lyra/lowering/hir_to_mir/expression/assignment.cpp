@@ -136,13 +136,19 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
 // once at submit time and captured as `captured_owner`; the descent above it
 // is restated over that capture with every coordinate snapshotted by value, so
 // the body writes the part the statement named at submit time (LRM 10.4.2). A
-// target that designates nothing is the captured reference itself.
+// target that designates nothing is the captured reference itself. The object
+// an owner is a property of is captured beside it, so the write the body makes
+// is the one that tells the object.
 auto FreezeTarget(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, const WriteTarget& target,
     mir::ExprId captured_owner) -> WriteTarget {
   WriteTarget frozen = target;
   frozen.owner = captured_owner;
+  if (target.object.has_value()) {
+    frozen.object =
+        SnapshotIntoClosure(unit_lowerer, outer_frame, closure, *target.object);
+  }
   for (DescentStep& step : frozen.descent) {
     for (mir::ExprId& coordinate : step.operands) {
       coordinate =

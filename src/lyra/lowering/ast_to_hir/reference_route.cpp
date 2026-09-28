@@ -1019,11 +1019,6 @@ auto UnitLowerer::TranslateSensitivityReads(
       }
       case Referent::kVariableStorage:
       case Referent::kNetStorage: {
-        // A virtual interface read here is one the expression reaches through,
-        // and what it reaches is watched where the wait begins. A wait does not
-        // yet notice the handle being assigned while it waits, which needs the
-        // handle's own storage to publish its writes.
-        if (target.getType().getCanonicalType().isVirtualInterface()) break;
         auto cell = ResolveValueTarget(frame, target, span);
         if (!cell) return std::unexpected(std::move(cell.error()));
         observe(*std::move(cell));

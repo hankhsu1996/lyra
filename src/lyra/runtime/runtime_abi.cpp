@@ -40,6 +40,7 @@
 #include "lyra/runtime/managed_object.hpp"
 #include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/nba_region.hpp"
+#include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/open_write.hpp"
 #include "lyra/runtime/plusargs.hpp"
@@ -735,6 +736,7 @@ using lyra::runtime::EnterCancellationTarget;
 using lyra::runtime::EnterForeignTask;
 using lyra::runtime::ErasedDesignation;
 using lyra::runtime::EvaluationAttempts;
+using lyra::runtime::EventSourceOf;
 using lyra::runtime::FileTable;
 using lyra::runtime::FindBehavior;
 using lyra::runtime::FindExportEntry;
@@ -755,6 +757,8 @@ using lyra::runtime::NetOf;
 using lyra::runtime::ObjectDefinition;
 using lyra::runtime::ObjectIsOfClass;
 using lyra::runtime::ObjectOf;
+using lyra::runtime::ObjectRootOf;
+using lyra::runtime::ObjectWrite;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
 using lyra::runtime::OpenCellWrite;
@@ -808,6 +812,7 @@ using lyra::runtime::ValuesOf;
 using lyra::runtime::Var;
 using lyra::runtime::WaitAny;
 using lyra::runtime::WaitFork;
+using lyra::runtime::WaitRecollecting;
 using lyra::runtime::WaitUntil;
 using lyra::value::AssociativeIndexOrder;
 using lyra::value::Chandle;
@@ -1333,6 +1338,15 @@ auto lyra_rt_wait_until(void* runtime, LyraSpan triggers) -> bool {
       *static_cast<RuntimeEffects*>(runtime), TriggerHandles(triggers));
 }
 
+auto lyra_rt_wait_recollecting(void* runtime, LyraSpan triggers) -> bool {
+  return WaitRecollecting(
+      *static_cast<RuntimeEffects*>(runtime), TriggerHandles(triggers));
+}
+
+auto lyra_rt_observation_took_event(const void* observation) -> std::int64_t {
+  return static_cast<const Observation*>(observation)->TookEvent() ? 1 : 0;
+}
+
 auto lyra_rt_resume_in_nba_region(void* runtime) -> bool {
   return ResumeInNbaRegion(*static_cast<RuntimeEffects*>(runtime));
 }
@@ -1776,6 +1790,24 @@ auto lyra_rt_object_of(const void* handle) -> void* {
   return ObjectOf(Read<ManagedRef>(handle));
 }
 
+auto lyra_rt_object_root_of(const void* handle) -> void* {
+  return ObjectRootOf(Read<ManagedRef>(handle));
+}
+
+auto lyra_rt_object_event_source(void* object) -> void* {
+  return EventSourceOf(static_cast<GcObject*>(object));
+}
+
+auto lyra_rt_open_object_write(void* object, const void* place, void* out)
+    -> void* {
+  return std::construct_at(
+      static_cast<ObjectWrite*>(out), static_cast<GcObject*>(object), place);
+}
+
+auto lyra_rt_object_write_through(const void* write) -> const void* {
+  return static_cast<const ObjectWrite*>(write)->Place();
+}
+
 auto lyra_rt_object_is_of_class(const void* handle, const void* definition)
     -> std::int64_t {
   return ObjectIsOfClass(
@@ -2120,6 +2152,22 @@ void lyra_rt_shortreal_ref_arm_sampling(void* reference) {
 
 auto lyra_rt_shortreal_ref_sampled_load(void* reference, void* out) -> void* {
   return RefSampledLoad<ShortReal>(reference, out);
+}
+
+auto lyra_rt_chandle_ref_get(void* reference) -> const void* {
+  return RefGet<Chandle>(reference);
+}
+
+void lyra_rt_chandle_ref_set(void* reference, const void* value) {
+  RefSet<Chandle>(reference, value);
+}
+
+void lyra_rt_chandle_ref_arm_sampling(void* reference) {
+  RefArmSampling<Chandle>(reference);
+}
+
+auto lyra_rt_chandle_ref_sampled_load(void* reference, void* out) -> void* {
+  return RefSampledLoad<Chandle>(reference, out);
 }
 
 auto lyra_rt_managedref_ref_get(void* reference) -> const void* {
@@ -3535,6 +3583,29 @@ void lyra_rt_chandle_value_cell_store(void* cell, const void* value) noexcept {
 
 auto lyra_rt_chandle_value_cell_load(void* cell) noexcept -> void* {
   return &static_cast<ActivationValueCell<Chandle>*>(cell)->Storage();
+}
+
+// A chandle variable, which a process may wait on: LRM 9.4.2 makes a write to
+// one an event whenever the pointer it holds is not the pointer it held.
+auto lyra_rt_chandle_cell_get(void* cell) -> const void* {
+  return &static_cast<Var<Chandle>*>(cell)->Get();
+}
+
+void lyra_rt_chandle_cell_initialize(
+    void* cell, const void* prototype) noexcept {
+  static_cast<Var<Chandle>*>(cell)->Initialize(Read<Chandle>(prototype));
+}
+
+void lyra_rt_chandle_cell_set(void* cell, const void* value) {
+  static_cast<Var<Chandle>*>(cell)->Set(Read<Chandle>(value));
+}
+
+void lyra_rt_chandle_cell_arm_sampling(void* cell) {
+  static_cast<Var<Chandle>*>(cell)->ArmSampling();
+}
+
+auto lyra_rt_chandle_cell_sampled_load(void* cell, void* out) -> void* {
+  return Emplace(out, static_cast<Var<Chandle>*>(cell)->SampledGet());
 }
 
 // A handle referring to nothing (LRM 8.4), a value of the domain like any
@@ -5857,6 +5928,9 @@ auto lyra_rt_real_cell_open_for_write(void* cell, void* out) -> void* {
 auto lyra_rt_shortreal_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<ShortReal>(cell, out);
 }
+auto lyra_rt_chandle_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<Chandle>(cell, out);
+}
 auto lyra_rt_managedref_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<ManagedRef>(cell, out);
 }
@@ -5892,6 +5966,9 @@ auto lyra_rt_real_ref_open_for_write(void* reference, void* out) -> void* {
 }
 auto lyra_rt_shortreal_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<ShortReal>(reference, out);
+}
+auto lyra_rt_chandle_ref_open_for_write(void* reference, void* out) -> void* {
+  return OpenRefWrite<Chandle>(reference, out);
 }
 auto lyra_rt_managedref_ref_open_for_write(void* reference, void* out)
     -> void* {
@@ -6150,6 +6227,9 @@ void lyra_rt_promoted_scope_destroy(void* object) {
 void lyra_rt_open_write_destroy(void* object) {
   std::destroy_at(static_cast<OpenWrite*>(object));
 }
+void lyra_rt_object_write_destroy(void* object) {
+  std::destroy_at(static_cast<ObjectWrite*>(object));
+}
 
 // A second value equal to one the body already holds, built in further storage
 // the body gave -- where a value it only reads has to become one it owns.
@@ -6366,6 +6446,7 @@ static_assert(LaidOutAs<Coroutine<void>>(LibraryObject::kExecution));
 static_assert(LaidOutAs<PromotedScopeRef>(LibraryObject::kPromotedScope));
 static_assert(LaidOutAs<OpenWrite>(LibraryObject::kOpenWrite));
 static_assert(LaidOutAs<ErasedDesignation>(LibraryObject::kDesignation));
+static_assert(LaidOutAs<ObjectWrite>(LibraryObject::kObjectWrite));
 
 }  // namespace
 

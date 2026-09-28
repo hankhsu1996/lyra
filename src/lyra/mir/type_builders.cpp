@@ -76,18 +76,13 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const UnionType&) { return wrap(); },
           [&](const TaggedUnionType&) { return wrap(); },
           [&](const EmptyType&) { return wrap(); },
-          // A variable naming an object is value storage too: LRM 9.4.2 makes a
-          // write to an object handle an event when what it names is not what
-          // it named before, and the clause's own example puts that beside a
-          // wait on a property of the object to say they are two waits.
+          // A variable naming an object or holding a pointer is value storage
+          // too: LRM 9.4.2 makes a write to an object handle or a chandle an
+          // event when it is not equal to what was there, and the clause's own
+          // example puts a wait on a handle beside a wait on a property of the
+          // object to say they are two waits.
           [&](const ManagedRefType&) { return wrap(); },
-          // A chandle is value storage too, and is not wrapped for a reason of
-          // its own: its value is the pointer it carries (LRM 6.14), so a null
-          // one is a null pointer and nothing tells it apart from a watched
-          // expression that settled no value at all. Such a wait waits for that
-          // pointer to change, which needs the domain to carry its value the
-          // way every other one does.
-          [&](const ChandleType&) { return bare(); },
+          [&](const ChandleType&) { return wrap(); },
           // Not value storage, so its own declaration shape is its storage and
           // it is not wrapped: a handle onto storage of another lifetime
           // (pointer, borrowed reference, vector), an object (a class instance
