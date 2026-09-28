@@ -668,12 +668,17 @@ endmodule
 
 TEST(
     ArtifactCount,
-    AValueHandedToAClassSpecializationIsSeenAndCompiledPerValue) {
+    AValueHandedToASharedSpecializationIsSeenAndCompiledPerValue) {
   // Each module hands its parameter to a class specialization at a different
-  // kind of site. A specialization is shared by every site handing it the same
-  // value, so what decides the module is the value this site wrote -- and it
-  // is seen there, so no instance has to be lowered apart to find it out.
+  // kind of site, or to the interface a virtual interface type names (LRM
+  // 25.9). Either is shared by every site handing it the same value, so what
+  // decides the module is the value this site wrote -- and it is seen there,
+  // so no instance has to be lowered apart to find it out.
   constexpr std::string_view kSpecialized = R"(
+interface bus_if #(parameter int W = 1);
+  logic [W-1:0] data;
+endinterface
+
 package p;
   class C #(parameter int W = 1);
     static int X = W;
@@ -714,21 +719,28 @@ module Extends #(parameter int N = 1) (output int o);
   initial o = D::f();
 endmodule
 
+module VirtualHandle #(parameter int N = 1) (output int o);
+  virtual bus_if #(.W(N)) vif;
+  initial o = N;
+endmodule
+
 module Top;
   for (genvar i = 1; i <= 2; i += 1) begin : g
-    int o[5];
+    int o[6];
     DeclaredType #(.N(i)) declared (.o(o[0]));
     StaticValue #(.N(i)) value (.o(o[1]));
     StaticCall #(.N(i)) call (.o(o[2]));
     ScopedNew #(.N(i)) made (.o(o[3]));
     Extends #(.N(i)) extended (.o(o[4]));
+    VirtualHandle #(.N(i)) handle (.o(o[5]));
   end
 endmodule
 )";
   const auto design = LowerDesign(kSpecialized);
   ASSERT_TRUE(design.has_value());
   for (const std::string_view definition :
-       {"DeclaredType", "StaticValue", "StaticCall", "ScopedNew", "Extends"}) {
+       {"DeclaredType", "StaticValue", "StaticCall", "ScopedNew", "Extends",
+        "VirtualHandle"}) {
     EXPECT_EQ(UnitsOf(*design, definition), 2U) << definition;
   }
 }

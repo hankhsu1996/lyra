@@ -370,10 +370,9 @@ specializations, not with instance count.
       declared in the module writes from the module's parameter is folded, since a class's methods
       are not bodies of the unit's objects; and an elaboration-time message (`$info`, LRM 20.11)
       naming a parameter is formatted once by the front end, which keeps the text and not the
-      arguments, so its text differs per value. A parameter handed to a virtual interface
-      (`virtual bus_if #(.W(W)) vif`) is read by the prediction, but virtual interfaces are not yet
-      supported, so no case has exercised it; it needs one once they are. The same holds for the
-      instance a `bind` directive names, since `bind` is not yet supported.
+      arguments, so its text differs per value. The instance a `bind` directive names is read by the
+      prediction, but `bind` is not yet supported, so no case has exercised it; it needs one once it
+      is.
 
 - [x] The generate axis of that same sharing. A `generate for` used to lower concretely: N
       iterations became N scope classes and N construction statements, so the artifact grew
