@@ -831,10 +831,10 @@ the detail lives in the entry itself.
   virtual interface's type fixes the interface and every position reached through it, so only the
   instance is chosen at run time; its value is which instance it holds, the runtime's
   pointer-identity value, with building one from an address and reading the address back stated as
-  operations; using a null one fails the simulation; a wait watches the variable in the instance
-  held when it begins; and an interface a type names is compiled whether or not it is instantiated.
-  Resolving members by name at each access, a pointer as the value, a cast between the two, and
-  refusing an uninstantiated parameterization are rejected.
+  operations; using a null one fails the simulation; a wait watches the variable in the instance the
+  handle holds, following it when the handle is assigned; and an interface a type names is compiled
+  whether or not it is instantiated. Resolving members by name at each access, a pointer as the
+  value, a cast between the two, and refusing an uninstantiated parameterization are rejected.
 - [parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) -- every
   parameter is treated as code-shape-affecting for now (conservative over-approximation);
   classification and constructor-input threading are deferred. Superseded for value parameters by

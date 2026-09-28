@@ -38,6 +38,7 @@
 #include "lyra/runtime/named_event.hpp"          // IWYU pragma: keep
 #include "lyra/runtime/nba_region.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/net.hpp"                  // IWYU pragma: keep
+#include "lyra/runtime/object_change.hpp"        // IWYU pragma: keep
 #include "lyra/runtime/object_ref.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/observable.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/process_control.hpp"      // IWYU pragma: keep

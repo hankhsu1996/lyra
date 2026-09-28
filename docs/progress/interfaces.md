@@ -287,9 +287,12 @@ asymmetry is the whole of what separates the two.
       variable, a net read, a subroutine call, a name a modport defines over storage or computes,
       and an interface the instance itself instantiates, whether reached into, called on, or held as
       a value itself. A wait whose expression reaches a variable through a virtual interface, or a
-      name its modport defines, watches what that reaches in the instance held when the wait begins,
-      which is how a class-based transactor waits on a design signal (the standard's own
-      `@(posedge bus.grant)`).
+      name its modport defines, watches what that reaches in the instance the handle holds, which is
+      how a class-based transactor waits on a design signal (the standard's own
+      `@(posedge bus.grant)`). Assigning the handle while the wait is under way moves it onto the
+      instance now held (LRM 9.4.2), a wait on which instance a handle holds ends when it is
+      assigned a different one, and an `always_comb` reading through a handle runs again when the
+      handle is assigned (LRM 9.2.2.2.1).
 - [x] E3 -- A virtual interface's type includes the interface's actual parameter values and,
       optionally, a selected modport (LRM 25.9). Assignment requires the parameter values to match;
       an instance or virtual interface with no modport selected may be assigned to one with a
@@ -330,14 +333,6 @@ asymmetry is the whole of what separates the two.
   interface ends at the object, which is an endpoint that already exists, with the callable named
   against what that unit published. Both are recorded in `../decisions/interface-port-binding.md`
   and `../decisions/calling-a-subroutine-on-another-units-object.md`.
-- A wait that reaches a variable through a virtual interface watches the instance the handle held
-  when the wait began. Assigning the handle while the wait is under way does not move the wait onto
-  the new instance, which LRM 9.4.2 asks for of a handle an event expression reads. Noticing that
-  assignment needs the handle's own storage to wake the waiter, and where the handle is a class
-  property that is the object event source `../decisions/object-is-an-event-source.md` defines and
-  nothing yet realizes. The same missing wake-up is why a wait on which instance a handle holds
-  (`@(vif)`, `@(vif.sub)`) is refused, and why a process whose implicit sensitivity reads a handle
-  (LRM 9.2.2.2.1) does not run again when the handle is assigned.
 - A port expression written as a concatenation or an assignment pattern in an ANSI header (LRM
   23.2.2.2) states one port over several pieces of the unit's storage, and it is refused. The
   non-ANSI form of the same thing is not open: LRM 23.2.2.1 makes it several bundled names, which is

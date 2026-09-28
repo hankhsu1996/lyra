@@ -690,6 +690,9 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "observation_qualified",
           .declaration = StaticFactory{"Qualified"}};
+    case BuiltinFn::kObservationTookEvent:
+      return {
+          .name = "observation_took_event", .declaration = Method{"TookEvent"}};
     case BuiltinFn::kWaitAny:
       return {
           .name = "wait_any",
@@ -700,6 +703,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "wait_until",
           .declaration = FreeFunction{"lyra::runtime::WaitUntil"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
+    case BuiltinFn::kWaitRecollecting:
+      return {
+          .name = "wait_recollecting",
+          .declaration = FreeFunction{"lyra::runtime::WaitRecollecting"},
           .takes_the_runtime_handle = true,
           .parks_the_caller = true};
     case BuiltinFn::kSimTime:
@@ -826,6 +835,20 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "object_of",
           .declaration = FreeFunction{"lyra::runtime::ObjectOf"}};
+    case BuiltinFn::kObjectRootOf:
+      return {
+          .name = "object_root_of",
+          .declaration = FreeFunction{"lyra::runtime::ObjectRootOf"}};
+    case BuiltinFn::kObjectEventSource:
+      return {
+          .name = "object_event_source",
+          .declaration = FreeFunction{"lyra::runtime::EventSourceOf"}};
+    case BuiltinFn::kOpenObjectWrite:
+      return {
+          .name = "open_object_write",
+          .declaration = FreeFunction{"lyra::runtime::ObjectWrite"}};
+    case BuiltinFn::kObjectWriteThrough:
+      return {.name = "object_write_through", .declaration = Method{"Place"}};
     case BuiltinFn::kObjectIsOfClass:
       return {
           .name = "object_is_of_class",

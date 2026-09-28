@@ -35,9 +35,9 @@ inline constexpr std::uint32_t kMemberSlotSize = 296;
 constexpr auto MembersAt(ValueHolder holder) -> std::uint32_t {
   switch (holder) {
     case ValueHolder::kObject:
-      return 56;
+      return 64;
     case ValueHolder::kScope:
-      return 192;
+      return 200;
     case ValueHolder::kClosure:
       return 24;
   }

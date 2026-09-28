@@ -13,8 +13,10 @@
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
@@ -45,7 +47,8 @@ auto BindRouted(
 }
 
 // The cell a virtual interface's member is, in the instance the handle holds
-// as the wait begins: a pointer to it, the form a registration takes. The
+// as the wait collects its leaves: a pointer to it, the form a registration
+// takes. The
 // handle was lowered once already, as part of the event expression the wait
 // evaluates, so lowering it here can fail only if the two disagree.
 template <typename Lowerer>
@@ -59,6 +62,35 @@ auto HeldCellPointer(
         "expression failed to lower again as the cell it watches");
   }
   return *pointer;
+}
+
+// The event source of the object a leaf reached, found as the wait collects its
+// leaves: whichever object the handle names then, or the method's own object.
+// The handle was lowered once already, as part of the event expression the wait
+// evaluates, so lowering it here can fail only if the two disagree.
+template <typename Lowerer>
+auto ObjectSourcePointer(
+    Lowerer& lowerer, const WalkFrame& frame, mir::Block& block,
+    const hir::ObjectEventSource& source) -> mir::ExprId {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::ExprId receiver = std::visit(
+      Overloaded{
+          [&](hir::ExprId handle) -> mir::ExprId {
+            auto lowered = lowerer.LowerExpr(
+                lowerer.HirExprs().Get(handle), frame.WithBlock(&block));
+            if (!lowered) {
+              throw InternalError(
+                  "ObjectSourcePointer: a handle lowered as part of the event "
+                  "expression failed to lower again as the object it reaches");
+            }
+            return block.exprs.Add(*std::move(lowered));
+          },
+          [&](const hir::ReceiverObject&) -> mir::ExprId {
+            return block.exprs.Add(
+                MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+          }},
+      source.object);
+  return ObjectEventSourceOf(unit, block, ObjectRootOf(unit, block, receiver));
 }
 
 }  // namespace
@@ -90,6 +122,13 @@ auto BuildObservableCellExpr(
                     .type = unit.types.Get(block.exprs.Get(pointer).type)
                                 .Get<mir::PointerType>()
                                 .pointee});
+          },
+          // An object's event source is subscribed to and holds no value, so
+          // there is no cell of it for anything to arm or read.
+          [&](const hir::ObjectEventSource&) -> mir::ExprId {
+            throw InternalError(
+                "BuildObservableCellExpr: an object's event source is reached "
+                "only as what a wait subscribes to, and holds no value");
           },
       },
       entry.ref);
@@ -132,6 +171,9 @@ auto BuildObservablePtrExpr(
           // the pointer a registration takes.
           [&](const hir::InterfaceMemberAccessExpr& held) -> mir::ExprId {
             return HeldCellPointer(lowerer, frame, block, held);
+          },
+          [&](const hir::ObjectEventSource& source) -> mir::ExprId {
+            return ObjectSourcePointer(lowerer, frame, block, source);
           },
       },
       entry.ref);
@@ -176,6 +218,18 @@ auto BuildTriggerExpr(
 }
 
 }  // namespace
+
+auto IsFoundThroughAHandle(const hir::SensitivityTarget& target) -> bool {
+  return std::visit(
+      Overloaded{
+          [](const hir::RoutedValueRef&) { return false; },
+          [](const hir::ExternalUnitValueRef&) { return false; },
+          [](const hir::StaticPropertyRef&) { return false; },
+          [](const hir::InterfaceMemberAccessExpr&) { return true; },
+          [](const hir::ObjectEventSource&) { return true; },
+      },
+      target);
+}
 
 auto DeclareObservation(
     const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,

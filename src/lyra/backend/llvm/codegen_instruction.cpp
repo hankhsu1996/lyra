@@ -1954,9 +1954,10 @@ auto CodeGenFunction::ConstructionOf(
               // open-array handle, a control effect, an observation and a
               // coordinate are what some other entry answers with; a chunk is
               // the element type a canonical buffer's pointer addresses rather
-              // than a value; and a cancellation target and a channel's joint
+              // than a value; a cancellation target and a channel's joint
               // cancel state are storage the owner holds and reaches by
-              // address.
+              // address; and a write into an object is opened by the entry
+              // that opens it.
               case lir::RuntimeLibraryKind::kPropertyCoordinate:
               case lir::RuntimeLibraryKind::kBehaviorCoordinate:
               // A class's record is assembled where the class is emitted, so a
@@ -1969,6 +1970,7 @@ auto CodeGenFunction::ConstructionOf(
               case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
               case lir::RuntimeLibraryKind::kControlEffect:
               case lir::RuntimeLibraryKind::kObservation:
+              case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kCancellationTarget:
               case lir::RuntimeLibraryKind::kChannelCancellation:
                 return no_construct();

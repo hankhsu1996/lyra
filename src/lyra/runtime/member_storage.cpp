@@ -177,20 +177,17 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
               case support::ValueDomain::kAssocArray:
                 object_.emplace<Var<value::RuntimeAssociativeArray>>();
                 return;
-              // A variable naming an object is waited on for the name changing:
-              // LRM 9.4.2 makes a write to an object handle an event whenever
-              // what it names is not what it named before, which is a different
-              // wait from one on a property of the object.
+              // A variable naming an object or holding a pointer is waited on
+              // for what it holds changing: LRM 9.4.2 makes a write to an
+              // object handle or a chandle an event whenever it is not equal to
+              // what was there, which is a different wait from one on a
+              // property of the object.
               case support::ValueDomain::kManagedRef:
                 object_.emplace<Var<value::ManagedRef>>();
                 return;
-              // The same clause says it of a chandle, and no cell is kept over
-              // one: a chandle's value is the pointer it carries (LRM 6.14), so
-              // a null one is a null pointer, which the boundary a watched
-              // expression answers across reads as no answer at all.
               case support::ValueDomain::kChandle:
-                throw InternalError(
-                    "MemberStorage: no observable cell is kept over a chandle");
+                object_.emplace<Var<value::Chandle>>();
+                return;
               // An empty (void) value is only ever a tagged union's payload
               // (LRM 7.3.2), held inside its union, never storage of its own
               // that a process could wait on.
@@ -239,11 +236,6 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
                 object_.emplace<
                     ActivationValueCell<value::RuntimeAssociativeArray>>();
                 return;
-              // A handle is a variable like any other here, unlike above: what
-              // a cell adds over the plain value is a write that lands at the
-              // declared representation, which a handle needs as much as a
-              // packed value does. What it does not need is the observation,
-              // and that is the whole of why the two switches differ.
               case support::ValueDomain::kChandle:
                 object_.emplace<ActivationValueCell<value::Chandle>>();
                 return;

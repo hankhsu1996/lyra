@@ -214,23 +214,16 @@ auto Type::IsValueChangeObservable() const -> bool {
           [](const ShortRealType&) { return true; },
           [](const RealTimeType&) { return true; },
           // A handle's value is which object it names, and LRM 9.4.2 makes a
-          // write to such a variable an event whenever what it names is not
-          // what it named before. It separates that from a wait on a property
-          // of the object, which is a wait on that property's own storage.
+          // write to such a variable, or to a chandle, an event whenever what
+          // it holds is not what it held before. It separates that from a wait
+          // on a property of the object, which the object answers.
           [](const ClassHandleType&) { return true; },
           [](const OpaqueObjectHandleType&) { return true; },
           [](const ImportedClassHandleType&) { return true; },
-          // The same clause says it of a chandle, and this answers no: a
-          // chandle's value is the pointer it carries (LRM 6.14), so a null one
-          // is a null pointer and nothing tells it apart from an expression
-          // that settled no value at all. Waiting on one waits for that pointer
-          // to change, which needs the domain to carry its value the way every
-          // other one does.
-          [](const ChandleType&) { return false; },
-          // LRM 25.9 allows a virtual interface only to be assigned and
-          // compared, so no event expression waits on one itself; a wait
-          // reaches through it to a member, whose own storage is what changes.
-          [](const VirtualInterfaceType&) { return false; },
+          [](const ChandleType&) { return true; },
+          // Which instance a virtual interface holds is a value it is compared
+          // by (LRM 25.9), so a wait on it waits for a different instance.
+          [](const VirtualInterfaceType&) { return true; },
           [](const WildcardIndexType&) { return false; },
           [](const EventType&) { return false; },
           [](const UnitObjectType&) { return false; },

@@ -52,6 +52,11 @@ struct DescentStep {
 // that reaches the part written. A target that designates no part descends
 // nowhere and is its own place.
 //
+// Where the owner is a property of an object (LRM 8.4), `object` is that
+// object, as the address its members are reached through. A write to the
+// property is opened on the object, which is what tells it that it was written
+// (LRM 9.4.2); a variable's own storage reports a write itself and has none.
+//
 // This is the lowering's own shape and reaches no layer below. What MIR carries
 // is what the descent lowers to -- a run of ordinary calls, each naming its own
 // entry, composed through the receiver -- because a consumer that met the
@@ -60,7 +65,15 @@ struct DescentStep {
 struct WriteTarget {
   mir::ExprId owner;
   std::vector<DescentStep> descent;
+  std::optional<mir::ExprId> object = std::nullopt;
 };
+
+// The owner as a write reaches it: through a write opened on the object it is a
+// property of, where it is one, so that ending the write tells the object. What
+// lends the owner whole to a `ref` lends this.
+[[nodiscard]] auto WrittenOwner(
+    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+    -> mir::ExprId;
 
 // The same target one step deeper. This is the only thing that builds a
 // descent, so the path gains exactly one step per level of the source's own
@@ -85,6 +98,8 @@ struct WriteTarget {
 // are storage of their own are then taken within the write in progress,
 // starting from the whole of what it designates, which is how it learns what
 // forming each did, and the place is where the last of them is dereferenced.
+// An owner that is a property of an object is reached through a write opened on
+// the object.
 [[nodiscard]] auto TargetPlace(
     mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
     -> mir::ExprId;

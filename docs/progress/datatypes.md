@@ -232,9 +232,10 @@ its legal uses are equality (`==` / `!=`) and case equality (`===` / `!==`) agai
 or `null`, a boolean test that is 0 when null and 1 otherwise, assignment from another chandle or
 `null`, membership in an associative array, a class, or a subroutine's arguments and return value,
 and the assignment-pattern conversion, which LRM 21.2.1.6 names it under. It is illegal as a port,
-in a sensitivity list or event expression, in a continuous assignment, in an untagged union, and in
-a packed type, so a chandle never participates in event propagation and a structural chandle is not
-observable storage.
+in a continuous assignment, in an untagged union, and in a packed type. LRM 6.14 also lists a
+sensitivity list and an event expression, while LRM 9.4.2 states what waiting on a chandle variable
+means -- an event on a write not equal to its previous value -- and the front end admits the form,
+so a chandle variable is observable storage and a wait on one has that meaning.
 
 - [x] CH1 -- Declaration and `null` default, assignment from `null` and from another chandle, the
       equality and case-equality families against a chandle and against `null`, the boolean test
@@ -242,7 +243,7 @@ observable storage.
       as an unpacked-struct field, as an associative-array element, and as an associative-array key
       (whose relative entry ordering LRM 6.14 leaves to the implementation). A non-null chandle
       originates only at the DPI boundary, where it crosses as an opaque pointer in either direction
-      (`dpi.md`).
+      (`dpi.md`). A variable of the type is waited on for the pointer it holds changing.
 - [x] CH2 -- `%p` on a chandle, which LRM 21.2.1.6 names among the handles that print in an
       implementation-dependent format, except that one naming nothing prints the word `null`. Every
       other conversion is one the language defines no text for; the frontend does not filter a bare

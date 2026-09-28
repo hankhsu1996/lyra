@@ -149,20 +149,25 @@ under each item, and the conformance gaps at the end.
       write to a simple object handle an event whenever what it names is not what it named before,
       and a write naming the object already named is no event. The clause's own example places a
       wait on a property of the object beside a wait on the handle to say they are two different
-      waits, and a write to the property resumes neither the other.
-  - [ ] A value-change event control on a chandle (LRM 9.4.2 names one in the same sentence as an
-        object handle): a chandle's value is the pointer it carries, so a null one is a null pointer
-        and the boundary a synthesized body answers across reads that as no answer at all. What it
-        waits on is a change to the pointer, so this waits on the domain crossing the way every
-        other value domain does.
+      waits, and a write to the property resumes neither the other. The same holds of a chandle
+      variable, whose value is the pointer it holds, and of a virtual interface, whose value is the
+      instance it holds.
+- [x] A wait follows what its expression reached (LRM 9.4.2). A property of a class object --
+      reached through a handle, the standard's own `@(p.status)`, through a handle another property
+      holds, or named bare inside a method -- is watched as its object, which every write to any of
+      its properties reports to: an assignment of any form, a nonblocking one when it lands, a
+      built-in method that changes it, and a task writing through a `ref` bound to it. A variable
+      reached through a virtual interface is watched in the instance the handle holds. Which object
+      or instance that is follows the handle: writing the handle while the wait is under way
+      reevaluates the expression, which is an event exactly when what it reaches now already
+      differs, and a write to what it reached before no longer reaches it. This holds of an event
+      control and of `wait (cond)` alike.
+  - [ ] A wait whose expression calls a method of a class object, or hands a subroutine a class
+        handle (LRM 9.4.2 admits a non-virtual method there). Which objects such a call reached is
+        not collected, so a wait on it is refused rather than left waiting on objects it never
+        subscribed to.
   - [ ] A value-change event control on any other operand whose change is not watched (LRM 9.4.2):
         an operand that is no value at all, and one whose value nothing yet compares.
-  - [ ] A wait on a property of a class object -- reached through a handle, the standard's own
-        `@(p.status)`, or named bare inside a method -- by an event control or `wait (cond)` (LRM
-        9.4.2). Nothing publishes a write to a property yet, so such a wait is refused rather than
-        left waiting for an event that never comes. `../decisions/object-is-an-event-source.md`
-        holds the model it waits on. A variable reached through a virtual interface is not this: it
-        is an interface's variable, watched in the instance held when the wait begins.
   - [ ] A nested timing control inside an event-list entry: only signal events compose in a list
         today.
 - [x] T6 -- The non-blocking event trigger `->> e` (LRM 15.5.1), with and without a control. The

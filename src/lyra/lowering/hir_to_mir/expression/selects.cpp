@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
+#include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
@@ -655,16 +656,28 @@ auto LowerHirMemberAccessExprLhs(
 // (a class field is a reference-storage receiver, and the mutate flow is the
 // usual observable-cell path when the property is itself an observable cell).
 template <ExprLowerer Lowerer>
+auto PropertyWriteTarget(
+    Lowerer& lowerer, const WalkFrame& frame, mir::ExprId receiver,
+    const hir::ClassPropertyTarget& target, mir::TypeId result_type)
+    -> WriteTarget {
+  auto& block = *frame.current_block;
+  return WriteTarget{
+      .owner = block.exprs.Add(BuildClassPropertyAccess(
+          lowerer, frame, receiver, target, result_type)),
+      .descent = {},
+      .object = ObjectRootOf(lowerer.Owner().Unit(), block, receiver)};
+}
+
+template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExprLhs(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
+    mir::TypeId result_type) -> diag::Result<WriteTarget> {
   const auto& base_hir_expr = lowerer.HirExprs().Get(sel.base_value);
   auto base_or = lowerer.LowerExpr(base_hir_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-  return BuildClassPropertyAccess(
-      lowerer, frame, base_id, sel.target, result_type);
+  return PropertyWriteTarget(
+      lowerer, frame, frame.current_block->exprs.Add(*std::move(base_or)),
+      sel.target, result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -740,13 +753,19 @@ template auto LowerHirMemberAccessExprLhs(
 template auto LowerHirMemberAccessExprLhs(
     const StructuralScopeLowerer&, WalkFrame, const hir::MemberAccessExpr&,
     mir::TypeId) -> diag::Result<WriteTarget>;
+template auto PropertyWriteTarget(
+    ProcessLowerer&, const WalkFrame&, mir::ExprId,
+    const hir::ClassPropertyTarget&, mir::TypeId) -> WriteTarget;
+template auto PropertyWriteTarget(
+    const StructuralScopeLowerer&, const WalkFrame&, mir::ExprId,
+    const hir::ClassPropertyTarget&, mir::TypeId) -> WriteTarget;
 template auto LowerHirClassPropertyAccessExprLhs(
     ProcessLowerer&, WalkFrame, const hir::ClassPropertyAccessExpr&,
-    mir::TypeId) -> diag::Result<mir::Expr>;
+    mir::TypeId) -> diag::Result<WriteTarget>;
 template auto LowerHirClassPropertyAccessExprLhs(
     const StructuralScopeLowerer&, WalkFrame,
     const hir::ClassPropertyAccessExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
+    -> diag::Result<WriteTarget>;
 template auto LowerHirInterfaceMemberAccessExpr(
     ProcessLowerer&, WalkFrame, const hir::InterfaceMemberAccessExpr&)
     -> diag::Result<mir::Expr>;

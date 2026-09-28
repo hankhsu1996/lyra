@@ -73,6 +73,8 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::runtime::Trigger";
     case mir::RuntimeLibraryKind::kObservation:
       return "lyra::runtime::Observation";
+    case mir::RuntimeLibraryKind::kObjectWrite:
+      return "lyra::runtime::ObjectWrite";
     case mir::RuntimeLibraryKind::kScopeProgram:
       return "lyra::runtime::ScopeProgram";
     case mir::RuntimeLibraryKind::kScopeCallable:

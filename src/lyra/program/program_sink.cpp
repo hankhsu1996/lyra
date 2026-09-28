@@ -255,6 +255,10 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_property_at", &lyra_rt_property_at);
   add("lyra_rt_behavior_at", &lyra_rt_behavior_at);
   add("lyra_rt_object_of", &lyra_rt_object_of);
+  add("lyra_rt_object_root_of", &lyra_rt_object_root_of);
+  add("lyra_rt_object_event_source", &lyra_rt_object_event_source);
+  add("lyra_rt_open_object_write", &lyra_rt_open_object_write);
+  add("lyra_rt_object_write_through", &lyra_rt_object_write_through);
   add("lyra_rt_object_is_of_class", &lyra_rt_object_is_of_class);
   add("lyra_rt_enumeration_has", &lyra_rt_enumeration_has);
   add("lyra_rt_enumeration_name", &lyra_rt_enumeration_name);
@@ -280,6 +284,8 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_observation_qualified", &lyra_rt_observation_qualified);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
   add("lyra_rt_wait_until", &lyra_rt_wait_until);
+  add("lyra_rt_wait_recollecting", &lyra_rt_wait_recollecting);
+  add("lyra_rt_observation_took_event", &lyra_rt_observation_took_event);
   add("lyra_rt_triggered", &lyra_rt_triggered);
   add("lyra_rt_trigger", &lyra_rt_trigger);
   add("lyra_rt_enter_target", &lyra_rt_enter_target);
@@ -369,6 +375,8 @@ void BindWriteEntries(const auto& add) {
   add("lyra_rt_real_cell_open_for_write", &lyra_rt_real_cell_open_for_write);
   add("lyra_rt_shortreal_cell_open_for_write",
       &lyra_rt_shortreal_cell_open_for_write);
+  add("lyra_rt_chandle_cell_open_for_write",
+      &lyra_rt_chandle_cell_open_for_write);
   add("lyra_rt_managedref_cell_open_for_write",
       &lyra_rt_managedref_cell_open_for_write);
   add("lyra_rt_tuple_cell_open_for_write", &lyra_rt_tuple_cell_open_for_write);
@@ -387,6 +395,8 @@ void BindWriteEntries(const auto& add) {
   add("lyra_rt_real_ref_open_for_write", &lyra_rt_real_ref_open_for_write);
   add("lyra_rt_shortreal_ref_open_for_write",
       &lyra_rt_shortreal_ref_open_for_write);
+  add("lyra_rt_chandle_ref_open_for_write",
+      &lyra_rt_chandle_ref_open_for_write);
   add("lyra_rt_managedref_ref_open_for_write",
       &lyra_rt_managedref_ref_open_for_write);
   add("lyra_rt_tuple_ref_open_for_write", &lyra_rt_tuple_ref_open_for_write);
@@ -471,6 +481,10 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_shortreal_ref_arm_sampling);
   add("lyra_rt_shortreal_ref_sampled_load",
       &lyra_rt_shortreal_ref_sampled_load);
+  add("lyra_rt_chandle_ref_get", &lyra_rt_chandle_ref_get);
+  add("lyra_rt_chandle_ref_set", &lyra_rt_chandle_ref_set);
+  add("lyra_rt_chandle_ref_arm_sampling", &lyra_rt_chandle_ref_arm_sampling);
+  add("lyra_rt_chandle_ref_sampled_load", &lyra_rt_chandle_ref_sampled_load);
   add("lyra_rt_managedref_ref_get", &lyra_rt_managedref_ref_get);
   add("lyra_rt_managedref_ref_set", &lyra_rt_managedref_ref_set);
   add("lyra_rt_managedref_ref_arm_sampling",
@@ -778,6 +792,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_erased_value_destroy", &lyra_rt_erased_value_destroy);
   add("lyra_rt_promoted_scope_destroy", &lyra_rt_promoted_scope_destroy);
   add("lyra_rt_open_write_destroy", &lyra_rt_open_write_destroy);
+  add("lyra_rt_object_write_destroy", &lyra_rt_object_write_destroy);
   add("lyra_rt_packed_assign", &lyra_rt_packed_assign);
   add("lyra_rt_string_assign", &lyra_rt_string_assign);
   add("lyra_rt_real_assign", &lyra_rt_real_assign);
@@ -937,6 +952,11 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_chandle_value_cell_alloc", &lyra_rt_chandle_value_cell_alloc);
   add("lyra_rt_chandle_value_cell_store", &lyra_rt_chandle_value_cell_store);
   add("lyra_rt_chandle_value_cell_load", &lyra_rt_chandle_value_cell_load);
+  add("lyra_rt_chandle_cell_get", &lyra_rt_chandle_cell_get);
+  add("lyra_rt_chandle_cell_initialize", &lyra_rt_chandle_cell_initialize);
+  add("lyra_rt_chandle_cell_set", &lyra_rt_chandle_cell_set);
+  add("lyra_rt_chandle_cell_arm_sampling", &lyra_rt_chandle_cell_arm_sampling);
+  add("lyra_rt_chandle_cell_sampled_load", &lyra_rt_chandle_cell_sampled_load);
   add("lyra_rt_managedref_default", &lyra_rt_managedref_default);
   add("lyra_rt_managedref_value_cell_alloc",
       &lyra_rt_managedref_value_cell_alloc);

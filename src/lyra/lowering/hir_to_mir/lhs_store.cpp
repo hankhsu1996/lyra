@@ -10,6 +10,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -124,6 +125,15 @@ auto StepArguments(
   return arguments;
 }
 
+auto WrittenOwner(
+    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+    -> mir::ExprId {
+  if (!target.object.has_value()) {
+    return target.owner;
+  }
+  return PropertyWrittenThrough(unit, block, *target.object, target.owner);
+}
+
 auto DescendInto(WriteTarget base, DescentStep step) -> WriteTarget {
   base.descent.push_back(std::move(step));
   return base;
@@ -153,7 +163,8 @@ auto TargetPlace(
   const mir::Type& owner_ty =
       unit.types.Get(block.exprs.Get(target.owner).type);
   auto step = target.descent.begin();
-  mir::ExprId reached = target.owner;
+  const mir::ExprId owner = WrittenOwner(unit, block, target);
+  mir::ExprId reached = owner;
   if (owner_ty.IsCapabilityWrapper()) {
     RefuseNetCell(owner_ty);
     // The write is opened on the wrapper, the whole of what the wrapper holds
@@ -173,7 +184,7 @@ auto TargetPlace(
                     .callee =
                         mir::Direct{
                             .target = support::BuiltinFn::kOpenForWrite,
-                            .receiver = target.owner},
+                            .receiver = owner},
                     .arguments = {}},
             .type = unit.types.Intern(
                 mir::Type{mir::OpenWriteType{.value = value}})});
@@ -251,7 +262,7 @@ auto BuildStoreExpr(
                 .callee =
                     mir::Direct{
                         .target = support::BuiltinFn::kStore,
-                        .receiver = target.owner},
+                        .receiver = WrittenOwner(unit, block, target)},
                 .arguments = {rhs_id}},
         .type = unit.builtins.void_type};
   }

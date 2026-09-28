@@ -80,7 +80,7 @@ class MemberStorage {
       BorrowedHandle, PromotedScopeRef, CancellationTarget, ChannelCancellation,
       NamedEvent, EvaluationAttempts, Var<value::PackedArray>,
       Var<value::String>, Var<value::Real>, Var<value::ShortReal>,
-      Var<value::RuntimeTuple>, Var<value::RuntimeUnion>,
+      Var<value::Chandle>, Var<value::RuntimeTuple>, Var<value::RuntimeUnion>,
       Var<value::RuntimeTaggedUnion>, Var<value::RuntimeDynamicArray>,
       Var<value::RuntimeUnpackedArray>, Var<value::RuntimeQueue>,
       Var<value::RuntimeAssociativeArray>, Var<value::ManagedRef>,

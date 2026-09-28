@@ -656,6 +656,17 @@ class HirDumper {
                   "held=Expr[{}] steps={} member[{}]", c.instance.handle.value,
                   c.instance.steps.size(), c.member.value);
             },
+            [](const ObjectEventSource& o) -> std::string {
+              return std::visit(
+                  Overloaded{
+                      [](ExprId handle) -> std::string {
+                        return std::format("object=Expr[{}]", handle.value);
+                      },
+                      [](const ReceiverObject&) -> std::string {
+                        return "object=receiver";
+                      }},
+                  o.object);
+            },
         },
         target);
   }

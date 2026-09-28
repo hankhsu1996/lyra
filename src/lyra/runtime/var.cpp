@@ -64,6 +64,11 @@ class EventControlWait : public Wait {
     return true;
   }
 
+ protected:
+  [[nodiscard]] auto Triggers() const -> std::span<const Trigger> {
+    return triggers_;
+  }
+
  private:
   std::vector<Trigger> triggers_;
 };
@@ -85,6 +90,33 @@ class LevelConditionWait : public EventControlWait {
   // NOLINTNEXTLINE(readability-named-parameter)
   auto Again(RuntimeEffects&, CoroutineHandle) -> WaitOutcome override {
     return WaitOutcome::kSatisfied;
+  }
+};
+
+// Waiting for an event control some of whose leaves were found by evaluating a
+// handle. Which storage the expression reaches can move while the process
+// waits, so the process resumes on every candidacy and collects its leaves
+// again, asking afterwards whether the candidacy was an event (LRM 9.4.2).
+// Nothing watches the expression between resuming and waiting again, so a wait
+// made afresh first compares the expression against what it last found, which
+// is what catches a change made in that gap.
+class RecollectingEventWait : public EventControlWait {
+ public:
+  using EventControlWait::EventControlWait;
+
+  auto Begin(RuntimeEffects& services, CoroutineHandle leaf)
+      -> WaitOutcome override {
+    for (const Trigger& trigger : Triggers()) {
+      if (ArmedObservation* observation = trigger.observation.Get();
+          observation != nullptr && observation->Fires()) {
+        return WaitOutcome::kSatisfied;
+      }
+    }
+    return EventControlWait::Begin(services, leaf);
+  }
+
+  [[nodiscard]] auto ResumesOnEveryCandidacy() const -> bool override {
+    return true;
   }
 };
 
@@ -126,9 +158,22 @@ auto WaitUntil(RuntimeEffects& services, std::span<const Trigger> triggers)
       services, triggers);
 }
 
+auto WaitRecollecting(
+    RuntimeEffects& services, std::span<const Trigger> triggers) -> bool {
+  return services.CurrentProcess().ParkOn<RecollectingEventWait>(
+      services, triggers);
+}
+
 auto WaitAny(RuntimeEffects& services, std::span<const Trigger* const> triggers)
     -> bool {
   return services.CurrentProcess().ParkOn<EventControlWait>(services, triggers);
+}
+
+auto WaitRecollecting(
+    RuntimeEffects& services, std::span<const Trigger* const> triggers)
+    -> bool {
+  return services.CurrentProcess().ParkOn<RecollectingEventWait>(
+      services, triggers);
 }
 
 auto WaitUntil(

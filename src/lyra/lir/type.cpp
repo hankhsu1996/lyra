@@ -106,6 +106,8 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "trigger";
     case RuntimeLibraryKind::kObservation:
       return "observation";
+    case RuntimeLibraryKind::kObjectWrite:
+      return "object write";
     case RuntimeLibraryKind::kCancellationTarget:
       return "cancellation target";
     case RuntimeLibraryKind::kControlEffect:
@@ -594,6 +596,10 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
                 return LibraryObject::kTrigger;
               case RuntimeLibraryKind::kObservation:
                 return LibraryObject::kObservation;
+              // Held by the writer for as long as the write lasts; ending it
+              // is what tells the object it was written.
+              case RuntimeLibraryKind::kObjectWrite:
+                return LibraryObject::kObjectWrite;
               // Kept by the run -- a description, a coordinate, a class's
               // record, the time format -- or reached inside something else --
               // a buffer's chunk, an image's handle, the effect a departure

@@ -237,6 +237,16 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<WriteTarget> {
             if constexpr (kProcedural) {
+              // A property named bare is one of the object the method runs on
+              // (LRM 8.4), and a write to it is opened on that object.
+              if (const auto* property =
+                      std::get_if<hir::ClassPropertyRef>(&p.data)) {
+                return PropertyWriteTarget(
+                    lowerer, frame,
+                    frame.current_block->exprs.Add(MakeSelfRefExpr(
+                        frame, frame.current_class->self_pointer_type)),
+                    property->target, result_type);
+              }
               return as_place(
                   LowerHirPrimaryExprProc(lowerer, frame, p.data, result_type));
             } else {
@@ -257,8 +267,8 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           },
           [&](const hir::ClassPropertyAccessExpr& sel)
               -> diag::Result<WriteTarget> {
-            return as_place(LowerHirClassPropertyAccessExprLhs(
-                lowerer, frame, sel, result_type));
+            return LowerHirClassPropertyAccessExprLhs(
+                lowerer, frame, sel, result_type);
           },
           [&](const hir::InterfaceMemberAccessExpr& sel)
               -> diag::Result<WriteTarget> {

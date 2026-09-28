@@ -63,12 +63,14 @@ class handle indeterminate. Every access therefore guards the evaluated handle a
 simulation error when it holds nothing. The handle is evaluated once, whatever the access then does
 with it.
 
-### D4. A wait watches the variable in the instance held when the wait begins
+### D4. A wait watches the variable in the instance the handle holds
 
 A wait whose expression reaches a variable through a virtual interface cannot name that variable's
-cell ahead of time. The wait evaluates the handle where it begins and registers on the cell it
-reaches, alongside the cells the expression names directly. The member is an interface's variable
-and is observable like any other; what the wait did not know in advance is only which instance.
+cell ahead of time. The wait evaluates the handle and registers on the cell it reaches, alongside
+the cells the expression names directly -- the handle's own variable among them, since which
+instance it holds is a value it is compared by. The member is an interface's variable and is
+observable like any other; what the wait did not know in advance is only which instance, and
+assigning the handle while the wait is under way moves it onto the instance now held (LRM 9.4.2).
 
 ### D5. An interface a type names is compiled whether or not it is instantiated
 
@@ -100,12 +102,9 @@ expression bodies, so the front end elaborates nothing it would not have.
   a port or as an array element; comparison; member reads and writes; subroutine calls; a modport's
   own names; an interface the instance instantiates, reached into, called on, or held as a value
   itself; and waits.
-- A wait keeps watching the instance it began with if the handle is assigned during the wait. LRM
-  9.4.2 asks for the wait to move. Noticing the assignment needs the handle's storage to wake the
-  waiter, which, for a handle held in a class property, is the object event source
-  `object-is-an-event-source.md` defines.
-- A wait on a property of a class object is refused rather than left never ending. Its expression
-  names no cell either, and unlike an interface's variable a property publishes no write yet.
+- A wait follows the handle: its expression is evaluated again when the handle's variable is
+  written, or, for a handle held in a class property, when that object is, which is the object event
+  source `object-is-an-event-source.md` defines.
 
 ## Cross-references
 
