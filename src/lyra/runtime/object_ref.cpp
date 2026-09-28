@@ -49,8 +49,12 @@ auto GcObject::EventSource() -> Observable& {
   return *event_source_;
 }
 
+auto GcObject::Watched() const -> bool {
+  return event_source_ != nullptr && event_source_->HasWaiter();
+}
+
 void GcObject::PublishChange() {
-  if (event_source_ != nullptr && event_source_->HasWaiter()) {
+  if (Watched()) {
     current_runtime().WakeWaitersOf(
         *event_source_, MakeWholeValueProjectionTest());
   }

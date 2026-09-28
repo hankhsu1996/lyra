@@ -236,13 +236,16 @@ ownership, or native in-frame layout) for every value.
       chain of `ref` ports denotes the one variable at its end. An `output` / `inout` argument is
       not subject to this -- it copies out through the actual's own write path.
 
-      Two things still refuse. A component of an aggregate is lent only out of a variable a write
-      opens, which the entry below covers. And reaching the storage a reference binds, rather than
-      reading or writing through it,
-      is not an operation here: the two
-      kinds are different storage with one type between them, so an address taken through a
-      reference would name whichever kind the type does not admit. Waiting on a `ref` port's own
-      name is what asks for it (LRM 9.4.2).
+      A member or an element of any of these is lent too, and belongs to the variable its whole
+      does, so a write through it is that variable's write at the moment it lands.
+      `../decisions/a-lent-part-carries-its-variable.md` holds the design.
+
+      Still refused: reaching the storage a reference binds, rather than reading or writing through
+      it, is not an operation here: the two kinds are different storage with one type between them,
+      so an address taken through a reference would name whichever kind the type does not admit.
+      Waiting on a `ref` port's own name is what asks for it (LRM 9.4.2). A `ref` port connected to
+      a member or an element is refused on both backends, because the port is bound before the
+      variable's declaration installs what it holds, which moves the part.
 
 - [ ] **A component of an aggregate is storage of its own.** The language gives a member of an
       unpacked structure and an element of an unpacked array an identity a second name may denote,
@@ -254,16 +257,10 @@ ownership, or native in-frame layout) for every value.
       a whole assignment to a fixed-size aggregate writes into the components already there (LRM
       7.6). `../decisions/a-part-of-storage-is-reached-where-it-lies.md` holds the design.
 
-      A component of a variable a write opens -- a module variable, a `ref` formal's referent -- is
-      lent as the place that write lands on, so the variable is told whether the call changed it
-      when the call's full-expression ends, as the C++ backend has always told it.
+      A write into a component keeps only that component's value from before the write.
       `../decisions/a-write-compares-what-it-reached.md` holds the design.
 
-      Still refused or unsettled: a component of storage no write opens -- a member or an element of
-      a local or of a class property -- cannot be lent yet. A write through a lent component is
-      reported when the call ends rather than when it lands, on both backends, which a task that
-      waits before returning makes visible to a process waiting on the variable (LRM 4.3, 13.5.2).
-      And a variable-size container
+      Still unsettled: a variable-size container
       preserving every element's identity across an insertion or a removal (LRM 7.10.3), with an
       element removed while a reference is bound going on existing for whoever holds it (LRM
       13.5.2), is a question of the container's representation that

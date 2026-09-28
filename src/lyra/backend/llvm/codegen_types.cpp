@@ -109,12 +109,12 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::RuntimeLibraryType& t) { return address(t); },
           [&](const lir::OpenWriteType& t) { return address(t); },
           [&](const lir::DesignationType& t) { return address(t); },
+          [&](const lir::RefType& t) { return address(t); },
 
           // A value that already is an address: a handle onto storage of some
           // other lifetime, an execution's own frame, or -- for a chandle (LRM
           // 6.14) and a class handle (LRM 8.3) -- a value whose whole content
           // is what it refers to.
-          [&](const lir::RefType& t) { return address(t); },
           [&](const lir::PointerType& t) { return address(t); },
           [&](const lir::ManagedRefType& t) { return address(t); },
           [&](const lir::ChandleType& t) { return address(t); },

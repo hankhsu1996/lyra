@@ -5,9 +5,9 @@ Date: 2026-09-11 Status: accepted
 ## Context
 
 A class property is one of the four things LRM 13.5.2 allows as a `ref` actual, and
-[reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md) makes a reference one machine word
-pointing at storage. So `foo(c.x)` hands the callee a pointer into the middle of a managed object,
-and that pointer has to stay correct for as long as the callee holds it.
+[reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md) makes a reference hold the address
+of the storage it names. So `foo(c.x)` hands the callee a pointer into the middle of a managed
+object, and that pointer has to stay correct for as long as the callee holds it.
 
 Two different things can go wrong with it, and they are worth separating because one of them is
 obvious and the other is the reason this entry is longer than the question looked:
@@ -111,8 +111,8 @@ for that reference's lifetime. The reference representation is not reopened for 
 
 ## Cross-references
 
-- [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md) -- the one-word reference this
-  keeps valid, and the conflict with the collector contract that this resolves.
+- [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md) -- the address a reference
+  holds, which this keeps valid, and the conflict with the collector contract that this resolves.
 - [object-model](object-model.md) -- the managed object this constrains the storage of.
 - [managed-value-realization](managed-value-realization.md) -- what a managed value may not live in,
   which this does not change.

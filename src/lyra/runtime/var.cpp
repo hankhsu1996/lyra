@@ -2,10 +2,14 @@
 
 #include <cstdint>
 #include <span>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -135,6 +139,46 @@ auto MakePackedProjectionTest(
 template auto LandedChange<value::PackedArray>(
     const value::PackedArray& before, const value::PackedArray& after)
     -> ProjectionUnchanged;
+
+RareWriteState::~RareWriteState() = default;
+
+VariableCell::VariableCell() = default;
+VariableCell::~VariableCell() = default;
+
+void ErasedReference::Report(const ProjectionUnchanged& unchanged) const {
+  std::visit(
+      Overloaded{
+          [](std::monostate) {},
+          [&](VariableCell* variable) {
+            current_runtime().WakeWaitersOf(*variable, unchanged);
+          },
+          [](GcObject* object) { object->PublishChange(); }},
+      holder);
+}
+
+void ErasedReference::AdmitStep() const {
+  if (!Admits()) {
+    throw SimulationError(
+        "lending part of a variable a procedural continuous assignment holds "
+        "is not yet supported");
+  }
+}
+
+auto ErasedReference::Part(void* part, value::Formation formed) const
+    -> ErasedReference {
+  switch (formed) {
+    case value::Formation::kExisting:
+      return {.holder = holder, .storage = part};
+    case value::Formation::kMade:
+      if (Watched()) {
+        Report(MakeWholeValueProjectionTest());
+      }
+      return {.holder = holder, .storage = part};
+    case value::Formation::kNowhere:
+      return {.holder = std::monostate{}, .storage = part};
+  }
+  throw InternalError("ErasedReference::Part: unknown formation");
+}
 
 void SubscribeToLeaves(
     CoroutineHandle frame, std::span<const Trigger> triggers) {

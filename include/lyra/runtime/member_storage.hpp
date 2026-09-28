@@ -40,9 +40,11 @@ struct BorrowedHandle {
 // declaration carries. The owner owns this object and a member place resolves
 // to its address; what the address means follows the member's storage kind. A
 // borrowed handle is a box holding a pointer the owner does not own -- the
-// storage behind a reference, and the driver a net issued -- so reading the
-// member reads the box; a hold is the one that does keep what it names alive,
-// and what it names ends once no holder is left (LRM 6.21); an observable cell,
+// driver a net issued, a scope another reaches -- so reading the member reads
+// the box; a reference names storage the owner does not own either, and is
+// held whole because it carries the variable that storage belongs to; a hold
+// is the one that does keep what it names alive, and what it names ends once
+// no holder is left (LRM 6.21); an observable cell,
 // a net's resolution node, a named event, a sampled value history and a
 // concurrent assertion's attempts are the storage itself, which library calls
 // reach through its address and never read out as a value; a value cell is a
@@ -52,9 +54,10 @@ struct BorrowedHandle {
 // as.
 //
 // The same storage serves a closure value's captures, which are members of the
-// declaration whose invoke reads them: a captured pointer or reference is a
-// borrowed handle, a captured hold is what lets a spawned body outlive the
-// scope it reads, and a captured value is an inline one the closure owns for
+// declaration whose invoke reads them: a captured pointer is a borrowed handle,
+// a captured reference a reference, a captured hold is what lets a spawned
+// body outlive the scope it reads, and a captured value is an inline one the
+// closure owns for
 // its whole life, so nothing a deferred body reads points into the stretch that
 // built it.
 class MemberStorage {
@@ -77,15 +80,15 @@ class MemberStorage {
 
  private:
   std::variant<
-      BorrowedHandle, PromotedScopeRef, CancellationTarget, ChannelCancellation,
-      NamedEvent, EvaluationAttempts, Var<value::PackedArray>,
-      Var<value::String>, Var<value::Real>, Var<value::ShortReal>,
-      Var<value::Chandle>, Var<value::RuntimeTuple>, Var<value::RuntimeUnion>,
-      Var<value::RuntimeTaggedUnion>, Var<value::RuntimeDynamicArray>,
-      Var<value::RuntimeUnpackedArray>, Var<value::RuntimeQueue>,
-      Var<value::RuntimeAssociativeArray>, Var<value::ManagedRef>,
-      value::Chandle, value::PackedArray, value::String, value::Real,
-      value::ShortReal, value::RuntimeTuple, value::RuntimeUnion,
+      BorrowedHandle, ErasedReference, PromotedScopeRef, CancellationTarget,
+      ChannelCancellation, NamedEvent, EvaluationAttempts,
+      Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
+      Var<value::ShortReal>, Var<value::Chandle>, Var<value::RuntimeTuple>,
+      Var<value::RuntimeUnion>, Var<value::RuntimeTaggedUnion>,
+      Var<value::RuntimeDynamicArray>, Var<value::RuntimeUnpackedArray>,
+      Var<value::RuntimeQueue>, Var<value::RuntimeAssociativeArray>,
+      Var<value::ManagedRef>, value::Chandle, value::PackedArray, value::String,
+      value::Real, value::ShortReal, value::RuntimeTuple, value::RuntimeUnion,
       value::RuntimeTaggedUnion, value::RuntimeDynamicArray,
       value::RuntimeUnpackedArray, value::RuntimeQueue,
       value::RuntimeAssociativeArray, value::ManagedRef,

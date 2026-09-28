@@ -294,6 +294,19 @@ enum class BuiltinFn : std::uint16_t {
   kDesignateElement,
   kDesignateComponent,
   kDesignateSlice,
+  // A step taken on a reference, into a part of what it refers to that may be
+  // passed by reference -- an element or a component (LRM 13.5.2). It answers
+  // with a reference to that part, which belongs to whatever the reference it
+  // was taken on belongs to, so a write through it is a write of the same
+  // variable. Forming an element can change that variable (LRM 7.8.7), and the
+  // step says so where it is taken.
+  kReferElement,
+  kReferComponent,
+  // A reference to a property of an object (LRM 13.5.2, 8.4), taking the object
+  // as the root every object shares and the property's address. A write
+  // through it tells the object as it lands (LRM 9.4.2), so the object travels
+  // with the reference.
+  kReferProperty,
   // Attaching a driver to a net (LRM 6.5), at the strength its source drives at
   // (LRM 28.11): a `ResolvedNet` method returning the driver handle the drive
   // capability is reached through. The strength is fixed when the driver

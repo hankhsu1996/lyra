@@ -1345,13 +1345,21 @@ auto InstallPortConnections(
             mir::Expr{
                 .data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
 
+        // The peer is lent as a `ref` actual is. A part of a variable is not
+        // yet: the member is bound before the variable's declaration installs
+        // what it holds, which moves the part the reference would name.
         auto peer_or =
             lowerer.LowerLhsExpr(hir_scope.exprs.Get(data.peer), resolve_frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
-        const mir::ExprId peer_cell = peer_or->owner;
-
+        if (!peer_or->descent.empty()) {
+          return diag::Fail(
+              pc.span, diag::DiagCode::kUnsupportedExpressionForm,
+              "a ref port connected to an element or a member of a variable "
+              "is not yet supported");
+        }
         const mir::ExprId bind = BindReferenceSlot(
-            unit_lowerer.Unit(), resolve_block, target, peer_cell);
+            resolve_block, target,
+            TargetReference(unit_lowerer.Unit(), resolve_block, *peer_or));
         resolve_block.AppendStmt(mir::ExprStmt{.expr = bind});
         continue;
       }

@@ -45,6 +45,20 @@ template class Var<value::RuntimeAssociativeArray>;
 template class Var<value::ManagedRef>;
 template class Var<value::ObjectRef>;
 
+template class CellRareState<value::PackedArray>;
+template class CellRareState<value::String>;
+template class CellRareState<value::Real>;
+template class CellRareState<value::ShortReal>;
+template class CellRareState<value::RuntimeTuple>;
+template class CellRareState<value::RuntimeUnion>;
+template class CellRareState<value::RuntimeTaggedUnion>;
+template class CellRareState<value::RuntimeDynamicArray>;
+template class CellRareState<value::RuntimeUnpackedArray>;
+template class CellRareState<value::RuntimeQueue>;
+template class CellRareState<value::RuntimeAssociativeArray>;
+template class CellRareState<value::ManagedRef>;
+template class CellRareState<value::ObjectRef>;
+
 template class Ref<value::PackedArray>;
 template class Ref<value::String>;
 template class Ref<value::Real>;

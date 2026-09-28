@@ -27,4 +27,11 @@ namespace lyra::lowering::hir_to_mir {
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
     mir::ExprId place) -> mir::ExprId;
 
+// A reference to `place`, a property of the object `object` addresses (LRM
+// 13.5.2). A write through it tells the object as it lands (LRM 9.4.2), which
+// no write held open around the call that is lent it could do.
+[[nodiscard]] auto PropertyReferred(
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
+    mir::ExprId place) -> mir::ExprId;
+
 }  // namespace lyra::lowering::hir_to_mir

@@ -38,6 +38,10 @@ enum class MemberStorageKind : std::uint8_t {
   // A box holding a handle the owner does not own, so a read reads the box
   // rather than what it names.
   kBorrowedHandle,
+  // A reference to storage the owner does not own (LRM 13.5.2), held whole:
+  // where the value lies and the variable, if any, it belongs to. A read hands
+  // back the reference itself, and filling it copies one.
+  kReference,
   // A hold on the storage a block promoted out of its frame (LRM 6.21), which
   // the owner does keep alive: a read hands back the hold, and the hold ending
   // with its owner is what ends the storage once no owner is left.

@@ -105,7 +105,8 @@ event". Coarser tracking is conforming; a per-property subscriber is one option 
 
 - **A reference must be able to name both forms.** That is a requirement on the reference's
   representation, and it is settled in
-  [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md).
+  [a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md): a reference carries the
+  variable its storage belongs to, or none.
 
 - **The three identities of `../architecture/storage.md` gain their implementation counterpart.**
   Storage identity is the storage object; update and event identity are the dependency machinery's;

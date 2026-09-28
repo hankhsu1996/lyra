@@ -2534,13 +2534,13 @@ auto FunctionLowerer::LowerReferenceBind(
 auto FunctionLowerer::LowerCellPlace(
     const mir::Block& block, mir::ExprId referent) -> diag::Result<lir::Place> {
   const mir::Expr& expr = block.exprs.Get(referent);
-  // A reference names storage by what may be written through it, and a write
-  // into a component of a subscribable variable has to reach the variable as
-  // well, which a reference carries no way to say yet.
+  // A part is lent by a step taken on a reference to its whole, which is what
+  // carries the variable the part belongs to; a reference built over the part's
+  // own place would name the storage without it.
   if (StoragePartAccess(block, referent) != nullptr) {
-    return Unsupported(
-        "mir_to_lir: binding a reference to an element or a structure member "
-        "is not yet lowerable to LIR");
+    throw InternalError(
+        "mir_to_lir: a reference is built over a whole, and a part is lent by "
+        "a step taken on one");
   }
   // A local the body gave storage of its own is named by the handle the body
   // opened over that storage, which reaches the storage in one step where

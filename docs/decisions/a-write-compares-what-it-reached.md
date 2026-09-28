@@ -63,9 +63,9 @@ part tells the write what forming it did.**
   no parts that are storage, so a write into one lands on the whole, and its waits go on being
   passed over by the bits they read.
 - **Every way a write reaches its part is a landing.** An assignment, a compound assignment or an
-  increment, a method changing its receiver in place, and a part lent to a `ref` formal each land
-  the write before anything is written, and each reaches the part the way a write does, so an
-  element a write would form is formed for any of them.
+  increment, and a method changing its receiver in place each land the write before anything is
+  written, and each reaches the part the way a write does, so an element a write would form is
+  formed for any of them.
 - **A whole-value store compares the new value with the old one before writing it.** It keeps no
   copy, except the old bits a packed variable's waits are passed over by.
 - **A sampled variable keeps its Preponed value at the first write of a time slot** (LRM 16.5.1),
@@ -125,7 +125,7 @@ part tells the write what forming it did.**
 
 - The clocked 4096-entry memory, 2026-09-25, `--release`: **0.39 s on the execution backend and 0.25
   s on the C++ backend**, from 8.7 s and 3.07 s.
-- A component of a variable a write opens can be lent to a `ref` formal on the execution backend, as
-  on the C++ backend: it is the place the write lands on, and the variable is told when the call's
-  full-expression ends. What is written through it is therefore reported when the call ends rather
-  than when it lands, on both backends, which a task that waits before returning makes visible.
+- A part lent to a `ref` formal is not a place a write lands on: the write would report when the
+  call's full-expression ends, and a write through a reference is due when it lands.
+  [a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md) lends it as a reference
+  that carries the variable.

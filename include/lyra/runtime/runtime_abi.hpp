@@ -768,14 +768,48 @@ auto lyra_rt_run_program(
     std::int32_t argc, char** argv, const void* root, const void* name,
     std::uint32_t length) -> std::int32_t;
 
-// Which form of storage an address names, recorded in the address itself so it
-// travels with every reference built over it. A body holding a reference is
-// lowered once for every caller and cannot ask what it was lent (LRM 13.5.2),
-// while a write through one has to wake whoever waited on a subscribable
-// variable and must not where nothing subscribes. Neither depends on what the
-// storage holds, so one of each serves every representation.
-auto lyra_rt_ref_to_cell(void* cell) -> void*;
-auto lyra_rt_ref_to_value(void* storage) -> void*;
+// A reference, built in the storage the caller gives: where a value lies, and
+// what holds that storage, if anyone is told about it. A body holding a
+// reference is lowered once for every caller and cannot ask what it was lent
+// (LRM 13.5.2), while a write through one has to wake whoever waits on the
+// variable or the object holding the storage at the moment it lands (LRM 4.3,
+// 9.4.2), so the holder travels with the reference. One over a subscribable
+// variable's cell names the whole of it, and is named by the domain the cell
+// holds since where the value lies inside the cell is the cell's type's to
+// say; one over a class property is handed the object and the property's own
+// address; one over storage nothing is told about is handed the value's own
+// address and names nothing.
+auto lyra_rt_refer_storage(void* storage, void* out) -> void*;
+auto lyra_rt_refer_property(void* object, void* property, void* out) -> void*;
+auto lyra_rt_packed_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_string_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_real_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_shortreal_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_chandle_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_managedref_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_tuple_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_union_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_tagged_union_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_dynarray_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_unpackedarray_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_queue_cell_refer(void* cell, void* out) -> void*;
+auto lyra_rt_assocarray_cell_refer(void* cell, void* out) -> void*;
+
+// A step a reference takes into an element or a component of what it names
+// (LRM 13.5.2), answering with a reference to that part in the storage the
+// caller gives. The part belongs to the variable the reference it was taken on
+// belongs to; forming an element can change that variable (LRM 7.8.7), and the
+// variable is told so where the step is taken.
+auto lyra_rt_dynarray_refer_element(
+    const void* reference, const void* index, void* out) -> void*;
+auto lyra_rt_unpackedarray_refer_element(
+    const void* reference, const void* position, void* out) -> void*;
+auto lyra_rt_queue_refer_element(
+    const void* reference, const void* index, void* out) -> void*;
+auto lyra_rt_assocarray_refer_element(
+    const void* reference, const void* index, void* out) -> void*;
+auto lyra_rt_tuple_refer_component(
+    const void* reference, std::int64_t index, void* out) -> void*;
 
 // A read of what a cell, a net, a driver or a reference holds answers with the
 // value where it lies; a reader copies it only to keep it.
@@ -2221,6 +2255,7 @@ void lyra_rt_unpackedarray_assign(void* storage, const void* value);
 void lyra_rt_queue_assign(void* storage, const void* value);
 void lyra_rt_assocarray_assign(void* storage, const void* value);
 void lyra_rt_managedref_assign(void* storage, const void* value);
+void lyra_rt_reference_assign(void* storage, const void* value);
 
 // Ending an object a generated body built in its own storage, where ending one
 // has anything to do; an object whose storage going away is the whole of its
@@ -2276,6 +2311,7 @@ auto lyra_rt_dpi_logic_buffer_copy(const void* value, void* out) -> void*;
 auto lyra_rt_dpi_open_array_copy(const void* value, void* out) -> void*;
 auto lyra_rt_channel_cancellation_copy(const void* value, void* out) -> void*;
 auto lyra_rt_erased_value_copy(const void* value, void* out) -> void*;
+auto lyra_rt_reference_copy(const void* value, void* out) -> void*;
 auto lyra_rt_packed_move(void* value, void* out) -> void*;
 auto lyra_rt_string_move(void* value, void* out) -> void*;
 auto lyra_rt_real_move(void* value, void* out) -> void*;
@@ -2303,4 +2339,5 @@ auto lyra_rt_dpi_logic_buffer_move(void* value, void* out) -> void*;
 auto lyra_rt_dpi_open_array_move(void* value, void* out) -> void*;
 auto lyra_rt_channel_cancellation_move(void* value, void* out) -> void*;
 auto lyra_rt_erased_value_move(void* value, void* out) -> void*;
+auto lyra_rt_reference_move(void* value, void* out) -> void*;
 }

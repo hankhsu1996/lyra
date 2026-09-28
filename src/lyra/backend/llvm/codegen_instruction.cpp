@@ -237,7 +237,7 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
             return LowerStore(store);
           },
           [&](const lir::AddrOfInstr& addr) -> diag::Result<llvm::Value*> {
-            return LowerAddrOf(addr, result_type);
+            return LowerAddrOf(addr, result_type, out);
           },
           [&](const lir::BinaryInstr& binary) -> diag::Result<llvm::Value*> {
             return LowerBinary(binary, out);
@@ -583,12 +583,12 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
 
 // Taking the address of a place. What that address is, is the place's own
 // answer; what it becomes depends on what is being built. A reference names
-// storage that may be subscribable or not, and the body holding one is lowered
-// once for every caller, so it cannot ask which it was lent (LRM 13.5.2) --
-// which is why the form is recorded here, where the place it came from still
-// answers. Every other address is the address itself.
+// storage that may belong to a subscribable variable or not, and the body
+// holding one is lowered once for every caller, so it cannot ask which it was
+// lent (LRM 13.5.2) -- which is why the variable is recorded here, where the
+// place it came from still answers. Every other address is the address itself.
 auto CodeGenFunction::LowerAddrOf(
-    const lir::AddrOfInstr& addr, lir::TypeId result_type)
+    const lir::AddrOfInstr& addr, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
   auto address = ResolvePlaceAddress(addr.place, Access::kWrite);
   if (!address) {
@@ -598,13 +598,17 @@ auto CodeGenFunction::LowerAddrOf(
   if (!types.Get(result_type).Is<lir::RefType>()) {
     return *address;
   }
-  const lir::TypeId reached =
-      ReachedType(addr.place, std::ssize(addr.place.chain));
-  const RuntimeOp op = types.Get(reached).Is<lir::ObservableType>()
-                           ? RuntimeOp::kRefToCell
-                           : RuntimeOp::kRefToValue;
-  const std::array<llvm::Value*, 1> args{*address};
-  return builder_.CreateCall(Entry(RuntimeSymbol(op), result_type, args), args);
+  const lir::Type& reached =
+      types.Get(ReachedType(addr.place, std::ssize(addr.place.chain)));
+  if (const auto* cell = reached.As<lir::ObservableType>()) {
+    auto domain = DomainOf(cell->value);
+    if (!domain) {
+      return std::unexpected(std::move(domain.error()));
+    }
+    return BuildInto(
+        RuntimeSymbol(*domain, RuntimeOp::kCellRefer), {*address}, out);
+  }
+  return BuildInto(RuntimeSymbol(RuntimeOp::kReferStorage), {*address}, out);
 }
 
 auto CodeGenFunction::IsHandleSequence(lir::TypeId type) const -> bool {

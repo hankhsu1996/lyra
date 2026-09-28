@@ -166,9 +166,10 @@ the subscription must represent. A virtual interface is stricter -- LRM 25.9 mak
   performance questions.
 - **A write to a property is a write opened on the object**, the way a write to a variable is one
   opened on the variable: ending it is what reports to the source, so every form of write reaches
-  the object without any of them saying so -- an assignment, a nonblocking one when it lands, a
-  built-in method changing the property, and a task writing through a `ref` bound to it, which
-  reports when the call ends as a variable lent the same way does.
+  the object without any of them saying so -- an assignment, a nonblocking one when it lands, and a
+  built-in method changing the property. A `ref` bound to a property outlasts any full-expression,
+  so it carries the object and each write through it reports as it lands, as one bound to a variable
+  does (LRM 13.5.2).
 - **Collecting the sources an evaluation reached (D3, D4) is done by the waiting process.** A wait
   whose expression reaches anything through a handle resumes on every candidacy, evaluates the
   handles again to find what it now reaches, and waits anew; before waiting it compares the

@@ -74,6 +74,20 @@ extern template class Var<value::RuntimeAssociativeArray>;
 extern template class Var<value::ManagedRef>;
 extern template class Var<value::ObjectRef>;
 
+extern template class CellRareState<value::PackedArray>;
+extern template class CellRareState<value::String>;
+extern template class CellRareState<value::Real>;
+extern template class CellRareState<value::ShortReal>;
+extern template class CellRareState<value::RuntimeTuple>;
+extern template class CellRareState<value::RuntimeUnion>;
+extern template class CellRareState<value::RuntimeTaggedUnion>;
+extern template class CellRareState<value::RuntimeDynamicArray>;
+extern template class CellRareState<value::RuntimeUnpackedArray>;
+extern template class CellRareState<value::RuntimeQueue>;
+extern template class CellRareState<value::RuntimeAssociativeArray>;
+extern template class CellRareState<value::ManagedRef>;
+extern template class CellRareState<value::ObjectRef>;
+
 extern template class Ref<value::PackedArray>;
 extern template class Ref<value::String>;
 extern template class Ref<value::Real>;

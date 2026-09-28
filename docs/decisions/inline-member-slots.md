@@ -99,10 +99,6 @@ to per-slot allocation would not fix it either, since the allocation is the same
   simpler: what a per-slot owning pointer did implicitly becomes a reverse-order destroy the block
   performs. Fewer allocations, more explicit code.
 
-- **The alignment the reference ABI requires is preserved.** Slots inline in a block are as aligned
-  as the block, so the low bits a tagged reference uses stay free
-  ([reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md) invariant 5).
-
 - **The closure path is the one thing left uneven**, and the decision names why rather than hiding
   it. Whether a closure value should be constructed where it will stay -- which its own contract
   already half-assumes, since starting one is only valid once it is where it will stay -- is a
@@ -113,7 +109,7 @@ to per-slot allocation would not fix it either, since the allocation is the same
 - [referenceable-objects-have-stable-addresses](referenceable-objects-have-stable-addresses.md) --
   the owner stability D1 is a condition on.
 - [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md) -- the reference that reads a
-  slot address directly, and the alignment invariant inline storage preserves.
+  slot address directly.
 - [observability-is-not-a-storage-property](observability-is-not-a-storage-property.md) -- why a
   slot is plain or observable, which is what the variant's alternatives are.
 - [member-slot-storage](member-slot-storage.md) -- the member slot this changes the allocation of.
