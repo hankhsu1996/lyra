@@ -68,11 +68,12 @@ auto SelectsByStatedIndex(
 // none of these. An operation any layer above can state is named in the entry
 // set both targets read instead, and reaches a symbol through that name.
 enum class RuntimeOp : std::uint8_t {
-  // Which form of storage an address names, recorded in the address itself so
-  // it travels with the reference built over it. Neither depends on what the
-  // storage holds, so one of each serves every representation.
-  kRefToCell,
-  kRefToValue,
+  // A reference built over an address: over a subscribable variable's cell,
+  // named by the domain the cell holds since where its value lies inside it is
+  // the cell's type's to say, or over storage nothing is told about, which is
+  // the value's own address and so names nothing.
+  kCellRefer,
+  kReferStorage,
   kVariablesOpen,
   kVariableAddress,
   kVariablesClose,

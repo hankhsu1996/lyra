@@ -80,8 +80,9 @@ class OpenWrite {
 
  private:
   // Room for the largest bracket any wrapper opens: the wrapper, a reference
-  // to its storage, and what the write has learned.
-  static constexpr std::size_t kBracketCapacity = 32;
+  // to its storage, what the write has learned, and a copy of the storage for
+  // a write the wrapper turns away to land in.
+  static constexpr std::size_t kBracketCapacity = 160;
   // Room for the largest part a write lands on, beside where it lies.
   static constexpr std::size_t kLandingCapacity = 112;
 

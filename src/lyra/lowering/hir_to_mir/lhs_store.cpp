@@ -11,6 +11,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -78,6 +79,41 @@ auto DesignatingStepOf(const DescentStep& step) -> DesignatingStep {
   throw InternalError("lhs_store: unknown part selection");
 }
 
+// A step of a target's descent taken on a reference. Only an element and a
+// component may be passed by reference (LRM 13.5.2), so a slice reaching here
+// is a producer that lent what the language does not.
+auto ReferringStepOf(const DescentStep& step) -> support::BuiltinFn {
+  const std::optional<support::PartSelection> selects =
+      support::RuntimeEntryOf(step.part_entry).selects;
+  if (!selects.has_value()) {
+    throw InternalError(
+        "lhs_store: a step of a lent target's descent reaches a part, and this "
+        "one names an entry that reaches none");
+  }
+  switch (*selects) {
+    case support::PartSelection::kElement:
+      return support::BuiltinFn::kReferElement;
+    case support::PartSelection::kComponent:
+      return support::BuiltinFn::kReferComponent;
+    case support::PartSelection::kSlice:
+      throw InternalError(
+          "lhs_store: a slice may not be passed by reference (LRM 13.5.2), so "
+          "no lent target reaches one");
+  }
+  throw InternalError("lhs_store: unknown part selection");
+}
+
+// The owner as a write reaches it: through a write opened on the object it is a
+// property of, where it is one, so that ending the write tells the object.
+auto WrittenOwner(
+    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+    -> mir::ExprId {
+  if (!target.object.has_value()) {
+    return target.owner;
+  }
+  return PropertyWrittenThrough(unit, block, *target.object, target.owner);
+}
+
 // `lhs op= rhs`, at an operator whose two forms are the whole of what an
 // assignment may apply. An operator the target applies to two values of one
 // type rides the store, which reaches the place once; one it does not is
@@ -123,15 +159,6 @@ auto StepArguments(
         unit, block, static_cast<std::int64_t>(*step.count)));
   }
   return arguments;
-}
-
-auto WrittenOwner(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
-    -> mir::ExprId {
-  if (!target.object.has_value()) {
-    return target.owner;
-  }
-  return PropertyWrittenThrough(unit, block, *target.object, target.owner);
 }
 
 auto DescendInto(WriteTarget base, DescentStep step) -> WriteTarget {
@@ -208,6 +235,33 @@ auto TargetPlace(
     reached = reach(step->part_entry, reached, *step, step->part_type);
   }
   return reached;
+}
+
+auto TargetReference(
+    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+    -> mir::ExprId {
+  mir::ExprId reference =
+      target.object.has_value()
+          ? PropertyReferred(unit, block, *target.object, target.owner)
+          : BuildReferenceArg(
+                unit, block, target.owner, block.exprs.Get(target.owner).type);
+  mir::TypeId value =
+      TargetValueType(unit, block, {.owner = target.owner, .descent = {}});
+  for (const DescentStep& step : target.descent) {
+    if (!unit.types.Get(value).PartsAreStorage()) {
+      throw InternalError(
+          "lhs_store: a part lent by reference is storage of its own (LRM "
+          "13.5.2), and this descent reaches into a value whose parts are not");
+    }
+    value = step.part_type;
+    reference = CallEntry(
+        block, ReferringStepOf(step), step.position, reference,
+        StepArguments(unit, block, step),
+        unit.types.Intern(
+            mir::Type{mir::RefType{
+                .pointee = value, .mutability = mir::Mutability::kMutable}}));
+  }
+  return reference;
 }
 
 auto ReadTargetValue(

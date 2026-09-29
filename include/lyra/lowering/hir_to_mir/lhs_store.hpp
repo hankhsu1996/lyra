@@ -54,8 +54,9 @@ struct DescentStep {
 //
 // Where the owner is a property of an object (LRM 8.4), `object` is that
 // object, as the address its members are reached through. A write to the
-// property is opened on the object, which is what tells it that it was written
-// (LRM 9.4.2); a variable's own storage reports a write itself and has none.
+// property is opened on the object, and a reference to it carries the object,
+// which is what tells it that it was written (LRM 9.4.2); a variable's own
+// storage reports a write itself and has none.
 //
 // This is the lowering's own shape and reaches no layer below. What MIR carries
 // is what the descent lowers to -- a run of ordinary calls, each naming its own
@@ -67,13 +68,6 @@ struct WriteTarget {
   std::vector<DescentStep> descent;
   std::optional<mir::ExprId> object = std::nullopt;
 };
-
-// The owner as a write reaches it: through a write opened on the object it is a
-// property of, where it is one, so that ending the write tells the object. What
-// lends the owner whole to a `ref` lends this.
-[[nodiscard]] auto WrittenOwner(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
-    -> mir::ExprId;
 
 // The same target one step deeper. This is the only thing that builds a
 // descent, so the path gains exactly one step per level of the source's own
@@ -89,9 +83,9 @@ struct WriteTarget {
     const WriteTarget& target) -> mir::TypeId;
 
 // The place the target designates: the owner's own storage, then one reaching
-// call per step. Storing into the result writes the part, reading it reads the
-// part, and handing it to a by-reference formal lends it, because a place is
-// what all three take.
+// call per step. Storing into the result writes the part, and applying a method
+// that changes its receiver to it changes the part, because a place is what
+// both take.
 //
 // An owner that is a capability wrapper is opened for a write, since asking one
 // which storage it stands for is an operation on it. The steps into parts that
@@ -101,6 +95,15 @@ struct WriteTarget {
 // An owner that is a property of an object is reached through a write opened on
 // the object.
 [[nodiscard]] auto TargetPlace(
+    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+    -> mir::ExprId;
+
+// The target as a reference (LRM 13.5.2): a reference to the whole of what the
+// owner holds, then one step per part, each taken on the reference before it.
+// What a reference to a part belongs to travels with it, so a write through it
+// is a write of the owner at the moment it lands, however long the reference is
+// held.
+[[nodiscard]] auto TargetReference(
     mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
     -> mir::ExprId;
 

@@ -126,6 +126,9 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
           [this](const BorrowedHandleStorage&) {
             object_.emplace<BorrowedHandle>();
           },
+          [this](const ReferenceStorage&) {
+            object_.emplace<ErasedReference>();
+          },
           [this](const PromotedScopeStorage&) {
             object_.emplace<PromotedScopeRef>();
           },
@@ -319,6 +322,7 @@ void MemberStorage::AdoptFrom(void* handle) {
           // A pointer-shaped value is the handle, so there is nothing behind it
           // to read out.
           [&](BorrowedHandle& box) { box.target = handle; },
+          [&](ErasedReference& reference) { adopt(reference); },
           // Copying the hold is what keeps the promoted scope alive for as
           // long as this owner lasts, which is the whole of LRM 6.21's
           // lifetime rule: no other step acquires anything and none releases.

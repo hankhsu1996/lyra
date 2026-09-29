@@ -29,6 +29,7 @@ on one is that name plus a fixed suffix, in every layer.**
 | Read the value            | `element`                | `component`                        | `slice`              |
 | Reach it for a write      | `element_ref`            | `component_ref`                    | `slice_ref`          |
 | Reach it within a write   | `designate_element`      | `designate_component`              | `designate_slice`    |
+| Refer to it by reference  | `refer_element`          | `refer_component`                  | --                   |
 | Build the whole, replaced | `with_element`           | `with_component`                   | `with_slice`         |
 | C++ method, read / reach  | `Element` / `ElementRef` | `Component<I>` / `ComponentRef<I>` | `Slice` / `SliceRef` |
 

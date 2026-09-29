@@ -45,6 +45,8 @@ auto LibraryObjectName(LibraryObject object) -> std::string_view {
       return "designation";
     case LibraryObject::kObjectWrite:
       return "object_write";
+    case LibraryObject::kReference:
+      return "reference";
   }
   throw InternalError("runtime object: unknown library object");
 }

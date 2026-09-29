@@ -236,6 +236,12 @@ struct ScopeProgram {
 // reference reaching another scope.
 struct BorrowedHandleStorage {};
 
+// A reference to storage the owner does not own (LRM 13.5.2): a `ref` port's
+// own name, a `ref` formal a suspended body keeps, a capture by reference. It
+// names no value domain, because what it holds is where a value lies rather
+// than a value.
+struct ReferenceStorage {};
+
 // A hold on the storage a block promoted out of its frame (LRM 6.21), which
 // the owner does keep alive: a branch spawned under that block holds one for
 // as long as it runs, and the storage ends with the last holder. It names no
@@ -308,10 +314,10 @@ struct SampledHistoryStorage {
 struct EvaluationAttemptsStorage {};
 
 using MemberStorageDescriptor = std::variant<
-    BorrowedHandleStorage, PromotedScopeStorage, ObservableCellStorage,
-    InlineValueStorage, ValueCellStorage, CancellationTargetStorage,
-    ChannelCancellationStorage, NamedEventStorage, SampledHistoryStorage,
-    EvaluationAttemptsStorage, ResolvedNetStorage>;
+    BorrowedHandleStorage, ReferenceStorage, PromotedScopeStorage,
+    ObservableCellStorage, InlineValueStorage, ValueCellStorage,
+    CancellationTargetStorage, ChannelCancellationStorage, NamedEventStorage,
+    SampledHistoryStorage, EvaluationAttemptsStorage, ResolvedNetStorage>;
 
 // One declaration's member storage schema, in its own member order: what a
 // generic value of it must realize for each member the declaration holds. It

@@ -56,8 +56,8 @@ effect leaving a region, and the driver ending a parked execution.
 no live call extent borrows it. Either alone is insufficient: still a member means still reachable,
 still borrowed means still required.
 
-**D6. Nothing reaches the access path.** A reference stays one tagged pointer, copying one changes
-no state, and a read or a write through one performs no bookkeeping. The only points that touch the
+**D6. Nothing reaches the access path.** A reference stays what it is, copying one changes no state,
+and a read or a write through one performs no bookkeeping. The only points that touch the
 registration are a source-level bind and an invocation's completion, and both are statically placed
 and few.
 
@@ -103,9 +103,7 @@ boundaries rather than in the access path.
   is exactly the operation that causes an array's detachment.
 
 - **A general lifetime token carried by the reference.** The most general answer, and the one the
-  three clauses above make unnecessary: the bound is static, so nothing has to be carried. It would
-  also widen the reference, which [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md)
-  fixes at one word.
+  three clauses above make unnecessary: the bound is static, so nothing has to be carried.
 
 - **Registering at block granularity rather than per call.** The lowering's existing extents are per
   block, so this would be the cheap way to reuse them. It is conservative rather than wrong -- it

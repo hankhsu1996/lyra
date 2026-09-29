@@ -10,6 +10,22 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+namespace {
+
+// The address of `place`, a property, as the entries naming one take it.
+auto PropertyAddress(
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId place)
+    -> mir::ExprId {
+  const mir::TypeId address_type = unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = block.exprs.Get(place).type,
+          .ownership = mir::PointerOwnership::kBorrowed,
+          .mutability = mir::Mutability::kMutable}});
+  return block.exprs.Add(mir::MakeAddressOfExpr(place, address_type));
+}
+
+}  // namespace
+
 auto ObjectRootOf(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId receiver)
     -> mir::ExprId {
@@ -59,11 +75,8 @@ auto PropertyWrittenThrough(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
     mir::ExprId place) -> mir::ExprId {
   const mir::TypeId place_type = block.exprs.Get(place).type;
-  const mir::TypeId address_type = unit.types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = place_type,
-          .ownership = mir::PointerOwnership::kBorrowed,
-          .mutability = mir::Mutability::kMutable}});
+  const mir::ExprId address = PropertyAddress(unit, block, place);
+  const mir::TypeId address_type = block.exprs.Get(address).type;
   const mir::ExprId write = block.exprs.Add(
       mir::Expr{
           .data =
@@ -71,10 +84,7 @@ auto PropertyWrittenThrough(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kOpenObjectWrite},
-                  .arguments =
-                      {object,
-                       block.exprs.Add(
-                           mir::MakeAddressOfExpr(place, address_type))}},
+                  .arguments = {object, address}},
           .type = unit.types.Intern(
               mir::Type{mir::RuntimeLibraryType{
                   .kind = mir::RuntimeLibraryKind::kObjectWrite}})});
@@ -94,6 +104,22 @@ auto PropertyWrittenThrough(
       mir::Expr{
           .data = mir::CastExpr{.operand = through}, .type = address_type});
   return block.exprs.Add(mir::MakeDerefExpr(typed, place_type));
+}
+
+auto PropertyReferred(
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
+    mir::ExprId place) -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kReferProperty},
+                  .arguments = {object, PropertyAddress(unit, block, place)}},
+          .type = unit.types.Intern(
+              mir::Type{mir::RefType{
+                  .pointee = block.exprs.Get(place).type,
+                  .mutability = mir::Mutability::kMutable}})});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

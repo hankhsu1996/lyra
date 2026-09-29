@@ -154,7 +154,8 @@ class CodeGenFunction {
   auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
-  auto LowerAddrOf(const lir::AddrOfInstr& addr, lir::TypeId result_type)
+  auto LowerAddrOf(
+      const lir::AddrOfInstr& addr, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   auto LowerBinary(const lir::BinaryInstr& binary, llvm::Value* out)
       -> diag::Result<llvm::Value*>;

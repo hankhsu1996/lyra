@@ -416,7 +416,10 @@ the detail lives in the entry itself.
   warning anticipated. A generic descriptor, two pointers, a type per form, and keeping one unified
   cell are rejected. It requires the address answer to `container-element-storage`'s open fork, and
   conflicts with `../architecture/lifetime.md`'s claim that a moving collector would change no
-  invariant.
+  invariant. Its representation is superseded by
+  [a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md): a part of a variable
+  something waits on is a referent its enumeration missed, and a reference to one has to carry the
+  variable; that a reference resolves its path once at the bind stands.
 - [object-model](object-model.md) -- a module / scope and an SV class are one generic nominal object
   type; an SV class handle is a managed reference via precise tracing GC.
 - [object-model-storage](object-model-storage.md) -- a compilation unit owns one canonical registry
@@ -590,6 +593,15 @@ the detail lives in the entry itself.
   name plus a fixed suffix in every layer (`component` / `component_ref` / `designate_component` /
   `with_component`). `Get` / `GetRef` after `std::get` is rejected, because it names the realization
   and is also every wrapper's whole-value read.
+- [a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md) -- a reference is where a
+  value lies together with the variable that storage belongs to, and a part is lent by a step taken
+  on a reference to its whole, so a write through a `ref` bound to a part is the variable's write at
+  the moment it lands (LRM 13.5.2, 4.3), whatever storage the part lies in. What a write asks of the
+  variable is type-free except for a sampled variable's copy, so the variable carries a state behind
+  it only once it is sampled or taken over. Lending the landing of a write held for the call, a
+  coordinate re-resolved per access, a one-word record in the binding frame, a table of the
+  variable's type carried in the reference, eager per-slot sampling and read-side overrides are
+  rejected.
 - [runtime-entry-naming](runtime-entry-naming.md) -- a runtime entry is named by the operation it
   performs and typed by the call that reaches it, so neither its symbol nor its signature is written
   down a second time; the symbol has one form, what the library does not realize is stated per

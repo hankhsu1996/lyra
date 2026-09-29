@@ -847,21 +847,14 @@ auto EmitSubroutineCall(
       }
 
       // A ref / const-ref formal aliases what the actual designates (LRM
-      // 13.5.2). An actual that reaches no part is lent as it stands, so a
-      // reference over a capability wrapper aliases the wrapper and keeps the
-      // wrapper's own access -- the update event a write fires included. One
-      // that descends reaches past that protocol, because a part of a value has
-      // none of its own, so what is lent is the storage the descent reaches. A
-      // property of an object is lent within a write opened on the object.
+      // 13.5.2), which is the whole of a variable or a class property or a
+      // part of one; either way a write through it is a write of what holds
+      // that storage, told to whoever waits on it when it lands.
       case hir::ParamDirection::kRef:
       case hir::ParamDirection::kConstRef: {
         auto arg_or = lowerer.LowerLhsExpr(hir_arg, frame);
         if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        const mir::ExprId actual_id = arg_or->descent.empty()
-                                          ? WrittenOwner(unit, block, *arg_or)
-                                          : TargetPlace(unit, block, *arg_or);
-        call_args.push_back(BuildReferenceArg(
-            unit, block, actual_id, block.exprs.Get(actual_id).type));
+        call_args.push_back(TargetReference(unit, block, *arg_or));
         break;
       }
 

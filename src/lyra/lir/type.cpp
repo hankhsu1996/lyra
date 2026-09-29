@@ -649,7 +649,6 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
           [](const RuntimeEffectsType&) -> Held { return std::nullopt; },
           [](const FilesType&) -> Held { return std::nullopt; },
           [](const DiagnosticType&) -> Held { return std::nullopt; },
-          [](const RefType&) -> Held { return std::nullopt; },
           [](const VectorType&) -> Held { return std::nullopt; },
           // A body in flight is taken by whoever drives it, the moment it is
           // made, so nothing is left for its maker to hold.
@@ -662,7 +661,11 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
           },
           [](const DesignationType&) -> Held {
             return LibraryObject::kDesignation;
-          }});
+          },
+          // Where a value lies and the variable, if any, it belongs to, so a
+          // write through it is told to whoever waits on that variable. The
+          // storage it names is somebody else's, so ending it ends nothing.
+          [](const RefType&) -> Held { return LibraryObject::kReference; }});
 }
 
 auto Type::IsOwnedValue() const -> bool {

@@ -496,6 +496,10 @@ it landed on (LRM 4.3). Nothing about the target asserts how the part is reached
 storage of its own is the language's fact about the type it is part of (`storage.md`), which
 MIR-to-LIR reads to state a part that is storage as a step of the owner's place and a part that is a
 view as an extract and an insert (`lir.md`). A construct that binds the designated part rather than
-writing it -- a reference actual, an output pack component, a nonblocking update -- binds the same
-statement of owner and descent; it is owner-relative, so it names no interior pointer and aliases
-nothing the owner does not already own.
+writing it -- an output pack component, a nonblocking update -- binds the same statement of owner
+and descent; it is owner-relative, so it names no interior pointer and aliases nothing the owner
+does not already own. A reference actual binds the part for as long as the callee holds it, and each
+write through it is a write of the owner at the moment it lands (LRM 13.5.2, 4.3), which no write
+ended with the caller's full-expression can be; so a reference is formed over the owner and each
+step into a part is taken on the reference (`refer_element`, `refer_component`), answering a
+reference to that part that belongs to the same owner.

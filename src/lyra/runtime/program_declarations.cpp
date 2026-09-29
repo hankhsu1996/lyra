@@ -151,6 +151,8 @@ auto RealizeMemberStorage(support::DeclaredMemberStorage described)
       return InlineValueStorage{.domain = domain};
     case support::MemberStorageKind::kBorrowedHandle:
       return BorrowedHandleStorage{};
+    case support::MemberStorageKind::kReference:
+      return ReferenceStorage{};
     case support::MemberStorageKind::kPromotedScope:
       return PromotedScopeStorage{};
     case support::MemberStorageKind::kNamedEvent:

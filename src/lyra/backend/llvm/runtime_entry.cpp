@@ -35,10 +35,10 @@ auto Symbol(support::ValueDomain domain, std::string_view operation)
 // module calls, so changing it renames a linked symbol.
 auto RuntimeOpName(RuntimeOp op) -> std::string_view {
   switch (op) {
-    case RuntimeOp::kRefToCell:
-      return "ref_to_cell";
-    case RuntimeOp::kRefToValue:
-      return "ref_to_value";
+    case RuntimeOp::kCellRefer:
+      return "cell_refer";
+    case RuntimeOp::kReferStorage:
+      return "refer_storage";
     case RuntimeOp::kVariablesOpen:
       return "variables_open";
     case RuntimeOp::kVariableAddress:
@@ -300,14 +300,17 @@ auto MemberStorageKindOf(
                 net.value, support::MemberStorageKind::kResolvedNet);
           },
           // A driver is a handle on a contribution the net owns and issues (LRM
-          // 6.5); a reference names storage living elsewhere; a declaration
-          // standing for several objects keeps a handle on the sequence of
-          // them, built once where the owner is built; and a code address names
-          // a body that outlives every owner there is. None of these owns what
-          // it names.
+          // 6.5); a declaration standing for several objects keeps a handle on
+          // the sequence of them, built once where the owner is built; and a
+          // code address names a body that outlives every owner there is. None
+          // of these owns what it names.
           [&](const lir::DriverType& t) { return borrowed(t); },
-          [&](const lir::RefType& t) { return borrowed(t); },
           [&](const lir::VectorType& t) { return borrowed(t); },
+          // A reference names storage living elsewhere too, and it is more than
+          // an address: the variable that storage belongs to travels with it.
+          [](const lir::RefType&) -> std::optional<support::MemberStorageKind> {
+            return support::MemberStorageKind::kReference;
+          },
           [&](const lir::MachineFunctionType& t) { return borrowed(t); },
           // A pointer is the one whose ownership decides the answer. A unique
           // or borrowed one likewise names storage somebody else ends, while a
@@ -476,6 +479,7 @@ auto DeclaredStorageOf(
     case support::MemberStorageKind::kInlineValue:
       return declared(domain_of(type));
     case support::MemberStorageKind::kBorrowedHandle:
+    case support::MemberStorageKind::kReference:
     case support::MemberStorageKind::kPromotedScope:
     case support::MemberStorageKind::kNamedEvent:
     case support::MemberStorageKind::kCancellationTarget:
@@ -766,10 +770,13 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSampledHistoryInstall:
     case support::BuiltinFn::kSampledHistoryPush:
     case support::BuiltinFn::kSampledHistoryAt:
-    // A step within a write is taken on a designation, and named by the
-    // representation of the value designated there.
+    // A step within a write is taken on a designation, and one lending a part
+    // on a reference; each is named by the representation of the value
+    // designated or referred to there.
     case support::BuiltinFn::kDesignateElement:
     case support::BuiltinFn::kDesignateComponent:
+    case support::BuiltinFn::kReferElement:
+    case support::BuiltinFn::kReferComponent:
       return NamedByStorageDomain{};
 
     case support::BuiltinFn::kSelfHandle:
@@ -907,6 +914,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObjectEventSource:
     case support::BuiltinFn::kOpenObjectWrite:
     case support::BuiltinFn::kObjectWriteThrough:
+    // A reference to a property holds the property erased, so one function
+    // serves every property's type.
+    case support::BuiltinFn::kReferProperty:
     // What an enumeration's member list answers about a value. One routine
     // serves every enumeration, because the list is the receiver and every
     // member is a packed value.

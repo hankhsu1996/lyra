@@ -121,9 +121,13 @@ auto IsTheDesignsOwn(
 // type its design shaped therefore carries these; each is a single comparison.
 // The list is what makes that a decision rather than a drift: an entry is added
 // only with the reason it has to be read where it is used.
-constexpr std::array<std::string_view, 2> kFoldedByTheWritePath = {
+constexpr std::array<std::string_view, 6> kFoldedByTheWritePath = {
     "lyra::runtime::Observable::HasWaiter() const",
-    "lyra::runtime::RegistrationList::Empty() const"};
+    "lyra::runtime::RegistrationList::Empty() const",
+    "lyra::runtime::VariableCell::AdmitsWrite()",
+    "lyra::runtime::VariableCell::Watched() const",
+    "lyra::runtime::ErasedReference::Admits() const",
+    "lyra::runtime::ErasedReference::Watched() const"};
 
 // Whether a symbol is an entity of the runtime namespace itself, or something
 // local to one, rather than a standard-library template that merely names a

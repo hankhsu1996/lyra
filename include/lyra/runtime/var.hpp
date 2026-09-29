@@ -8,10 +8,13 @@
 #include <span>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -26,8 +29,14 @@ namespace lyra::runtime {
 
 // What a write into part of an owner's storage writes through (LRM 11.5.1).
 // The write reaches the owner's storage and lands its part there directly; the
-// owner is told once, when the write is over, whether it changed. Three things
+// owner is told once, when the write is over, whether it changed. Four things
 // that takes, named for the role rather than for either owner's vocabulary.
+//
+// `AdmitsWrite` is whether the write goes into the owner at all: one does not
+// while a procedural continuous assignment holds a variable (LRM 10.6), and it
+// then lands in a copy the write keeps and nobody reads. Asking is the first
+// write of the time slot at the latest, so a sampled variable keeps its value
+// from before it here (LRM 16.5.1).
 //
 // `MutationStorage` is the storage itself, so a write reaches the part it
 // names and disturbs nothing else. Two things follow: a write cannot lose one
@@ -50,6 +59,7 @@ namespace lyra::runtime {
 template <class S>
 concept MutationSink = requires(S sink, const ProjectionUnchanged& unchanged) {
   typename S::ValueType;
+  { sink.AdmitsWrite() } -> std::same_as<bool>;
   { sink.MutationStorage() } -> std::same_as<typename S::ValueType&>;
   { sink.Watched() } -> std::same_as<bool>;
   sink.PublishTransition(unchanged);
@@ -68,8 +78,145 @@ class Ref;
     const value::PackedArray& old_val, const value::PackedArray& new_val)
     -> ProjectionUnchanged;
 
+// What only a variable something samples or takes over has to do before a
+// write lands in it: keep its value from before the time slot's first change
+// (LRM 16.5.1), and turn the write away while a procedural continuous
+// assignment holds it (LRM 10.6). Almost no variable is either, so this exists
+// only once one is, behind the variable, and the variable asks it for nothing
+// otherwise.
+class RareWriteState {
+ public:
+  RareWriteState() = default;
+  RareWriteState(const RareWriteState&) = delete;
+  auto operator=(const RareWriteState&) -> RareWriteState& = delete;
+  RareWriteState(RareWriteState&&) = delete;
+  auto operator=(RareWriteState&&) -> RareWriteState& = delete;
+  virtual ~RareWriteState();
+
+  // Before a write lands: keeps the value the variable held when the slot
+  // began, the first time in the slot, and answers whether the write lands.
+  [[nodiscard]] virtual auto Admit() -> bool = 0;
+  [[nodiscard]] virtual auto TakenOver() const -> bool = 0;
+};
+
+// What every variable is whatever it holds: the waits parked on it, and
+// whatever a sampled or taken-over variable has to do before a write lands. A
+// write that knows the variable only as this -- one through a reference to a
+// part of it, which knows the part's type and not the variable's -- asks it
+// everything it needs.
+class VariableCell : public Observable {
+ public:
+  VariableCell(const VariableCell&) = delete;
+  auto operator=(const VariableCell&) -> VariableCell& = delete;
+  VariableCell(VariableCell&&) = delete;
+  auto operator=(VariableCell&&) -> VariableCell& = delete;
+
+  // Written here rather than in the library's own source because every write
+  // asks them, and for a variable nothing samples or takes over each is a null
+  // test.
+  [[nodiscard]] auto AdmitsWrite() -> bool {
+    return rare_ == nullptr || rare_->Admit();
+  }
+  // Whether a write into the variable has anyone to tell what it did: a wait
+  // parked here (LRM 4.3). Under a procedural continuous assignment a write
+  // lands where nothing reads it (LRM 10.6), so it has nothing to tell either.
+  [[nodiscard]] auto Watched() const -> bool {
+    return HasWaiter() && (rare_ == nullptr || !rare_->TakenOver());
+  }
+
+ protected:
+  VariableCell();
+  ~VariableCell();
+
+  [[nodiscard]] auto Rare() const -> RareWriteState* {
+    return rare_.get();
+  }
+  void InstallRare(std::unique_ptr<RareWriteState> rare) {
+    rare_ = std::move(rare);
+  }
+
+ private:
+  std::unique_ptr<RareWriteState> rare_;
+};
+
+// What a sampled or taken-over variable of type `T` keeps: the value it held
+// when the current slot began, and the slot that value belongs to (LRM
+// 16.5.1); and the procedural continuous assignments it has been put under
+// (LRM 10.6). Each part is empty until its feature is used.
 template <value::LyraValue T>
-class Var : public Observable, public ValueStorageCore<T> {
+class CellRareState final : public RareWriteState {
+ public:
+  explicit CellRareState(const T& value) : value_(&value) {
+  }
+  CellRareState(const CellRareState&) = delete;
+  auto operator=(const CellRareState&) -> CellRareState& = delete;
+  CellRareState(CellRareState&&) = delete;
+  auto operator=(CellRareState&&) -> CellRareState& = delete;
+  ~CellRareState() override;
+
+  auto Admit() -> bool override {
+    KeepPreponed();
+    return !TakenOver();
+  }
+  [[nodiscard]] auto TakenOver() const -> bool override {
+    return takeovers_ != nullptr && takeovers_->Highest() != nullptr;
+  }
+
+  // Arms the variable to answer for its sampled value, taking what it holds
+  // now, stamped with time zero.
+  void ArmSampling() {
+    if (retained_.has_value()) {
+      return;
+    }
+    retained_ = *value_;
+    retained_slot_ = SimTime{};
+  }
+
+  [[nodiscard]] auto Retained() const -> const std::optional<T>& {
+    return retained_;
+  }
+  [[nodiscard]] auto RetainedSlot() const -> SimTime {
+    return retained_slot_;
+  }
+
+  // Keeps what the variable held in the Preponed region of the current slot,
+  // the first time a write reaches it in that slot (LRM 4.4.2.1, 16.5.1).
+  // Nothing in the slot has changed it before its first write, so what it
+  // holds then is that value, whether or not the write goes on to change it.
+  void KeepPreponed() {
+    if (!retained_.has_value()) {
+      return;
+    }
+    const SimTime now = current_runtime().Now();
+    if (retained_slot_ == now) {
+      return;
+    }
+    retained_ = *value_;
+    retained_slot_ = now;
+  }
+
+  [[nodiscard]] auto Takeovers() -> runtime::Takeovers<T>& {
+    if (takeovers_ == nullptr) {
+      takeovers_ = std::make_unique<runtime::Takeovers<T>>();
+    }
+    return *takeovers_;
+  }
+  [[nodiscard]] auto ExistingTakeovers() const -> runtime::Takeovers<T>* {
+    return takeovers_.get();
+  }
+
+ private:
+  const T* value_;
+  std::optional<T> retained_;
+  SimTime retained_slot_ = SimTime{};
+  std::unique_ptr<runtime::Takeovers<T>> takeovers_;
+};
+
+template <value::LyraValue T>
+CellRareState<T>::~CellRareState() = default;
+
+template <value::LyraValue T>
+class Var : public VariableCell, public ValueStorageCore<T> {
  public:
   Var();
   Var(const Var&) = delete;
@@ -126,13 +273,6 @@ class Var : public Observable, public ValueStorageCore<T> {
   // 10.6.2).
   void EndTakeover(const value::PackedArray& level);
 
-  // Whether a write into the cell has anyone to tell what it did: a wait parked
-  // here (LRM 4.3). Under a procedural continuous assignment a write lands
-  // where nothing reads it (LRM 10.6), so it has nothing to tell either.
-  [[nodiscard]] auto Watched() const -> bool {
-    return this->HasWaiter() && !TakenOver();
-  }
-
   // Arms the cell to answer for its sampled value (LRM 16.5.1) and installs the
   // one every read answers with until the first change of some later slot.
   //
@@ -145,11 +285,7 @@ class Var : public Observable, public ValueStorageCore<T> {
   // More than one read may name one cell, and they all want the same answer, so
   // arming an armed cell is not an error and changes nothing.
   void ArmSampling() {
-    if (retained_.has_value()) {
-      return;
-    }
-    retained_ = this->Get();
-    retained_slot_ = SimTime{};
+    RareState().ArmSampling();
   }
 
   // What the cell held in the Preponed region of the current time slot -- its
@@ -157,13 +293,14 @@ class Var : public Observable, public ValueStorageCore<T> {
   // has changed the cell that value is the retained one; until then the cell
   // still holds it.
   [[nodiscard]] auto SampledGet() const -> const T& {
-    if (!retained_.has_value()) {
+    const CellRareState<T>* rare = ExistingRareState();
+    if (rare == nullptr || !rare->Retained().has_value()) {
       throw InternalError(
           "Var::SampledGet: a sampled value was read from a cell nothing armed "
           "to answer for one");
     }
-    if (retained_slot_ == current_runtime().Now()) {
-      return *retained_;
+    if (rare->RetainedSlot() == current_runtime().Now()) {
+      return *rare->Retained();
     }
     return this->Get();
   }
@@ -172,19 +309,6 @@ class Var : public Observable, public ValueStorageCore<T> {
   // over a wait whose bits `unchanged` shows the write left alone.
   void PublishTransition(const ProjectionUnchanged& unchanged) {
     current_runtime().WakeWaitersOf(*this, unchanged);
-  }
-
-  // Where a write reaching part of the cell lands: the cell's own storage, or,
-  // while a procedural continuous assignment is in effect (LRM 10.6), storage
-  // nothing reads -- the partial write is overridden exactly as a whole-value
-  // write through `Set` is. Opening one is the first write of the slot at the
-  // latest, so the slot's sampled value is kept here.
-  [[nodiscard]] auto PartialWriteTarget() -> T& {
-    KeepPreponed();
-    if (TakenOver()) {
-      return takeovers_->Discarded(this->Get());
-    }
-    return this->Storage();
   }
 
   // Opens a write into the cell for the full-expression that writes. The cell's
@@ -210,7 +334,9 @@ class Var : public Observable, public ValueStorageCore<T> {
             "Var<PackedArray>: store into a cell that was never initialized");
       }
     }
-    KeepPreponed();
+    if (CellRareState<T>* rare = ExistingRareState()) {
+      rare->KeepPreponed();
+    }
     if (!this->HasWaiter()) {
       this->Overwrite(new_val);
       return;
@@ -228,47 +354,124 @@ class Var : public Observable, public ValueStorageCore<T> {
     }
   }
 
-  // Keeps what the cell held in the Preponed region of the current slot, the
-  // first time a write reaches the cell in that slot (LRM 4.4.2.1, 16.5.1).
-  // Nothing in the slot has changed the cell before its first write, so what
-  // it holds then is that value, whether or not the write goes on to change
-  // it.
-  void KeepPreponed() {
-    if (!retained_.has_value()) {
-      return;
-    }
-    const SimTime now = current_runtime().Now();
-    if (retained_slot_ == now) {
-      return;
-    }
-    retained_ = this->Get();
-    retained_slot_ = now;
-  }
-
   // Whether a procedural continuous assignment shows through the cell (LRM
   // 10.6).
   [[nodiscard]] auto TakenOver() const -> bool {
-    return takeovers_ != nullptr && takeovers_->Highest() != nullptr;
+    const CellRareState<T>* rare = ExistingRareState();
+    return rare != nullptr && rare->TakenOver();
   }
 
-  // The sampled value (LRM 16.5.1) and the time slot it belongs to. Engaged
-  // exactly while the cell is armed to answer for one, so a cell nothing
-  // samples carries neither the storage nor the work of maintaining it.
-  std::optional<T> retained_;
-  SimTime retained_slot_ = SimTime{};
-
-  // The procedural continuous assignments this cell has been put under (LRM
-  // 10.6), which almost no cell in a design ever is. It appears the first time
-  // one starts, so a cell nobody takes over carries one pointer, answers every
-  // read from its own storage, and pays one null test on a write.
-  std::unique_ptr<Takeovers<T>> takeovers_;
+  // What only a sampled or taken-over cell keeps, made the first time either
+  // is asked for. This cell is the only thing that makes it, so it is always
+  // of the cell's own type.
+  [[nodiscard]] auto RareState() -> CellRareState<T>& {
+    if (Rare() == nullptr) {
+      InstallRare(std::make_unique<CellRareState<T>>(this->Get()));
+    }
+    return static_cast<CellRareState<T>&>(*Rare());
+  }
+  [[nodiscard]] auto ExistingRareState() const -> CellRareState<T>* {
+    return static_cast<CellRareState<T>*>(Rare());
+  }
 };
 
-// A reference to a variable cell. Transparently views one of two backings: an
-// observable `Var<T>`, where a write goes through the cell so the update event
-// fires and subscribers wake, or a plain `T` cell, where it is a raw write and
-// nothing observes it. Copyable, so a ref formal can be forwarded as a ref
-// argument to a nested call.
+// Which bits of a part landed on a change between the two values left alone:
+// a packed value's by position, and nothing that can be shown of any other.
+template <class Part>
+auto LandedChange(const Part& before, const Part& after)
+    -> ProjectionUnchanged {
+  if constexpr (std::same_as<Part, value::PackedArray>) {
+    return MakePackedProjectionTest(before, after);
+  } else {
+    return MakeWholeValueProjectionTest();
+  }
+}
+
+// A packed part is what no design shapes, so it is compiled once, in the
+// library.
+extern template auto LandedChange<value::PackedArray>(
+    const value::PackedArray& before, const value::PackedArray& after)
+    -> ProjectionUnchanged;
+
+// Writes `value` into storage a reference names, at the representation the
+// storage already has; the first write into a packed value nothing has written
+// yet is the one that gives it one, as a local's declaration does.
+template <value::LyraValue T>
+void StoreInto(T& storage, const T& value) {
+  if constexpr (std::same_as<T, value::PackedArray>) {
+    if (!storage.IsUninitialized() && !storage.SameRepresentation(value)) {
+      throw InternalError(
+          "StoreInto: a value's representation does not match the storage a "
+          "reference names; a required conversion was not emitted");
+    }
+  }
+  storage = value;
+}
+
+// What holds the storage a reference names, which is what a write through the
+// reference is a write of (LRM 13.5.2): a variable something may wait on, the
+// object a class property belongs to (LRM 9.4.2), or nothing anyone is told
+// about -- an automatic variable, and an element an index named none of.
+using StorageHolder = std::variant<std::monostate, VariableCell*, GcObject*>;
+
+// A reference in a form that names no type: where a value lies, and what holds
+// that storage. What a reference does that does not depend on the type of the
+// value it names is done here, once, for every reference whichever side holds
+// it.
+struct ErasedReference {
+  StorageHolder holder;
+  void* storage = nullptr;
+  // Whether the storage is the whole of a variable, which is when the
+  // reference stands for the variable itself. Only where the reference is
+  // formed can say so: a part can lie at the address its whole does.
+  bool whole = false;
+
+  // Written here rather than in the library's own source because every write
+  // through a reference asks them, and for storage whose variable nothing
+  // samples or takes over each is a test or two.
+
+  // Whether a write through the reference now lands where it names. Only a
+  // variable can be put under a procedural continuous assignment (LRM 10.6).
+  [[nodiscard]] auto Admits() const -> bool {
+    VariableCell* const* variable = std::get_if<VariableCell*>(&holder);
+    return variable == nullptr || (*variable)->AdmitsWrite();
+  }
+
+  [[nodiscard]] auto Watched() const -> bool {
+    if (VariableCell* const* variable = std::get_if<VariableCell*>(&holder)) {
+      return (*variable)->Watched();
+    }
+    GcObject* const* object = std::get_if<GcObject*>(&holder);
+    return object != nullptr && (*object)->Watched();
+  }
+
+  // The rest are defined in the library's own source: none depends on the type
+  // of the value the reference names, and none is on every write's path.
+
+  // Tells whoever waits on what holds the storage that a write through the
+  // reference changed it (LRM 4.3). A wait on an object reevaluates the
+  // expression that reached it, which decides whether the write was an event,
+  // so it is told nothing about which bits moved.
+  void Report(const ProjectionUnchanged& unchanged) const;
+
+  // A step can form what it reaches, which is a write into the variable, so
+  // the variable admits it first.
+  void AdmitStep() const;
+
+  // The reference to a part of what this one names, at `part`, which forming
+  // did `formed` to. The part has the same holder, which is told at once where
+  // forming it changed the storage -- an associative entry made by being bound
+  // (LRM 7.8.7). An index naming no element names storage that belongs to
+  // nothing (LRM 7.4.6).
+  [[nodiscard]] auto Part(void* part, value::Formation formed) const
+      -> ErasedReference;
+};
+
+// A reference, typed by the value it names. A reference to the whole of a
+// variable and one to a part of it are the same thing, so a write through
+// either is the variable's write, told to whoever waits on the variable at the
+// moment it lands (LRM 4.3). Copyable, so a ref formal can be forwarded as a
+// ref argument to a nested call.
 template <value::LyraValue T>
 class Ref {
  public:
@@ -278,88 +481,151 @@ class Ref {
   // a `ref` port's child-side member is declared with the child and filled by
   // the parent during elaboration (LRM 23.3.3.2), before simulation reads it.
   Ref() = default;
-  explicit Ref(Var<T>& cell) : signal_(&cell) {
+  explicit Ref(Var<T>& cell)
+      : erased_{
+            .holder = static_cast<VariableCell*>(&cell),
+            .storage = &cell.Storage(),
+            .whole = true} {
   }
-  explicit Ref(T& cell) : plain_(&cell) {
+  explicit Ref(T& storage) : erased_{.holder = {}, .storage = &storage} {
+  }
+  explicit Ref(const ErasedReference& erased) : erased_(erased) {
+  }
+
+  [[nodiscard]] auto Erased() const -> const ErasedReference& {
+    return erased_;
   }
 
   [[nodiscard]] auto Get() const -> const T& {
-    if (signal_ != nullptr) {
-      return signal_->Get();
-    }
-    return *plain_;
+    return Storage();
   }
 
-  // Const: a `Ref` is a view, so `Set` writes the referenced cell, not the
+  // Const: a `Ref` is a view, so `Set` writes the referenced storage, not the
   // handle's own pointers -- as `*p = v` is allowed through a `T* const p`.
   void Set(const T& new_val) const {
-    if (signal_ != nullptr) {
-      signal_->Set(new_val);
-    } else {
-      *plain_ = new_val;
+    if (!erased_.Admits()) {
+      return;
     }
+    if (!erased_.Watched()) {
+      StoreInto(Storage(), new_val);
+      return;
+    }
+    if (Storage().IsBitIdentical(new_val)) {
+      return;
+    }
+    const T before = Storage();
+    StoreInto(Storage(), new_val);
+    erased_.Report(LandedChange(before, Storage()));
   }
 
   // Opens a write into the referenced storage, as an observable cell itself
-  // does; only an observable backing has anyone to tell what the write did.
+  // does; only storage that belongs to a variable has anyone to tell what the
+  // write did.
   [[nodiscard]] auto Mutate() const -> ScopedMutation<Ref<T>>;
 
-  // The `MutationSink` surface. A plain backing has no observation at all, so
-  // nothing reads what a write did to it; that is the same answer an
-  // observable backing gives while nothing waits on it, reached by a shorter
-  // route.
+  // A reference to an element or a component of what this one names (LRM
+  // 13.5.2), which belongs to the same variable.
+  template <typename Key>
+  [[nodiscard]] auto ReferElement(const Key& key) const {
+    erased_.AdmitStep();
+    value::Formation formed{};
+    auto& element = Storage().ElementRef(key, formed);
+    return Ref<std::remove_reference_t<decltype(element)>>{
+        erased_.Part(&element, formed)};
+  }
+
+  template <std::size_t I>
+  [[nodiscard]] auto ReferComponent() const {
+    auto& component = Storage().template ComponentRef<I>();
+    return Ref<std::remove_reference_t<decltype(component)>>{
+        erased_.Part(&component, value::Formation::kExisting)};
+  }
+
+  // The `MutationSink` surface. Storage that belongs to no variable has no
+  // observation at all, so nothing reads what a write did to it; that is the
+  // same answer a variable gives while nothing waits on it, reached by a
+  // shorter route.
+  [[nodiscard]] auto AdmitsWrite() const -> bool {
+    return erased_.Admits();
+  }
   [[nodiscard]] auto MutationStorage() const -> T& {
-    if (signal_ != nullptr) {
-      return signal_->PartialWriteTarget();
-    }
-    return *plain_;
+    return Storage();
   }
   [[nodiscard]] auto Watched() const -> bool {
-    return signal_ != nullptr && signal_->Watched();
+    return erased_.Watched();
   }
 
   // A reference denotes the storage it binds (LRM 23.3.3.2), so the operations
-  // on a cell answer through it. Only an observable cell keeps the value a time
-  // slot moved away from, so a plain backing has none to answer with -- and
-  // answering with its current value would be a different value whenever the
-  // slot has already written it.
+  // on a cell answer through it. Storage nothing holds is an automatic
+  // variable, whose sampled value is its current one (LRM 16.5.1). A variable
+  // keeps the value a time slot moved away from, and keeps it whole, so a
+  // reference to a part of one has none to answer with; and nothing keeps a
+  // class property's Preponed value.
   void ArmSampling() const {
-    if (signal_ != nullptr) {
-      signal_->ArmSampling();
+    if (Whole()) {
+      Cell().ArmSampling();
     }
   }
   [[nodiscard]] auto SampledGet() const -> const T& {
-    if (signal_ == nullptr) {
-      throw SimulationError(
-          "a sampled value of storage lent by reference is only available "
-          "where that storage is an observable cell");
-    }
-    return signal_->SampledGet();
+    return std::visit(
+        Overloaded{
+            [&](std::monostate) -> const T& { return Storage(); },
+            [&](VariableCell*) -> const T& {
+              if (!Whole()) {
+                throw SimulationError(
+                    "a sampled value of part of a variable lent by reference "
+                    "is not yet supported");
+              }
+              return Cell().SampledGet();
+            },
+            [](GcObject*) -> const T& {
+              throw SimulationError(
+                  "a sampled value of a class property lent by reference is "
+                  "not yet supported");
+            }},
+        erased_.holder);
   }
 
   // Opening the reference: the cell it binds (LRM 23.3.3.2). What a wait
   // registers on, and what an operation on the cell acts through, is that cell
-  // and never the reference standing for it. A plain backing is storage no cell
-  // stands for, so there is nothing to open.
+  // and never the reference standing for it.
   [[nodiscard]] auto operator*() const -> Var<T>& {
-    if (signal_ == nullptr) {
+    if (!Whole()) {
       throw SimulationError(
           "storage lent by reference can only be reached as a cell where that "
-          "storage is an observable cell");
+          "storage is the whole of an observable cell");
     }
-    return *signal_;
+    return Cell();
   }
 
   void PublishTransition(const ProjectionUnchanged& unchanged) const {
-    if (signal_ != nullptr) {
-      signal_->PublishTransition(unchanged);
-    }
+    erased_.Report(unchanged);
   }
 
  private:
-  Var<T>* signal_ = nullptr;
-  T* plain_ = nullptr;
+  [[nodiscard]] auto Storage() const -> T& {
+    return *static_cast<T*>(erased_.storage);
+  }
+
+  [[nodiscard]] auto Whole() const -> bool {
+    return erased_.whole;
+  }
+
+  // The variable a reference to the whole of it names, whose value is then of
+  // this reference's own type.
+  [[nodiscard]] auto Cell() const -> Var<T>& {
+    return static_cast<Var<T>&>(**std::get_if<VariableCell*>(&erased_.holder));
+  }
+
+  ErasedReference erased_;
 };
+
+// A reference to a property of the object `object` addresses (LRM 8.4), which
+// a write through it tells as it lands (LRM 9.4.2).
+template <value::LyraValue T>
+auto ReferProperty(GcObject* object, T* property) -> Ref<T> {
+  return Ref<T>{ErasedReference{.holder = object, .storage = property}};
+}
 
 // Makes `frame` runnable again when what happens at one of `triggers` is an
 // event for the wait (LRM 9.4.2 / 9.4.2.2 / 9.4.3 / 15.5.2). Each subscription
@@ -421,18 +687,19 @@ void Var<T>::Set(const T& new_val) {
 template <value::LyraValue T>
 auto Var<T>::BeginTakeover(const value::PackedArray& level)
     -> value::PackedArray {
-  if (takeovers_ == nullptr) {
-    takeovers_ = std::make_unique<Takeovers<T>>();
-  }
-  return TakeoverGenerationValue(takeovers_->Begin(TakeoverLevelOf(level)));
+  return TakeoverGenerationValue(
+      RareState().Takeovers().Begin(TakeoverLevelOf(level)));
 }
 
 template <value::LyraValue T>
 auto Var<T>::DriveTakeover(
     const value::PackedArray& level, const value::PackedArray& generation,
     const T& new_val) -> bool {
-  if (takeovers_ == nullptr ||
-      !takeovers_->Drive(
+  const CellRareState<T>* rare = ExistingRareState();
+  Takeovers<T>* takeovers =
+      rare == nullptr ? nullptr : rare->ExistingTakeovers();
+  if (takeovers == nullptr ||
+      !takeovers->Drive(
           TakeoverLevelOf(level), TakeoverGenerationOf(generation), new_val)) {
     return false;
   }
@@ -440,7 +707,7 @@ auto Var<T>::DriveTakeover(
   // value only where no higher level covers it. Storing whatever shows needs
   // no question asked: where a higher level covers this one, what shows has
   // not moved, and a store that changes nothing publishes nothing.
-  Store(*takeovers_->Highest());
+  Store(*takeovers->Highest());
   return true;
 }
 
@@ -448,14 +715,17 @@ template <value::LyraValue T>
 void Var<T>::EndTakeover(const value::PackedArray& level) {
   // Ending a level nothing occupies is what a `release` on an untaken variable
   // does, and the language gives it no effect (LRM 10.6.2).
-  if (takeovers_ == nullptr) {
+  const CellRareState<T>* rare = ExistingRareState();
+  Takeovers<T>* takeovers =
+      rare == nullptr ? nullptr : rare->ExistingTakeovers();
+  if (takeovers == nullptr) {
     return;
   }
-  takeovers_->End(TakeoverLevelOf(level));
+  takeovers->End(TakeoverLevelOf(level));
   // Where a level is still in effect underneath, the cell takes what that
   // level already holds. Where none is, the cell keeps what it has, which is
   // the value the ended takeover last gave it.
-  if (const T* showing = takeovers_->Highest(); showing != nullptr) {
+  if (const T* showing = takeovers->Highest(); showing != nullptr) {
     Store(*showing);
   }
 }
@@ -483,10 +753,16 @@ class WriteBracket {
  public:
   using ValueType = typename Sink::ValueType;
 
-  explicit WriteBracket(Sink sink)
-      : sink_(sink),
-        storage_(&sink_.MutationStorage()),
-        watched_(sink_.Watched()) {
+  // A write the sink turns away (LRM 10.6) still has to reach a part to land
+  // on, so it lands in a copy of the sink's storage that this write keeps and
+  // nobody reads, and it has no one to tell.
+  explicit WriteBracket(Sink sink) : sink_(sink) {
+    if (sink_.AdmitsWrite()) {
+      storage_ = &sink_.MutationStorage();
+      watched_ = sink_.Watched();
+    } else {
+      storage_ = &discarded_.emplace(sink_.MutationStorage());
+    }
   }
 
   [[nodiscard]] auto Storage() const -> ValueType& {
@@ -570,28 +846,11 @@ class WriteBracket {
   }
 
   Sink sink_;
-  ValueType* storage_;
-  bool watched_;
+  ValueType* storage_ = nullptr;
+  bool watched_ = false;
   Outcome outcome_ = Outcome::kUndecided;
+  std::optional<ValueType> discarded_;
 };
-
-// Which bits of a part landed on a change between the two values left alone:
-// a packed value's by position, and nothing that can be shown of any other.
-template <class Part>
-auto LandedChange(const Part& before, const Part& after)
-    -> ProjectionUnchanged {
-  if constexpr (std::same_as<Part, value::PackedArray>) {
-    return MakePackedProjectionTest(before, after);
-  } else {
-    return MakeWholeValueProjectionTest();
-  }
-}
-
-// A packed part is what no design shapes, so it is compiled once, in the
-// library.
-extern template auto LandedChange<value::PackedArray>(
-    const value::PackedArray& before, const value::PackedArray& after)
-    -> ProjectionUnchanged;
 
 template <class Sink, class Slice>
 class DesignatedSlice;

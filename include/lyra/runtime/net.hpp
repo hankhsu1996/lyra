@@ -785,7 +785,12 @@ class Driver {
   // The `MutationSink` surface: this driver's own contribution as storage, and
   // the re-resolution that follows a write to it. The net always reads what a
   // write did, but only positions whose contribution moved move the resolution
-  // over them, so those are the ones that resolve again.
+  // over them, so those are the ones that resolve again. A contribution goes on
+  // being updated while its net is forced, since the net takes what its drivers
+  // determine the moment it is released (LRM 10.6.2), so a write always lands.
+  [[nodiscard]] static auto AdmitsWrite() -> bool {
+    return true;
+  }
   [[nodiscard]] auto MutationStorage() const -> T& {
     return Net().ContributionOf(contribution_).value;
   }

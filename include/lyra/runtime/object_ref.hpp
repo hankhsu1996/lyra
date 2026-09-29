@@ -74,6 +74,9 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
   // was copied from waits on that one.
   [[nodiscard]] auto EventSource() -> Observable&;
 
+  // Whether a write to one of this object's properties has anyone to tell.
+  [[nodiscard]] auto Watched() const -> bool;
+
   // A write to one of this object's properties is over.
   void PublishChange();
 

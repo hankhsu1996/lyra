@@ -462,6 +462,21 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "designate_slice",
           .declaration = Method{"SliceRef"},
           .selects = PartSelection::kSlice};
+    case BuiltinFn::kReferElement:
+      return {
+          .name = "refer_element",
+          .declaration = Method{"ReferElement"},
+          .selects = PartSelection::kElement,
+          .index_operand = 1};
+    case BuiltinFn::kReferComponent:
+      return {
+          .name = "refer_component",
+          .declaration = Method{"ReferComponent"},
+          .selects = PartSelection::kComponent};
+    case BuiltinFn::kReferProperty:
+      return {
+          .name = "refer_property",
+          .declaration = FreeFunction{"lyra::runtime::ReferProperty"}};
     case BuiltinFn::kAttachDriver:
       return {.name = "attach_driver", .declaration = Method{"AttachDriver"}};
     case BuiltinFn::kNetJoin:

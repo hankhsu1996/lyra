@@ -139,9 +139,11 @@ neither array. The substrate serves those two.
   it is the next step rather than a detail.
 
   **Answered by [reference-is-a-tagged-pointer](reference-is-a-tagged-pointer.md): a slot is an
-  address.** A reference is one machine word, and an index into relocatable storage needs the arena
-  beside it, which is more than a word carries. What stays open is only how the ordering structure
-  names a slot -- a pointer or a small id -- which the reference does not see.
+  address.** A reference names where a value lies by its address, resolved once at the bind (that
+  record's D3, which [a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md) keeps),
+  and an index into relocatable storage would need the arena beside it at every access. What stays
+  open is only how the ordering structure names a slot -- a pointer or a small id -- which the
+  reference does not see.
 
 - **The ordering structure's element size is a measured cost, not a free choice.** A middle insert
   moves the order array, so a 4-byte slot id and an 8-byte pointer differ by a factor of two in what

@@ -260,57 +260,31 @@ auto Emplace(void* out, T value) -> void* {
   return std::construct_at(static_cast<T*>(out), std::move(value));
 }
 
-// The storage a caller lent, and which of the two forms it is. A body holding
-// a reference is lowered once for every caller and so cannot ask what it was
-// handed (LRM 13.5.2), while the two forms answer a write differently: one is
-// a subscribable variable, where a write wakes whoever waited on it, and one
-// is storage nothing subscribes to, where it does not. So the form travels in
-// the address, in the low bit the alignment of every referenceable storage
-// leaves free.
-class LentStorage {
- public:
-  [[nodiscard]] static auto OverCell(void* cell) -> void* {
-    return std::bit_cast<void*>(
-        std::bit_cast<std::uintptr_t>(cell) | kSubscribable);
-  }
+// A reference, behind the address the ABI carries it as. A body holding one is
+// lowered once for every caller and so cannot ask what it was handed (LRM
+// 13.5.2); what holds the storage travels in the reference, and every access
+// through it asks that.
+template <value::LyraValue T>
+auto LentAt(const void* reference) -> Ref<T> {
+  return Ref<T>{*static_cast<const ErasedReference*>(reference)};
+}
 
-  [[nodiscard]] static auto OverValue(void* storage) -> void* {
-    return storage;
-  }
+auto BuildReference(void* out, const ErasedReference& reference) -> void* {
+  return std::construct_at(static_cast<ErasedReference*>(out), reference);
+}
 
-  explicit LentStorage(void* reference)
-      : bits_(std::bit_cast<std::uintptr_t>(reference)) {
-  }
+// A reference to the whole of a subscribable variable, which a write through it
+// is a write of.
+template <value::LyraValue T>
+auto ReferToCell(void* cell, void* out) -> void* {
+  return BuildReference(out, Ref<T>{*static_cast<Var<T>*>(cell)}.Erased());
+}
 
-  [[nodiscard]] auto Subscribable() const -> bool {
-    return (bits_ & kSubscribable) != 0;
-  }
-
-  template <value::LyraValue T>
-  [[nodiscard]] auto Cell() const -> Var<T>* {
-    return std::bit_cast<Var<T>*>(bits_ & ~kSubscribable);
-  }
-
-  template <value::LyraValue T>
-  [[nodiscard]] auto Value() const -> ActivationValueCell<T>* {
-    return std::bit_cast<ActivationValueCell<T>*>(bits_);
-  }
-
- private:
-  static constexpr std::uintptr_t kSubscribable = 1;
-
-  std::uintptr_t bits_;
-};
-
-// Reading and writing storage a caller lent. Each asks the form the reference
-// carries which storage answers, and the answer is that storage's own access:
-// a read answers with the storage itself, a subscribable variable's write
-// raises its update event, and storage nothing subscribes to is written
-// directly.
+// Reading and writing storage a caller lent, which answers through the variable
+// it belongs to where it belongs to one.
 template <value::LyraValue T>
 auto RefGet(void* reference) -> const void* {
-  const LentStorage lent{reference};
-  return lent.Subscribable() ? &lent.Cell<T>()->Get() : &lent.Value<T>()->Get();
+  return &LentAt<T>(reference).Get();
 }
 
 // Opening a write into what a wrapper stands for, in the storage the caller
@@ -325,58 +299,23 @@ auto OpenCellWrite(void* cell, void* out) -> void* {
 
 template <value::LyraValue T>
 auto OpenRefWrite(void* reference, void* out) -> void* {
-  const LentStorage lent{reference};
-  if (lent.Subscribable()) {
-    return std::construct_at(
-        static_cast<OpenWrite*>(out), Ref<T>{*lent.Cell<T>()});
-  }
-  return std::construct_at(
-      static_cast<OpenWrite*>(out), Ref<T>{lent.Value<T>()->Storage()});
+  return std::construct_at(static_cast<OpenWrite*>(out), LentAt<T>(reference));
 }
 
 template <value::LyraValue T>
 void RefSet(void* reference, const void* value) {
-  const LentStorage lent{reference};
-  if (lent.Subscribable()) {
-    lent.Cell<T>()->Set(Read<T>(value));
-  } else {
-    lent.Value<T>()->Store(Read<T>(value));
-  }
+  LentAt<T>(reference).Set(Read<T>(value));
 }
 
-// What a time slot moved away from is kept only where something retains it, so
-// arming storage nothing subscribes to asks for nothing.
 template <value::LyraValue T>
 void RefArmSampling(void* reference) {
-  const LentStorage lent{reference};
-  if (lent.Subscribable()) {
-    lent.Cell<T>()->ArmSampling();
-  }
+  LentAt<T>(reference).ArmSampling();
 }
 
-// LRM 16.5.1 gives a variable its value in the Preponed region, excepting an
-// automatic variable, whose sampled value is the value it holds. Storage
-// nothing subscribes to covers both -- a caller may lend an automatic variable
-// or a class property -- and what the reference carries is which of the two
-// forms the storage is, never which kind of variable, so neither answer can be
-// given without risking the other's. Refused rather than guessed.
 template <value::LyraValue T>
 auto RefSampledLoad(void* reference, void* out) -> void* {
-  const LentStorage lent{reference};
-  if (!lent.Subscribable()) {
-    throw lyra::SimulationError(
-        "a sampled value of storage lent by reference is only available where "
-        "that storage is an observable cell");
-  }
-  return Emplace(out, lent.Cell<T>()->SampledGet());
+  return Emplace(out, LentAt<T>(reference).SampledGet());
 }
-
-// The obligation the encoding above places on storage, claimed here rather
-// than assumed: storage a reference can name is built at an alignment that
-// leaves the low bit free. Every representation is reached through one of
-// these two families, so checking them checks the family.
-static_assert(alignof(Var<value::PackedArray>) > 1);
-static_assert(alignof(ActivationValueCell<value::PackedArray>) > 1);
 
 // A net and one of its drivers, behind the addresses the ABI carries them as.
 // The fold a net resolves under travels in the net object itself, so one
@@ -482,6 +421,33 @@ auto LandDesignation(const void* designation) noexcept -> void* {
   const ErasedDesignation& landed = DesignationAt(designation);
   landed.write->Land(*static_cast<Part*>(landed.part));
   return landed.part;
+}
+
+// A reference to storage nothing is told about -- an automatic variable --
+// which a write through it only writes.
+auto ReferToStorage(void* storage, void* out) -> void* {
+  return BuildReference(out, ErasedReference{.holder = {}, .storage = storage});
+}
+
+// A reference to a property of an object, which a write through it tells.
+auto ReferToProperty(void* object, void* property, void* out) -> void* {
+  return BuildReference(
+      out, ErasedReference{
+               .holder = static_cast<GcObject*>(object), .storage = property});
+}
+
+// The steps a reference takes into a part of what it names, each over the
+// value the reference names; they do what a reference's own methods do where
+// the value's type is known.
+template <typename Container, typename Index>
+auto ReferElement(const void* reference, const Index& index, void* out)
+    -> void* {
+  const ErasedReference& from = *static_cast<const ErasedReference*>(reference);
+  from.AdmitStep();
+  value::Formation formed{};
+  void* element =
+      HeldIn(static_cast<Container*>(from.storage)->ElementRef(index, formed));
+  return BuildReference(out, from.Part(element, formed));
 }
 
 // Builds a copy of one element, as a value of the element's own domain, in the
@@ -735,6 +701,7 @@ using lyra::runtime::Emplace;
 using lyra::runtime::EnterCancellationTarget;
 using lyra::runtime::EnterForeignTask;
 using lyra::runtime::ErasedDesignation;
+using lyra::runtime::ErasedReference;
 using lyra::runtime::EvaluationAttempts;
 using lyra::runtime::EventSourceOf;
 using lyra::runtime::FileTable;
@@ -748,7 +715,6 @@ using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::LandDesignation;
 using lyra::runtime::LeaveCancellationTarget;
-using lyra::runtime::LentStorage;
 using lyra::runtime::MakeForeignExecution;
 using lyra::runtime::MakeManagedObject;
 using lyra::runtime::MemberStorageSchema;
@@ -782,6 +748,10 @@ using lyra::runtime::Read;
 using lyra::runtime::RealTimeInUnit;
 using lyra::runtime::ReceiveDeparture;
 using lyra::runtime::RefArmSampling;
+using lyra::runtime::ReferElement;
+using lyra::runtime::ReferToCell;
+using lyra::runtime::ReferToProperty;
+using lyra::runtime::ReferToStorage;
 using lyra::runtime::RefGet;
 using lyra::runtime::RefSampledLoad;
 using lyra::runtime::RefSet;
@@ -2082,12 +2052,82 @@ auto lyra_rt_packed_cell_sampled_load(void* cell, void* out) -> void* {
   return Emplace(out, static_cast<Var<PackedArray>*>(cell)->SampledGet());
 }
 
-auto lyra_rt_ref_to_cell(void* cell) -> void* {
-  return LentStorage::OverCell(cell);
+auto lyra_rt_refer_storage(void* storage, void* out) -> void* {
+  return ReferToStorage(storage, out);
 }
 
-auto lyra_rt_ref_to_value(void* storage) -> void* {
-  return LentStorage::OverValue(storage);
+auto lyra_rt_refer_property(void* object, void* property, void* out) -> void* {
+  return ReferToProperty(object, property, out);
+}
+
+auto lyra_rt_packed_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<PackedArray>(cell, out);
+}
+auto lyra_rt_string_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<String>(cell, out);
+}
+auto lyra_rt_real_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<Real>(cell, out);
+}
+auto lyra_rt_shortreal_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<ShortReal>(cell, out);
+}
+auto lyra_rt_chandle_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<Chandle>(cell, out);
+}
+auto lyra_rt_managedref_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<ManagedRef>(cell, out);
+}
+auto lyra_rt_tuple_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<RuntimeTuple>(cell, out);
+}
+auto lyra_rt_union_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<RuntimeUnion>(cell, out);
+}
+auto lyra_rt_tagged_union_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<RuntimeTaggedUnion>(cell, out);
+}
+auto lyra_rt_dynarray_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<RuntimeDynamicArray>(cell, out);
+}
+auto lyra_rt_unpackedarray_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<RuntimeUnpackedArray>(cell, out);
+}
+auto lyra_rt_queue_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<RuntimeQueue>(cell, out);
+}
+auto lyra_rt_assocarray_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<RuntimeAssociativeArray>(cell, out);
+}
+
+auto lyra_rt_dynarray_refer_element(
+    const void* reference, const void* index, void* out) -> void* {
+  return ReferElement<RuntimeDynamicArray>(
+      reference, Read<PackedArray>(index), out);
+}
+auto lyra_rt_unpackedarray_refer_element(
+    const void* reference, const void* position, void* out) -> void* {
+  return ReferElement<RuntimeUnpackedArray>(
+      reference, Read<PackedArray>(position), out);
+}
+auto lyra_rt_queue_refer_element(
+    const void* reference, const void* index, void* out) -> void* {
+  return ReferElement<RuntimeQueue>(reference, Read<PackedArray>(index), out);
+}
+auto lyra_rt_assocarray_refer_element(
+    const void* reference, const void* index, void* out) -> void* {
+  return ReferElement<RuntimeAssociativeArray>(
+      reference, Read<RuntimeValue>(index), out);
+}
+auto lyra_rt_tuple_refer_component(
+    const void* reference, std::int64_t index, void* out) -> void* {
+  const ErasedReference& from = *static_cast<const ErasedReference*>(reference);
+  return lyra::runtime::BuildReference(
+      out, from.Part(
+               lyra::runtime::HeldIn(
+                   static_cast<RuntimeTuple*>(from.storage)
+                       ->ComponentRef(static_cast<std::size_t>(index))),
+               lyra::value::Formation::kExisting));
 }
 
 auto lyra_rt_packed_ref_get(void* reference) -> const void* {
@@ -6160,6 +6200,11 @@ void lyra_rt_assocarray_assign(void* storage, const void* value) {
 void lyra_rt_managedref_assign(void* storage, const void* value) {
   *static_cast<ManagedRef*>(storage) = Read<ManagedRef>(value);
 }
+// Binding a reference-typed place -- a `ref` port's own name (LRM 23.3.3.2) --
+// replaces the reference it holds, never what it names.
+void lyra_rt_reference_assign(void* storage, const void* value) {
+  *static_cast<ErasedReference*>(storage) = Read<ErasedReference>(value);
+}
 
 // Ending an object the generated body held in its own storage, where ending one
 // has something to do. An object whose type has a trivial destructor is ended
@@ -6311,6 +6356,9 @@ auto lyra_rt_channel_cancellation_copy(const void* value, void* out) -> void* {
 auto lyra_rt_erased_value_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<RuntimeValue>(value));
 }
+auto lyra_rt_reference_copy(const void* value, void* out) -> void* {
+  return Emplace(out, Read<ErasedReference>(value));
+}
 
 // A value moved into storage that takes it over. What is left behind is still
 // an object, which the body then ends.
@@ -6395,6 +6443,9 @@ auto lyra_rt_channel_cancellation_move(void* value, void* out) -> void* {
 auto lyra_rt_erased_value_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<RuntimeValue*>(value)));
 }
+auto lyra_rt_reference_move(void* value, void* out) -> void* {
+  return Emplace(out, Read<ErasedReference>(value));
+}
 }
 
 namespace lyra::runtime {
@@ -6447,6 +6498,7 @@ static_assert(LaidOutAs<PromotedScopeRef>(LibraryObject::kPromotedScope));
 static_assert(LaidOutAs<OpenWrite>(LibraryObject::kOpenWrite));
 static_assert(LaidOutAs<ErasedDesignation>(LibraryObject::kDesignation));
 static_assert(LaidOutAs<ObjectWrite>(LibraryObject::kObjectWrite));
+static_assert(LaidOutAs<ErasedReference>(LibraryObject::kReference));
 
 }  // namespace
 

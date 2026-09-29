@@ -1,6 +1,10 @@
 # A reference is a pointer-sized tagged pointer
 
-Date: 2026-09-11 Status: accepted
+Date: 2026-09-11 Status: superseded in part by
+[a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md), which keeps D3 and replaces
+the representation. The enumeration below lists a member and an element as plain storage; that holds
+for a part of storage nothing waits on, and a part of a variable something waits on is a referent it
+missed, which needs the variable as well as the address -- more than D5 admits.
 
 ## Context
 
