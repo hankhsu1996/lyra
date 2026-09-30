@@ -57,6 +57,12 @@ struct PositionMap {
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId start,
     mir::ExprId count, bool up) -> mir::ExprId;
 
+// The position `offset` positions past `base`, in the position type: where a
+// part of a part starts, counted in the numbering of the value both lie in.
+[[nodiscard]] auto BuildPositionSum(
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId base,
+    mir::ExprId offset) -> mir::ExprId;
+
 // A position the lowering computed itself -- a packed member's place in its
 // aggregate, the tag above them -- as a constant of the position type.
 [[nodiscard]] auto BuildConstantPosition(

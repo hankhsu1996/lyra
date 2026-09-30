@@ -15,14 +15,15 @@ namespace lyra::lowering::ast_to_hir {
 
 class StructuralScopeLowerer;
 
-// A run of one net's positions: the net, and where among its positions the run
-// starts and how many it covers. Positions rather than the coordinate the
-// source wrote, because what connectivity composes is expressible only as a
+// A run of one net's positions: the part of the net the source named -- the net
+// whole, or a constant select of it -- and where among that part's positions
+// the run starts and how many it covers. Positions rather than the coordinate
+// the source wrote, because what connectivity composes is expressible only as a
 // position: joining a run of `a` to one of `b` and a run of `b` to one of `c`
 // puts runs of `a` and `c` in one resolution, and the two may be declared in
 // opposite directions, so where they meet is a select of neither.
 struct NetRun {
-  hir::ExprId net;
+  hir::ExprId part;
   std::uint32_t offset{};
   std::uint32_t width{};
 };

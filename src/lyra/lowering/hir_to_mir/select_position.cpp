@@ -61,6 +61,14 @@ auto ToPosition(
 
 }  // namespace
 
+auto BuildPositionSum(
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId base,
+    mir::ExprId offset) -> mir::ExprId {
+  return Arithmetic(
+      unit, block, mir::BinaryOp::kAdd, ToPosition(unit, block, base),
+      ToPosition(unit, block, offset));
+}
+
 auto PositionMapOf(const mir::CompilationUnit& unit, mir::TypeId receiver)
     -> PositionMap {
   const mir::Type& type = unit.types.Get(receiver);

@@ -2,9 +2,8 @@
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <unordered_map>
-#include <utility>
+#include <variant>
 #include <vector>
 
 namespace slang::analysis {
@@ -23,13 +22,32 @@ class ProceduralBlockSymbol;
 
 namespace lyra::lowering::ast_to_hir {
 
-// One leaf read produced by `SensitivityAnalyzer`. `footprint` is the flat-bit
-// range of the read within the symbol's encoding; an absent footprint means the
-// whole signal is observed on any change, the form a non-bit-addressed
+// A read observes the whole signal on any change, the form a non-bit-addressed
 // observation (e.g. a port connection) produces.
+struct ReadOfWhole {};
+
+// A read of the bits the source's own selects name: the longest static prefixes
+// (LRM 11.5.3) of reads of the symbol in the analyzed node, which together make
+// up exactly the bits the analysis reported. Where an index in one is a value
+// each construction of the body is given, the prefix still says which bits the
+// next construction reads, and the bits one elaboration settled do not.
+struct ReadOfSelects {
+  std::vector<const slang::ast::Expression*> prefixes;
+};
+
+// A read of a run of the symbol's flat-bit encoding, first and last bit, that
+// no select in the analyzed node names -- a read inside a called function, or
+// what is left of reads once a procedure's own writes are excluded.
+struct ReadOfBits {
+  std::uint64_t first = 0;
+  std::uint64_t last = 0;
+};
+
+// One leaf read produced by `SensitivityAnalyzer`: which symbol, and which part
+// of it.
 struct SensitivityRead {
   const slang::ast::ValueSymbol* symbol = nullptr;
-  std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
+  std::variant<ReadOfWhole, ReadOfSelects, ReadOfBits> part;
 };
 
 // Reports every value read inside an arbitrary `slang::ast::Expression` or

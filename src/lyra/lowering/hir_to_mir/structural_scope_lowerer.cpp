@@ -25,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/concurrent_assertion.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
@@ -33,6 +34,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/forwarding_entry.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
@@ -40,6 +42,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
+#include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
@@ -1252,36 +1255,54 @@ auto InstallNetJoins(StructuralScopeLowerer& lowerer, WalkFrame resolve_frame)
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Block& block = *resolve_frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  for (const hir::NetJoin& join : hir_scope.net_joins) {
-    auto here_or =
-        lowerer.LowerLhsExpr(hir_scope.exprs.Get(join.here), resolve_frame);
-    if (!here_or) return std::unexpected(std::move(here_or.error()));
-    auto there_or =
-        lowerer.LowerLhsExpr(hir_scope.exprs.Get(join.there), resolve_frame);
-    if (!there_or) return std::unexpected(std::move(there_or.error()));
-    if (!here_or->descent.empty() || !there_or->descent.empty()) {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  // One side of a join: the net whole, and where the run starts in it -- the
+  // start of the part the source named, and the offset into that part.
+  struct Side {
+    mir::ExprId net;
+    mir::ExprId start;
+  };
+  const auto side_of = [&](hir::ExprId part,
+                           std::uint32_t offset) -> diag::Result<Side> {
+    auto start = PartStartOf(std::as_const(lowerer), resolve_frame, part);
+    if (!start) return std::unexpected(std::move(start.error()));
+    auto net =
+        lowerer.LowerLhsExpr(hir_scope.exprs.Get(start->whole), resolve_frame);
+    if (!net) return std::unexpected(std::move(net.error()));
+    if (!net->descent.empty()) {
       throw InternalError(
-          "InstallNetJoins: a join names a whole net on each side and says "
-          "which of its positions the run covers, decided where it is read");
+          "InstallNetJoins: the value a part of a net lies in is the net "
+          "itself");
     }
-    const mir::ExprId there = there_or->owner;
-    const mir::TypeId net_ptr_type = unit_lowerer.Unit().types.Intern(
+    return Side{
+        .net = net->owner,
+        .start = ConvertToType(
+            unit, block,
+            BuildPositionSum(
+                unit, block, start->first,
+                BuildConstantPosition(
+                    unit, block, static_cast<std::int64_t>(offset))),
+            unit.builtins.int_type)};
+  };
+  for (const hir::NetJoin& join : hir_scope.net_joins) {
+    auto here = side_of(join.here, join.here_offset);
+    if (!here) return std::unexpected(std::move(here.error()));
+    auto there = side_of(join.there, join.there_offset);
+    if (!there) return std::unexpected(std::move(there.error()));
+    const mir::TypeId net_ptr_type = unit.types.Intern(
         mir::Type{mir::PointerType{
-            .pointee = block.exprs.Get(there).type,
+            .pointee = block.exprs.Get(there->net).type,
             .ownership = mir::PointerOwnership::kBorrowed}});
     block.AppendStmt(
         mir::ExprStmt{
             .expr = block.exprs.Add(
                 mir::MakeNetJoinCallExpr(
-                    here_or->owner,
+                    here->net,
                     block.exprs.Add(
-                        mir::MakeAddressOfExpr(there, net_ptr_type)),
-                    BuildIntLiteral(
-                        unit_lowerer.Unit(), block, join.here_offset),
-                    BuildIntLiteral(
-                        unit_lowerer.Unit(), block, join.there_offset),
-                    BuildIntLiteral(unit_lowerer.Unit(), block, join.width),
-                    unit_lowerer.Unit().builtins.void_type))});
+                        mir::MakeAddressOfExpr(there->net, net_ptr_type)),
+                    here->start, there->start,
+                    BuildIntLiteral(unit, block, join.width),
+                    unit.builtins.void_type))});
   }
   return {};
 }
@@ -3422,7 +3443,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // the design has run, which is what puts this here rather than beside the
   // initializer itself: a cell reached across an instance boundary is one this
   // scope cannot order itself against.
-  for (const hir::SensitivityEntry& sampled : hir_scope.sampled_cells) {
+  for (const hir::ValueTarget& sampled : hir_scope.sampled_cells) {
     const mir::ExprId cell = BuildObservableCellExpr(
         activate_block, activate_frame, unit_lowerer.Unit(),
         std::as_const(*this), sampled);

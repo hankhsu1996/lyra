@@ -21,24 +21,24 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// Appends the runs one operand of a side names. A concatenation contributes its
-// own operands' runs in the order written, which is most significant first, so
-// nesting one inside another needs nothing of its own. Anything else is a name
-// the front end has already folded a constant select against: what it hands
-// back is the net the expression bottoms out at and the bounds of the positions
-// the static part of the expression reached.
-auto RunsInto(
+// The runs one operand of a side names. A concatenation names its own operands'
+// runs in the order written, which is most significant first, so nesting one
+// inside another needs nothing of its own. Anything else is a net or a constant
+// select of one, which is its own longest static prefix (LRM 11.5.3) and names
+// the part of the net its one run covers whole.
+auto RunsOf(
     StructuralScopeLowerer& scope, slang::ast::EvalContext& eval_context,
     const slang::ast::Expression& expr, diag::SourceSpan span,
-    diag::DiagCode code, WalkFrame frame, NetSide& into) -> diag::Result<void> {
+    diag::DiagCode code, WalkFrame frame) -> diag::Result<NetSide> {
   if (expr.kind == slang::ast::ExpressionKind::Concatenation) {
+    NetSide runs;
     for (const slang::ast::Expression* operand :
          expr.as<slang::ast::ConcatenationExpression>().operands()) {
-      auto appended =
-          RunsInto(scope, eval_context, *operand, span, code, frame, into);
-      if (!appended) return std::unexpected(std::move(appended.error()));
+      auto named = RunsOf(scope, eval_context, *operand, span, code, frame);
+      if (!named) return std::unexpected(std::move(named.error()));
+      runs.insert(runs.end(), named->begin(), named->end());
     }
-    return {};
+    return runs;
   }
   const slang::ast::ValuePath path(expr, eval_context);
   const slang::ast::ValueSymbol* root = path.rootSymbol();
@@ -50,15 +50,23 @@ auto RunsInto(
         "(LRM 10.11) is not yet supported where a connection or an alias "
         "names a run of positions");
   }
-  auto net = scope.LowerExpr(*path.rootExpr, frame);
-  if (!net) return std::unexpected(std::move(net.error()));
-  into.push_back(
-      NetRun{
-          .net = frame.Exprs().Add(*std::move(net)),
-          .offset = static_cast<std::uint32_t>(path.lspBounds.first),
-          .width = static_cast<std::uint32_t>(
-              path.lspBounds.second - path.lspBounds.first + 1)});
-  return {};
+  // A run is counted in the positions of a bit vector. A net whose data type is
+  // an unpacked aggregate resolves per bit as well (LRM 6.7.1), but it keeps no
+  // runs of positions another net could join, whether the whole of it is named
+  // or one element.
+  if (!root->getType().isIntegral()) {
+    return diag::Fail(
+        span, code,
+        "a net whose data type is an unpacked aggregate is not yet supported "
+        "where a connection or an alias names a run of positions");
+  }
+  auto part = scope.LowerExpr(expr, frame);
+  if (!part) return std::unexpected(std::move(part.error()));
+  return NetSide{NetRun{
+      .part = frame.Exprs().Add(*std::move(part)),
+      .offset = 0,
+      .width = static_cast<std::uint32_t>(
+          path.lspBounds.second - path.lspBounds.first + 1)}};
 }
 
 }  // namespace
@@ -68,10 +76,7 @@ auto NetRunsOfLvalue(
     const slang::ast::Expression& expr, diag::SourceSpan span,
     diag::DiagCode code, WalkFrame frame) -> diag::Result<NetSide> {
   slang::ast::EvalContext eval_context(eval_scope);
-  NetSide runs;
-  auto appended = RunsInto(scope, eval_context, expr, span, code, frame, runs);
-  if (!appended) return std::unexpected(std::move(appended.error()));
-  return runs;
+  return RunsOf(scope, eval_context, expr, span, code, frame);
 }
 
 auto CoupleSides(
@@ -90,9 +95,9 @@ auto CoupleSides(
     couplings.push_back(
         hir::NetJoin{
             .span = span,
-            .here = here.net,
+            .here = here.part,
             .here_offset = here.offset + here.width - taken_left - run,
-            .there = there.net,
+            .there = there.part,
             .there_offset = there.offset + there.width - taken_right - run,
             .width = run});
     taken_left += run;

@@ -868,6 +868,12 @@ the detail lives in the entry itself.
   it denies by default, and every instance handed new values is lowered and compared, a difference
   keeping the definition whole. It rejects naming a child by its body's hash, grouping by comparing
   across the design, declaring every parameter, and reporting a miss as an error.
+- [a-part-is-the-select-the-source-wrote](a-part-is-the-select-the-source-wrote.md) -- a part of a
+  vector a genvar or a parameter selects -- the bits a wait watches, a part-select's type, the
+  positions a connection joins -- is stated as the select the source wrote, so constructions
+  differing only in that value share one body. Which bits are watched stays the front end's answer,
+  and every construction is still compared. Watching the whole variable, computing the read set from
+  the source, and passing settled ranges at construction are rejected.
 - [generate-variable-specialization](generate-variable-specialization.md) -- a generate variable is
   a specialization input like a parameter; demoting it to a runtime input is a proof-gated
   optimization. Its conservative default is superseded on the loop axis by the next entry.

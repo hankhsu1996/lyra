@@ -67,6 +67,23 @@ namespace lyra::lowering::hir_to_mir {
     const PackedProjection& projection, base::ComponentIndex index)
     -> mir::ExprId;
 
+// Where a part of a value lies: the value at the root of the selects naming it,
+// and the part's lowest bit, counted from that value's least significant bit in
+// the position type. How many bits the part spans is its own type's.
+struct PartStart {
+  hir::ExprId whole = {};
+  mir::ExprId first = {};
+};
+
+// Where `part` lies (LRM 7.2.1, 11.5.1), each select taken as the step a read
+// of it takes -- so a wait on a part and a read of it cannot disagree about
+// where it lies. The start stays an expression, because an index may be a
+// value each construction of the body is given. A part that selects nothing is
+// the whole value, starting at its first bit.
+template <typename Lowerer>
+auto PartStartOf(Lowerer& lowerer, WalkFrame frame, hir::ExprId part)
+    -> diag::Result<PartStart>;
+
 // A select's meaning is independent of the enclosing scope, so one template
 // over the pass class serves both the procedural and structural contexts;
 // explicit instantiations live in the implementation file.

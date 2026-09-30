@@ -407,6 +407,18 @@ specializations, not with instance count.
       a declared width, an unpacked extent -- are unchanged and correct: two types are two classes,
       and that is the sentence above rather than an exception to it.
 
+      **A block or an instance reaching part of a vector through its index or its parameter used to
+      fall outside both axes, and no longer does.** The bits a continuous assignment, an event
+      control, `always_comb` or `wait` watches were stated as the bits one construction settled them
+      to, and so were the range an indexed part-select yields and the positions a bidirectional port
+      joins. A loop of `assign d[e] = v[e]` was therefore one class per index, and a module reading
+      `v[N]` one unit per value, the second caught only by comparing instances and reported as lost
+      sharing. Each is now stated as the select the source wrote (LRM 11.5.3), which every
+      construction evaluates with its own index or value. The loop at 64 iterations emits two scope
+      classes and 11,368 bytes for the whole module, where it emitted one class per iteration.
+      [../decisions/a-part-is-the-select-the-source-wrote.md](../decisions/a-part-is-the-select-the-source-wrote.md)
+      holds why which bits are watched stays the front end's answer.
+
       What it costs where nothing is gained, measured rather than waved at: a block that cannot
       share either way now carries the declaration instead of the folded literal, which is **359
       bytes per block** -- 15 blocks declaring a width through a named constant emit 154,362 bytes

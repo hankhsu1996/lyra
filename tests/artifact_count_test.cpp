@@ -233,6 +233,41 @@ endmodule
       1U);
 }
 
+TEST(ArtifactCount, BlocksReachingThePartTheirIndexSelectsAreCompiledOnce) {
+  // A select whose index is a genvar is a constant select (LRM 11.5.3), so each
+  // block reaches a different part of a vector: the bits it waits on, the bits
+  // an indexed part-select yields, the positions a port joins. Which part is
+  // still the index, a value each construction is handed, so the blocks state
+  // the same thing -- through a continuous assignment, an event control,
+  // `always_comb`, `wait`, an element of a multidimensional packed array, an
+  // indexed part-select, and a bidirectional port alike.
+  EXPECT_EQ(
+      CompiledBlocksOfGenerate(
+          R"(
+module Pad(inout wire p);
+endmodule
+
+module Top;
+  logic [7:0] v;
+  logic [3:0][7:0] m;
+  wire [3:0] n;
+  logic d [8];
+  logic e [8];
+  logic f [8];
+  int wakes [8];
+  for (genvar i = 0; i < 4; i += 1) begin : g
+    assign d[i] = v[i];
+    always_comb e[i] = m[i][3] ^ v[i * 2 +: 2] == 2'b01;
+    always @(v[i + 4]) wakes[i]++;
+    initial wait (v[i]) f[i] = 1;
+    Pad pad (.p(n[i]));
+  end
+endmodule
+)",
+          0),
+      1U);
+}
+
 TEST(
     ArtifactCount,
     BlocksSizingADeclarationThroughSuchAConstantAreCompiledApart) {
@@ -434,6 +469,33 @@ TEST(ArtifactCount, AChildGivenAValuePerIndexIsCompiledOnceAndSoIsTheLoop) {
   ASSERT_TRUE(design.has_value());
   EXPECT_EQ(UnitsOf(*design, "Leaf"), 1U);
   EXPECT_EQ(BlocksOfGenerate(*design, 0), 1U);
+}
+
+TEST(ArtifactCount, AValueSelectingWhatAChildWatchesIsCompiledOnce) {
+  // Each child selects by its parameter the bit it reads, so each watches a
+  // different bit (LRM 11.5.3) -- through a continuous assignment, an event
+  // control, and `always_comb`. The parameter is still a value the instance is
+  // handed, so one unit serves every value and nothing is caught lowering
+  // apart.
+  const auto design = LowerDesign(R"(
+module Watches #(parameter int N = 0) (input logic [7:0] v, output int o);
+  logic a;
+  logic c;
+  assign a = v[N];
+  always_comb c = v[N + 1 -: 2] == 2'b10;
+  always @(v[N]) o++;
+endmodule
+
+module Top;
+  logic [7:0] v;
+  int o [3];
+  Watches #(.N(1)) one (.v(v), .o(o[0]));
+  Watches #(.N(3)) three (.v(v), .o(o[1]));
+  Watches #(.N(6)) six (.v(v), .o(o[2]));
+endmodule
+)");
+  ASSERT_TRUE(design.has_value());
+  EXPECT_EQ(UnitsOf(*design, "Watches"), 1U);
 }
 
 TEST(ArtifactCount, AValueThatDecidesTheChildIsCompiledPerValue) {

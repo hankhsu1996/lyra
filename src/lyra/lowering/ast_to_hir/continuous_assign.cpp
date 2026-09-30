@@ -23,11 +23,12 @@ namespace {
 // Assembles a continuous assignment (LRM 10.3.2) from its two already-built
 // operand expressions and the read set its sensitivity derives from.
 auto BuildContinuousAssign(
-    UnitLowerer& unit_lowerer, WalkFrame frame, diag::SourceSpan span,
+    StructuralScopeLowerer& scope, WalkFrame frame, diag::SourceSpan span,
     hir::Expr lhs, hir::Expr rhs, support::StrengthLevel strength,
     const std::vector<SensitivityRead>& reads)
     -> diag::Result<hir::ContinuousAssign> {
-  auto sensitivity = unit_lowerer.TranslateSensitivityReads(reads, frame);
+  auto sensitivity =
+      scope.Owner().TranslateSensitivityReads(scope, reads, frame);
   if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
   const hir::ExprId lhs_id = frame.Exprs().Add(std::move(lhs));
   const hir::ExprId rhs_id = frame.Exprs().Add(std::move(rhs));
@@ -92,7 +93,7 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
   const auto& reads = owner_->Sensitivity().AnalyzeReads(assignment_expr, sym);
 
   return BuildContinuousAssign(
-      *owner_, frame, span, *std::move(lhs_or), *std::move(rhs_or), *strength,
+      *this, frame, span, *std::move(lhs_or), *std::move(rhs_or), *strength,
       reads);
 }
 

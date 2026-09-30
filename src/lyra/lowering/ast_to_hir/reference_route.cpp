@@ -4,12 +4,12 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <tuple>
 #include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include <slang/ast/Expression.h>
 #include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
@@ -30,7 +30,9 @@
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
@@ -936,14 +938,15 @@ auto UnitLowerer::ObservedThroughModport(
     out.push_back(
         hir::SensitivityEntry{
             .cell = hir::RoutedValueRef{.id = reference},
-            .footprint = std::nullopt});
+            .part = hir::WatchedWhole{}});
   }
   return out;
 }
 
-auto UnitLowerer::TranslateSensitivityReads(
-    const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
-    -> diag::Result<std::vector<hir::SensitivityEntry>> {
+template <typename PartsOf>
+auto UnitLowerer::WatchedEntriesOf(
+    const std::vector<SensitivityRead>& reads, const WalkFrame& frame,
+    PartsOf parts_of) -> diag::Result<std::vector<hir::SensitivityEntry>> {
   std::vector<hir::SensitivityEntry> out;
   out.reserve(reads.size());
   for (const auto& read : reads) {
@@ -952,20 +955,27 @@ auto UnitLowerer::TranslateSensitivityReads(
     if (!resolved) return std::unexpected(std::move(resolved.error()));
     const slang::ast::ValueSymbol& target = *resolved->symbol;
 
-    // A footprint is meaningful only for a signal the runtime bit-addresses: a
+    // A part is meaningful only for a signal the runtime bit-addresses: a
     // packed bit vector, which renders to one observable cell whose change set
     // is read per bit. For an enum, unpacked aggregate, string, or real the
-    // runtime observes the whole signal on any change, so the read carries no
-    // footprint regardless of the flat-bit view the DFA computed over its own
+    // runtime observes the whole signal on any change, so the read watches the
+    // whole of it regardless of the flat-bit view the DFA computed over its own
     // encoding.
-    const auto observe = [&](hir::ValueTarget cell) {
+    const auto observe =
+        [&](const hir::ValueTarget& cell) -> diag::Result<void> {
       const slang::ast::Type& read_type = target.getType();
-      out.push_back(
-          hir::SensitivityEntry{
-              .cell = std::move(cell),
-              .footprint = read_type.isIntegral() && !read_type.isEnum()
-                               ? read.footprint
-                               : std::nullopt});
+      if (!read_type.isIntegral() || read_type.isEnum()) {
+        out.push_back(
+            hir::SensitivityEntry{.cell = cell, .part = hir::WatchedWhole{}});
+        return {};
+      }
+      auto parts = parts_of(read);
+      if (!parts) return std::unexpected(std::move(parts.error()));
+      for (hir::WatchedPart& part : *parts) {
+        out.push_back(
+            hir::SensitivityEntry{.cell = cell, .part = std::move(part)});
+      }
+      return {};
     };
 
     switch (resolved->kind) {
@@ -1005,14 +1015,19 @@ auto UnitLowerer::TranslateSensitivityReads(
         if (prop.lifetime != slang::ast::VariableLifetime::Static) break;
         auto property = ResolveStaticPropertyTarget(frame, prop, span);
         if (!property) return std::unexpected(std::move(property.error()));
-        observe(hir::ValueTarget{*std::move(property)});
+        if (auto observed = observe(hir::ValueTarget{*std::move(property)});
+            !observed) {
+          return std::unexpected(std::move(observed.error()));
+        }
         break;
       }
       case Referent::kVariableStorage:
       case Referent::kNetStorage: {
         auto cell = ResolveValueTarget(frame, target, span);
         if (!cell) return std::unexpected(std::move(cell.error()));
-        observe(*std::move(cell));
+        if (auto observed = observe(*std::move(cell)); !observed) {
+          return std::unexpected(std::move(observed.error()));
+        }
         break;
       }
       case Referent::kPrimitivePort:
@@ -1022,8 +1037,8 @@ auto UnitLowerer::TranslateSensitivityReads(
         return FailOnUnsupportedReferent(resolved->kind, span);
       case Referent::kNotAValue:
         throw InternalError(
-            "TranslateSensitivityReads: a read resolved to a declaration that "
-            "denotes no value");
+            "WatchedEntriesOf: a read resolved to a declaration that denotes "
+            "no value");
     }
   }
 
@@ -1033,15 +1048,75 @@ auto UnitLowerer::TranslateSensitivityReads(
   // symbols were allocated. What leaves here is a sequence the compiled
   // artifact carries, and an artifact is a function of the design -- so the
   // order is settled against the identities this step has just given them,
-  // which the design decides and nothing about the run touches.
-  std::ranges::sort(
-      out,
-      [](const hir::SensitivityEntry& left,
-         const hir::SensitivityEntry& right) -> bool {
-        return std::tie(left.cell, left.footprint) <
-               std::tie(right.cell, right.footprint);
-      });
+  // which the design decides and nothing about the run touches. The runs of
+  // one symbol arrive in bit order and the parts of one run in source order,
+  // and a stable sort keeps both.
+  std::ranges::stable_sort(out, {}, &hir::SensitivityEntry::cell);
   return out;
+}
+
+template <typename Lowerer>
+auto UnitLowerer::TranslateSensitivityReads(
+    Lowerer& lowerer, const std::vector<SensitivityRead>& reads,
+    const WalkFrame& frame)
+    -> diag::Result<std::vector<hir::SensitivityEntry>> {
+  return WatchedEntriesOf(
+      reads, frame,
+      [&](const SensitivityRead& read)
+          -> diag::Result<std::vector<hir::WatchedPart>> {
+        return std::visit(
+            Overloaded{
+                [](const ReadOfWhole&)
+                    -> diag::Result<std::vector<hir::WatchedPart>> {
+                  return std::vector<hir::WatchedPart>{hir::WatchedWhole{}};
+                },
+                [&](const ReadOfSelects& named)
+                    -> diag::Result<std::vector<hir::WatchedPart>> {
+                  std::vector<hir::WatchedPart> parts;
+                  parts.reserve(named.prefixes.size());
+                  for (const slang::ast::Expression* prefix : named.prefixes) {
+                    auto lowered = lowerer.LowerExpr(*prefix, frame);
+                    if (!lowered) {
+                      return std::unexpected(std::move(lowered.error()));
+                    }
+                    parts.emplace_back(
+                        hir::WatchedSelect{
+                            .prefix = frame.Exprs().Add(*std::move(lowered))});
+                  }
+                  return parts;
+                },
+                [](const ReadOfBits& bits)
+                    -> diag::Result<std::vector<hir::WatchedPart>> {
+                  return std::vector<hir::WatchedPart>{
+                      hir::WatchedBits{.first = bits.first, .last = bits.last}};
+                }},
+            read.part);
+      });
+}
+
+template auto UnitLowerer::TranslateSensitivityReads(
+    ProcessLowerer&, const std::vector<SensitivityRead>&, const WalkFrame&)
+    -> diag::Result<std::vector<hir::SensitivityEntry>>;
+template auto UnitLowerer::TranslateSensitivityReads(
+    StructuralScopeLowerer&, const std::vector<SensitivityRead>&,
+    const WalkFrame&) -> diag::Result<std::vector<hir::SensitivityEntry>>;
+
+auto UnitLowerer::CellsRead(
+    const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
+    -> diag::Result<std::vector<hir::ValueTarget>> {
+  auto entries = WatchedEntriesOf(
+      reads, frame,
+      [](const SensitivityRead&)
+          -> diag::Result<std::vector<hir::WatchedPart>> {
+        return std::vector<hir::WatchedPart>{hir::WatchedWhole{}};
+      });
+  if (!entries) return std::unexpected(std::move(entries.error()));
+  std::vector<hir::ValueTarget> cells;
+  cells.reserve(entries->size());
+  for (hir::SensitivityEntry& entry : *entries) {
+    cells.push_back(std::move(entry.cell));
+  }
+  return cells;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -706,6 +706,74 @@ auto LowerHirInterfaceInstanceAccessExpr(
       lowerer.Owner().Unit(), *frame.current_block, *object, result_type);
 }
 
+template <typename Lowerer>
+auto PartStartOf(Lowerer& lowerer, WalkFrame frame, hir::ExprId part)
+    -> diag::Result<PartStart> {
+  UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const auto& exprs = lowerer.HirExprs();
+  auto& block = *frame.current_block;
+  const hir::Expr& expr = exprs.Get(part);
+  const mir::TypeId part_type = unit_lowerer.TranslateType(expr.type);
+
+  // A step starts where its receiver's own numbering puts it, and the receiver
+  // starts somewhere in the value above it, so the part starts at the sum.
+  const auto within = [&](hir::ExprId receiver,
+                          const DescentStep& step) -> diag::Result<PartStart> {
+    auto outer = PartStartOf(lowerer, frame, receiver);
+    if (!outer) return std::unexpected(std::move(outer.error()));
+    if (step.operands.size() != 1 || !step.count.has_value()) {
+      throw InternalError(
+          "PartStartOf: a select into a packed value is a run of a fixed count "
+          "from one start");
+    }
+    return PartStart{
+        .whole = outer->whole,
+        .first =
+            BuildPositionSum(unit, block, outer->first, step.operands.front())};
+  };
+  const auto receiver_type = [&](hir::ExprId receiver) {
+    return unit_lowerer.TranslateType(exprs.Get(receiver).type);
+  };
+  const auto lower_one = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
+    auto lowered = lowerer.LowerExpr(exprs.Get(id), frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return block.exprs.Add(*std::move(lowered));
+  };
+
+  if (const auto* sel = std::get_if<hir::ElementSelectExpr>(&expr.data)) {
+    auto index = lower_one(sel->index);
+    if (!index) return std::unexpected(std::move(index.error()));
+    return within(
+        sel->base_value,
+        ElementStep(
+            unit_lowerer, block, receiver_type(sel->base_value), *index,
+            part_type));
+  }
+  if (const auto* sel = std::get_if<hir::RangeSelectExpr>(&expr.data)) {
+    auto step = RangeStep(
+        unit_lowerer, block, sel->bounds, receiver_type(sel->base_value),
+        part_type, lower_one);
+    if (!step) return std::unexpected(std::move(step.error()));
+    return within(sel->base_value, *step);
+  }
+  if (const auto* sel = std::get_if<hir::MemberAccessExpr>(&expr.data)) {
+    const ProjectedMember& member = ProjectedMemberAt(
+        ProjectPackedAggregate(
+            unit_lowerer,
+            unit_lowerer.Hir().types.Get(exprs.Get(sel->base_value).type)),
+        sel->field_index);
+    return within(
+        sel->base_value,
+        RunStep(
+            BuildConstantPosition(
+                unit, block, static_cast<std::int64_t>(member.bit_offset)),
+            member.bit_width, part_type));
+  }
+  return PartStart{
+      .whole = part, .first = BuildConstantPosition(unit, block, 0)};
+}
+
 // One concrete instantiation per pass class. The handler templates are defined
 // in this file rather than the header so the file-local helpers stay private,
 // so the dispatchers in process_lowerer.cpp / structural_scope_lowerer.cpp link
@@ -779,5 +847,9 @@ template auto LowerHirInterfaceInstanceAccessExpr(
     const StructuralScopeLowerer&, WalkFrame,
     const hir::InterfaceInstanceAccessExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
+template auto PartStartOf(ProcessLowerer&, WalkFrame, hir::ExprId)
+    -> diag::Result<PartStart>;
+template auto PartStartOf(const StructuralScopeLowerer&, WalkFrame, hir::ExprId)
+    -> diag::Result<PartStart>;
 
 }  // namespace lyra::lowering::hir_to_mir

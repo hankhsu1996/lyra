@@ -170,19 +170,19 @@ auto ArmSampledReads(
   auto& unit_lowerer = proc.Owner();
   const auto& reads = unit_lowerer.Sensitivity().AnalyzeReads(
       expr, frame.reader_scope->asSymbol());
-  auto entries = unit_lowerer.TranslateSensitivityReads(reads, frame);
-  if (!entries) return std::unexpected(std::move(entries.error()));
+  auto cells = unit_lowerer.CellsRead(reads, frame);
+  if (!cells) return std::unexpected(std::move(cells.error()));
   // A read the translation could not name as a cell of this design leaves one
   // that can never answer for a sampled value, so it is refused rather than
   // read against whatever the cell currently holds.
-  if (entries->size() < reads.size()) {
+  if (cells->size() < reads.size()) {
     return RefuseAssertionForm(
         span, "a Boolean expression reading storage this scope cannot name");
   }
-  std::vector<hir::SensitivityEntry>& sampled =
+  std::vector<hir::ValueTarget>& sampled =
       frame.current_structural_scope->sampled_cells;
-  for (hir::SensitivityEntry& entry : *entries) {
-    sampled.push_back(std::move(entry));
+  for (hir::ValueTarget& cell : *cells) {
+    sampled.push_back(std::move(cell));
   }
   return {};
 }
@@ -576,6 +576,7 @@ auto LowerPropertySpec(
     auto cond_or = proc.LowerExpr(*parts.disable_condition, frame);
     if (!cond_or) return std::unexpected(std::move(cond_or.error()));
     auto sensitivity_or = proc.Owner().TranslateSensitivityReads(
+        proc,
         proc.Owner().Sensitivity().AnalyzeReads(
             *parts.disable_condition, proc.ContainingSymbol()),
         frame);
