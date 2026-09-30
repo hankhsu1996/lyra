@@ -411,7 +411,9 @@ void StoreInto(T& storage, const T& value) {
 // What holds the storage a reference names, which is what a write through the
 // reference is a write of (LRM 13.5.2): a variable something may wait on, the
 // object a class property belongs to (LRM 9.4.2), or nothing anyone is told
-// about -- an automatic variable, and an element an index named none of.
+// about -- a variable of a function, which nothing can wait on (LRM 13.4.4), a
+// closure's own copy of a variable, which no other process reaches, and an
+// element an index named none of.
 using StorageHolder = std::variant<std::monostate, VariableCell*, GcObject*>;
 
 // A reference in a form that names no type: where a value lies, and what holds
@@ -457,6 +459,11 @@ struct ErasedReference {
   // A step can form what it reaches, which is a write into the variable, so
   // the variable admits it first.
   void AdmitStep() const;
+
+  // What a wait on the storage registers on: what `Report` tells, which is the
+  // variable or the object's event source. Storage that belongs to nothing
+  // answers with none, since no write to it is ever told.
+  [[nodiscard]] auto ReportsTo() const -> Observable*;
 
   // The reference to a part of what this one names, at `part`, which forming
   // did `formed` to. The part has the same holder, which is told at once where
@@ -556,11 +563,11 @@ class Ref {
   }
 
   // A reference denotes the storage it binds (LRM 23.3.3.2), so the operations
-  // on a cell answer through it. Storage nothing holds is an automatic
-  // variable, whose sampled value is its current one (LRM 16.5.1). A variable
-  // keeps the value a time slot moved away from, and keeps it whole, so a
-  // reference to a part of one has none to answer with; and nothing keeps a
-  // class property's Preponed value.
+  // on a cell answer through it. Storage nothing holds changes only where the
+  // reference is, so its sampled value is its current one. A variable keeps
+  // the value a time slot moved away from, and keeps it whole, so a reference
+  // to a part of one has none to answer with; and nothing keeps a class
+  // property's Preponed value.
   void ArmSampling() const {
     if (Whole()) {
       Cell().ArmSampling();
@@ -584,18 +591,6 @@ class Ref {
                   "not yet supported");
             }},
         erased_.holder);
-  }
-
-  // Opening the reference: the cell it binds (LRM 23.3.3.2). What a wait
-  // registers on, and what an operation on the cell acts through, is that cell
-  // and never the reference standing for it.
-  [[nodiscard]] auto operator*() const -> Var<T>& {
-    if (!Whole()) {
-      throw SimulationError(
-          "storage lent by reference can only be reached as a cell where that "
-          "storage is the whole of an observable cell");
-    }
-    return Cell();
   }
 
   void PublishTransition(const ProjectionUnchanged& unchanged) const {
@@ -625,6 +620,13 @@ class Ref {
 template <value::LyraValue T>
 auto ReferProperty(GcObject* object, T* property) -> Ref<T> {
   return Ref<T>{ErasedReference{.holder = object, .storage = property}};
+}
+
+// What a wait on the storage `reference` names registers on (LRM 13.5.2): what
+// a write through the reference is told to, never the reference itself.
+template <value::LyraValue T>
+auto ReportsTo(const Ref<T>& reference) -> Observable* {
+  return reference.Erased().ReportsTo();
 }
 
 // Makes `frame` runnable again when what happens at one of `triggers` is an

@@ -292,6 +292,13 @@ the detail lives in the entry itself.
   since a list of the ones somebody remembered had already answered wrongly twice. Read it also for
   what a variable naming an object is waited on for, and for why holding a reference in the target's
   own frame is the wrong place rather than the unbuilt one.
+- [a-variable-a-body-declares-reports-its-writes](a-variable-a-body-declares-reports-its-writes.md)
+  -- every variable a body that can wait declares is a cell reporting its writes, stated in MIR,
+  because any process that can reach it may wait on it, while a function's stay values since nothing
+  can wait on them; a wait names it by its declaration rather than a route, a wait through a
+  reference registers on what the reference reports to, and an automatic variable's sampled and past
+  values are its current one. A cell only where another process can reach the variable, and one
+  coarse source for plain storage, are rejected.
 - [inline-member-slots](inline-member-slots.md) -- a storage block whose owner cannot move holds its
   slots inline, one allocation for the block rather than one per member: an object's properties and
   a scope's members qualify, and a closure's captures did not until

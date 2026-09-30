@@ -151,7 +151,10 @@ under each item, and the conformance gaps at the end.
       wait on a property of the object beside a wait on the handle to say they are two different
       waits, and a write to the property resumes neither the other. The same holds of a chandle
       variable, whose value is the pointer it holds, and of a virtual interface, whose value is the
-      instance it holds.
+      instance it holds. A variable a call or a block declares -- a local, a loop variable, a formal
+      of any direction -- is waited on as a module's is, and a write to it from a branch the body
+      forks or through a reference it lent wakes the wait; a `ref` formal is waited on as whatever
+      its actual is, a variable, an element, a member or a class property (LRM 6.21, 13.5.2).
 - [x] A wait follows what its expression reached (LRM 9.4.2). A property of a class object --
       reached through a handle, the standard's own `@(p.status)`, through a handle another property
       holds, or named bare inside a method -- is watched as its object, which every write to any of

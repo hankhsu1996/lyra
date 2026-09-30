@@ -118,14 +118,16 @@ The IDs are stable references and do not imply execution order beyond the depend
       as far as naming an event a scope may select as its default; its clockvars, skews, drives and
       the cycle-delay operator are refused.
 
-      Three things are refused rather than answered. An expression that reads an automatic variable
-      stops before sampling is reached at all: such a name is resolved as if it named a signal of
-      the enclosing scope and the refusal says so, which describes neither the construct nor what is
-      missing. What the standard asks for there is not a history -- LRM 16.5.1 makes the sampled
-      value of an automatic variable its current value, and a past value of one the current value
-      too -- so what is owed is a plain read rather than any storage. A call outside a procedure
-      reaches only the default clocking rule, which is not wired. And a clocking event that is a
-      named event rather than a value change is not carried.
+      An automatic variable, and a `ref` formal that is not `ref static`, answers with its current
+      value, and a past value of one is its current value too (LRM 16.5.1), so no cell is armed for
+      it and an expression reading only such variables keeps no history.
+
+      Four things are refused rather than answered. A sampled value of a `ref static` formal,
+      whose actual's Preponed value is what it should answer with. A history function over an
+      expression reading both an automatic variable and one the design element holds, which needs
+      the history kept per variable rather than per expression. A call outside a procedure reaches
+      only the default clocking rule, which is not wired. And a clocking event that is a named
+      event rather than a value change is not carried.
 
 - [ ] AS5 -- Concurrent assertions (LRM 16.5-16.13): sequences, properties, their named
       declarations, `disable iff`, and the clocking a property is evaluated against. Evaluation is

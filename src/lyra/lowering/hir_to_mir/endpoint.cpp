@@ -10,6 +10,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -17,20 +18,15 @@ namespace {
 
 // The endpoint a member of type `member_type` gives wherever it is. A `ref`
 // port's internal name owns no cell: it stands for the connected variable's
-// (LRM 23.3.3.2), and opening the reference is what reaches that cell. Every
-// other member is the cell.
+// storage (LRM 23.3.3.2). Every other member is the cell.
 auto EndpointAt(
     const mir::CompilationUnit& unit, MemberPlace place,
     mir::TypeId member_type) -> BoundEndpoint {
-  if (const auto* ref = unit.types.Get(member_type).As<mir::RefType>();
-      ref != nullptr) {
-    return BoundEndpoint{
-        .place = place,
-        .kind = MemberKind::kReference,
-        .cell_type = mir::ObservableCellOf(unit.types, ref->pointee)};
-  }
   return BoundEndpoint{
-      .place = place, .kind = MemberKind::kCell, .cell_type = member_type};
+      .place = place,
+      .kind = unit.types.Get(member_type).Is<mir::RefType>()
+                  ? MemberKind::kReference
+                  : MemberKind::kCell};
 }
 
 // The endpoint a route of parent edges gives: the member it ends at, reached
@@ -121,10 +117,10 @@ auto BindEndpoint(
 auto EndpointCellExpr(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     const BoundEndpoint& endpoint) -> mir::Expr {
-  // A reference answers for the operations on the cell it binds -- a read, a
-  // write, a sampled read -- so naming it is naming that cell, and no step
-  // stands between them here. Only a wait needs the cell as storage in its
-  // own right, which is where the two part company.
+  // A reference answers for the operations on the storage it binds -- a read,
+  // a write, a sampled read -- so naming it is naming that storage, and no step
+  // stands between them here. Only a wait asks something else of it, what a
+  // write through it is told to, which is where the two part company.
   return MemberExpr(frame, unit, endpoint.place);
 }
 
@@ -134,7 +130,7 @@ auto EndpointObservablePtr(
   const auto address_of = [&](mir::ExprId cell) {
     const mir::TypeId ptr_type = unit.types.Intern(
         mir::Type{mir::PointerType{
-            .pointee = endpoint.cell_type,
+            .pointee = block.exprs.Get(cell).type,
             .ownership = mir::PointerOwnership::kBorrowed,
             .mutability = mir::Mutability::kMutable}});
     return block.exprs.Add(mir::MakeAddressOfExpr(cell, ptr_type));
@@ -154,18 +150,26 @@ auto EndpointObservablePtr(
                     at_block, unit, mir::EnclosingHops{0}, through.slot));
               }},
           endpoint.place);
-    // What a wait registers on is the cell the reference binds, never the
-    // reference itself, so the reference is opened before its address is taken.
     case MemberKind::kReference:
-      return address_of(block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::DerefExpr{
-                      .pointer = block.exprs.Add(
-                          MemberExpr(at_block, unit, endpoint.place))},
-              .type = endpoint.cell_type}));
+      return ReferenceReportsTo(
+          unit, block,
+          block.exprs.Add(MemberExpr(at_block, unit, endpoint.place)));
   }
   throw InternalError("EndpointObservablePtr: unknown member kind");
+}
+
+auto ReferenceReportsTo(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reference)
+    -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kReferenceReportsTo},
+                  .arguments = {reference}},
+          .type = mir::ErasedPointer(unit.types)});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -1177,11 +1177,13 @@ class UnitLowerer {
       -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
   // The entries a set of reads watches, with `parts_of` saying which parts of
-  // a bit vector a read of one watches.
-  template <typename PartsOf>
+  // a bit vector a read of one watches and `declared_by` which variable of the
+  // reading body a name binds, where it binds one.
+  template <typename PartsOf, typename DeclaredBy>
   auto WatchedEntriesOf(
       const std::vector<SensitivityRead>& reads, const WalkFrame& frame,
-      PartsOf parts_of) -> diag::Result<std::vector<hir::SensitivityEntry>>;
+      PartsOf parts_of, DeclaredBy declared_by)
+      -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
   // The reader-relative route to a cell in an instantiated scope: a count of
   // parent edges when the target sits on the reader's own scope or one

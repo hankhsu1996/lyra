@@ -424,8 +424,8 @@ auto LandDesignation(const void* designation) noexcept -> void* {
   return landed.part;
 }
 
-// A reference to storage nothing is told about -- an automatic variable --
-// which a write through it only writes.
+// A reference to storage nothing is told about -- a variable of a function, a
+// closure's own copy of a variable -- which a write through it only writes.
 auto ReferToStorage(void* storage, void* out) -> void* {
   return BuildReference(out, ErasedReference{.holder = {}, .storage = storage});
 }
@@ -2101,6 +2101,10 @@ auto lyra_rt_refer_storage(void* storage, void* out) -> void* {
 
 auto lyra_rt_refer_property(void* object, void* property, void* out) -> void* {
   return ReferToProperty(object, property, out);
+}
+
+auto lyra_rt_reference_reports_to(const void* reference) -> void* {
+  return static_cast<const ErasedReference*>(reference)->ReportsTo();
 }
 
 auto lyra_rt_packed_cell_refer(void* cell, void* out) -> void* {

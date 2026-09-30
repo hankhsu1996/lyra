@@ -272,6 +272,23 @@ auto ExternalMethodSymbol(
           lir::SymbolPart::Name(method_name))};
 }
 
+// Whether a local is a cell as MIR declared it -- a variable the source
+// declared, which reports its writes -- rather than a value the body keeps.
+auto IsDeclaredCell(const mir::CompilationUnit& unit, mir::TypeId declared)
+    -> bool {
+  return unit.types.Get(declared).Is<mir::ObservableType>();
+}
+
+// The value a local's storage holds: what its cell holds where MIR declared
+// one, and otherwise the local's own type.
+auto StoredValueType(const mir::CompilationUnit& unit, mir::TypeId declared)
+    -> mir::TypeId {
+  if (const auto* cell = unit.types.Get(declared).As<mir::ObservableType>()) {
+    return cell->value;
+  }
+  return declared;
+}
+
 }  // namespace
 
 auto FunctionLowerer::LowerCallTarget(
@@ -509,16 +526,20 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // here -- not whether anything writes it, not whether anything binds a
   // second name to it. A variable of a type whose values the runtime builds
   // gets storage of its own there, which a reference can bind and which
-  // survives a suspension; any other stays a value of the body.
+  // survives a suspension, and so does a cell MIR declared, which is a
+  // variable the source declared; any other stays a value of the body.
   for (const mir::LocalId local : code_->locals.Ids()) {
     const mir::TypeId declared = code_->locals.Get(local).type;
-    if (!unit_->Mir().types.Get(declared).IsRuntimeStoredValue()) {
+    if (!IsDeclaredCell(unit_->Mir(), declared) &&
+        !unit_->Mir().types.Get(declared).IsRuntimeStoredValue()) {
       continue;
     }
     variable_slot_[local.value] =
         static_cast<std::uint32_t>(fn_.variables.size());
     fn_.variables.push_back(
-        lir::CellOf(unit_->Types(), unit_->TranslateType(declared)));
+        lir::CellOf(
+            unit_->Types(),
+            unit_->TranslateType(StoredValueType(unit_->Mir(), declared))));
   }
 
   // The entry block exists first, so the storage the body's variables live in
@@ -1054,6 +1075,12 @@ auto FunctionLowerer::BindLocal(
 auto FunctionLowerer::DeclareLocal(
     const mir::Block& block, mir::LocalId local, mir::ExprId init)
     -> diag::Result<void> {
+  // A cell MIR declared is built where the body opens its variables, so its
+  // declaration names storage that already exists; what it holds is the
+  // initialization that follows.
+  if (IsDeclaredCell(unit_->Mir(), code_->locals.Get(local).type)) {
+    return {};
+  }
   const std::size_t depth = scopes_.size();
   auto value = LowerExpr(block, init);
   if (!value) {
@@ -1137,8 +1164,8 @@ void FunctionLowerer::OpenVariables() {
     if (!variable_slot_[local.value].has_value()) {
       continue;
     }
-    const lir::TypeId value =
-        unit_->TranslateType(code_->locals.Get(local).type);
+    const lir::TypeId value = unit_->TranslateType(
+        StoredValueType(unit_->Mir(), code_->locals.Get(local).type));
     const lir::TypeId address = unit_->Types().Intern(
         lir::Type{lir::PointerType{
             .pointee = lir::CellOf(unit_->Types(), value),
@@ -2157,6 +2184,13 @@ auto FunctionLowerer::ReferencePlace(
                     // variable does not say, so a write into part of it is
                     // opened on the cell here.
                     [&](const CellBinding& cell) -> diag::Result<lir::Place> {
+                      // A cell MIR declared is named as the cell, whose own
+                      // operations read and write it, as a design variable's
+                      // cell is.
+                      if (IsDeclaredCell(
+                              unit_->Mir(), code_->locals.Get(ref.var).type)) {
+                        return StorageAt(cell.cell);
+                      }
                       if (!WritesInto(reach)) {
                         return ValueAt(cell.cell);
                       }
@@ -3408,19 +3442,17 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             // stating it (LRM 13.5.2), and the two forms are different storage
             // with one type between them -- so an address taken through one
             // would name whichever form the type does not admit. Reading and
-            // writing through a reference are its own operations and need no
-            // address; reaching the storage itself, which is what registering
-            // a wait on it takes, is not yet one of them.
+            // writing through a reference are its own operations, and so is
+            // what a wait on it registers on.
             if (const auto* opened = std::get_if<mir::DerefExpr>(
                     &block.exprs.Get(addr.operand).data);
                 opened != nullptr &&
                 unit_->Mir()
                     .types.Get(block.exprs.Get(opened->pointer).type)
                     .Is<mir::RefType>()) {
-              return Unsupported(
-                  "mir_to_lir: reaching the storage a reference binds, rather "
-                  "than reading or writing through it, is not yet an operation "
-                  "on this backend");
+              throw InternalError(
+                  "mir_to_lir: an address was taken through a reference, where "
+                  "the reference's own operations reach its storage");
             }
             auto place = LowerPlace(block, addr.operand, Reach::kWhole);
             if (!place) {

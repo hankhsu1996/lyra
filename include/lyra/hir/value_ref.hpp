@@ -88,7 +88,8 @@ struct RoutedDisableTargetRef {
 struct ProceduralVarRef {
   ProceduralVarId var;
 
-  auto operator==(const ProceduralVarRef&) const -> bool = default;
+  auto operator<=>(const ProceduralVarRef&) const
+      -> std::strong_ordering = default;
 };
 
 // A reference to a class property (LRM 8.4) from within an instance method

@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -13,6 +14,7 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/declared_variable.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -214,15 +216,59 @@ auto LowerForeverProcess(
   return code;
 }
 
-// Starts `local` at its type's default value (LRM Table 6-7 for a scalar, Table
-// 7-1 for an aggregate): a formal that brings no value in, or the implicit
-// result variable, both of which a body may read before writing.
-void InitializeToDefault(
-    UnitLowerer& unit_lowerer, mir::Block& body, mir::LocalId local,
-    hir::TypeId type) {
-  const mir::ExprId init =
-      body.exprs.Add(BuildDefaultValueFromHir(unit_lowerer, body, type));
-  body.AppendStmt(mir::LocalDeclStmt{.target = local, .init = init});
+// A variable that starts at its type's default value (LRM Table 6-7 for a
+// scalar, Table 7-1 for an aggregate): a formal that brings no value in, or the
+// implicit result variable, both of which a body may read before writing.
+auto DeclareDefaulted(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Block& body,
+    BindingOriginId origin, const std::optional<std::string>& name,
+    hir::TypeId type) -> DeclaredVariable {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const DeclaredVariable variable = DeclareVariable(
+      unit, *frame.bindings, body, origin, name,
+      unit_lowerer.TranslateType(type), frame.body_can_wait);
+  body.AppendStmt(InitializeVariable(
+      unit, body, variable,
+      body.exprs.Add(BuildDefaultValueFromHir(unit_lowerer, body, type))));
+  return variable;
+}
+
+// A formal that brings a value in: the parameter the call hands it through,
+// and the variable, which starts at that value. Where the body cannot wait the
+// variable is the parameter itself.
+auto DeclareParameter(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Block& body,
+    BindingOriginId origin, const std::optional<std::string>& name,
+    mir::TypeId value_type) -> std::pair<mir::LocalId, DeclaredVariable> {
+  if (!frame.body_can_wait) {
+    const mir::LocalId parameter =
+        frame.bindings->DeclareProcedural(origin, name, value_type);
+    return {
+        parameter, DeclaredVariable{.local = parameter, .type = value_type}};
+  }
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::LocalId parameter = frame.bindings->Declare(
+      BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0),
+      value_type);
+  const DeclaredVariable variable = DeclareVariable(
+      unit, *frame.bindings, body, origin, name, value_type,
+      frame.body_can_wait);
+  body.AppendStmt(InitializeVariable(
+      unit, body, variable,
+      body.exprs.Add(mir::MakeLocalRefExpr(parameter, value_type))));
+  return {parameter, variable};
+}
+
+// Whether a subroutine's body can wait, which a task's can and a function's
+// cannot (LRM 13.4.4).
+auto CanWait(hir::SubroutineKind kind) -> bool {
+  switch (kind) {
+    case hir::SubroutineKind::kTask:
+      return true;
+    case hir::SubroutineKind::kFunction:
+      return false;
+  }
+  throw InternalError("CanWait: unknown SubroutineKind");
 }
 
 }  // namespace
@@ -256,7 +302,8 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   const WalkFrame entry_frame =
       parent.WithBlock(&code.Body())
           .WithBindings(&bindings)
-          .WithScopeNameBorrowedHandle(RootScope().NameBorrowedHandle());
+          .WithScopeNameBorrowedHandle(RootScope().NameBorrowedHandle())
+          .WithBodyCanWait(CanWait(src.kind));
   BoundImplicitParameters bound =
       parent.current_class == nullptr
           ? BoundImplicitParameters{.params = {}, .frame = entry_frame}
@@ -266,6 +313,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
                               : CallableForm::kInstanceMember);
   const WalkFrame& body_frame = bound.frame;
   std::vector<mir::LocalId> params = std::move(bound.params);
+  const mir::CompilationUnit& unit = owner_->Unit();
 
   // Formals normalize into the signature's data flow (LRM 13.5). Every formal
   // is a binding in the callable, identified by its HIR id; one that is no
@@ -279,23 +327,31 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
     const std::optional<mir::TypeId> param_type =
         ParamTypeOf(*owner_, hir_var.type, dir);
 
+    const BindingOriginId origin = BindingOriginId::Procedural(param.var);
     if (!param_type.has_value()) {
-      const mir::LocalId local = bindings.DeclareProcedural(
-          BindingOriginId::Procedural(param.var), hir_var.name, value_type);
-      InitializeToDefault(*owner_, code.Body(), local, hir_var.type);
-      MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
-      output_locals_.push_back(
-          PayloadLocal{.local = local, .type = value_type});
+      const DeclaredVariable variable = DeclareDefaulted(
+          *owner_, body_frame, code.Body(), origin, hir_var.name, hir_var.type);
+      MapProceduralVar(param.var, AutomaticVarBinding{.type = variable.type});
+      output_locals_.push_back(variable);
       continue;
     }
 
-    const mir::LocalId mir_var = bindings.DeclareProcedural(
-        BindingOriginId::Procedural(param.var), hir_var.name, *param_type);
-    MapProceduralVar(param.var, AutomaticVarBinding{.type = *param_type});
-    params.push_back(mir_var);
+    // A `ref` formal names its actual's storage, which reports its own writes
+    // (LRM 13.5.2), so it is the parameter itself.
+    if (unit.types.Get(*param_type).Is<mir::RefType>()) {
+      const mir::LocalId mir_var =
+          bindings.DeclareProcedural(origin, hir_var.name, *param_type);
+      MapProceduralVar(param.var, AutomaticVarBinding{.type = *param_type});
+      params.push_back(mir_var);
+      continue;
+    }
+
+    const auto [parameter, variable] = DeclareParameter(
+        *owner_, body_frame, code.Body(), origin, hir_var.name, value_type);
+    MapProceduralVar(param.var, AutomaticVarBinding{.type = variable.type});
+    params.push_back(parameter);
     if (dir == hir::ParamDirection::kInOut) {
-      output_locals_.push_back(
-          PayloadLocal{.local = mir_var, .type = value_type});
+      output_locals_.push_back(variable);
     }
   }
 
@@ -305,12 +361,13 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   // completion-payload component, the value a fall-through or value-less
   // `return` carries. void functions and tasks have none.
   if (src.result_var.has_value()) {
-    const mir::TypeId ret_type = owner_->TranslateType(src.result_type);
-    const mir::LocalId result_local = bindings.Declare(
-        BindingOriginId::Procedural(*src.result_var), ret_type);
-    InitializeToDefault(*owner_, code.Body(), result_local, src.result_type);
-    MapProceduralVar(*src.result_var, AutomaticVarBinding{.type = ret_type});
-    result_var_ = PayloadLocal{.local = result_local, .type = ret_type};
+    const DeclaredVariable variable = DeclareDefaulted(
+        *owner_, body_frame, code.Body(),
+        BindingOriginId::Procedural(*src.result_var), std::nullopt,
+        src.result_type);
+    MapProceduralVar(
+        *src.result_var, AutomaticVarBinding{.type = variable.type});
+    result_var_ = variable;
   }
 
   // A definition produces the completion its declaration fixes, so it reads
@@ -377,10 +434,11 @@ auto ProcessLowerer::RegisterConstructorFormals(
     }
     const auto& hir_var = ctor.body.procedural_vars.Get(param.var);
     const mir::TypeId value_type = owner_->TranslateType(hir_var.type);
-    const mir::LocalId mir_var = frame.bindings->DeclareProcedural(
+    const auto [parameter, variable] = DeclareParameter(
+        *owner_, frame, *frame.current_block,
         BindingOriginId::Procedural(param.var), hir_var.name, value_type);
-    MapProceduralVar(param.var, AutomaticVarBinding{.type = value_type});
-    params.push_back(mir_var);
+    MapProceduralVar(param.var, AutomaticVarBinding{.type = variable.type});
+    params.push_back(parameter);
   }
   return {};
 }
@@ -478,18 +536,15 @@ auto ProcessLowerer::BuildReturnPayload(
           : result_type_;
   if (payload_type == owner_->Unit().builtins.void_type) return std::nullopt;
 
+  mir::CompilationUnit& unit = owner_->Unit();
   std::vector<mir::ExprId> components;
   if (result_var_.has_value()) {
     components.push_back(
-        explicit_value.has_value()
-            ? *explicit_value
-            : block.exprs.Add(
-                  mir::MakeLocalRefExpr(
-                      result_var_->local, result_var_->type)));
+        explicit_value.has_value() ? *explicit_value
+                                   : ReadVariable(unit, block, *result_var_));
   }
-  for (const PayloadLocal& output : output_locals_) {
-    components.push_back(
-        block.exprs.Add(mir::MakeLocalRefExpr(output.local, output.type)));
+  for (const DeclaredVariable& output : output_locals_) {
+    components.push_back(ReadVariable(unit, block, output));
   }
   return block.exprs.Add(
       mir::Expr{

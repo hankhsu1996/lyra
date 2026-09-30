@@ -471,6 +471,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_packed_cell_sampled_load", &lyra_rt_packed_cell_sampled_load);
   add("lyra_rt_refer_storage", &lyra_rt_refer_storage);
   add("lyra_rt_refer_property", &lyra_rt_refer_property);
+  add("lyra_rt_reference_reports_to", &lyra_rt_reference_reports_to);
   add("lyra_rt_packed_cell_refer", &lyra_rt_packed_cell_refer);
   add("lyra_rt_string_cell_refer", &lyra_rt_string_cell_refer);
   add("lyra_rt_real_cell_refer", &lyra_rt_real_cell_refer);

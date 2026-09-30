@@ -121,7 +121,8 @@ auto LowerForkStmt(
     // fork's own block-item declarations and aliases deeper enclosing
     // variables (LRM 6.21).
     ClosureBuilder closure(process.Owner().Unit(), fork_frame, branch_policy);
-    auto lowered = process.LowerStmt(branch, closure.Frame());
+    auto lowered =
+        process.LowerStmt(branch, closure.Frame().WithBodyCanWait(true));
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }

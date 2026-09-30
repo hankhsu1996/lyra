@@ -158,6 +158,17 @@ void ErasedReference::Report(const ProjectionUnchanged& unchanged) const {
       holder);
 }
 
+auto ErasedReference::ReportsTo() const -> Observable* {
+  return std::visit(
+      Overloaded{
+          [](std::monostate) -> Observable* { return nullptr; },
+          [](VariableCell* variable) -> Observable* { return variable; },
+          [](GcObject* object) -> Observable* {
+            return &object->EventSource();
+          }},
+      holder);
+}
+
 void ErasedReference::AdmitStep() const {
   if (!Admits()) {
     throw SimulationError(
@@ -185,8 +196,10 @@ auto ErasedReference::Part(void* part, value::Formation formed) const
 void SubscribeToLeaves(
     CoroutineHandle frame, std::span<const Trigger> triggers) {
   for (const Trigger& trigger : triggers) {
+    // Storage that belongs to nothing is never told of a write, so a wait on
+    // it has nothing to register on and waits on its other leaves.
     if (trigger.observable == nullptr) {
-      throw InternalError("SubscribeToLeaves: a leaf names nothing to wait on");
+      continue;
     }
     trigger.observable->Subscribe(
         frame, trigger.observation, trigger.lsb_bit_offset, trigger.bit_width);

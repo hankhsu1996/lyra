@@ -19,6 +19,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
+#include "lyra/lowering/hir_to_mir/declared_variable.hpp"
 #include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -49,6 +50,8 @@ struct PromotedVarBinding {
   BindingOriginId handle_origin;
   mir::TypeId handle_type;
   mir::StructFieldTarget field;
+  // The field's type, the observable cell every variable a body declares is.
+  mir::TypeId cell_type;
 };
 
 // Where one HIR procedural var of this body keeps its storage: an in-frame
@@ -350,12 +353,6 @@ class ProcessLowerer {
   const DeclaredScopes* scopes_;
   base::SymbolTable<hir::ProceduralVarId, ProceduralVarBinding> bindings_;
 
-  // A body local whose final value is one component of the completion payload.
-  struct PayloadLocal {
-    mir::LocalId local;
-    mir::TypeId type;
-  };
-
   // The result type of the body being lowered, set before its body walks. It
   // is the call protocol, so every return site reads what its completion
   // carries from it -- a body that completes for no caller carries nothing,
@@ -363,8 +360,8 @@ class ProcessLowerer {
   // fills that payload is the result variable, if the body has one, followed
   // by each output / inout local.
   mir::TypeId result_type_;
-  std::optional<PayloadLocal> result_var_;
-  std::vector<PayloadLocal> output_locals_;
+  std::optional<DeclaredVariable> result_var_;
+  std::vector<DeclaredVariable> output_locals_;
 
   std::map<hir::ProceduralVarId, PromotedVarBinding> pending_activation_;
 };

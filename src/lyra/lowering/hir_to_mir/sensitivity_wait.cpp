@@ -53,6 +53,53 @@ auto BindRouted(
   return BindEndpoint(process.EnclosingScopeLowerer(), frame, reference);
 }
 
+// What a wait on a variable the running body declares registers on: its cell,
+// or, for a `ref` formal, whatever a write through it is told to (LRM 13.5.2).
+// Only a procedural body declares one.
+template <typename Lowerer>
+auto BodyVariableSource(
+    Lowerer& lowerer, const WalkFrame& frame, mir::Block& block,
+    const hir::ProceduralVarRef& var) -> mir::ExprId {
+  if constexpr (!std::same_as<Lowerer, ProcessLowerer>) {
+    throw InternalError(
+        "BodyVariableSource: a wait outside a procedural body named a variable "
+        "of one");
+  } else {
+    mir::CompilationUnit& unit = lowerer.Owner().Unit();
+    const hir::ProceduralVarDecl& decl =
+        lowerer.HirBody().procedural_vars.Get(var.var);
+    auto lowered = LowerHirPrimaryExprProc(
+        lowerer, frame.WithBlock(&block), hir::Primary{var},
+        lowerer.Owner().TranslateType(decl.type));
+    if (!lowered) {
+      throw InternalError(
+          "BodyVariableSource: a variable the body declares failed to lower as "
+          "the storage a wait registers on");
+    }
+    const mir::ExprId storage = block.exprs.Add(*std::move(lowered));
+    const mir::TypeId storage_type = block.exprs.Get(storage).type;
+    const mir::Type& storage_form = unit.types.Get(storage_type);
+    if (storage_form.Is<mir::RefType>()) {
+      return ReferenceReportsTo(unit, block, storage);
+    }
+    // A closure's snapshot of a variable is the closure's own copy, which no
+    // other process reaches, so nothing that could change it is ever told.
+    if (!storage_form.Is<mir::ObservableType>()) {
+      return block.exprs.Add(
+          mir::Expr{
+              .data = mir::NullLiteral{},
+              .type = mir::ErasedPointer(unit.types)});
+    }
+    return block.exprs.Add(
+        mir::MakeAddressOfExpr(
+            storage, unit.types.Intern(
+                         mir::Type{mir::PointerType{
+                             .pointee = storage_type,
+                             .ownership = mir::PointerOwnership::kBorrowed,
+                             .mutability = mir::Mutability::kMutable}})));
+  }
+}
+
 }  // namespace
 
 template <typename Lowerer>
@@ -100,18 +147,20 @@ auto BuildReportCall(
 
 namespace {
 
-// The same storage as a borrowed pointer, which is the form a registration
-// hands the runtime. A route answers for this form itself, because an endpoint
-// that reached out of the unit already holds a pointer and composing one from
-// the cell would send that case through a dereference and back. Every other
-// form is reached as the cell itself, so its pointer is that cell's address.
+// What a registration hands the runtime: a borrowed pointer to what reports a
+// write there. A route answers for this form itself, because an endpoint that
+// reached out of the unit already holds a pointer and composing one from the
+// cell would send that case through a dereference and back; so does whatever
+// is found through a handle or a reference. A cell reached as itself answers
+// with its address.
 template <typename Lowerer>
 auto BuildObservablePtrExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::SensitivityEntry& entry) -> mir::ExprId {
-  const auto address_of_cell = [&]() -> mir::ExprId {
+  const auto address_of_cell =
+      [&](const hir::ValueTarget& sealed) -> mir::ExprId {
     const mir::ExprId cell =
-        BuildObservableCellExpr(block, frame, unit, lowerer, entry.cell);
+        BuildObservableCellExpr(block, frame, unit, lowerer, sealed);
     const mir::TypeId ptr_type = unit.types.Intern(
         mir::Type{mir::PointerType{
             .pointee = block.exprs.Get(cell).type,
@@ -119,19 +168,30 @@ auto BuildObservablePtrExpr(
             .mutability = mir::Mutability::kMutable}});
     return block.exprs.Add(mir::MakeAddressOfExpr(cell, ptr_type));
   };
+  const auto sealed_cell = [&](const hir::ValueTarget& sealed) -> mir::ExprId {
+    return std::visit(
+        Overloaded{
+            [&](const hir::RoutedValueRef& reference) -> mir::ExprId {
+              return EndpointObservablePtr(
+                  block, frame, unit, BindRouted(lowerer, frame, reference));
+            },
+            [&](const hir::ExternalUnitValueRef&) -> mir::ExprId {
+              return address_of_cell(sealed);
+            },
+            [&](const hir::StaticPropertyRef&) -> mir::ExprId {
+              return address_of_cell(sealed);
+            },
+        },
+        sealed);
+  };
   return std::visit(
       Overloaded{
-          [&](const hir::RoutedValueRef& reference) -> mir::ExprId {
-            return EndpointObservablePtr(
-                block, frame, unit, BindRouted(lowerer, frame, reference));
+          [&](const hir::ValueTarget& sealed) -> mir::ExprId {
+            return sealed_cell(sealed);
           },
-          [&](const hir::ExternalUnitValueRef&) -> mir::ExprId {
-            return address_of_cell();
-          },
-          [&](const hir::StaticPropertyRef&) -> mir::ExprId {
-            return address_of_cell();
-          },
-      },
+          [&](const hir::ProceduralVarRef& var) -> mir::ExprId {
+            return BodyVariableSource(lowerer, frame, block, var);
+          }},
       entry.cell);
 }
 

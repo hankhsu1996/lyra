@@ -251,8 +251,8 @@ struct ForeignTarget {
 // An operation on a value cell -- storage that holds a value, written through
 // itself so a write lands at the representation the declaration gave it, and
 // read by answering with the value where it lies. `kAllocate` asks for one the
-// running activation owns, which is what a value-typed local of a suspending
-// body needs to keep its value across a suspension.
+// running activation owns, which is what a value the body holds across a
+// suspension -- a call's completion -- needs to outlive it.
 // A LIR-only target with no MIR twin -- where a value's storage sits is a
 // below-MIR realization the C++ backend never sees -- so a backend realizes it
 // the way it realizes any call: the value domain the op works in names the

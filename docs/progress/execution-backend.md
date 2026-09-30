@@ -240,12 +240,14 @@ ownership, or native in-frame layout) for every value.
       does, so a write through it is that variable's write at the moment it lands.
       `../decisions/a-lent-part-carries-its-variable.md` holds the design.
 
-      Still refused: reaching the storage a reference binds, rather than reading or writing through
-      it, is not an operation here: the two kinds are different storage with one type between them,
-      so an address taken through a reference would name whichever kind the type does not admit.
-      Waiting on a `ref` port's own name is what asks for it (LRM 9.4.2). A `ref` port connected to
-      a member or an element is refused on both backends, because the port is bound before the
-      variable's declaration installs what it holds, which moves the part.
+      A wait on a `ref` formal or a `ref` port registers on whatever a write through the reference
+      is told to -- the variable, or the object a property belongs to -- so it wakes on a write to
+      the actual by name and on one through any other reference to it (LRM 13.5.2, 9.4.2).
+      `../decisions/a-variable-a-body-declares-reports-its-writes.md` holds the design.
+
+      Still refused: a `ref` port connected to a member or an element is refused on both backends,
+      because the port is bound before the variable's declaration installs what it holds, which
+      moves the part.
 
 - [ ] **A component of an aggregate is storage of its own.** The language gives a member of an
       unpacked structure and an element of an unpacked array an identity a second name may denote,

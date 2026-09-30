@@ -141,7 +141,7 @@ auto LowerPatternVarRefExpr(WalkFrame frame, const hir::PatternVarRef& r)
 
 auto LowerProceduralVarRefExpr(
     ProcessLowerer& process, const WalkFrame& frame,
-    const hir::ProceduralVarRef& l, mir::TypeId type) -> mir::Expr {
+    const hir::ProceduralVarRef& l) -> mir::Expr {
   return std::visit(
       Overloaded{
           // Storage that outlives every activation (LRM 6.21) sits wherever the
@@ -161,7 +161,8 @@ auto LowerProceduralVarRefExpr(
                 frame.bindings->EnsureCarrier(promoted.handle_origin);
             const mir::ExprId handle_ref = frame.current_block->exprs.Add(
                 frame.bindings->MakeReadExpr(handle, *frame.current_block));
-            return mir::MakeFieldAccessExpr(handle_ref, promoted.field, type);
+            return mir::MakeFieldAccessExpr(
+                handle_ref, promoted.field, promoted.cell_type);
           },
           // An ordinary automatic local: resolve its carrier in this body -- a
           // direct local in the declaring body, a captured field in a closure
@@ -306,7 +307,7 @@ auto LowerHirPrimaryExprProc(
             return LowerHirThisHandle(frame, result_type);
           },
           [&](const hir::ProceduralVarRef& l) -> mir::Expr {
-            return LowerProceduralVarRefExpr(process, frame, l, result_type);
+            return LowerProceduralVarRefExpr(process, frame, l);
           },
           [&](const hir::PatternVarRef& r) -> mir::Expr {
             return LowerPatternVarRefExpr(frame, r);
