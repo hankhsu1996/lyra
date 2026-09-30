@@ -49,10 +49,11 @@ auto Fnv1a64(std::string_view bytes) -> std::uint64_t {
 
 // One type's identity, as this compiler tells types apart. SystemVerilog
 // identifies most types by their shape, and the frontend renders a shape
-// faithfully, so those answer with that rendering. A class is the exception: it
-// is identified by its declaration (LRM 8.3), so two with identical members are
-// still two types, and its identity is the unit that declares it together with
-// its own name -- the same pair every cross-unit reference to a class carries.
+// faithfully, so those answer with that rendering. A class and an unpacked
+// structure are the exceptions: each is identified by its declaration (LRM 8.3,
+// 6.22.1), so two with identical members are still two types, and its identity
+// is the unit that declares it together with its own name -- the same pair
+// every cross-unit reference to one carries.
 //
 // A type built out of others answers with its own form over the identities of
 // what it holds, so a class inside one is named the way it would be alone. Only
@@ -112,8 +113,10 @@ auto TypeIdentity(
           "[{}]{}", index, TypeIdentity(assoc.elementType, policy));
     }
     case SymbolKind::UnpackedStructType:
-      return "struct" +
-             field_identities(canonical.as<slang::ast::UnpackedStructType>());
+      return std::format(
+          "struct {}::{}",
+          CompilationUnitName(DeclaringCompilationUnit(canonical), policy),
+          TypeDeclarationName(canonical, policy));
     case SymbolKind::UnpackedUnionType: {
       const auto& u = canonical.as<slang::ast::UnpackedUnionType>();
       return (u.isTagged ? "tagged union" : "union") + field_identities(u);
@@ -230,37 +233,46 @@ auto InterfacePortInput(
               modport == nullptr ? std::string{} : std::string{modport->name}}};
 }
 
-// The generate blocks (LRM 27.6) between a declaration and the compilation unit
-// that owns it, outermost first. Each is a declaration scope of its own, so two
-// of them may declare the same class name; the path is what tells those
-// declarations apart in a name space that has no nesting of its own.
-//
-// A block is spelled the way the hierarchy spells it, which is what makes the
-// path tell two of them apart. An `if` or `case` arm answers to its own label;
-// a loop's block carries no label of its own and answers to the construct's
-// label together with the index it elaborated at (LRM 27.4), so both halves are
-// needed for it.
+// Whether `symbol` is the scope a compilation unit is: a package (LRM 26), a
+// design element's body (LRM 23.2, 25), or the `$unit` file-set scope (LRM
+// 3.12.1).
+auto IsCompilationUnit(const slang::ast::Symbol& symbol) -> bool {
+  return symbol.kind == slang::ast::SymbolKind::Package ||
+         symbol.kind == slang::ast::SymbolKind::InstanceBody ||
+         symbol.kind == slang::ast::SymbolKind::CompilationUnit;
+}
+
+// A generate block (LRM 27.6) as a path to a declaration inside it spells it,
+// the way the hierarchy does, which is what tells two of them apart. An `if` or
+// `case` arm answers to its own label; a loop's block carries no label of its
+// own and answers to the construct's label together with the index it
+// elaborated at (LRM 27.4), so both halves are needed for it.
+auto GenerateBlockStep(const slang::ast::GenerateBlockSymbol& block)
+    -> std::string {
+  const slang::SVInt* index = block.getArrayIndex();
+  if (index == nullptr) {
+    return std::string{block.name};
+  }
+  const slang::ast::Scope* array = block.getHierarchicalParent();
+  return std::format(
+      "{}_{}", array == nullptr ? std::string_view{} : array->asSymbol().name,
+      index->as<std::int64_t>().value_or(0));
+}
+
+// The generate blocks between a declaration and the compilation unit that owns
+// it, outermost first. Each is a declaration scope of its own, so two of them
+// may declare the same class name; the path is what tells those declarations
+// apart in a name space that has no nesting of its own.
 auto DeclaringBlockPath(const slang::ast::Symbol& decl)
     -> std::vector<std::string> {
   std::vector<std::string> path;
   for (const slang::ast::Scope* scope = decl.getParentScope(); scope != nullptr;
        scope = scope->asSymbol().getParentScope()) {
     const slang::ast::Symbol& sym = scope->asSymbol();
-    if (sym.kind != slang::ast::SymbolKind::GenerateBlock) {
-      continue;
+    if (sym.kind == slang::ast::SymbolKind::GenerateBlock) {
+      path.push_back(
+          GenerateBlockStep(sym.as<slang::ast::GenerateBlockSymbol>()));
     }
-    const auto& block = sym.as<slang::ast::GenerateBlockSymbol>();
-    const slang::SVInt* index = block.getArrayIndex();
-    if (index == nullptr) {
-      path.emplace_back(sym.name);
-      continue;
-    }
-    const slang::ast::Scope* array = sym.getHierarchicalParent();
-    path.push_back(
-        std::format(
-            "{}_{}",
-            array == nullptr ? std::string_view{} : array->asSymbol().name,
-            index->as<std::int64_t>().value_or(0)));
   }
   std::ranges::reverse(path);
   return path;
@@ -387,9 +399,7 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
   for (const slang::ast::Scope* scope = decl.getParentScope(); scope != nullptr;
        scope = scope->asSymbol().getParentScope()) {
     const slang::ast::Symbol& owner = scope->asSymbol();
-    if (owner.kind == slang::ast::SymbolKind::Package ||
-        owner.kind == slang::ast::SymbolKind::InstanceBody ||
-        owner.kind == slang::ast::SymbolKind::CompilationUnit) {
+    if (IsCompilationUnit(owner)) {
       return owner;
     }
   }
@@ -441,6 +451,89 @@ auto CompilationUnitName(
   throw InternalError(
       "CompilationUnitName: symbol is not a package, module body, or "
       "compilation unit");
+}
+
+namespace {
+
+// What a scope between a declaration and its unit is called on the path to it:
+// a generate block as the hierarchy spells it, a class as its specialization,
+// and a block with no label as where it sits, since it has nothing else.
+auto ScopeStep(
+    const slang::ast::Symbol& scope, const SpecializationPolicy& policy)
+    -> std::string {
+  if (scope.kind == slang::ast::SymbolKind::GenerateBlock) {
+    return GenerateBlockStep(scope.as<slang::ast::GenerateBlockSymbol>());
+  }
+  if (scope.kind == slang::ast::SymbolKind::ClassType) {
+    return SpecializationName(scope.as<slang::ast::ClassType>(), policy);
+  }
+  if (!scope.name.empty()) {
+    return std::string{scope.name};
+  }
+  return std::format("${}", static_cast<std::uint32_t>(scope.getIndex()));
+}
+
+// Whether `candidate` is the type the declaration `type` came from declares. A
+// type written in place of a name is one type for every data object its
+// declaration statement declares (LRM 6.22.1 c), while the front end elaborates
+// it once per object; what the objects share is the text that wrote it.
+auto DeclaredBySameText(
+    const slang::ast::Type& candidate, const slang::ast::Type& type) -> bool {
+  const slang::ast::Type& canonical = candidate.getCanonicalType();
+  return &canonical == &type || (type.getSyntax() != nullptr &&
+                                 canonical.getSyntax() == type.getSyntax());
+}
+
+// The name a type answers to in the scope that declares it: the typedef
+// declaring it, or else the first data object its declaration statement
+// declares (LRM 6.22.1 c). A type declared some other way has nothing to answer
+// to but where it sits.
+auto NameInScope(const slang::ast::Type& type) -> std::string {
+  for (const auto& member : type.getParentScope()->members()) {
+    if (const auto* alias = member.as_if<slang::ast::TypeAliasType>()) {
+      if (DeclaredBySameText(alias->targetType.getType(), type)) {
+        return std::string{alias->name};
+      }
+      continue;
+    }
+    if (const auto* value = member.as_if<slang::ast::ValueSymbol>()) {
+      if (DeclaredBySameText(value->getType(), type)) {
+        return std::string{value->name};
+      }
+    }
+  }
+  return std::format("${}", static_cast<std::uint32_t>(type.getIndex()));
+}
+
+}  // namespace
+
+auto TypeDeclarationName(
+    const slang::ast::Type& type, const SpecializationPolicy& policy)
+    -> std::string {
+  std::vector<std::string> path{NameInScope(type)};
+  for (const slang::ast::Scope* scope = type.getParentScope(); scope != nullptr;
+       scope = scope->asSymbol().getParentScope()) {
+    const slang::ast::Symbol& owner = scope->asSymbol();
+    if (IsCompilationUnit(owner)) {
+      break;
+    }
+    // A type written in place inside another is named inside that one's name.
+    if (owner.kind == slang::ast::SymbolKind::UnpackedStructType ||
+        owner.kind == slang::ast::SymbolKind::UnpackedUnionType) {
+      path.push_back(TypeDeclarationName(owner.as<slang::ast::Type>(), policy));
+      break;
+    }
+    path.push_back(ScopeStep(owner, policy));
+  }
+  std::ranges::reverse(path);
+  std::string name;
+  for (const std::string& step : path) {
+    if (!name.empty()) {
+      name += '.';
+    }
+    name += step;
+  }
+  return name;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -84,14 +84,6 @@ void HashEnum(std::size_t& seed, E value) {
   HashField(seed, static_cast<std::uint64_t>(value));
 }
 
-void HashMembers(
-    std::size_t& seed, const std::vector<AggregateMember>& members) {
-  for (const AggregateMember& member : members) {
-    HashField(seed, member.name);
-    HashId(seed, member.type);
-  }
-}
-
 }  // namespace
 
 void HashPackedShape(std::size_t& seed, const PackedArrayType& packed) {
@@ -117,14 +109,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
       Overloaded{
           [&](const PackedArrayType& t) { HashPackedShape(seed, t); },
           [&](const EnumType& t) { HashEnumeration(seed, t); },
-          [&](const PackedStructType& t) {
-            HashPackedShape(seed, t.base);
-            HashMembers(seed, t.members);
-          },
-          [&](const PackedUnionType& t) {
-            HashPackedShape(seed, t.base);
-            HashMembers(seed, t.members);
-          },
           [&](const UnpackedArrayType& t) {
             HashId(seed, t.element_type);
             HashField(seed, t.dim.left);
@@ -160,7 +144,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const EventType&) {},
           [](const RealType&) {},
           [](const ShortRealType&) {},
-          [](const RealTimeType&) {},
           [](const ChandleType&) {},
           [](const VoidType&) {},
           [&](const ObjectType& t) { HashField(seed, t.class_id.value); },
@@ -190,9 +173,8 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ManagedRefType& t) { HashId(seed, t.pointee); },
           [&](const VectorType& t) { HashId(seed, t.element); },
           [&](const TupleType& t) { HashIds(seed, t.elements); },
-          [&](const UnpackedStructType& t) { HashMembers(seed, t.members); },
-          [&](const UnionType& t) { HashMembers(seed, t.members); },
-          [&](const TaggedUnionType& t) { HashMembers(seed, t.members); },
+          [&](const UnionType& t) { HashIds(seed, t.members); },
+          [&](const TaggedUnionType& t) { HashIds(seed, t.members); },
           [](const EmptyType&) {},
           [&](const ObservableType& t) { HashId(seed, t.value); },
           [&](const ResolvedType& t) { HashId(seed, t.value); },
@@ -201,24 +183,22 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const DesignationType& t) { HashId(seed, t.value); },
           [&](const SampledHistoryType& t) { HashId(seed, t.value); },
           [](const EvaluationAttemptsType&) {},
-          [&](const StructType& t) { HashField(seed, t.struct_id.value); },
+          [&](const StructType& t) {
+            std::visit(
+                Overloaded{
+                    [&](StructId id) { HashField(seed, id.value); },
+                    [&](const TypeDeclarationRef& ref) {
+                      HashField(seed, ref.unit_name);
+                      HashField(seed, ref.name);
+                    }},
+                t.declaration);
+          },
           [&](const ClosureType& t) { HashField(seed, t.closure_id.value); }});
   return seed;
 }
 
-auto MemberTypes(const std::vector<AggregateMember>& members)
-    -> std::vector<TypeId> {
-  std::vector<TypeId> types;
-  types.reserve(members.size());
-  for (const AggregateMember& member : members) {
-    types.push_back(member.type);
-  }
-  return types;
-}
-
 auto Type::IsIntegralPacked() const -> bool {
-  return Is<PackedArrayType>() || Is<EnumType>() || Is<PackedStructType>() ||
-         Is<PackedUnionType>();
+  return Is<PackedArrayType>() || Is<EnumType>();
 }
 
 auto Type::PackedShape() const -> const PackedArrayType& {
@@ -228,31 +208,11 @@ auto Type::PackedShape() const -> const PackedArrayType& {
   if (const auto* enumeration = As<EnumType>()) {
     return enumeration->base;
   }
-  if (const auto* packed_struct = As<PackedStructType>()) {
-    return packed_struct->base;
-  }
-  if (const auto* packed_union = As<PackedUnionType>()) {
-    return packed_union->base;
-  }
   throw InternalError("mir: type has no packed shape; it is not integral");
 }
 
-auto Type::IsProduct() const -> bool {
-  return Is<TupleType>() || Is<UnpackedStructType>();
-}
-
-auto Type::ProductComponentTypes() const -> std::vector<TypeId> {
-  if (const auto* tuple = As<TupleType>()) {
-    return tuple->elements;
-  }
-  if (const auto* structure = As<UnpackedStructType>()) {
-    return MemberTypes(structure->members);
-  }
-  throw InternalError("mir: type is not a product");
-}
-
 auto Type::IsRealFamily() const -> bool {
-  return Is<RealType>() || Is<ShortRealType>() || Is<RealTimeType>();
+  return Is<RealType>() || Is<ShortRealType>();
 }
 
 auto Type::IsAliasHandle() const -> bool {
@@ -295,20 +255,17 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           // library still decides.
           [](const PackedArrayType&) { return true; },
           [](const EnumType&) { return true; },
-          [](const PackedStructType&) { return true; },
-          [](const PackedUnionType&) { return true; },
           [](const UnpackedArrayType&) { return true; },
           [](const DynamicArrayType&) { return true; },
           [](const QueueType&) { return true; },
           [](const AssociativeArrayType&) { return true; },
           [](const TupleType&) { return true; },
-          [](const UnpackedStructType&) { return true; },
+          [](const StructType&) { return true; },
           [](const UnionType&) { return true; },
           [](const TaggedUnionType&) { return true; },
           [](const StringType&) { return true; },
           [](const RealType&) { return true; },
           [](const ShortRealType&) { return true; },
-          [](const RealTimeType&) { return true; },
 
           // A class handle is one of these and a chandle is not, which LRM 8.4
           // Table 8-1 states directly: an unreferenced object is collected
@@ -337,14 +294,13 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const DriverType&) { return false; },
           [](const CoroutineType&) { return false; },
 
-          // A nominal type names a declaration, and what is built from one is
-          // reached by its address for the same reason.
+          // An object and a closure are reached by their address for the same
+          // reason.
           [](const ObjectType&) { return false; },
           [](const ExternalUnitObjectType&) { return false; },
           [](const CrossUnitClassType&) { return false; },
           [](const OpaqueObjectType&) { return false; },
           [](const RuntimeClassType&) { return false; },
-          [](const StructType&) { return false; },
           [](const ClosureType&) { return false; },
 
           // Storage, and the facilities the runtime holds for the whole run.
@@ -383,7 +339,7 @@ auto Type::PartsAreStorage() const -> bool {
           [](const QueueType&) { return true; },
           [](const AssociativeArrayType&) { return true; },
           [](const TupleType&) { return true; },
-          [](const UnpackedStructType&) { return true; },
+          [](const StructType&) { return true; },
 
           // A packed value is one vector however its bits are named (LRM
           // 7.4.1), a string one sequence of characters (LRM 6.16), and a union
@@ -391,8 +347,6 @@ auto Type::PartsAreStorage() const -> bool {
           // 7.3), so a part of any of them is a view of the whole.
           [](const PackedArrayType&) { return false; },
           [](const EnumType&) { return false; },
-          [](const PackedStructType&) { return false; },
-          [](const PackedUnionType&) { return false; },
           [](const StringType&) { return false; },
           [](const UnionType&) { return false; },
           [](const TaggedUnionType&) { return false; },
@@ -400,7 +354,6 @@ auto Type::PartsAreStorage() const -> bool {
           // Everything else has no parts a write reaches.
           [](const RealType&) { return false; },
           [](const ShortRealType&) { return false; },
-          [](const RealTimeType&) { return false; },
           [](const ManagedRefType&) { return false; },
           [](const ChandleType&) { return false; },
           [](const MachineCStringType&) { return false; },
@@ -419,7 +372,6 @@ auto Type::PartsAreStorage() const -> bool {
           [](const CrossUnitClassType&) { return false; },
           [](const OpaqueObjectType&) { return false; },
           [](const RuntimeClassType&) { return false; },
-          [](const StructType&) { return false; },
           [](const ClosureType&) { return false; },
           [](const ObservableType&) { return false; },
           [](const ResolvedType&) { return false; },
@@ -461,13 +413,11 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // the others.
           [](const PackedArrayType&) -> Element { return std::nullopt; },
           [](const EnumType&) -> Element { return std::nullopt; },
-          [](const PackedStructType&) -> Element { return std::nullopt; },
-          [](const PackedUnionType&) -> Element { return std::nullopt; },
 
           // Held all at once, or one at a time, but never as a run of one
           // type.
           [](const TupleType&) -> Element { return std::nullopt; },
-          [](const UnpackedStructType&) -> Element { return std::nullopt; },
+          [](const StructType&) -> Element { return std::nullopt; },
           [](const UnionType&) -> Element { return std::nullopt; },
           [](const TaggedUnionType&) -> Element { return std::nullopt; },
 
@@ -480,7 +430,6 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const MachineFloatType&) -> Element { return std::nullopt; },
           [](const RealType&) -> Element { return std::nullopt; },
           [](const ShortRealType&) -> Element { return std::nullopt; },
-          [](const RealTimeType&) -> Element { return std::nullopt; },
           [](const ChandleType&) -> Element { return std::nullopt; },
           [](const EventType&) -> Element { return std::nullopt; },
           [](const EmptyType&) -> Element { return std::nullopt; },
@@ -505,14 +454,13 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const CoroutineType&) -> Element { return std::nullopt; },
           [](const MachineFunctionType&) -> Element { return std::nullopt; },
 
-          // A nominal type names a declaration, and a declaration is not a run
-          // of anything.
+          // An object and a closure are declarations, and a declaration is not
+          // a run of anything.
           [](const ObjectType&) -> Element { return std::nullopt; },
           [](const ExternalUnitObjectType&) -> Element { return std::nullopt; },
           [](const CrossUnitClassType&) -> Element { return std::nullopt; },
           [](const OpaqueObjectType&) -> Element { return std::nullopt; },
           [](const RuntimeClassType&) -> Element { return std::nullopt; },
-          [](const StructType&) -> Element { return std::nullopt; },
           [](const ClosureType&) -> Element { return std::nullopt; },
 
           // A handle to a runtime facility, and an inert payload the library

@@ -16,12 +16,14 @@ struct CompilationUnit;
 
 namespace lyra::backend::llvm_backend {
 
-// Where each component of a product value sits in the storage the value
-// occupies. A product is laid out the way a C record is: each component at the
-// first offset its own alignment allows after the one before, and the whole
-// rounded to the widest alignment among them, so a component's position follows
-// from the components ahead of it and nothing else.
-struct ProductLayout {
+// Where each component of a tuple value -- the runtime's one form for a
+// product, a struct a declaration names among them -- sits in the storage the
+// value occupies. A tuple opens with the address of its type's operation table
+// and is laid out after it the way a C record is: each component at the first
+// offset its own alignment allows after the one before, and the whole rounded
+// to the widest alignment among them, so a component's position follows from
+// the components ahead of it and nothing else.
+struct TupleLayout {
   std::vector<lir::TypeId> components;
   std::vector<std::uint32_t> offsets;
   support::ObjectLayout storage;
@@ -37,12 +39,12 @@ class CodeGenTypes {
 
   auto Map(lir::TypeId id) -> llvm::Type*;
 
-  // The storage a value of an owned type occupies. A product's is composed from
+  // The storage a value of an owned type occupies. A tuple's is composed from
   // its components'; every other owned value is one runtime object, whose
   // storage the library states.
   auto StorageOf(lir::TypeId type) -> support::ObjectLayout;
-  // Where each component of a product sits. Asked only of a product.
-  auto LayoutOfProduct(lir::TypeId product) -> const ProductLayout&;
+  // Where each component of a tuple sits. Asked only of a product.
+  auto LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout&;
 
   auto Ptr() const -> llvm::PointerType* {
     return ptr_ty_;
@@ -60,7 +62,7 @@ class CodeGenTypes {
   llvm::PointerType* ptr_ty_;
   llvm::StructType* span_ty_;
   std::unordered_map<lir::TypeId, llvm::Type*> cache_;
-  std::unordered_map<lir::TypeId, ProductLayout> products_;
+  std::unordered_map<lir::TypeId, TupleLayout> tuples_;
 };
 
 }  // namespace lyra::backend::llvm_backend

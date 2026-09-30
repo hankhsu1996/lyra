@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/net_resolution.hpp"
 #include "lyra/value/packed.hpp"
 #include "lyra/value/packed_type.hpp"
 
@@ -208,13 +209,6 @@ class PackedArray {
   // width.
   [[nodiscard]] auto ReverseBlocks(std::int64_t block_bits) const
       -> PackedArray;
-
-  // Restore the value to its shape's canonical default in place: all-zero for
-  // 2-state, all-X for 4-state (LRM Table 6-7 / Table 7-1). The width,
-  // signedness and state domain are preserved; only the bits are reset.
-  // Container shield slots call this on OOB access so the slot mirrors what
-  // a freshly-defaulted element would read as.
-  auto ResetToDefault() -> void;
 
   // `prototype`'s declared type with every bit set to `fill`'s low bit: what a
   // net shows where nothing drives it, and what a driver contributes where it
@@ -435,14 +429,18 @@ class PackedArray {
   // agree on survives, and every other bit becomes x.
   [[nodiscard]] auto MergeConditional(const PackedArray& other) const
       -> PackedArray;
-  // Resolution of two driver contributions under the truth table `fold` names:
-  // tri-state (LRM 6.6.1 Table 6-2), wired-and (LRM 6.6.3 Table 6-3), or
-  // wired-or (Table 6-4). Z is every fold's identity and defers to the other
-  // driver; tri-state passes equal drivers through and yields X on a 0/1
-  // conflict, wired-and lets any 0 win, wired-or any 1. Associative and
-  // commutative, so a net folds its drivers in any order.
-  [[nodiscard]] auto ResolveNet(
-      const PackedArray& other, NetResolution fold) const -> PackedArray;
+  // Resolution of two driver contributions under each truth table: tri-state
+  // (LRM 6.6.1 Table 6-2), wired-and (LRM 6.6.3 Table 6-3), and wired-or
+  // (Table 6-4). Z is every fold's identity and defers to the other driver;
+  // tri-state passes equal drivers through and yields X on a 0/1 conflict,
+  // wired-and lets any 0 win, wired-or any 1. Associative and commutative, so a
+  // net folds its drivers in any order.
+  [[nodiscard]] auto ResolveTriState(const PackedArray& other) const
+      -> PackedArray;
+  [[nodiscard]] auto ResolveWiredAnd(const PackedArray& other) const
+      -> PackedArray;
+  [[nodiscard]] auto ResolveWiredOr(const PackedArray& other) const
+      -> PackedArray;
   // The result of this value meeting a weaker one: it determines every position
   // it drives, and `weaker` determines the rest (LRM 28.12.1). A position is
   // driven wherever this value is not high-impedance there, so nothing is
@@ -541,6 +539,11 @@ class PackedArray {
       -> PackedArray;
 
   [[nodiscard]] auto WordsPerPlane() const -> std::size_t;
+
+  // The three tables differ only in how two driving bits combine, so they
+  // share one walk over the words.
+  [[nodiscard]] auto FoldedWith(
+      const PackedArray& other, NetResolution fold) const -> PackedArray;
 
   // Writable planes, which is sound only while nothing else can observe this
   // value -- a result being filled, or a designated run being written through.
@@ -721,7 +724,6 @@ static_assert(BitstreamConvertible<PackedArray>);
 static_assert(Sliceable<PackedArray>);
 static_assert(SliceableRef<PackedArray>);
 static_assert(Ownable<PackedArray>);
-static_assert(Defaultable<PackedArray>);
 static_assert(NetResolvable<PackedArray>);
 static_assert(ConditionallyMergeable<PackedArray>);
 

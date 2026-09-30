@@ -105,9 +105,9 @@ one a published identifier.
 
 The declaration is what decides, and a lowering answers facts it then stops carrying: a packed
 tagged union reads as its tag and the member that tag names where an untagged one reads as its first
-member, while both project onto one vector below the front end. Keying there is what lets MIR keep
-one packed union type. MIR never needs to tell the two apart, because it is handed two bodies and
-not one body plus a discriminator.
+member, while both are one vector below the front end. Keying there is what lets MIR carry nothing
+of either beyond that vector. MIR never needs to tell the two apart, because it is handed two bodies
+and not one body plus a discriminator.
 
 ### D5. A backend qualifies a unit's namespace from the global scope
 

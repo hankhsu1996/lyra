@@ -2,11 +2,14 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -36,31 +39,37 @@ auto RefuseUnfixedStream(diag::SourceSpan span)
 
 }  // namespace
 
-auto FixedStreamShapeOf(const mir::TypePool& types, mir::TypeId type)
+auto FixedStreamShapeOfParts(
+    const mir::CompilationUnit& unit, std::span<const mir::TypeId> parts)
     -> std::optional<StreamShape> {
-  const mir::Type& resolved = types.Get(type);
+  StreamShape shape{
+      .width = 0, .state_kind = mir::IntegralStateKind::kTwoState};
+  for (const mir::TypeId component : parts) {
+    const std::optional<StreamShape> part = FixedStreamShapeOf(unit, component);
+    if (!part.has_value()) {
+      return std::nullopt;
+    }
+    shape = WidenedWith(shape, *part);
+  }
+  return shape;
+}
+
+auto FixedStreamShapeOf(const mir::CompilationUnit& unit, mir::TypeId type)
+    -> std::optional<StreamShape> {
+  const mir::Type& resolved = unit.types.Get(type);
   if (resolved.IsIntegralPacked()) {
     const mir::PackedArrayType& packed = resolved.PackedShape();
     return StreamShape{
         .width = packed.BitWidth(), .state_kind = packed.state_kind};
   }
-  if (resolved.IsProduct()) {
-    StreamShape shape{
-        .width = 0, .state_kind = mir::IntegralStateKind::kTwoState};
-    for (const mir::TypeId component : resolved.ProductComponentTypes()) {
-      const std::optional<StreamShape> part =
-          FixedStreamShapeOf(types, component);
-      if (!part.has_value()) {
-        return std::nullopt;
-      }
-      shape = WidenedWith(shape, *part);
-    }
-    return shape;
+  if (const std::optional<std::span<const mir::TypeId>> parts =
+          mir::ProductElements(unit, type)) {
+    return FixedStreamShapeOfParts(unit, *parts);
   }
   if (resolved.Is<mir::UnpackedArrayType>()) {
     const auto& array = resolved.Get<mir::UnpackedArrayType>();
     const std::optional<StreamShape> element =
-        FixedStreamShapeOf(types, array.element_type);
+        FixedStreamShapeOf(unit, array.element_type);
     if (!element.has_value()) {
       return std::nullopt;
     }
@@ -75,21 +84,13 @@ auto BuildToBitstream(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value_id,
     diag::SourceSpan span) -> diag::Result<mir::ExprId> {
   const std::optional<StreamShape> shape =
-      FixedStreamShapeOf(unit.types, block.exprs.Get(value_id).type);
+      FixedStreamShapeOf(unit, block.exprs.Get(value_id).type);
   if (!shape.has_value()) {
     return RefuseUnfixedStream(span);
   }
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kToBitstream,
-                          .receiver = value_id},
-                  .arguments = {}},
-          .type = mir::PackedVectorOf(
-              unit.types, shape->width, shape->state_kind)});
+  return BuildValueOperation(
+      unit, block, support::BuiltinFn::kToBitstream, value_id, {},
+      mir::PackedVectorOf(unit.types, shape->width, shape->state_kind));
 }
 
 auto BuildReorderedStream(
@@ -115,14 +116,13 @@ auto BuildReorderedStream(
 
 auto BuildFromBitstream(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId bits_id,
-    mir::TypeId dst_type, diag::SourceSpan span) -> diag::Result<mir::Expr> {
+    mir::TypeId dst_type, diag::SourceSpan span) -> diag::Result<mir::ExprId> {
   // A stream is a run of bits, so its own shape is on its type and asking for
   // it cannot fail; only the destination can be a type with no stream. By
   // value: the pool's view does not survive the interning below.
   const mir::PackedArrayType stream =
       unit.types.Get(block.exprs.Get(bits_id).type).PackedShape();
-  const std::optional<StreamShape> target =
-      FixedStreamShapeOf(unit.types, dst_type);
+  const std::optional<StreamShape> target = FixedStreamShapeOf(unit, dst_type);
   if (!target.has_value()) {
     return RefuseUnfixedStream(span);
   }
@@ -159,13 +159,9 @@ auto BuildFromBitstream(
   // carries none of.
   const mir::ExprId prototype_id =
       block.exprs.Add(BuildDefaultValueExpr(unit, block, dst_type));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{.target = support::BuiltinFn::kFromBitstream},
-              .arguments = {filled, prototype_id}},
-      .type = dst_type};
+  return BuildValueOperation(
+      unit, block, support::BuiltinFn::kFromBitstream, std::nullopt,
+      {filled, prototype_id}, dst_type);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

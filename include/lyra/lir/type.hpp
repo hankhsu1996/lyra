@@ -96,41 +96,6 @@ struct PackedArrayType {
   auto operator==(const PackedArrayType&) const -> bool = default;
 };
 
-// A named member of an aggregate the source declared. The position it sits at
-// is what an access names it by; the name is what LRM 21.2.1.6 prints for it.
-struct AggregateMember {
-  std::string name;
-  TypeId type;
-
-  auto operator==(const AggregateMember&) const -> bool = default;
-};
-
-// The member types in declaration order, for a consumer answering about the
-// types alone. A member list is read directly wherever the names are part of
-// the answer.
-[[nodiscard]] auto MemberTypes(const std::vector<AggregateMember>& members)
-    -> std::vector<TypeId>;
-
-// LRM 7.2.1 packed structure: every value operation runs on `base`, the one
-// vector the members are placed in; the members are what the aggregate declares
-// of itself and a bare vector of the same width does not carry.
-struct PackedStructType {
-  PackedArrayType base;
-  std::vector<AggregateMember> members;
-
-  auto operator==(const PackedStructType&) const -> bool = default;
-};
-
-// LRM 7.3.1 packed union: members overlapping at the least significant bits of
-// one vector. A tagged union places a tag ahead of them, which widens `base`
-// and is bits of the vector like any other.
-struct PackedUnionType {
-  PackedArrayType base;
-  std::vector<AggregateMember> members;
-
-  auto operator==(const PackedUnionType&) const -> bool = default;
-};
-
 struct UnpackedArrayType {
   TypeId element_type;
   std::uint64_t size;
@@ -240,9 +205,6 @@ struct RealType {
 struct ShortRealType {
   auto operator==(const ShortRealType&) const -> bool = default;
 };
-struct RealTimeType {
-  auto operator==(const RealTimeType&) const -> bool = default;
-};
 struct ChandleType {
   auto operator==(const ChandleType&) const -> bool = default;
 };
@@ -309,17 +271,6 @@ struct ClosureType {
   auto operator==(const ClosureType&) const -> bool = default;
 };
 
-// Member-bearing storage of one struct declaration, carrying no code of its
-// own: nothing dispatches on it, nothing constructs it, and a field is reached
-// by a member projection the way every other member-bearing storage's is. What
-// separates it from the others is only what they carry beyond their members --
-// a class its methods, a closure its invoke.
-struct StructType {
-  StructId struct_id;
-
-  auto operator==(const StructType&) const -> bool = default;
-};
-
 struct RuntimeEffectsType {
   auto operator==(const RuntimeEffectsType&) const -> bool = default;
 };
@@ -369,31 +320,45 @@ struct VectorType {
   auto operator==(const VectorType&) const -> bool = default;
 };
 
-// The anonymous product a lowering composes for itself: a product the source
-// declared names its parts and this names none.
+// The declaration a type is: the unit that declares it and the name it has
+// there, which identifies it from anywhere.
+struct TypeDeclarationRef {
+  std::string unit_name;
+  std::string name;
+
+  auto operator==(const TypeDeclarationRef&) const -> bool = default;
+};
+
+// A heterogeneous fixed product that is its components and nothing more, each
+// reached by its position: two with the same components are the same type.
 struct TupleType {
   std::vector<TypeId> elements;
 
   auto operator==(const TupleType&) const -> bool = default;
 };
 
-// LRM 7.2 unpacked structure: every value operation on it is the product's,
-// and what it carries beyond one is the name the source declared for each
-// member.
-struct UnpackedStructType {
-  std::vector<AggregateMember> members;
+// The declaration a struct type is: one this unit declares, by its position in
+// the unit's registry, or one another unit declares, by the name it has there.
+using StructRef = std::variant<StructId, TypeDeclarationRef>;
 
-  auto operator==(const UnpackedStructType&) const -> bool = default;
+// A product named by its declaration, each component reached by its position
+// the way a tuple's is: two structs with the same components are still two
+// types (LRM 6.22.1), and the declaration is what states the operations on a
+// whole value of one.
+struct StructType {
+  StructRef declaration;
+
+  auto operator==(const StructType&) const -> bool = default;
 };
 
 struct UnionType {
-  std::vector<AggregateMember> members;
+  std::vector<TypeId> members;
 
   auto operator==(const UnionType&) const -> bool = default;
 };
 
 struct TaggedUnionType {
-  std::vector<AggregateMember> members;
+  std::vector<TypeId> members;
 
   auto operator==(const TaggedUnionType&) const -> bool = default;
 };
@@ -459,15 +424,15 @@ struct DesignationType {
   auto operator==(const DesignationType&) const -> bool = default;
 };
 
-// The declaration a type names: a class this unit compiles, an object or a
-// class another unit declares, or one of the two a lowering introduces that no
-// source declaration stands behind. What identifies each differs -- a position
-// in this unit's registry, a name its own unit gave it, the position that unit
-// counted it at -- so a consumer reaching what the declaration holds asks which
-// of the five it met rather than asking every type there is.
+// The declaration of member-bearing storage a type names: a class this unit
+// compiles, an object or a class another unit declares, or a closure a lowering
+// introduces that no source declaration stands behind. What identifies each
+// differs -- a position in this unit's registry, a name its own unit gave it,
+// the position that unit counted it at -- so a consumer reaching what the
+// declaration holds asks which of the four it met rather than asking every
+// type there is.
 using TypeDeclaration = std::variant<
-    ObjectType, ExternalUnitObjectType, CrossUnitClassType, ClosureType,
-    StructType>;
+    ObjectType, ExternalUnitObjectType, CrossUnitClassType, ClosureType>;
 
 // A type one LIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
@@ -481,18 +446,17 @@ using TypeDeclaration = std::variant<
 class Type {
  private:
   using Data = std::variant<
-      PackedArrayType, PackedStructType, PackedUnionType, UnpackedArrayType,
-      DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
-      StringType, MachineCStringType, MachineBoolType, MachineIntType,
-      MachineFloatType, MachineArrayType, MachineFunctionType, EventType,
-      RealType, ShortRealType, RealTimeType, ChandleType, VoidType, EmptyType,
-      ObjectType, ExternalUnitObjectType, CrossUnitClassType, OpaqueObjectType,
-      RuntimeClassType, ClosureType, StructType, RuntimeEffectsType, FilesType,
-      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
-      ManagedRefType, VectorType, TupleType, UnpackedStructType, UnionType,
-      TaggedUnionType, ResolvedType, DriverType, ObservableType,
-      SampledHistoryType, EvaluationAttemptsType, OpenWriteType,
-      DesignationType>;
+      PackedArrayType, UnpackedArrayType, DynamicArrayType, QueueType,
+      AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
+      MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
+      MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
+      VoidType, EmptyType, ObjectType, ExternalUnitObjectType,
+      CrossUnitClassType, OpaqueObjectType, RuntimeClassType, ClosureType,
+      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
+      CoroutineType, RefType, PointerType, ManagedRefType, VectorType,
+      TupleType, StructType, UnionType, TaggedUnionType, ResolvedType,
+      DriverType, ObservableType, SampledHistoryType, EvaluationAttemptsType,
+      OpenWriteType, DesignationType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -504,9 +468,10 @@ class Type {
   // next.
   [[nodiscard]] auto KindName() const -> std::string_view;
 
-  // The declaration this type names, absent for a type that names none. What
-  // that declaration holds -- its members, the class it extends, the names it
-  // was emitted under -- is reached through the unit it belongs to, so this
+  // The declaration of member-bearing storage this type names -- a class, a
+  // closure, another unit's object or class -- absent for every other type.
+  // What that declaration holds -- its members, the class it extends, the names
+  // it was emitted under -- is reached through the unit it belongs to, so this
   // answers which declaration it is and not what is in it.
   [[nodiscard]] auto Declaration() const -> std::optional<TypeDeclaration>;
 
@@ -547,7 +512,7 @@ class Type {
   // whose value is held as itself or is reached where it lives. A value of the
   // design is its domain's object; an object a call builds for one use -- what
   // a print is assembled from, what a wait registers, the storage a closure
-  // captures into, a hold on a promoted scope -- is the library's own. Which
+  // captures into, a counted hold on a value -- is the library's own. Which
   // object it is, is the logical shape the value has during execution; how
   // large one is, is a physical fact decided below this layer.
   [[nodiscard]] auto HeldObject() const
@@ -559,12 +524,10 @@ class Type {
   // block.
   [[nodiscard]] auto IsOwnedValue() const -> bool;
 
-  // True for any type whose value-level shape is a single packed vector: a
-  // packed array, or an enumeration or packed aggregate through its base. This
-  // is the precondition of asking for a packed shape, so a consumer that does
-  // not already know it asks here rather than listing the integral types
-  // itself.
-  [[nodiscard]] auto IsIntegralPacked() const -> bool;
+  // True for a value made of all its components at once, each reached by its
+  // position -- a tuple, or a struct a declaration names. What the components
+  // are is read from the unit, since a struct's are listed on its declaration.
+  [[nodiscard]] auto IsProduct() const -> bool;
 
   // True for a value that holds one of its members at a time (LRM 7.3 /
   // 7.3.2), which is what makes reaching a member of one a choice of domain
@@ -574,16 +537,6 @@ class Type {
   // The member types of a union, in declaration order. A type that is not a
   // union is a caller error.
   [[nodiscard]] auto UnionMemberTypes() const -> std::vector<TypeId>;
-
-  // True for a value built from all of its components at once -- the anonymous
-  // product a lowering composes and the structure the source declared. What
-  // separates the two is what the type says about the components, never how a
-  // value of it is composed.
-  [[nodiscard]] auto IsProduct() const -> bool;
-
-  // The component types a product value is built from, in order. A type that
-  // is not a product is a caller error.
-  [[nodiscard]] auto ProductComponentTypes() const -> std::vector<TypeId>;
 
   // The type of the elements this one holds a run of, or nothing where it
   // holds none: the unpacked array (LRM 7.4), the dynamic array (7.5), the
@@ -601,14 +554,6 @@ class Type {
   // never negative, so it answers rather than standing outside.
   [[nodiscard]] auto MachineIntegerSignedness() const
       -> std::optional<Signedness>;
-
-  // The packed shape an integral type's value is structured by: a packed array
-  // is its own shape, an enumeration is represented by its base's. Every
-  // consumer that must know how an integral value's bits are grouped asks
-  // this, so the answer is given once rather than re-derived wherever it is
-  // needed. A type that is not integral has no such shape and is a caller
-  // error, never a width guess.
-  [[nodiscard]] auto PackedShape() const -> const PackedArrayType&;
 
   template <typename T>
   [[nodiscard]] auto Is() const -> bool {

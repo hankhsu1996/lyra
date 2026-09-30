@@ -6,6 +6,7 @@
 
 #include "lyra/runtime/member_slots.hpp"
 #include "lyra/runtime/scope_program.hpp"
+#include "lyra/support/tuple_operations.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/runtime_value.hpp"
 
@@ -20,7 +21,8 @@ namespace lyra::runtime {
 //
 // A body that answers a value builds it in storage its caller gives, and states
 // which representation it comes back in, because a handle carries no type: it
-// is a fact only whoever compiled the body holds.
+// is a fact only whoever compiled the body holds. A tuple answer also names its
+// type, which is what says how much storage it needs.
 struct SynchronousBody {
   void (*run)(void* self) = nullptr;
 };
@@ -31,10 +33,12 @@ struct PerElementBody {
   void* (*run)(void* self, const void* item, const void* index, void* out) =
       nullptr;
   support::ValueDomain result_domain{};
+  const support::TupleOperations* result_tuple = nullptr;
 };
 struct ValueBody {
   void* (*run)(void* self, void* out) = nullptr;
   support::ValueDomain result_domain{};
+  const support::TupleOperations* result_tuple = nullptr;
 };
 using ClosureBody =
     std::variant<SynchronousBody, CoroutineBody, PerElementBody, ValueBody>;

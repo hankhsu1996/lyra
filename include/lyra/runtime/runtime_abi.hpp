@@ -262,16 +262,28 @@ auto lyra_rt_object_make(const void* definition, void* out) -> void*;
 // handle referring to no object fails the run here rather than further in.
 auto lyra_rt_object_deref(void* handle) -> void*;
 
-// A hold on the storage a block promoted out of its own frame (LRM 6.21),
-// where `definition` names the storage its members need the way a class's does
-// for an object's properties. The hold is built in storage the frame that names
-// it gives, and ends when that frame lets it go.
-auto lyra_rt_make_promoted_scope(const void* definition, void* out) -> void*;
+// A counted hold on a new, empty cell of the named domain -- what a block's
+// local lives in when a branch the block spawns can outlive it (LRM 6.21). The
+// hold is built in storage the frame that names it gives, and the cell ends
+// with the last hold on it.
+auto lyra_rt_packed_shared_cell_make(void* out) -> void*;
+auto lyra_rt_string_shared_cell_make(void* out) -> void*;
+auto lyra_rt_real_shared_cell_make(void* out) -> void*;
+auto lyra_rt_shortreal_shared_cell_make(void* out) -> void*;
+auto lyra_rt_chandle_shared_cell_make(void* out) -> void*;
+auto lyra_rt_managedref_shared_cell_make(void* out) -> void*;
+auto lyra_rt_tuple_shared_cell_make(void* out) -> void*;
+auto lyra_rt_union_shared_cell_make(void* out) -> void*;
+auto lyra_rt_tagged_union_shared_cell_make(void* out) -> void*;
+auto lyra_rt_dynarray_shared_cell_make(void* out) -> void*;
+auto lyra_rt_unpackedarray_shared_cell_make(void* out) -> void*;
+auto lyra_rt_queue_shared_cell_make(void* out) -> void*;
+auto lyra_rt_assocarray_shared_cell_make(void* out) -> void*;
 
-// The storage a hold on a promoted scope names. A hold is a value rather than
-// the address of what it names, exactly as a class handle is, so reaching the
-// storage behind one is an operation.
-auto lyra_rt_promoted_scope_deref(void* handle) -> void*;
+// Where the cell a hold names lies. A hold is a value rather than the address
+// of what it names, exactly as a class handle is, so reaching the storage
+// behind one is an operation.
+auto lyra_rt_shared_pointer_deref(void* handle) -> void*;
 
 // The body a value's class answers one behavior with (LRM 8.20), named by the
 // class that introduced the behavior and which of that class's introductions it
@@ -719,8 +731,9 @@ auto lyra_rt_shared_storage_declare(std::uint8_t kind, std::uint8_t domain)
 // from there, one run once per entry of a container, and one taking nothing and
 // answering with a value. The two that answer a value build it in storage their
 // caller gives, and state which representation it comes back in, because a
-// handle carries no type. `captures` describes what the closure's captures
-// need, exactly as a body's variables are described.
+// handle carries no type -- and, for a tuple, which tuple, by its type's
+// operation table, absent for every other value. `captures` describes what the
+// closure's captures need, exactly as a body's variables are described.
 auto lyra_rt_closure_declare_synchronous(
     const void* captures, std::uint64_t count, void (*body)(void* self))
     -> const void*;
@@ -730,11 +743,11 @@ auto lyra_rt_closure_declare_coroutine(
 auto lyra_rt_closure_declare_per_element(
     const void* captures, std::uint64_t count,
     void* (*body)(void* self, const void* item, const void* index, void* out),
-    std::uint8_t result_domain) -> const void*;
+    std::uint8_t result_domain, const void* result_tuple) -> const void*;
 auto lyra_rt_closure_declare_value(
     const void* captures, std::uint64_t count,
-    void* (*body)(void* self, void* out), std::uint8_t result_domain) -> const
-    void*;
+    void* (*body)(void* self, void* out), std::uint8_t result_domain,
+    const void* result_tuple) -> const void*;
 
 // One class a unit declares, and one whose values stand in the design
 // hierarchy. Each answers with the definition every value of it carries, which
@@ -796,11 +809,12 @@ auto lyra_rt_run_program(
 // 9.4.2), so the holder travels with the reference. One over a subscribable
 // variable's cell names the whole of it, and is named by the domain the cell
 // holds since where the value lies inside the cell is the cell's type's to
-// say; one over a class property is handed the object and the property's own
-// address; one over storage nothing is told about is handed the value's own
-// address and names nothing.
+// say; one over storage nothing is told about is handed the value's handle and
+// names nothing; and one over a class property is that reference to the
+// property's storage, handed the object that holds it.
 auto lyra_rt_refer_storage(void* storage, void* out) -> void*;
-auto lyra_rt_refer_property(void* object, void* property, void* out) -> void*;
+auto lyra_rt_refer_property(void* object, const void* storage, void* out)
+    -> void*;
 // What a wait on the storage a reference names registers on: the variable or
 // the object's event source, and null for storage nothing is told about.
 auto lyra_rt_reference_reports_to(const void* reference) -> void*;
@@ -1375,12 +1389,12 @@ auto lyra_rt_managedref_cell_sampled_load(void* cell, void* out) -> void*;
 
 // Boxes a value-domain handle into a type-erased `RuntimeValue`, the form in
 // which an aggregate holds its parts. A value crosses this way exactly where it
-// states a representation the entry receiving it has no other way to know: a
-// product's components, each of its own domain, and a container construction's
-// element prototype, which is what every element beside it is then erased
-// against. A value that conforms to a representation its entry already fixes
-// crosses as the bare handle of its own domain instead. The domain rides in the
-// symbol name, as every other domain-parametric entry does.
+// states a representation the entry receiving it has no other way to know: the
+// member a union is to hold, and a container construction's element prototype,
+// which is what every element beside it is then erased against. A value that
+// conforms to a representation its entry already fixes crosses as the bare
+// handle of its own domain instead. The domain rides in the symbol name, as
+// every other domain-parametric entry does.
 auto lyra_rt_packed_value_box(const void* value, void* out) -> void*;
 auto lyra_rt_string_value_box(const void* value, void* out) -> void*;
 auto lyra_rt_real_value_box(const void* value, void* out) -> void*;
@@ -1390,23 +1404,17 @@ auto lyra_rt_managedref_value_box(const void* value, void* out) -> void*;
 auto lyra_rt_tuple_value_box(const void* value, void* out) -> void*;
 auto lyra_rt_dynarray_value_box(const void* value, void* out) -> void*;
 
-// The unpacked-struct domain (LRM 7.2), MIR's product type. A struct value is a
-// product carried behind an opaque handle. It owns its components by value, so
-// construction copies each component in.
+// The tuple domain, an unpacked struct (LRM 7.2) among them. A tuple is laid
+// out by the program that uses it, opening with its type's operation table, and
+// crosses as the address of those bytes; building one, reaching a component,
+// comparing two and every other operation of the type are the program's own,
+// compiled for the type. What remains here is what a storage wrapper does with
+// a tuple it holds.
 //
-// `make` collects the boxed components into the product value. A component is
-// storage of its own (LRM 7.2): `component` answers with component `index`
-// where it lies, for reading, and `component_ref` with the same storage for a
-// write to land in.
-auto lyra_rt_tuple_make(LyraSpan components, void* out) -> void*;
-auto lyra_rt_tuple_component(const void* tuple, std::int64_t index) -> const
-    void*;
-auto lyra_rt_tuple_component_ref(void* tuple, std::int64_t index) -> void*;
-auto lyra_rt_tuple_eq(const void* lhs, const void* rhs, void* out) -> void*;
-auto lyra_rt_tuple_ne(const void* lhs, const void* rhs, void* out) -> void*;
-auto lyra_rt_tuple_case_equal(const void* lhs, const void* rhs, void* out)
-    -> void*;
-auto lyra_rt_tuple_is_unknown(const void* value, void* out) -> void*;
+// `held` answers the bytes of a tuple the runtime keeps in storage of its own,
+// which is that tuple's handle: the storage is the runtime's object, and the
+// bytes lie elsewhere.
+auto lyra_rt_tuple_held(void* tuple) -> void*;
 auto lyra_rt_tuple_cell_get(void* cell) -> const void*;
 void lyra_rt_tuple_cell_initialize(void* cell, const void* prototype) noexcept;
 void lyra_rt_tuple_cell_set(void* cell, const void* value);
@@ -2055,7 +2063,6 @@ auto lyra_rt_unpackedarray_from_string(
 // laid end to end. A packed value answers from its own shape and needs no entry
 // here.
 auto lyra_rt_string_bitstream_width(const void* value, void* out) -> void*;
-auto lyra_rt_tuple_bitstream_width(const void* value, void* out) -> void*;
 auto lyra_rt_dynarray_bitstream_width(const void* value, void* out) -> void*;
 auto lyra_rt_unpackedarray_bitstream_width(const void* value, void* out)
     -> void*;
@@ -2066,11 +2073,8 @@ auto lyra_rt_unpackedarray_bitstream_width(const void* value, void* out)
 // domain a fixed-size stream is built from; a domain whose width only the
 // running program fixes has no entry, because no stream over one is nameable.
 auto lyra_rt_packed_to_bitstream(const void* value, void* out) -> void*;
-auto lyra_rt_tuple_to_bitstream(const void* value, void* out) -> void*;
 auto lyra_rt_unpackedarray_to_bitstream(const void* value, void* out) -> void*;
 auto lyra_rt_packed_from_bitstream(const void* bits, void* prototype, void* out)
-    -> void*;
-auto lyra_rt_tuple_from_bitstream(const void* bits, void* prototype, void* out)
     -> void*;
 auto lyra_rt_unpackedarray_from_bitstream(
     const void* bits, void* prototype, void* out) -> void*;
@@ -2085,12 +2089,106 @@ auto lyra_rt_packed_reverse_blocks(
 // different element type.
 auto lyra_rt_string_count_bits(
     const void* value, const void* control_bits, void* out) -> void*;
-auto lyra_rt_tuple_count_bits(
-    const void* value, const void* control_bits, void* out) -> void*;
 auto lyra_rt_dynarray_count_bits(
     const void* value, const void* control_bits, void* out) -> void*;
 auto lyra_rt_unpackedarray_count_bits(
     const void* value, const void* control_bits, void* out) -> void*;
+
+// The whole-value operations of each domain a structure's own functions apply
+// to its members (LRM 7.2): a member of any domain is asked them, so each has
+// an entry here even where no program asks it of a value of that domain alone.
+// Where a domain the language admits has no such operation on this backend
+// yet, its entry answers as an operation not carried out; where the language
+// gives the domain none, there is no entry and no structure holding one has
+// the operation.
+auto lyra_rt_packed_bit_identical(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_string_bit_identical(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_real_bit_identical(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_shortreal_bit_identical(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_chandle_bit_identical(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_union_bit_identical(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_tagged_union_bit_identical(const void* lhs, const void* rhs)
+    -> bool;
+auto lyra_rt_dynarray_bit_identical(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_unpackedarray_bit_identical(const void* lhs, const void* rhs)
+    -> bool;
+auto lyra_rt_queue_bit_identical(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_assocarray_bit_identical(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_managedref_bit_identical(const void* lhs, const void* rhs) -> bool;
+auto lyra_rt_packed_has_unknown(const void* value) -> bool;
+auto lyra_rt_string_has_unknown(const void* value) -> bool;
+auto lyra_rt_real_has_unknown(const void* value) -> bool;
+auto lyra_rt_shortreal_has_unknown(const void* value) -> bool;
+auto lyra_rt_chandle_has_unknown(const void* value) -> bool;
+auto lyra_rt_union_has_unknown(const void* value) -> bool;
+auto lyra_rt_tagged_union_has_unknown(const void* value) -> bool;
+auto lyra_rt_dynarray_has_unknown(const void* value) -> bool;
+auto lyra_rt_unpackedarray_has_unknown(const void* value) -> bool;
+auto lyra_rt_queue_has_unknown(const void* value) -> bool;
+auto lyra_rt_assocarray_has_unknown(const void* value) -> bool;
+auto lyra_rt_managedref_has_unknown(const void* value) -> bool;
+auto lyra_rt_packed_bitstream_width(const void* value, void* out) -> void*;
+auto lyra_rt_union_bitstream_width(const void* value, void* out) -> void*;
+auto lyra_rt_tagged_union_bitstream_width(const void* value, void* out)
+    -> void*;
+auto lyra_rt_managedref_bitstream_width(const void* value, void* out) -> void*;
+auto lyra_rt_union_count_bits(
+    const void* value, const void* control_bits, void* out) -> void*;
+auto lyra_rt_tagged_union_count_bits(
+    const void* value, const void* control_bits, void* out) -> void*;
+auto lyra_rt_managedref_count_bits(
+    const void* value, const void* control_bits, void* out) -> void*;
+auto lyra_rt_string_to_bitstream(const void* value, void* out) -> void*;
+auto lyra_rt_union_to_bitstream(const void* value, void* out) -> void*;
+auto lyra_rt_tagged_union_to_bitstream(const void* value, void* out) -> void*;
+auto lyra_rt_dynarray_to_bitstream(const void* value, void* out) -> void*;
+auto lyra_rt_queue_to_bitstream(const void* value, void* out) -> void*;
+auto lyra_rt_assocarray_to_bitstream(const void* value, void* out) -> void*;
+auto lyra_rt_managedref_to_bitstream(const void* value, void* out) -> void*;
+auto lyra_rt_string_from_bitstream(const void* bits, void* prototype, void* out)
+    -> void*;
+auto lyra_rt_union_from_bitstream(const void* bits, void* prototype, void* out)
+    -> void*;
+auto lyra_rt_tagged_union_from_bitstream(
+    const void* bits, void* prototype, void* out) -> void*;
+auto lyra_rt_dynarray_from_bitstream(
+    const void* bits, void* prototype, void* out) -> void*;
+auto lyra_rt_queue_from_bitstream(const void* bits, void* prototype, void* out)
+    -> void*;
+auto lyra_rt_assocarray_from_bitstream(
+    const void* bits, void* prototype, void* out) -> void*;
+auto lyra_rt_managedref_from_bitstream(
+    const void* bits, void* prototype, void* out) -> void*;
+auto lyra_rt_packed_resolve_tri_state(
+    const void* lhs, const void* rhs, void* out) -> void*;
+auto lyra_rt_union_resolve_tri_state(
+    const void* lhs, const void* rhs, void* out) -> void*;
+auto lyra_rt_unpackedarray_resolve_tri_state(
+    const void* lhs, const void* rhs, void* out) -> void*;
+auto lyra_rt_packed_resolve_wired_and(
+    const void* lhs, const void* rhs, void* out) -> void*;
+auto lyra_rt_union_resolve_wired_and(
+    const void* lhs, const void* rhs, void* out) -> void*;
+auto lyra_rt_unpackedarray_resolve_wired_and(
+    const void* lhs, const void* rhs, void* out) -> void*;
+auto lyra_rt_packed_resolve_wired_or(
+    const void* lhs, const void* rhs, void* out) -> void*;
+auto lyra_rt_union_resolve_wired_or(const void* lhs, const void* rhs, void* out)
+    -> void*;
+auto lyra_rt_unpackedarray_resolve_wired_or(
+    const void* lhs, const void* rhs, void* out) -> void*;
+auto lyra_rt_packed_dominating(
+    const void* stronger, const void* weaker, void* out) -> void*;
+auto lyra_rt_union_dominating(
+    const void* stronger, const void* weaker, void* out) -> void*;
+auto lyra_rt_unpackedarray_dominating(
+    const void* stronger, const void* weaker, void* out) -> void*;
+auto lyra_rt_packed_filled_like(
+    const void* prototype, const void* fill, void* out) -> void*;
+auto lyra_rt_union_filled_like(
+    const void* prototype, const void* fill, void* out) -> void*;
+auto lyra_rt_unpackedarray_filled_like(
+    const void* prototype, const void* fill, void* out) -> void*;
 
 // Builds one conversion's format specification, and the print item that pairs a
 // value with it. Each field arrives as a packed value, as the value model
@@ -2271,7 +2369,6 @@ void lyra_rt_real_assign(void* storage, const void* value);
 void lyra_rt_shortreal_assign(void* storage, const void* value);
 void lyra_rt_chandle_assign(void* storage, const void* value);
 void lyra_rt_empty_assign(void* storage, const void* value);
-void lyra_rt_tuple_assign(void* storage, const void* value);
 void lyra_rt_union_assign(void* storage, const void* value);
 void lyra_rt_tagged_union_assign(void* storage, const void* value);
 void lyra_rt_dynarray_assign(void* storage, const void* value);
@@ -2289,7 +2386,6 @@ void lyra_rt_reference_assign(void* storage, const void* value);
 // move leaves behind is still an object, which the body then ends.
 void lyra_rt_packed_destroy(void* object);
 void lyra_rt_string_destroy(void* object);
-void lyra_rt_tuple_destroy(void* object);
 void lyra_rt_union_destroy(void* object);
 void lyra_rt_tagged_union_destroy(void* object);
 void lyra_rt_dynarray_destroy(void* object);
@@ -2307,7 +2403,7 @@ void lyra_rt_dpi_logic_buffer_destroy(void* object);
 void lyra_rt_dpi_open_array_destroy(void* object);
 void lyra_rt_channel_cancellation_destroy(void* object);
 void lyra_rt_erased_value_destroy(void* object);
-void lyra_rt_promoted_scope_destroy(void* object);
+void lyra_rt_shared_pointer_destroy(void* object);
 void lyra_rt_open_write_destroy(void* object);
 void lyra_rt_object_write_destroy(void* object);
 auto lyra_rt_packed_copy(const void* value, void* out) -> void*;
@@ -2316,7 +2412,6 @@ auto lyra_rt_real_copy(const void* value, void* out) -> void*;
 auto lyra_rt_shortreal_copy(const void* value, void* out) -> void*;
 auto lyra_rt_chandle_copy(const void* value, void* out) -> void*;
 auto lyra_rt_empty_copy(const void* value, void* out) -> void*;
-auto lyra_rt_tuple_copy(const void* value, void* out) -> void*;
 auto lyra_rt_union_copy(const void* value, void* out) -> void*;
 auto lyra_rt_tagged_union_copy(const void* value, void* out) -> void*;
 auto lyra_rt_dynarray_copy(const void* value, void* out) -> void*;
@@ -2324,7 +2419,7 @@ auto lyra_rt_unpackedarray_copy(const void* value, void* out) -> void*;
 auto lyra_rt_queue_copy(const void* value, void* out) -> void*;
 auto lyra_rt_assocarray_copy(const void* value, void* out) -> void*;
 auto lyra_rt_managedref_copy(const void* value, void* out) -> void*;
-auto lyra_rt_promoted_scope_copy(const void* value, void* out) -> void*;
+auto lyra_rt_shared_pointer_copy(const void* value, void* out) -> void*;
 auto lyra_rt_print_item_copy(const void* value, void* out) -> void*;
 auto lyra_rt_format_spec_copy(const void* value, void* out) -> void*;
 auto lyra_rt_format_arg_copy(const void* value, void* out) -> void*;
@@ -2343,7 +2438,6 @@ auto lyra_rt_real_move(void* value, void* out) -> void*;
 auto lyra_rt_shortreal_move(void* value, void* out) -> void*;
 auto lyra_rt_chandle_move(void* value, void* out) -> void*;
 auto lyra_rt_empty_move(void* value, void* out) -> void*;
-auto lyra_rt_tuple_move(void* value, void* out) -> void*;
 auto lyra_rt_union_move(void* value, void* out) -> void*;
 auto lyra_rt_tagged_union_move(void* value, void* out) -> void*;
 auto lyra_rt_dynarray_move(void* value, void* out) -> void*;
@@ -2352,7 +2446,7 @@ auto lyra_rt_queue_move(void* value, void* out) -> void*;
 auto lyra_rt_assocarray_move(void* value, void* out) -> void*;
 auto lyra_rt_managedref_move(void* value, void* out) -> void*;
 auto lyra_rt_closure_move(void* value, void* out) -> void*;
-auto lyra_rt_promoted_scope_move(void* value, void* out) -> void*;
+auto lyra_rt_shared_pointer_move(void* value, void* out) -> void*;
 auto lyra_rt_print_item_move(void* value, void* out) -> void*;
 auto lyra_rt_format_spec_move(void* value, void* out) -> void*;
 auto lyra_rt_format_arg_move(void* value, void* out) -> void*;

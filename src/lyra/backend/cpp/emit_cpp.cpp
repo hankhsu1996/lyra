@@ -114,24 +114,43 @@ auto FileConsumed(const mir::ConsumedSignature& consumed) -> std::string {
 
 // A unit becomes one C++ namespace, named after it, written across these files:
 //
+//   Top.types.hpp     the structs the unit declares under a name
 //   Top.opening.hpp   forward declarations, namespace functions and variables
 //   Top.<Class>.hpp   one per class other units may name
 //   Top.hpp           includes all of the above; what other units include
 //   Top.cpp           every other class, and every definition
 //
-// The opening header includes nothing of the program, and a class header
-// includes the headers of its bases, so two units can include each other's
-// headers without a cycle. Anything other units never name goes into the
-// `.cpp`, so changing it recompiles no other unit.
+// The types header includes only other units' types headers, the opening
+// header only this unit's types header, and a class header the headers of its
+// bases, so two units can include each other's headers without a cycle.
+// Anything other units never name goes into the `.cpp`, so changing it
+// recompiles no other unit.
 auto RenderUnitFiles(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
     -> CppUnitArtifacts {
+  const UnitText structs = RenderUnitStructs(unit, refusals);
   const UnitText callables = RenderUnitCallables(unit, refusals);
   const UnitText variables = RenderUnitStaticVariables(unit);
   const UnitText forwards = RenderUnitForwardDeclarations(unit);
   UnitClasses classes = RenderUnitClasses(unit, refusals);
   const UnitClosures closures = RenderUnitClosures(unit, refusals);
   const SourceName unit_namespace = UnitNamespaceOf(unit.name);
+
+  // A struct is built from structs of the units whose namespaces this one
+  // consumes, so their types headers come first.
+  TargetText types;
+  types += "#pragma once\n";
+  WriteInclude(types, support::kRuntimePreludeHeader);
+  for (const mir::ConsumedSignature& consumed : unit.consumed_signatures) {
+    if (const auto* consumed_namespace =
+            std::get_if<mir::ConsumedNamespace>(&consumed)) {
+      WriteInclude(types, UnitTypesFileOf(consumed_namespace->unit_name));
+    }
+  }
+  types += "\n";
+  OpenNamespace(types, unit_namespace);
+  types += structs.signature.View();
+  CloseNamespace(types, unit_namespace);
 
   TargetText opened;
   AppendSection(opened, forwards.signature);
@@ -142,6 +161,7 @@ auto RenderUnitFiles(
   TargetText opening;
   opening += "#pragma once\n";
   WriteInclude(opening, support::kRuntimePreludeHeader);
+  WriteInclude(opening, UnitTypesFileOf(unit.name));
   opening += "\n";
   {
     const TargetText::Section external(opening);
@@ -152,6 +172,9 @@ auto RenderUnitFiles(
   CloseNamespace(opening, unit_namespace);
 
   std::vector<CppArtifact> declarations;
+  declarations.push_back(
+      {.relpath = UnitTypesFileOf(unit.name),
+       .content = std::move(types).Take()});
   declarations.push_back(
       {.relpath = UnitOpeningFileOf(unit.name),
        .content = std::move(opening).Take()});
@@ -190,6 +213,7 @@ auto RenderUnitFiles(
     const TargetText::Section constants(realized);
     RenderIntegralConstants(unit, refusals, realized);
   }
+  AppendSection(realized, structs.code);
   AppendSection(realized, classes.internal);
   AppendSection(realized, closures.declarations);
   AppendSection(realized, variables.code);

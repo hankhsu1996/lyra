@@ -188,11 +188,10 @@ auto BuildValueConversion(
   }
 
   // Integral -> integral: a reshape into the destination's declared
-  // representation. An integral type that names its content -- an enumeration
-  // (LRM 6.19.3), a packed structure or union (LRM 7.2.1 / 7.3.1) -- shares
-  // that representation with its base while being a type of its own, so
-  // crossing into or out of one changes the type a value is held to and not the
-  // bits it carries, which is what the cast below says and all it says.
+  // representation. An enumeration (LRM 6.19.3) shares that representation
+  // with its base while being a type of its own, so crossing into or out of
+  // one changes the type a value is held to and not the bits it carries, which
+  // is what the cast below says and all it says.
   if (src_ty.IsIntegralPacked() && dst_ty.IsIntegralPacked()) {
     const auto& src_pa = src_ty.PackedShape();
     const auto& dst_pa = dst_ty.PackedShape();

@@ -159,16 +159,6 @@ class DynamicArray {
     return *this;
   }
 
-  // LRM Table 6-7: dynamic array default is the empty array. When this
-  // container is itself the discard sink of an outer container, the outer
-  // scrubs it to canonical state before handing out a reference; any subsequent
-  // inner access then re-misses naturally (data_ is empty), so chained access
-  // through the sink never observes a stale
-  // write.
-  auto ResetToDefault() -> void {
-    data_.clear();
-  }
-
   // LRM 7.4.5: an invalid-index write lands on the shield's discard target,
   // which is no element of the array.
   [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
@@ -306,11 +296,7 @@ class DynamicArray {
     return total;
   }
 
-  // LRM 7.5.3: empties the array, resulting in a zero-sized array. Body is
-  // identical to ResetToDefault (LRM Table 6-7 default for dynamic array is
-  // the empty array), but the two surface names track distinct contracts:
-  // Delete is the user-facing method name; ResetToDefault is the
-  // canonical-reset protocol shared with PackedArray / UnpackedArray.
+  // LRM 7.5.3: empties the array, resulting in a zero-sized array.
   auto Delete() -> void {
     data_.clear();
   }
@@ -476,7 +462,6 @@ static_assert(Indexable<DynamicArray<PackedArray>>);
 static_assert(Sliceable<DynamicArray<PackedArray>>);
 static_assert(SliceableRef<DynamicArray<PackedArray>>);
 static_assert(Ownable<DynamicArray<PackedArray>>);
-static_assert(Defaultable<DynamicArray<PackedArray>>);
 static_assert(Sortable<DynamicArray<PackedArray>>);
 static_assert(OrdinalElements<DynamicArray<PackedArray>>);
 

@@ -3,10 +3,16 @@
 // with expression takes for that element. Each element of the result is typed
 // by the self-determined type of that expression rather than by the source's
 // element type, so a mapping may widen, narrow, or change the element type
-// entirely. An element that is itself an array is an ordinary operand of the
-// expression, and a source with no elements maps to a result with no elements
-// (LRM 7.12.5).
+// entirely. An element that is itself an array or a structure is an ordinary
+// operand of the expression, the expression may itself take a structure's
+// value, and a source with no elements maps to a result with no elements (LRM
+// 7.12.5).
 module Top;
+  typedef struct {
+    int value;
+    string label;
+  } entry_t;
+
   int base [] = '{1, 2, 3};
   int other [] = '{10, 20, 30};
   bit [7:0] narrow [] = '{8'd5, 8'd6};
@@ -15,6 +21,7 @@ module Top;
   int empty_source [];
   int rows [][] = '{'{1, 2, 3}, '{4, 5}};
   string words [] = '{"a", "bb"};
+  entry_t entries [] = '{'{value: 1, label: "one"}, '{value: 2, label: "two"}};
 
   int combined [];
   bit [31:0] widened [];
@@ -24,6 +31,8 @@ module Top;
   int from_empty [];
   int row_totals [];
   string shouted [];
+  int entry_values [];
+  entry_t labelled [];
 
   initial begin
     flags = '{1'b1, 1'b1, 1'b1};
@@ -37,6 +46,8 @@ module Top;
     from_empty = empty_source.map(x) with (x + 1);
     row_totals = rows.map(row) with (row.sum());
     shouted = words.map(s) with (s.toupper());
+    entry_values = entries.map(e) with (e.value * 10);
+    labelled = base.map(x) with (entry_t'{value: x * 2, label: words[x % 2]});
   end
 
   final begin
@@ -93,6 +104,21 @@ module Top;
       $fatal(1, "shouted[0] was '%s', expected 'A'", shouted[0]);
     if (shouted[1] != "BB")
       $fatal(1, "shouted[1] was '%s', expected 'BB'", shouted[1]);
+
+    if (entry_values.size() !== 2)
+      $fatal(1, "entry_values held %0d elements, expected 2",
+             entry_values.size());
+    if (entry_values[1] !== 20)
+      $fatal(1, "entry_values[1] was %0d, expected 20", entry_values[1]);
+
+    if (labelled.size() !== 3)
+      $fatal(1, "labelled held %0d elements, expected 3", labelled.size());
+    if (labelled[0].value !== 2 || labelled[0].label != "bb")
+      $fatal(1, "labelled[0] was {%0d, '%s'}, expected {2, 'bb'}",
+             labelled[0].value, labelled[0].label);
+    if (labelled[1].value !== 4 || labelled[1].label != "a")
+      $fatal(1, "labelled[1] was {%0d, '%s'}, expected {4, 'a'}",
+             labelled[1].value, labelled[1].label);
     $display("All checks passed");
   end
 endmodule

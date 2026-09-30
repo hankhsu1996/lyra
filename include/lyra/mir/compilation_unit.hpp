@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -200,7 +202,8 @@ struct BuiltinMirTypes {
   TypeId machine_float64;
   TypeId string;
   TypeId void_type;
-  TypeId realtime;
+  // A `real`, which a `realtime` is as well (LRM 6.12).
+  TypeId real;
   TypeId time;
   TypeId effects;
   TypeId scope_ptr;
@@ -325,11 +328,14 @@ struct CompilationUnit {
   // party assembling the program keeps one; a definition up there calls that
   // unit's own subroutine and no other artifact can write it.
   std::vector<ForeignScopeEntry> foreign_scope_entries;
-  // Every compiler-generated nominal struct of this unit -- a promoted
-  // automatic scope's storage. Its `StructId` is the struct's type identity; a
-  // backend derives the C++ emission host from the struct's lexical synthesis
-  // site.
+  // Every struct this unit declares: the structures its source declares, and
+  // the storage a scope keeps past its end. A struct type names one of these
+  // by where it sits.
   base::Registry<StructDecl, StructId> structs;
+  // Every struct of another unit this one holds a value of, found by the
+  // declaration it is. A unit naming one states nothing about it beyond what
+  // it read, and calls the declaring unit's methods.
+  std::vector<ExternalStruct> external_structs;
   // Every closure of this unit, one per closure site -- an anonymous concrete
   // callable value (capture fields plus one invoke). Its `ClosureId` is the
   // closure's type identity, in a separate registry from `structs`: a closure
@@ -381,7 +387,7 @@ struct CompilationUnit {
                 Type{MachineFloatType{.width = MachineFloatWidth::k64}}),
             .string = types.Intern(Type{StringType{}}),
             .void_type = types.Intern(Type{VoidType{}}),
-            .realtime = types.Intern(Type{RealTimeType{}}),
+            .real = types.Intern(Type{RealType{}}),
             .time = types.Intern(
                 Type{PackedArrayType{
                     .state_kind = IntegralStateKind::kFourState,
@@ -668,6 +674,77 @@ using NamespaceReach = std::variant<
   return ReachedByPosition{id};
 }
 
+// What this unit read of the struct another unit declares as `declaration`, or
+// null where it has read nothing of it yet.
+[[nodiscard]] inline auto FindExternalStruct(
+    const CompilationUnit& unit, const TypeDeclarationRef& declaration)
+    -> const ExternalStruct* {
+  for (const ExternalStruct& external : unit.external_structs) {
+    if (external.declaration == declaration) {
+      return &external;
+    }
+  }
+  return nullptr;
+}
+
+// What this unit read of the struct another unit declares as `declaration`,
+// for a caller holding a value of it, which reading the struct preceded.
+[[nodiscard]] inline auto ExternalStructOf(
+    const CompilationUnit& unit, const TypeDeclarationRef& declaration)
+    -> const ExternalStruct& {
+  if (const ExternalStruct* external = FindExternalStruct(unit, declaration)) {
+    return *external;
+  }
+  throw InternalError(
+      "mir: a struct of another unit is named that this unit never read -- "
+      "please report this as a bug");
+}
+
+// The members' types of the struct `type` is, wherever it was declared.
+[[nodiscard]] inline auto StructElements(
+    const CompilationUnit& unit, const StructType& type)
+    -> std::span<const TypeId> {
+  return std::visit(
+      Overloaded{
+          [&](StructId id) -> std::span<const TypeId> {
+            return unit.GetStruct(id).elements;
+          },
+          [&](const TypeDeclarationRef& ref) -> std::span<const TypeId> {
+            return ExternalStructOf(unit, ref).elements;
+          }},
+      type.declaration);
+}
+
+// The declaration any unit names the struct `type` is by.
+[[nodiscard]] inline auto StructDeclarationOf(
+    const CompilationUnit& unit, const StructType& type) -> TypeDeclarationRef {
+  return std::visit(
+      Overloaded{
+          [&](StructId id) -> TypeDeclarationRef {
+            return TypeDeclarationRef{
+                .unit_name = unit.name, .name = unit.GetStruct(id).name};
+          },
+          [](const TypeDeclarationRef& ref) -> TypeDeclarationRef {
+            return ref;
+          }},
+      type.declaration);
+}
+
+// The components of a product -- a tuple or a struct, which are reached the
+// same way -- or nothing for a type that is no product.
+[[nodiscard]] inline auto ProductElements(
+    const CompilationUnit& unit, TypeId type)
+    -> std::optional<std::span<const TypeId>> {
+  const Type& t = unit.types.Get(type);
+  if (const auto* tuple = t.As<TupleType>()) {
+    return std::span<const TypeId>{tuple->elements};
+  }
+  if (const auto* structure = t.As<StructType>()) {
+    return StructElements(unit, *structure);
+  }
+  return std::nullopt;
+}
+
 [[nodiscard]] inline auto MakeStringLiteral(
     TypeId string_type, std::string text) -> Expr {
   return Expr{
@@ -687,7 +764,7 @@ using NamespaceReach = std::variant<
   if (tag_index.value >= tu->members.size()) {
     throw InternalError("TaggedComponentType: tag index out of range");
   }
-  return tu->members[tag_index.value].type;
+  return tu->members[tag_index.value];
 }
 
 }  // namespace lyra::mir

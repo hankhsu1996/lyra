@@ -116,6 +116,7 @@ auto TypeImporter::Import(const Type& type) -> Type {
           },
           [this](const UnpackedStructType& t) -> Type {
             return Type{UnpackedStructType{
+                .declaration = t.declaration,
                 .fields = ImportUnpackedFields(t.fields, *this)}};
           },
           [this](const UnpackedUnionType& t) -> Type {

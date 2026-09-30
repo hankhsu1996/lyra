@@ -255,7 +255,22 @@ auto RuntimeUnpackedArray::MergeConditional(
   return result;
 }
 
-auto RuntimeUnpackedArray::ResolveNet(
+auto RuntimeUnpackedArray::ResolveTriState(
+    const RuntimeUnpackedArray& other) const -> RuntimeUnpackedArray {
+  return FoldedWith(other, NetResolution::kTriState);
+}
+
+auto RuntimeUnpackedArray::ResolveWiredAnd(
+    const RuntimeUnpackedArray& other) const -> RuntimeUnpackedArray {
+  return FoldedWith(other, NetResolution::kWiredAnd);
+}
+
+auto RuntimeUnpackedArray::ResolveWiredOr(
+    const RuntimeUnpackedArray& other) const -> RuntimeUnpackedArray {
+  return FoldedWith(other, NetResolution::kWiredOr);
+}
+
+auto RuntimeUnpackedArray::FoldedWith(
     const RuntimeUnpackedArray& other, NetResolution fold) const
     -> RuntimeUnpackedArray {
   RuntimeUnpackedArray resolved = *this;

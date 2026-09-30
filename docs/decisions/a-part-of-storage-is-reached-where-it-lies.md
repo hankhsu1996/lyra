@@ -34,10 +34,12 @@ there.**
   between a place step and a value projection. Nothing else asks it.
 - **LIR states an element and a component as place steps, beside member and dereference.** An
   element is named by the coordinate the program computed, a component by its position. The backend
-  realizes each step through the library, as it realizes a member step, so no layout crosses into
-  generated code. Which element a step reaches depends on the access. A read of a missing element
-  reads the default. A write appends at a queue's one-past-the-end, allocates a missing associative
-  entry, and otherwise lands where nothing reads it.
+  realizes an element step through the library, which holds the container, and a component step as
+  the offset its tuple's type lays the component at
+  ([a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md)). Which element a step
+  reaches depends on the access. A read of a missing element reads the default. A write appends at a
+  queue's one-past-the-end, allocates a missing associative entry, and otherwise lands where nothing
+  reads it.
 - **A load answers with the value where it lies.** Nothing is copied until a value is kept -- a
   store into a slot, a return, a `to_owned`, or a postfix step's old value read past its own write.
 - **A write into what a wrapper holds is an open write.** It is an object in the writer's frame,

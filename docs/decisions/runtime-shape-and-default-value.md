@@ -1,10 +1,16 @@
 # Packed Array runtime shape and collection default value
 
-Date: 2026-06-03 (revised 2026-06-22) Status: accepted
+Date: 2026-06-03 (revised 2026-06-22, 2026-09-28) Status: accepted
 
 The 2026-06-22 revision splits the container's single `mutable` default slot into two fields -- an
 immutable canonical default and a separate write-discard sink -- so the read path is genuinely
 `const`. Decision points 2 and 4 and the rejected-alternatives list are updated accordingly.
+
+The 2026-09-28 revision withdraws point 3. Each value type restoring its own default in place stated
+every type's default a second time, beside the one point 6 already carries from MIR, and for a
+structure it was the library composing a whole-value operation
+([a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md)). The
+sink is now restored by copying `element_default_`, which carries the shape by the same channel.
 
 ## Context
 
@@ -50,17 +56,12 @@ Three questions surface:
    the prototype every fill / grow / slice / locator copies; it is only ever read or copied, never
    written, so it stays canonical for the container's life and a const read returns it by direct
    reference with no scrub. `discard_sink_` is the throwaway an invalid write lands on; the
-   non-const write path scrubs it to canonical via `T::ResetToDefault` before handing out the
-   reference, so a discarded write never leaks into a later access. The two fields are two distinct
+   non-const write path restores it by copying `element_default_` before handing out the reference,
+   so a discarded write never leaks into a later access. The two fields are two distinct
    responsibilities -- the canonical default value versus the throwaway write target -- not a
    duplicated value.
 
-3. **Every value type that can be an element provides `ResetToDefault()`.** `PackedArray` in-place
-   zero-fills (2-state) or X-fills (4-state) the data bits while preserving shape; `DynamicArray<T>`
-   clears `data_`; `UnpackedArray<T>` recurses into each element. The recursive case for fixed-size
-   unpacked is O(N) and is the LRM-mandated cost of "Array, all of whose elements have the value
-   specified ... for that array's element type" -- there is no way to express that default cheaper
-   than initializing N elements.
+3. Withdrawn 2026-09-28; see the note under the title.
 
 4. **The positional element accessor returns `T&` directly; element-level proxy classes are
    absent.** Compound semantics (`+=`, `&=`, the shift-assign family, the increment / decrement
@@ -126,14 +127,10 @@ _Rejected alternatives:_
 - Every container wrapper carries two extra `T` members (`element_default_`, `discard_sink_`). The
   size cost is two element-sized objects per wrapper, independent of element count.
 
-- Every value type usable as a container element implements `ResetToDefault()`. The contract is
-  in-place restoration to the LRM Table 6-7 / Table 7-1 canonical default while preserving any shape
-  information embedded in the value (bit width / signedness / state kind for `PackedArray`).
-
-- `UnpackedArray<T>::ResetToDefault` is O(N) where N is the array's fixed size; this cost is paid
-  only when the array is an outer container's `discard_sink_` being scrubbed on an invalid-index
-  write, and is the LRM-mandated cost of materializing "all elements at default." In-bounds access
-  and invalid reads pay no scrub cost (the read returns the pristine `element_default_` directly).
+- Restoring the sink is a copy of `element_default_`, paid only on an invalid-index write; for a
+  fixed-size unpacked array it is O(N), the LRM-mandated cost of materializing "all elements at
+  default." In-bounds access and invalid reads pay nothing (the read returns the pristine
+  `element_default_` directly).
 
 - All container construction sites -- emit-generated and direct C++ -- must provide
   `canonical_default` explicitly. Container wrappers no longer expose a zero-argument default
@@ -145,11 +142,11 @@ _Rejected alternatives:_
 - The pattern extends naturally to queue, associative array, packed-struct collection,
   unpacked-struct collection, and any future wrapper whose element type requires runtime
   construction parameters. Each new wrapper introduces `element_default_` / `discard_sink_` members
-  following the same shape and implements its own `ResetToDefault`. (Associative array carries the
-  same immutable shape prototype, paired with the value a read of an absent index answers with,
-  which a LRM 7.9.11 `default:` clause names and which is otherwise that prototype.) Associative
-  array's "auto-allocate on write" rule (LRM 7.8.7) is a different element-access contract and
-  requires its own design when that workstream opens.
+  following the same shape. (Associative array carries the same immutable shape prototype, paired
+  with the value a read of an absent index answers with, which a LRM 7.9.11 `default:` clause names
+  and which is otherwise that prototype.) Associative array's "auto-allocate on write" rule (LRM
+  7.8.7) is a different element-access contract and requires its own design when that workstream
+  opens.
 
 - Shape uniformity within a collection is enforced by convention -- lowering supplies the same
   canonical default for all writes and never mixes shapes in one container -- not by the C++ type
@@ -160,7 +157,6 @@ _Rejected alternatives:_
 - LRM 7.4.5 (Indexing and slicing of arrays), 7.4.6 (Operations on arrays), Table 6-7 (Default
   initial values), Table 7-1 (Value read from a nonexistent array entry).
 - `src/lyra/lowering/hir_to_mir/default_value.cpp` -- default-expression synthesis.
-- `include/lyra/value/packed_array.hpp` -- runtime-shape `PackedArray` definition and
-  `ResetToDefault`.
+- `include/lyra/value/packed_array.hpp` -- runtime-shape `PackedArray` definition.
 - `include/lyra/value/dynamic_array.hpp`, `include/lyra/value/unpacked_array.hpp` -- first wrappers
   to adopt the default / sink pattern.

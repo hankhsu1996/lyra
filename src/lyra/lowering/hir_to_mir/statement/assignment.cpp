@@ -212,7 +212,7 @@ auto LowerStreamingUnpackAssign(
     const hir::Expr& target = hir_proc.exprs.Get(op_id);
     const mir::TypeId target_type = process.Owner().TranslateType(target.type);
     const std::optional<StreamShape> shape =
-        FixedStreamShapeOf(unit.types, target_type);
+        FixedStreamShapeOf(unit, target_type);
     if (!shape.has_value()) {
       return diag::Fail(
           target.span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -294,7 +294,7 @@ auto LowerStreamingUnpackAssign(
     parts.push_back(
         DestructuredPart{
             .target = *std::move(part_lhs_or),
-            .value = wrapper.exprs.Add(*std::move(value_or)),
+            .value = *value_or,
             .type = target.type});
   }
 

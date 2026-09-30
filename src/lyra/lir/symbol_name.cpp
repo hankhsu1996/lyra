@@ -12,6 +12,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
 
@@ -22,18 +23,16 @@ namespace {
 // with a marker of their own.
 auto CategoryTag(SymbolCategory category) -> char {
   switch (category) {
-    case SymbolCategory::kClass:
-      return 'c';
     case SymbolCategory::kClassDefinition:
       return 'd';
     case SymbolCategory::kClosureDefinition:
       return 'e';
-    case SymbolCategory::kStructDefinition:
-      return 'g';
     case SymbolCategory::kConstructor:
       return 'n';
     case SymbolCategory::kClassCallable:
       return 'm';
+    case SymbolCategory::kStructMethod:
+      return 'r';
     case SymbolCategory::kNamespaceCallable:
       return 'f';
     case SymbolCategory::kNamespaceStorageInstall:
@@ -46,14 +45,10 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'v';
     case SymbolCategory::kStaticProperty:
       return 'p';
-    case SymbolCategory::kClosure:
-      return 'k';
     case SymbolCategory::kClosureInvoke:
       return 'i';
     case SymbolCategory::kScopeEntry:
       return 'x';
-    case SymbolCategory::kStruct:
-      return 's';
     case SymbolCategory::kTypeDescription:
       return 't';
     case SymbolCategory::kIntegralConstant:
@@ -94,23 +89,11 @@ auto SymbolName(
   return out;
 }
 
-auto ClassSymbol(std::string_view unit_name, SymbolPart cls) -> std::string {
-  return SymbolName(
-      SymbolCategory::kClass, {SymbolPart::Name(unit_name), std::move(cls)});
-}
-
 auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)
     -> std::string {
   return SymbolName(
       SymbolCategory::kClassDefinition,
       {SymbolPart::Name(unit_name), std::move(cls)});
-}
-
-auto StructDefinitionSymbol(std::string_view unit_name, SymbolPart record)
-    -> std::string {
-  return SymbolName(
-      SymbolCategory::kStructDefinition,
-      {SymbolPart::Name(unit_name), std::move(record)});
 }
 
 auto ClosureDefinitionSymbol(std::string_view unit_name, SymbolPart closure)
@@ -133,6 +116,15 @@ auto ClassCallableSymbol(
   return SymbolName(
       SymbolCategory::kClassCallable,
       {SymbolPart::Name(unit_name), std::move(cls), std::move(callable)});
+}
+
+auto StructMethodSymbol(
+    std::string_view unit_name, std::string_view structure,
+    support::ValueOperation operation) -> std::string {
+  return SymbolName(
+      SymbolCategory::kStructMethod,
+      {SymbolPart::Name(unit_name), SymbolPart::Name(structure),
+       SymbolPart::Name(support::ValueOperationName(operation))});
 }
 
 auto StaticPropertySymbol(
@@ -174,13 +166,6 @@ auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)
       {SymbolPart::Name(unit_name), std::move(variable)});
 }
 
-auto StructSymbol(std::string_view unit_name, SymbolPart record)
-    -> std::string {
-  return SymbolName(
-      SymbolCategory::kStruct,
-      {SymbolPart::Name(unit_name), std::move(record)});
-}
-
 auto TypeDescriptionSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string {
   return SymbolName(
@@ -193,13 +178,6 @@ auto IntegralConstantSymbol(std::string_view unit_name, std::uint32_t ordinal)
   return SymbolName(
       SymbolCategory::kIntegralConstant,
       {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
-}
-
-auto ClosureSymbol(std::string_view unit_name, SymbolPart closure)
-    -> std::string {
-  return SymbolName(
-      SymbolCategory::kClosure,
-      {SymbolPart::Name(unit_name), std::move(closure)});
 }
 
 auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
@@ -217,28 +195,8 @@ auto ScopeEntrySymbol(
                                     SymbolPart::Ordinal(ordinal)});
 }
 
-namespace {
-
-// Which of the declarations a value can be built from a type names. Each is
-// identified differently -- two of them by a name their unit gave, the third by
-// the position its unit counted it at -- so the three are told apart before
-// either symbol over them is composed.
-enum class DeclarationKind : std::uint8_t { kClass, kClosure, kStruct };
-
-// The parts of the declaration `type` names, or nothing where the type names no
-// declaration. A declaration this unit compiles carries the names it was
-// emitted under; one another unit declares carries the names its signature
-// gave, so both sides reach the same parts.
-struct DeclarationParts {
-  DeclarationKind kind;
-  std::string unit_name;
-  // What the declaration contributes: the identifier its unit gave it, or the
-  // position that unit counted it at where it was given none.
-  SymbolPart part;
-};
-
-auto PartsOf(const CompilationUnit& unit, TypeId type)
-    -> std::optional<DeclarationParts> {
+auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
+    -> std::optional<std::string> {
   const std::optional<TypeDeclaration> declaration =
       unit.types.Get(type).Declaration();
   if (!declaration) {
@@ -246,81 +204,29 @@ auto PartsOf(const CompilationUnit& unit, TypeId type)
   }
   return std::visit(
       Overloaded{
-          [&](const ObjectType& o) -> std::optional<DeclarationParts> {
-            return DeclarationParts{
-                .kind = DeclarationKind::kClass,
-                .unit_name = unit.name,
-                .part = SymbolPartOf(
-                    unit.classes.Get(o.class_id).name, o.class_id.value)};
+          [&](const ObjectType& o) {
+            return ClassDefinitionSymbol(
+                unit.name,
+                SymbolPartOf(
+                    unit.classes.Get(o.class_id).name, o.class_id.value));
           },
-          [&](const ExternalUnitObjectType& e)
-              -> std::optional<DeclarationParts> {
+          [&](const ExternalUnitObjectType& e) {
             const ExternalUnitObject& object =
                 unit.external_unit_objects.Get(e.object);
-            return DeclarationParts{
-                .kind = DeclarationKind::kClass,
-                .unit_name = object.unit_name,
-                .part = SymbolPart::Name(object.class_name)};
+            return ClassDefinitionSymbol(
+                object.unit_name, SymbolPart::Name(object.class_name));
           },
-          [](const CrossUnitClassType& c) -> std::optional<DeclarationParts> {
-            return DeclarationParts{
-                .kind = DeclarationKind::kClass,
-                .unit_name = c.unit_name,
-                .part = SymbolPart::Name(c.class_name)};
+          [](const CrossUnitClassType& c) {
+            return ClassDefinitionSymbol(
+                c.unit_name, SymbolPart::Name(c.class_name));
           },
-          [&](const ClosureType& c) -> std::optional<DeclarationParts> {
-            // A closure has no declaration of the source to take a name from,
-            // so what identifies it is the position its unit counted it at.
-            return DeclarationParts{
-                .kind = DeclarationKind::kClosure,
-                .unit_name = unit.name,
-                .part = SymbolPart::Ordinal(c.closure_id.value)};
-          },
-          [&](const StructType& s) -> std::optional<DeclarationParts> {
-            // Like a closure, a gathered scope is no declaration of the
-            // source, so its position is what identifies it.
-            return DeclarationParts{
-                .kind = DeclarationKind::kStruct,
-                .unit_name = unit.name,
-                .part = SymbolPart::Ordinal(s.struct_id.value)};
+          // A closure has no declaration of the source to take a name from, so
+          // what identifies it is the position its unit counted it at.
+          [&](const ClosureType& c) {
+            return ClosureDefinitionSymbol(
+                unit.name, SymbolPart::Ordinal(c.closure_id.value));
           }},
       *declaration);
-}
-
-}  // namespace
-
-auto DeclarationSymbol(const CompilationUnit& unit, TypeId type)
-    -> std::optional<std::string> {
-  const std::optional<DeclarationParts> parts = PartsOf(unit, type);
-  if (!parts.has_value()) {
-    return std::nullopt;
-  }
-  switch (parts->kind) {
-    case DeclarationKind::kClass:
-      return ClassSymbol(parts->unit_name, parts->part);
-    case DeclarationKind::kStruct:
-      return StructSymbol(parts->unit_name, parts->part);
-    case DeclarationKind::kClosure:
-      return ClosureSymbol(parts->unit_name, parts->part);
-  }
-  throw InternalError("DeclarationSymbol: unknown declaration kind");
-}
-
-auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
-    -> std::optional<std::string> {
-  const std::optional<DeclarationParts> parts = PartsOf(unit, type);
-  if (!parts.has_value()) {
-    return std::nullopt;
-  }
-  switch (parts->kind) {
-    case DeclarationKind::kClass:
-      return ClassDefinitionSymbol(parts->unit_name, parts->part);
-    case DeclarationKind::kStruct:
-      return StructDefinitionSymbol(parts->unit_name, parts->part);
-    case DeclarationKind::kClosure:
-      return ClosureDefinitionSymbol(parts->unit_name, parts->part);
-  }
-  throw InternalError("DefinitionSymbol: unknown declaration kind");
 }
 
 }  // namespace lyra::lir

@@ -9,6 +9,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/array_case_equal.hpp"
+#include "lyra/value/net_resolution.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/wildcard_index.hpp"
 
@@ -73,10 +74,10 @@ auto RuntimeValueResolveNet(
         using T = std::decay_t<decltype(lhs)>;
         if constexpr (NetResolvable<T>) {
           return RuntimeValue{
-              .value = lhs.ResolveNet(std::get<T>(b.value), fold)};
+              .value = ResolvedUnder(fold, lhs, std::get<T>(b.value))};
         } else {
           throw InternalError(
-              "RuntimeValue::ResolveNet: this domain is not valid for a "
+              "RuntimeValueResolveNet: this domain is not valid for a "
               "net (LRM 6.7.1), so nothing should have attached a driver to "
               "it");
         }

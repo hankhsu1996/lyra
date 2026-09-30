@@ -86,12 +86,12 @@ the IR carries: LIR states the pair and nothing else.
   it does not publish still take positions. That is the same case the path already refuses; when it
   lands, the position is what the runtime supplies rather than what lowering computes.
 - Every kind of declaration that declares fields is named this way, not only the class -- the
-  compiler-generated struct a promoted automatic scope lives in, the closure whose captures are its
-  fields, the object another unit published, and the class another unit declares. Only the class
-  makes the alternative derivation _wrong_, since only it inherits; the others make it merely
-  unnecessary, and an access that states its declaration anyway is what lets one reading resolve
-  every field name. The receiver's type is then checked against that declaration rather than
-  consulted to find it, which is the same relation the class case already had.
+  closure whose captures are its fields, the object another unit published, and the class another
+  unit declares. Only the class makes the alternative derivation _wrong_, since only it inherits;
+  the others make it merely unnecessary, and an access that states its declaration anyway is what
+  lets one reading resolve every field name. The receiver's type is then checked against that
+  declaration rather than consulted to find it, which is the same relation the class case already
+  had.
 - Not this decision: which method a call selects, and when a base's constructor and a class's
   property initializers run (8.7). Both are stated elsewhere and neither changes how storage is
   named.

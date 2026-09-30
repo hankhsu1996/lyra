@@ -408,7 +408,9 @@ class HirDumper {
                 fields += std::format(
                     "{}:Type[{}]", s.fields[i].name, s.fields[i].type.value);
               }
-              return std::format("UnpackedStruct(fields=[{}])", fields);
+              return std::format(
+                  "UnpackedStruct({}::{}, fields=[{}])",
+                  s.declaration.unit_name, s.declaration.name, fields);
             },
             [](const UnpackedUnionType& u) -> std::string {
               std::string fields;

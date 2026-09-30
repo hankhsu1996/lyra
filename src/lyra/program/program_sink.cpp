@@ -246,8 +246,25 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_closure_make", &lyra_rt_closure_make);
   add("lyra_rt_object_make", &lyra_rt_object_make);
   add("lyra_rt_object_deref", &lyra_rt_object_deref);
-  add("lyra_rt_make_promoted_scope", &lyra_rt_make_promoted_scope);
-  add("lyra_rt_promoted_scope_deref", &lyra_rt_promoted_scope_deref);
+  add("lyra_rt_packed_shared_cell_make", &lyra_rt_packed_shared_cell_make);
+  add("lyra_rt_string_shared_cell_make", &lyra_rt_string_shared_cell_make);
+  add("lyra_rt_real_shared_cell_make", &lyra_rt_real_shared_cell_make);
+  add("lyra_rt_shortreal_shared_cell_make",
+      &lyra_rt_shortreal_shared_cell_make);
+  add("lyra_rt_chandle_shared_cell_make", &lyra_rt_chandle_shared_cell_make);
+  add("lyra_rt_managedref_shared_cell_make",
+      &lyra_rt_managedref_shared_cell_make);
+  add("lyra_rt_tuple_shared_cell_make", &lyra_rt_tuple_shared_cell_make);
+  add("lyra_rt_union_shared_cell_make", &lyra_rt_union_shared_cell_make);
+  add("lyra_rt_tagged_union_shared_cell_make",
+      &lyra_rt_tagged_union_shared_cell_make);
+  add("lyra_rt_dynarray_shared_cell_make", &lyra_rt_dynarray_shared_cell_make);
+  add("lyra_rt_unpackedarray_shared_cell_make",
+      &lyra_rt_unpackedarray_shared_cell_make);
+  add("lyra_rt_queue_shared_cell_make", &lyra_rt_queue_shared_cell_make);
+  add("lyra_rt_assocarray_shared_cell_make",
+      &lyra_rt_assocarray_shared_cell_make);
+  add("lyra_rt_shared_pointer_deref", &lyra_rt_shared_pointer_deref);
   add("lyra_rt_method", &lyra_rt_method);
   add("lyra_rt_class_find_property", &lyra_rt_class_find_property);
   add("lyra_rt_class_find_behavior", &lyra_rt_class_find_behavior);
@@ -800,7 +817,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dpi_open_array_value", &lyra_rt_dpi_open_array_value);
   add("lyra_rt_packed_destroy", &lyra_rt_packed_destroy);
   add("lyra_rt_string_destroy", &lyra_rt_string_destroy);
-  add("lyra_rt_tuple_destroy", &lyra_rt_tuple_destroy);
   add("lyra_rt_union_destroy", &lyra_rt_union_destroy);
   add("lyra_rt_tagged_union_destroy", &lyra_rt_tagged_union_destroy);
   add("lyra_rt_dynarray_destroy", &lyra_rt_dynarray_destroy);
@@ -819,7 +835,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_channel_cancellation_destroy",
       &lyra_rt_channel_cancellation_destroy);
   add("lyra_rt_erased_value_destroy", &lyra_rt_erased_value_destroy);
-  add("lyra_rt_promoted_scope_destroy", &lyra_rt_promoted_scope_destroy);
+  add("lyra_rt_shared_pointer_destroy", &lyra_rt_shared_pointer_destroy);
   add("lyra_rt_open_write_destroy", &lyra_rt_open_write_destroy);
   add("lyra_rt_object_write_destroy", &lyra_rt_object_write_destroy);
   add("lyra_rt_packed_assign", &lyra_rt_packed_assign);
@@ -828,7 +844,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_shortreal_assign", &lyra_rt_shortreal_assign);
   add("lyra_rt_chandle_assign", &lyra_rt_chandle_assign);
   add("lyra_rt_empty_assign", &lyra_rt_empty_assign);
-  add("lyra_rt_tuple_assign", &lyra_rt_tuple_assign);
   add("lyra_rt_union_assign", &lyra_rt_union_assign);
   add("lyra_rt_tagged_union_assign", &lyra_rt_tagged_union_assign);
   add("lyra_rt_dynarray_assign", &lyra_rt_dynarray_assign);
@@ -843,7 +858,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_shortreal_copy", &lyra_rt_shortreal_copy);
   add("lyra_rt_chandle_copy", &lyra_rt_chandle_copy);
   add("lyra_rt_empty_copy", &lyra_rt_empty_copy);
-  add("lyra_rt_tuple_copy", &lyra_rt_tuple_copy);
   add("lyra_rt_union_copy", &lyra_rt_union_copy);
   add("lyra_rt_tagged_union_copy", &lyra_rt_tagged_union_copy);
   add("lyra_rt_dynarray_copy", &lyra_rt_dynarray_copy);
@@ -851,7 +865,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_queue_copy", &lyra_rt_queue_copy);
   add("lyra_rt_assocarray_copy", &lyra_rt_assocarray_copy);
   add("lyra_rt_managedref_copy", &lyra_rt_managedref_copy);
-  add("lyra_rt_promoted_scope_copy", &lyra_rt_promoted_scope_copy);
+  add("lyra_rt_shared_pointer_copy", &lyra_rt_shared_pointer_copy);
   add("lyra_rt_print_item_copy", &lyra_rt_print_item_copy);
   add("lyra_rt_format_spec_copy", &lyra_rt_format_spec_copy);
   add("lyra_rt_format_arg_copy", &lyra_rt_format_arg_copy);
@@ -870,7 +884,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_shortreal_move", &lyra_rt_shortreal_move);
   add("lyra_rt_chandle_move", &lyra_rt_chandle_move);
   add("lyra_rt_empty_move", &lyra_rt_empty_move);
-  add("lyra_rt_tuple_move", &lyra_rt_tuple_move);
   add("lyra_rt_union_move", &lyra_rt_union_move);
   add("lyra_rt_tagged_union_move", &lyra_rt_tagged_union_move);
   add("lyra_rt_dynarray_move", &lyra_rt_dynarray_move);
@@ -879,7 +892,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_assocarray_move", &lyra_rt_assocarray_move);
   add("lyra_rt_managedref_move", &lyra_rt_managedref_move);
   add("lyra_rt_closure_move", &lyra_rt_closure_move);
-  add("lyra_rt_promoted_scope_move", &lyra_rt_promoted_scope_move);
+  add("lyra_rt_shared_pointer_move", &lyra_rt_shared_pointer_move);
   add("lyra_rt_print_item_move", &lyra_rt_print_item_move);
   add("lyra_rt_format_spec_move", &lyra_rt_format_spec_move);
   add("lyra_rt_format_arg_move", &lyra_rt_format_arg_move);
@@ -1023,14 +1036,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_managedref_value_box", &lyra_rt_managedref_value_box);
   add("lyra_rt_tuple_value_box", &lyra_rt_tuple_value_box);
   add("lyra_rt_dynarray_value_box", &lyra_rt_dynarray_value_box);
-  add("lyra_rt_tuple_make", &lyra_rt_tuple_make);
-  add("lyra_rt_tuple_component", &lyra_rt_tuple_component);
-  add("lyra_rt_tuple_count_bits", &lyra_rt_tuple_count_bits);
-  add("lyra_rt_tuple_component_ref", &lyra_rt_tuple_component_ref);
-  add("lyra_rt_tuple_eq", &lyra_rt_tuple_eq);
-  add("lyra_rt_tuple_ne", &lyra_rt_tuple_ne);
-  add("lyra_rt_tuple_case_equal", &lyra_rt_tuple_case_equal);
-  add("lyra_rt_tuple_is_unknown", &lyra_rt_tuple_is_unknown);
+  add("lyra_rt_tuple_held", &lyra_rt_tuple_held);
   add("lyra_rt_tuple_cell_get", &lyra_rt_tuple_cell_get);
   add("lyra_rt_tuple_cell_initialize", &lyra_rt_tuple_cell_initialize);
   add("lyra_rt_tuple_cell_set", &lyra_rt_tuple_cell_set);
@@ -1180,16 +1186,13 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_assocarray_assoc_next", &lyra_rt_assocarray_assoc_next);
   add("lyra_rt_assocarray_assoc_prev", &lyra_rt_assocarray_assoc_prev);
   add("lyra_rt_string_bitstream_width", &lyra_rt_string_bitstream_width);
-  add("lyra_rt_tuple_bitstream_width", &lyra_rt_tuple_bitstream_width);
   add("lyra_rt_dynarray_bitstream_width", &lyra_rt_dynarray_bitstream_width);
   add("lyra_rt_unpackedarray_bitstream_width",
       &lyra_rt_unpackedarray_bitstream_width);
   add("lyra_rt_packed_to_bitstream", &lyra_rt_packed_to_bitstream);
-  add("lyra_rt_tuple_to_bitstream", &lyra_rt_tuple_to_bitstream);
   add("lyra_rt_unpackedarray_to_bitstream",
       &lyra_rt_unpackedarray_to_bitstream);
   add("lyra_rt_packed_from_bitstream", &lyra_rt_packed_from_bitstream);
-  add("lyra_rt_tuple_from_bitstream", &lyra_rt_tuple_from_bitstream);
   add("lyra_rt_unpackedarray_from_bitstream",
       &lyra_rt_unpackedarray_from_bitstream);
   add("lyra_rt_packed_reverse_blocks", &lyra_rt_packed_reverse_blocks);
@@ -1393,6 +1396,80 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_unpackedarray_from_packed_array);
 }
 
+// The whole-value operations of each domain a structure's own functions apply
+// to its members, which are the whole of what the library holds for a
+// structure it never sees.
+void BindMemberOperationEntries(const auto& add) {
+  add("lyra_rt_packed_bit_identical", &lyra_rt_packed_bit_identical);
+  add("lyra_rt_string_bit_identical", &lyra_rt_string_bit_identical);
+  add("lyra_rt_real_bit_identical", &lyra_rt_real_bit_identical);
+  add("lyra_rt_shortreal_bit_identical", &lyra_rt_shortreal_bit_identical);
+  add("lyra_rt_chandle_bit_identical", &lyra_rt_chandle_bit_identical);
+  add("lyra_rt_union_bit_identical", &lyra_rt_union_bit_identical);
+  add("lyra_rt_tagged_union_bit_identical",
+      &lyra_rt_tagged_union_bit_identical);
+  add("lyra_rt_dynarray_bit_identical", &lyra_rt_dynarray_bit_identical);
+  add("lyra_rt_unpackedarray_bit_identical",
+      &lyra_rt_unpackedarray_bit_identical);
+  add("lyra_rt_queue_bit_identical", &lyra_rt_queue_bit_identical);
+  add("lyra_rt_assocarray_bit_identical", &lyra_rt_assocarray_bit_identical);
+  add("lyra_rt_managedref_bit_identical", &lyra_rt_managedref_bit_identical);
+  add("lyra_rt_packed_has_unknown", &lyra_rt_packed_has_unknown);
+  add("lyra_rt_string_has_unknown", &lyra_rt_string_has_unknown);
+  add("lyra_rt_real_has_unknown", &lyra_rt_real_has_unknown);
+  add("lyra_rt_shortreal_has_unknown", &lyra_rt_shortreal_has_unknown);
+  add("lyra_rt_chandle_has_unknown", &lyra_rt_chandle_has_unknown);
+  add("lyra_rt_union_has_unknown", &lyra_rt_union_has_unknown);
+  add("lyra_rt_tagged_union_has_unknown", &lyra_rt_tagged_union_has_unknown);
+  add("lyra_rt_dynarray_has_unknown", &lyra_rt_dynarray_has_unknown);
+  add("lyra_rt_unpackedarray_has_unknown", &lyra_rt_unpackedarray_has_unknown);
+  add("lyra_rt_queue_has_unknown", &lyra_rt_queue_has_unknown);
+  add("lyra_rt_assocarray_has_unknown", &lyra_rt_assocarray_has_unknown);
+  add("lyra_rt_managedref_has_unknown", &lyra_rt_managedref_has_unknown);
+  add("lyra_rt_packed_bitstream_width", &lyra_rt_packed_bitstream_width);
+  add("lyra_rt_union_bitstream_width", &lyra_rt_union_bitstream_width);
+  add("lyra_rt_tagged_union_bitstream_width",
+      &lyra_rt_tagged_union_bitstream_width);
+  add("lyra_rt_managedref_bitstream_width",
+      &lyra_rt_managedref_bitstream_width);
+  add("lyra_rt_union_count_bits", &lyra_rt_union_count_bits);
+  add("lyra_rt_tagged_union_count_bits", &lyra_rt_tagged_union_count_bits);
+  add("lyra_rt_managedref_count_bits", &lyra_rt_managedref_count_bits);
+  add("lyra_rt_string_to_bitstream", &lyra_rt_string_to_bitstream);
+  add("lyra_rt_union_to_bitstream", &lyra_rt_union_to_bitstream);
+  add("lyra_rt_tagged_union_to_bitstream", &lyra_rt_tagged_union_to_bitstream);
+  add("lyra_rt_dynarray_to_bitstream", &lyra_rt_dynarray_to_bitstream);
+  add("lyra_rt_queue_to_bitstream", &lyra_rt_queue_to_bitstream);
+  add("lyra_rt_assocarray_to_bitstream", &lyra_rt_assocarray_to_bitstream);
+  add("lyra_rt_managedref_to_bitstream", &lyra_rt_managedref_to_bitstream);
+  add("lyra_rt_string_from_bitstream", &lyra_rt_string_from_bitstream);
+  add("lyra_rt_union_from_bitstream", &lyra_rt_union_from_bitstream);
+  add("lyra_rt_tagged_union_from_bitstream",
+      &lyra_rt_tagged_union_from_bitstream);
+  add("lyra_rt_dynarray_from_bitstream", &lyra_rt_dynarray_from_bitstream);
+  add("lyra_rt_queue_from_bitstream", &lyra_rt_queue_from_bitstream);
+  add("lyra_rt_assocarray_from_bitstream", &lyra_rt_assocarray_from_bitstream);
+  add("lyra_rt_managedref_from_bitstream", &lyra_rt_managedref_from_bitstream);
+  add("lyra_rt_packed_resolve_tri_state", &lyra_rt_packed_resolve_tri_state);
+  add("lyra_rt_union_resolve_tri_state", &lyra_rt_union_resolve_tri_state);
+  add("lyra_rt_unpackedarray_resolve_tri_state",
+      &lyra_rt_unpackedarray_resolve_tri_state);
+  add("lyra_rt_packed_resolve_wired_and", &lyra_rt_packed_resolve_wired_and);
+  add("lyra_rt_union_resolve_wired_and", &lyra_rt_union_resolve_wired_and);
+  add("lyra_rt_unpackedarray_resolve_wired_and",
+      &lyra_rt_unpackedarray_resolve_wired_and);
+  add("lyra_rt_packed_resolve_wired_or", &lyra_rt_packed_resolve_wired_or);
+  add("lyra_rt_union_resolve_wired_or", &lyra_rt_union_resolve_wired_or);
+  add("lyra_rt_unpackedarray_resolve_wired_or",
+      &lyra_rt_unpackedarray_resolve_wired_or);
+  add("lyra_rt_packed_dominating", &lyra_rt_packed_dominating);
+  add("lyra_rt_union_dominating", &lyra_rt_union_dominating);
+  add("lyra_rt_unpackedarray_dominating", &lyra_rt_unpackedarray_dominating);
+  add("lyra_rt_packed_filled_like", &lyra_rt_packed_filled_like);
+  add("lyra_rt_union_filled_like", &lyra_rt_union_filled_like);
+  add("lyra_rt_unpackedarray_filled_like", &lyra_rt_unpackedarray_filled_like);
+}
+
 // What the runtime library publishes, each entry at the shape its own
 // definition states. The entries are also the answer to what this backend can
 // carry out: an entry's name composes a value domain with an operation, and the
@@ -1411,6 +1488,7 @@ auto PublishedEntries() -> const std::map<std::string, AbiSignature>& {
     BindEngineEntries(add);
     BindValueEntries(add);
     BindWriteEntries(add);
+    BindMemberOperationEntries(add);
     return listed;
   }();
   return published;

@@ -79,6 +79,14 @@ auto RenderUnitCallables(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
     -> UnitText;
 
+// The structs the unit declares, each the C++ type every unit naming it spells
+// it as, with its methods as members. Each goes into the unit's types header,
+// which a unit naming it includes, and every method is defined once, in the
+// code file.
+auto RenderUnitStructs(
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
+    -> UnitText;
+
 // The unit's package variables (LRM 26.2): declared in the header, so other
 // units can name them, and defined once in the code file.
 auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText;

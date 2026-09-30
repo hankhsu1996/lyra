@@ -42,24 +42,27 @@ struct AutomaticVarBinding {
 };
 
 // LRM 6.21: an automatic local a detached fork branch borrows and can
-// outlive is lifted into a shared activation object. Its reads / writes
-// reach a field of that object through a shared-pointer handle; a branch
-// captures the handle by value to keep the activation alive across the
-// declaring frame's return.
+// outlive is lifted into a cell of its own, held by a shared pointer. Its
+// reads and writes reach the cell through the pointer; a branch captures the
+// pointer by value to keep the cell alive across the declaring frame's return.
 struct PromotedVarBinding {
   BindingOriginId handle_origin;
-  mir::TypeId handle_type;
-  mir::StructFieldTarget field;
-  // The field's type, the observable cell every variable a body declares is.
+  // The cell the handle holds, the observable cell every variable a body
+  // declares is.
   mir::TypeId cell_type;
 };
 
+// The place a lifetime-extended automatic is: its cell, reached through the
+// handle the body holds.
+[[nodiscard]] auto PromotedVarPlace(
+    const WalkFrame& frame, const PromotedVarBinding& binding) -> mir::Expr;
+
 // Where one HIR procedural var of this body keeps its storage: an in-frame
-// local for an automatic, a field of a shared activation object for a
+// local for an automatic, a cell behind a shared pointer for a
 // lifetime-extended automatic, or a cell that outlives every activation for a
-// static-lifetime local (LRM 6.21). Every var the body
-// reaches has exactly one of these, so a reader visits the answer rather than
-// probing one registry and falling back to another.
+// static-lifetime local (LRM 6.21). Every var
+// the body reaches has exactly one of these, so a reader visits the answer
+// rather than probing one registry and falling back to another.
 using ProceduralVarBinding =
     std::variant<AutomaticVarBinding, PromotedVarBinding, StaticVarBinding>;
 
@@ -270,10 +273,10 @@ class ProcessLowerer {
     return bindings_.Get(hir_id);
   }
 
-  // An activation scope is opened at block entry -- the scope struct and its
-  // handle are built then -- but a promoted var's binding must register in HIR
-  // id order at its declaration like any other. So block entry leaves the slot
-  // here and the declaration takes it back out, which is where the binding
+  // An activation scope is opened at block entry -- each lifted var's cell and
+  // its handle are built then -- but a promoted var's binding must register in
+  // HIR id order at its declaration like any other. So block entry leaves the
+  // slot here and the declaration takes it back out, which is where the binding
   // lands in order.
   void RecordPendingActivation(
       hir::ProceduralVarId hir_id, PromotedVarBinding binding) {
@@ -293,9 +296,6 @@ class ProcessLowerer {
     return binding;
   }
 
-  // The synthesized identifier for the callable being lowered (`"process_3"`,
-  // or a user-given name), used as a prefix for any per-callable artifact the
-  // body emits (e.g. a lifetime-extended activation scope's struct).
   // The owner class's constructor-time frame -- the base each body lowering
   // extends with its own block / bindings. Carries the outer-class context
   // (self pointer type, scope chain) so a body frame derived from it

@@ -9,12 +9,12 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <utility>
 #include <variant>
 #include <vector>
 
 #include <llvm/IR/IRBuilder.h>
 
+#include "lyra/backend/llvm/codegen_tuple.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
@@ -55,13 +55,6 @@ class CodeGenFunction {
     std::vector<llvm::Value*> args;
   };
 
-  // How a product crosses to a callee: as this target lays it out, to code
-  // this program generates, or erased, to the runtime library, which is
-  // compiled once and so holds every product in one form.
-  enum class ProductCrossing : std::uint8_t { kLaidOut, kErased };
-  [[nodiscard]] static auto ProductCrossingOf(const lir::CallTarget& target)
-      -> ProductCrossing;
-
   // The LLVM argument each of the body's parameters reads. They correspond one
   // for one, except where the body is how a scope is built: that answers to one
   // prototype for every class, so only what the construction shares with every
@@ -94,59 +87,40 @@ class CodeGenFunction {
   auto BuildInto(
       std::string_view symbol, std::vector<llvm::Value*> args, llvm::Value* out)
       -> llvm::Value*;
-  // The runtime object an owned value of `type` is. A product is not one: it
-  // is laid out in place from its components.
+  // The runtime object an owned value of `type` is. For a product that is the
+  // tuple domain the library holds one as, while its lifecycle here is the one
+  // compiled for its type.
   [[nodiscard]] auto ObjectOf(lir::TypeId type) const -> support::RuntimeObject;
   // Ends the object `value` names, where ending one has anything to do.
   void EndObject(support::RuntimeObject object, llvm::Value* value);
-  // Writes `value` into the object already at `storage`, which goes on being
-  // that object.
-  void AssignObject(
-      support::RuntimeObject object, llvm::Value* storage, llvm::Value* value);
-  // Moves the object `value` names into `out`, and ends what the move left
-  // behind: the value now lives in `out` and nowhere else.
-  void RelocateObject(
-      support::RuntimeObject object, llvm::Value* value, llvm::Value* out);
-  // The same three over an owned value of any type. A product's are its
-  // components', one by one, as clang synthesizes a record's special members
-  // from its fields'.
+  // What carries out a lifecycle step on an owned value of `type`: the step
+  // compiled for its tuple type, as clang emits a class's implicit special
+  // members, or the entry the library defines over its object.
+  auto OwnedCallee(
+      lir::TypeId type, TupleLifecycle tuple_step, RuntimeOp object_op,
+      llvm::Type* result, std::span<llvm::Value* const> args)
+      -> llvm::FunctionCallee;
+  // Ends the value `value` names, where ending one has anything to do; copies
+  // it into `out`; writes it into the value already at `storage`, which goes
+  // on being that value; and moves it into `out` and ends what the move left
+  // behind, so the value lives in `out` and nowhere else.
   void EndValue(lir::TypeId type, llvm::Value* value);
   auto CopyValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
       -> llvm::Value*;
+  void AssignValue(lir::TypeId type, llvm::Value* storage, llvm::Value* value);
   void RelocateValue(lir::TypeId type, llvm::Value* value, llvm::Value* out);
-  // Where component `index` of a product lives, given where the product does.
+  // Where component `index` of a tuple lives, given where the tuple does.
   auto ComponentAddress(
-      lir::TypeId product, llvm::Value* value, std::size_t index)
-      -> llvm::Value*;
-
-  // The runtime library is compiled once, so it holds a product as the one
-  // erased tuple every product domain entry is written over, never laid out as
-  // the product's own type is. A product crossing to it is therefore rebuilt in
-  // that form, in storage that lives until the call it is handed to returns;
-  // any other value crosses as itself.
-  auto ToRuntime(lir::TypeId type, llvm::Value* value) -> llvm::Value*;
-  // A product rebuilt erased in `out`, which the caller then owns.
-  void ToRuntimeInto(lir::TypeId product, llvm::Value* value, llvm::Value* out);
-  // A product the runtime holds in the erased form, laid out in place in `out`.
-  // `erased` is left as it was.
-  void FromRuntime(lir::TypeId type, llvm::Value* erased, llvm::Value* out);
-  // The storage a callee answering a value of `type` is handed: `out` itself,
-  // except for a product the runtime answers with, which it builds erased in
-  // storage of its own and `Received` then lays out in `out`.
-  auto ReceivingStorage(
-      ProductCrossing crossing, lir::TypeId type, llvm::Value* out)
-      -> llvm::Value*;
-  auto Received(lir::TypeId type, llvm::Value* received, llvm::Value* out)
-      -> llvm::Value*;
+      lir::TypeId tuple, llvm::Value* value, std::size_t index) -> llvm::Value*;
 
   // A value boxed into the erased representation of `domain`, in storage of
   // its own that lives until the call it is handed to returns.
   auto Box(support::ValueDomain domain, llvm::Value* value) -> llvm::Value*;
-  // Ends every object made for the call of the instruction just emitted, once
-  // that call has returned. Where the call is one a departure can leave, they
-  // are owed on both edges, so they are ended as each successor opens.
-  void EndLent();
-  void OweLentOnEntry(std::initializer_list<lir::BlockId> successors);
+  // Ends every box made for the instruction just emitted, whose one call has
+  // returned. Where that call is one a departure can leave, the boxes are owed
+  // on both edges, so they are ended as each successor opens.
+  void EndBoxes();
+  void OweBoxesOnEntry(std::initializer_list<lir::BlockId> successors);
 
   auto ResolveCall(
       const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
@@ -154,17 +128,6 @@ class CodeGenFunction {
   auto LowerCall(
       const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  // A call that ends or copies a product, which this target carries out in
-  // place because it lays the product out itself, or that ends an object whose
-  // end has nothing to do. Nothing for any other call, which is made to its
-  // callee.
-  auto LowerInPlace(
-      const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
-      -> std::optional<llvm::Value*>;
-  // A body the runtime calls receives each product erased; this lays each out
-  // in the body's own frame and binds the parameter to it.
-  void LayOutRuntimeParameters();
-  void EndLaidOutParameters();
   // Opens a landing: the pad the platform transfers to, and the target the
   // departure names, which is what the body's own test reads.
   auto LowerReceiveDeparture() -> diag::Result<llvm::Value*>;
@@ -186,9 +149,9 @@ class CodeGenFunction {
       -> llvm::Value*;
   auto LowerArray(const lir::ArrayInstr& array, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
-  auto LowerProduct(
-      const lir::ProductInstr& product, lir::TypeId result_type,
-      llvm::Value* out) -> diag::Result<llvm::Value*>;
+  auto LowerTuple(
+      const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
+      -> diag::Result<llvm::Value*>;
   auto LowerUnion(
       const lir::UnionInstr& u, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
@@ -198,8 +161,8 @@ class CodeGenFunction {
       lir::TypeId union_type, std::uint32_t index) const
       -> diag::Result<support::ValueDomain>;
   auto LowerAggregateExtract(
-      const lir::AggregateExtractInstr& extract, lir::TypeId result_type,
-      llvm::Value* out) -> diag::Result<llvm::Value*>;
+      const lir::AggregateExtractInstr& extract, llvm::Value* out)
+      -> diag::Result<llvm::Value*>;
   auto LowerAggregateUpdate(
       const lir::AggregateUpdateInstr& update, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
@@ -436,6 +399,10 @@ class CodeGenFunction {
   auto ContentsOf(
       support::ValueDomain domain, WrapperKind kind, llvm::Value* wrapper)
       -> llvm::Value*;
+  // The handle of the value the value cell at `cell` holds, which is not the
+  // cell's own address for every domain.
+  auto ValueCellContents(support::ValueDomain domain, llvm::Value* cell)
+      -> llvm::Value*;
   // Whether a type is the sequence of handles a declaration standing for
   // several objects builds. It belongs to no value domain -- what it holds are
   // objects, not values -- so an operation over one is answered by the entry
@@ -454,6 +421,13 @@ class CodeGenFunction {
   // the class.
   auto MemberStorage(llvm::Value* owner, const lir::StatedMemberRef& member)
       -> diag::Result<llvm::Value*>;
+  // What a member place names, given the slot its step reached and the type of
+  // the value it holds: the slot, except where the slot holds a value whose
+  // handle is not the object holding it -- a product kept inline, whose value
+  // is the bytes that object keeps.
+  auto InlineValueHandle(
+      const lir::StatedMemberRef& member, lir::TypeId value, llvm::Value* slot)
+      -> llvm::Value*;
 
   [[nodiscard]] auto ReachedType(
       const lir::Place& place, std::ptrdiff_t index) const -> lir::TypeId;
@@ -470,28 +444,11 @@ class CodeGenFunction {
   // Where frame storage is allocated: the end of the code the body opens with,
   // ahead of its first statement.
   llvm::Instruction* frame_storage_point_ = nullptr;
-  // What a call hands the runtime for one instruction that it ends once the
-  // call returns: boxes, and products rebuilt erased.
-  struct Lent {
-    support::RuntimeObject object;
-    llvm::Value* value = nullptr;
-  };
-  // A product a call a departure can leave answers erased, laid out once the
-  // call has returned, which is where its successor on that edge opens.
-  struct Receipt {
-    lir::TypeId type;
-    llvm::Value* received = nullptr;
-    llvm::Value* out = nullptr;
-  };
-  struct OwedOnEntry {
-    std::vector<Lent> lent;
-    std::vector<Receipt> receipts;
-  };
-  std::vector<Lent> lent_;
-  std::unordered_map<llvm::BasicBlock*, OwedOnEntry> owed_on_entry_;
-  // A body the runtime calls is handed a product erased, and lays it out in
-  // its own frame where it opens; what it laid out is ended on every way out.
-  std::vector<std::pair<lir::TypeId, llvm::Value*>> laid_out_parameters_;
+  // The boxes made for the call being emitted, and the boxes a call a
+  // departure can leave owes each of its successors as it opens.
+  std::vector<llvm::Value*> boxes_;
+  std::unordered_map<llvm::BasicBlock*, std::vector<llvm::Value*>>
+      owed_on_entry_;
   // A coroutine body's ramp state: the coroutine identity (which names the
   // frame to release) and its handle, plus the blocks every suspension and
   // return funnels through. The frame's layout and the resume state machine are

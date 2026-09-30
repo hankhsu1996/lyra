@@ -218,16 +218,15 @@ auto BuildDefaultValueExpr(
   // deterministic fallback is that same first member, so one build answers
   // both. Synthesized at each use rather than stored on the interned type, so
   // two source declarations with the same component types share one type.
-  const auto first_member_default =
-      [&](std::span<const mir::TypeId> members) -> mir::Expr {
+  const auto first_member_default = [&](mir::TypeId first) -> mir::Expr {
     constexpr base::ComponentIndex kFirstMember{0};
     return mir::MakeActiveMemberExpr(
-        block.exprs.Add(
-            BuildDefaultValueExpr(unit, block, members[kFirstMember.value])),
+        block.exprs.Add(BuildDefaultValueExpr(unit, block, first)),
         kFirstMember, type);
   };
-  const auto product_default =
-      [&](std::span<const mir::TypeId> components) -> mir::Expr {
+  const auto component_wise =
+      [&](std::span<const mir::TypeId> view) -> mir::Expr {
+    const std::vector<mir::TypeId> components(view.begin(), view.end());
     std::vector<mir::ExprId> parts;
     parts.reserve(components.size());
     for (const mir::TypeId component : components) {
@@ -256,20 +255,12 @@ auto BuildDefaultValueExpr(
             return block.exprs.Get(BuildIntegralLiteral(
                 unit, block, type, DefaultIntegralConstant(pa)));
           },
-          // An enumeration and a packed aggregate default as the vector they
-          // are: LRM Table 6-7 reads the default off the state domain, which
-          // the base carries and the names do not affect.
+          // An enumeration defaults as the vector it is: LRM Table 6-7 reads
+          // the default off the state domain, which the base carries and the
+          // names do not affect.
           [&](const mir::EnumType& e) -> mir::Expr {
             return block.exprs.Get(BuildIntegralLiteral(
                 unit, block, type, DefaultIntegralConstant(e.base)));
-          },
-          [&](const mir::PackedStructType& s) -> mir::Expr {
-            return block.exprs.Get(BuildIntegralLiteral(
-                unit, block, type, DefaultIntegralConstant(s.base)));
-          },
-          [&](const mir::PackedUnionType& u) -> mir::Expr {
-            return block.exprs.Get(BuildIntegralLiteral(
-                unit, block, type, DefaultIntegralConstant(u.base)));
           },
           [&](const mir::StringType&) -> mir::Expr {
             // Software string literal -> `value::String("")` via the
@@ -288,9 +279,6 @@ auto BuildDefaultValueExpr(
             return block.exprs.Get(BuildRealLiteral(unit, block, type, 0.0));
           },
           [&](const mir::ShortRealType&) -> mir::Expr {
-            return block.exprs.Get(BuildRealLiteral(unit, block, type, 0.0));
-          },
-          [&](const mir::RealTimeType&) -> mir::Expr {
             return block.exprs.Get(BuildRealLiteral(unit, block, type, 0.0));
           },
           // LRM Table 7-1: a fixed unpacked array defaults to every element at
@@ -313,16 +301,16 @@ auto BuildDefaultValueExpr(
           // initializer (LRM 7.2.2) takes precedence over it and is a value the
           // source states, not part of what the type is.
           [&](const mir::TupleType& t) -> mir::Expr {
-            return product_default(t.elements);
+            return component_wise(t.elements);
           },
-          [&](const mir::UnpackedStructType& s) -> mir::Expr {
-            return product_default(mir::MemberTypes(s.members));
+          [&](const mir::StructType& s) -> mir::Expr {
+            return component_wise(mir::StructElements(unit, s));
           },
           [&](const mir::UnionType& u) -> mir::Expr {
-            return first_member_default(mir::MemberTypes(u.members));
+            return first_member_default(u.members.front());
           },
           [&](const mir::TaggedUnionType& u) -> mir::Expr {
-            return first_member_default(mir::MemberTypes(u.members));
+            return first_member_default(u.members.front());
           },
           [&](const mir::DynamicArrayType& da) -> mir::Expr {
             return BuildDynamicArrayDefault(
@@ -476,16 +464,13 @@ auto BuildDefaultValueExpr(
           },
 
           // Code, and the storage a body reaches through rather than holds: a
-          // suspending body's frame, a closure's, the scope a lowering gathers
-          // for one, and a reference bound to a cell that already exists.
+          // suspending body's frame, a closure's, and a reference bound to a
+          // cell that already exists.
           [&](const mir::CoroutineType&) -> mir::Expr {
             return holds_no_declared_value("a suspending body");
           },
           [&](const mir::ClosureType&) -> mir::Expr {
             return holds_no_declared_value("a closure");
-          },
-          [&](const mir::StructType&) -> mir::Expr {
-            return holds_no_declared_value("a gathered scope");
           },
           [&](const mir::RefType&) -> mir::Expr {
             return holds_no_declared_value("a reference to a cell");

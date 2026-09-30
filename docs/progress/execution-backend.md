@@ -113,17 +113,15 @@ ownership, or native in-frame layout) for every value.
       collection supports follows from the domain rather than from the collection, so this was one
       answer and not one per container. Reading a class object out as a bit stream (LRM 6.24.3) is a
       separate operation over the object's own properties and is not carried out.
-- [x] **The unpacked struct** (LRM 7.2) -- realized on the execution backend as a product value
-      domain: a runtime-owned product that owns its components by value and crosses as an opaque
-      handle, so the generated side never inspects a component's representation. It default-
-      constructs member-wise, builds from an assignment pattern, copies with value semantics, takes
-      the equality and case-equality families, reads and writes a component (including a nested
-      product and a string component), reads its bit stream out and builds one back from a stream
-      and a prototype, lives in a member slot as a whole-cell observable signal whose partial write
-      fires subscribers, and crosses a suspension as an activation-frame value. A component write is
-      a whole-value rebuild stored back through the value's owner, so an observable partial write
-      never bypasses the cell's update semantics -- the aggregate partial-update protocol a
-      container reuses later.
+- [x] **The unpacked struct** (LRM 7.2) -- realized on the execution backend as a product the code
+      generator lays out by its type, opening with its type's table of operations, so a component
+      lies at an offset wherever the struct lies and the runtime reaches what the struct can do
+      through that table. It default-constructs member-wise, builds from an assignment pattern,
+      copies with value semantics, takes the equality and case-equality families as the methods its
+      declaration states, reads and writes a component (including a nested struct and a string
+      component), reads its bit stream out and builds one back from a stream, lives in a member slot
+      as a whole-cell observable signal whose partial write fires subscribers, and crosses a
+      suspension as an activation-frame value.
 - [x] **The dynamic array** (LRM 7.5) -- realized on the execution backend as a run-time-sized
       container value domain, the first variable-size aggregate. It defaults to empty, builds from
       `new[N]` / `new[N](src)` and an assignment pattern, copies with value semantics, takes the
@@ -284,9 +282,11 @@ The value layer is realized two ways, and the breadth work above runs against th
   (`../decisions/a-value-lives-in-its-makers-frame.md`), one type per domain, since it emits
   generated code with no host compiler to expand a template. A product -- an unpacked struct, a
   function's answer -- is laid out by the code generator the way the host compiler lays out the C++
-  backend's, with its operations compiled once per product type; the runtime holds it in that same
-  layout and calls those operations
-  (`../decisions/a-product-is-laid-out-from-its-components.md`). Containers and unions stay one
+  backend's, with its copy, move and end compiled per product type; the runtime holds it in that
+  same layout and reaches those, and the methods a structure's declaration states in MIR for its
+  whole-value operations, through the table the value carries
+  (`../decisions/a-tuple-is-laid-out-by-its-type.md`,
+  `../decisions/a-structures-operations-are-stated-in-mir.md`). Containers and unions stay one
   erased object, and a component that is storage of its own is reached where it lies.
 
 Both are correct and agree per source (the backend-agreement tests check this), but they are two

@@ -1,26 +1,22 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <tuple>
 #include <utility>
-
-#include "lyra/value/concepts.hpp"
-#include "lyra/value/format.hpp"
-#include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
 
 // A heterogeneous product value: a positional, fixed list of component value
-// types, each reached by its declaration-order index. Not any one SystemVerilog
-// construct -- it backs every product the pipeline builds: a task's output
-// pack, an associative entry's (key, value) pair, and an SV unpacked struct
-// (LRM 7.2), whose members a value reaches by position whatever its type calls
-// them, so one realization serves the named and the anonymous alike. It
-// composes the LyraValue contract from its components: member-wise equality
-// yielding a 1-bit PackedArray, bit-identity, and unknown detection. A
-// component that owns variable-size storage carries its own copy semantics, so
-// a Tuple copy is a shallow copy of its components.
+// types, each reached by its declaration-order index. It holds the components
+// and copies, moves and ends them with itself; a component that owns
+// variable-size storage carries its own copy semantics, so a Tuple copy is a
+// shallow copy of its components.
+//
+// A product a lowering composes for itself -- a task's output pack, an
+// associative entry's (key, value) pair -- is this and nothing more, since
+// nothing asks a whole-value operation of one. A structure the source declares
+// (LRM 7.2) is a type of its declaring unit built on this one, whose members
+// are the methods its declaration states for those operations.
 template <typename... Ts>
 class Tuple {
  public:
@@ -55,186 +51,8 @@ class Tuple {
     return std::get<I>(data_);
   }
 
-  // LRM 11.4.5 `==` / `!=` (Any data type). Member-wise logical AND, yielding a
-  // 1-bit PackedArray; X / Z on any member propagates through the per-member
-  // `==`.
-  [[nodiscard]] auto operator==(const Tuple& other) const -> PackedArray {
-    return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      PackedArray result = PackedArray::Bit(true);
-      ((result = result && (std::get<I>(data_) == std::get<I>(other.data_))),
-       ...);
-      return result;
-    }(std::index_sequence_for<Ts...>{});
-  }
-  [[nodiscard]] auto operator!=(const Tuple& other) const -> PackedArray {
-    return !(*this == other);
-  }
-
-  // LRM 11.4.5 `===` / `!==` (case equality): member-wise bit-for-bit identity,
-  // AND-reduced to a 1-bit PackedArray that is always a known 0 or 1. A real /
-  // shortreal leaf has no case-equality meaning and is rejected before
-  // lowering, so every component itself supplies case equality.
-  [[nodiscard]] auto CaseEqual(const Tuple& other) const -> PackedArray {
-    return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      PackedArray result = PackedArray::Bit(true);
-      ((result =
-            result && std::get<I>(data_).CaseEqual(std::get<I>(other.data_))),
-       ...);
-      return result;
-    }(std::index_sequence_for<Ts...>{});
-  }
-
-  // LRM 9.4.2 update-event predicate (engine change-detection hook): are the
-  // two values member-wise bit-identical.
-  [[nodiscard]] auto IsBitIdentical(const Tuple& other) const -> bool {
-    return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      return (
-          std::get<I>(data_).IsBitIdentical(std::get<I>(other.data_)) && ...);
-    }(std::index_sequence_for<Ts...>{});
-  }
-
-  // Net resolution applied member-wise under the fold `fold` names (LRM 6.6).
-  // LRM 6.7.1 admits an unpacked struct as a net's data type when every member
-  // is itself valid for a net, and it composes a net out of its members' bits,
-  // so folding two contributions is folding each member pair.
-  [[nodiscard]] auto ResolveNet(const Tuple& other, NetResolution fold) const
-      -> Tuple {
-    return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      return Tuple(
-          std::get<I>(data_).ResolveNet(std::get<I>(other.data_), fold)...);
-    }(std::index_sequence_for<Ts...>{});
-  }
-
-  // What a stronger contribution leaves a weaker one, member by member (LRM
-  // 28.12.1).
-  [[nodiscard]] auto Dominating(const Tuple& weaker) const -> Tuple {
-    return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      return Tuple(std::get<I>(data_).Dominating(std::get<I>(weaker.data_))...);
-    }(std::index_sequence_for<Ts...>{});
-  }
-
-  // `prototype`'s shape with every bit set to `fill`: each member filled the
-  // same way (LRM 6.7.1). Only the prototype's shape is read.
-  [[nodiscard]] static auto FilledLike(
-      const Tuple& prototype, const PackedArray& fill) -> Tuple {
-    return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      return Tuple(Ts::FilledLike(std::get<I>(prototype.data_), fill)...);
-    }(std::index_sequence_for<Ts...>{});
-  }
-
-  // LRM 20.6.2 `$bits`: a product occupies the sum of its members' bit counts.
-  // A member that is itself dynamically sized contributes its current width.
-  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
-    return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      PackedArray total = PackedArray::Int(0);
-      ((total = total + std::get<I>(data_).BitstreamWidth()), ...);
-      return total;
-    }(std::index_sequence_for<Ts...>{});
-  }
-
-  // LRM 20.9 `$countbits`: the bit stream this value contributes is its
-  // elements' streams laid end to end, so the count over it is the sum of the
-  // elements' own counts under the same control bits.
-  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
-      -> PackedArray {
-    return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      PackedArray total = PackedArray::Int(0);
-      ((total = total + std::get<I>(data_).CountBits(control_bits)), ...);
-      return total;
-    }(std::index_sequence_for<Ts...>{});
-  }
-
-  // LRM 6.24.3: the members' own streams laid end to end, the first member
-  // most significant. A product of no components contributes no bits, and a
-  // sequence of no bits is not a value this representation has, so the
-  // conversion is declared only where there are components -- the same reason
-  // the component-taking constructor is.
-  [[nodiscard]] auto ToBitstream() const -> PackedArray
-    requires(sizeof...(Ts) > 0)
-  {
-    PackedArray stream = std::get<0>(data_).ToBitstream();
-    [&]<std::size_t... I>(std::index_sequence<I...>) {
-      ((stream = stream.Concat(std::get<I + 1>(data_).ToBitstream())), ...);
-    }(std::make_index_sequence<sizeof...(Ts) - 1>{});
-    return stream;
-  }
-
-  // The inverse, each member taking its own width off the front of what is
-  // left (LRM 11.4.14.3) and reading it back at the shape the prototype's
-  // corresponding member has.
-  [[nodiscard]] static auto FromBitstream(
-      const PackedArray& bits, const Tuple& prototype) -> Tuple
-    requires(sizeof...(Ts) > 0)
-  {
-    Tuple result = prototype;
-    std::uint64_t consumed = 0;
-    [&]<std::size_t... I>(std::index_sequence<I...>) {
-      ((result.template ComponentRef<I>() =
-            TakeMember<I>(bits, consumed, prototype)),
-       ...);
-    }(std::index_sequence_for<Ts...>{});
-    return result;
-  }
-
-  // LRM 20.9 `$isunknown`: any member carrying an X / Z bit propagates up.
-  [[nodiscard]] auto HasUnknown() const -> bool {
-    return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      return (std::get<I>(data_).HasUnknown() || ...);
-    }(std::index_sequence_for<Ts...>{});
-  }
-
-  [[nodiscard]] auto IsUnknown() const -> PackedArray {
-    return PackedArray::Bit(HasUnknown());
-  }
-
-  // LRM Table 7-1 unpacked-struct default: member-wise reset, each component to
-  // its own Table 6-7 default. In-place rather than reconstruct, so a container
-  // can scrub a reused discard slot to canonical before handing out a
-  // reference.
-  auto ResetToDefault() -> void {
-    [&]<std::size_t... I>(std::index_sequence<I...>) {
-      (std::get<I>(data_).ResetToDefault(), ...);
-    }(std::index_sequence_for<Ts...>{});
-  }
-
  private:
-  // Member `I` read off the stream and the cursor advanced past it, so the
-  // fold that rebuilds a product states the order once and the offset nowhere.
-  template <std::size_t I>
-  [[nodiscard]] static auto TakeMember(
-      const PackedArray& bits, std::uint64_t& consumed, const Tuple& prototype)
-      -> std::tuple_element_t<I, std::tuple<Ts...>> {
-    using Member = std::tuple_element_t<I, std::tuple<Ts...>>;
-    const auto& member_prototype = std::get<I>(prototype.data_);
-    const auto width =
-        static_cast<std::uint64_t>(member_prototype.BitstreamWidth().ToInt64());
-    Member member = Member::FromBitstream(
-        BitstreamSegment(bits, consumed, width), member_prototype);
-    consumed += width;
-    return member;
-  }
-
   std::tuple<Ts...> data_;
 };
-
-// Every arity is a product, so the contract is asserted at none, one, and many
-// components rather than only at the shape that happens to be common.
-static_assert(LyraValue<Tuple<>>);
-static_assert(CaseEqualComparable<Tuple<>>);
-static_assert(BitstreamSizable<Tuple<>>);
-static_assert(Defaultable<Tuple<>>);
-
-static_assert(LyraValue<Tuple<PackedArray>>);
-static_assert(CaseEqualComparable<Tuple<PackedArray>>);
-static_assert(BitstreamSizable<Tuple<PackedArray>>);
-static_assert(BitstreamConvertible<Tuple<PackedArray>>);
-static_assert(Defaultable<Tuple<PackedArray>>);
-
-static_assert(LyraValue<Tuple<PackedArray, PackedArray>>);
-static_assert(CaseEqualComparable<Tuple<PackedArray, PackedArray>>);
-static_assert(BitstreamSizable<Tuple<PackedArray, PackedArray>>);
-static_assert(BitstreamConvertible<Tuple<PackedArray, PackedArray>>);
-static_assert(Defaultable<Tuple<PackedArray, PackedArray>>);
-static_assert(NetResolvable<Tuple<PackedArray, PackedArray>>);
 
 }  // namespace lyra::value

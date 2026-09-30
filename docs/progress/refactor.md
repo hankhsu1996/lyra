@@ -648,13 +648,12 @@ enough to warrant its own focused review.
       spine. The design round this entry once held is resolved: the contract is
       `../architecture/compiler_generated_storage.md` and the trade-offs are
       `../decisions/closure-environment-and-activation-frame.md`. The resolution: a closure and a
-      promoted scope are two distinct nominal categories sharing only the field substrate -- the
-      closure is an anonymous concrete callable value (`ClosureType`: capture fields plus one invoke
-      body), the promoted scope a named aggregate reached through `Shared<>` (`StructType`: fields,
-      no invoke); the callable value additionally has an erased `Callable<Sig>` level reached
-      through an explicit erasure, introduced only with a heterogeneous consumer. Neither category
-      is a `mir::Class` -- `mir::Class` stays the one object IR, and the frame is a plain
-      `StructType`, not a `mir::Class` specialization. The value/reference spine is the top split --
+      lifted local are two distinct categories -- the closure is an anonymous concrete callable
+      value (`ClosureType`: capture fields plus one invoke body), a lifted local its own cell
+      reached through `Shared<>`; the callable value additionally has an erased `Callable<Sig>`
+      level reached through an explicit erasure, introduced only with a heterogeneous consumer.
+      Neither category is a `mir::Class` -- `mir::Class` stays the one object IR, and the frame is a
+      plain struct, not a `mir::Class` specialization. The value/reference spine is the top split --
       a single root over value records and reference storage is explicitly not built. Staged cuts,
       each its own review:
   - [x] R52a -- First-class callable value type. A closure's MIR type stops being its call result
@@ -697,26 +696,28 @@ enough to warrant its own focused review.
         renamed from member to field -- done here because only now are all three field-bearing
         categories concrete, so the abstraction is validated rather than imagined. A scope struct is
         reached by the one name its identity carries in the unit, and a backend emits the unit's
-        structs by iterating its registry.
+        structs by iterating its registry. The scope struct later lost its fields and then went
+        away: each lifted local is now its own cell held through `Shared<>`, which shares only
+        `CallableCode` with the closure.
 
   - [ ] R52d -- Generalize the HIR-to-MIR capture / lifetime policy -- gated on a new escaping
         construct, not doable now. The three capture forms (snapshot value, live-place alias
-        `Ref<T>`, retained frame `Shared<StructType>` plus a slot projection) are already chosen per
-        site from its source semantics, and no generic "deferred means snapshot" default exists: a
-        fork-detached branch snapshots its own block-item locals and retains an escaping enclosing
-        automatic through a promoted shared scope (LRM 6.21); a postponed `$strobe` aliases its live
-        cells and reads them at postponed fire (LRM 21.2); a non-blocking assignment snapshots its
-        right-hand value at submit (LRM 10.4.2). The one fork-shaped part is the escape / promotion
-        trigger -- which automatic must be retained -- and that is correct for every construct
-        lowered today: a fork-detached branch is the only legal capture that both aliases an
-        enclosing automatic and can outlive its owner scope. The frontend rejects an automatic in a
-        traced (`$strobe` / `$monitor`) context; a non-blocking assignment snapshots rather than
-        aliases; a suspended coroutine keeps its own frame; assertions are not yet lowered.
-        Generalizing the trigger beyond fork is therefore gated on a new legal construct that both
-        aliases an automatic and outlives its owner scope (a coroutine-based process handle, a DPI
-        callback, a class-held process) -- introduced with that construct, never ahead of one. Keep:
-        capture form carried by field type, whole-scope promotion, per-site lowering, and
-        copy-before-escape for snapshots.
+        `Ref<T>`, retained cell `Shared<cell>`) are already chosen per site from its source
+        semantics, and no generic "deferred means snapshot" default exists: a fork-detached branch
+        snapshots its own block-item locals and retains an escaping enclosing automatic through its
+        shared cell (LRM 6.21); a postponed `$strobe` aliases its live cells and reads them at
+        postponed fire (LRM 21.2); a non-blocking assignment snapshots its right-hand value at
+        submit (LRM 10.4.2). The one fork-shaped part is the escape / promotion trigger -- which
+        automatic must be retained -- and that is correct for every construct lowered today: a
+        fork-detached branch is the only legal capture that both aliases an enclosing automatic and
+        can outlive its owner scope. The frontend rejects an automatic in a traced (`$strobe` /
+        `$monitor`) context; a non-blocking assignment snapshots rather than aliases; a suspended
+        coroutine keeps its own frame; assertions are not yet lowered. Generalizing the trigger
+        beyond fork is therefore gated on a new legal construct that both aliases an automatic and
+        outlives its owner scope (a coroutine-based process handle, a DPI callback, a class-held
+        process) -- introduced with that construct, never ahead of one. Keep: capture form carried
+        by field type, whole-scope promotion, per-site lowering, and copy-before-escape for
+        snapshots.
 
     **Interacts with**: R47 (object model), R51 (a class with a body), R8 (callable model).
 
@@ -1649,12 +1650,13 @@ enough to warrant its own focused review.
       What it costs is memory held longer than the language requires, which grows with the number of
       declarations in a body rather than with anything a program does.
 
-      That last clause is too kind, and the hold on a promoted scope is the counter-example. It is
+      That last clause is too kind, and the hold on a lifted local is the counter-example. It is
       taken where the block is entered rather than where the body starts, so a body that enters such
       a block in a loop takes one hold per iteration and lets go of none until the whole execution
       ends -- growth in what the program does, not in what it declares. Measured at 685 bytes per
       entry over 200000 iterations, beside a baseline that already retains an order of magnitude
-      more per iteration for other reasons.
+      more per iteration for other reasons -- on the hold the runtime made before each lifted local
+      became its own cell held by a counted pointer, and not measured since.
 
       And that one is worse than a cost, because dropping the hold where its scope ends is half of
       what the shared wrapper the semantic layer names already means, not a target's spelling of it.
@@ -1744,23 +1746,14 @@ enough to warrant its own focused review.
       which the error policy does not allow.
 
       Target: settle what an initializer runs inside, then either give it one or refuse the program
-      where it is accepted. Not blocked. Found while probing where a promoted scope's storage
-      belongs when the body holding it cannot suspend.
+      where it is accepted. Not blocked. Found while probing where a lifted local's storage belongs
+      when the body holding it cannot suspend.
 
-- [ ] R109 -- The runtime type holding a block of storage over a definition is named for one of the
-      two lifetimes that use it. It is what a class object's properties live in and what a block
-      promoted out of its frame lives in, and those are the two regimes this project is most careful
-      to keep apart: one ends by reachability, the other with the last hold on it. Nothing is wrong
-      with one type serving both -- the operation reaching a member of one is identical, and giving
-      each its own would be two entries differing only in a cast -- but the name states a regime
-      rather than what the type is, so reading it tells a reader the wrong thing about half of what
-      it holds.
-
-      Target: a name for the storage rather than for one of its owners. What makes this its own
-      change rather than a rename in passing is that the name reaches the C++ backend's emitted
-      text, so it is held by the emitted-name policy and costs a full host-compile run to move.
-
-      Not blocked. Found by widening the type's second user without being able to widen its name.
+- [x] R109 -- The runtime type holding a block of storage over a definition was named for one of the
+      two lifetimes that used it: class objects, which end by reachability, and blocks promoted out
+      of their frame, which end with the last hold. Resolved by holding each lifted local as its own
+      cell behind a counted pointer, so the type now serves class objects alone and its name states
+      what it is.
 
 - [ ] R110 -- A closed set of alternatives read by a chain of type tests is the one spelling of that
       shape nothing checks. The project settles that such a set is consumed so that gaining a member
@@ -2624,6 +2617,74 @@ enough to warrant its own focused review.
       Done: a read set names a sealed cell and the bits it reads, and only an event control's
       entry and a `wait (cond)` hold the wider leaf, of which a sealed cell is one form. The
       throwing branch went with the widening.
+
+- [ ] R152 -- On the execution backend the runtime takes every product it is handed as a copy in
+      storage of its own, even where it only reads it for the length of the call -- a whole write
+      into a structure variable, a value cell's store, a driver's contribution. That is an
+      allocation per write, where the C++ backend's `Var<Tuple<...>>::Set` reads the value where it
+      lies through a reference. A product the runtime reads by reference could be viewed in place,
+      the way a C++ reference is; what has to hold is that a view never flows into a family
+      operation that keeps its argument by value, since keeping it has to copy. Measured on a loop
+      copying a structure variable through a function and back: the copies and their frees are the
+      largest part of what remains. Not blocked.
+
+- [ ] R153 -- Where a value is copied, moved and ended is decided twice, once per backend. The
+      execution backend decides it lowering MIR to LIR, which states each copy and each end; the C++
+      backend is told nothing and takes C++'s own answer -- a copy for every by-value pass, an end
+      at every scope exit, and whatever elision C++ allows. Nothing keeps the two in step: a copy
+      one makes and the other does not costs time rather than correctness, but an end one omits is a
+      leak. The target states it once, above both, as Swift's SIL states `copy_value` /
+      `destroy_value` and Rust's MIR states moves, copies and drops (both recalled, to be read), and
+      each backend follows it. What a type's own copy and end do stays below MIR: in SystemVerilog a
+      program cannot define it, so it is member by member with no choice, as layout is.
+
+      What stands in the way is `mir.md`'s forbidden "lifecycle node family for value copy or move",
+      whose stated reason -- MIR states only what a program spells -- does not hold: MIR already
+      states closures, synthesized functions and runtime calls no program spelled. The ban bundles
+      the two questions above and gives a reason for neither, so it is re-derived as part of this
+      entry rather than obeyed. Open before a design: whether a structured, CFG-free MIR can decide a
+      last use, what of LIR's own end derivation moves up, and how the C++ backend renders a stated
+      move. Its own subject, not blocked.
+
+- [ ] R154 -- On the execution backend a container and a union hold their elements boxed, each
+      tagged with its domain, and the runtime answers every operation on the whole value -- a
+      queue's `==`, a union's copy -- itself, reaching an element's through that tag; the C++
+      backend has the host compiler instantiate the same operations per element type. The operations
+      a container carries are defined by the standard for any element type, so they are
+      parameterized the way a template's members are, and the field's answer is to instantiate them
+      per element type where they are used -- clang's pending instantiations, rustc's
+      monomorphization -- with only the part that needs no element operation, such as growing
+      storage given a size, kept prebuilt, as rustc keeps `RawVecInner` apart from `RawVec<T>`. The
+      runtime's value holders -- a cell, a net and its drivers, a pending update, a sampled history
+      -- are type constructors over any value type in the same way. Once those take per-type code, a
+      structure's value needs no table, and a union carries its declaration as a structure does (LRM
+      6.22.1), since its operations then come from the unit declaring it. Measured on the way: a
+      structure's operations cost about 9.4 ms of unoptimized build each on the execution backend.
+      Its own subject, not blocked.
+
+- [ ] R155 -- A small function the unit states in MIR comes out of the execution backend several
+      times its size: a structure's `==` over two members opens a variables frame, installs each
+      parameter into a runtime cell and reads it back before comparing, and the operations of a
+      three-member structure come to about 1,400 lines of LLVM IR. A parameter the body only reads
+      needs no cell. Not blocked.
+
+- [ ] R156 -- On the execution backend, whether ending a value has anything to do is asked in three
+      places -- where a call to end one is lowered, where a value is ended, and where a runtime
+      object is ended -- and the call that ends or copies a value picks its callee through a path of
+      its own beside the helpers that already end and copy one. The answers agree today, so nothing
+      is wrong, but a value kind added later has three questions to keep in step. Target: the call
+      lowers through the same helpers, and the question is asked once. Not blocked.
+
+- [ ] R157 -- A class declared in a module under the module's own name (legal: the module's name is
+      in the definitions name space, the class's in the module's scope, LRM 3.13) is one of two
+      classes of that unit with one name, because the class an instance of the unit is takes the
+      unit's name. On the execution backend the two definitions share a linkage symbol and the run
+      ends in `double free or corruption`; on the C++ backend the two classes are one C++ name in
+      the unit's namespace and the emitted project does not compile. Reproduced by
+      `module Test; class Test; int n = 4; endclass Test h; initial begin h = new; end endmodule`.
+      Target: the class an instance of a unit is gets an identity no declaration inside the unit can
+      take, on both backends. A struct named like its module met the same fold on the C++ backend
+      and is kept apart by the namespace its structs are declared in. Not blocked.
 
 ## Out of Scope
 

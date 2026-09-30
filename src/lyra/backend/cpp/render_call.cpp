@@ -239,6 +239,18 @@ void WriteDirectCallee(
                 ReceiverPlacement::kIntoCalleeName, CppUnitScope(t.unit_name),
                 "::", ToCppName(t.class_name), "::", ToCppName(t.method_name));
           },
+          // A struct's method, qualified by the struct the way a class method
+          // is: `v.::Pkg::sv_types::s::IsBitIdentical(w)` on the value it is
+          // asked of, `::Pkg::sv_types::s::FromBitstream(b, p)` for a question
+          // asked of the type.
+          [&](const mir::StructMethodTarget& t) {
+            callee.Named(
+                ReceiverPlacement::kIntoCalleeName,
+                CppUnitScope(t.declaration.unit_name),
+                "::", CppStructTypesNamespace(),
+                "::", ToCppName(t.declaration.name),
+                "::", CppStructMethodName(t.answers));
+          },
           // One of another unit's fixed entries: `::Pkg::sv_create`.
           [&](const mir::ExternalUnitMintedEntryTarget& t) {
             callee.Named(

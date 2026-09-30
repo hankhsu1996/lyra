@@ -233,7 +233,15 @@ auto LowerUnpackedStruct(
   auto fields_or =
       LowerUnpackedAggregateFields(struct_type.fields, decl_span, unit_lowerer);
   if (!fields_or) return std::unexpected(std::move(fields_or.error()));
-  return hir::UnpackedStructType{.fields = *std::move(fields_or)};
+  return hir::UnpackedStructType{
+      .declaration =
+          hir::TypeDeclarationRef{
+              .unit_name = CompilationUnitName(
+                  DeclaringCompilationUnit(struct_type),
+                  unit_lowerer.Specialization()),
+              .name = TypeDeclarationName(
+                  struct_type, unit_lowerer.Specialization())},
+      .fields = *std::move(fields_or)};
 }
 
 auto LowerUnpackedUnion(

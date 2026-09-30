@@ -71,10 +71,6 @@ struct NamedField {
 // relation for the opposite reason -- it also holds the cells its bodies keep
 // -- and putting one here would oblige every consumer to handle an absence that
 // cannot arise.
-//
-// Not `AggregateMember`, which carries the same two fields for a different
-// reason: there the name is content of a declared type, printed by LRM
-// 21.2.1.6, and it travels with the type into the runtime.
 struct PromisedField {
   std::string name;
   TypeId type;

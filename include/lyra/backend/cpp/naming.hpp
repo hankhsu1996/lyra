@@ -23,8 +23,10 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/static_constant_id.hpp"
-#include "lyra/mir/struct_id.hpp"
+#include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type_descriptor_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -234,11 +236,21 @@ void WriteOne(TargetText& out, UnitScope scope);
 }
 
 // `Top.opening.hpp`: forward declarations, and the cells and functions the
-// unit's namespace declares. It includes nothing of the program, so any class
-// file, of this unit or another, can include it first.
+// unit's namespace declares. Of the program it includes only the unit's types
+// file, so any class file, of this unit or another, can include it first.
 [[nodiscard]] inline auto UnitOpeningFileOf(std::string_view unit_name)
     -> std::string {
   return TextOf(ToCppName(unit_name), ".opening.hpp");
+}
+
+// `Top.types.hpp`: the structs the unit declares under a name, which a value of
+// one needs complete wherever it is held. It includes the types files of every
+// unit whose namespace this one consumes, which covers every unit a struct here
+// is built from; those files form no cycle, because a struct can only be built
+// from one declared before it (LRM 6.22).
+[[nodiscard]] inline auto UnitTypesFileOf(std::string_view unit_name)
+    -> std::string {
+  return TextOf(ToCppName(unit_name), ".types.hpp");
 }
 
 // `Top.Base.hpp`: one class another unit may name, alone in its file. It
@@ -385,15 +397,21 @@ void WriteOne(TargetText& out, UnitScope scope);
   return MintedCppName("scope", id.value);
 }
 
-// The names of a struct the compiler made to hold a scope's variables, and of
-// its fields. The source names neither, so both are positions:
-// `sv_scope_storage_<n>` and `sv_field_<slot>`.
-[[nodiscard]] inline auto CppStructName(mir::StructId id) -> MintedName {
-  return MintedCppName("scope_storage", id.value);
+// The name of a struct this unit declares: its declared name, which is what
+// every other unit writes after the unit's types namespace below.
+[[nodiscard]] inline auto CppStructName(const mir::StructDecl& decl)
+    -> CppName {
+  return ToCppName(decl.name);
 }
 
-[[nodiscard]] inline auto CppStructFieldName(mir::FieldId slot) -> MintedName {
-  return CppFieldNameOf(slot, std::nullopt);
+// The namespace inside a unit's own that the structs the source declares are
+// declared in, `sv_types`. A struct takes its name from the type names of the
+// scope declaring it, and the unit's namespace also holds the class an instance
+// of the unit is, which takes the unit's name from the name space of design
+// elements (LRM 3.13); keeping the two apart is what lets a module declare a
+// struct under its own name.
+[[nodiscard]] inline auto CppStructTypesNamespace() -> MintedWord {
+  return MintedWord{.word = "types"};
 }
 
 // The name of a closure's type, `sv_closure_<n>`: a position in the unit's
@@ -436,6 +454,51 @@ void WriteOne(TargetText& out, UnitScope scope);
 [[nodiscard]] inline auto CppIntegralConstantName(mir::IntegralConstantId c)
     -> MintedName {
   return MintedCppName("const", c.value);
+}
+
+// The name a struct gives the library product it is built on, `sv_base`,
+// through which it takes that product's constructors as its own. A member of
+// the struct, so no source name reaches it.
+[[nodiscard]] inline auto CppTupleBaseName() -> MintedWord {
+  return MintedWord{.word = "base"};
+}
+
+// The member a struct answers an operation on its whole value with: the
+// operator, or the identifier the library's entry for the question declares on
+// every value, so the library's own code asking a value of the struct finds it
+// by the name it asks every value by.
+[[nodiscard]] inline auto CppStructMethodName(support::ValueOperation operation)
+    -> VerbatimName {
+  return std::visit(
+      Overloaded{
+          [](support::ValueOperator op) -> VerbatimName {
+            switch (op) {
+              case support::ValueOperator::kEquality:
+                return VerbatimName{.text = "operator=="};
+              case support::ValueOperator::kInequality:
+                return VerbatimName{.text = "operator!="};
+            }
+            throw InternalError("backend::cpp: unknown value operator");
+          },
+          [](support::BuiltinFn fn) -> VerbatimName {
+            return std::visit(
+                Overloaded{
+                    [](const support::Method& m) -> VerbatimName {
+                      return VerbatimName{.text = m.identifier};
+                    },
+                    [](const support::StaticFactory& f) -> VerbatimName {
+                      return VerbatimName{.text = f.identifier};
+                    },
+                    [](const support::FreeFunction&) -> VerbatimName {
+                      throw InternalError(
+                          "backend::cpp: a struct answers a question the "
+                          "library asks of a value or of its type, and this "
+                          "entry is declared on neither -- please report this "
+                          "as a bug");
+                    }},
+                support::RuntimeEntryOf(fn).declaration);
+          }},
+      operation);
 }
 
 // The names of a class's runtime callbacks and its static constants,

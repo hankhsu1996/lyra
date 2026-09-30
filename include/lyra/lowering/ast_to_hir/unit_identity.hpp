@@ -30,6 +30,7 @@ class InstanceBodySymbol;
 class InstanceSymbol;
 class ParameterSymbol;
 class Symbol;
+class Type;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -251,6 +252,16 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
 // producer and every consumer compute this from the same slang unit symbol.
 auto CompilationUnitName(
     const slang::ast::Symbol& unit, const SpecializationPolicy& policy)
+    -> std::string;
+
+// The name a type declaration has inside the unit declaring it, for a type
+// SystemVerilog identifies by its declaration (LRM 6.22.1): the scopes between
+// the unit and the declaration, then what the declaration answers to there.
+// Together with the declaring unit's name it identifies the type from anywhere,
+// and the unit declaring it and every unit naming it compute it alike from the
+// same frontend symbol.
+auto TypeDeclarationName(
+    const slang::ast::Type& type, const SpecializationPolicy& policy)
     -> std::string;
 
 }  // namespace lyra::lowering::ast_to_hir

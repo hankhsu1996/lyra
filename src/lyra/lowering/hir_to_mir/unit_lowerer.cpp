@@ -517,8 +517,18 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   type_translations_ =
       base::Translation<hir::TypeId, mir::TypeId>{hir_->types.size()};
   for (const hir::TypeId hir_id : hir_->types.Ids()) {
-    type_translations_.Append(
-        unit_.types.Intern(TranslateType(hir_->types.Get(hir_id))));
+    const hir::Type& type = hir_->types.Get(hir_id);
+    const mir::TypeId translated = unit_.types.Intern(TranslateType(type));
+    type_translations_.Append(translated);
+    // A struct this unit declares took an identity with no declaration yet,
+    // which its type now names.
+    const auto* structure = unit_.types.Get(translated).As<mir::StructType>();
+    if (structure == nullptr) {
+      continue;
+    }
+    if (const auto* id = std::get_if<mir::StructId>(&structure->declaration)) {
+      DefineOwnStruct(type.Get<hir::UnpackedStructType>(), *id, translated);
+    }
   }
 
   // Every promise this unit read of another unit's class, taken whole and

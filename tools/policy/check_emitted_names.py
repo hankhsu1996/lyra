@@ -58,6 +58,8 @@ MAPPERS = [
     "UnitOpeningFileOf",
     "UnitClassFileOf",
     "UnitCodeFileOf",
+    "UnitTypesFileOf",
+    "CppStructName",
     "CppClassCallableName",
     "CppExternalBehaviorName",
     "CppFieldNameOf",

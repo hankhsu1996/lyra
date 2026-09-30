@@ -407,9 +407,10 @@ struct CallInstr {
   std::vector<Operand> args;
 };
 
-// Builds a product value from its components, in declaration order. Its result
-// is the product itself; the components keep their own types.
-struct ProductInstr {
+// Builds a product value -- a tuple or a struct -- from its components, in
+// position order. Its result is the product itself; the components keep their
+// own types.
+struct TupleInstr {
   std::vector<Operand> components;
 };
 
@@ -543,7 +544,7 @@ struct ElementProjection {
 };
 
 // Selects one component of whatever product the projection has reached, by its
-// declaration-order position. A component is storage of its own (LRM 7.2).
+// position. A component is storage of its own (LRM 7.2).
 struct ComponentProjection {
   base::ComponentIndex index;
 };
@@ -623,7 +624,7 @@ struct CastInstr {
 struct ReceiveDepartureInstr {};
 
 using InstrData = std::variant<
-    CallInstr, ProductInstr, ArrayInstr, UnionInstr, AggregateExtractInstr,
+    CallInstr, TupleInstr, ArrayInstr, UnionInstr, AggregateExtractInstr,
     AggregateUpdateInstr, TagTestInstr, LoadInstr, StoreInstr, AddrOfInstr,
     BinaryInstr, UnaryInstr, CastInstr, ReceiveDepartureInstr>;
 

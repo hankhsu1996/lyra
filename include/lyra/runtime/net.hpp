@@ -606,8 +606,8 @@ auto PhysicalNet<T>::Resolve() const -> T {
     for (const auto& placement : placements_) {
       for (const auto& driver : placement.net->contributions_) {
         if (driver.strength == at) {
-          group =
-              group.ResolveNet(FromPlacement(driver.value, placement), fold_);
+          group = value::ResolvedUnder(
+              fold_, group, FromPlacement(driver.value, placement));
         }
       }
     }

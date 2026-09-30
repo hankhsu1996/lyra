@@ -24,6 +24,7 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -334,7 +335,8 @@ class UnitLowerer {
       -> mir::ExternalUnitObject;
 
   // Publishes everything the unit declares before any root-scope body lowers:
-  // every class identity and body, every interned type, this unit's record of
+  // every class identity and body, every interned type and the functions each
+  // structure type answers a whole-value operation with, this unit's record of
   // each object it reaches in another unit, and the prototype of every foreign
   // symbol the unit takes part in. Shared prologue of every unit
   // kind -- a module and a package own the same declaration kinds; they differ
@@ -351,6 +353,20 @@ class UnitLowerer {
   void PublishAssignmentPatternTexts();
 
   [[nodiscard]] auto TranslateType(const hir::Type& type) -> mir::Type;
+
+  // The struct type naming `src`. A struct this unit declares takes its
+  // identity here and its declaration once its type is interned, since a
+  // method names the type of the value it is asked of; one another unit
+  // declares is named by that declaration, and holding a value of it depends
+  // on that unit.
+  [[nodiscard]] auto TranslateStructType(const hir::UnpackedStructType& src)
+      -> mir::StructType;
+
+  // Settles the declaration `id` of a struct this unit declares, over values of
+  // the interned type `structure` naming it.
+  void DefineOwnStruct(
+      const hir::UnpackedStructType& src, mir::StructId id,
+      mir::TypeId structure);
 
   const hir::CompilationUnit* hir_;
   const diag::SourceManager* source_manager_;

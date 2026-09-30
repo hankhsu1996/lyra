@@ -31,9 +31,9 @@ out the way clang carries it out.**
 - **The caller's storage is a slot in its own frame, sized from the runtime object the value is.**
   Every value domain realizes one runtime type whatever source type it stands for, so a value's size
   and alignment are known per domain, stated once beside the domains, and asserted against the
-  runtime's own types. A product's are its components', laid out as a record
-  ([a-product-is-laid-out-from-its-components](a-product-is-laid-out-from-its-components.md)). The
-  slot is allocated where the body opens, so a loop reuses it.
+  runtime's own types. A tuple's are its type's
+  ([a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md)). The slot is allocated
+  where the body opens, so a loop reuses it.
 - **A value's end is stated below MIR, at the end of the full-expression that made it** -- an
   expression statement, a condition, a loop step, a declaration's initializer, a return -- and on
   every edge that leaves the extent early, a departure included. It is the cleanup stack a C++

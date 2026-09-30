@@ -37,6 +37,14 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+auto PromotedVarPlace(const WalkFrame& frame, const PromotedVarBinding& binding)
+    -> mir::Expr {
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId handle = block.exprs.Add(frame.bindings->MakeReadExpr(
+      frame.bindings->EnsureCarrier(binding.handle_origin), block));
+  return mir::MakeDerefExpr(handle, binding.cell_type);
+}
+
 auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
     -> diag::Result<mir::Stmt> {
   return std::visit(

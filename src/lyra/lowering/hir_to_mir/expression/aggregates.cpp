@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -282,7 +283,7 @@ auto LowerHirAssignmentPatternExpr(
         BuildElementDefault(lowerer.Owner(), block, hir_result_type),
         std::move(element_ids));
   }
-  if (result_ty.IsProduct()) {
+  if (mir::ProductElements(unit, result_type).has_value()) {
     return mir::Expr{
         .data = mir::CompositeExpr{.parts = std::move(element_ids)},
         .type = result_type};
@@ -431,14 +432,14 @@ auto LowerHirAssignmentPatternReplicationExpr(
     item_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const auto& result_ty = unit.types.Get(result_type);
 
   // A structure's members differ in type, so there is no repeat for the target
   // to carry out: the items land in member positions here, and how many
   // positions there are is what the structure's own type says (LRM 10.9). The
   // multiplier states the same number the type does, so nothing reads it.
-  if (result_ty.IsProduct()) {
-    const std::size_t position_count = result_ty.ProductComponentTypes().size();
+  if (const std::optional<std::span<const mir::TypeId>> parts =
+          mir::ProductElements(unit, result_type)) {
+    const std::size_t position_count = parts->size();
     std::vector<mir::ExprId> components;
     components.reserve(position_count);
     for (std::size_t i = 0; i < position_count; ++i) {
@@ -454,20 +455,23 @@ auto LowerHirAssignmentPatternReplicationExpr(
   const mir::ExprId count_value = block.exprs.Add(*std::move(count_or));
   const mir::ExprId count_id =
       block.exprs.Add(MakeToInt64Call(unit, count_value));
-  if (BuildsFromAnElementList(result_ty)) {
+  // Every type read below is read by value or where it is used: lowering the
+  // count and building the concatenation intern types, which can relocate what
+  // the pool holds.
+  if (BuildsFromAnElementList(unit.types.Get(result_type))) {
     return BuildArrayRepeatCall(
         unit, block, result_type,
         BuildElementDefault(lowerer.Owner(), block, hir_result_type),
         std::move(item_ids), count_id);
   }
   const mir::ExprId inner_id = BuildPackedConcat(unit, block, item_ids);
-  const mir::PackedArrayType& inner_pa =
-      unit.types.Get(block.exprs.Get(inner_id).type).PackedShape();
+  const mir::IntegralStateKind inner_state =
+      unit.types.Get(block.exprs.Get(inner_id).type).PackedShape().state_kind;
+  const std::uint64_t result_width =
+      unit.types.Get(result_type).PackedShape().BitWidth();
   const mir::ExprId repl_id = block.exprs.Add(BuildReplicateCall(
       inner_id, count_id,
-      mir::PackedVectorOf(
-          unit.types, result_ty.PackedShape().BitWidth(),
-          inner_pa.state_kind)));
+      mir::PackedVectorOf(unit.types, result_width, inner_state)));
   return BuildValueConversion(unit, block, repl_id, result_type);
 }
 

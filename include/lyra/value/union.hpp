@@ -8,6 +8,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/net_resolution.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -160,25 +161,18 @@ class Union {
         "their resolution has no defined value");
   }
 
-  // Net resolution over the active member under the fold `fold` names
-  // (LRM 6.6). LRM 6.7.1 admits an unpacked union as a net's data type when
-  // every member is itself valid for a net, so a union net resolves its drivers
-  // like any other when they agree on which member they drive.
-  [[nodiscard]] auto ResolveNet(const Union& other, NetResolution fold) const
-      -> Union {
-    if (data_.index() != other.data_.index()) {
-      return AcrossMembers(*this, other);
-    }
-    Union resolved;
-    [&]<std::size_t... I>(std::index_sequence<I...>) {
-      ((std::get_if<I>(&data_) == nullptr
-            ? void()
-            : void(resolved.data_.template emplace<I>(
-                  std::get_if<I>(&data_)->ResolveNet(
-                      *std::get_if<I>(&other.data_), fold)))),
-       ...);
-    }(std::index_sequence_for<Ts...>{});
-    return resolved;
+  // Net resolution over the active member under each truth table (LRM 6.6).
+  // LRM 6.7.1 admits an unpacked union as a net's data type when every member
+  // is itself valid for a net, so a union net resolves its drivers like any
+  // other when they agree on which member they drive.
+  [[nodiscard]] auto ResolveTriState(const Union& other) const -> Union {
+    return FoldedWith(other, NetResolution::kTriState);
+  }
+  [[nodiscard]] auto ResolveWiredAnd(const Union& other) const -> Union {
+    return FoldedWith(other, NetResolution::kWiredAnd);
+  }
+  [[nodiscard]] auto ResolveWiredOr(const Union& other) const -> Union {
+    return FoldedWith(other, NetResolution::kWiredOr);
   }
 
   // What a stronger contribution leaves a weaker one (LRM 28.12.1), which for
@@ -227,23 +221,49 @@ class Union {
     return PackedArray::Bit(HasUnknown());
   }
 
-  // LRM Table 7-1: an unpacked union's default is its first member's. A first
-  // member already active is reset where it lies, keeping the shape it was
-  // built with, so a container can scrub a reused discard slot in place.
-  auto ResetToDefault() -> void {
-    if (auto* first = std::get_if<0>(&data_)) {
-      first->ResetToDefault();
-      return;
-    }
-    data_.template emplace<0>();
+  // LRM 6.24.3 streams a union, which is not carried out yet; the execution
+  // backend answers a union the same way. A structure with a union member asks
+  // these only where the program measures it.
+  [[noreturn]] static auto BitstreamWidth() -> PackedArray {
+    throw SimulationError(
+        "$bits of a union is not yet supported on this backend; please open "
+        "an issue asking for support");
+  }
+  [[noreturn]] static auto ToBitstream() -> PackedArray {
+    throw SimulationError(
+        "reading this value as a stream of bits is not yet supported on this "
+        "backend; please open an issue asking for support");
+  }
+  // LRM 20.9 counts over the bit stream.
+  [[nodiscard]] static auto CountBits(const PackedArray& control_bits)
+      -> PackedArray {
+    return ToBitstream().CountBits(control_bits);
   }
 
  private:
+  // The active members of two contributions folded under one table; the three
+  // tables differ only in the member's own fold.
+  [[nodiscard]] auto FoldedWith(const Union& other, NetResolution fold) const
+      -> Union {
+    if (data_.index() != other.data_.index()) {
+      return AcrossMembers(*this, other);
+    }
+    Union resolved;
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      ((std::get_if<I>(&data_) == nullptr
+            ? void()
+            : void(resolved.data_.template emplace<I>(ResolvedUnder(
+                  fold, *std::get_if<I>(&data_),
+                  *std::get_if<I>(&other.data_))))),
+       ...);
+    }(std::index_sequence_for<Ts...>{});
+    return resolved;
+  }
+
   std::variant<Ts...> data_;
 };
 
 static_assert(LyraValue<Union<PackedArray, PackedArray>>);
-static_assert(Defaultable<Union<PackedArray, PackedArray>>);
 static_assert(CaseEqualComparable<Union<PackedArray, PackedArray>>);
 static_assert(NetResolvable<Union<PackedArray, PackedArray>>);
 

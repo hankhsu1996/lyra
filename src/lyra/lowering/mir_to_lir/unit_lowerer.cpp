@@ -15,6 +15,7 @@
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/symbol_name.hpp"
+#include "lyra/lir/type.hpp"
 #include "lyra/lowering/mir_to_lir/function_lowerer.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
@@ -22,6 +23,7 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
+#include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type_descriptor_id.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -87,6 +89,29 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     structs.push_back(out_.structs.Declare());
   }
   struct_identities_ = {mir_->structs.size(), std::move(structs)};
+
+  // What every struct is made of is settled before any body lowers, since a
+  // body reaching a component of one reads it -- a method of the struct
+  // included, which is why each method's function is only reserved here.
+  for (const mir::ExternalStruct& external : mir_->external_structs) {
+    out_.external_structs.push_back(
+        lir::ExternalStruct{
+            .declaration = TranslateDeclaration(external.declaration),
+            .elements = TranslateTypes(external.elements)});
+  }
+  for (const mir::StructId id : mir_->structs.Ids()) {
+    const mir::StructDecl& decl = mir_->GetStruct(id);
+    lir::Struct lowered{
+        .name = decl.name,
+        .elements = TranslateTypes(decl.elements),
+        .methods = {}};
+    for (const mir::StructMethod& method : decl.methods) {
+      lowered.methods.push_back(
+          lir::StructMethod{
+              .answers = method.answers, .function = out_.functions.Declare()});
+    }
+    out_.structs.Define(StructDeclaration(id), std::move(lowered));
+  }
 
   // A variable the unit's namespace owns -- a package's (LRM 26.2), a
   // `$unit` scope's (LRM 3.12.1) -- is one cell for the whole program that no
@@ -154,6 +179,25 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     out_.functions.Add(*std::move(fn));
   }
 
+  // A struct's method is a function under a symbol composed from the struct
+  // and the operation it answers, which is how every unit reaching it names it.
+  for (const mir::StructId id : mir_->structs.Ids()) {
+    const mir::StructDecl& decl = mir_->GetStruct(id);
+    const lir::Struct& lowered = out_.structs.Get(StructDeclaration(id));
+    for (std::size_t i = 0; i < decl.methods.size(); ++i) {
+      const mir::StructMethod& method = decl.methods[i];
+      auto fn =
+          FunctionLowerer(
+              *this, method.code,
+              lir::StructMethodSymbol(mir_->name, decl.name, method.answers))
+              .Run();
+      if (!fn) {
+        return std::unexpected(std::move(fn.error()));
+      }
+      out_.functions.Define(lowered.methods[i].function, *std::move(fn));
+    }
+  }
+
   for (const mir::ClassId id : mir_->classes.Ids()) {
     auto cls = LowerClass(id, mir_->GetClass(id));
     if (!cls) {
@@ -184,20 +228,6 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     }
     out_.functions.Define(closure.invoke, *std::move(fn));
     out_.closures.Define(ClosureDeclaration(id), std::move(closure));
-  }
-
-  // A struct's fields are the storage its values own. Nothing else of it
-  // lowers: it declares no body, so there is no function to reserve and none to
-  // fill in beside the declaration.
-  for (const mir::StructId id : mir_->structs.Ids()) {
-    const mir::StructDecl& decl = mir_->GetStruct(id);
-    lir::Struct record;
-    record.fields.reserve(decl.fields.size());
-    for (const mir::FieldId field : decl.fields.Ids()) {
-      record.fields.push_back(
-          lir::Member{.type = TranslateType(decl.fields.Get(field).type)});
-    }
-    out_.structs.Define(StructDeclaration(id), std::move(record));
   }
 
   // Building a value is an instruction sequence at this layer, so each value
@@ -580,11 +610,6 @@ auto UnitLowerer::ClassValueType(mir::ClassId cls) -> lir::TypeId {
   return out_.types.Intern(
       lir::Type{
           lir::ObjectType{.class_id = class_identities_.Get(cls).lir_class}});
-}
-
-auto UnitLowerer::StructValueType(mir::StructId record) -> lir::TypeId {
-  return out_.types.Intern(
-      lir::Type{lir::StructType{.struct_id = StructDeclaration(record)}});
 }
 
 auto UnitLowerer::ExternalClassValueType(

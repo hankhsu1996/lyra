@@ -39,6 +39,7 @@ CodeGenModule::CodeGenModule(
       unit_(&unit),
       time_(time),
       types_(*context_, unit),
+      tuples_(*this, types_, unit),
       functions_(unit.functions.size()) {
   for (const lir::ClassId id : unit.classes.Ids()) {
     const lir::Class& cls = unit.classes.Get(id);
@@ -52,18 +53,11 @@ CodeGenModule::CodeGenModule(
       scope_constructions_.insert(*cls.constructor);
     }
   }
-  for (const lir::ClosureId id : unit.closures.Ids()) {
-    closure_bodies_.insert(unit.closures.Get(id).invoke);
-  }
 }
 
 auto CodeGenModule::IsScopeConstruction(lir::FunctionId function) const
     -> bool {
   return scope_constructions_.contains(function);
-}
-
-auto CodeGenModule::IsClosureBody(lir::FunctionId function) const -> bool {
-  return closure_bodies_.contains(function);
 }
 
 auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
@@ -98,6 +92,7 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
       return std::unexpected(std::move(generated.error()));
     }
   }
+  tuples_.EmitDeclared();
   auto declared = EmitUnitDeclaration();
   if (!declared) {
     return std::unexpected(std::move(declared.error()));
@@ -153,8 +148,14 @@ auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
   }
   auto* fn_ty =
       llvm::FunctionType::get(types_.Map(fn.result_type), params, false);
-  return llvm::Function::Create(
+  llvm::Function* declared = llvm::Function::Create(
       fn_ty, LinkageOf(fn.definition), fn.name, module_.get());
+  // A body the runtime calls back through a tuple's table answers a
+  // predicate as a C++ `bool`, which is read as a whole byte.
+  if (unit_->types.Get(fn.result_type).Is<lir::MachineBoolType>()) {
+    declared->addRetAttr(llvm::Attribute::ZExt);
+  }
+  return declared;
 }
 
 auto CodeGenModule::UnitFunction(lir::FunctionId function) -> llvm::Function* {
@@ -193,12 +194,6 @@ auto CodeGenModule::EmitUnitDeclaration() -> diag::Result<void> {
   }
   for (const lir::ClassId id : unit_->classes.Ids()) {
     auto stated = StateClass(builder, id);
-    if (!stated) {
-      return std::unexpected(std::move(stated.error()));
-    }
-  }
-  for (const lir::StructId id : unit_->structs.Ids()) {
-    auto stated = StateStruct(builder, id);
     if (!stated) {
       return std::unexpected(std::move(stated.error()));
     }
@@ -448,33 +443,6 @@ auto CodeGenModule::StateClass(llvm::IRBuilderBase& builder, lir::ClassId id)
   return {};
 }
 
-auto CodeGenModule::StateStruct(llvm::IRBuilderBase& builder, lir::StructId id)
-    -> diag::Result<void> {
-  const lir::Struct& record = unit_->structs.Get(id);
-  const std::string symbol = lir::StructDefinitionSymbol(
-      unit_->name, lir::SymbolPart::Ordinal(id.value));
-  auto* ptr_ty = types_.Ptr();
-  llvm::Value* declared =
-      StateCall(builder, RuntimeOp::kClassDeclare, {}, ptr_ty);
-  llvm::GlobalVariable* cell = DeclaredCell(symbol);
-  cell->setInitializer(llvm::ConstantPointerNull::get(ptr_ty));
-  builder.CreateStore(declared, cell);
-  auto fields = DescribedStorage(
-      record.fields, MemberSlotRoleOf(lir::StructType{.struct_id = id}),
-      "a field");
-  if (!fields) {
-    return std::unexpected(std::move(fields.error()));
-  }
-  const std::array<llvm::Value*, 3> held{
-      declared, *fields,
-      llvm::ConstantInt::get(
-          llvm::Type::getInt64Ty(*context_), record.fields.size())};
-  StateCall(
-      builder, RuntimeOp::kClassDeclareMembers, held,
-      llvm::Type::getVoidTy(*context_));
-  return {};
-}
-
 auto CodeGenModule::StateClosure(
     llvm::IRBuilderBase& builder, lir::ClosureId id) -> diag::Result<void> {
   const lir::Closure& closure = unit_->closures.Get(id);
@@ -489,8 +457,9 @@ auto CodeGenModule::StateClosure(
   // Which protocol a body answers to follows from what it results in and what
   // it is handed: a coroutine yields the handle its caller drives, a body
   // resulting in nothing runs to completion, and one resulting in a value
-  // states which representation that value comes back in -- taking an entry and
-  // its position beyond the receiver is what separates the two that do.
+  // states which representation that value comes back in, and for a tuple
+  // which tuple -- taking an entry and its position beyond the receiver is
+  // what separates the two that do.
   const lir::Function& invoke = unit_->functions.Get(closure.invoke);
   const lir::Type& result = unit_->types.Get(invoke.result_type);
   auto* ptr_ty = types_.Ptr();
@@ -516,6 +485,11 @@ auto CodeGenModule::StateClosure(
     params.push_back(byte_ty);
     args.push_back(
         llvm::ConstantInt::get(byte_ty, static_cast<std::uint64_t>(*domain)));
+    params.push_back(ptr_ty);
+    args.push_back(
+        result.IsProduct()
+            ? llvm::cast<llvm::Value>(tuples_.Operations(invoke.result_type))
+            : llvm::ConstantPointerNull::get(ptr_ty));
   }
   llvm::FunctionCallee declare = module_->getOrInsertFunction(
       RuntimeSymbol(op), llvm::FunctionType::get(ptr_ty, params, false));

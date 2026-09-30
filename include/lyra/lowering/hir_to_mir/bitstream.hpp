@@ -2,11 +2,11 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -40,7 +40,14 @@ struct StreamShape {
 // answers rather than asserts. Every construct written over a bit stream
 // reaches it, so this is where that refusal is decided.
 [[nodiscard]] auto FixedStreamShapeOf(
-    const mir::TypePool& types, mir::TypeId type) -> std::optional<StreamShape>;
+    const mir::CompilationUnit& unit, mir::TypeId type)
+    -> std::optional<StreamShape>;
+
+// The shape of the stream a product of `parts` makes: each part's laid end to
+// end, the first most significant.
+[[nodiscard]] auto FixedStreamShapeOfParts(
+    const mir::CompilationUnit& unit, std::span<const mir::TypeId> parts)
+    -> std::optional<StreamShape>;
 
 // The bits `value_id` makes, as a vector of that value's own stream shape.
 [[nodiscard]] auto BuildToBitstream(
@@ -62,6 +69,6 @@ struct StreamShape {
 // from where an ordinary assignment extends its right-hand side.
 [[nodiscard]] auto BuildFromBitstream(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId bits_id,
-    mir::TypeId dst_type, diag::SourceSpan span) -> diag::Result<mir::Expr>;
+    mir::TypeId dst_type, diag::SourceSpan span) -> diag::Result<mir::ExprId>;
 
 }  // namespace lyra::lowering::hir_to_mir

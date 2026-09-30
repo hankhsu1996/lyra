@@ -66,8 +66,8 @@ is the composition's own type, the way a brace initializer's meaning is the type
 Each of these types has exactly one way to be built, so the type answers completely and no consumer
 chooses.
 
-Where they separate is the layer that owns storage: a `ProductInstr` whose components each keep a
-type of their own, an `ArrayInstr` naming contiguous storage by a span. Codegen assembles the value
+Where they separate is the layer that owns storage: a `TupleInstr` whose components each keep a type
+of their own, an `ArrayInstr` naming contiguous storage by a span. Codegen assembles the value
 itself either way, naming no entry.
 
 A container holding that list is not its elements. It is a library type, with a representation the

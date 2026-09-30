@@ -930,6 +930,13 @@ class UnitLowerer {
   auto InternOwnClassDeclarations(const slang::ast::Scope& scope)
       -> diag::Result<void>;
 
+  // Interns every unpacked structure a typedef of this unit declares outside a
+  // body, in the same scopes classes are declared in, so the structure's type
+  // -- and with it the operations its declaration brings -- is in the unit that
+  // declares it whatever the unit's bodies use.
+  auto InternOwnStructureDeclarations(const slang::ast::Scope& scope)
+      -> diag::Result<void>;
+
   // A class whose declarations are settled and whose bodies are not. A class
   // body names what encloses the class the way any other body does, so it
   // lowers once every structural scope has bound its own declarations; what is

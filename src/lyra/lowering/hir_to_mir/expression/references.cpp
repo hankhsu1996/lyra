@@ -152,17 +152,12 @@ auto LowerProceduralVarRefExpr(
                 process.Owner().Unit(), frame, binding.home, binding.cell_type,
                 mir::EnclosingHops{});
           },
-          // A lifetime-extended automatic (LRM 6.21) lives in a shared
-          // activation object; the read reaches its field through the handle,
-          // a carrier the resolver makes available in this body (a by-value,
-          // owning copy inside a detached branch).
+          // A lifetime-extended automatic (LRM 6.21) lives in a shared cell;
+          // the read reaches it through the handle, a carrier the resolver
+          // makes available in this body (a by-value, owning copy inside a
+          // detached branch).
           [&](const PromotedVarBinding& promoted) {
-            const BodyBindingRef handle =
-                frame.bindings->EnsureCarrier(promoted.handle_origin);
-            const mir::ExprId handle_ref = frame.current_block->exprs.Add(
-                frame.bindings->MakeReadExpr(handle, *frame.current_block));
-            return mir::MakeFieldAccessExpr(
-                handle_ref, promoted.field, promoted.cell_type);
+            return PromotedVarPlace(frame, promoted);
           },
           // An ordinary automatic local: resolve its carrier in this body -- a
           // direct local in the declaring body, a captured field in a closure

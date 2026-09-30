@@ -39,8 +39,8 @@ auto LibraryObjectName(LibraryObject object) -> std::string_view {
       return "erased_value";
     case LibraryObject::kExecution:
       return "execution";
-    case LibraryObject::kPromotedScope:
-      return "promoted_scope";
+    case LibraryObject::kSharedPointer:
+      return "shared_pointer";
     case LibraryObject::kOpenWrite:
       return "open_write";
     case LibraryObject::kDesignation:

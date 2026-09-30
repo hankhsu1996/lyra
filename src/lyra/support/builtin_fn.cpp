@@ -371,6 +371,26 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "is_unknown", .declaration = Method{"IsUnknown"}};
     case BuiltinFn::kCountBits:
       return {.name = "count_bits", .declaration = Method{"CountBits"}};
+    case BuiltinFn::kBitIdentical:
+      return {.name = "bit_identical", .declaration = Method{"IsBitIdentical"}};
+    case BuiltinFn::kHasUnknown:
+      return {.name = "has_unknown", .declaration = Method{"HasUnknown"}};
+    case BuiltinFn::kResolveTriState:
+      return {
+          .name = "resolve_tri_state",
+          .declaration = Method{"ResolveTriState"}};
+    case BuiltinFn::kResolveWiredAnd:
+      return {
+          .name = "resolve_wired_and",
+          .declaration = Method{"ResolveWiredAnd"}};
+    case BuiltinFn::kResolveWiredOr:
+      return {
+          .name = "resolve_wired_or", .declaration = Method{"ResolveWiredOr"}};
+    case BuiltinFn::kDominating:
+      return {.name = "dominating", .declaration = Method{"Dominating"}};
+    case BuiltinFn::kFilledLike:
+      return {
+          .name = "filled_like", .declaration = StaticFactory{"FilledLike"}};
     case BuiltinFn::kClog2:
       return {.name = "clog2", .declaration = Method{"Clog2"}};
     case BuiltinFn::kLn:

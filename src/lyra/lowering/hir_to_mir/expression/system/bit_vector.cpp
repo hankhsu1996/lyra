@@ -18,6 +18,7 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
+#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -25,7 +26,6 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
-#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -86,31 +86,37 @@ auto AdmittedByControlArguments(
 
 // The control bits the runtime counts under, as a value of their own: the
 // admitted four-state values laid out one per bit position, in the order the
-// bit-plane encoding gives them. No source declaration names this value -- LRM
-// 20.9 spells the same set as a variable-length argument list, which no single
-// runtime entry can take -- so the lowering builds it.
+// bit-plane encoding gives them, the first repeated into any position left. No
+// source declaration names this value -- LRM 20.9 spells the same set as a
+// variable-length argument list, which no single runtime entry can take -- so
+// the lowering builds it.
 auto MakeControlBitsExpr(
     const mir::CompilationUnit& unit, mir::Block& block,
     AdmittedBitValues admitted) -> mir::ExprId {
+  std::vector<unsigned> named;
+  for (unsigned i = 0; i < kBitValueCount; ++i) {
+    if ((admitted & (1U << i)) != 0U) {
+      named.push_back(i);
+    }
+  }
+  if (named.empty()) {
+    throw InternalError(
+        "MakeControlBitsExpr: a count names no value to count, which LRM 20.9 "
+        "does not let a call write");
+  }
   std::uint64_t value_word = 0;
   std::uint64_t state_word = 0;
-  std::uint32_t width = 0;
-  for (unsigned i = 0; i < kBitValueCount; ++i) {
-    if ((admitted & (1U << i)) == 0U) {
-      continue;
+  for (unsigned position = 0; position < kBitValueCount; ++position) {
+    const unsigned value = named[position % named.size()];
+    if ((value & 1U) != 0U) {
+      value_word |= std::uint64_t{1} << position;
     }
-    if ((i & 1U) != 0U) {
-      value_word |= std::uint64_t{1} << width;
+    if ((value & 2U) != 0U) {
+      state_word |= std::uint64_t{1} << position;
     }
-    if ((i & 2U) != 0U) {
-      state_word |= std::uint64_t{1} << width;
-    }
-    ++width;
   }
   return BuildIntegralLiteral(
-      unit, block,
-      mir::PackedVectorOf(
-          unit.types, width, mir::IntegralStateKind::kFourState),
+      unit, block, BitCountControlType(unit),
       mir::IntegralConstant{
           .value_words = {value_word}, .state_words = {state_word}});
 }
@@ -129,7 +135,7 @@ auto ReadingComparison(support::BitCountReading reading)
 
 // LRM 20.9 defines `$isunknown` as `$countbits(expr, 'x, 'z) != 0`, but every
 // value type answers the unknown question on its own, so that reading takes the
-// direct entry instead of counting and then comparing.
+// direct question instead of counting and then comparing.
 template <ExprLowerer Lowerer>
 auto LowerUnknownTest(Lowerer& lowerer, WalkFrame frame, hir::ExprId value)
     -> diag::Result<mir::Expr> {
@@ -138,15 +144,9 @@ auto LowerUnknownTest(Lowerer& lowerer, WalkFrame frame, hir::ExprId value)
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kIsUnknown,
-                      .receiver = body.exprs.Add(*std::move(operand_or))},
-              .arguments = {}},
-      .type = lowerer.Owner().Unit().builtins.bit1};
+  const mir::ExprId answer = BuildUnknownTest(
+      lowerer.Owner().Unit(), body, body.exprs.Add(*std::move(operand_or)));
+  return body.exprs.Get(answer);
 }
 
 }  // namespace
@@ -195,27 +195,22 @@ auto LowerBitVectorSystemSubroutineCall(
   }
   const mir::ExprId operand_id = body.exprs.Add(*std::move(operand_or));
   const mir::ExprId control_id = MakeControlBitsExpr(unit, body, admitted);
-  mir::Expr count{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kCountBits,
-                      .receiver = operand_id},
-              .arguments = {control_id}},
-      .type = unit.builtins.int_type};
+  const mir::ExprId count = BuildBitCount(unit, body, operand_id, control_id);
 
   const std::optional<mir::BinaryOp> op = ReadingComparison(info.reading);
   if (!op) {
-    return count;
+    return body.exprs.Get(count);
   }
   return mir::Expr{
       .data =
           mir::BinaryExpr{
-              .op = *op,
-              .lhs = body.exprs.Add(std::move(count)),
-              .rhs = BuildIntLiteral(unit, body, 1)},
+              .op = *op, .lhs = count, .rhs = BuildIntLiteral(unit, body, 1)},
       .type = unit.builtins.bit1};
+}
+
+auto BitCountControlType(const mir::CompilationUnit& unit) -> mir::TypeId {
+  return mir::PackedVectorOf(
+      unit.types, kBitValueCount, mir::IntegralStateKind::kFourState);
 }
 
 template auto LowerBitVectorSystemSubroutineCall(

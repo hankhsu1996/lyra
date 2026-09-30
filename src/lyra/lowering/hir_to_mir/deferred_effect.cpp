@@ -69,8 +69,7 @@ auto BuildNbaSubmitAfterCall(
   if (duration_type.Is<mir::ShortRealType>()) {
     // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
     // from them only in host precision, so the entry takes the wider.
-    duration_id =
-        ConvertToType(unit, block, duration_id, unit.builtins.realtime);
+    duration_id = ConvertToType(unit, block, duration_id, unit.builtins.real);
   }
   const mir::ExprId unit_power_id = BuildIntLiteral(
       unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));

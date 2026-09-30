@@ -22,6 +22,7 @@
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/NetType.h>
 #include <slang/ast/types/Type.h>
 #include <slang/numeric/SVInt.h>
@@ -53,7 +54,81 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
   if (auto r = InternOwnClassDeclarations(*scope_); !r) {
     return std::unexpected(std::move(r.error()));
   }
+  if (auto r = InternOwnStructureDeclarations(*scope_); !r) {
+    return std::unexpected(std::move(r.error()));
+  }
   return PublishSignature();
+}
+
+namespace {
+
+// Hands `visit` every member of `scope`, and of each scope within it that a
+// declaration outside a body may stand in: a class (LRM 8.3 admits a class
+// declaration as a class item), each live specialization of a parameterized
+// one (LRM 8.25), and each generate block this elaboration built (LRM 27). A
+// member is visited before anything inside it.
+template <typename Visit>
+auto WalkDeclarationScopes(const slang::ast::Scope& scope, Visit& visit)
+    -> diag::Result<void> {
+  for (const auto& member : scope.members()) {
+    if (auto r = visit(member); !r) {
+      return r;
+    }
+    std::vector<const slang::ast::Scope*> inner;
+    if (member.kind == slang::ast::SymbolKind::ClassType) {
+      inner.push_back(&member.as<slang::ast::ClassType>());
+    } else if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
+      for (const auto& spec :
+           member.as<slang::ast::GenericClassDefSymbol>().specializations()) {
+        inner.push_back(&spec.getCanonicalType().as<slang::ast::ClassType>());
+      }
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
+      const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
+      if (!block.isUninstantiated) {
+        inner.push_back(&block);
+      }
+    } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
+      for (const auto* entry :
+           member.as<slang::ast::GenerateBlockArraySymbol>().entries) {
+        inner.push_back(entry);
+      }
+    }
+    for (const slang::ast::Scope* scope_within : inner) {
+      if (auto r = WalkDeclarationScopes(*scope_within, visit); !r) {
+        return r;
+      }
+    }
+  }
+  return {};
+}
+
+}  // namespace
+
+auto UnitLowerer::InternOwnStructureDeclarations(const slang::ast::Scope& scope)
+    -> diag::Result<void> {
+  // A structure's typedef declares the type, and the declaration brings the
+  // operations the language defines on a whole structure (LRM 7.2), so the
+  // type exists in the unit that declares it whether or not that unit ever
+  // holds a value of it -- another unit naming it reaches those operations
+  // here. It runs after the class walk, because a member of a structure may be
+  // a handle to any class the unit declares.
+  auto visit = [&](const slang::ast::Symbol& member) -> diag::Result<void> {
+    if (member.kind != slang::ast::SymbolKind::TypeAlias) {
+      return {};
+    }
+    const slang::ast::Type& declared =
+        member.as<slang::ast::TypeAliasType>().targetType.getType();
+    if (!declared.isUnpackedStruct()) {
+      return {};
+    }
+    if (auto r =
+            InternType(declared, SourceMapper().PointSpanOf(member.location));
+        !r) {
+      return std::unexpected(std::move(r.error()));
+    }
+    return {};
+  };
+  return WalkDeclarationScopes(scope, visit);
 }
 
 auto UnitLowerer::TakeSignature() -> hir::UnitSignature {
@@ -99,46 +174,29 @@ auto UnitLowerer::InternOwnClassDeclarations(const slang::ast::Scope& scope)
   // is settled before any body lowers rather than by whichever reference
   // reaches the class first (LRM 23.9 makes a class a scope of the name tree,
   // and a generate block declares its own).
-  for (const auto& member : scope.members()) {
+  auto visit = [&](const slang::ast::Symbol& member) -> diag::Result<void> {
     if (member.kind == slang::ast::SymbolKind::ClassType) {
-      const auto& cls = member.as<slang::ast::ClassType>();
-      const diag::SourceSpan span = SourceMapper().PointSpanOf(cls.location);
-      if (auto r = InternLocalClass(cls, span); !r) {
+      if (auto r = InternLocalClass(
+              member.as<slang::ast::ClassType>(),
+              SourceMapper().PointSpanOf(member.location));
+          !r) {
         return std::unexpected(std::move(r.error()));
       }
-      // A class is itself a scope, so a class it declares is reached by the
-      // same walk (LRM 8.3 admits a class declaration as a class item).
-      if (auto r = InternOwnClassDeclarations(cls); !r) {
-        return std::unexpected(std::move(r.error()));
-      }
-    } else if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
-      const auto& def = member.as<slang::ast::GenericClassDefSymbol>();
-      const diag::SourceSpan span = SourceMapper().PointSpanOf(def.location);
-      for (const auto& spec : def.specializations()) {
-        const auto& cls = spec.getCanonicalType().as<slang::ast::ClassType>();
-        if (auto r = InternLocalClass(cls, span); !r) {
-          return std::unexpected(std::move(r.error()));
-        }
-        if (auto r = InternOwnClassDeclarations(cls); !r) {
-          return std::unexpected(std::move(r.error()));
-        }
-      }
-    } else if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
-      const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
-      if (block.isUninstantiated) continue;
-      if (auto r = InternOwnClassDeclarations(block); !r) {
-        return std::unexpected(std::move(r.error()));
-      }
-    } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
-      const auto& array = member.as<slang::ast::GenerateBlockArraySymbol>();
-      for (const auto* entry : array.entries) {
-        if (auto r = InternOwnClassDeclarations(*entry); !r) {
+    }
+    if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
+      const diag::SourceSpan span = SourceMapper().PointSpanOf(member.location);
+      for (const auto& spec :
+           member.as<slang::ast::GenericClassDefSymbol>().specializations()) {
+        if (auto r = InternLocalClass(
+                spec.getCanonicalType().as<slang::ast::ClassType>(), span);
+            !r) {
           return std::unexpected(std::move(r.error()));
         }
       }
     }
-  }
-  return {};
+    return {};
+  };
+  return WalkDeclarationScopes(scope, visit);
 }
 
 auto UnitLowerer::NextScopeFrameId() -> ScopeFrameId {

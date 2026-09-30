@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -109,17 +110,16 @@ auto PropertyWrittenThrough(
 auto PropertyReferred(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
     mir::ExprId place) -> mir::ExprId {
+  const mir::TypeId value = block.exprs.Get(place).type;
+  const mir::ExprId storage = BuildReferenceArg(unit, block, place, value);
   return block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kReferProperty},
-                  .arguments = {object, PropertyAddress(unit, block, place)}},
-          .type = unit.types.Intern(
-              mir::Type{mir::RefType{
-                  .pointee = block.exprs.Get(place).type,
-                  .mutability = mir::Mutability::kMutable}})});
+                  .arguments = {object, storage}},
+          .type = block.exprs.Get(storage).type});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

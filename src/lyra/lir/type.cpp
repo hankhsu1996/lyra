@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/hash.hpp"
@@ -50,14 +51,6 @@ void Combine(std::size_t& seed, const PackedArrayType& packed) {
   for (const PackedRange& dim : packed.dims) {
     Combine(seed, static_cast<std::uint64_t>(dim.left));
     Combine(seed, static_cast<std::uint64_t>(dim.right));
-  }
-}
-
-void CombineMembers(
-    std::size_t& seed, const std::vector<AggregateMember>& members) {
-  for (const AggregateMember& member : members) {
-    Combine(seed, member.name);
-    Combine(seed, member.type);
   }
 }
 
@@ -144,14 +137,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
   std::size_t seed = std::hash<std::size_t>{}(type.data_.index());
   type.Visit(
       Overloaded{
-          [&](const PackedStructType& t) {
-            Combine(seed, t.base);
-            CombineMembers(seed, t.members);
-          },
-          [&](const PackedUnionType& t) {
-            Combine(seed, t.base);
-            CombineMembers(seed, t.members);
-          },
           [&](const PackedArrayType& t) { Combine(seed, t); },
           [&](const UnpackedArrayType& t) {
             Combine(seed, t.element_type);
@@ -189,7 +174,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const EventType&) {},
           [](const RealType&) {},
           [](const ShortRealType&) {},
-          [](const RealTimeType&) {},
           [](const ChandleType&) {},
           [](const VoidType&) {},
           [](const EmptyType&) {},
@@ -204,7 +188,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const OpaqueObjectType&) {},
           [&](const RuntimeClassType& t) { Combine(seed, t.symbol); },
           [&](const ClosureType& t) { Combine(seed, t.closure_id.value); },
-          [&](const StructType& t) { Combine(seed, t.struct_id.value); },
           [](const RuntimeEffectsType&) {},
           [](const FilesType&) {},
           [](const DiagnosticType&) {},
@@ -222,9 +205,18 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ManagedRefType& t) { Combine(seed, t.pointee); },
           [&](const VectorType& t) { Combine(seed, t.element); },
           [&](const TupleType& t) { Combine(seed, t.elements); },
-          [&](const UnpackedStructType& t) { CombineMembers(seed, t.members); },
-          [&](const UnionType& t) { CombineMembers(seed, t.members); },
-          [&](const TaggedUnionType& t) { CombineMembers(seed, t.members); },
+          [&](const StructType& t) {
+            std::visit(
+                Overloaded{
+                    [&](StructId id) { Combine(seed, id.value); },
+                    [&](const TypeDeclarationRef& ref) {
+                      Combine(seed, ref.unit_name);
+                      Combine(seed, ref.name);
+                    }},
+                t.declaration);
+          },
+          [&](const UnionType& t) { Combine(seed, t.members); },
+          [&](const TaggedUnionType& t) { Combine(seed, t.members); },
           [&](const ResolvedType& t) { Combine(seed, t.value); },
           [&](const DriverType& t) { Combine(seed, t.value); },
           [&](const ObservableType& t) { Combine(seed, t.value); },
@@ -239,8 +231,6 @@ auto Type::KindName() const -> std::string_view {
   return Visit(
       Overloaded{
           [](const PackedArrayType&) { return "packed array"; },
-          [](const PackedStructType&) { return "packed structure"; },
-          [](const PackedUnionType&) { return "packed union"; },
           [](const UnpackedArrayType&) { return "unpacked array"; },
           [](const DynamicArrayType&) { return "dynamic array"; },
           [](const QueueType&) { return "queue"; },
@@ -256,7 +246,6 @@ auto Type::KindName() const -> std::string_view {
           [](const EventType&) { return "named event"; },
           [](const RealType&) { return "real"; },
           [](const ShortRealType&) { return "shortreal"; },
-          [](const RealTimeType&) { return "realtime"; },
           [](const ChandleType&) { return "chandle"; },
           [](const VoidType&) { return "void"; },
           [](const EmptyType&) { return "empty"; },
@@ -278,8 +267,7 @@ auto Type::KindName() const -> std::string_view {
           [](const PointerType&) { return "pointer"; },
           [](const ManagedRefType&) { return "managed reference"; },
           [](const VectorType&) { return "vector"; },
-          [](const TupleType&) { return "product"; },
-          [](const UnpackedStructType&) { return "unpacked structure"; },
+          [](const TupleType&) { return "tuple"; },
           [](const UnionType&) { return "union"; },
           [](const TaggedUnionType&) { return "tagged union"; },
           [](const ResolvedType&) { return "net resolution node"; },
@@ -298,19 +286,19 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
   const auto names_none = []() -> Declared { return std::nullopt; };
   return Visit(
       Overloaded{
-          // The five that name one.
+          // Member-bearing storage, whose members are reached through its
+          // declaration.
           [](const ObjectType& t) -> Declared { return t; },
           [](const ExternalUnitObjectType& t) -> Declared { return t; },
           [](const CrossUnitClassType& t) -> Declared { return t; },
           [](const ClosureType& t) -> Declared { return t; },
-          [](const StructType& t) -> Declared { return t; },
+
+          // A struct names a declaration too, but of a value, whose components
+          // are reached by position as a tuple's are rather than as members.
+          [&](const StructType&) { return names_none(); },
 
           // A value, however it is shaped and however its elements are held.
-          // What a declaration gave it is a name for the type, which is not a
-          // declaration anything is reached through.
           [&](const PackedArrayType&) { return names_none(); },
-          [&](const PackedStructType&) { return names_none(); },
-          [&](const PackedUnionType&) { return names_none(); },
           [&](const UnpackedArrayType&) { return names_none(); },
           [&](const DynamicArrayType&) { return names_none(); },
           [&](const QueueType&) { return names_none(); },
@@ -319,10 +307,8 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const StringType&) { return names_none(); },
           [&](const RealType&) { return names_none(); },
           [&](const ShortRealType&) { return names_none(); },
-          [&](const RealTimeType&) { return names_none(); },
           [&](const ChandleType&) { return names_none(); },
           [&](const TupleType&) { return names_none(); },
-          [&](const UnpackedStructType&) { return names_none(); },
           [&](const UnionType&) { return names_none(); },
           [&](const TaggedUnionType&) { return names_none(); },
           [&](const EmptyType&) { return names_none(); },
@@ -384,17 +370,14 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const MachineArrayType&) -> Element { return std::nullopt; },
           [](const VectorType&) -> Element { return std::nullopt; },
 
-          // One vector of bits, under a set of names or not: what looks like
-          // an element is a run of that vector rather than a value held beside
-          // the others.
+          // One vector of bits: what looks like an element is a run of that
+          // vector rather than a value held beside the others.
           [](const PackedArrayType&) -> Element { return std::nullopt; },
-          [](const PackedStructType&) -> Element { return std::nullopt; },
-          [](const PackedUnionType&) -> Element { return std::nullopt; },
 
           // Held all at once, or one at a time, but never as a run of one
           // type.
           [](const TupleType&) -> Element { return std::nullopt; },
-          [](const UnpackedStructType&) -> Element { return std::nullopt; },
+          [](const StructType&) -> Element { return std::nullopt; },
           [](const UnionType&) -> Element { return std::nullopt; },
           [](const TaggedUnionType&) -> Element { return std::nullopt; },
 
@@ -407,7 +390,6 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const MachineFloatType&) -> Element { return std::nullopt; },
           [](const RealType&) -> Element { return std::nullopt; },
           [](const ShortRealType&) -> Element { return std::nullopt; },
-          [](const RealTimeType&) -> Element { return std::nullopt; },
           [](const ChandleType&) -> Element { return std::nullopt; },
           [](const EventType&) -> Element { return std::nullopt; },
           [](const EmptyType&) -> Element { return std::nullopt; },
@@ -439,7 +421,6 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const CrossUnitClassType&) -> Element { return std::nullopt; },
           [](const OpaqueObjectType&) -> Element { return std::nullopt; },
           [](const RuntimeClassType&) -> Element { return std::nullopt; },
-          [](const StructType&) -> Element { return std::nullopt; },
           [](const ClosureType&) -> Element { return std::nullopt; },
 
           // A handle to a runtime facility, and an inert payload the library
@@ -500,28 +481,20 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
   return Visit(
       Overloaded{
           [](const PackedArrayType&) -> Held { return ValueDomain::kPacked; },
-          // A packed aggregate is a packed value at runtime: one vector under a
-          // set of names, and a name is not something a value carries.
-          [](const PackedStructType&) -> Held { return ValueDomain::kPacked; },
-          [](const PackedUnionType&) -> Held { return ValueDomain::kPacked; },
           // LRM 7.8.1 gives a wildcard-indexed array no index data type, so
           // this type names where an index goes rather than what one is made
           // of. What goes there is always integral, at whatever width the
           // expression carried, which is why the value states its width.
           [](const WildcardIndexType&) -> Held { return ValueDomain::kPacked; },
           [](const StringType&) -> Held { return ValueDomain::kString; },
-          // `real` and `realtime` are one host-precision value (LRM 6.12.1);
-          // `shortreal` is the single-precision one.
           [](const RealType&) -> Held { return ValueDomain::kReal; },
-          [](const RealTimeType&) -> Held { return ValueDomain::kReal; },
           [](const ShortRealType&) -> Held { return ValueDomain::kShortReal; },
           // A chandle (LRM 6.14) is a value holding one host pointer.
           [](const ChandleType&) -> Held { return ValueDomain::kChandle; },
-          // A declared structure and the anonymous product a lowering composes
-          // realize as one product value; what the structure declares beyond
-          // it is the name of each member, which no value carries.
+          // A product is held the same way whether its components are all it
+          // is or a declaration names it.
           [](const TupleType&) -> Held { return ValueDomain::kTuple; },
-          [](const UnpackedStructType&) -> Held { return ValueDomain::kTuple; },
+          [](const StructType&) -> Held { return ValueDomain::kTuple; },
           // An untagged union erases its tag and gives a cross-member read the
           // component default; a tagged union keeps the tag observable and
           // faults a mismatched access (LRM 7.3 / 7.3.2), so the two are
@@ -566,7 +539,7 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
           [](const PointerType& pointer) -> Held {
             switch (pointer.ownership) {
               case PointerOwnership::kShared:
-                return LibraryObject::kPromotedScope;
+                return LibraryObject::kSharedPointer;
               case PointerOwnership::kUnique:
               case PointerOwnership::kBorrowed:
                 return std::nullopt;
@@ -644,7 +617,6 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
           [](const CrossUnitClassType&) -> Held { return std::nullopt; },
           [](const OpaqueObjectType&) -> Held { return std::nullopt; },
           [](const RuntimeClassType&) -> Held { return std::nullopt; },
-          [](const StructType&) -> Held { return std::nullopt; },
           [](const EventType&) -> Held { return std::nullopt; },
           [](const ObservableType&) -> Held { return std::nullopt; },
           [](const ResolvedType&) -> Held { return std::nullopt; },
@@ -677,19 +649,8 @@ auto Type::IsOwnedValue() const -> bool {
   return HeldObject().has_value();
 }
 
-auto MemberTypes(const std::vector<AggregateMember>& members)
-    -> std::vector<TypeId> {
-  std::vector<TypeId> types;
-  types.reserve(members.size());
-  for (const AggregateMember& member : members) {
-    types.push_back(member.type);
-  }
-  return types;
-}
-
-auto Type::IsIntegralPacked() const -> bool {
-  return Is<PackedArrayType>() || Is<PackedStructType>() ||
-         Is<PackedUnionType>();
+auto Type::IsProduct() const -> bool {
+  return Is<TupleType>() || Is<StructType>();
 }
 
 auto Type::IsUnion() const -> bool {
@@ -698,26 +659,12 @@ auto Type::IsUnion() const -> bool {
 
 auto Type::UnionMemberTypes() const -> std::vector<TypeId> {
   if (const auto* untagged = As<UnionType>()) {
-    return MemberTypes(untagged->members);
+    return untagged->members;
   }
   if (const auto* tagged = As<TaggedUnionType>()) {
-    return MemberTypes(tagged->members);
+    return tagged->members;
   }
   throw InternalError("lir: type is not a union");
-}
-
-auto Type::IsProduct() const -> bool {
-  return Is<TupleType>() || Is<UnpackedStructType>();
-}
-
-auto Type::ProductComponentTypes() const -> std::vector<TypeId> {
-  if (const auto* tuple = As<TupleType>()) {
-    return tuple->elements;
-  }
-  if (const auto* structure = As<UnpackedStructType>()) {
-    return MemberTypes(structure->members);
-  }
-  throw InternalError("lir: type is not a product");
 }
 
 auto Type::MachineIntegerSignedness() const -> std::optional<Signedness> {
@@ -728,19 +675,6 @@ auto Type::MachineIntegerSignedness() const -> std::optional<Signedness> {
     return Signedness::kUnsigned;
   }
   return std::nullopt;
-}
-
-auto Type::PackedShape() const -> const PackedArrayType& {
-  if (const auto* packed = As<PackedArrayType>()) {
-    return *packed;
-  }
-  if (const auto* packed_struct = As<PackedStructType>()) {
-    return packed_struct->base;
-  }
-  if (const auto* packed_union = As<PackedUnionType>()) {
-    return packed_union->base;
-  }
-  throw InternalError("lir: type has no packed shape; it is not integral");
 }
 
 }  // namespace lyra::lir

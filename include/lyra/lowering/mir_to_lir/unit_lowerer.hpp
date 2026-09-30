@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -56,6 +57,11 @@ class UnitLowerer {
   // counterpart. A type with no LIR mirror yet records an unsupported-type
   // error read at `Run`; it never silently mistranslates.
   auto TranslateType(mir::TypeId id) -> lir::TypeId;
+  auto TranslateTypes(std::span<const mir::TypeId> source)
+      -> std::vector<lir::TypeId>;
+  // A declaration another unit names a type by, which crosses unchanged.
+  [[nodiscard]] static auto TranslateDeclaration(
+      const mir::TypeDeclarationRef& ref) -> lir::TypeDeclarationRef;
 
   // Translates a MIR description to its LIR-owned identity. Every description
   // the unit holds is lowered, in pool order, so the two pools run in step and
@@ -97,9 +103,6 @@ class UnitLowerer {
   // the class that declares the member, which is not always the class the
   // receiver has: a class carries what its bases declare as well as its own.
   auto ClassValueType(mir::ClassId cls) -> lir::TypeId;
-
-  // The type of the values one generated-struct declaration builds.
-  auto StructValueType(mir::StructId record) -> lir::TypeId;
 
   // The type naming a class another unit declares. The pair is the whole
   // identity, which is what lets a property step and a dispatch on one name the
@@ -153,8 +156,8 @@ class UnitLowerer {
   [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
       -> lir::FunctionId;
 
-  // The declaration a struct's fields are members of. A struct carries no code,
-  // so its identity is the declaration and nothing beside it.
+  // The declaration a struct of this unit is, which its components and its
+  // methods are listed on.
   [[nodiscard]] auto StructDeclaration(mir::StructId record) const
       -> lir::StructId;
 

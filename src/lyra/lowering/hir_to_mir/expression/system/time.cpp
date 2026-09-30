@@ -13,49 +13,34 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-namespace {
-
-struct TimeFnInfo {
-  support::BuiltinFn id;
-  mir::TypeId result_type;
-};
-
-auto SelectTimeFn(const mir::BuiltinMirTypes& builtins, support::TimeKind kind)
-    -> TimeFnInfo {
-  switch (kind) {
-    case support::TimeKind::kTime:
-      return {.id = support::BuiltinFn::kSimTime, .result_type = builtins.time};
-    case support::TimeKind::kStime:
-      return {
-          .id = support::BuiltinFn::kSTime, .result_type = builtins.int_type};
-    case support::TimeKind::kRealtime:
-      return {
-          .id = support::BuiltinFn::kRealTime,
-          .result_type = builtins.realtime};
-  }
-  throw InternalError("SelectTimeFn: unknown TimeKind");
-}
-
-}  // namespace
-
 template <ExprLowerer Lowerer>
 auto LowerTimeSystemSubroutineCall(
     const Lowerer& lowerer, const WalkFrame& frame,
     const support::TimeSystemSubroutineInfo& info) -> diag::Result<mir::Expr> {
   const auto& builtins = lowerer.Owner().Unit().builtins;
-  const TimeFnInfo fn = SelectTimeFn(builtins, info.kind);
   auto& body = *frame.current_block;
   const mir::ExprId runtime_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
   const mir::ExprId unit_power_id = BuildIntLiteral(
       lowerer.Owner().Unit(), body,
       static_cast<std::int64_t>(lowerer.Resolution().unit_power));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = fn.id},
-              .arguments = {runtime_id, unit_power_id}},
-      .type = fn.result_type};
+  const auto call = [&](support::BuiltinFn entry, mir::TypeId result) {
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee = mir::Direct{.target = entry},
+                .arguments = {runtime_id, unit_power_id}},
+        .type = result};
+  };
+  switch (info.kind) {
+    case support::TimeKind::kTime:
+      return call(support::BuiltinFn::kSimTime, builtins.time);
+    case support::TimeKind::kStime:
+      return call(support::BuiltinFn::kSTime, builtins.int_type);
+    case support::TimeKind::kRealtime:
+      return call(support::BuiltinFn::kRealTime, builtins.real);
+  }
+  throw InternalError("LowerTimeSystemSubroutineCall: unknown TimeKind");
 }
 
 template auto LowerTimeSystemSubroutineCall(

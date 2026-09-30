@@ -7,6 +7,7 @@
 
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
 
@@ -16,22 +17,19 @@ namespace lyra::lir {
 // the compiler mints, having no source name at all, is nameable without
 // borrowing a spelling the source could also write.
 enum class SymbolCategory : std::uint8_t {
-  kClass,
   kClassDefinition,
   kClosureDefinition,
-  kStructDefinition,
   kConstructor,
   kClassCallable,
+  kStructMethod,
   kNamespaceCallable,
   kNamespaceStorageInstall,
   kNamespaceStorageInitialize,
   kObjectEntry,
   kNamespaceVariable,
   kStaticProperty,
-  kClosure,
   kClosureInvoke,
   kScopeEntry,
-  kStruct,
   kTypeDescription,
   kIntegralConstant,
 };
@@ -68,19 +66,23 @@ auto SymbolName(
     SymbolCategory category, std::initializer_list<SymbolPart> parts)
     -> std::string;
 
-// The symbol a class is linked under, and the symbols of what belongs to it. A
-// class's own part is unique only inside its unit while the whole program links
-// into one name space, so the unit qualifies it; a member's name is unique only
-// inside its class, so the class qualifies that. Every part is a name where the
-// source declared one and a position where it did not -- a scope of the design
-// hierarchy is a class the lowering built, and a body the lowering synthesized
-// is reached by no call site that could spell it.
-auto ClassSymbol(std::string_view unit_name, SymbolPart cls) -> std::string;
+// The symbols of what belongs to a class. A class's own part is unique only
+// inside its unit while the whole program links into one name space, so the
+// unit qualifies it; a member's name is unique only inside its class, so the
+// class qualifies that. Every part is a name where the source declared one and
+// a position where it did not -- a scope of the design hierarchy is a class the
+// lowering built, and a body the lowering synthesized is reached by no call
+// site that could spell it.
 auto ConstructorSymbol(std::string_view unit_name, SymbolPart cls)
     -> std::string;
 auto ClassCallableSymbol(
     std::string_view unit_name, SymbolPart cls, SymbolPart callable)
     -> std::string;
+// A struct's method (LRM 7.2), under the struct the unit declares. The
+// operation it answers is its name, since a struct has one method for each.
+auto StructMethodSymbol(
+    std::string_view unit_name, std::string_view structure,
+    support::ValueOperation operation) -> std::string;
 // A class's cell, under the class that owns it. The pool holding a class's
 // cells also takes what its bodies keep for the whole class, which the source
 // never declared.
@@ -92,8 +94,6 @@ auto StaticPropertySymbol(
 // The record is the compiler's own and stands beside the declaration rather
 // than inside it, so it is a category over the same parts.
 auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)
-    -> std::string;
-auto StructDefinitionSymbol(std::string_view unit_name, SymbolPart record)
     -> std::string;
 auto ClosureDefinitionSymbol(std::string_view unit_name, SymbolPart closure)
     -> std::string;
@@ -131,9 +131,6 @@ auto ScopeEntrySymbol(
     std::string_view unit_name, SymbolPart cls, std::uint32_t ordinal)
     -> std::string;
 
-// A gathered-scope aggregate, which the source never declared, so its position
-// in the unit's registry is the whole of its identity.
-auto StructSymbol(std::string_view unit_name, SymbolPart record) -> std::string;
 // The run-time description of one of a unit's types. The source declares no
 // such thing, so the position the description sits at in its unit's pool is the
 // whole of what identifies it.
@@ -145,24 +142,18 @@ auto TypeDescriptionSymbol(std::string_view unit_name, std::uint32_t ordinal)
 auto IntegralConstantSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
-// A closure is counted rather than named, having no declaration of the source
-// to take a name from; its body is a second symbol over the same ordinal.
-auto ClosureSymbol(std::string_view unit_name, SymbolPart closure)
-    -> std::string;
+// A closure's body. A closure is counted rather than named, having no
+// declaration of the source to take a name from.
 auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
-// The symbol the declaration `type` names is linked under, or nothing where the
-// type names no declaration a value is built from. A declaration this unit
-// compiles carries the name it was emitted under; one another unit declares is
-// composed from the unit and the name a signature gave, the same way that unit
-// composed it -- which is what lets the two agree with no shared table.
-auto DeclarationSymbol(const CompilationUnit& unit, TypeId type)
-    -> std::optional<std::string>;
-
 // The symbol the runtime record describing `type`'s declaration is linked
-// under. The record is the compiler's own, so it is a category of its own
-// rather than a word appended to the declaration's symbol.
+// under, or nothing where the type names no declaration a value is built from.
+// The record is the compiler's own, so it is a category of its own rather than
+// a word appended to the declaration's symbol. A declaration this unit compiles
+// carries the name it was emitted under; one another unit declares is composed
+// from the unit and the name a signature gave, the same way that unit composed
+// it -- which is what lets the two agree with no shared table.
 auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
     -> std::optional<std::string>;
 

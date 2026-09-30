@@ -8,9 +8,9 @@
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/net.hpp"
-#include "lyra/runtime/promoted_scope.hpp"
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/scope_program.hpp"
+#include "lyra/runtime/shared_pointer.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/managed_ref.hpp"
@@ -72,6 +72,12 @@ class MemberStorage {
   // Where this storage lives, which is what a member place resolves to.
   [[nodiscard]] auto Address() -> void*;
 
+  // Where the value this storage holds lies, which is what an address of the
+  // member names: the storage's own address for every value but a tuple, which
+  // is kept as bytes laid out elsewhere, and so is a variable's value in its
+  // cell. Storage holding no value is named at its own address.
+  [[nodiscard]] auto ValueHandle() -> void*;
+
   // Takes a copy of what `handle` names, which is how a value reaches storage
   // that outlives the stretch the value was made in. Only storage its owner
   // fills at construction takes this; a cell is written through its own access,
@@ -80,7 +86,7 @@ class MemberStorage {
 
  private:
   std::variant<
-      BorrowedHandle, ErasedReference, PromotedScopeRef, CancellationTarget,
+      BorrowedHandle, ErasedReference, SharedPointer, CancellationTarget,
       ChannelCancellation, NamedEvent, EvaluationAttempts,
       Var<value::PackedArray>, Var<value::String>, Var<value::Real>,
       Var<value::ShortReal>, Var<value::Chandle>, Var<value::RuntimeTuple>,

@@ -242,12 +242,12 @@ struct BorrowedHandleStorage {};
 // than a value.
 struct ReferenceStorage {};
 
-// A hold on the storage a block promoted out of its frame (LRM 6.21), which
-// the owner does keep alive: a branch spawned under that block holds one for
-// as long as it runs, and the storage ends with the last holder. It names no
-// value domain, because what it holds is a whole block of members rather than
-// a value of one.
-struct PromotedScopeStorage {};
+// A counted hold on the cell a block's local lives in when a branch the block
+// spawns can outlive it (LRM 6.21), which the owner does keep alive: a branch
+// spawned under that block holds one for as long as it runs, and the cell ends
+// with the last holder. It names no value domain, because it is a hold on a
+// variable rather than a value itself.
+struct SharedPointerStorage {};
 
 // The subscribable variable a process reads, writes, and waits on.
 struct ObservableCellStorage {
@@ -314,7 +314,7 @@ struct SampledHistoryStorage {
 struct EvaluationAttemptsStorage {};
 
 using MemberStorageDescriptor = std::variant<
-    BorrowedHandleStorage, ReferenceStorage, PromotedScopeStorage,
+    BorrowedHandleStorage, ReferenceStorage, SharedPointerStorage,
     ObservableCellStorage, InlineValueStorage, ValueCellStorage,
     CancellationTargetStorage, ChannelCancellationStorage, NamedEventStorage,
     SampledHistoryStorage, EvaluationAttemptsStorage, ResolvedNetStorage>;

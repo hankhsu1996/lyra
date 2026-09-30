@@ -194,6 +194,24 @@ enum class BuiltinFn : std::uint16_t {
   // value named by several control bits still counts once. Returns the SV
   // `int` shape.
   kCountBits,
+  // Whether two values are the same bits -- an unknown bit matching only the
+  // same unknown, a real its own pattern -- which is what decides whether a
+  // write changed a variable (LRM 4.3, 9.4.2); and whether a value holds an
+  // unknown bit at all, which a value with no four-state part never does (LRM
+  // 20.9). Each answers with a machine boolean, being a predicate the runtime
+  // asks of a value it holds as well as one the program writes.
+  kBitIdentical,
+  kHasUnknown,
+  // Folding two contributions of equal strength to a net, one entry per truth
+  // table for the reason a net's installation is one entry per resolution (LRM
+  // 6.6.1, 6.6.3); what a stronger contribution leaves a weaker one (LRM
+  // 28.12.1); and a value of a prototype's shape with every bit set to one fill
+  // (LRM 6.7.1).
+  kResolveTriState,
+  kResolveWiredAnd,
+  kResolveWiredOr,
+  kDominating,
+  kFilledLike,
   // LRM 20.8.1. ceil(log2) of the operand read as unsigned; $clog2(0) is 0.
   // A constant argument is folded downstream, never in lowering.
   kClog2,

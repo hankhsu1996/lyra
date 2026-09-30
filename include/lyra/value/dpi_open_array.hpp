@@ -208,9 +208,7 @@ class DpiOpenArray {
         elements[ordinal] =
             Rebuild(prototype.RawAt(ordinal), dimension + 1, position);
       }
-      typename T::ElementType element_default = prototype.RawAt(0);
-      element_default.ResetToDefault();
-      return T(std::move(element_default), elements);
+      return T(prototype.ElementDefault(), elements);
     }
   }
 

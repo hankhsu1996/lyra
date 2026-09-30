@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
@@ -44,6 +45,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
+#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
@@ -407,6 +409,17 @@ auto LowerBuiltinMethodCall(
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
       receiver = block.exprs.Add(*std::move(recv_or));
     }
+  }
+  // How many bits a structure holds is its type's own function to answer (LRM
+  // 20.6.2), so the width is asked the way every whole-value question is.
+  if (b.method == support::BuiltinFn::kBitstreamWidth) {
+    if (!receiver.has_value()) {
+      throw InternalError(
+          "LowerBuiltinMethodCall: a bit count is asked of no value");
+    }
+    const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+    return block.exprs.Get(ConvertToType(
+        unit, block, BuildBitWidth(unit, block, *receiver), result_type));
   }
   const mir::Direct mir_callee{.target = b.method, .receiver = receiver};
 

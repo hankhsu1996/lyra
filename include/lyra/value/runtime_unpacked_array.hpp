@@ -7,6 +7,7 @@
 
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/net_resolution.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -163,12 +164,15 @@ class RuntimeUnpackedArray {
   [[nodiscard]] auto MergeConditional(const RuntimeUnpackedArray& other) const
       -> RuntimeUnpackedArray;
 
-  // Net resolution applied element by element under the fold `fold` names
-  // (LRM 6.6). LRM 6.7.1 admits an unpacked array as a net's data type when its
+  // Net resolution applied element by element under each truth table (LRM
+  // 6.6). LRM 6.7.1 admits an unpacked array as a net's data type when its
   // element type is itself valid for a net, and it composes a net out of its
   // elements' bits, so folding two contributions is folding each element pair.
-  [[nodiscard]] auto ResolveNet(
-      const RuntimeUnpackedArray& other, NetResolution fold) const
+  [[nodiscard]] auto ResolveTriState(const RuntimeUnpackedArray& other) const
+      -> RuntimeUnpackedArray;
+  [[nodiscard]] auto ResolveWiredAnd(const RuntimeUnpackedArray& other) const
+      -> RuntimeUnpackedArray;
+  [[nodiscard]] auto ResolveWiredOr(const RuntimeUnpackedArray& other) const
       -> RuntimeUnpackedArray;
 
   // What a stronger contribution leaves a weaker one, element by element (LRM
@@ -208,6 +212,12 @@ class RuntimeUnpackedArray {
       -> RuntimeUnpackedArray;
 
  private:
+  // Each element pair folded under one table; the three tables differ only in
+  // the elements' own fold.
+  [[nodiscard]] auto FoldedWith(
+      const RuntimeUnpackedArray& other, NetResolution fold) const
+      -> RuntimeUnpackedArray;
+
   // Indirect because `RuntimeValue` closes over this type: a by-value member
   // would need `RuntimeValue` complete here, which it is not.
   std::unique_ptr<RuntimeValue> element_default_;

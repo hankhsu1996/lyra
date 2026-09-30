@@ -50,13 +50,14 @@ the detail lives in the entry itself.
 - [unpacked-array-representation](unpacked-array-representation.md) -- representation of a
   fixed-size unpacked array.
 - [unpacked-struct-representation](unpacked-struct-representation.md) -- an unpacked struct is a
-  value product and not an object, positional access, defaults synthesized at lowering.
+  nominal value product (`StructType`) and not an object, positional access, defaults synthesized at
+  lowering.
 - [unpacked-union-representation](unpacked-union-representation.md) -- the sibling the struct
   decision left open: overlapping storage is neither a product nor a sum, and this settles which one
   MIR models it as.
-- [aggregate-names-are-type-content](aggregate-names-are-type-content.md) -- an aggregate the source
-  declared names its members in its own type, whose value-domain projection is the product or the
-  vector a type naming nothing already has.
+- [aggregate-names-are-type-content](aggregate-names-are-type-content.md) -- superseded: an
+  aggregate's member names were put on its MIR type for rendering, and came off again once rendering
+  was built from the source type.
 - [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) -- an unpacked array's index
   range is part of its type, not a size carried beside it; packed arrays are carved out.
 - [selector-coordinate-resolution](selector-coordinate-resolution.md) -- `a[1:7]`, `b[7:1]`, and
@@ -71,14 +72,19 @@ the detail lives in the entry itself.
   rejected.
 - [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend a union or a
   container is a runtime-owned erased value, not structurally monomorphized; the choice is below
-  LIR, and LIR's aggregate operations stay realization-agnostic. Superseded for products by the
-  entry below.
-- [a-product-is-laid-out-from-its-components](a-product-is-laid-out-from-its-components.md) -- the
-  execution backend lays a product out itself, as a C record of its components' objects, so a
-  function's answer is built in its caller's storage and read in place; the runtime, compiled once,
-  still holds a product erased, and one crossing to it is converted. Call-chain 1,044.7 M -> 895.5 M
-  instructions; a struct-variable loop 427.1 M -> 538.0 M, the conversion's price until the runtime
-  holds products laid out.
+  LIR, and LIR's aggregate operations stay realization-agnostic. Superseded for tuples by the entry
+  below.
+- [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) -- on the execution backend
+  a tuple has one form wherever it lies: its type's layout, opening with its type's operation table,
+  as a C++ object with virtual functions opens with its vtable pointer. The code generator compiles
+  each tuple type's lifecycle, and the prebuilt runtime reaches that and the type's operations
+  through the table. Call-chain 1,032.0 M -> 851.3 M instructions, a struct loop 278.7 M -> 236.3 M.
+  A description the runtime walks and a tuple converted where it crosses are rejected.
+- [a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md) -- `==`,
+  `===`, `$bits`, `$countbits`, `$isunknown`, the bit stream and the net folds on a structure are
+  methods its declaration states in MIR, one per operation the type has, and the program's use is a
+  call of one. Each backend compiles them like any other declared body; the execution backend also
+  hands its runtime a table of them. Composing them in a backend is rejected.
 - [slice-value-semantics](slice-value-semantics.md) -- a slice read materializes an owned value; the
   access model is value, not borrow.
 - [value-projection-write](value-projection-write.md) -- a value-aggregate interior write is an
@@ -185,10 +191,9 @@ the detail lives in the entry itself.
   the one node that lifts any statement sequence into an expression; it sequences and nothing else,
   so its steps do not return. A closure invoked where it is built is rejected.
 - [closure-environment-and-activation-frame](closure-environment-and-activation-frame.md) -- a
-  closure (`ClosureType`, an anonymous concrete callable value: captures plus one invoke) and a
-  promoted automatic scope (`StructType` reached via `Shared<>`, fields only, no invoke) are two
-  distinct nominal categories sharing only the field substrate, not one fused type with an optional
-  invoke; the callable value has a concrete `ClosureType` level and an erased
+  closure (`ClosureType`, an anonymous concrete callable value: captures plus one invoke) is its own
+  category, and a lifted automatic local is its own cell held through a shared pointer; the two
+  share only `CallableCode`, and the callable value has a concrete `ClosureType` level and an erased
   `ErasedCallableType<Sig>` level with an explicit erasure.
 - [builtin-call-identity](builtin-call-identity.md) -- built-in method calls carry a flat
   closed-namespace identifier (`support::BuiltinFn`) shared by HIR and MIR. Its positional receiver
