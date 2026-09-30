@@ -726,6 +726,28 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = FreeFunction{"lyra::runtime::WaitRecollecting"},
           .takes_the_runtime_handle = true,
           .parks_the_caller = true};
+    case BuiltinFn::kWaitUntilCollected:
+      return {
+          .name = "wait_until_collected",
+          .declaration = FreeFunction{"lyra::runtime::WaitUntil"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
+    case BuiltinFn::kReadReportFor:
+      return {.name = "read_report_for", .declaration = StaticFactory{"For"}};
+    case BuiltinFn::kReadReportAdd:
+      return {.name = "read_report_add", .declaration = Method{"Add"}};
+    case BuiltinFn::kReadReportAddEveryObject:
+      return {
+          .name = "read_report_add_every_object",
+          .declaration = Method{"AddEveryObject"}};
+    case BuiltinFn::kReadReportEnter:
+      return {.name = "read_report_enter", .declaration = Method{"Enter"}};
+    case BuiltinFn::kReadReportLeave:
+      return {.name = "read_report_leave", .declaration = Method{"Leave"}};
+    case BuiltinFn::kRefuseReport:
+      return {
+          .name = "refuse_report",
+          .declaration = FreeFunction{"lyra::runtime::RefuseReport"}};
     case BuiltinFn::kSimTime:
       return {
           .name = "sim_time",

@@ -15,6 +15,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/foreign_export.hpp"
+#include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
@@ -1283,6 +1284,13 @@ auto SynthesizeForeignExportEntry(
     const mir::LocalId sv_in = bindings.DeclareAnonymous(sv_type);
     body.AppendStmt(mir::LocalDeclStmt{.target = sv_in, .init = sv_init});
     call_args.push_back(body.exprs.Add(mir::MakeLocalRefExpr(sv_in, sv_type)));
+  }
+  // The foreign caller has the subroutine run, so it hands no report.
+  if (const std::optional<mir::TypeId> report = ReportParamTypeOf(
+          unit, is_task ? hir::SubroutineKind::kTask
+                        : hir::SubroutineKind::kFunction)) {
+    call_args.push_back(
+        body.exprs.Add(mir::Expr{.data = mir::NullLiteral{}, .type = *report}));
   }
 
   // The completion payload the writeback loop below destructures is the

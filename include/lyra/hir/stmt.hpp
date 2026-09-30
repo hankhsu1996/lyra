@@ -338,14 +338,13 @@ struct EventTriggerStmt {
   auto operator==(const EventTriggerStmt&) const -> bool = default;
 };
 
-// LRM 9.4.3 level-sensitive `wait (cond) body`. `sensitivity_list` is the
-// precomputed read set of `cond`, populated at AST -> HIR from a slang-side
-// ASTVisitor over WaitStatement.cond -- symmetric with how `@*` and
-// always_comb carry slang-derived sensitivity.
+// LRM 9.4.3 level-sensitive `wait (cond) body`. `reads` is what `cond` can
+// read, including through the subroutines it calls, a change to any of which
+// is what can make the condition true.
 struct WaitStmt {
   ExprId cond;
   StmtId body;
-  std::vector<SensitivityEntry> sensitivity_list;
+  Reads reads;
 
   auto operator==(const WaitStmt&) const -> bool = default;
 };

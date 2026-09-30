@@ -636,8 +636,7 @@ class HirDumper {
         p);
   }
 
-  static auto FormatSensitivityTarget(const SensitivityTarget& target)
-      -> std::string {
+  static auto FormatSealedCell(const ValueTarget& cell) -> std::string {
     return std::visit(
         Overloaded{
             [](const RoutedValueRef& r) -> std::string {
@@ -651,24 +650,8 @@ class HirDumper {
                   "var=StaticProperty[{}]",
                   FormatStaticPropertyTarget(r.target));
             },
-            [](const InterfaceMemberAccessExpr& c) -> std::string {
-              return std::format(
-                  "held=Expr[{}] steps={} member[{}]", c.instance.handle.value,
-                  c.instance.steps.size(), c.member.value);
-            },
-            [](const ObjectEventSource& o) -> std::string {
-              return std::visit(
-                  Overloaded{
-                      [](ExprId handle) -> std::string {
-                        return std::format("object=Expr[{}]", handle.value);
-                      },
-                      [](const ReceiverObject&) -> std::string {
-                        return "object=receiver";
-                      }},
-                  o.object);
-            },
         },
-        target);
+        cell);
   }
 
   static auto FormatFootprint(
@@ -678,6 +661,92 @@ class HirDumper {
       return "[whole]";
     }
     return std::format("[{}:{}]", footprint->first, footprint->second);
+  }
+
+  static auto FormatSensitivityEntry(const SensitivityEntry& entry)
+      -> std::string {
+    return std::format(
+        "{} bits={}", FormatSealedCell(entry.cell),
+        FormatFootprint(entry.footprint));
+  }
+
+  static auto FormatSensitivityList(std::span<const SensitivityEntry> entries)
+      -> std::string {
+    std::string out = "[";
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+      if (i != 0) out += ", ";
+      out += std::format("{{{}}}", FormatSensitivityEntry(entries[i]));
+    }
+    out += "]";
+    return out;
+  }
+
+  static auto FormatWaitLeaf(const WaitLeaf& leaf) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const SensitivityEntry& e) -> std::string {
+              return FormatSensitivityEntry(e);
+            },
+            [](const InterfaceMemberAccessExpr& c) -> std::string {
+              return std::format(
+                  "held=Expr[{}] steps={} member[{}]", c.instance.handle.value,
+                  c.instance.steps.size(), c.member.value);
+            },
+            [](const ObjectChain& c) -> std::string {
+              const std::string root = std::visit(
+                  Overloaded{
+                      [](ExprId handle) {
+                        return std::format("Expr[{}]", handle.value);
+                      },
+                      [](const ReceiverObject&) {
+                        return std::string{"receiver"};
+                      }},
+                  c.root);
+              return std::format("objects={} hops={}", root, c.hops.size());
+            },
+            [](const EveryObject&) -> std::string { return "every_object"; },
+        },
+        leaf);
+  }
+
+  static auto FormatReportedArgument(ReportedArgument argument)
+      -> std::string_view {
+    switch (argument) {
+      case ReportedArgument::kEvaluated:
+        return "evaluated";
+      case ReportedArgument::kDefaulted:
+        return "defaulted";
+    }
+    throw InternalError("HirDumper::FormatReportedArgument: unknown argument");
+  }
+
+  static auto FormatReads(const Reads& reads) -> std::string {
+    std::string out = "reads=[";
+    for (std::size_t i = 0; i < reads.leaves.size(); ++i) {
+      if (i != 0) out += ", ";
+      out += std::format("{{{}}}", FormatWaitLeaf(reads.leaves[i]));
+    }
+    out += "] calls=[";
+    for (std::size_t i = 0; i < reads.calls.size(); ++i) {
+      if (i != 0) out += ", ";
+      const ReportingCall& call = reads.calls[i];
+      out += std::format("{{Expr[{}]", call.call.value);
+      if (call.receiver.has_value()) {
+        out +=
+            std::format(" receiver={}", FormatReportedArgument(*call.receiver));
+      }
+      out += " args=[";
+      for (std::size_t j = 0; j < call.arguments.size(); ++j) {
+        if (j != 0) out += ", ";
+        out += FormatReportedArgument(call.arguments[j]);
+      }
+      out += "]}";
+    }
+    out += "]";
+    if (reads.unreportable.has_value()) {
+      out += std::format(" unreportable=\"{}\"", *reads.unreportable);
+    }
+    return out;
   }
 
   static auto FormatEventEdge(support::EventEdge edge) -> std::string_view {
@@ -710,17 +779,10 @@ class HirDumper {
     for (std::size_t i = 0; i < e.triggers.size(); ++i) {
       if (i != 0) out += ", ";
       out += std::format(
-          "{{signal=Expr[{}] edge={}{} sensitivity=[",
-          e.triggers[i].signal.value, FormatEventEdge(e.triggers[i].edge),
-          FormatCondition(e.triggers[i].condition));
-      for (std::size_t j = 0; j < e.triggers[i].sensitivity_list.size(); ++j) {
-        if (j != 0) out += ", ";
-        const auto& r = e.triggers[i].sensitivity_list[j];
-        out += std::format(
-            "{{{} bits={}}}", FormatSensitivityTarget(r.ref),
-            FormatFootprint(r.footprint));
-      }
-      out += "]}";
+          "{{signal=Expr[{}] edge={}{} {}}}", e.triggers[i].signal.value,
+          FormatEventEdge(e.triggers[i].edge),
+          FormatCondition(e.triggers[i].condition),
+          FormatReads(e.triggers[i].reads));
     }
     out += "]";
     return out;
@@ -729,9 +791,8 @@ class HirDumper {
   static auto FormatNamedEventControl(const NamedEventControl& n)
       -> std::string {
     return std::format(
-        "NamedEventControl event={{{} bits={}}}{}",
-        FormatSensitivityTarget(n.event.ref),
-        FormatFootprint(n.event.footprint), FormatCondition(n.condition));
+        "NamedEventControl event={{{}}}{}", FormatSensitivityEntry(n.event),
+        FormatCondition(n.condition));
   }
 
   static auto FormatAnyEventControl(const AnyEventControl& event)
@@ -752,16 +813,9 @@ class HirDumper {
             [](const DelayControl& d) { return FormatDelayControl(d); },
             [](const EventControl& e) { return FormatEventControl(e); },
             [](const ImplicitEventControl& ie) -> std::string {
-              std::string out = "ImplicitEventControl sensitivity=[";
-              for (std::size_t i = 0; i < ie.sensitivity_list.size(); ++i) {
-                if (i != 0) out += ", ";
-                const auto& r = ie.sensitivity_list[i];
-                out += std::format(
-                    "{{{} bits={}}}", FormatSensitivityTarget(r.ref),
-                    FormatFootprint(r.footprint));
-              }
-              out += "]";
-              return out;
+              return std::format(
+                  "ImplicitEventControl sensitivity={}",
+                  FormatSensitivityList(ie.sensitivity_list));
             },
             [](const NamedEventControl& n) {
               return FormatNamedEventControl(n);
@@ -1833,6 +1887,7 @@ class HirDumper {
     if (d.result_var.has_value()) {
       Line(std::format("Result var=ProceduralVar[{}]", d.result_var->value));
     }
+    Line(FormatReads(d.reads));
     // A pure virtual method is a prototype with no implementation (LRM 8.21):
     // its formals and the scope owning them are real declarations, but there
     // is no statement tree behind the signature to walk.
@@ -1907,10 +1962,7 @@ class HirDumper {
       Line("ImplicitSensitivityList:");
       Indent();
       for (const auto& r : p.implicit_sensitivity_list) {
-        Line(
-            std::format(
-                "{} bits={}", FormatSensitivityTarget(r.ref),
-                FormatFootprint(r.footprint)));
+        Line(FormatSensitivityEntry(r));
       }
       Dedent();
     }
@@ -2052,10 +2104,7 @@ class HirDumper {
       Line("SensitivityList:");
       Indent();
       for (const auto& r : ca.sensitivity_list) {
-        Line(
-            std::format(
-                "{} bits={}", FormatSensitivityTarget(r.ref),
-                FormatFootprint(r.footprint)));
+        Line(FormatSensitivityEntry(r));
       }
       Dedent();
     }
@@ -2558,19 +2607,10 @@ class HirDumper {
                       id.value, et.event.value, FormatEffectTiming(et.timing)));
             },
             [&](const WaitStmt& w) {
-              std::string sens = "sensitivity=[";
-              for (std::size_t i = 0; i < w.sensitivity_list.size(); ++i) {
-                if (i != 0) sens += ", ";
-                const auto& r = w.sensitivity_list[i];
-                sens += std::format(
-                    "{{{} bits={}}}", FormatSensitivityTarget(r.ref),
-                    FormatFootprint(r.footprint));
-              }
-              sens += "]";
               Line(
                   std::format(
                       "Stmt[{}] WaitStmt cond=Expr[{}] {}", id.value,
-                      w.cond.value, sens));
+                      w.cond.value, FormatReads(w.reads)));
               Indent();
               Line("body:");
               Indent();
@@ -2601,21 +2641,13 @@ class HirDumper {
                       "Stmt[{}] DisableStmt target={}", id.value, target));
             },
             [&](const ProceduralContinuousAssignStmt& pca) {
-              std::string sens = "sensitivity=[";
-              for (std::size_t i = 0; i < pca.sensitivity_list.size(); ++i) {
-                if (i != 0) sens += ", ";
-                const auto& r = pca.sensitivity_list[i];
-                sens += std::format(
-                    "{{{} bits={}}}", FormatSensitivityTarget(r.ref),
-                    FormatFootprint(r.footprint));
-              }
-              sens += "]";
               Line(
                   std::format(
                       "Stmt[{}] ProceduralContinuousAssignStmt level={} "
-                      "target=Expr[{}] source=Expr[{}] {}",
+                      "target=Expr[{}] source=Expr[{}] sensitivity={}",
                       id.value, FormatTakeoverLevel(pca.level),
-                      pca.target.value, pca.source.value, sens));
+                      pca.target.value, pca.source.value,
+                      FormatSensitivityList(pca.sensitivity_list)));
             },
             [&](const ProceduralContinuousEndStmt& pce) {
               Line(

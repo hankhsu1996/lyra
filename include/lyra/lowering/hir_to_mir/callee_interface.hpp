@@ -117,6 +117,15 @@ auto ParamTypeOf(
     UnitLowerer& unit_lowerer, hir::TypeId value_type,
     hir::ParamDirection direction) -> std::optional<mir::TypeId>;
 
+// The parameter a subroutine takes after its formals: where a call of a
+// function is to report what it reads instead of running (LRM 9.4.2), which an
+// ordinary call hands none of. A task is never called from an expression a
+// wait watches, so it takes none. This is the sole statement of which
+// subroutines take one, so a definition, its prototype and every call agree.
+auto ReportParamTypeOf(
+    const mir::CompilationUnit& unit, hir::SubroutineKind kind)
+    -> std::optional<mir::TypeId>;
+
 // A subroutine declaration's formals, read into the shape a completion derives
 // from.
 auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)

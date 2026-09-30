@@ -49,14 +49,21 @@ auto GcObject::EventSource() -> Observable& {
   return *event_source_;
 }
 
+// A write to any object also reaches the waits watching every object, so the
+// object is watched while one of them is, whether or not it has a source of
+// its own.
 auto GcObject::Watched() const -> bool {
-  return event_source_ != nullptr && event_source_->HasWaiter();
+  return (event_source_ != nullptr && event_source_->HasWaiter()) ||
+         current_runtime().EveryObject().HasWaiter();
 }
 
 void GcObject::PublishChange() {
-  if (Watched()) {
-    current_runtime().WakeWaitersOf(
-        *event_source_, MakeWholeValueProjectionTest());
+  RuntimeEffects& runtime = current_runtime();
+  if (event_source_ != nullptr && event_source_->HasWaiter()) {
+    runtime.WakeWaitersOf(*event_source_, MakeWholeValueProjectionTest());
+  }
+  if (Observable& every = runtime.EveryObject(); every.HasWaiter()) {
+    runtime.WakeWaitersOf(every, MakeWholeValueProjectionTest());
   }
 }
 

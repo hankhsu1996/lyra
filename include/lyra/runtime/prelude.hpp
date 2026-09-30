@@ -44,6 +44,7 @@
 #include "lyra/runtime/process_control.hpp"      // IWYU pragma: keep
 #include "lyra/runtime/process_kind.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/random.hpp"               // IWYU pragma: keep
+#include "lyra/runtime/read_report.hpp"          // IWYU pragma: keep
 #include "lyra/runtime/runtime.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/runtime_effects.hpp"      // IWYU pragma: keep
 #include "lyra/runtime/runtime_process.hpp"      // IWYU pragma: keep

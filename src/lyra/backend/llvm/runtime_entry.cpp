@@ -375,6 +375,7 @@ auto MemberStorageKindOf(
               case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
               case lir::RuntimeLibraryKind::kTrigger:
               case lir::RuntimeLibraryKind::kObservation:
+              case lir::RuntimeLibraryKind::kReadReport:
               case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kControlEffect:
                 return std::nullopt;
@@ -871,6 +872,13 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kWaitAny:
     case support::BuiltinFn::kWaitUntil:
     case support::BuiltinFn::kWaitRecollecting:
+    case support::BuiltinFn::kWaitUntilCollected:
+    case support::BuiltinFn::kReadReportFor:
+    case support::BuiltinFn::kReadReportAdd:
+    case support::BuiltinFn::kReadReportAddEveryObject:
+    case support::BuiltinFn::kReadReportEnter:
+    case support::BuiltinFn::kReadReportLeave:
+    case support::BuiltinFn::kRefuseReport:
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:
     case support::BuiltinFn::kRealTime:

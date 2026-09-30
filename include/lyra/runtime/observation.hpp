@@ -235,13 +235,17 @@ class ArmedObservation {
   // still a change, and the baseline has to advance to it or the wait goes on
   // comparing against a value the design has left behind.
   [[nodiscard]] auto Fires() -> bool {
-    took_event_ = (!watch_.has_value() || watch_->TakeTransition()) &&
-                  (!condition_ || condition_());
-    return took_event_;
+    const bool fired = (!watch_.has_value() || watch_->TakeTransition()) &&
+                       (!condition_ || condition_());
+    took_event_ = took_event_ || fired;
+    return fired;
   }
 
-  // What the last candidacy asked of it answered, for a wait that resumes on
-  // every candidacy and asks afterwards whether it was an event.
+  // Whether a candidacy since the wait was armed was an event for it, for a
+  // wait that resumes on every candidacy and asks afterwards. It holds once
+  // taken: one change can reach a wait through several places it watches, and
+  // each asks in turn, so the first to see the change moves the baseline and
+  // every later one compares the new value against itself.
   [[nodiscard]] auto TookEvent() const -> bool {
     return took_event_;
   }

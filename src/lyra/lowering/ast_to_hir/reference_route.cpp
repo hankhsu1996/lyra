@@ -21,7 +21,6 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
@@ -936,7 +935,7 @@ auto UnitLowerer::ObservedThroughModport(
                                                   .type = member.type}});
     out.push_back(
         hir::SensitivityEntry{
-            .ref = hir::RoutedValueRef{.id = reference},
+            .cell = hir::RoutedValueRef{.id = reference},
             .footprint = std::nullopt});
   }
   return out;
@@ -959,19 +958,11 @@ auto UnitLowerer::TranslateSensitivityReads(
     // runtime observes the whole signal on any change, so the read carries no
     // footprint regardless of the flat-bit view the DFA computed over its own
     // encoding.
-    const auto observe = [&](const hir::ValueTarget& cell) {
+    const auto observe = [&](hir::ValueTarget cell) {
       const slang::ast::Type& read_type = target.getType();
       out.push_back(
           hir::SensitivityEntry{
-              .ref = std::visit(
-                  Overloaded{
-                      [](const hir::RoutedValueRef& r)
-                          -> hir::SensitivityTarget { return r; },
-                      [](const hir::ExternalUnitValueRef& r)
-                          -> hir::SensitivityTarget { return r; },
-                      [](const hir::StaticPropertyRef& r)
-                          -> hir::SensitivityTarget { return r; }},
-                  cell),
+              .cell = std::move(cell),
               .footprint = read_type.isIntegral() && !read_type.isEnum()
                                ? read.footprint
                                : std::nullopt});
@@ -1047,8 +1038,8 @@ auto UnitLowerer::TranslateSensitivityReads(
       out,
       [](const hir::SensitivityEntry& left,
          const hir::SensitivityEntry& right) -> bool {
-        return std::tie(left.ref, left.footprint) <
-               std::tie(right.ref, right.footprint);
+        return std::tie(left.cell, left.footprint) <
+               std::tie(right.cell, right.footprint);
       });
   return out;
 }

@@ -11,6 +11,7 @@
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observation.hpp"
+#include "lyra/runtime/read_report.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/trigger.hpp"
@@ -97,10 +98,11 @@ class LevelConditionWait : public EventControlWait {
   }
 };
 
-// Waiting for an event control some of whose leaves were found by evaluating a
-// handle. Which storage the expression reaches can move while the process
-// waits, so the process resumes on every candidacy and collects its leaves
-// again, asking afterwards whether the candidacy was an event (LRM 9.4.2).
+// Waiting for an event control whose leaves are collected where it stands --
+// found through a handle, or reported by a function its expression calls.
+// What the expression reaches can move while the process waits, so the process
+// resumes on every candidacy and collects its leaves again, asking afterwards
+// whether the candidacy was an event (LRM 9.4.2).
 // Nothing watches the expression between resuming and waiting again, so a wait
 // made afresh first compares the expression against what it last found, which
 // is what catches a change made in that gap.
@@ -202,22 +204,38 @@ auto WaitUntil(RuntimeEffects& services, std::span<const Trigger> triggers)
       services, triggers);
 }
 
-auto WaitRecollecting(
-    RuntimeEffects& services, std::span<const Trigger> triggers) -> bool {
-  return services.CurrentProcess().ParkOn<RecollectingEventWait>(
-      services, triggers);
-}
-
 auto WaitAny(RuntimeEffects& services, std::span<const Trigger* const> triggers)
     -> bool {
   return services.CurrentProcess().ParkOn<EventControlWait>(services, triggers);
 }
 
+namespace {
+
+// Every leaf the reports collected, one wait's worth.
+auto CollectedLeaves(std::span<ReadReport* const> reports)
+    -> std::vector<Trigger> {
+  std::vector<Trigger> leaves;
+  for (const ReadReport* report : reports) {
+    const std::span<const Trigger> reported = report->Triggers();
+    leaves.insert(leaves.end(), reported.begin(), reported.end());
+  }
+  return leaves;
+}
+
+}  // namespace
+
 auto WaitRecollecting(
-    RuntimeEffects& services, std::span<const Trigger* const> triggers)
-    -> bool {
+    RuntimeEffects& services, std::span<ReadReport* const> reports) -> bool {
+  const std::vector<Trigger> leaves = CollectedLeaves(reports);
   return services.CurrentProcess().ParkOn<RecollectingEventWait>(
-      services, triggers);
+      services, std::span<const Trigger>{leaves});
+}
+
+auto WaitUntil(RuntimeEffects& services, std::span<ReadReport* const> reports)
+    -> bool {
+  const std::vector<Trigger> leaves = CollectedLeaves(reports);
+  return services.CurrentProcess().ParkOn<LevelConditionWait>(
+      services, std::span<const Trigger>{leaves});
 }
 
 auto WaitUntil(

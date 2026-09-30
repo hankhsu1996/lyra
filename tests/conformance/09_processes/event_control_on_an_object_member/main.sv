@@ -11,9 +11,12 @@
 // assignment, an increment, a nonblocking assignment, a built-in method that
 // changes a member, and a task writing through a `ref` bound to the member.
 // A member named bare inside a method is a member of the object the method
-// runs on, and a wait may go through a handle a member holds.
+// runs on, and a wait may go through a handle a member holds. A wait reading
+// two members of one object is reached through both by one write, which is
+// one event.
 class Packet;
   int status = 0;
+  int other = 0;
   int q[$];
   Packet next;
 
@@ -41,6 +44,8 @@ module Top;
   time level_woke = 0;
   time chained_woke = 0;
   time edge_woke = 0;
+  time twice_woke = 0;
+  Packet twice;
   Packet a;
   Packet a_first;
   Packet b;
@@ -73,6 +78,7 @@ module Top;
     k = new;
     chain = new;
     chain.next = new;
+    twice = new;
     fork
       begin
         @(p.status);
@@ -123,6 +129,12 @@ module Top;
         @(posedge p.status[0]);
         edge_woke = $time;
       end
+      // Two members of one object: the one write reaches the wait through
+      // both, and is one event.
+      begin
+        @(twice.status + twice.other);
+        twice_woke = $time;
+      end
     join_none
     #5 p.status = 1;
     #5 p = new;
@@ -150,6 +162,7 @@ module Top;
     // now names.
     #5 chain.next = new;
     #5 chain.next.status = 5;
+    #5 twice.other = 1;
   end
 
   final begin
@@ -166,6 +179,7 @@ module Top;
     if (ref_woke !== 60) $fatal(1, "the wait on a write through a ref ended at %0t, expected 60", ref_woke);
     if (level_woke !== 70) $fatal(1, "the level wait ended at %0t, expected 70", level_woke);
     if (chained_woke !== 80) $fatal(1, "the wait through a member handle ended at %0t, expected 80", chained_woke);
+    if (twice_woke !== 85) $fatal(1, "the wait on two members of one object ended at %0t, expected 85", twice_woke);
     $display("All checks passed");
   end
 endmodule

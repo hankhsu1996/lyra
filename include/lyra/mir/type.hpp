@@ -440,6 +440,11 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // the event and the value it had when the wait began. The leaves of one
   // event expression name one of these between them.
   kObservation,
+  // LRM 9.4.2 what a wait learns, each time it collects its leaves, about what
+  // one of its event expressions can read: `lyra::runtime::ReadReport`, into
+  // which the wait adds what it reaches and every function the expression
+  // calls reports what a call of it reads.
+  kReadReport,
   // A write in progress into a property of an object (LRM 8.4):
   // `lyra::runtime::ObjectWrite`, through which the place written is reached,
   // and which tells the object it was written when the full-expression doing

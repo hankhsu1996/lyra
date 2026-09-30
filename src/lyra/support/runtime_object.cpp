@@ -25,6 +25,8 @@ auto LibraryObjectName(LibraryObject object) -> std::string_view {
       return "trigger";
     case LibraryObject::kObservation:
       return "observation";
+    case LibraryObject::kReadReport:
+      return "read_report";
     case LibraryObject::kDpiBitBuffer:
       return "dpi_bit_buffer";
     case LibraryObject::kDpiLogicBuffer:

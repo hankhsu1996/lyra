@@ -551,7 +551,8 @@ auto SynthesizeDefaultConstructor(
       .body = std::move(body),
       .root_stmt = root_stmt,
       .is_virtual = false,
-      .overrides = std::nullopt};
+      .overrides = std::nullopt,
+      .reads = {}};
 }
 
 // Builds the forwarding method for one interface pure virtual method a class
@@ -654,6 +655,17 @@ auto BuildInterfaceForwardingMethod(
       unit_lowerer.MakeOverriddenBehavior(*iface_ref, *proto_stub, span);
   if (!taken) return std::unexpected(std::move(taken.error()));
 
+  // What a call of the forwarder reads is what the implementation it forwards
+  // to reads, handed the same object and the same formals.
+  hir::Reads reads{
+      .leaves = {},
+      .calls = {hir::ReportingCall{
+          .call = call,
+          .receiver = hir::ReportedArgument::kEvaluated,
+          .arguments = std::vector<hir::ReportedArgument>(
+              params.size(), hir::ReportedArgument::kEvaluated)}},
+      .unreportable = std::nullopt};
+
   return hir::SubroutineDecl{
       .name = std::string{proto.name},
       .kind = hir::SubroutineKind::kFunction,
@@ -665,7 +677,8 @@ auto BuildInterfaceForwardingMethod(
       .is_virtual = true,
       .is_prototype = false,
       .is_static = false,
-      .overrides = *std::move(taken)};
+      .overrides = *std::move(taken),
+      .reads = std::move(reads)};
 }
 
 // Synthesizes forwarding methods for every interface pure virtual method a

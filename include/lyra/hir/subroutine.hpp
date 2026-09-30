@@ -9,6 +9,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
+#include "lyra/hir/timing.hpp"
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
@@ -52,6 +53,10 @@ struct SubroutineParam {
 // `CallableCode.params` prepends `self`: instance methods do, static methods
 // omit it. Only class methods carry it; free subroutines and processes are
 // never static in this sense.
+//
+// `reads` is what a call of a function can read (LRM 9.4.2), stated in terms of
+// its own formals and the object it runs on so a wait calling it can ask. A
+// task is never called from an expression and states nothing.
 struct SubroutineDecl {
   std::string name;
   SubroutineKind kind;
@@ -64,6 +69,7 @@ struct SubroutineDecl {
   bool is_prototype = false;
   bool is_static = false;
   std::optional<OverriddenBehavior> overrides;
+  Reads reads;
 
   auto operator==(const SubroutineDecl&) const -> bool = default;
 };

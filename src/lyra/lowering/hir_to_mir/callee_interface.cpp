@@ -79,6 +79,18 @@ auto ParamTypeOf(
   throw InternalError("ParamTypeOf: unknown parameter direction");
 }
 
+auto ReportParamTypeOf(
+    const mir::CompilationUnit& unit, hir::SubroutineKind kind)
+    -> std::optional<mir::TypeId> {
+  switch (kind) {
+    case hir::SubroutineKind::kFunction:
+      return unit.builtins.read_report_ptr;
+    case hir::SubroutineKind::kTask:
+      return std::nullopt;
+  }
+  throw InternalError("ReportParamTypeOf: unknown subroutine kind");
+}
+
 auto CalleeFormalsOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
     -> std::vector<CalleeFormal> {
   std::vector<CalleeFormal> formals;

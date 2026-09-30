@@ -106,6 +106,8 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "trigger";
     case RuntimeLibraryKind::kObservation:
       return "observation";
+    case RuntimeLibraryKind::kReadReport:
+      return "read report";
     case RuntimeLibraryKind::kObjectWrite:
       return "object write";
     case RuntimeLibraryKind::kCancellationTarget:
@@ -596,6 +598,9 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
                 return LibraryObject::kTrigger;
               case RuntimeLibraryKind::kObservation:
                 return LibraryObject::kObservation;
+              // Held by the waiting frame while it collects its leaves.
+              case RuntimeLibraryKind::kReadReport:
+                return LibraryObject::kReadReport;
               // Held by the writer for as long as the write lasts; ending it
               // is what tells the object it was written.
               case RuntimeLibraryKind::kObjectWrite:

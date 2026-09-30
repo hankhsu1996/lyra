@@ -26,6 +26,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/support/dpi_abi.hpp"
 
@@ -364,6 +365,17 @@ auto LowerSubroutineDeclImpl(
   if (!body_stmt_or) return std::unexpected(std::move(body_stmt_or.error()));
   const hir::StmtId root_stmt = body.stmts.Add(*std::move(body_stmt_or));
 
+  // A function may be called from an expression a wait watches, so it states
+  // what a call of it reads (LRM 9.4.2). A constructor and a task never are.
+  hir::Reads reads;
+  if (sym.subroutineKind == slang::ast::SubroutineKind::Function &&
+      !sym.flags.has(slang::ast::MethodFlags::Constructor)) {
+    auto reads_or = ReadsOfFunctionBody(
+        lowerer, body_frame, sym, mapper.PointSpanOf(sym.location));
+    if (!reads_or) return std::unexpected(std::move(reads_or.error()));
+    reads = *std::move(reads_or);
+  }
+
   // The registry the root is defined in belongs to whichever declaration scope
   // owns this body -- the enclosing structural scope for a free subroutine, the
   // class for a method.
@@ -380,7 +392,8 @@ auto LowerSubroutineDeclImpl(
               .body = std::move(body),
               .root_stmt = root_stmt,
               .is_virtual = false,
-              .overrides = std::nullopt},
+              .overrides = std::nullopt,
+              .reads = std::move(reads)},
       .base_arguments = std::move(base_arguments)};
 }
 
@@ -470,6 +483,7 @@ auto LowerMethodPrototypeDecl(
       .is_virtual = true,
       .is_prototype = true,
       .overrides = std::nullopt,
+      .reads = {},
   };
 }
 

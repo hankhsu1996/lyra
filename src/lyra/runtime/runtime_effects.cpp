@@ -237,6 +237,10 @@ void RuntimeEffects::WakeWaitersOf(
   }
 }
 
+auto RuntimeEffects::EveryObject() -> Observable& {
+  return AsRuntime(*this).every_object_;
+}
+
 void RuntimeEffects::EndRun(
     std::string_view task, const value::String& origin,
     const value::PackedArray& level) {

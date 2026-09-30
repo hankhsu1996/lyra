@@ -532,7 +532,7 @@ enum class BuiltinFn : std::uint16_t {
   kObservationQualified,
   // Whether the candidacy that last reached a wait watching through an
   // observation was an event for it, asked by a wait that resumes on every
-  // candidacy (`kWaitRecollecting`).
+  // candidacy.
   kObservationTookEvent,
   // LRM 9.4.2 / 9.4.2.2 value-change wait. The runtime free function a wait on
   // a signal suspends on -- an `@(...)`, an `@*`, an `always_comb` /
@@ -547,12 +547,26 @@ enum class BuiltinFn : std::uint16_t {
   // the next occurrence, while a condition is read by the body, so this one
   // lets the body's own loop test it.
   kWaitUntil,
-  // LRM 9.4.2 value-change wait for an event control some of whose leaves are
-  // found by evaluating a handle. Which storage those are can move while the
-  // wait is under way, so the caller resumes on every candidacy, asks its
-  // observations whether it was an event, and otherwise collects the leaves
-  // again and waits anew.
+  // LRM 9.4.2 / 9.4.3 the waits whose leaves are collected where they stand --
+  // found through a handle, or reported by a function the expression calls --
+  // each taking the runtime handle and one read report per event expression.
+  // What those leaves are can move while the wait is under way, so an event
+  // control resumes on every candidacy, asks its observations whether it was
+  // an event, and otherwise collects the leaves again and waits anew; a
+  // `wait (cond)` collects them again each time its loop tests the condition.
   kWaitRecollecting,
+  kWaitUntilCollected,
+  // What a wait collecting its leaves records them in (LRM 9.4.2): a report
+  // begun for one event expression's observation; a place it reads and the
+  // bits it reads there; every object at once; and the bracket a function
+  // takes around reporting into it, which answers whether to go on at all. A
+  // function reaching a read no leaf watches yet refuses the report instead.
+  kReadReportFor,
+  kReadReportAdd,
+  kReadReportAddEveryObject,
+  kReadReportEnter,
+  kReadReportLeave,
+  kRefuseReport,
   // LRM 20.3 simulation-time read functions. Each takes the runtime handle
   // and the calling scope's unit power; the runtime scales the design-global
   // tick down to that unit. `$time` rounds and yields a 64-bit `time`,

@@ -67,6 +67,11 @@ class RuntimeEffects {
   void WakeWaitersOf(
       Observable& observable, const ProjectionUnchanged& unchanged);
 
+  // What every object's change also reaches: a wait whose expression reads an
+  // object no report could follow is reevaluated whenever a property of any
+  // object is written, which LRM 9.4.2 permits.
+  [[nodiscard]] auto EveryObject() -> Observable&;
+
   // LRM 4.4: place `effect` in `region` of the time slot at `when`. A deferred
   // effect runs where it is placed and never suspends whoever submitted it.
   void Submit(SimTime when, Region region, OwnedCall effect);

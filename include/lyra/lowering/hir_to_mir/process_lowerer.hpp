@@ -331,6 +331,14 @@ class ProcessLowerer {
       -> std::optional<mir::ExprId>;
 
  private:
+  // What a function does first where it is handed a report (LRM 9.4.2): it
+  // records what a call of it reads -- or refuses where it reads something no
+  // leaf watches yet -- and returns the defaults its result and outputs start
+  // at, running none of its body. `report` is the parameter it is handed it by.
+  auto BuildReportPrologue(
+      const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
+      -> diag::Result<void>;
+
   UnitLowerer* owner_;
   const StructuralScopeLowerer* enclosing_scope_lowerer_;
   TimeResolution time_resolution_;
