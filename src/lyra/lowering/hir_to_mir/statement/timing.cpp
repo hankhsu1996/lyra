@@ -226,17 +226,18 @@ auto BuildTriggerCallExpr(
 
 }  // namespace
 
-// A wait some of whose leaves are found by evaluating a handle (LRM 9.4.2):
-// which storage the expression reaches can move while the process waits, so the
-// leaves are collected again on every candidacy, and the wait ends once one of
-// its observations says the candidacy was an event. The observations are armed
-// once, where the control is reached, so a candidacy that moves only which
-// storage is watched is compared against the value the expression had then.
+// A wait whose leaves are collected where it stands -- found through a handle,
+// or reported by a function the expression calls (LRM 9.4.2): what the
+// expression reaches can move while the process waits, so the leaves are
+// collected again on every candidacy, and the wait ends once one of its
+// observations says the candidacy was an event. The observations are armed
+// once, where the control is reached, so a candidacy that moves only what is
+// watched is compared against the value the expression had then.
 template <ExprLowerer Lowerer>
 auto BuildRecollectingWaitStmt(
     Lowerer& lowerer, WalkFrame frame, mir::Block& block,
-    std::span<const ObservedLeaf> leaves,
-    std::span<const mir::LocalId> observations) -> mir::Stmt {
+    std::span<const CollectedExpression> expressions)
+    -> diag::Result<mir::Stmt> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   // Each observation answers one or zero, so their union is nonzero exactly
   // where one of them took an event.
@@ -254,15 +255,15 @@ auto BuildRecollectingWaitStmt(
                     .arguments = {}},
             .type = unit.builtins.machine_int64});
   };
-  mir::ExprId ended = took_event(observations.front());
-  for (const mir::LocalId observation : observations.subspan(1)) {
+  mir::ExprId ended = took_event(expressions.front().observation);
+  for (const CollectedExpression& expression : expressions.subspan(1)) {
     ended = block.exprs.Add(
         mir::Expr{
             .data =
                 mir::BinaryExpr{
                     .op = mir::BinaryOp::kBitwiseOr,
                     .lhs = ended,
-                    .rhs = took_event(observation)},
+                    .rhs = took_event(expression.observation)},
             .type = unit.builtins.machine_int64});
   }
   const mir::ExprId waiting = block.exprs.Add(
@@ -276,9 +277,11 @@ auto BuildRecollectingWaitStmt(
 
   mir::Block collect;
   const WalkFrame collect_frame = frame.WithBlock(&collect);
-  collect.AppendStmt(BuildWaitStmt(
-      collect, collect_frame, lowerer, leaves,
-      support::BuiltinFn::kWaitRecollecting));
+  auto wait = BuildCollectingWaitStmt(
+      collect_frame, lowerer, expressions,
+      support::BuiltinFn::kWaitRecollecting);
+  if (!wait) return std::unexpected(std::move(wait.error()));
+  collect.AppendStmt(*std::move(wait));
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::WhileStmt{
@@ -286,29 +289,38 @@ auto BuildRecollectingWaitStmt(
           .scope = block.child_scopes.Add(std::move(collect))}};
 }
 
+// An event control registers its leaves once where every entry reads only cells
+// elaboration sealed, and otherwise collects them where it stands each time it
+// waits (LRM 9.4.2).
 template <ExprLowerer Lowerer>
 auto BuildEventWaitStmt(
     Lowerer& lowerer, WalkFrame frame, mir::Block& block,
     const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
+  std::vector<CollectedExpression> expressions;
+  expressions.reserve(ec.triggers.size());
   std::vector<ObservedLeaf> leaves;
-  std::vector<mir::LocalId> observations;
-  observations.reserve(ec.triggers.size());
+  bool collects = false;
   for (const hir::EventTrigger& trigger : ec.triggers) {
     auto observation = BuildObservationLocal(lowerer, frame, block, trigger);
     if (!observation) {
       return std::unexpected(std::move(observation.error()));
     }
-    observations.push_back(*observation);
-    for (const hir::SensitivityEntry& leaf : trigger.sensitivity_list) {
+    expressions.push_back(
+        CollectedExpression{
+            .reads = &trigger.reads, .observation = *observation});
+    const std::optional<std::vector<hir::SensitivityEntry>> cells =
+        SealedCells(trigger.reads);
+    if (!cells.has_value()) {
+      collects = true;
+      continue;
+    }
+    for (const hir::SensitivityEntry& cell : *cells) {
       leaves.push_back(
-          ObservedLeaf{.entry = leaf, .observation = *observation});
+          ObservedLeaf{.entry = cell, .observation = *observation});
     }
   }
-  if (std::ranges::any_of(leaves, [](const ObservedLeaf& leaf) {
-        return IsFoundThroughAHandle(leaf.entry.ref);
-      })) {
-    return BuildRecollectingWaitStmt(
-        lowerer, frame, block, leaves, observations);
+  if (collects) {
+    return BuildRecollectingWaitStmt(lowerer, frame, block, expressions);
   }
   return BuildWaitStmt(
       block, frame, lowerer, leaves, support::BuiltinFn::kWaitAny);
@@ -447,17 +459,30 @@ auto LowerWaitStmt(
                       process.Owner().Unit(), wrapper, cond_id)},
           .type = process.Owner().Unit().builtins.machine_bool});
 
-  const auto& reads = w.sensitivity_list;
-
   mir::Block inner_block;
   const WalkFrame inner_frame = wrapper_frame.WithBlock(&inner_block);
   // The loop is what reads the condition, so what this waits for is the loop
   // getting to read it again -- which is also the rule LRM 9.7 gives a `wait`
   // that is started after being stopped, and why it is not the wait an event
-  // control makes over the same reads.
-  inner_block.AppendStmt(BuildValueChangeWaitStmt(
-      inner_block, inner_frame, process, reads,
-      support::BuiltinFn::kWaitUntil));
+  // control makes over the same reads. Where the condition reaches anything
+  // that can move, the loop collects it afresh each time around.
+  if (const std::optional<std::vector<hir::SensitivityEntry>> cells =
+          SealedCells(w.reads)) {
+    inner_block.AppendStmt(BuildValueChangeWaitStmt(
+        inner_block, inner_frame, process, *cells,
+        support::BuiltinFn::kWaitUntil));
+  } else {
+    const std::array<CollectedExpression, 1> expressions{CollectedExpression{
+        .reads = &w.reads,
+        .observation = DeclareObservation(
+            process.Owner().Unit(), inner_frame, inner_block,
+            support::BuiltinFn::kObservationOnReaching, {})}};
+    auto wait = BuildCollectingWaitStmt(
+        inner_frame, process, expressions,
+        support::BuiltinFn::kWaitUntilCollected);
+    if (!wait) return std::unexpected(std::move(wait.error()));
+    inner_block.AppendStmt(*std::move(wait));
+  }
 
   const mir::BlockId inner_scope_id =
       wrapper.child_scopes.Add(std::move(inner_block));

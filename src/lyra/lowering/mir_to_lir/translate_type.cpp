@@ -372,6 +372,8 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kTrigger);
     case mir::RuntimeLibraryKind::kObservation:
       return mirror(lir::RuntimeLibraryKind::kObservation);
+    case mir::RuntimeLibraryKind::kReadReport:
+      return mirror(lir::RuntimeLibraryKind::kReadReport);
     case mir::RuntimeLibraryKind::kObjectWrite:
       return mirror(lir::RuntimeLibraryKind::kObjectWrite);
     case mir::RuntimeLibraryKind::kCancellationTarget:

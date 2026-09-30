@@ -440,7 +440,27 @@ auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool;
 // part company where a stopped process is started again: this one lets the body
 // read the condition, and that one waits for the next occurrence (LRM 9.7).
 auto lyra_rt_wait_until(void* runtime, LyraSpan triggers) -> bool;
-auto lyra_rt_wait_recollecting(void* runtime, LyraSpan triggers) -> bool;
+
+// The waits whose leaves are collected where they stand, one read report per
+// event expression: an event control resuming on every candidacy, and a
+// `wait (cond)` whose loop collects them each time it tests the condition
+// (LRM 9.4.2, 9.4.3).
+auto lyra_rt_wait_recollecting(void* runtime, LyraSpan reports) -> bool;
+auto lyra_rt_wait_until_collected(void* runtime, LyraSpan reports) -> bool;
+
+// What a collecting wait records its leaves in: a report begun for one event
+// expression's observation, a place read and the bits of it read, every object
+// at once, and the bracket a function reporting into it takes, which answers
+// one or zero for whether it goes on. A function meeting a read no leaf watches
+// yet refuses the report, and the design fails there.
+auto lyra_rt_read_report_for(const void* observation, void* out) -> void*;
+void lyra_rt_read_report_add(
+    void* report, void* place, const void* lsb_bit_offset,
+    const void* bit_width);
+void lyra_rt_read_report_add_every_object(void* report);
+auto lyra_rt_read_report_enter(void* report) -> std::int64_t;
+void lyra_rt_read_report_leave(void* report);
+void lyra_rt_refuse_report(const void* why);
 // The answer crosses as the machine integer every computed answer crosses as;
 // a host `bool` here would say the call parks its caller.
 auto lyra_rt_observation_took_event(const void* observation) -> std::int64_t;
@@ -2277,6 +2297,7 @@ void lyra_rt_closure_destroy(void* object);
 void lyra_rt_hierarchy_segment_destroy(void* object);
 void lyra_rt_trigger_destroy(void* object);
 void lyra_rt_observation_destroy(void* object);
+void lyra_rt_read_report_destroy(void* object);
 void lyra_rt_dpi_bit_buffer_destroy(void* object);
 void lyra_rt_dpi_logic_buffer_destroy(void* object);
 void lyra_rt_dpi_open_array_destroy(void* object);
@@ -2334,6 +2355,7 @@ auto lyra_rt_format_arg_move(void* value, void* out) -> void*;
 auto lyra_rt_hierarchy_segment_move(void* value, void* out) -> void*;
 auto lyra_rt_trigger_move(void* value, void* out) -> void*;
 auto lyra_rt_observation_move(void* value, void* out) -> void*;
+auto lyra_rt_read_report_move(void* value, void* out) -> void*;
 auto lyra_rt_dpi_bit_buffer_move(void* value, void* out) -> void*;
 auto lyra_rt_dpi_logic_buffer_move(void* value, void* out) -> void*;
 auto lyra_rt_dpi_open_array_move(void* value, void* out) -> void*;

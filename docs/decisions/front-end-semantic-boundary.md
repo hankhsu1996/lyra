@@ -90,7 +90,9 @@ the code with `read-set-inference.md`, whose intent the current code diverged fr
   per-term edges.
 - continuous assign / implied port assign (LRM 10.3, 23.3.3): the continuous-assign surface;
   function-read inlining follows the chosen policy flag (the LRM leaves it unspecified).
-- `wait(cond)` (LRM 9.4.3): a fresh sub-expression analysis of the condition.
+- `wait(cond)` (LRM 9.4.3): a fresh sub-expression analysis of the condition, and, like an explicit
+  event control, what the functions it calls read (LRM 9.4.2). Only `@*` stops at a call's
+  arguments; nothing in LRM 9.4.3 does.
 
 Every inferred surface normalizes to the same dependency shape:
 `(elaborated target ValueSymbol*, bit range)`, with an edge only for explicit event controls. The
@@ -125,11 +127,11 @@ one translation; they must not each re-derive it.
    (`always_comb`, `always @*`, continuous assign, `wait`, port connection).
 2. `always_comb` / `always_latch` read `AnalyzedProcedure::getSensitivityList()` rather than raw
    `getRValues()`, so function-body reads contribute per LRM 9.2.2.2.1. The other consumers already
-   read the surface their semantics require -- `always @*` and `wait` the reads of their controlled
-   region (function arguments only, LRM 9.2.2.2.2 / 9.4.3), continuous assign its RHS read set --
-   subject to one ordering correction: an `always @*` now infers its sensitivity after its body
-   lowers, so a read's cross-unit reference is resolved before the subscription is built, the same
-   order the other consumers already used.
+   read the surface their semantics require -- `always @*` the reads of its controlled region
+   (function arguments only, LRM 9.2.2.2.2), continuous assign its RHS read set -- subject to one
+   ordering correction: an `always @*` now infers its sensitivity after its body lowers, so a read's
+   cross-unit reference is resolved before the subscription is built, the same order the other
+   consumers already used.
 3. Regression tests cover: a same-unit cross-scope read in both declaration orders with a mutation
    at t > 0 (order independence and real re-trigger, not t = 0 settling); an `always_comb` whose
    dependency is read only inside a called function; and an `always @*` reading a cross-scope signal

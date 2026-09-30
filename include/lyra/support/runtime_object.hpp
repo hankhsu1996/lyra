@@ -24,6 +24,7 @@ enum class LibraryObject : std::uint8_t {
   kHierarchySegment,
   kTrigger,
   kObservation,
+  kReadReport,
   kDpiBitBuffer,
   kDpiLogicBuffer,
   kDpiOpenArray,
@@ -109,6 +110,8 @@ constexpr auto LayoutOf(LibraryObject object) -> ObjectLayout {
       return {.size = 40, .align = 8, .ends_with_nothing_to_do = false};
     case LibraryObject::kObservation:
       return {.size = 16, .align = 8, .ends_with_nothing_to_do = false};
+    case LibraryObject::kReadReport:
+      return {.size = 48, .align = 8, .ends_with_nothing_to_do = false};
     case LibraryObject::kDpiBitBuffer:
       return {.size = 24, .align = 8, .ends_with_nothing_to_do = false};
     case LibraryObject::kDpiLogicBuffer:

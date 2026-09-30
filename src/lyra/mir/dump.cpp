@@ -426,6 +426,8 @@ class MirDumper {
                   return "RuntimeLibrary(Trigger)";
                 case RuntimeLibraryKind::kObservation:
                   return "RuntimeLibrary(Observation)";
+                case RuntimeLibraryKind::kReadReport:
+                  return "RuntimeLibrary(ReadReport)";
                 case RuntimeLibraryKind::kObjectWrite:
                   return "RuntimeLibrary(ObjectWrite)";
                 case RuntimeLibraryKind::kScopeProgram:

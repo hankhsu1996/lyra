@@ -17,6 +17,7 @@
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/mem_file.hpp"
+#include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/registration.hpp"
@@ -202,6 +203,9 @@ class Runtime final : public RuntimeEffects {
   // The activations a region drain is working through, held apart from the
   // region they came out of.
   RegistrationList draining_;
+  // Reached by a write to a property of any object, for the waits nothing
+  // narrower covers.
+  Observable every_object_;
   std::vector<std::shared_ptr<RuntimeProcess>> processes_;
   RuntimeProcess* current_process_ = nullptr;
   // What is running, which is what a randomization call draws from (LRM 18.13,

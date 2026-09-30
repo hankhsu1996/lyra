@@ -377,6 +377,15 @@ the detail lives in the entry itself.
   handle alone, and a parent pointer from property storage are rejected. It sharpens
   `update-events-are-per-variable` invariant 4 rather than reversing it: a place may name a target
   whose identity is resolved at run time.
+- [a-function-reports-what-a-call-of-it-reads](a-function-reports-what-a-call-of-it-reads.md) --
+  what a function an awaited expression calls reads is stated by the unit declaring it and reported
+  at run time: every function takes one more parameter, where to report, and handed one it records
+  what a call of it reads -- cells, objects a chain reaches, interface variables, and the functions
+  it calls in turn -- and returns without running. An object reached through its own variables is
+  covered by every object at once, a null link ends a chain, a depth bound stops a cycle, and a read
+  no leaf watches yet is refused at the wait that asks. Summarizing the callee in the waiting unit,
+  publishing a summary in the signature, a sibling report body, recording every read, and polling
+  are rejected.
 - [event-source-has-two-realizations](event-source-has-two-realizations.md) -- what a source costs
   to have, settled by counting rather than by intuition: a declared variable's source is provisioned
   because 83% of a design's cells are genuinely subscribed to, while a class object's is

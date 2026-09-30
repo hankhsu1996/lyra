@@ -1,22 +1,15 @@
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
 
-#include <algorithm>
 #include <expected>
 #include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
 
-#include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/TimingControl.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
-#include <slang/ast/expressions/CallExpression.h>
-#include <slang/ast/expressions/MiscExpressions.h>
-#include <slang/ast/expressions/SelectExpressions.h>
 #include <slang/ast/statements/MiscStatements.h>
-#include <slang/ast/symbols/ClassSymbols.h>
-#include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
@@ -24,9 +17,8 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
-#include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/value_ref.hpp"
-#include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
+#include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -63,138 +55,6 @@ auto LowerEventCondition(
   return std::optional<hir::Expr>{*std::move(cond_or)};
 }
 
-// A property of a class object, which is reached through an object and not
-// declared in any scope (LRM 8.4). A static one is the one copy its class
-// shares (LRM 8.9) and is a variable like any other.
-auto IsObjectMember(const slang::ast::Symbol& symbol) -> bool {
-  const auto* property = symbol.as_if<slang::ast::ClassPropertySymbol>();
-  return property != nullptr &&
-         property->lifetime != slang::ast::VariableLifetime::Static;
-}
-
-// Whether a call may reach an object the expression calling it does not name: a
-// method of one, or a subroutine handed a class handle.
-auto ReachesObjectsItDoesNotName(const slang::ast::CallExpression& call)
-    -> bool {
-  if (call.isSystemCall()) {
-    return false;
-  }
-  if (call.thisClass() != nullptr) {
-    return true;
-  }
-  return std::ranges::any_of(
-      call.arguments(), [](const slang::ast::Expression* argument) {
-        return argument->type->getCanonicalType().isClass();
-      });
-}
-
-// What a waited-on expression reaches through a handle. Which instance a
-// virtual interface holds, and which object a class handle names, is settled
-// only by evaluating the handle, so no read set computed ahead of the wait
-// names that storage (LRM 9.4.2, 25.9); the handle itself is a variable the
-// read set does name, and the wait collects its leaves again when it is
-// written. An access through a virtual interface is kept whole, the handle part
-// being what the wait evaluates to find the cell. A property of an object is
-// watched as the object, which every property of it reports to -- the one a
-// handle names, or the method's own where the property is named bare -- and
-// what reaches the object is read on.
-struct ReadsThroughHandles
-    : slang::ast::ASTVisitor<
-          ReadsThroughHandles, slang::ast::VisitFlags::Expressions> {
-  std::vector<const slang::ast::MemberAccessExpression*> interface_members;
-  std::vector<std::variant<const slang::ast::Expression*, hir::ReceiverObject>>
-      objects;
-  const slang::ast::CallExpression* call_reaching_objects = nullptr;
-
-  void handle(const slang::ast::MemberAccessExpression& access) {
-    if (access.type->getCanonicalType().isVirtualInterface()) {
-      return;
-    }
-    if (access.value().type->getCanonicalType().isVirtualInterface()) {
-      interface_members.push_back(&access);
-      return;
-    }
-    if (IsObjectMember(access.member)) {
-      objects.emplace_back(&access.value());
-    }
-    visitDefault(access);
-  }
-
-  void handle(const slang::ast::NamedValueExpression& named) {
-    if (IsObjectMember(named.symbol)) {
-      objects.emplace_back(hir::ReceiverObject{});
-    }
-  }
-
-  void handle(const slang::ast::CallExpression& call) {
-    if (ReachesObjectsItDoesNotName(call)) {
-      call_reaching_objects = &call;
-    }
-    visitDefault(call);
-  }
-};
-
-// The leaves a wait on `expr` has beyond the variables it names, each found by
-// evaluating a handle when the wait collects its leaves: a variable of the
-// interface instance a virtual interface holds, and an object whose property
-// the expression reads (LRM 9.4.2). A call that may reach an object the
-// expression does not name is refused rather than left out, because which
-// objects it reached is not collected, and a wait missing one would not end
-// when that object changes.
-auto LeavesThroughHandles(
-    ProcessLowerer& proc, WalkFrame frame, const slang::ast::Expression& expr,
-    diag::SourceSpan span) -> diag::Result<std::vector<hir::SensitivityEntry>> {
-  ReadsThroughHandles reads;
-  expr.visit(reads);
-  if (reads.call_reaching_objects != nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedEventTriggerForm,
-        "waiting on an expression that calls a method of a class object, or "
-        "hands a subroutine a class handle, is not yet supported: which "
-        "objects the call reaches is not collected (LRM 9.4.2)");
-  }
-  std::vector<hir::SensitivityEntry> leaves;
-  leaves.reserve(reads.interface_members.size() + reads.objects.size());
-  for (const auto& object : reads.objects) {
-    auto source = std::visit(
-        Overloaded{
-            [&](const slang::ast::Expression* handle)
-                -> diag::Result<hir::ObjectEventSource> {
-              auto lowered = proc.LowerExpr(*handle, frame);
-              if (!lowered) return std::unexpected(std::move(lowered.error()));
-              return hir::ObjectEventSource{
-                  .object = frame.Exprs().Add(*std::move(lowered))};
-            },
-            [](const hir::ReceiverObject& receiver)
-                -> diag::Result<hir::ObjectEventSource> {
-              return hir::ObjectEventSource{.object = receiver};
-            }},
-        object);
-    if (!source) return std::unexpected(std::move(source.error()));
-    leaves.push_back(
-        hir::SensitivityEntry{
-            .ref = *std::move(source), .footprint = std::nullopt});
-  }
-  for (const slang::ast::MemberAccessExpression* access :
-       reads.interface_members) {
-    auto handle = proc.LowerExpr(access->value(), frame);
-    if (!handle) return std::unexpected(std::move(handle.error()));
-    auto watched = WatchedThroughHandle(
-        proc.Owner(), frame.Exprs().Add(*std::move(handle)),
-        access->value()
-            .type->getCanonicalType()
-            .as<slang::ast::VirtualInterfaceType>(),
-        access->member, span);
-    if (!watched) return std::unexpected(std::move(watched.error()));
-    for (hir::InterfaceMemberAccessExpr& member : *watched) {
-      leaves.push_back(
-          hir::SensitivityEntry{
-              .ref = std::move(member), .footprint = std::nullopt});
-    }
-  }
-  return leaves;
-}
-
 auto AddEventCondition(WalkFrame frame, std::optional<hir::Expr> condition)
     -> std::optional<hir::ExprId> {
   if (!condition.has_value()) {
@@ -227,18 +87,10 @@ auto LowerSignalEventTrigger(
 
   const auto edge_kind = LowerEventEdge(sig.edge);
 
-  // The leaves are what the expression reads, which is what makes the wait a
-  // candidate; the edge belongs to the expression, whose value decides.
-  const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
-      sig.expr, proc.ContainingSymbol());
-  auto sensitivity_list = proc.Owner().TranslateSensitivityReads(reads, frame);
-  if (!sensitivity_list) {
-    return std::unexpected(std::move(sensitivity_list.error()));
-  }
-  auto through = LeavesThroughHandles(proc, frame, sig.expr, span);
-  if (!through) return std::unexpected(std::move(through.error()));
-  sensitivity_list->insert(
-      sensitivity_list->end(), through->begin(), through->end());
+  // What the expression reads is what makes the wait a candidate; the edge
+  // belongs to the expression, whose value decides.
+  auto reads = ReadsOfWaitedExpression(proc, frame, sig.expr, span);
+  if (!reads) return std::unexpected(std::move(reads.error()));
 
   auto condition = LowerEventCondition(proc, frame, sig);
   if (!condition) return std::unexpected(std::move(condition.error()));
@@ -246,7 +98,7 @@ auto LowerSignalEventTrigger(
   return hir::EventTrigger{
       .signal = frame.Exprs().Add(*std::move(expr_or)),
       .edge = edge_kind,
-      .sensitivity_list = *std::move(sensitivity_list),
+      .reads = *std::move(reads),
       .condition = AddEventCondition(frame, *std::move(condition)),
   };
 }
@@ -293,7 +145,7 @@ auto LowerNamedEventControl(
   auto condition = LowerEventCondition(proc, frame, sig);
   if (!condition) return std::unexpected(std::move(condition.error()));
   return hir::NamedEventControl{
-      .event = hir::SensitivityEntry{.ref = *route, .footprint = std::nullopt},
+      .event = hir::SensitivityEntry{.cell = *route, .footprint = std::nullopt},
       .condition = AddEventCondition(frame, *std::move(condition)),
   };
 }
@@ -635,10 +487,10 @@ auto LowerEventTriggerStmt(
       .span = span};
 }
 
-// LRM 9.4.3 `wait (cond) body`. The wait re-evaluates when any cell the
-// condition reads changes, so its sensitivity is that condition's own read set
-// -- narrower than the enclosing body's, which is why it is analyzed here
-// rather than inherited.
+// LRM 9.4.3 `wait (cond) body`. The wait re-evaluates when anything the
+// condition reads changes, so what it watches is that condition's own reads --
+// narrower than the enclosing body's, which is why they are stated here rather
+// than inherited.
 auto LowerWaitStmt(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::WaitStatement& w,
     diag::SourceSpan span) -> diag::Result<hir::Stmt> {
@@ -649,20 +501,13 @@ auto LowerWaitStmt(
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->stmts.Add(*std::move(body_or));
-  const auto& reads =
-      proc.Owner().Sensitivity().AnalyzeReads(w.cond, proc.ContainingSymbol());
-  auto sensitivity = proc.Owner().TranslateSensitivityReads(reads, frame);
-  if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
-  auto through = LeavesThroughHandles(proc, frame, w.cond, span);
-  if (!through) return std::unexpected(std::move(through.error()));
-  sensitivity->insert(sensitivity->end(), through->begin(), through->end());
+  auto reads = ReadsOfWaitedExpression(proc, frame, w.cond, span);
+  if (!reads) return std::unexpected(std::move(reads.error()));
   return hir::Stmt{
       .label = std::nullopt,
       .data =
           hir::WaitStmt{
-              .cond = cond_id,
-              .body = body_id,
-              .sensitivity_list = *std::move(sensitivity)},
+              .cond = cond_id, .body = body_id, .reads = *std::move(reads)},
       .span = span};
 }
 

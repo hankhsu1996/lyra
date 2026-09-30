@@ -554,6 +554,10 @@ auto ClassDeclLowerer::PopulateBodies(
             *param_type);
         proto_params.push_back(param_id);
       }
+      if (const std::optional<mir::TypeId> report_type =
+              ReportParamTypeOf(unit_lowerer.Unit(), method.kind)) {
+        proto_params.push_back(proto_bindings.DeclareAnonymous(*report_type));
+      }
       proto_code.params = std::move(proto_params);
       // A prototype declares the interface its definitions implement, so it
       // reads that interface from the same declaration they do.

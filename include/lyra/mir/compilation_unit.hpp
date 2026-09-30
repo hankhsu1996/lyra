@@ -233,6 +233,10 @@ struct BuiltinMirTypes {
   TypeId hierarchy_segment;
   TypeId trigger;
   TypeId observation;
+  TypeId read_report;
+  // What a function is handed where a call of it is to report what it reads
+  // (LRM 9.4.2), and null where it is to run.
+  TypeId read_report_ptr;
   TypeId coroutine_void;
   TypeId wildcard_index;
 };
@@ -436,17 +440,26 @@ struct CompilationUnit {
             .observation = types.Intern(
                 Type{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kObservation}}),
+            .read_report = types.Intern(
+                Type{RuntimeLibraryType{
+                    .kind = RuntimeLibraryKind::kReadReport}}),
+            .read_report_ptr = TypeId{},
             .coroutine_void = TypeId{},
             .wildcard_index = types.Intern(Type{WildcardIndexType{}}),
         } {
-    // `Coroutine<void>` is the completion type of a process or void task. It is
-    // built in the constructor body because it reads back the already-interned
-    // `void_type`; the member-list entry above is an unused placeholder
-    // overwritten here. The field is a convenience alias for the canonical
-    // instance, not a deduplication mechanism -- interning `Coroutine<void>`
-    // anywhere returns this same id.
+    // `Coroutine<void>` is the completion type of a process or void task, and a
+    // pointer to a read report is what a function is handed. Both are built in
+    // the constructor body because each reads back an already-interned type;
+    // their member-list entries above are unused placeholders overwritten here.
+    // The field is a convenience alias for the canonical instance, not a
+    // deduplication mechanism -- interning `Coroutine<void>` anywhere returns
+    // this same id.
     builtins.coroutine_void = types.Intern(
         mir::Type{mir::CoroutineType{.payload = builtins.void_type}});
+    builtins.read_report_ptr = types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = builtins.read_report,
+            .ownership = mir::PointerOwnership::kBorrowed}});
   }
 
   [[nodiscard]] auto GetClass(ClassId id) const -> const Class& {

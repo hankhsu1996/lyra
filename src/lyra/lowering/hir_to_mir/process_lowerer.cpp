@@ -14,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/statement/assertions.hpp"
@@ -30,6 +31,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -315,6 +317,16 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   const mir::TypeId result_type = SubroutineCallTypeOf(*owner_, src);
   result_type_ = result_type;
 
+  // A function is handed where to report what a call of it reads (LRM 9.4.2),
+  // after its formals. Handed one, it reports instead of running.
+  if (const std::optional<mir::TypeId> report_type =
+          ReportParamTypeOf(owner_->Unit(), src.kind)) {
+    const mir::LocalId report = bindings.DeclareAnonymous(*report_type);
+    params.push_back(report);
+    auto asked = BuildReportPrologue(body_frame, src.reads, report);
+    if (!asked) return std::unexpected(std::move(asked.error()));
+  }
+
   // A task carries a name, so any task can be a `disable` target (LRM 9.6.2)
   // and every task is therefore a region that consumes the effect naming it:
   // each activation leaves through its own body end and completes normally
@@ -374,6 +386,84 @@ auto ProcessLowerer::RegisterConstructorFormals(
 auto ProcessLowerer::LowerConstructorBodyInto(const WalkFrame& frame)
     -> diag::Result<void> {
   return LowerStraightLineBodyInto(*this, frame);
+}
+
+auto ProcessLowerer::BuildReportPrologue(
+    const WalkFrame& frame, const hir::Reads& reads, mir::LocalId report)
+    -> diag::Result<void> {
+  mir::CompilationUnit& unit = owner_->Unit();
+  mir::Block& block = *frame.current_block;
+  mir::Block asked;
+  const WalkFrame asked_frame = frame.WithBlock(&asked);
+  if (reads.unreportable.has_value()) {
+    asked.AppendStmt(
+        mir::ExprStmt{
+            .expr = asked.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee =
+                                mir::Direct{
+                                    .target =
+                                        support::BuiltinFn::kRefuseReport},
+                            .arguments = {asked.exprs.Add(
+                                mir::MakeStringLiteral(
+                                    unit.builtins.string,
+                                    *reads.unreportable))}},
+                    .type = unit.builtins.void_type})});
+  } else {
+    // The report bounds how deep reports nest, and past the bound this one
+    // reports nothing of its own.
+    mir::Block entered;
+    auto reported =
+        ReportReads(*this, asked_frame.WithBlock(&entered), reads, report);
+    if (!reported) return std::unexpected(std::move(reported.error()));
+    entered.AppendStmt(
+        mir::ExprStmt{
+            .expr = BuildReportCall(
+                unit, entered, report, support::BuiltinFn::kReadReportLeave, {},
+                unit.builtins.void_type)});
+    const mir::ExprId goes_on = asked.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::BinaryExpr{
+                    .op = mir::BinaryOp::kInequality,
+                    .lhs = BuildReportCall(
+                        unit, asked, report,
+                        support::BuiltinFn::kReadReportEnter, {},
+                        unit.builtins.machine_int64),
+                    .rhs = BuildMachineIntLiteral(unit, asked, 0)},
+            .type = unit.builtins.machine_bool});
+    asked.AppendStmt(
+        mir::IfStmt{
+            .condition = goes_on,
+            .then_scope = asked.child_scopes.Add(std::move(entered)),
+            .else_scope = std::nullopt});
+  }
+  // What the function would have settled is no part of a report, so it hands
+  // back the defaults its result and outputs start at.
+  asked.AppendStmt(
+      mir::ReturnStmt{.value = BuildReturnPayload(asked, std::nullopt)});
+
+  const mir::ExprId handed = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kInequality,
+                  .lhs = block.exprs.Add(
+                      mir::MakeLocalRefExpr(
+                          report, unit.builtins.read_report_ptr)),
+                  .rhs = block.exprs.Add(
+                      mir::Expr{
+                          .data = mir::NullLiteral{},
+                          .type = unit.builtins.read_report_ptr})},
+          .type = unit.builtins.machine_bool});
+  block.AppendStmt(
+      mir::IfStmt{
+          .condition = handed,
+          .then_scope = block.child_scopes.Add(std::move(asked)),
+          .else_scope = std::nullopt});
+  return {};
 }
 
 auto ProcessLowerer::BuildReturnPayload(

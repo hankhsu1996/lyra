@@ -162,10 +162,22 @@ under each item, and the conformance gaps at the end.
       reevaluates the expression, which is an event exactly when what it reaches now already
       differs, and a write to what it reached before no longer reaches it. This holds of an event
       control and of `wait (cond)` alike.
-  - [ ] A wait whose expression calls a method of a class object, or hands a subroutine a class
-        handle (LRM 9.4.2 admits a non-virtual method there). Which objects such a call reached is
-        not collected, so a wait on it is refused rather than left waiting on objects it never
-        subscribed to.
+- [x] A wait follows what the functions its expression calls read (LRM 9.4.2), wherever they are
+      declared: a variable of the module or a package, an element, a static property, a property of
+      the object a method runs on or of one a handle argument or a module's handle names, a variable
+      of the instance a virtual interface holds, and what a function it calls reads in turn -- a
+      method, a static method, a package function, an interface's function and one reached by a
+      hierarchical name alike, virtual or not. Before this, a function reading a module variable
+      left the wait unwoken on both backends, and a method call was refused. A handle the function
+      tests for null before reading through is not followed while it is null. An object reached only
+      through a variable of the function's own -- walking a list, recursing -- is covered by any
+      object's property being written, which the clause permits.
+  - [ ] A function reaching a variable of an interface instance through a virtual interface its own
+        variables hold, or lending a `ref` to what its own variables hold, cannot say what a call of
+        it reads, and a wait calling it fails the simulation saying so; the function itself compiles
+        and runs as before.
+  - [ ] A constructor called inside such a function: what the constructor's own body reads is not
+        followed.
   - [ ] A value-change event control on any other operand whose change is not watched (LRM 9.4.2):
         an operand that is no value at all, and one whose value nothing yet compares.
   - [ ] A nested timing control inside an event-list entry: only signal events compose in a list

@@ -659,7 +659,8 @@ auto StructuralScopeLowerer::DefineEvaluator(
                                        .is_virtual = false,
                                        .is_prototype = false,
                                        .is_static = false,
-                                       .overrides = std::nullopt});
+                                       .overrides = std::nullopt,
+                                       .reads = {}});
   return {};
 }
 

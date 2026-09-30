@@ -48,6 +48,7 @@
 #include "lyra/runtime/program_declarations.hpp"
 #include "lyra/runtime/promoted_scope.hpp"
 #include "lyra/runtime/random.hpp"
+#include "lyra/runtime/read_report.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -654,6 +655,11 @@ auto TriggerHandles(LyraSpan triggers) -> std::span<const Trigger* const> {
   return {static_cast<const Trigger* const*>(triggers.data), triggers.count};
 }
 
+// A collecting wait's reports cross the same way, one per event expression.
+auto ReportHandles(LyraSpan reports) -> std::span<ReadReport* const> {
+  return {static_cast<ReadReport* const*>(reports.data), reports.count};
+}
+
 }  // namespace
 
 }  // namespace lyra::runtime
@@ -745,6 +751,7 @@ using lyra::runtime::PropertyAt;
 using lyra::runtime::PropertyCoordinate;
 using lyra::runtime::RaiseDeclinedDeparture;
 using lyra::runtime::Read;
+using lyra::runtime::ReadReport;
 using lyra::runtime::RealTimeInUnit;
 using lyra::runtime::ReceiveDeparture;
 using lyra::runtime::RefArmSampling;
@@ -755,7 +762,9 @@ using lyra::runtime::ReferToStorage;
 using lyra::runtime::RefGet;
 using lyra::runtime::RefSampledLoad;
 using lyra::runtime::RefSet;
+using lyra::runtime::RefuseReport;
 using lyra::runtime::Region;
+using lyra::runtime::ReportHandles;
 using lyra::runtime::ResumeInNbaRegion;
 using lyra::runtime::RunDeclaredProgram;
 using lyra::runtime::RunHostCommand;
@@ -1308,9 +1317,43 @@ auto lyra_rt_wait_until(void* runtime, LyraSpan triggers) -> bool {
       *static_cast<RuntimeEffects*>(runtime), TriggerHandles(triggers));
 }
 
-auto lyra_rt_wait_recollecting(void* runtime, LyraSpan triggers) -> bool {
+auto lyra_rt_wait_recollecting(void* runtime, LyraSpan reports) -> bool {
   return WaitRecollecting(
-      *static_cast<RuntimeEffects*>(runtime), TriggerHandles(triggers));
+      *static_cast<RuntimeEffects*>(runtime), ReportHandles(reports));
+}
+
+auto lyra_rt_wait_until_collected(void* runtime, LyraSpan reports) -> bool {
+  return WaitUntil(
+      *static_cast<RuntimeEffects*>(runtime), ReportHandles(reports));
+}
+
+auto lyra_rt_read_report_for(const void* observation, void* out) -> void* {
+  return Emplace(
+      out, ReadReport::For(*static_cast<const Observation*>(observation)));
+}
+
+void lyra_rt_read_report_add(
+    void* report, void* place, const void* lsb_bit_offset,
+    const void* bit_width) {
+  static_cast<ReadReport*>(report)->Add(
+      static_cast<Observable*>(place), Read<PackedArray>(lsb_bit_offset),
+      Read<PackedArray>(bit_width));
+}
+
+void lyra_rt_read_report_add_every_object(void* report) {
+  static_cast<ReadReport*>(report)->AddEveryObject();
+}
+
+auto lyra_rt_read_report_enter(void* report) -> std::int64_t {
+  return static_cast<ReadReport*>(report)->Enter();
+}
+
+void lyra_rt_read_report_leave(void* report) {
+  static_cast<ReadReport*>(report)->Leave();
+}
+
+void lyra_rt_refuse_report(const void* why) {
+  RefuseReport(static_cast<const char*>(why));
 }
 
 auto lyra_rt_observation_took_event(const void* observation) -> std::int64_t {
@@ -6251,6 +6294,9 @@ void lyra_rt_trigger_destroy(void* object) {
 void lyra_rt_observation_destroy(void* object) {
   std::destroy_at(static_cast<Observation*>(object));
 }
+void lyra_rt_read_report_destroy(void* object) {
+  std::destroy_at(static_cast<ReadReport*>(object));
+}
 void lyra_rt_dpi_bit_buffer_destroy(void* object) {
   std::destroy_at(static_cast<DpiBitBuffer*>(object));
 }
@@ -6428,6 +6474,9 @@ auto lyra_rt_trigger_move(void* value, void* out) -> void* {
 auto lyra_rt_observation_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<Observation*>(value)));
 }
+auto lyra_rt_read_report_move(void* value, void* out) -> void* {
+  return Emplace(out, std::move(*static_cast<ReadReport*>(value)));
+}
 auto lyra_rt_dpi_bit_buffer_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<DpiBitBuffer*>(value)));
 }
@@ -6487,6 +6536,7 @@ static_assert(LaidOutAs<value::FormatArg>(LibraryObject::kFormatArg));
 static_assert(LaidOutAs<HierarchySegment>(LibraryObject::kHierarchySegment));
 static_assert(LaidOutAs<Trigger>(LibraryObject::kTrigger));
 static_assert(LaidOutAs<Observation>(LibraryObject::kObservation));
+static_assert(LaidOutAs<ReadReport>(LibraryObject::kReadReport));
 static_assert(LaidOutAs<value::DpiBitBuffer>(LibraryObject::kDpiBitBuffer));
 static_assert(LaidOutAs<value::DpiLogicBuffer>(LibraryObject::kDpiLogicBuffer));
 static_assert(LaidOutAs<value::DpiOpenArray>(LibraryObject::kDpiOpenArray));

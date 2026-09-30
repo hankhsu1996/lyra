@@ -629,6 +629,11 @@ auto CodeGenFunction::LowerBinary(
           module_->Unit().types.Get(operand_type).MachineIntegerSignedness()) {
     return LowerMachineBinary(binary, *signedness);
   }
+  // An address compared with another is a machine comparison too, as it is in
+  // what clang makes of the same comparison.
+  if (module_->Unit().types.Get(operand_type).Is<lir::PointerType>()) {
+    return LowerMachineBinary(binary, lir::Signedness::kUnsigned);
+  }
   auto domain = DomainOf(operand_type);
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
@@ -1974,6 +1979,7 @@ auto CodeGenFunction::ConstructionOf(
               case lir::RuntimeLibraryKind::kDpiOpenArrayHandle:
               case lir::RuntimeLibraryKind::kControlEffect:
               case lir::RuntimeLibraryKind::kObservation:
+              case lir::RuntimeLibraryKind::kReadReport:
               case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kCancellationTarget:
               case lir::RuntimeLibraryKind::kChannelCancellation:

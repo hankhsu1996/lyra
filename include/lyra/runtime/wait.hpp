@@ -62,10 +62,11 @@ class Wait {
   [[nodiscard]] virtual auto IsReportFlushPoint() const -> bool = 0;
 
   // Whether a candidacy that is no event still resumes the execution. A wait
-  // whose leaves are found by evaluating a handle collects them again after
-  // each candidacy, because the candidacy may be the handle moving (LRM 9.4.2),
-  // and asks afterwards whether it was an event; every other wait stays parked
-  // until one is.
+  // whose leaves are collected where it stands -- found through a handle, or
+  // reported by a function its expression calls -- collects them again after
+  // each candidacy, because the candidacy may have moved what the expression
+  // reaches (LRM 9.4.2), and asks afterwards whether it was an event; every
+  // other wait stays parked until one is.
   [[nodiscard]] virtual auto ResumesOnEveryCandidacy() const -> bool {
     return false;
   }
