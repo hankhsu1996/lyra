@@ -49,10 +49,16 @@ struct WatchedBits {
 
 using WatchedPart = std::variant<WatchedWhole, WatchedSelect, WatchedBits>;
 
-// One cell of a read set, a cell elaboration sealed, and which part of it the
-// read reaches.
+// Where a read set's storage is, fixed for as long as a wait on it lasts: a
+// cell elaboration sealed; or a variable the running body declares, which lives
+// as long as a call or a block and so has no place on the design hierarchy to
+// be routed to (LRM 6.21) -- where it is a `ref` formal, what it watches is
+// whatever its actual reports to (LRM 13.5.2).
+using WatchedStorage = std::variant<ValueTarget, ProceduralVarRef>;
+
+// One cell of a read set, and which part of it the read reaches.
 struct SensitivityEntry {
-  ValueTarget cell;
+  WatchedStorage cell;
   WatchedPart part;
 
   auto operator==(const SensitivityEntry&) const -> bool = default;

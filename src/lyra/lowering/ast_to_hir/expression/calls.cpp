@@ -91,11 +91,33 @@ auto ClassifyMethodReceiver(
       .expr = frame.Exprs().Add(*std::move(receiver_or))};
 }
 
+// Whether a variable answers for a sampled value with its current value, which
+// an automatic variable does (LRM 16.5.1) -- and so does a `ref` formal that is
+// not `ref static`, being usable only where an automatic variable is (LRM
+// 13.5.2). A property of an object has a lifetime too, but it is the object's
+// rather than a call's, and the clause does not reach it.
+auto SampledAsCurrent(const slang::ast::ValueSymbol& symbol) -> bool {
+  const auto* var = symbol.as_if<slang::ast::VariableSymbol>();
+  return var != nullptr &&
+         symbol.kind != slang::ast::SymbolKind::ClassProperty &&
+         var->lifetime == slang::ast::VariableLifetime::Automatic &&
+         !var->flags.has(slang::ast::VariableFlags::RefStatic);
+}
+
+// How the variables a sampled value function's operand reads answer for it:
+// how many are cells this scope arms, and how many answer with what they hold
+// now.
+struct SampledOperandReads {
+  std::size_t armed = 0;
+  std::size_t current = 0;
+};
+
 // Records the cells a sampled value function's operand reads, so each is armed
 // to answer for one (LRM 16.5.1). The sampled value of an expression is
 // composed from the sampled values of the variables it reads, which makes those
 // variables exactly what has to answer -- and they are the same set an event
-// control watches, taken from the same analysis.
+// control watches, taken from the same analysis. A variable that answers with
+// its current value needs nothing armed.
 //
 // The set only ever has to cover them: a cell armed that nothing samples holds
 // a value nobody reads, while one left unarmed cannot answer at all. So a
@@ -104,39 +126,96 @@ template <typename Lowerer>
 auto RecordSampledCells(
     Lowerer& lowerer, const WalkFrame& frame,
     const slang::ast::CallExpression& call, diag::SourceSpan span)
-    -> diag::Result<void> {
+    -> diag::Result<SampledOperandReads> {
   if (call.arguments().empty()) {
     throw InternalError(
         "AST->HIR sampled value: no operand to take a sampled value of");
   }
-  if (frame.current_structural_scope == nullptr ||
-      frame.reader_scope == nullptr) {
+  auto& unit_lowerer = lowerer.Owner();
+  if (frame.reader_scope == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "a sampled value read outside a design element's scope is not yet "
         "supported");
   }
-  auto& unit_lowerer = lowerer.Owner();
   const auto& reads = unit_lowerer.Sensitivity().AnalyzeReads(
       *call.arguments()[0], frame.reader_scope->asSymbol());
-  auto cells = unit_lowerer.CellsRead(reads, frame);
+  std::vector<SensitivityRead> armed;
+  SampledOperandReads counted;
+  for (const SensitivityRead& read : reads) {
+    const auto* var = read.symbol->as_if<slang::ast::VariableSymbol>();
+    if (var != nullptr &&
+        var->flags.has(slang::ast::VariableFlags::RefStatic)) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedExpressionForm,
+          "a sampled value of a `ref static` argument is not yet supported");
+    }
+    if (SampledAsCurrent(*read.symbol)) {
+      ++counted.current;
+      continue;
+    }
+    armed.push_back(read);
+  }
+  counted.armed = armed.size();
+  if (armed.empty()) return counted;
+  if (frame.current_structural_scope == nullptr) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "a sampled value read outside a design element's scope is not yet "
+        "supported");
+  }
+  auto cells = unit_lowerer.CellsRead(armed, frame);
   if (!cells) return std::unexpected(std::move(cells.error()));
   // Every variable the operand reads has to be armed, so a read the translation
   // could not name as a cell of this design leaves one that can never answer.
-  // The reachable case is a `ref` formal (LRM 13.5.2): which cell it binds is
-  // settled per call, so the scope holding the read cannot name it.
-  if (cells->size() < reads.size()) {
+  // The reachable case is a property of an object (LRM 8.4), which no scope
+  // holds a cell of.
+  if (cells->size() < armed.size()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a sampled value of storage reached through a subroutine's reference "
-        "argument is not yet supported");
+        "a sampled value of storage this design element holds no cell of is "
+        "not yet supported");
   }
   std::vector<hir::ValueTarget>& sampled =
       frame.current_structural_scope->sampled_cells;
   for (hir::ValueTarget& cell : *cells) {
     sampled.push_back(std::move(cell));
   }
-  return {};
+  return counted;
+}
+
+// What a value change function answers of a value that is the same at every
+// tick: that it is stable, and so that it neither rose, fell nor changed (LRM
+// 16.9.3).
+auto UnchangedAnswer(
+    const UnitLowerer& unit_lowerer, support::ValueChangeReading reading,
+    diag::SourceSpan span) -> hir::Expr {
+  const bool holds = [&] {
+    switch (reading) {
+      case support::ValueChangeReading::kUnchanged:
+        return true;
+      case support::ValueChangeReading::kRoseToOne:
+      case support::ValueChangeReading::kFellToZero:
+      case support::ValueChangeReading::kChanged:
+        return false;
+    }
+    throw InternalError("UnchangedAnswer: unknown ValueChangeReading");
+  }();
+  return hir::Expr{
+      .type = unit_lowerer.Unit().builtins.scalar_bit,
+      .data =
+          hir::PrimaryExpr{
+              .data =
+                  hir::IntegerLiteral{
+                      .value =
+                          hir::IntegralConstant{
+                              .value_words = {holds ? 1ULL : 0ULL},
+                              .state_words = {},
+                              .width = 1,
+                              .signedness = hir::Signedness::kUnsigned,
+                              .state_kind =
+                                  hir::IntegralStateKind::kTwoState}}},
+      .span = span};
 }
 
 // The argument the source wrote at `position`, or nothing where it wrote none.
@@ -203,11 +282,10 @@ auto LowerTicksBack(
   return lowerer.LowerExpr(*ticks_back, frame);
 }
 
-// What a sampled value function needs from the scope it is read in. Its
-// expression's cells have to be armed, because a tick settles that expression
-// over their sampled values; and the scope has to keep a history of it under
-// the event this call counts ticks of. The call then names that history, since
-// which event it is was settled here.
+// What a sampled value function needs from the scope it is read in, once its
+// expression's cells are armed: the scope has to keep a history of that
+// expression under the event this call counts ticks of. The call then names
+// that history, since which event it is was settled here.
 //
 // The subject and the event are lowered into the scope's own arena rather than
 // the reader's: nothing the source wrote evaluates them, and what does is a
@@ -220,11 +298,6 @@ auto RecordSampledHistory(
     const slang::ast::Expression* ticks_back,
     const slang::ast::Expression* gate, std::string_view name,
     diag::SourceSpan span) -> diag::Result<hir::SampledHistoryId> {
-  // Arming is the same requirement `$sampled` has, and the same check reports
-  // an expression reading storage this scope cannot name.
-  if (auto armed = RecordSampledCells(lowerer, frame, call, span); !armed) {
-    return std::unexpected(std::move(armed.error()));
-  }
   auto clock_or = ResolveClockingEvent(lowerer, call, clock_arg, name, span);
   if (!clock_or) return std::unexpected(std::move(clock_or.error()));
 
@@ -311,9 +384,43 @@ auto LowerSampledHistoryExpr(
   if (desc == nullptr) {
     return std::optional<hir::Expr>{std::nullopt};
   }
+  const bool past =
+      std::holds_alternative<support::PastValueSystemSubroutineInfo>(
+          desc->semantic);
+  const auto* change =
+      std::get_if<support::ValueChangeSystemSubroutineInfo>(&desc->semantic);
+  if (!past && change == nullptr) {
+    return std::optional<hir::Expr>{std::nullopt};
+  }
 
-  if (std::holds_alternative<support::PastValueSystemSubroutineInfo>(
-          desc->semantic)) {
+  // Arming is the same requirement `$sampled` has, and the same check reports
+  // an expression reading storage this scope cannot name.
+  auto operand_reads = RecordSampledCells(lowerer, frame, call, span);
+  if (!operand_reads) {
+    return std::unexpected(std::move(operand_reads.error()));
+  }
+  // An operand reading only variables that answer with their current value has
+  // that value at every tick, the past ones included (LRM 16.5.1), so no
+  // history has anything to keep: `$past` is the operand as it stands, and it
+  // never changed.
+  if (operand_reads->armed == 0) {
+    if (past) {
+      auto operand_or = lowerer.LowerExpr(*call.arguments()[0], frame);
+      if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+      return std::optional<hir::Expr>{*std::move(operand_or)};
+    }
+    return std::optional<hir::Expr>{
+        UnchangedAnswer(lowerer.Owner(), change->reading, span)};
+  }
+  if (operand_reads->current != 0) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        std::string{"'"} + std::string{name} +
+            "' of an expression reading both an automatic variable and one "
+            "the design element holds is not yet supported");
+  }
+
+  if (past) {
     // `$past` states its operand first, then how far back, then the gate, then
     // the event (LRM 16.9.3).
     const slang::ast::Expression* ticks_back = WrittenArgument(call, 1);
@@ -341,11 +448,6 @@ auto LowerSampledHistoryExpr(
     }};
   }
 
-  const auto* change =
-      std::get_if<support::ValueChangeSystemSubroutineInfo>(&desc->semantic);
-  if (change == nullptr) {
-    return std::optional<hir::Expr>{std::nullopt};
-  }
   // A value change function takes its event second and gates nothing: only
   // `$past` carries a gating expression (LRM 16.9.3).
   auto history_or = RecordSampledHistory(

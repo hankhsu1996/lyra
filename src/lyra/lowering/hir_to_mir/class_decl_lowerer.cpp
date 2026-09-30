@@ -419,7 +419,8 @@ auto ClassDeclLowerer::PopulateBodies(
   BoundImplicitParameters bound = BindImplicitParameters(
       BodyFrame(declaring_frame, mir_class, scope_link)
           .WithBlock(&ctor_block)
-          .WithBindings(&ctor_bindings),
+          .WithBindings(&ctor_bindings)
+          .WithBodyCanWait(false),
       shape, CallableForm::kConstructor);
   const WalkFrame& frame = bound.frame;
   std::vector<mir::LocalId> ctor_params = std::move(bound.params);

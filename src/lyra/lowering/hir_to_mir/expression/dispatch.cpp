@@ -2,6 +2,7 @@
 #include <concepts>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -9,6 +10,8 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/procedural_var.hpp"
+#include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
@@ -28,6 +31,25 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
+
+// Whether `expr`, read as of the Preponed region, answers with a value its cell
+// kept. A variable a body declares with automatic lifetime -- a `ref` formal
+// among them -- keeps none, its sampled value being its current one (LRM
+// 16.5.1).
+template <ExprLowerer L>
+auto KeepsSampledValue(const L& lowerer, const hir::Expr& expr) -> bool {
+  if constexpr (std::same_as<L, ProcessLowerer>) {
+    const auto* primary = std::get_if<hir::PrimaryExpr>(&expr.data);
+    const auto* var = primary == nullptr
+                          ? nullptr
+                          : std::get_if<hir::ProceduralVarRef>(&primary->data);
+    if (var != nullptr) {
+      return lowerer.HirBody().procedural_vars.Get(var->var).lifetime !=
+             hir::VariableLifetime::kAutomatic;
+    }
+  }
+  return true;
+}
 
 // The one value-context expression dispatcher, shared by both pass classes. An
 // expression's meaning does not depend on whether a process body or a
@@ -201,7 +223,8 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     // values of the variables it reads (LRM 16.5.1), so the whole of what
     // reading one changes is which value each leaf answers with -- here, where
     // every leaf read is built.
-    if (frame.reads_as_of == ReadsAsOf::kPreponed) {
+    if (frame.reads_as_of == ReadsAsOf::kPreponed &&
+        KeepsSampledValue(lowerer, expr)) {
       return mir::MakeCellSampledLoadCallExpr(cell_id, result_type);
     }
     return mir::MakeCellLoadCallExpr(cell_id, result_type);

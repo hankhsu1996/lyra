@@ -96,6 +96,15 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
   if (CapturesByReference(policy_.ViewFor(origin))) {
     source = BuildReferenceArg(*unit_, *capture_site_, read, parent_type);
     field_type = capture_site_->exprs.Get(source).type;
+  } else if (
+      const auto* cell =
+          unit_->types.Get(parent_type).As<mir::ObservableType>()) {
+    // A snapshot is a copy of what the variable holds, taken where the closure
+    // is built, and belongs to the closure alone; no other process reaches it,
+    // so it is the value rather than a cell that reports its writes.
+    field_type = cell->value;
+    source =
+        capture_site_->exprs.Add(mir::MakeCellLoadCallExpr(read, field_type));
   }
 
   const mir::FieldId field =

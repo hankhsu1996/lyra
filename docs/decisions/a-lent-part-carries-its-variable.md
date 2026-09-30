@@ -46,9 +46,11 @@ reference to its whole.**
   write through one to a property, or to a part of one, tells the object at the moment of the write
   as well; the object's waiters reevaluate what they reached, so it is told nothing about which bits
   moved, and nothing puts a property under a procedural continuous assignment (LRM 10.6). Only what
-  acts on the variable itself -- its sampled value, being waited on as a cell -- needs the whole,
-  and whether a reference names the whole is said where it is formed, because a part can lie at the
-  address its whole does (the last component of a C++ `std::tuple` does).
+  acts on the variable itself -- its sampled value -- needs the whole, and whether a reference names
+  the whole is said where it is formed, because a part can lie at the address its whole does (the
+  last component of a C++ `std::tuple` does). A wait through a reference registers on the holder
+  whatever part the reference names
+  ([a-variable-a-body-declares-reports-its-writes](a-variable-a-body-declares-reports-its-writes.md)).
 - **What a write asks of the variable needs no type, except where the variable is in a rare state,
   and then the variable carries it.** Whether a procedural continuous assignment holds it (LRM 10.6)
   and whether anything waits are yes-or-no facts of any variable. The one type-dependent duty is a
@@ -122,5 +124,8 @@ reference to its whole.**
   opening one asks the variable whether it admits the write and whether anything waits, and a whole
   store reaches the rare state through the variable's base -- and does not grow with the value.
 - Still refused: a `ref` port connected to a part, because the port is bound before the variable's
-  declaration installs what it holds, which moves the part; and waiting on, or reading the sampled
-  value of, a reference to a part rather than to a whole variable.
+  declaration installs what it holds, which moves the part. Waiting on a reference to a part is
+  answered by
+  [a-variable-a-body-declares-reports-its-writes](a-variable-a-body-declares-reports-its-writes.md),
+  and a `ref` formal's sampled value is its current one; what stays refused is the sampled value of
+  a `ref static` formal.

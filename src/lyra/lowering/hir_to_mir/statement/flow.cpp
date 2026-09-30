@@ -10,12 +10,14 @@
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/declared_variable.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -26,9 +28,11 @@ auto LowerAutomaticVarDeclStmt(
     const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
     mir::TypeId type) -> diag::Result<mir::Stmt> {
   auto& block = *frame.current_block;
-  const mir::LocalId local_id = frame.bindings->DeclareProcedural(
-      BindingOriginId::Procedural(v.var), hir_local.name, type);
-  process.MapProceduralVar(v.var, AutomaticVarBinding{.type = type});
+  mir::CompilationUnit& unit = process.Owner().Unit();
+  const DeclaredVariable variable = DeclareVariable(
+      unit, *frame.bindings, block, BindingOriginId::Procedural(v.var),
+      hir_local.name, type, frame.body_can_wait);
+  process.MapProceduralVar(v.var, AutomaticVarBinding{.type = variable.type});
 
   mir::ExprId init_value{};
   if (hir_local.init.has_value()) {
@@ -40,18 +44,18 @@ auto LowerAutomaticVarDeclStmt(
     init_value = block.exprs.Add(
         BuildDefaultValueFromHir(process.Owner(), block, hir_local.type));
   }
-  init_value = ConvertToType(process.Owner().Unit(), block, init_value, type);
+  init_value = ConvertToType(unit, block, init_value, type);
 
-  return mir::Stmt{
-      .label = std::move(label),
-      .data = mir::LocalDeclStmt{.target = local_id, .init = init_value}};
+  mir::Stmt initialized = InitializeVariable(unit, block, variable, init_value);
+  initialized.label = std::move(label);
+  return initialized;
 }
 
-// A lifetime-extended automatic (LRM 6.21) is a field of the scope's shared
-// activation frame; its declaration assigns the initial value into that field
-// through the handle (`handle->field = init`) rather than into a plain local.
-// The field was recorded when the activation scope opened; consume it here, in
-// HIR id order, to register the binding its references resolve through.
+// A lifetime-extended automatic (LRM 6.21) is a cell in a field of the scope's
+// shared activation frame; its declaration initializes that cell through the
+// handle rather than a local's own. The field was recorded when the activation
+// scope opened; consume it here, in HIR id order, to register the binding its
+// references resolve through.
 auto LowerPromotedVarDeclStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
@@ -59,10 +63,11 @@ auto LowerPromotedVarDeclStmt(
   const PromotedVarBinding pb = process.TakePendingActivation(v.var);
   process.MapProceduralVar(v.var, pb);
   auto& block = *frame.current_block;
+  mir::CompilationUnit& unit = process.Owner().Unit();
   const mir::ExprId handle_ref = block.exprs.Add(frame.bindings->MakeReadExpr(
       frame.bindings->EnsureCarrier(pb.handle_origin), block));
-  const mir::ExprId target =
-      block.exprs.Add(mir::MakeFieldAccessExpr(handle_ref, pb.field, type));
+  const mir::ExprId target = block.exprs.Add(
+      mir::MakeFieldAccessExpr(handle_ref, pb.field, pb.cell_type));
   mir::ExprId init_value{};
   if (hir_local.init.has_value()) {
     auto init_or =
@@ -73,11 +78,14 @@ auto LowerPromotedVarDeclStmt(
     init_value = block.exprs.Add(
         BuildDefaultValueFromHir(process.Owner(), block, hir_local.type));
   }
-  init_value = ConvertToType(process.Owner().Unit(), block, init_value, type);
-  const mir::ExprId assign =
-      block.exprs.Add(mir::MakeAssignExpr(target, init_value, type));
+  init_value = ConvertToType(unit, block, init_value, type);
   return mir::Stmt{
-      .label = std::move(label), .data = mir::ExprStmt{.expr = assign}};
+      .label = std::move(label),
+      .data = mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::MakeCapabilityInstallCallExpr(
+                  target, init_value, support::BuiltinFn::kInitialize,
+                  unit.builtins.void_type))}};
 }
 
 }  // namespace

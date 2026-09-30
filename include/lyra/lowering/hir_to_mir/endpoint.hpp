@@ -42,15 +42,11 @@ enum class MemberKind : std::uint8_t {
 };
 
 // The runtime endpoint a reader-relative reference reaches: where its member
-// is, what the member is, and `cell_type`, the observable cell's type, which
-// carries the target's access capability (a variable cell versus a
-// resolved-net node) so a consumer reads net-versus-variable from it rather
-// than re-deriving it. One endpoint serves value read, value write, and change
-// observation.
+// is and what the member is. One endpoint serves value read, value write, and
+// change observation.
 struct BoundEndpoint {
   MemberPlace place;
   MemberKind kind = MemberKind::kCell;
-  mir::TypeId cell_type;
 };
 
 // Resolves a value reference to its endpoint. Pure: it reads identities and
@@ -69,13 +65,21 @@ struct BoundEndpoint {
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     const BoundEndpoint& endpoint) -> mir::Expr;
 
-// A borrowed pointer to the observable cell -- the change-observation
-// subscription surface. A slot pointing at the cell hands it over; a reference
-// is opened first, since a wait registers on the cell it binds; anything else
-// takes the address of the cell it names. Appends to `block` and returns the
-// pointer's id.
+// A borrowed pointer to what a wait on the endpoint registers on -- the
+// change-observation subscription surface. A slot pointing at the cell hands it
+// over; a reference answers with what it reports to, since a wait registers on
+// whatever a write through it tells; anything else takes the address of the
+// cell it names. Appends to `block` and returns the pointer's id.
 [[nodiscard]] auto EndpointObservablePtr(
     mir::Block& block, const WalkFrame& frame, const mir::CompilationUnit& unit,
     const BoundEndpoint& endpoint) -> mir::ExprId;
+
+// What a wait on the storage `reference` names registers on (LRM 13.5.2):
+// whatever a write through the reference is told to, the variable or the
+// object a property belongs to, as an erased pointer -- null where the storage
+// belongs to nothing. Appends to `block` and returns the pointer's id.
+[[nodiscard]] auto ReferenceReportsTo(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reference)
+    -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

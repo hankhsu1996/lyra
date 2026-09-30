@@ -477,6 +477,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "refer_property",
           .declaration = FreeFunction{"lyra::runtime::ReferProperty"}};
+    case BuiltinFn::kReferenceReportsTo:
+      return {
+          .name = "reference_reports_to",
+          .declaration = FreeFunction{"lyra::runtime::ReportsTo"}};
     case BuiltinFn::kAttachDriver:
       return {.name = "attach_driver", .declaration = Method{"AttachDriver"}};
     case BuiltinFn::kNetJoin:

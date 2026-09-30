@@ -116,6 +116,13 @@ struct WalkFrame {
   // nothing beside it.
   ReadsAsOf reads_as_of = ReadsAsOf::kNow;
 
+  // Whether the body being lowered can wait. A function cannot (LRM 13.4.4),
+  // and nothing else can reach one of its variables while it runs -- a branch
+  // it forks outlives it and so holds what it names in storage of its own -- so
+  // a variable it declares has no one to report its writes to. Set where a
+  // callable's frame is built; a fork branch is a process and can.
+  bool body_can_wait = true;
+
   // The binding-resolution context of the callable body being lowered: a
   // reference resolves to a binding through it, and entering a closure body
   // installs a child context whose parent is this one (so a capture forwards
@@ -209,6 +216,12 @@ struct WalkFrame {
       ++hops;
     }
     return mir::EnclosingHops{hops};
+  }
+
+  [[nodiscard]] auto WithBodyCanWait(bool can_wait) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.body_can_wait = can_wait;
+    return next;
   }
 
   [[nodiscard]] auto WithReadsAsOf(ReadsAsOf when) const -> WalkFrame {

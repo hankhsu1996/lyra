@@ -923,8 +923,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kOpenObjectWrite:
     case support::BuiltinFn::kObjectWriteThrough:
     // A reference to a property holds the property erased, so one function
-    // serves every property's type.
+    // serves every property's type; and what any reference reports to is a
+    // fact of the reference, whatever it names.
     case support::BuiltinFn::kReferProperty:
+    case support::BuiltinFn::kReferenceReportsTo:
     // What an enumeration's member list answers about a value. One routine
     // serves every enumeration, because the list is the receiver and every
     // member is a packed value.

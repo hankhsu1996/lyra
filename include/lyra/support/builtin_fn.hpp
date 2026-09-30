@@ -307,6 +307,11 @@ enum class BuiltinFn : std::uint16_t {
   // through it tells the object as it lands (LRM 9.4.2), so the object travels
   // with the reference.
   kReferProperty,
+  // What a wait on the storage a reference names registers on: whatever a
+  // write through the reference is told to -- the variable, or the object a
+  // property belongs to (LRM 13.5.2, 9.4.2) -- as an erased pointer, the form
+  // an object's event source takes too.
+  kReferenceReportsTo,
   // Attaching a driver to a net (LRM 6.5), at the strength its source drives at
   // (LRM 28.11): a `ResolvedNet` method returning the driver handle the drive
   // capability is reached through. The strength is fixed when the driver

@@ -801,6 +801,9 @@ auto lyra_rt_run_program(
 // address and names nothing.
 auto lyra_rt_refer_storage(void* storage, void* out) -> void*;
 auto lyra_rt_refer_property(void* object, void* property, void* out) -> void*;
+// What a wait on the storage a reference names registers on: the variable or
+// the object's event source, and null for storage nothing is told about.
+auto lyra_rt_reference_reports_to(const void* reference) -> void*;
 auto lyra_rt_packed_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_string_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_real_cell_refer(void* cell, void* out) -> void*;
@@ -1027,12 +1030,13 @@ void lyra_rt_evaluation_attempts_seed(
     void* attempts, std::int64_t index, bool this_tick);
 void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects);
 
-// A procedural local whose value crosses a suspension (LRM 9.4). The cell lives
-// in the running activation's store, so the handle a generated frame holds
-// across a suspension points into activation-lifetime storage. `store`
-// overwrites the cell -- the first store installs the declared representation
-// -- and `load` answers with the value where the cell holds it. No runtime
-// handle and no subscriber wakeup: a procedural local is not observable.
+// A value a body holds across a suspension (LRM 9.4) -- what a call it awaits
+// completes with. The cell lives in the running activation's store, so the
+// handle a generated frame holds across a suspension points into
+// activation-lifetime storage. `store` overwrites the cell -- the first store
+// installs the declared representation -- and `load` answers with the value
+// where the cell holds it. No runtime handle and no subscriber wakeup: it is no
+// variable, and nothing waits on it.
 auto lyra_rt_packed_value_cell_alloc() noexcept -> void*;
 auto lyra_rt_string_value_cell_alloc() noexcept -> void*;
 void lyra_rt_packed_value_cell_store(void* cell, const void* value) noexcept;

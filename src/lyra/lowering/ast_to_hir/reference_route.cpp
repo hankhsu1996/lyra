@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <concepts>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -17,10 +18,12 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
@@ -943,39 +946,67 @@ auto UnitLowerer::ObservedThroughModport(
   return out;
 }
 
-template <typename PartsOf>
+template <typename PartsOf, typename DeclaredBy>
 auto UnitLowerer::WatchedEntriesOf(
     const std::vector<SensitivityRead>& reads, const WalkFrame& frame,
-    PartsOf parts_of) -> diag::Result<std::vector<hir::SensitivityEntry>> {
+    PartsOf parts_of, DeclaredBy declared_by)
+    -> diag::Result<std::vector<hir::SensitivityEntry>> {
   std::vector<hir::SensitivityEntry> out;
   out.reserve(reads.size());
+  // A part is meaningful only for a signal the runtime bit-addresses: a packed
+  // bit vector, which renders to one observable cell whose change set is read
+  // per bit. For an enum, unpacked aggregate, string, or real the runtime
+  // observes the whole signal on any change, so the read watches the whole of
+  // it regardless of the flat-bit view the DFA computed over its own encoding.
+  const auto observe =
+      [&](const SensitivityRead& read, const hir::WatchedStorage& cell,
+          const slang::ast::Type& read_type) -> diag::Result<void> {
+    if (!read_type.isIntegral() || read_type.isEnum()) {
+      out.push_back(
+          hir::SensitivityEntry{.cell = cell, .part = hir::WatchedWhole{}});
+      return {};
+    }
+    auto parts = parts_of(read);
+    if (!parts) return std::unexpected(std::move(parts.error()));
+    for (hir::WatchedPart& part : *parts) {
+      out.push_back(
+          hir::SensitivityEntry{.cell = cell, .part = std::move(part)});
+    }
+    return {};
+  };
   for (const auto& read : reads) {
+    // A variable the reading body declares is watched as that declaration,
+    // the lexical binding winning as it does for a name read (LRM 6.21). A
+    // `ref` formal's storage is its actual, which may be one element or member
+    // of a larger variable, so the formal's bits are not that variable's and
+    // the whole of it is watched; the change the wait tests is the formal's
+    // own (LRM 9.4.2).
+    if (const std::optional<hir::ProceduralVarId> var =
+            declared_by(*read.symbol)) {
+      const auto* formal =
+          read.symbol->as_if<slang::ast::FormalArgumentSymbol>();
+      const hir::ProceduralVarRef declared{.var = *var};
+      if (formal != nullptr &&
+          formal->direction == slang::ast::ArgumentDirection::Ref) {
+        out.push_back(
+            hir::SensitivityEntry{
+                .cell = declared, .part = hir::WatchedWhole{}});
+        continue;
+      }
+      if (auto observed = observe(read, declared, read.symbol->getType());
+          !observed) {
+        return std::unexpected(std::move(observed.error()));
+      }
+      continue;
+    }
+
     const auto span = SourceMapper().PointSpanOf(read.symbol->location);
     auto resolved = ResolveReferent(*read.symbol, span);
     if (!resolved) return std::unexpected(std::move(resolved.error()));
     const slang::ast::ValueSymbol& target = *resolved->symbol;
-
-    // A part is meaningful only for a signal the runtime bit-addresses: a
-    // packed bit vector, which renders to one observable cell whose change set
-    // is read per bit. For an enum, unpacked aggregate, string, or real the
-    // runtime observes the whole signal on any change, so the read watches the
-    // whole of it regardless of the flat-bit view the DFA computed over its own
-    // encoding.
-    const auto observe =
+    const auto observe_cell =
         [&](const hir::ValueTarget& cell) -> diag::Result<void> {
-      const slang::ast::Type& read_type = target.getType();
-      if (!read_type.isIntegral() || read_type.isEnum()) {
-        out.push_back(
-            hir::SensitivityEntry{.cell = cell, .part = hir::WatchedWhole{}});
-        return {};
-      }
-      auto parts = parts_of(read);
-      if (!parts) return std::unexpected(std::move(parts.error()));
-      for (hir::WatchedPart& part : *parts) {
-        out.push_back(
-            hir::SensitivityEntry{.cell = cell, .part = std::move(part)});
-      }
-      return {};
+      return observe(read, cell, target.getType());
     };
 
     switch (resolved->kind) {
@@ -1015,7 +1046,8 @@ auto UnitLowerer::WatchedEntriesOf(
         if (prop.lifetime != slang::ast::VariableLifetime::Static) break;
         auto property = ResolveStaticPropertyTarget(frame, prop, span);
         if (!property) return std::unexpected(std::move(property.error()));
-        if (auto observed = observe(hir::ValueTarget{*std::move(property)});
+        if (auto observed =
+                observe_cell(hir::ValueTarget{*std::move(property)});
             !observed) {
           return std::unexpected(std::move(observed.error()));
         }
@@ -1025,7 +1057,7 @@ auto UnitLowerer::WatchedEntriesOf(
       case Referent::kNetStorage: {
         auto cell = ResolveValueTarget(frame, target, span);
         if (!cell) return std::unexpected(std::move(cell.error()));
-        if (auto observed = observe(*std::move(cell)); !observed) {
+        if (auto observed = observe_cell(*std::move(cell)); !observed) {
           return std::unexpected(std::move(observed.error()));
         }
         break;
@@ -1091,6 +1123,14 @@ auto UnitLowerer::TranslateSensitivityReads(
                       hir::WatchedBits{.first = bits.first, .last = bits.last}};
                 }},
             read.part);
+      },
+      [&](const slang::ast::ValueSymbol& symbol)
+          -> std::optional<hir::ProceduralVarId> {
+        if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+          return lowerer.LookupProceduralVar(symbol);
+        } else {
+          return std::nullopt;
+        }
       });
 }
 
@@ -1104,17 +1144,31 @@ template auto UnitLowerer::TranslateSensitivityReads(
 auto UnitLowerer::CellsRead(
     const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
     -> diag::Result<std::vector<hir::ValueTarget>> {
+  // A variable of a body answers for a sampled value with what it holds (LRM
+  // 16.5.1) and is never armed, so every read here is resolved as a cell.
   auto entries = WatchedEntriesOf(
       reads, frame,
       [](const SensitivityRead&)
           -> diag::Result<std::vector<hir::WatchedPart>> {
         return std::vector<hir::WatchedPart>{hir::WatchedWhole{}};
-      });
+      },
+      [](const slang::ast::ValueSymbol&)
+          -> std::optional<hir::ProceduralVarId> { return std::nullopt; });
   if (!entries) return std::unexpected(std::move(entries.error()));
   std::vector<hir::ValueTarget> cells;
   cells.reserve(entries->size());
   for (hir::SensitivityEntry& entry : *entries) {
-    cells.push_back(std::move(entry.cell));
+    cells.push_back(
+        std::visit(
+            Overloaded{
+                [](hir::ValueTarget& cell) { return std::move(cell); },
+                [](const hir::ProceduralVarRef&) -> hir::ValueTarget {
+                  throw InternalError(
+                      "CellsRead: a read resolved as a cell named a variable "
+                      "of a "
+                      "body");
+                }},
+            entry.cell));
   }
   return cells;
 }

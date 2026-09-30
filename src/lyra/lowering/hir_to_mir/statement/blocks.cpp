@@ -28,6 +28,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -64,11 +65,16 @@ void OpenActivationScope(
   // so wrote no name for one.
   mir::StructDecl struct_decl;
   std::vector<mir::FieldId> fields;
+  std::vector<mir::TypeId> cell_types;
   fields.reserve(promoted.size());
+  cell_types.reserve(promoted.size());
   for (const hir::ProceduralVarId v : promoted) {
     const hir::ProceduralVarDecl& decl = body.procedural_vars.Get(v);
-    fields.push_back(struct_decl.fields.Add(
-        mir::FieldDecl{.type = unit_lowerer.TranslateType(decl.type)}));
+    cell_types.push_back(
+        mir::ObservableCellOf(
+            unit.types, unit_lowerer.TranslateType(decl.type)));
+    fields.push_back(
+        struct_decl.fields.Add(mir::FieldDecl{.type = cell_types.back()}));
   }
   const mir::StructId struct_id = unit.AddStruct(std::move(struct_decl));
   const mir::TypeId struct_type =
@@ -99,11 +105,13 @@ void OpenActivationScope(
 
   for (std::size_t i = 0; i < promoted.size(); ++i) {
     process.RecordPendingActivation(
-        promoted[i], PromotedVarBinding{
-                         .handle_origin = handle_origin,
-                         .handle_type = handle_type,
-                         .field = mir::StructFieldTarget{
-                             .owner = struct_id, .slot = fields[i]}});
+        promoted[i],
+        PromotedVarBinding{
+            .handle_origin = handle_origin,
+            .handle_type = handle_type,
+            .field =
+                mir::StructFieldTarget{.owner = struct_id, .slot = fields[i]},
+            .cell_type = cell_types[i]});
   }
 }
 

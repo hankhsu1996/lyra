@@ -654,6 +654,19 @@ class HirDumper {
         cell);
   }
 
+  static auto FormatWatchedStorage(const WatchedStorage& storage)
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const ValueTarget& cell) -> std::string {
+              return FormatSealedCell(cell);
+            },
+            [](const ProceduralVarRef& r) -> std::string {
+              return std::format("var=ProceduralVar[{}]", r.var.value);
+            }},
+        storage);
+  }
+
   static auto FormatWatchedPart(const WatchedPart& part) -> std::string {
     return std::visit(
         Overloaded{
@@ -670,7 +683,7 @@ class HirDumper {
   static auto FormatSensitivityEntry(const SensitivityEntry& entry)
       -> std::string {
     return std::format(
-        "{} part={}", FormatSealedCell(entry.cell),
+        "{} part={}", FormatWatchedStorage(entry.cell),
         FormatWatchedPart(entry.part));
   }
 
