@@ -414,7 +414,7 @@ auto ConnectBidirectionalPort(
         "supported");
   }
   const NetSide inside = {NetRun{
-      .net = frame.Exprs().Add(std::move(child_net)),
+      .part = frame.Exprs().Add(std::move(child_net)),
       .offset = child_run.position,
       .width = child_run.width}};
   return CoupleSides(*outside, inside, span);
@@ -508,6 +508,7 @@ auto ConnectDataPort(
       if (!peer_or) return std::unexpected(std::move(peer_or.error()));
       peer = frame.Exprs().Add(*std::move(peer_or));
       auto entries = unit_lowerer.TranslateSensitivityReads(
+          scope,
           unit_lowerer.Sensitivity().AnalyzeReads(*expr, *child.instance),
           frame);
       if (!entries) return std::unexpected(std::move(entries.error()));
@@ -536,7 +537,7 @@ auto ConnectDataPort(
       if (!peer_or) return std::unexpected(std::move(peer_or.error()));
       peer = frame.Exprs().Add(*std::move(peer_or));
       auto entries = unit_lowerer.TranslateSensitivityReads(
-          {SensitivityRead{.symbol = internal, .footprint = std::nullopt}},
+          scope, {SensitivityRead{.symbol = internal, .part = ReadOfWhole{}}},
           frame);
       if (!entries) return std::unexpected(std::move(entries.error()));
       sensitivity = *std::move(entries);

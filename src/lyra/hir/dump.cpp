@@ -654,20 +654,24 @@ class HirDumper {
         cell);
   }
 
-  static auto FormatFootprint(
-      const std::optional<std::pair<std::uint64_t, std::uint64_t>>& footprint)
-      -> std::string {
-    if (!footprint.has_value()) {
-      return "[whole]";
-    }
-    return std::format("[{}:{}]", footprint->first, footprint->second);
+  static auto FormatWatchedPart(const WatchedPart& part) -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const WatchedWhole&) -> std::string { return "whole"; },
+            [](const WatchedSelect& s) -> std::string {
+              return std::format("Expr[{}]", s.prefix.value);
+            },
+            [](const WatchedBits& b) -> std::string {
+              return std::format("[{}:{}]", b.first, b.last);
+            }},
+        part);
   }
 
   static auto FormatSensitivityEntry(const SensitivityEntry& entry)
       -> std::string {
     return std::format(
-        "{} bits={}", FormatSealedCell(entry.cell),
-        FormatFootprint(entry.footprint));
+        "{} part={}", FormatSealedCell(entry.cell),
+        FormatWatchedPart(entry.part));
   }
 
   static auto FormatSensitivityList(std::span<const SensitivityEntry> entries)

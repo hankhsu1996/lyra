@@ -1111,9 +1111,22 @@ class UnitLowerer {
   // signal leaves only the signal watched (LRM 9.2.2.2.1). A read this compiler
   // cannot watch is refused, because a process that does not wake answers
   // wrongly and shows nothing.
+  //
+  // A read of part of a bit vector watches that part as the source selected
+  // it, lowered by `lowerer` into the arena `frame` adds to, so an index that
+  // is a value each construction is given stays that value.
+  template <typename Lowerer>
   [[nodiscard]] auto TranslateSensitivityReads(
-      const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
+      Lowerer& lowerer, const std::vector<SensitivityRead>& reads,
+      const WalkFrame& frame)
       -> diag::Result<std::vector<hir::SensitivityEntry>>;
+
+  // The cells a set of reads names, whatever part of each it reads: what a
+  // sampled value arms is the whole cell (LRM 16.5.1). A read naming no cell
+  // this scope can reach contributes none, which the caller counts.
+  [[nodiscard]] auto CellsRead(
+      const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
+      -> diag::Result<std::vector<hir::ValueTarget>>;
 
  private:
   // Derives what this unit publishes from its own declarations: the object an
@@ -1162,6 +1175,13 @@ class UnitLowerer {
   auto ObservedThroughModport(
       const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame)
       -> diag::Result<std::vector<hir::SensitivityEntry>>;
+
+  // The entries a set of reads watches, with `parts_of` saying which parts of
+  // a bit vector a read of one watches.
+  template <typename PartsOf>
+  auto WatchedEntriesOf(
+      const std::vector<SensitivityRead>& reads, const WalkFrame& frame,
+      PartsOf parts_of) -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
   // The reader-relative route to a cell in an instantiated scope: a count of
   // parent edges when the target sits on the reader's own scope or one

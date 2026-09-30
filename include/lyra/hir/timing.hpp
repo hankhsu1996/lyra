@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -22,12 +21,39 @@ struct DelayControl {
   auto operator==(const DelayControl&) const -> bool = default;
 };
 
-// One cell of a read set, a cell elaboration sealed, and the flat-bit footprint
-// of its packed encoding the read reaches. An absent footprint means the whole
-// of it is read.
+// A leaf reads the whole of its cell.
+struct WatchedWhole {
+  auto operator==(const WatchedWhole&) const -> bool = default;
+};
+
+// A leaf reads the part of its cell the source selected: the longest static
+// prefix the source wrote (LRM 11.5.3), a select over the cell whose indices
+// are constants. A genvar or a parameter is such a constant and each
+// construction is given its own, so the part is stated in terms of that value
+// rather than as the bits one construction settled it to.
+struct WatchedSelect {
+  ExprId prefix;
+
+  auto operator==(const WatchedSelect&) const -> bool = default;
+};
+
+// A leaf reads a run of its cell's packed encoding, first and last bit, that no
+// prefix in the source spells: a read inside a called function, or what is left
+// of one once the procedure's own writes are excluded (LRM 9.2.2.2.1).
+struct WatchedBits {
+  std::uint64_t first;
+  std::uint64_t last;
+
+  auto operator==(const WatchedBits&) const -> bool = default;
+};
+
+using WatchedPart = std::variant<WatchedWhole, WatchedSelect, WatchedBits>;
+
+// One cell of a read set, a cell elaboration sealed, and which part of it the
+// read reaches.
 struct SensitivityEntry {
   ValueTarget cell;
-  std::optional<std::pair<std::uint64_t, std::uint64_t>> footprint;
+  WatchedPart part;
 
   auto operator==(const SensitivityEntry&) const -> bool = default;
 };

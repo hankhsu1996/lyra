@@ -193,9 +193,11 @@ auto LowerForeverProcess(
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     if (implicit_sensitivity != nullptr) {
-      body_block.AppendStmt(BuildValueChangeWaitStmt(
+      auto waited = BuildValueChangeWaitStmt(
           body_block, body_frame, process, *implicit_sensitivity,
-          support::BuiltinFn::kWaitAny));
+          support::BuiltinFn::kWaitAny);
+      if (!waited) return std::unexpected(std::move(waited.error()));
+      body_block.AppendStmt(*std::move(waited));
     }
   }
 

@@ -148,6 +148,11 @@ This workstream reasons from these and does not restate them:
       A connection cuts the runs its own ends fall inside, which is what lets two positions of one
       name take part in two resolutions -- and a name no connection reached is the single run that
       covers it.
+- [ ] N14 -- A bidirectional connection or an `alias` reaching a net whose data type is an unpacked
+      aggregate (N3a), whether it names the whole net (`alias a = b` over two `wire [2]` arrays) or
+      one element (`wire u [4]` joined through `u[e]`). Such a net resolves per bit but keeps no
+      runs of positions for another net to join. Refused by name; it used to stop the run with an
+      internal error, or produce C++ that did not compile.
 
 ## Out of scope
 

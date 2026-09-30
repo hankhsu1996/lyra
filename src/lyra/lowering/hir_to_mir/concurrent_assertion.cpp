@@ -543,9 +543,12 @@ auto LowerDisableWatcher(
   mir::Block body_block;
   const WalkFrame body_frame =
       ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
-  body_block.AppendStmt(BuildValueChangeWaitStmt(
-      body_block, body_frame, lowerer, disable.sensitivity,
-      support::BuiltinFn::kWaitAny));
+  // What the condition reads is stated beside it, in the action's own body.
+  auto waited = BuildValueChangeWaitStmt(
+      body_block, body_frame, action, disable.sensitivity,
+      support::BuiltinFn::kWaitAny);
+  if (!waited) return std::unexpected(std::move(waited.error()));
+  body_block.AppendStmt(*std::move(waited));
 
   auto condition = action.LowerExpr(
       action.HirBody().exprs.Get(disable.condition), body_frame);

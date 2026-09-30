@@ -145,7 +145,8 @@ auto LowerNamedEventControl(
   auto condition = LowerEventCondition(proc, frame, sig);
   if (!condition) return std::unexpected(std::move(condition.error()));
   return hir::NamedEventControl{
-      .event = hir::SensitivityEntry{.cell = *route, .footprint = std::nullopt},
+      .event =
+          hir::SensitivityEntry{.cell = *route, .part = hir::WatchedWhole{}},
       .condition = AddEventCondition(frame, *std::move(condition)),
   };
 }
@@ -236,7 +237,8 @@ auto LowerTimingControl(
     case slang::ast::TimingControlKind::ImplicitEvent: {
       const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
           controlled, proc.ContainingSymbol());
-      auto sensitivity = proc.Owner().TranslateSensitivityReads(reads, frame);
+      auto sensitivity =
+          proc.Owner().TranslateSensitivityReads(proc, reads, frame);
       if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
       return hir::TimingControl{hir::ImplicitEventControl{
           .sensitivity_list = *std::move(sensitivity)}};

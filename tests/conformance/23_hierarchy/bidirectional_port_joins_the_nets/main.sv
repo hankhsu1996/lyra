@@ -178,6 +178,13 @@ module Top;
   Window window(.p(viewed));
   assign viewed[0] = 1'b0;
 
+  // Each block of a loop joins the position its own index selects, a constant
+  // of that block (LRM 27.4), so every block's child reaches a different one.
+  wire [3:0] per_block;
+  for (genvar e = 0; e < 4; e++) begin : by_block
+    Leaf bit_pad(.w(per_block[e]), .en(e % 2 == 1));
+  end
+
   logic undriven;
   logic driven_from_child;
   logic driven_from_parent;
@@ -335,6 +342,10 @@ module Top;
     if (viewed !== 2'bz0) $fatal(1, "viewed was %b, expected z0", viewed);
     if (window.inner !== 4'b1z0z)
       $fatal(1, "window.inner was %b, expected 1z0z", window.inner);
+    // The odd blocks drive their position and the even ones leave theirs, so a
+    // block joined to another's position would show here.
+    if (per_block !== 4'b1z1z)
+      $fatal(1, "per_block was %b, expected 1z1z", per_block);
     $display("All checks passed");
   end
 endmodule

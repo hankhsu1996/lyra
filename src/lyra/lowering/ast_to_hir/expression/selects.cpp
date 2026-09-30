@@ -97,6 +97,35 @@ auto LowerElementSelectExpr(
   };
 }
 
+namespace {
+
+// What a part-select of a packed value yields: a vector as wide as the select
+// (LRM 11.5.1, 11.8.1), numbered from zero in the direction the value runs.
+// Which bits it came from is the select's, not the value's -- and where the
+// base is a value each construction is given, the front end's range for it
+// differs per construction while the vector it yields does not -- so that range
+// is never taken into the unit at all.
+auto PartSelectType(
+    UnitLowerer& unit_lowerer, const slang::ast::Type& selected,
+    diag::SourceSpan span) -> diag::Result<hir::TypeId> {
+  const auto* packed =
+      selected.getCanonicalType().as_if<slang::ast::PackedArrayType>();
+  if (packed == nullptr) return unit_lowerer.InternType(selected, span);
+  auto element = unit_lowerer.InternType(packed->elementType, span);
+  if (!element) return std::unexpected(std::move(element.error()));
+  const auto last = static_cast<std::int64_t>(packed->range.width()) - 1;
+  return unit_lowerer.AddComposedType(
+      hir::Type{hir::PackedArrayType{
+          .dim = packed->range.left >= packed->range.right
+                     ? hir::PackedRange{.left = last, .right = 0}
+                     : hir::PackedRange{.left = 0, .right = last},
+          .element_type = *element,
+          .signedness = selected.isSigned() ? hir::Signedness::kSigned
+                                            : hir::Signedness::kUnsigned}});
+}
+
+}  // namespace
+
 template <ExprLowerer Lowerer>
 auto LowerRangeSelectExpr(
     Lowerer& lowerer, WalkFrame frame,
@@ -155,7 +184,7 @@ auto LowerRangeSelectExpr(
         "LowerRangeSelectExpr: unknown slang RangeSelectionKind");
   }();
 
-  auto type_id = lowerer.Owner().InternType(*sel.type, span);
+  auto type_id = PartSelectType(lowerer.Owner(), *sel.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,

@@ -237,7 +237,7 @@ auto LowerProceduralContinuousAssignStmt(
   if (!source_or) return std::unexpected(std::move(source_or.error()));
   const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
       assign.right(), proc.ContainingSymbol());
-  auto sensitivity = proc.Owner().TranslateSensitivityReads(reads, frame);
+  auto sensitivity = proc.Owner().TranslateSensitivityReads(proc, reads, frame);
   if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
   return hir::Stmt{
       .label = std::nullopt,

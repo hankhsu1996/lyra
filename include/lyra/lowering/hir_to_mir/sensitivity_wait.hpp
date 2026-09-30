@@ -36,7 +36,7 @@ struct ObservedLeaf {
 template <typename Lowerer>
 [[nodiscard]] auto BuildObservableCellExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    Lowerer& lowerer, const hir::SensitivityEntry& entry) -> mir::ExprId;
+    Lowerer& lowerer, const hir::ValueTarget& cell) -> mir::ExprId;
 
 // The cells a wait over `reads` watches, where every one is a cell elaboration
 // sealed so the wait can register them once for good (LRM 9.4.2); absent where
@@ -91,11 +91,15 @@ auto ReportReads(
 // leaves this is -- one for the next occurrence, or one for a condition the
 // body re-tests -- since the two ask the same leaves and part company only
 // where a stopped process is started again (LRM 9.7).
+//
+// A leaf watching part of its cell names the part by the select the source
+// wrote, whose indices are lowered here; `lowerer` is the lowering that owns
+// those expressions.
 template <typename Lowerer>
 auto BuildWaitStmt(
     mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
     std::span<const ObservedLeaf> leaves, support::BuiltinFn entry)
-    -> mir::Stmt;
+    -> diag::Result<mir::Stmt>;
 
 // One expression a wait collecting its leaves watches: what it reads, and the
 // observation deciding whether reaching one of them is an event.
@@ -124,6 +128,6 @@ template <typename Lowerer>
 auto BuildValueChangeWaitStmt(
     mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list,
-    support::BuiltinFn entry) -> mir::Stmt;
+    support::BuiltinFn entry) -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

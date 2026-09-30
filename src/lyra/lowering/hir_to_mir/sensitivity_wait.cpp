@@ -1,18 +1,23 @@
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <span>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -53,7 +58,7 @@ auto BindRouted(
 template <typename Lowerer>
 auto BuildObservableCellExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    Lowerer& lowerer, const hir::SensitivityEntry& entry) -> mir::ExprId {
+    Lowerer& lowerer, const hir::ValueTarget& cell) -> mir::ExprId {
   return std::visit(
       Overloaded{
           [&](const hir::RoutedValueRef& reference) -> mir::ExprId {
@@ -69,7 +74,7 @@ auto BuildObservableCellExpr(
                 LowerStaticPropertyRefExpr(lowerer.Owner(), frame, property));
           },
       },
-      entry.cell);
+      cell);
 }
 
 auto BuildReportCall(
@@ -106,7 +111,7 @@ auto BuildObservablePtrExpr(
     Lowerer& lowerer, const hir::SensitivityEntry& entry) -> mir::ExprId {
   const auto address_of_cell = [&]() -> mir::ExprId {
     const mir::ExprId cell =
-        BuildObservableCellExpr(block, frame, unit, lowerer, entry);
+        BuildObservableCellExpr(block, frame, unit, lowerer, entry.cell);
     const mir::TypeId ptr_type = unit.types.Intern(
         mir::Type{mir::PointerType{
             .pointee = block.exprs.Get(cell).type,
@@ -130,23 +135,54 @@ auto BuildObservablePtrExpr(
       entry.cell);
 }
 
-// Which bits of a cell's packed encoding a leaf reads, as the `(lsb, width)` a
-// registration takes (LRM 9.4.2 / 9.4.2.2 / 9.4.3): a bit-addressed footprint
-// becomes `(lsb, hi - lsb + 1)`, and a read of the whole of it (no footprint)
-// is width 0, which is also what a named event carries, having no bits at all.
-struct LeafBits {
-  std::int64_t lsb = 0;
-  std::int64_t width = 0;
+// Which bits of a place's packed encoding a leaf reads, as the `(lsb, width)` a
+// registration takes (LRM 9.4.2 / 9.4.2.2 / 9.4.3). A read of the whole of it
+// is width 0, which is also what a named event and an object carry, having no
+// bits at all.
+struct WatchedRun {
+  mir::ExprId first;
+  mir::ExprId width;
 };
 
-auto BitsOf(const hir::SensitivityEntry& entry) -> LeafBits {
-  if (!entry.footprint.has_value()) {
-    return {};
-  }
-  return LeafBits{
-      .lsb = static_cast<std::int64_t>(entry.footprint->first),
-      .width = static_cast<std::int64_t>(
-          entry.footprint->second - entry.footprint->first + 1)};
+auto WholeRun(const mir::CompilationUnit& unit, mir::Block& block)
+    -> WatchedRun {
+  return WatchedRun{
+      .first = BuildIntLiteral(unit, block, 0),
+      .width = BuildIntLiteral(unit, block, 0)};
+}
+
+template <typename Lowerer>
+auto WatchedRunOf(
+    mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
+    Lowerer& lowerer, const hir::WatchedPart& part)
+    -> diag::Result<WatchedRun> {
+  const auto int_literal = [&](std::uint64_t value) {
+    return BuildIntLiteral(unit, block, static_cast<std::int64_t>(value));
+  };
+  return std::visit(
+      Overloaded{
+          [&](const hir::WatchedWhole&) -> diag::Result<WatchedRun> {
+            return WholeRun(unit, block);
+          },
+          [&](const hir::WatchedSelect& select) -> diag::Result<WatchedRun> {
+            auto start =
+                PartStartOf(lowerer, frame.WithBlock(&block), select.prefix);
+            if (!start) return std::unexpected(std::move(start.error()));
+            const mir::TypeId part_type = lowerer.Owner().TranslateType(
+                lowerer.HirExprs().Get(select.prefix).type);
+            return WatchedRun{
+                .first = ConvertToType(
+                    unit, block, start->first, unit.builtins.int_type),
+                .width = int_literal(
+                    unit.types.Get(part_type).PackedShape().BitWidth())};
+          },
+          [&](const hir::WatchedBits& bits) -> diag::Result<WatchedRun> {
+            return WatchedRun{
+                .first = int_literal(bits.first),
+                .width = int_literal(bits.last - bits.first + 1)};
+          },
+      },
+      part);
 }
 
 // One leaf of the wait: the place it watches, what decides whether what happens
@@ -155,10 +191,11 @@ template <typename Lowerer>
 auto BuildTriggerExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::SensitivityEntry& entry,
-    mir::LocalId observation) -> mir::ExprId {
+    mir::LocalId observation) -> diag::Result<mir::ExprId> {
   const mir::ExprId observable_ptr =
       BuildObservablePtrExpr(block, frame, unit, lowerer, entry);
-  const LeafBits bits = BitsOf(entry);
+  auto run = WatchedRunOf(block, frame, unit, lowerer, entry.part);
+  if (!run) return std::unexpected(std::move(run.error()));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -169,8 +206,7 @@ auto BuildTriggerExpr(
                        block.exprs.Add(
                            mir::MakeLocalRefExpr(
                                observation, unit.builtins.observation)),
-                       BuildIntLiteral(unit, block, bits.lsb),
-                       BuildIntLiteral(unit, block, bits.width)}},
+                       run->first, run->width}},
           .type = unit.builtins.trigger});
 }
 
@@ -187,12 +223,11 @@ void ActOnReport(
 
 // Records the place `place` points at, and which bits of it are read.
 void ReportPlace(
-    mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
-    mir::ExprId place, LeafBits bits) {
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
+    mir::ExprId place, WatchedRun run) {
   ActOnReport(
       unit, block, report, support::BuiltinFn::kReadReportAdd,
-      {place, BuildIntLiteral(unit, block, bits.lsb),
-       BuildIntLiteral(unit, block, bits.width)});
+      {place, run.first, run.width});
 }
 
 // Binds `value` to a local of `frame`'s block, so a block nested in it can read
@@ -246,7 +281,7 @@ auto ReportObjectThenHops(
   ReportPlace(
       unit, block, report,
       ObjectEventSourceOf(unit, block, ObjectRootOf(unit, block, object())),
-      LeafBits{});
+      WholeRun(unit, block));
   if (hops.empty()) return {};
   const hir::ObjectChain::Hop& hop = hops.front();
   const mir::TypeId next_type = lowerer.Owner().TranslateType(hop.handle_type);
@@ -286,10 +321,11 @@ auto ReportLeaf(
   return std::visit(
       Overloaded{
           [&](const hir::SensitivityEntry& entry) -> diag::Result<void> {
-            ReportPlace(
-                unit, block, report,
-                BuildObservablePtrExpr(block, frame, unit, lowerer, entry),
-                BitsOf(entry));
+            const mir::ExprId place =
+                BuildObservablePtrExpr(block, frame, unit, lowerer, entry);
+            auto run = WatchedRunOf(block, frame, unit, lowerer, entry.part);
+            if (!run) return std::unexpected(std::move(run.error()));
+            ReportPlace(unit, block, report, place, *run);
             return {};
           },
           // A variable of the instance a virtual interface holds (LRM 25.9),
@@ -308,7 +344,8 @@ auto ReportLeaf(
                   auto place = HeldInterfaceMember(lowerer, inner, held);
                   if (!place) return std::unexpected(std::move(place.error()));
                   ReportPlace(
-                      unit, *inner.current_block, report, *place, LeafBits{});
+                      unit, *inner.current_block, report, *place,
+                      WholeRun(unit, *inner.current_block));
                   return {};
                 });
           },
@@ -405,13 +442,15 @@ template <typename Lowerer>
 auto BuildWaitStmt(
     mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
     std::span<const ObservedLeaf> leaves, support::BuiltinFn entry)
-    -> mir::Stmt {
+    -> diag::Result<mir::Stmt> {
   auto& unit = lowerer.Owner().Unit();
   std::vector<mir::ExprId> triggers;
   triggers.reserve(leaves.size());
   for (const ObservedLeaf& leaf : leaves) {
-    triggers.push_back(BuildTriggerExpr(
-        target_block, frame, unit, lowerer, leaf.entry, leaf.observation));
+    auto trigger = BuildTriggerExpr(
+        target_block, frame, unit, lowerer, leaf.entry, leaf.observation);
+    if (!trigger) return std::unexpected(std::move(trigger.error()));
+    triggers.push_back(*trigger);
   }
   const mir::TypeId triggers_type =
       mir::MachineArrayOf(unit.types, unit.builtins.trigger, triggers.size());
@@ -501,7 +540,7 @@ template <typename Lowerer>
 auto BuildValueChangeWaitStmt(
     mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
     const std::vector<hir::SensitivityEntry>& sensitivity_list,
-    support::BuiltinFn entry) -> mir::Stmt {
+    support::BuiltinFn entry) -> diag::Result<mir::Stmt> {
   const mir::LocalId observation = DeclareObservation(
       lowerer.Owner().Unit(), frame, target_block,
       support::BuiltinFn::kObservationOnReaching, {});
@@ -516,10 +555,10 @@ auto BuildValueChangeWaitStmt(
 // One instantiation per lowering a wait is built in.
 template auto BuildObservableCellExpr(
     mir::Block&, const WalkFrame&, mir::CompilationUnit&, ProcessLowerer&,
-    const hir::SensitivityEntry&) -> mir::ExprId;
+    const hir::ValueTarget&) -> mir::ExprId;
 template auto BuildObservableCellExpr(
     mir::Block&, const WalkFrame&, mir::CompilationUnit&,
-    const StructuralScopeLowerer&, const hir::SensitivityEntry&) -> mir::ExprId;
+    const StructuralScopeLowerer&, const hir::ValueTarget&) -> mir::ExprId;
 template auto ReportReads(
     ProcessLowerer&, const WalkFrame&, const hir::Reads&, mir::LocalId)
     -> diag::Result<void>;
@@ -528,10 +567,12 @@ template auto ReportReads(
     mir::LocalId) -> diag::Result<void>;
 template auto BuildWaitStmt(
     mir::Block&, const WalkFrame&, ProcessLowerer&,
-    std::span<const ObservedLeaf>, support::BuiltinFn) -> mir::Stmt;
+    std::span<const ObservedLeaf>, support::BuiltinFn)
+    -> diag::Result<mir::Stmt>;
 template auto BuildWaitStmt(
     mir::Block&, const WalkFrame&, const StructuralScopeLowerer&,
-    std::span<const ObservedLeaf>, support::BuiltinFn) -> mir::Stmt;
+    std::span<const ObservedLeaf>, support::BuiltinFn)
+    -> diag::Result<mir::Stmt>;
 template auto BuildCollectingWaitStmt(
     const WalkFrame&, ProcessLowerer&, std::span<const CollectedExpression>,
     support::BuiltinFn) -> diag::Result<mir::Stmt>;
@@ -541,9 +582,11 @@ template auto BuildCollectingWaitStmt(
     -> diag::Result<mir::Stmt>;
 template auto BuildValueChangeWaitStmt(
     mir::Block&, const WalkFrame&, ProcessLowerer&,
-    const std::vector<hir::SensitivityEntry>&, support::BuiltinFn) -> mir::Stmt;
+    const std::vector<hir::SensitivityEntry>&, support::BuiltinFn)
+    -> diag::Result<mir::Stmt>;
 template auto BuildValueChangeWaitStmt(
     mir::Block&, const WalkFrame&, const StructuralScopeLowerer&,
-    const std::vector<hir::SensitivityEntry>&, support::BuiltinFn) -> mir::Stmt;
+    const std::vector<hir::SensitivityEntry>&, support::BuiltinFn)
+    -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

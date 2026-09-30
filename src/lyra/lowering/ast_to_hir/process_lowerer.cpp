@@ -80,30 +80,29 @@ auto ProcessLowerer::Run(
   auto root_stmt_or = LowerStmt(proc.getBody(), frame);
   if (!root_stmt_or) return std::unexpected(std::move(root_stmt_or.error()));
   const hir::StmtId root_stmt = body.stmts.Add(*std::move(root_stmt_or));
-  body.root_scope = parent_frame.SealScope(std::move(root));
 
-  const auto& mapper = owner_->SourceMapper();
-  const auto span = mapper.PointSpanOf(proc.location);
+  // LRM 9.2.2.2.1 / 9.2.2.3: an always_comb / always_latch wakes on the reads
+  // of its whole procedure, including reads inside any function it calls -- the
+  // procedure-level sensitivity, not the raw read set of the body node, which
+  // reflects only call arguments across a function boundary. What it watches is
+  // stated in the body, so it is stated while the body is still open.
   const auto kind = FromSlangProceduralBlockKind(proc.procedureKind);
-
-  hir::Process out{
-      .kind = kind,
-      .span = span,
-      .body = std::move(body),
-      .root_stmt = root_stmt,
-      .implicit_sensitivity_list = {}};
+  std::vector<hir::SensitivityEntry> implicit_sensitivity;
   if (kind == hir::ProcessKind::kAlwaysComb ||
       kind == hir::ProcessKind::kAlwaysLatch) {
-    // LRM 9.2.2.2.1 / 9.2.2.3: an always_comb / always_latch wakes on the reads
-    // of its whole procedure, including reads inside any function it calls --
-    // the procedure-level sensitivity, not the raw read set of the body node,
-    // which reflects only call arguments across a function boundary.
     auto sensitivity = owner_->TranslateSensitivityReads(
-        owner_->Sensitivity().AnalyzeProcedureSensitivity(proc), frame);
+        *this, owner_->Sensitivity().AnalyzeProcedureSensitivity(proc), frame);
     if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
-    out.implicit_sensitivity_list = *std::move(sensitivity);
+    implicit_sensitivity = *std::move(sensitivity);
   }
-  return out;
+  body.root_scope = parent_frame.SealScope(std::move(root));
+
+  return hir::Process{
+      .kind = kind,
+      .span = owner_->SourceMapper().PointSpanOf(proc.location),
+      .body = std::move(body),
+      .root_stmt = root_stmt,
+      .implicit_sensitivity_list = std::move(implicit_sensitivity)};
 }
 
 auto ProcessLowerer::RunConcurrentAssertion(

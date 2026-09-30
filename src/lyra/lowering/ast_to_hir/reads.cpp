@@ -423,6 +423,7 @@ auto ReadsOfWaitedExpression(
         "expression reads can be evaluated");
   }
   auto sealed = proc.Owner().TranslateSensitivityReads(
+      proc,
       proc.Owner().Sensitivity().AnalyzeReads(expr, proc.ContainingSymbol()),
       frame);
   if (!sealed) return std::unexpected(std::move(sealed.error()));
@@ -456,7 +457,7 @@ auto ReadsOfFunctionBody(
       outside.push_back(read);
     }
   }
-  auto sealed = proc.Owner().TranslateSensitivityReads(outside, frame);
+  auto sealed = proc.Owner().TranslateSensitivityReads(proc, outside, frame);
   if (!sealed) return refused_when_asked(std::move(sealed.error()));
   AddSealed(reads->leaves, *std::move(sealed));
   return reads;

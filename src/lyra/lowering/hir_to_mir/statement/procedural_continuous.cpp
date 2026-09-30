@@ -96,9 +96,11 @@ auto LowerProceduralContinuousAssignStmt(
     body.AppendStmt(mir::ExprStmt{.expr = drive});
   } else {
     mir::Block wait_block;
-    wait_block.AppendStmt(BuildValueChangeWaitStmt(
+    auto waited = BuildValueChangeWaitStmt(
         wait_block, closure.Frame().WithBlock(&wait_block), process,
-        pca.sensitivity_list, support::BuiltinFn::kWaitAny));
+        pca.sensitivity_list, support::BuiltinFn::kWaitAny);
+    if (!waited) return std::unexpected(std::move(waited.error()));
+    wait_block.AppendStmt(*std::move(waited));
     const mir::BlockId wait_scope =
         body.child_scopes.Add(std::move(wait_block));
     // Evaluating and driving is the loop's own condition, so the source is

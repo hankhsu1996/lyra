@@ -463,16 +463,18 @@ struct PortConnection {
 
 // A run of one net's positions and an equally wide run of another's, which a
 // construct states are the same physical net (LRM 23.3.3.7, 10.11). `here` and
-// `there` name the two nets whole, and the offsets say where the shared run
-// starts in each of their values, counted from the first position.
+// `there` are each the part of a net the source wrote -- the net whole, or a
+// constant select of it -- and the offsets say where the shared run starts in
+// each part, counted from the part's lowest position. A select's index may be a
+// value each construction is given, so the part is stated as the select rather
+// than as the positions one construction settles it to.
 //
 // What such a construct states is a position-wise overlay -- LRM 10.11 gives it
 // the bit overlay rules of a packed union, and LRM 7.6 makes whole-value
-// correspondence positional rather than range-relative -- so the declared range
-// each side names its own positions by is read once, here, where the source
-// wrote the select, and is not a fact any layer below needs. A construct naming
-// one whole net on each side states the run that covers both, which is the
-// case every design that joins whole nets is in rather than a shape of its own.
+// correspondence positional rather than range-relative -- so a run is counted
+// in positions, never in either side's declared range. A construct naming one
+// whole net on each side states the run that covers both, which is the case
+// every design that joins whole nets is in rather than a shape of its own.
 //
 // Nothing is driven, read, or waited on: a bidirectional connection (LRM
 // 23.3.3) and an `alias` (LRM 10.11) both state which positions resolve
@@ -734,12 +736,13 @@ struct StructuralScope {
   std::vector<NetJoin> net_joins;
   ScopeRoutes routes;
   // The cells something in this scope reads a sampled value of (LRM 16.5.1),
-  // each named the way an event control names what it watches -- so one reached
-  // across an instance boundary is carried by its route like any other. A cell
-  // answers for a sampled value only once armed, and arming installs the value
-  // every read answers with until a later time slot first changes it, so it
-  // happens once every variable initializer in the design has run.
-  std::vector<SensitivityEntry> sampled_cells;
+  // each named the way an event control names the cell it watches -- so one
+  // reached across an instance boundary is carried by its route like any other.
+  // A cell answers for a sampled value only once armed, and arming installs the
+  // value every read answers with until a later time slot first changes it, so
+  // it happens once every variable initializer in the design has run. What is
+  // armed is the whole cell, whatever part of it a read selects.
+  std::vector<ValueTarget> sampled_cells;
   // What something in this scope reads across the ticks of a clocking event
   // (LRM 16.9.3). A history's subject is an expression rather than a reference,
   // so it lives in this scope's own arena the way a continuous assignment's

@@ -119,22 +119,22 @@ auto RecordSampledCells(
   auto& unit_lowerer = lowerer.Owner();
   const auto& reads = unit_lowerer.Sensitivity().AnalyzeReads(
       *call.arguments()[0], frame.reader_scope->asSymbol());
-  auto entries = unit_lowerer.TranslateSensitivityReads(reads, frame);
-  if (!entries) return std::unexpected(std::move(entries.error()));
+  auto cells = unit_lowerer.CellsRead(reads, frame);
+  if (!cells) return std::unexpected(std::move(cells.error()));
   // Every variable the operand reads has to be armed, so a read the translation
   // could not name as a cell of this design leaves one that can never answer.
   // The reachable case is a `ref` formal (LRM 13.5.2): which cell it binds is
   // settled per call, so the scope holding the read cannot name it.
-  if (entries->size() < reads.size()) {
+  if (cells->size() < reads.size()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "a sampled value of storage reached through a subroutine's reference "
         "argument is not yet supported");
   }
-  std::vector<hir::SensitivityEntry>& sampled =
+  std::vector<hir::ValueTarget>& sampled =
       frame.current_structural_scope->sampled_cells;
-  for (hir::SensitivityEntry& entry : *entries) {
-    sampled.push_back(std::move(entry));
+  for (hir::ValueTarget& cell : *cells) {
+    sampled.push_back(std::move(cell));
   }
   return {};
 }

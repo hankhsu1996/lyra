@@ -143,7 +143,7 @@ auto BuildQualifierObservationLocal(
 // being reached is the whole of the condition.
 auto BuildImplicitEventWaitStmt(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
-    const hir::ImplicitEventControl& ie) -> mir::Stmt {
+    const hir::ImplicitEventControl& ie) -> diag::Result<mir::Stmt> {
   return BuildValueChangeWaitStmt(
       block, frame, process, ie.sensitivity_list, support::BuiltinFn::kWaitAny);
 }
@@ -468,9 +468,11 @@ auto LowerWaitStmt(
   // that can move, the loop collects it afresh each time around.
   if (const std::optional<std::vector<hir::SensitivityEntry>> cells =
           SealedCells(w.reads)) {
-    inner_block.AppendStmt(BuildValueChangeWaitStmt(
+    auto waited = BuildValueChangeWaitStmt(
         inner_block, inner_frame, process, *cells,
-        support::BuiltinFn::kWaitUntil));
+        support::BuiltinFn::kWaitUntil);
+    if (!waited) return std::unexpected(std::move(waited.error()));
+    inner_block.AppendStmt(*std::move(waited));
   } else {
     const std::array<CollectedExpression, 1> expressions{CollectedExpression{
         .reads = &w.reads,
