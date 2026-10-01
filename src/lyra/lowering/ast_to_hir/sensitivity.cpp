@@ -16,10 +16,13 @@
 #include <slang/ast/ASTVisitor.h>
 #include <slang/ast/EvalContext.h>
 #include <slang/ast/Expression.h>
+#include <slang/ast/Patterns.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/ValuePath.h>
+#include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
 namespace lyra::lowering::ast_to_hir {
@@ -51,6 +54,81 @@ class PathCollector : public slang::ast::ASTVisitor<
   slang::ast::EvalContext* eval_context_;
   std::vector<slang::ast::ValuePath>* paths_;
 };
+
+// What a node brings into being itself: the scopes it opens, whose
+// declarations are its own, and the variables it introduces for its own
+// evaluation -- an array method's iterator (LRM 7.12) and a pattern's binding
+// (LRM 12.6) -- which belong to no scope it opens.
+struct NodeDeclarations {
+  std::vector<const slang::ast::Scope*> scopes;
+  std::vector<const slang::ast::ValueSymbol*> temporaries;
+};
+
+class DeclarationsCollector
+    : public slang::ast::ASTVisitor<
+          DeclarationsCollector, slang::ast::VisitFlags::AllGood> {
+ public:
+  explicit DeclarationsCollector(NodeDeclarations& declarations)
+      : declarations_(&declarations) {
+  }
+
+  void handle(const slang::ast::BlockStatement& block) {
+    if (block.blockSymbol != nullptr) {
+      declarations_->scopes.push_back(block.blockSymbol);
+    }
+    visitDefault(block);
+  }
+
+  void handle(const slang::ast::CallExpression& call) {
+    if (const auto* system =
+            std::get_if<slang::ast::CallExpression::SystemCallInfo>(
+                &call.subroutine)) {
+      if (const slang::ast::ValueSymbol* iterator =
+              system->getIteratorInfo().second;
+          iterator != nullptr) {
+        declarations_->temporaries.push_back(iterator);
+      }
+    }
+    visitDefault(call);
+  }
+
+  void handle(const slang::ast::VariablePattern& pattern) {
+    declarations_->temporaries.push_back(&pattern.variable);
+  }
+
+ private:
+  NodeDeclarations* declarations_;
+};
+
+template <typename Node>
+auto DeclarationsOf(const Node& node) -> NodeDeclarations {
+  NodeDeclarations declarations;
+  DeclarationsCollector collector(declarations);
+  node.visit(collector);
+  return declarations;
+}
+
+// Whether a read of `symbol` inside a node is a read of state that is there
+// before the node runs. What is declared outside is; so is a static variable
+// the source declares inside, which lives from time zero (LRM 6.21). An
+// automatic one, a formal and a function's result come into being as the node
+// is entered, and a temporary holds only what the node puts in it.
+auto IsStateOutside(
+    const slang::ast::Symbol& symbol, const NodeDeclarations& declarations)
+    -> bool {
+  if (std::ranges::contains(declarations.temporaries, &symbol)) return false;
+  bool declared_inside = false;
+  for (const slang::ast::Scope* scope = symbol.getParentScope();
+       scope != nullptr && !declared_inside;
+       scope = scope->asSymbol().getParentScope()) {
+    declared_inside = std::ranges::contains(declarations.scopes, scope);
+  }
+  if (!declared_inside) return true;
+  if (symbol.kind != slang::ast::SymbolKind::Variable) return false;
+  const auto& variable = symbol.as<slang::ast::VariableSymbol>();
+  return variable.lifetime == slang::ast::VariableLifetime::Static &&
+         !variable.flags.has(slang::ast::VariableFlags::CompilerGenerated);
+}
 
 // The bits `[lo, hi]` of `symbol` as the source names them: the prefixes among
 // `paths` rooted at it whose bits lie inside the range, one per distinct run of
@@ -127,20 +205,26 @@ auto PathsOf(const Node& node, const slang::ast::Symbol& containing_symbol)
   return paths;
 }
 
-// Runs slang's `DefaultDFA` on a single AST node and harvests its read set.
+// Runs slang's `DefaultDFA` on a single AST node and harvests the state it
+// reads from outside itself, given what the node declares.
 template <typename Node>
 auto RunDfa(
     slang::analysis::AnalysisContext& context,
-    const slang::ast::Symbol& containing_symbol, const Node& node)
-    -> std::vector<SensitivityRead> {
+    const slang::ast::Symbol& containing_symbol, const Node& node,
+    const NodeDeclarations& declarations) -> std::vector<SensitivityRead> {
   slang::analysis::DefaultDFA dfa(context, containing_symbol, false);
   dfa.slang::analysis::AbstractFlowAnalysis<
       slang::analysis::DefaultDFA, slang::analysis::DataFlowState>::run(node);
-  return FlattenReadSet(dfa.getRValues(), PathsOf(node, containing_symbol));
+  std::vector<SensitivityRead> reads =
+      FlattenReadSet(dfa.getRValues(), PathsOf(node, containing_symbol));
+  std::erase_if(reads, [&](const SensitivityRead& read) {
+    return !IsStateOutside(*read.symbol, declarations);
+  });
+  return reads;
 }
 
 // Flattens slang's procedure-level sensitivity list (LRM 9.2.2.2.1) into the
-// same shape as a raw read set. slang has already narrowed each entry's bit
+// same shape as a node's reads. slang has already narrowed each entry's bit
 // range to the bits that wake the procedure and excluded the procedure's locals
 // and self-driven bits.
 auto FlattenSensitivityList(
@@ -178,7 +262,7 @@ auto SensitivityAnalyzer::AnalyzeReads(
     return it->second;
   }
   auto [inserted_it, _] = expression_cache_.emplace(
-      &expr, RunDfa(*context_, containing_symbol, expr));
+      &expr, RunDfa(*context_, containing_symbol, expr, DeclarationsOf(expr)));
   return inserted_it->second;
 }
 
@@ -191,8 +275,30 @@ auto SensitivityAnalyzer::AnalyzeReads(
     return it->second;
   }
   auto [inserted_it, _] = statement_cache_.emplace(
-      &stmt, RunDfa(*context_, containing_symbol, stmt));
+      &stmt, RunDfa(*context_, containing_symbol, stmt, DeclarationsOf(stmt)));
   return inserted_it->second;
+}
+
+auto SensitivityAnalyzer::AnalyzeReads(
+    const slang::ast::SubroutineSymbol& subroutine)
+    -> const std::vector<SensitivityRead>& {
+  if (const auto it = subroutine_cache_.find(&subroutine);
+      it != subroutine_cache_.end()) {
+    return it->second;
+  }
+  const slang::ast::Statement& body = subroutine.getBody();
+  NodeDeclarations declarations = DeclarationsOf(body);
+  declarations.scopes.push_back(&subroutine);
+  auto [inserted_it, _] = subroutine_cache_.emplace(
+      &subroutine, RunDfa(*context_, subroutine, body, declarations));
+  return inserted_it->second;
+}
+
+auto HoldsStateBeforeItRuns(
+    const slang::ast::Symbol& symbol,
+    const slang::ast::SubroutineSymbol& subroutine) -> bool {
+  return IsStateOutside(
+      symbol, NodeDeclarations{.scopes = {&subroutine}, .temporaries = {}});
 }
 
 auto SensitivityAnalyzer::AnalyzeProcedureSensitivity(

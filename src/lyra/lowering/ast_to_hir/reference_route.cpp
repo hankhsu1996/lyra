@@ -975,6 +975,16 @@ auto UnitLowerer::WatchedEntriesOf(
     return {};
   };
   for (const auto& read : reads) {
+    // Nothing writes these while a wait stands, so none is watched: a foreach
+    // loop variable is read-only (LRM 12.7.3), an array method's iterator
+    // exists only inside its method's expression (LRM 7.12), and a pattern's
+    // binding is set by the match (LRM 12.6), the front end refusing any other
+    // write to it.
+    if (read.symbol->kind == slang::ast::SymbolKind::Iterator ||
+        read.symbol->kind == slang::ast::SymbolKind::PatternVar) {
+      continue;
+    }
+
     // A variable the reading body declares is watched as that declaration,
     // the lexical binding winning as it does for a name read (LRM 6.21). A
     // `ref` formal's storage is its actual, which may be one element or member
@@ -1029,10 +1039,10 @@ auto UnitLowerer::WatchedEntriesOf(
       case Referent::kEnumConstant:
       case Referent::kSpecparam:
         break;
-      // LRM 9.2.2.2.1 excludes a variable the block itself declares, and the
-      // surface a read set comes from has applied that already.
       case Referent::kPatternBinding:
-        break;
+        throw InternalError(
+            "WatchedEntriesOf: a pattern's binding is never watched, and is "
+            "passed over before its referent is resolved");
       // The same clause excludes a reference to a class object, which a handle
       // to the invoking object is.
       case Referent::kThisHandle:

@@ -1,8 +1,10 @@
 #pragma once
 
+#include <format>
 #include <map>
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -270,7 +272,18 @@ class ProcessLowerer {
   // the declaration.
   [[nodiscard]] auto LookupProceduralVar(hir::ProceduralVarId hir_id) const
       -> const ProceduralVarBinding& {
-    return bindings_.Get(hir_id);
+    const ProceduralVarBinding* binding = bindings_.Find(hir_id);
+    if (binding == nullptr) {
+      const std::optional<std::string>& name =
+          hir_body_->procedural_vars.Get(hir_id).name;
+      throw InternalError(
+          std::format(
+              "a reference to {} reaches it before its declaration has been "
+              "passed",
+              name.has_value() ? std::format("variable `{}`", *name)
+                               : std::string{"a variable the lowering made"}));
+    }
+    return *binding;
   }
 
   // An activation scope is opened at block entry -- each lifted var's cell and

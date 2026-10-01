@@ -17,7 +17,8 @@
 // to the object it named before no longer reaches it. A function that reaches
 // an object only through a variable of its own still wakes the wait when that
 // object changes, and a handle it guards against null is not followed while
-// it is null.
+// it is null. A static variable the function declares exists before any call
+// runs, so another call changing it is a change the wait sees.
 package counters;
   int count = 0;
 
@@ -121,6 +122,7 @@ module Top;
   time interface_function_woke = 0;
   time hierarchical_woke = 0;
   time virtual_woke = 0;
+  time own_static_woke = 0;
 
   function int reads_g();
     return g;
@@ -168,6 +170,12 @@ module Top;
     return n == null ? 0 : n.status;
   endfunction
 
+  function automatic int tally(bit bump);
+    static int count = 0;
+    if (bump) count = count + 1;
+    return count;
+  endfunction
+
   initial begin
     gh = new;
     p = new;
@@ -209,6 +217,7 @@ module Top;
       begin @(vb.read_e()); interface_function_woke = $time; end
       begin @(holder_inst.read_held()); hierarchical_woke = $time; end
       begin @(dispatched.read_level()); virtual_woke = $time; end
+      begin @(tally(0)); own_static_woke = $time; end
     join_none
     #5 g = 1;
     #5 arr[2] = 3;
@@ -238,6 +247,7 @@ module Top;
     #5 bus.e = 1;
     #5 holder_inst.held = 1;
     #5 dispatched.level = 1;
+    #5 void'(tally(1));
   end
 
   final begin
@@ -263,6 +273,7 @@ module Top;
     if (interface_function_woke !== 85) $fatal(1, "an interface's function called through a virtual interface ended the wait at %0t, expected 85", interface_function_woke);
     if (hierarchical_woke !== 90) $fatal(1, "a function called by a hierarchical name ended the wait at %0t, expected 90", hierarchical_woke);
     if (virtual_woke !== 95) $fatal(1, "a virtual method ended the wait at %0t, expected 95", virtual_woke);
+    if (own_static_woke !== 100) $fatal(1, "a function's own static variable ended the wait at %0t, expected 100", own_static_woke);
     $display("All checks passed");
   end
 endmodule

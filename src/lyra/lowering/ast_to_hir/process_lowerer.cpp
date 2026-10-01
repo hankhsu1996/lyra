@@ -83,8 +83,8 @@ auto ProcessLowerer::Run(
 
   // LRM 9.2.2.2.1 / 9.2.2.3: an always_comb / always_latch wakes on the reads
   // of its whole procedure, including reads inside any function it calls -- the
-  // procedure-level sensitivity, not the raw read set of the body node, which
-  // reflects only call arguments across a function boundary. What it watches is
+  // procedure-level sensitivity, not the reads of the body node, which reflect
+  // only call arguments across a function boundary. What it watches is
   // stated in the body, so it is stated while the body is still open.
   const auto kind = FromSlangProceduralBlockKind(proc.procedureKind);
   std::vector<hir::SensitivityEntry> implicit_sensitivity;

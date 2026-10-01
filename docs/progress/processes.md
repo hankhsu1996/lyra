@@ -71,7 +71,11 @@ under each item, and the conformance gaps at the end.
       it reads (LRM 25.5.4). A value fixed before simulation starts contributes nothing, which a
       parameter, an enumeration name and a specparam each are. LRM 9.2.2.2.1 excludes a reference
       through a class object and a variable the block itself declares, so an instance property and
-      `this` contribute nothing either. **A read whose kind this compiler does not carry, or whose
+      `this` contribute nothing either. `@*` has no such exclusion, but an automatic variable its
+      statement declares -- a `for` loop's variable, a block's local -- does not exist while the
+      control waits and nothing outside can write it, so it contributes nothing; a static one the
+      statement declares is waited on. Nothing writes a foreach index, an array method's iterator
+      or a pattern's binding while a wait stands, so no wait of any form subscribes to one. **A read whose kind this compiler does not carry, or whose
       storage it cannot reach from the reading scope, is refused by name** -- a subscription is never
       quietly left out, because a process that does not wake gives a wrong answer with nothing to
       see.
