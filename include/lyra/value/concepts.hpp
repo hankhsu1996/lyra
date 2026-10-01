@@ -5,8 +5,6 @@
 #include <cstdint>
 #include <optional>
 
-#include "lyra/value/net_resolution.hpp"
-
 // Runtime value-layer concept catalogue. Each concept names a contract that a
 // `lyra::value::*` type claims via `static_assert(<Concept><T>)` in its own
 // header, hard-pinning the signature shape at compile time so any future
@@ -99,10 +97,12 @@ concept WildcardComparable = LyraValue<T> && requires(const T& a, const T& b) {
 // such a type, so a net is composed entirely of 4-state bits and combines per
 // bit. The recursion is what this concept states: an aggregate is
 // net-resolvable exactly when its elements are, and it answers every net
-// question by delegating to them. `ResolveNet` folds one driver's contribution
-// into another under the truth table its `NetResolution` names -- tri-state,
-// wired-and, or wired-or (LRM 6.6.1 Table 6-2, LRM 6.6.3 Tables 6-3 and 6-4);
-// `Dominating` is what a stronger contribution does to a weaker one: it
+// question by delegating to them. Each of the three truth tables folds one
+// driver's contribution into another -- tri-state, wired-and, and wired-or
+// (LRM 6.6.1 Table 6-2, LRM 6.6.3 Tables 6-3 and 6-4) -- and each is an
+// operation of its own, since which one a net asks is the net's state rather
+// than the value's; `Dominating` is what a stronger contribution does to a
+// weaker one: it
 // determines every position it drives and leaves the rest (LRM 28.12.1).
 // `FilledLike` yields the prototype's shape with every bit set to one scalar,
 // which is how both the identity every fold starts from and the value a net
@@ -111,10 +111,10 @@ concept WildcardComparable = LyraValue<T> && requires(const T& a, const T& b) {
 // "4-state bits".
 template <typename T>
 concept NetResolvable =
-    LyraValue<T> &&
-    requires(
-        const T& a, const T& b, const PackedArray& bit, NetResolution fold) {
-      { a.ResolveNet(b, fold) } -> std::same_as<T>;
+    LyraValue<T> && requires(const T& a, const T& b, const PackedArray& bit) {
+      { a.ResolveTriState(b) } -> std::same_as<T>;
+      { a.ResolveWiredAnd(b) } -> std::same_as<T>;
+      { a.ResolveWiredOr(b) } -> std::same_as<T>;
       { a.Dominating(b) } -> std::same_as<T>;
       { T::FilledLike(a, bit) } -> std::same_as<T>;
     };
@@ -248,14 +248,6 @@ concept SliceableRef =
 template <typename T>
 concept Ownable = requires(const T& t) {
   { t.ToOwned() };
-};
-
-// Defaultable: in-place reset to the element-shape default (LRM Table 6-7).
-// The receiver's shape (dims, bit_width, signedness, etc.) is preserved;
-// only the value bits are zeroed.
-template <typename T>
-concept Defaultable = requires(T& t) {
-  { t.ResetToDefault() };
 };
 
 // Sortable: in-place ordering family. Conforming containers expose

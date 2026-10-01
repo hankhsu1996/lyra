@@ -62,10 +62,10 @@ returns.**
 2. **The rendering is synthesized from the SystemVerilog type, not the MIR type.** The clause is
    stated over source types, and it distinguishes what a lowering is entitled to stop carrying: a
    packed tagged union prints `tag:value` where a packed untagged union prints its first member,
-   while both project onto one vector below the front end. Keying the rendering there is what lets
-   MIR keep one packed union type, which
-   [aggregate-names-are-type-content](aggregate-names-are-type-content.md) point 4 otherwise
-   required a second type for.
+   while both are one vector below the front end. Keying the rendering there is what lets MIR carry
+   no type of either beyond that vector, and it is also what later took every member name off the
+   MIR types ([aggregate-names-are-type-content](aggregate-names-are-type-content.md) records that
+   revision).
 
 3. **Each rendering is shared by every site in the unit**, homed on the class the print site lowers
    into, exactly as the LRM 6.19.5 `name` callable already is. Two values of one type therefore

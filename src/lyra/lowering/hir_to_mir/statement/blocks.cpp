@@ -23,10 +23,8 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -36,11 +34,10 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // LRM 6.21: a block declaring automatic locals a detached fork branch borrows
-// and can outlive lifts the whole borrowed set into one shared promoted scope
-// (the "activation frame" role). Synthesize a struct holding those locals as
-// fields, allocate it at block entry through a shared handle, and record each
-// promoted var's field so its declaration and references reach `handle->field`.
-// The branch keeps the scope alive by holding a by-value copy of the handle.
+// and can outlive lifts each borrowed local into a cell of its own, held by a
+// shared pointer made at block entry, and records the pointer so the local's
+// declaration and references reach the cell through it. A branch keeps each
+// cell it names alive by holding a by-value copy of its pointer.
 void OpenActivationScope(
     ProcessLowerer& process, const WalkFrame& frame,
     std::span<const hir::StmtId> statements) {
@@ -59,59 +56,40 @@ void OpenActivationScope(
   UnitLowerer& unit_lowerer = process.Owner();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
 
-  // The escaping scope's locals are gathered into a compiler-generated struct
-  // whose identity lives in the unit's struct registry. That identity is the
-  // whole of what distinguishes it; the source declared no such aggregate and
-  // so wrote no name for one.
-  mir::StructDecl struct_decl;
-  std::vector<mir::FieldId> fields;
-  std::vector<mir::TypeId> cell_types;
-  fields.reserve(promoted.size());
-  cell_types.reserve(promoted.size());
-  for (const hir::ProceduralVarId v : promoted) {
-    const hir::ProceduralVarDecl& decl = body.procedural_vars.Get(v);
-    cell_types.push_back(
-        mir::ObservableCellOf(
-            unit.types, unit_lowerer.TranslateType(decl.type)));
-    fields.push_back(
-        struct_decl.fields.Add(mir::FieldDecl{.type = cell_types.back()}));
-  }
-  const mir::StructId struct_id = unit.AddStruct(std::move(struct_decl));
-  const mir::TypeId struct_type =
-      unit.types.Intern(mir::Type{mir::StructType{.struct_id = struct_id}});
-
-  // The handle: a shared pointer to the generated struct, allocated by
-  // make_shared. Declared first in the scope, before the promoted locals it
-  // stands in for.
-  const mir::TypeId handle_type = unit.types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = struct_type,
-          .ownership = mir::PointerOwnership::kShared,
-          .mutability = mir::Mutability::kMutable}});
+  // Each handle is a synthesized carrier declared in this body, before the
+  // locals they stand in for, and captured (by value, owning) by any branch
+  // that borrows its local. Their origins come from the unit's
+  // synthesized-site allocator, the one collision-free id space every
+  // synthesized carrier shares. A cell is built empty, and the local's
+  // declaration initializes it where it is reached.
+  const std::uint32_t site = unit_lowerer.NextSynthesizedSite();
   mir::Block& block = *frame.current_block;
-  const mir::ExprId init = block.exprs.Add(
-      mir::Expr{
-          .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
-          .type = handle_type});
-  // The handle is a synthesized carrier declared in this body and captured (by
-  // value, owning) by any branch that borrows a promoted field. Its origin
-  // comes from the unit's synthesized-site allocator, the one collision-free id
-  // space every synthesized carrier shares.
-  const BindingOriginId handle_origin =
-      BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
-  const mir::LocalId handle =
-      frame.bindings->Declare(handle_origin, handle_type);
-  block.AppendStmt(mir::LocalDeclStmt{.target = handle, .init = init});
-
   for (std::size_t i = 0; i < promoted.size(); ++i) {
+    const mir::TypeId cell_type = mir::ObservableCellOf(
+        unit.types,
+        unit_lowerer.TranslateType(body.procedural_vars.Get(promoted[i]).type));
+    const mir::TypeId handle_type = unit.types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = cell_type,
+            .ownership = mir::PointerOwnership::kShared,
+            .mutability = mir::Mutability::kMutable}});
+    const BindingOriginId handle_origin =
+        BindingOriginId::Synthesized(site, static_cast<std::uint32_t>(i));
+    const mir::LocalId handle =
+        frame.bindings->Declare(handle_origin, handle_type);
+    block.AppendStmt(
+        mir::LocalDeclStmt{
+            .target = handle,
+            .init = block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee = mir::Construct{}, .arguments = {}},
+                    .type = handle_type})});
     process.RecordPendingActivation(
         promoted[i],
         PromotedVarBinding{
-            .handle_origin = handle_origin,
-            .handle_type = handle_type,
-            .field =
-                mir::StructFieldTarget{.owner = struct_id, .slot = fields[i]},
-            .cell_type = cell_types[i]});
+            .handle_origin = handle_origin, .cell_type = cell_type});
   }
 }
 

@@ -1,11 +1,17 @@
 #include "lyra/backend/llvm/codegen_types.hpp"
 
+#include <algorithm>
+#include <optional>
+#include <span>
+#include <utility>
+
 #include <llvm/IR/LLVMContext.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/support/tuple_operations.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -66,8 +72,6 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           // so generated code never holds the object's shape and would have
           // nothing to do with it if it did.
           [&](const lir::PackedArrayType& t) { return address(t); },
-          [&](const lir::PackedStructType& t) { return address(t); },
-          [&](const lir::PackedUnionType& t) { return address(t); },
           [&](const lir::UnpackedArrayType& t) { return address(t); },
           [&](const lir::DynamicArrayType& t) { return address(t); },
           [&](const lir::QueueType& t) { return address(t); },
@@ -75,12 +79,13 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::StringType& t) { return address(t); },
           [&](const lir::RealType& t) { return address(t); },
           [&](const lir::ShortRealType& t) { return address(t); },
-          [&](const lir::RealTimeType& t) { return address(t); },
-          [&](const lir::TupleType& t) { return address(t); },
-          [&](const lir::UnpackedStructType& t) { return address(t); },
           [&](const lir::UnionType& t) { return address(t); },
           [&](const lir::TaggedUnionType& t) { return address(t); },
           [&](const lir::EmptyType& t) { return address(t); },
+          // A product, which this backend lays out itself from its
+          // components; it is held where it lies, like every value above.
+          [&](const lir::TupleType& t) { return address(t); },
+          [&](const lir::StructType& t) { return address(t); },
           [&](const lir::EventType& t) { return address(t); },
           // A wildcard index (LRM 7.8.1) is the one type this runtime realizes
           // no value of. Naming a machine type for it settles nothing, because
@@ -90,14 +95,13 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::WildcardIndexType& t) { return address(t); },
 
           // Storage, whose operations consume where it lives rather than what
-          // it holds: a node of the object tree, a record the compiler
-          // generated, and the cells a declaration installs over a value.
+          // it holds: a node of the object tree, a closure's captures, and the
+          // cells a declaration installs over a value.
           [&](const lir::ObjectType& t) { return address(t); },
           [&](const lir::ExternalUnitObjectType& t) { return address(t); },
           [&](const lir::CrossUnitClassType& t) { return address(t); },
           [&](const lir::OpaqueObjectType& t) { return address(t); },
           [&](const lir::RuntimeClassType& t) { return address(t); },
-          [&](const lir::StructType& t) { return address(t); },
           [&](const lir::ClosureType& t) { return address(t); },
           [&](const lir::ObservableType& t) { return address(t); },
           [&](const lir::ResolvedType& t) { return address(t); },
@@ -124,6 +128,54 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
       });
   cache_.emplace(id, mapped);
   return mapped;
+}
+
+auto CodeGenTypes::StorageOf(lir::TypeId type) -> support::ObjectLayout {
+  const lir::Type& ty = unit_->types.Get(type);
+  if (ty.IsProduct()) {
+    return LayoutOfTuple(type).storage;
+  }
+  const std::optional<support::RuntimeObject> object = ty.HeldObject();
+  if (!object.has_value()) {
+    throw InternalError(
+        "llvm codegen: storage asked of a type whose values are not owned -- "
+        "please report this as a bug");
+  }
+  return support::LayoutOf(*object);
+}
+
+auto CodeGenTypes::LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout& {
+  if (const auto found = tuples_.find(tuple); found != tuples_.end()) {
+    return found->second;
+  }
+  const auto aligned_up = [](std::uint32_t size, std::uint32_t align) {
+    return (size + align - 1) / align * align;
+  };
+  const std::optional<std::span<const lir::TypeId>> components =
+      lir::ProductElements(*unit_, tuple);
+  if (!components.has_value()) {
+    throw InternalError(
+        "llvm codegen: a tuple layout asked of a type that is no product");
+  }
+  TupleLayout layout{
+      .components = {components->begin(), components->end()},
+      .offsets = {},
+      .storage = {
+          .size = support::kTupleOperationsSize,
+          .align = alignof(const support::TupleOperations*),
+          .ends_with_nothing_to_do = true}};
+  layout.offsets.reserve(layout.components.size());
+  for (const lir::TypeId component : layout.components) {
+    const support::ObjectLayout held = StorageOf(component);
+    const std::uint32_t offset = aligned_up(layout.storage.size, held.align);
+    layout.offsets.push_back(offset);
+    layout.storage.size = offset + held.size;
+    layout.storage.align = std::max(layout.storage.align, held.align);
+    layout.storage.ends_with_nothing_to_do =
+        layout.storage.ends_with_nothing_to_do && held.ends_with_nothing_to_do;
+  }
+  layout.storage.size = aligned_up(layout.storage.size, layout.storage.align);
+  return tuples_.emplace(tuple, std::move(layout)).first->second;
 }
 
 }  // namespace lyra::backend::llvm_backend

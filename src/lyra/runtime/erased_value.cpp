@@ -5,6 +5,7 @@
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/value_handle.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/runtime_value.hpp"
 
@@ -24,7 +25,13 @@ auto Take(void* storage) -> value::RuntimeValue {
 
 auto HandleOf(const value::RuntimeValue& value) -> const void* {
   return std::visit(
-      [](const auto& held) -> const void* { return &held; }, value.value);
+      [](const auto& held) -> const void* { return HandleTo(held); },
+      value.value);
+}
+
+auto HandleOf(value::RuntimeValue& value) -> void* {
+  return std::visit(
+      [](auto& held) -> void* { return HandleTo(held); }, value.value);
 }
 
 auto TakeValue(support::ValueDomain domain, void* storage)
@@ -43,7 +50,9 @@ auto TakeValue(support::ValueDomain domain, void* storage)
     case support::ValueDomain::kEmpty:
       return Take<value::Empty>(storage);
     case support::ValueDomain::kTuple:
-      return Take<value::RuntimeTuple>(storage);
+      throw InternalError(
+          "erased value: a tuple answer is built in storage its own type "
+          "sizes, never in storage laid out for any value");
     case support::ValueDomain::kUnion:
       return Take<value::RuntimeUnion>(storage);
     case support::ValueDomain::kTaggedUnion:

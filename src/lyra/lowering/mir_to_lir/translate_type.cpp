@@ -1,6 +1,8 @@
 #include <format>
+#include <span>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -9,7 +11,9 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
+#include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -99,18 +103,22 @@ auto UnitLowerer::TranslateType(mir::TypeId id) -> lir::TypeId {
   return lir_id;
 }
 
+auto UnitLowerer::TranslateTypes(std::span<const mir::TypeId> source)
+    -> std::vector<lir::TypeId> {
+  std::vector<lir::TypeId> types;
+  types.reserve(source.size());
+  for (const mir::TypeId type : source) {
+    types.push_back(TranslateType(type));
+  }
+  return types;
+}
+
+auto UnitLowerer::TranslateDeclaration(const mir::TypeDeclarationRef& ref)
+    -> lir::TypeDeclarationRef {
+  return lir::TypeDeclarationRef{.unit_name = ref.unit_name, .name = ref.name};
+}
+
 auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
-  const auto aggregate_members =
-      [&](const std::vector<mir::AggregateMember>& source) {
-        std::vector<lir::AggregateMember> translated;
-        translated.reserve(source.size());
-        for (const mir::AggregateMember& member : source) {
-          translated.push_back(
-              lir::AggregateMember{
-                  .name = member.name, .type = TranslateType(member.type)});
-        }
-        return translated;
-      };
   return ty.Visit(
       Overloaded{
           [&](const mir::PackedArrayType& pa) -> lir::Type {
@@ -121,16 +129,6 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           // enumeration from its base.
           [&](const mir::EnumType& e) -> lir::Type {
             return lir::Type{TranslatePackedArray(e.base)};
-          },
-          [&](const mir::PackedStructType& s) -> lir::Type {
-            return lir::Type{lir::PackedStructType{
-                .base = TranslatePackedArray(s.base),
-                .members = aggregate_members(s.members)}};
-          },
-          [&](const mir::PackedUnionType& u) -> lir::Type {
-            return lir::Type{lir::PackedUnionType{
-                .base = TranslatePackedArray(u.base),
-                .members = aggregate_members(u.members)}};
           },
           [&](const mir::UnpackedArrayType& ua) -> lir::Type {
             return lir::Type{lir::UnpackedArrayType{
@@ -177,13 +175,8 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 .element = TranslateType(ma.element), .size = ma.size}};
           },
           [&](const mir::MachineFunctionType& mf) -> lir::Type {
-            std::vector<lir::TypeId> params;
-            params.reserve(mf.params.size());
-            for (const mir::TypeId param : mf.params) {
-              params.push_back(TranslateType(param));
-            }
             return lir::Type{lir::MachineFunctionType{
-                .params = std::move(params),
+                .params = TranslateTypes(mf.params),
                 .result = TranslateType(mf.result)}};
           },
           [](const mir::EventType&) -> lir::Type {
@@ -194,9 +187,6 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           },
           [](const mir::ShortRealType&) -> lir::Type {
             return lir::Type{lir::ShortRealType{}};
-          },
-          [](const mir::RealTimeType&) -> lir::Type {
-            return lir::Type{lir::RealTimeType{}};
           },
           [](const mir::ChandleType&) -> lir::Type {
             return lir::Type{lir::ChandleType{}};
@@ -266,24 +256,16 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 lir::VectorType{.element = TranslateType(v.element)}};
           },
           [&](const mir::TupleType& t) -> lir::Type {
-            std::vector<lir::TypeId> elements;
-            elements.reserve(t.elements.size());
-            for (const mir::TypeId element : t.elements) {
-              elements.push_back(TranslateType(element));
-            }
-            return lir::Type{lir::TupleType{.elements = std::move(elements)}};
-          },
-          [&](const mir::UnpackedStructType& s) -> lir::Type {
-            return lir::Type{lir::UnpackedStructType{
-                .members = aggregate_members(s.members)}};
+            return lir::Type{
+                lir::TupleType{.elements = TranslateTypes(t.elements)}};
           },
           [&](const mir::UnionType& u) -> lir::Type {
             return lir::Type{
-                lir::UnionType{.members = aggregate_members(u.members)}};
+                lir::UnionType{.members = TranslateTypes(u.members)}};
           },
           [&](const mir::TaggedUnionType& u) -> lir::Type {
             return lir::Type{
-                lir::TaggedUnionType{.members = aggregate_members(u.members)}};
+                lir::TaggedUnionType{.members = TranslateTypes(u.members)}};
           },
           [&](const mir::ResolvedType& r) -> lir::Type {
             return lir::Type{
@@ -312,8 +294,17 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{lir::EvaluationAttemptsType{}};
           },
           [&](const mir::StructType& s) -> lir::Type {
-            return lir::Type{
-                lir::StructType{.struct_id = StructDeclaration(s.struct_id)}};
+            return lir::Type{lir::StructType{
+                .declaration = std::visit(
+                    Overloaded{
+                        [&](mir::StructId id) -> lir::StructRef {
+                          return StructDeclaration(id);
+                        },
+                        [](const mir::TypeDeclarationRef& ref)
+                            -> lir::StructRef {
+                          return TranslateDeclaration(ref);
+                        }},
+                    s.declaration)}};
           },
           [&](const mir::ClosureType& c) -> lir::Type {
             return lir::Type{lir::ClosureType{

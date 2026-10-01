@@ -192,10 +192,6 @@ void RenderFieldAccessExpr(
                 out, CppClassName(cls, t.owner),
                 "::", CppFieldName(cls.named_fields, t.slot));
           },
-          [&](const mir::StructFieldTarget& t) {
-            write_receiver();
-            Write(out, CppStructFieldName(t.slot));
-          },
           [&](const mir::ClosureFieldTarget& t) {
             write_receiver();
             Write(out, CppClosureCaptureName(t.slot));

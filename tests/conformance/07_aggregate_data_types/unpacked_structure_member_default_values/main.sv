@@ -7,9 +7,10 @@
 // array member its value. An initializer written on the variable supplies
 // every member, and the type's own member initial assignments are then not
 // used for it. Where the variable is declared makes no difference: a
-// structure held in an array element or declared inside a procedure starts
-// out the same way as one declared in a module (LRM 7.2.2, 6.8, Table 6-7,
-// Table 7-1).
+// structure held in an array element, declared inside a procedure, or held in
+// a class property, static or not, starts out the same way as one declared in
+// a module, and its members are then read and written in place (LRM 7.2.2,
+// 6.8, 8.7, Table 6-7, Table 7-1).
 module Top;
   typedef struct {
     int offset;
@@ -31,15 +32,34 @@ module Top;
                           filled: '{30, 31}};
   entry_t in_array [2];
 
+  class Holder;
+    entry_t held;
+    static entry_t shared;
+  endclass
+
   int local_with_default;
   logic [3:0] local_four_state = 4'h5;
   int local_nested_offset;
+  logic [3:0] property_four_state = 4'h5;
+  int property_nested_offset;
+  logic [3:0] property_written_tag;
+  logic [3:0] static_four_state = 4'h5;
+  int static_with_default;
 
   initial begin
     entry_t declared_in_procedure;
+    Holder holder;
     local_with_default = declared_in_procedure.with_default;
     local_four_state = declared_in_procedure.four_state_without_default;
     local_nested_offset = declared_in_procedure.nested.offset;
+
+    holder = new;
+    property_four_state = holder.held.four_state_without_default;
+    property_nested_offset = holder.held.nested.offset;
+    holder.held.nested.tag = 4'h9;
+    property_written_tag = holder.held.nested.tag;
+    static_four_state = Holder::shared.four_state_without_default;
+    static_with_default = Holder::shared.with_default;
   end
 
   final begin
@@ -93,6 +113,21 @@ module Top;
     if (local_nested_offset !== 11)
       $fatal(1, "local_nested_offset was %0d, expected 11",
              local_nested_offset);
+
+    if (property_four_state !== 4'bxxxx)
+      $fatal(1, "property_four_state was %0h, expected all x",
+             property_four_state);
+    if (property_nested_offset !== 11)
+      $fatal(1, "property_nested_offset was %0d, expected 11",
+             property_nested_offset);
+    if (property_written_tag !== 4'h9)
+      $fatal(1, "property_written_tag was %0h, expected 9",
+             property_written_tag);
+    if (static_four_state !== 4'bxxxx)
+      $fatal(1, "static_four_state was %0h, expected all x", static_four_state);
+    if (static_with_default !== 42)
+      $fatal(1, "static_with_default was %0d, expected 42",
+             static_with_default);
     $display("All checks passed");
   end
 endmodule

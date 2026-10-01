@@ -1,5 +1,6 @@
 #pragma once
 
+#include <span>
 #include <string_view>
 #include <variant>
 
@@ -63,6 +64,16 @@ struct CppConstructorName {
 };
 
 void WriteOne(TargetText& out, const CppConstructorName& constructor);
+
+// The library's product of a product type's components, `Tuple<Ts...>`: what a
+// tuple is spelled as, and what the type a unit defines for a struct is built
+// on.
+struct CppTupleComponents {
+  const mir::CompilationUnit* unit;
+  std::span<const mir::TypeId> of;
+};
+
+void WriteOne(TargetText& out, const CppTupleComponents& components);
 
 // A class a reference names, as C++: its own name for a class of this unit,
 // `::Unit::Name` for another unit's, and the runtime's name for a runtime

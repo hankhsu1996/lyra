@@ -43,9 +43,10 @@ with the same identity, whichever route asked.
 2. **The key is the type's structure, including the identities its structure names.** A class handle
    is keyed by the class reference it names -- a declaration identity, local or by declaring unit
    and name -- never by the class's members, since two classes with identical members are different
-   types. No other HIR type carries a nominal identity to lose: HIR records no source name for a
-   struct, a union, or an enum, so structure is all there is to key on, and folding two entries that
-   agree on it merges nothing a consumer could have told apart.
+   types. An unpacked structure is keyed the same way, by the declaration it is (LRM 6.22.1), named
+   by its declaring unit and its name there. A union and an enum are keyed by their structure: HIR
+   records no declaration for either, and folding two that agree on it merges nothing a consumer
+   tells apart.
 
 3. **A type crossing a unit boundary is interned on arrival.** Import walks the published subgraph
    and interns each node, so a type the consuming unit already holds is not copied. This is what
@@ -85,6 +86,18 @@ with the same identity, whichever route asked.
   the hundreds, so this is not on any axis that matters; a heavier key would be.
 - The interner is unit-local, mutable during that unit's lowering only. It is not shared between
   units, which is what keeps unit lowerings independent.
+
+## Revision (2026-09-28): an unpacked structure is keyed by its declaration
+
+Rule 2 used to key every type but a class by its structure, on the ground that HIR recorded no
+source name for a struct and so had nothing nominal to lose. That was true only because HIR had
+dropped the declaration, and the language keeps it: a structure is its declaration (LRM 6.22.1), so
+two with the same members are two types. A consumer now tells them apart -- the unit declaring a
+structure states the operations the language defines on it, and every unit naming it reaches those
+by the declaration (see
+[a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md)) -- so the
+structure carries its declaration and is keyed by it, as a class is. The interner is unchanged; a
+declaration is one more identity a structure names.
 
 ## Cross-references
 

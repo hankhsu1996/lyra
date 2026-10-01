@@ -240,12 +240,6 @@ class RealValue {
     return PackedArray::Bit(false);
   }
 
-  // LRM Table 6-7: the real default is 0.0. Satisfies the container
-  // OOB-shield contract so a real can be an unpacked-array element.
-  auto ResetToDefault() -> void {
-    v_ = Host{0};
-  }
-
   // LRM 11.4.7 / 12.4: a real in a boolean context is true when non-zero.
   explicit operator bool() const {
     return v_ != Host{0};
@@ -276,8 +270,6 @@ struct Formatter<RealValue<Host>> {
 static_assert(LyraValue<Real>);
 static_assert(LyraValue<ShortReal>);
 static_assert(Ordered<Real>);
-static_assert(Defaultable<Real>);
-static_assert(Defaultable<ShortReal>);
 static_assert(Ordered<ShortReal>);
 static_assert(!CaseEqualComparable<Real>);
 static_assert(!CaseEqualComparable<ShortReal>);

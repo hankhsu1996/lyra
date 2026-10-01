@@ -45,16 +45,16 @@ not a product with a different label.
 ## Decision
 
 1. **HIR untagged `UnpackedUnionType` lowers to a new MIR `UnionType`**, whose component types are
-   the member types in declaration order. A **tagged** union is rejected at the HIR-to-MIR gate: a
-   tagged union is a sum type, a distinct generic-language concept (an SV-visible tag, type
-   checking, pattern matching, LRM 7.3.2 / 11.9) that will be its own future MIR type, not
-   `UnionType` with a flag. `UnionType` carries no `tagged` field -- per `mir.md` invariant 7 the
-   type is the classification, and there is no second union concept hiding behind a flag.
+   the member types in declaration order. A **tagged** union is a sum type, a distinct
+   generic-language concept (an SV-visible tag, type checking, pattern matching, LRM 7.3.2 / 11.9),
+   and is its own MIR type rather than `UnionType` with a flag. `UnionType` carries no `tagged`
+   field -- per `mir.md` invariant 7 the type is the classification, and there is no second union
+   concept hiding behind a flag.
 
 2. **Member access is positional, by declaration-order index**, identical to struct / tuple. The
-   index is the carrier of the access; the member's name stays on the type, which is what the
-   language renders a value by
-   ([aggregate-names-are-type-content](aggregate-names-are-type-content.md)).
+   index is the carrier of the access, and the type carries no member names: what the language
+   renders a value by (LRM 21.2.1.6) is built from the source type before MIR
+   ([rendering-a-value-by-its-type](rendering-a-value-by-its-type.md)).
 
 3. **A union value is "(active member index, that member's value)" at the MIR semantic level.** This
    is a semantic statement, not a storage-layout claim; how a backend stores it is a realization
@@ -103,12 +103,12 @@ not a product with a different label.
 
 ## Rejected alternatives
 
-- **Desugar the union to `TupleType` (reuse the struct representation).** A product holds all
-  members; a union holds one. They differ in default initialization (all members vs the first) and
-  in write semantics (an independent slot write vs replacing the active member). A consumer reading
-  `TupleType` could not tell them apart, violating `mir.md` invariant 7 (the type is the
-  classification). It also contradicts the recorded struct decision ("the union does not share the
-  struct representation") and stores every member when only one is live. The observable contract for
+- **Desugar the union to a product (`TupleType` or `StructType`).** A product holds all members; a
+  union holds one. They differ in default initialization (all members vs the first) and in write
+  semantics (an independent slot write vs replacing the active member). A consumer reading a product
+  could not tell them apart, violating `mir.md` invariant 7 (the type is the classification). It
+  also contradicts the recorded struct decision ("the union does not share the struct
+  representation") and stores every member when only one is live. The observable contract for
   conformant programs happens to coincide -- because cross-reads are undefined -- but the type
   identity and the semantics differ, and conflating them is the inverse of the
   type-is-classification invariant.
@@ -138,8 +138,8 @@ not a product with a different label.
 
 - `../architecture/mir.md` -- the product beside the value that holds one member at a time;
   invariant 7 (the type is the classification); the forbidden flag-beside-the-type shape.
-- [aggregate-names-are-type-content](aggregate-names-are-type-content.md) -- why a union's member
-  names stay on its type, which this entry's point 2 originally dropped.
+- [aggregate-names-are-type-content](aggregate-names-are-type-content.md) -- the argument that put a
+  union's member names on its type for a time, and why it no longer holds.
 - [unpacked-struct-representation](unpacked-struct-representation.md) -- the sibling product
   representation, which left the union open.
 - [value-type-concepts](value-type-concepts.md) -- the `LyraValue` lattice the runtime

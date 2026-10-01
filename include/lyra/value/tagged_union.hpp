@@ -157,16 +157,23 @@ class TaggedUnion {
     return PackedArray::Bit(HasUnknown());
   }
 
-  // LRM 11.9 leaves an uninitialized tagged union undefined, and the stand-in
-  // this type gives it is tag 0 with the first member's default, which is what
-  // resetting restores. A first member already active is reset where it lies,
-  // keeping the shape it was built with.
-  auto ResetToDefault() -> void {
-    if (auto* first = std::get_if<0>(&data_)) {
-      first->ResetToDefault();
-      return;
-    }
-    data_.template emplace<0>();
+  // LRM 6.24.3 streams a tagged union, which is not carried out yet; the
+  // execution backend answers one the same way. A structure with such a member
+  // asks these only where the program measures it.
+  [[noreturn]] static auto BitstreamWidth() -> PackedArray {
+    throw SimulationError(
+        "$bits of a union is not yet supported on this backend; please open "
+        "an issue asking for support");
+  }
+  [[noreturn]] static auto ToBitstream() -> PackedArray {
+    throw SimulationError(
+        "reading this value as a stream of bits is not yet supported on this "
+        "backend; please open an issue asking for support");
+  }
+  // LRM 20.9 counts over the bit stream.
+  [[nodiscard]] static auto CountBits(const PackedArray& control_bits)
+      -> PackedArray {
+    return ToBitstream().CountBits(control_bits);
   }
 
  private:
@@ -174,7 +181,6 @@ class TaggedUnion {
 };
 
 static_assert(LyraValue<TaggedUnion<PackedArray, PackedArray>>);
-static_assert(Defaultable<TaggedUnion<Empty, PackedArray>>);
 static_assert(LyraValue<TaggedUnion<Empty, PackedArray>>);
 static_assert(CaseEqualComparable<TaggedUnion<PackedArray, PackedArray>>);
 

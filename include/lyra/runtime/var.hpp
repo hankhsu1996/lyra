@@ -474,6 +474,13 @@ struct ErasedReference {
       -> ErasedReference;
 };
 
+// The variable a reference to the whole of it names, whose value is then of
+// the reference's own type `T`.
+template <value::LyraValue T>
+auto WholeVariable(const ErasedReference& reference) -> Var<T>& {
+  return static_cast<Var<T>&>(**std::get_if<VariableCell*>(&reference.holder));
+}
+
 // A reference, typed by the value it names. A reference to the whole of a
 // variable and one to a part of it are the same thing, so a write through
 // either is the variable's write, told to whoever waits on the variable at the
@@ -606,20 +613,20 @@ class Ref {
     return erased_.whole;
   }
 
-  // The variable a reference to the whole of it names, whose value is then of
-  // this reference's own type.
   [[nodiscard]] auto Cell() const -> Var<T>& {
-    return static_cast<Var<T>&>(**std::get_if<VariableCell*>(&erased_.holder));
+    return WholeVariable<T>(erased_);
   }
 
   ErasedReference erased_;
 };
 
 // A reference to a property of the object `object` addresses (LRM 8.4), which
-// a write through it tells as it lands (LRM 9.4.2).
+// a write through it tells as it lands (LRM 9.4.2): the reference to the
+// property's storage, held by the object.
 template <value::LyraValue T>
-auto ReferProperty(GcObject* object, T* property) -> Ref<T> {
-  return Ref<T>{ErasedReference{.holder = object, .storage = property}};
+auto ReferProperty(GcObject* object, const Ref<T>& storage) -> Ref<T> {
+  return Ref<T>{
+      ErasedReference{.holder = object, .storage = storage.Erased().storage}};
 }
 
 // What a wait on the storage `reference` names registers on (LRM 13.5.2): what

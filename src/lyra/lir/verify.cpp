@@ -131,10 +131,10 @@ void VerifyInstr(
             if (!operand_type) {
               throw InternalError("lir verify: cast operand has no type");
             }
-            const Type& from = unit.types.Get(*operand_type);
-            const Type& to = unit.types.Get(result_type);
-            if (from.IsIntegralPacked() && to.IsIntegralPacked() &&
-                from.PackedShape() != to.PackedShape()) {
+            const auto* from =
+                unit.types.Get(*operand_type).As<PackedArrayType>();
+            const auto* to = unit.types.Get(result_type).As<PackedArrayType>();
+            if (from != nullptr && to != nullptr && *from != *to) {
               throw InternalError(
                   "lir verify: cast changes its value's representation");
             }
@@ -145,7 +145,7 @@ void VerifyInstr(
           [&](const AggregateUpdateInstr& update) {
             RequireViewedPart(unit, fn, update.aggregate);
           },
-          [](const CallInstr&) {}, [](const ProductInstr&) {},
+          [](const CallInstr&) {}, [](const TupleInstr&) {},
           [](const ArrayInstr&) {}, [](const UnionInstr&) {},
           [](const TagTestInstr&) {}, [](const BinaryInstr&) {},
           [](const UnaryInstr&) {},

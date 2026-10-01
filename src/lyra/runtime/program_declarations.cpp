@@ -153,8 +153,8 @@ auto RealizeMemberStorage(support::DeclaredMemberStorage described)
       return BorrowedHandleStorage{};
     case support::MemberStorageKind::kReference:
       return ReferenceStorage{};
-    case support::MemberStorageKind::kPromotedScope:
-      return PromotedScopeStorage{};
+    case support::MemberStorageKind::kSharedPointer:
+      return SharedPointerStorage{};
     case support::MemberStorageKind::kNamedEvent:
       return NamedEventStorage{};
     case support::MemberStorageKind::kCancellationTarget:

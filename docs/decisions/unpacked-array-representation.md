@@ -142,12 +142,12 @@ Unpacked array support follows these invariants:
    to a storage position against the wrapper's own range (see
    `docs/decisions/selector-coordinate-resolution.md`); the storage position is internal and never a
    public argument. LRM 7.4.5 invalid-index handling lives in the wrapper: an index outside the
-   declared range or bearing X / Z returns a reference to the shield slot, restored to canonical
-   state via `T::ResetToDefault` before being handed out so any prior OOB write is erased.
-   Element-level compound semantics live on `PackedArray` directly -- the wrapper carries no per-T
-   forwarder. The write-side slice (`SliceRef`) returns a write-through proxy whose destructor
-   scatters back into the receiver's storage; slice reads on partially-OOB positions handle in-range
-   and OOB elements per-element, matching the packed array's per-bit OOB treatment. See
+   declared range or bearing X / Z returns a reference to the shield slot, restored to a copy of the
+   element default before being handed out so any prior OOB write is erased. Element-level compound
+   semantics live on `PackedArray` directly -- the wrapper carries no per-T forwarder. The
+   write-side slice (`SliceRef`) returns a write-through proxy whose destructor scatters back into
+   the receiver's storage; slice reads on partially-OOB positions handle in-range and OOB elements
+   per-element, matching the packed array's per-bit OOB treatment. See
    `docs/decisions/runtime-shape-and-default-value.md` for the shield contract.
 
 3. **Default initialization emits a `ConstructExpr` whose arguments are the declared range, the

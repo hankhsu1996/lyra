@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/qualified_statement_check.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
+#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -32,26 +33,37 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The entry that tests one case label. Every condition compares its labels
-// exactly: an x or a z stands for itself and matches itself, where logical
-// equality would answer x and send the whole statement to its default arm
-// (LRM 12.5). Which bits are do-not-care is the condition's own business, so
-// each form has its own entry rather than an operator a target applies. The
-// membership condition (LRM 12.5.4) tests its labels a different way and never
-// asks.
-auto CaseCompareFn(hir::CaseCondition condition) -> support::BuiltinFn {
+// The test of one case label. Every condition compares its labels exactly: an
+// x or a z stands for itself and matches itself, where logical equality would
+// answer x and send the whole statement to its default arm (LRM 12.5). Which
+// bits are do-not-care is the condition's own business, so each form has its
+// own question rather than an operator a target applies. The membership
+// condition (LRM 12.5.4) tests its labels a different way and never asks.
+auto BuildLabelTest(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    hir::CaseCondition condition, mir::ExprId selector, mir::ExprId label)
+    -> mir::ExprId {
+  const auto entry = [&](support::BuiltinFn fn) {
+    return block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee = mir::Direct{.target = fn, .receiver = selector},
+                    .arguments = {label}},
+            .type = unit.builtins.bit1});
+  };
   switch (condition) {
     case hir::CaseCondition::kNormal:
-      return support::BuiltinFn::kCaseEqual;
+      return BuildCaseEquality(unit, block, selector, label);
     case hir::CaseCondition::kWildcardJustZ:
-      return support::BuiltinFn::kCasezEquals;
+      return entry(support::BuiltinFn::kCasezEquals);
     case hir::CaseCondition::kWildcardXOrZ:
-      return support::BuiltinFn::kCasexEquals;
+      return entry(support::BuiltinFn::kCasexEquals);
     case hir::CaseCondition::kInside:
       break;
   }
   throw InternalError(
-      "CaseCompareFn: condition tests its labels by membership");
+      "BuildLabelTest: condition tests its labels by membership");
 }
 
 // Turns pre-lowered item bodies into the statement that selects among them.
@@ -209,16 +221,7 @@ auto LowerCaseStmt(
     const mir::ExprId written = label_block.exprs.Add(*std::move(label_or));
     const mir::ExprId label_id =
         OperandAtHandleType(unit, label_block, written, snapshot.sel_type);
-    return label_block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = CaseCompareFn(c.condition_kind),
-                            .receiver = sel},
-                    .arguments = {label_id}},
-            .type = bit_type});
+    return BuildLabelTest(unit, label_block, c.condition_kind, sel, label_id);
   };
 
   // An item is selected when any of its labels matches (LRM 12.5).

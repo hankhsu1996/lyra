@@ -42,10 +42,10 @@ enum class MemberStorageKind : std::uint8_t {
   // where the value lies and the variable, if any, it belongs to. A read hands
   // back the reference itself, and filling it copies one.
   kReference,
-  // A hold on the storage a block promoted out of its frame (LRM 6.21), which
-  // the owner does keep alive: a read hands back the hold, and the hold ending
-  // with its owner is what ends the storage once no owner is left.
-  kPromotedScope,
+  // A counted hold on the cell of a local a scope keeps past its end (LRM
+  // 6.21), which the owner does keep alive: a read hands back the hold, and the
+  // hold ending with its owner is what ends the cell once no holder is left.
+  kSharedPointer,
   // A named event (LRM 15.5), a scope's cancellation target (LRM 9.6.2), the
   // joint cancel state of the channels a deferred write targets (LRM 21.3.2),
   // and what one concurrent assertion has in flight (LRM 16.14.1). Each is a

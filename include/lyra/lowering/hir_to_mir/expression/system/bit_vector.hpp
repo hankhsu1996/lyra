@@ -5,7 +5,9 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/type_id.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -25,5 +27,12 @@ auto LowerBitVectorSystemSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     const support::BitVectorSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
+
+// The type of the set a count is taken under: a bit holds one of four values,
+// each at most once in the set, one per bit position. A set naming fewer
+// repeats one it names, which admits nothing twice (LRM 20.9), so every set is
+// a value of this one type.
+[[nodiscard]] auto BitCountControlType(const mir::CompilationUnit& unit)
+    -> mir::TypeId;
 
 }  // namespace lyra::lowering::hir_to_mir

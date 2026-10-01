@@ -2,11 +2,13 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/translation.hpp"
@@ -16,8 +18,10 @@
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
+#include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
 
@@ -250,16 +254,32 @@ struct Closure {
   FunctionId invoke{};
 };
 
-// One struct declaration: the fields values of it hold, and nothing else. It
-// shares the member vocabulary with a class and a closure because a field is
-// reached the same way a property and a capture are; what it does not share is
-// any code, since a struct is storage a builder fills rather than a thing that
-// runs.
-// `name` is the struct's own, as its unit named it -- not a symbol.
-// It carries no name: the source declares no such aggregate, so its position in
-// the unit's registry is the whole of what identifies it.
+// The function of the unit a struct answers one operation on its whole value
+// with.
+struct StructMethod {
+  support::ValueOperation answers;
+  FunctionId function;
+};
+
+// A struct this unit declares: the name another unit reaches it by (LRM 7.2),
+// its components' types in position order, and the function it answers each
+// operation on a whole value with.
+//
+// The runtime asks the same questions of values it holds, and it was compiled
+// before the type existed, so a target hands it these methods along with what
+// it derives of the type itself: where the components lie, and how a value is
+// copied, moved and ended.
 struct Struct {
-  std::vector<Member> fields;
+  std::string name;
+  std::vector<TypeId> elements;
+  std::vector<StructMethod> methods;
+};
+
+// A struct another unit declares, as this unit reads it: the declaration it is
+// and its components' types, which is what a value of it needs here.
+struct ExternalStruct {
+  TypeDeclarationRef declaration;
+  std::vector<TypeId> elements;
 };
 
 // Storage this unit defines that no instance owns: one cell for the whole
@@ -274,7 +294,8 @@ struct StaticStorage {
 };
 
 // The LIR of one compilation unit: its own type graph, its classes, its
-// closures, the objects of other units it compiled against, the storage it
+// closures, its structs and those of other units it holds values of, the
+// objects of other units it compiled against, the storage it
 // shares program-wide, every function it compiles, and the class its object
 // tree is rooted at, when it roots one -- a unit that declares only a namespace
 // compiles functions and roots no objects. Self-contained -- it holds no
@@ -293,6 +314,9 @@ struct CompilationUnit {
   base::Registry<Class, ClassId> classes;
   base::Registry<Closure, ClosureId> closures;
   base::Registry<Struct, StructId> structs;
+  // Every struct of another unit this one holds a value of, found by the
+  // declaration that names it.
+  std::vector<ExternalStruct> external_structs;
   // One record per unit this one compiled against, under the same
   // declare-then-define lifecycle a class has: a member of one record may name
   // another of them -- an interface port's does (LRM 25.3) -- so a record's
@@ -390,6 +414,64 @@ struct CompilationUnit {
                           StandsInObjectTree(unit, promised->base);
                  }},
              *extends);
+}
+
+// What this unit read of the struct another unit declares as `declaration`.
+[[nodiscard]] inline auto ExternalStructOf(
+    const CompilationUnit& unit, const TypeDeclarationRef& declaration)
+    -> const ExternalStruct& {
+  for (const ExternalStruct& external : unit.external_structs) {
+    if (external.declaration == declaration) {
+      return external;
+    }
+  }
+  throw InternalError(
+      "lir: a struct of another unit is named that this unit never read");
+}
+
+// The components' types of the struct `type` is, wherever it was declared.
+[[nodiscard]] inline auto StructElements(
+    const CompilationUnit& unit, const StructType& type)
+    -> std::span<const TypeId> {
+  return std::visit(
+      Overloaded{
+          [&](StructId id) -> std::span<const TypeId> {
+            return unit.structs.Get(id).elements;
+          },
+          [&](const TypeDeclarationRef& ref) -> std::span<const TypeId> {
+            return ExternalStructOf(unit, ref).elements;
+          }},
+      type.declaration);
+}
+
+// The declaration any unit names the struct `type` is by.
+[[nodiscard]] inline auto StructDeclarationOf(
+    const CompilationUnit& unit, const StructType& type) -> TypeDeclarationRef {
+  return std::visit(
+      Overloaded{
+          [&](StructId id) -> TypeDeclarationRef {
+            return TypeDeclarationRef{
+                .unit_name = unit.name, .name = unit.structs.Get(id).name};
+          },
+          [](const TypeDeclarationRef& ref) -> TypeDeclarationRef {
+            return ref;
+          }},
+      type.declaration);
+}
+
+// The components of a product -- a tuple or a struct, which are reached the
+// same way -- or nothing for a type that is no product.
+[[nodiscard]] inline auto ProductElements(
+    const CompilationUnit& unit, TypeId type)
+    -> std::optional<std::span<const TypeId>> {
+  const Type& t = unit.types.Get(type);
+  if (const auto* tuple = t.As<TupleType>()) {
+    return std::span<const TypeId>{tuple->elements};
+  }
+  if (const auto* structure = t.As<StructType>()) {
+    return StructElements(unit, *structure);
+  }
+  return std::nullopt;
 }
 
 }  // namespace lyra::lir

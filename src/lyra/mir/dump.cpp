@@ -28,10 +28,12 @@
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/value_operation.hpp"
 #include "lyra/value/format.hpp"
 
 namespace lyra::mir {
@@ -168,6 +170,14 @@ class MirDumper {
       }
       Dedent();
     }
+    if (!unit.external_structs.empty()) {
+      Line("ExternalStructs:");
+      Indent();
+      for (const ExternalStruct& external : unit.external_structs) {
+        DumpExternalStruct(external);
+      }
+      Dedent();
+    }
     if (unit.closures.size() > 0) {
       Line("Closures:");
       Indent();
@@ -223,12 +233,11 @@ class MirDumper {
     return out;
   }
 
-  static auto FormatMembers(const std::vector<AggregateMember>& members)
-      -> std::string {
+  static auto FormatTypeList(const std::vector<TypeId>& types) -> std::string {
     std::string out;
-    for (const auto& member : members) {
+    for (const TypeId type : types) {
       if (!out.empty()) out += ", ";
-      out += std::format("{}=Type[{}]", member.name, member.type.value);
+      out += std::format("Type[{}]", type.value);
     }
     return out;
   }
@@ -295,22 +304,6 @@ class MirDumper {
                   FormatSignedness(e.base.signedness),
                   FormatPackedDims(e.base.dims), members);
             },
-            [](const PackedStructType& s) -> std::string {
-              return std::format(
-                  "PackedStruct(base=PackedArray(state={}, signed={}, "
-                  "dims={}), members=[{}])",
-                  FormatStateKind(s.base.state_kind),
-                  FormatSignedness(s.base.signedness),
-                  FormatPackedDims(s.base.dims), FormatMembers(s.members));
-            },
-            [](const PackedUnionType& u) -> std::string {
-              return std::format(
-                  "PackedUnion(base=PackedArray(state={}, signed={}, "
-                  "dims={}), members=[{}])",
-                  FormatStateKind(u.base.state_kind),
-                  FormatSignedness(u.base.signedness),
-                  FormatPackedDims(u.base.dims), FormatMembers(u.members));
-            },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
                   "UnpackedArray(elem=Type[{}], dim=[{}:{}])",
@@ -368,7 +361,6 @@ class MirDumper {
             [](const EventType&) -> std::string { return "EventType"; },
             [](const RealType&) -> std::string { return "RealType"; },
             [](const ShortRealType&) -> std::string { return "ShortRealType"; },
-            [](const RealTimeType&) -> std::string { return "RealTimeType"; },
             [](const ChandleType&) -> std::string { return "ChandleType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
             [](const ObjectType& o) -> std::string {
@@ -492,7 +484,16 @@ class MirDumper {
                   "Coroutine(payload=Type[{}])", c.payload.value);
             },
             [](const StructType& s) -> std::string {
-              return std::format("Struct[{}]", s.struct_id.value);
+              return std::visit(
+                  Overloaded{
+                      [](StructId id) {
+                        return std::format("Struct[{}]", id.value);
+                      },
+                      [](const TypeDeclarationRef& ref) {
+                        return std::format(
+                            "Struct({}::{})", ref.unit_name, ref.name);
+                      }},
+                  s.declaration);
             },
             [](const ClosureType& c) -> std::string {
               return std::format("Closure[{}]", c.closure_id.value);
@@ -530,29 +531,19 @@ class MirDumper {
               return std::format("Vector(elem=Type[{}])", v.element.value);
             },
             [](const TupleType& t) -> std::string {
-              std::string elements;
-              for (std::size_t i = 0; i < t.elements.size(); ++i) {
-                if (i != 0) {
-                  elements += ", ";
-                }
-                elements += std::format("Type[{}]", t.elements[i].value);
-              }
-              return std::format("Tuple(elems=[{}])", elements);
-            },
-            [](const UnpackedStructType& s) -> std::string {
               return std::format(
-                  "UnpackedStruct(members=[{}])", FormatMembers(s.members));
+                  "Tuple(elems=[{}])", FormatTypeList(t.elements));
             },
             [](const UnionType& u) -> std::string {
               return std::format(
-                  "Union(members=[{}])", FormatMembers(u.members));
+                  "Union(members=[{}])", FormatTypeList(u.members));
             },
             [](const EmptyType&) -> std::string {
               return std::string{"Empty"};
             },
             [](const TaggedUnionType& u) -> std::string {
               return std::format(
-                  "TaggedUnion(members=[{}])", FormatMembers(u.members));
+                  "TaggedUnion(members=[{}])", FormatTypeList(u.members));
             },
             [](const ObservableType& o) -> std::string {
               return std::format("Observable(value=Type[{}])", o.value.value);
@@ -692,6 +683,11 @@ class MirDumper {
               return std::format(
                   "external_class_method={}::{}::{}", e.unit_name, e.class_name,
                   e.method_name);
+            },
+            [](const StructMethodTarget& s) -> std::string {
+              return std::format(
+                  R"(struct_method={}::{} "{}")", s.declaration.unit_name,
+                  s.declaration.name, support::ValueOperationName(s.answers));
             },
             [](const ExternalUnitMintedEntryTarget& e) -> std::string {
               return std::format(
@@ -892,11 +888,6 @@ class MirDumper {
                           [](const ClassFieldTarget& t) -> std::string {
                             return std::format(
                                 "Class[{}]::Field[{}]", t.owner.value,
-                                t.slot.value);
-                          },
-                          [](const StructFieldTarget& t) -> std::string {
-                            return std::format(
-                                "Struct[{}]::Field[{}]", t.owner.value,
                                 t.slot.value);
                           },
                           [](const ClosureFieldTarget& t) -> std::string {
@@ -1106,14 +1097,7 @@ class MirDumper {
     if (d.foreign.has_value()) {
       DumpForeignLinkage(*d.foreign);
     }
-    for (std::size_t i = 0; i < d.code.params.size(); ++i) {
-      const LocalId param = d.code.params[i];
-      Line(
-          std::format(
-              "Param[{}]{} : Type[{}]", i,
-              FormatName(NameOf(d.code.named_locals, param)),
-              d.code.locals.Get(param).type.value));
-    }
+    DumpParams(d.code);
     if (d.code.body.has_value()) {
       DumpCallableBody(d.code);
     }
@@ -1121,13 +1105,41 @@ class MirDumper {
   }
 
   void DumpStruct(StructId id, const StructDecl& decl) {
-    Line(std::format("Struct (#{})", id.value));
+    Line(
+        std::format(
+            R"(Struct (#{}) "{}" elems=[{}])", id.value, decl.name,
+            FormatTypeList(decl.elements)));
     Indent();
-    Line("Fields:");
-    Indent();
-    DumpFieldList(decl.fields, {});
+    for (const StructMethod& method : decl.methods) {
+      Line(
+          std::format(
+              R"(Method "{}" : Type[{}])",
+              support::ValueOperationName(method.answers),
+              method.code.result_type.value));
+      Indent();
+      DumpParams(method.code);
+      DumpCallableBody(method.code);
+      Dedent();
+    }
     Dedent();
-    Dedent();
+  }
+
+  void DumpExternalStruct(const ExternalStruct& external) {
+    Line(
+        std::format(
+            "Struct({}::{}) elems=[{}]", external.declaration.unit_name,
+            external.declaration.name, FormatTypeList(external.elements)));
+  }
+
+  void DumpParams(const CallableCode& code) {
+    for (std::size_t i = 0; i < code.params.size(); ++i) {
+      const LocalId param = code.params[i];
+      Line(
+          std::format(
+              "Param[{}]{} : Type[{}]", i,
+              FormatName(NameOf(code.named_locals, param)),
+              code.locals.Get(param).type.value));
+    }
   }
 
   void DumpClosure(ClosureId id, const ClosureDecl& decl) {
@@ -1156,14 +1168,7 @@ class MirDumper {
     Line(std::format("[{}] : Type[{}]", index, e.signature.value));
     Indent();
     DumpForeignLinkage(e.linkage);
-    for (std::size_t i = 0; i < e.definition.params.size(); ++i) {
-      const LocalId param = e.definition.params[i];
-      Line(
-          std::format(
-              "Param[{}]{} : Type[{}]", i,
-              FormatName(NameOf(e.definition.named_locals, param)),
-              e.definition.locals.Get(param).type.value));
-    }
+    DumpParams(e.definition);
     DumpCallableBody(e.definition);
     Dedent();
   }
@@ -1171,14 +1176,7 @@ class MirDumper {
   void DumpAbiAdapter(const AbiAdapter& a, std::size_t index) {
     Line(std::format("[{}] : Type[{}]", index, a.code.result_type.value));
     Indent();
-    for (std::size_t i = 0; i < a.code.params.size(); ++i) {
-      const LocalId param = a.code.params[i];
-      Line(
-          std::format(
-              "Param[{}]{} : Type[{}]", i,
-              FormatName(NameOf(a.code.named_locals, param)),
-              a.code.locals.Get(param).type.value));
-    }
+    DumpParams(a.code);
     DumpCallableBody(a.code);
     Dedent();
   }

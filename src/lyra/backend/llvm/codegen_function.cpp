@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <format>
 #include <optional>
+#include <span>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -18,6 +19,7 @@
 #include <llvm/IR/Type.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
+#include "lyra/backend/llvm/codegen_tuple.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -92,7 +94,7 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
 
   // A place local is frame storage: its slot is allocated once, in the entry
   // block, so every path that reaches it names the same address. A slot of an
-  // owned type holds the object itself, as a C++ local of class type does.
+  // owned type holds the value itself, as a C++ local of class type does.
   builder_.SetInsertPoint(entry);
   BindConstructionArguments();
   frame_storage_point_ =
@@ -102,12 +104,10 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
     if (!local.NamesStorage()) {
       continue;
     }
-    const std::optional<support::RuntimeObject> object =
-        module_->Unit().types.Get(local.type).HeldObject();
+    llvm::Value* owned = StorageFor(local.type);
     values_.emplace(
-        id, object.has_value()
-                ? ObjectStorage(*object)
-                : FrameStorage(module_->Types().Map(local.type)));
+        id, owned != nullptr ? owned
+                             : FrameStorage(module_->Types().Map(local.type)));
   }
   if (IsCoroutine()) {
     // The ramp places the arguments in the frame and stops before the body's
@@ -163,9 +163,8 @@ auto CodeGenFunction::FrameStorage(llvm::Type* type) -> llvm::Value* {
   return at.CreateAlloca(type);
 }
 
-auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
+auto CodeGenFunction::LaidOutStorage(support::ObjectLayout layout)
     -> llvm::Value* {
-  const support::ObjectLayout layout = support::LayoutOf(object);
   llvm::IRBuilder<> at(frame_storage_point_);
   llvm::AllocaInst* storage =
       at.CreateAlloca(llvm::ArrayType::get(at.getInt8Ty(), layout.size));
@@ -173,10 +172,16 @@ auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
   return storage;
 }
 
+auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
+    -> llvm::Value* {
+  return LaidOutStorage(support::LayoutOf(object));
+}
+
 auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
-  const std::optional<support::RuntimeObject> object =
-      module_->Unit().types.Get(type).HeldObject();
-  return object.has_value() ? ObjectStorage(*object) : nullptr;
+  if (!module_->Unit().types.Get(type).IsOwnedValue()) {
+    return nullptr;
+  }
+  return LaidOutStorage(module_->Types().StorageOf(type));
 }
 
 auto CodeGenFunction::BuildInto(
@@ -200,20 +205,65 @@ void CodeGenFunction::EndObject(
       args);
 }
 
-void CodeGenFunction::AssignObject(
-    support::RuntimeObject object, llvm::Value* storage, llvm::Value* value) {
-  const std::array<llvm::Value*, 2> args{storage, value};
+auto CodeGenFunction::OwnedCallee(
+    lir::TypeId type, TupleLifecycle tuple_step, RuntimeOp object_op,
+    llvm::Type* result, std::span<llvm::Value* const> args)
+    -> llvm::FunctionCallee {
+  if (module_->Unit().types.Get(type).IsProduct()) {
+    return module_->Tuples().Function(type, tuple_step);
+  }
+  return Entry(RuntimeSymbol(ObjectOf(type), object_op), result, args);
+}
+
+void CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value) {
+  if (module_->Types().StorageOf(type).ends_with_nothing_to_do) {
+    return;
+  }
+  const std::array<llvm::Value*, 1> args{value};
   builder_.CreateCall(
-      Entry(
-          RuntimeSymbol(object, RuntimeOp::kAssign), module_->Types().Void(),
-          args),
+      OwnedCallee(
+          type, TupleLifecycle::kDestroy, RuntimeOp::kDestroy,
+          module_->Types().Void(), args),
       args);
 }
 
-void CodeGenFunction::RelocateObject(
-    support::RuntimeObject object, llvm::Value* value, llvm::Value* out) {
-  BuildInto(RuntimeSymbol(object, RuntimeOp::kMove), {value}, out);
-  EndObject(object, value);
+auto CodeGenFunction::CopyValue(
+    lir::TypeId type, llvm::Value* value, llvm::Value* out) -> llvm::Value* {
+  const std::array<llvm::Value*, 2> args{value, out};
+  builder_.CreateCall(
+      OwnedCallee(
+          type, TupleLifecycle::kCopy, RuntimeOp::kCopy, module_->Types().Ptr(),
+          args),
+      args);
+  return out;
+}
+
+void CodeGenFunction::AssignValue(
+    lir::TypeId type, llvm::Value* storage, llvm::Value* value) {
+  const std::array<llvm::Value*, 2> args{storage, value};
+  builder_.CreateCall(
+      OwnedCallee(
+          type, TupleLifecycle::kAssign, RuntimeOp::kAssign,
+          module_->Types().Void(), args),
+      args);
+}
+
+void CodeGenFunction::RelocateValue(
+    lir::TypeId type, llvm::Value* value, llvm::Value* out) {
+  const std::array<llvm::Value*, 2> args{value, out};
+  builder_.CreateCall(
+      OwnedCallee(
+          type, TupleLifecycle::kMove, RuntimeOp::kMove, module_->Types().Ptr(),
+          args),
+      args);
+  EndValue(type, value);
+}
+
+auto CodeGenFunction::ComponentAddress(
+    lir::TypeId tuple, llvm::Value* value, std::size_t index) -> llvm::Value* {
+  return builder_.CreateConstInBoundsGEP1_64(
+      builder_.getInt8Ty(), value,
+      module_->Types().LayoutOfTuple(tuple).offsets.at(index));
 }
 
 auto CodeGenFunction::Box(support::ValueDomain domain, llvm::Value* value)
@@ -348,10 +398,9 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             }
             // An owned answer is built in the storage the caller gave, which
             // the body answers with as an entry does.
-            if (const std::optional<support::RuntimeObject> object =
-                    module_->Unit().types.Get(fn_->result_type).HeldObject()) {
+            if (module_->Unit().types.Get(fn_->result_type).IsOwnedValue()) {
               llvm::Value* out = value_->getArg(value_->arg_size() - 1);
-              RelocateObject(*object, *value, out);
+              RelocateValue(fn_->result_type, *value, out);
               builder_.CreateRet(out);
               return {};
             }

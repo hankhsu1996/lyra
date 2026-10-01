@@ -8,9 +8,9 @@ namespace lyra::value::detail {
 // the element-type canonical default (LRM Table 7-1) an invalid-index read
 // returns and every fill / slice / new slot copies; it is only ever read, so it
 // stays canonical with no scrub. `DiscardTarget()` is the throwaway an
-// invalid-index write lands on (LRM 7.4.5), scrubbed to canonical before each
-// use so a discarded write never leaks into a later access. Both slots carry
-// the element's runtime shape -- for `T = PackedArray`, the bit width,
+// invalid-index write lands on (LRM 7.4.5), a fresh copy of that default before
+// each use so a discarded write never leaks into a later access. Both slots
+// carry the element's runtime shape -- for `T = PackedArray`, the bit width,
 // signedness, and state domain the C++ type alone cannot recover -- supplied at
 // construction.
 template <typename T>
@@ -26,7 +26,7 @@ class OobShield {
   }
 
   [[nodiscard]] auto DiscardTarget() -> T& {
-    discard_sink_.ResetToDefault();
+    discard_sink_ = default_;
     return discard_sink_;
   }
 

@@ -25,10 +25,11 @@
 #include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
-#include "lyra/mir/struct_id.hpp"
+#include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
 
@@ -83,9 +84,8 @@ struct UnaryExpr {
 // the ones a target can state outright: a value read as the machine boolean a
 // condition tests (LRM 12.4), a machine integer at another width, a
 // reference-like value at another pointee, a code address at the signature its
-// definition was generated with, and an integral type that names its content --
-// an enumeration, a packed structure or union -- read as the vector it shares a
-// representation with.
+// definition was generated with, and an enumeration read as the vector it
+// shares a representation with.
 struct CastExpr {
   ExprId operand;
 };
@@ -249,23 +249,36 @@ struct ExternalUnitClassMethodTarget {
   auto operator==(const ExternalUnitClassMethodTarget&) const -> bool = default;
 };
 
+// Identity of a method a struct's declaration has: the struct, and the
+// operation on a whole value the method answers. A struct the source declared
+// is identified by its declaration wherever it is named (LRM 6.22), and it has
+// one method per operation, so the pair names the method from the declaring
+// unit and from any other alike.
+struct StructMethodTarget {
+  TypeDeclarationRef declaration;
+  support::ValueOperation answers;
+
+  auto operator==(const StructMethodTarget&) const -> bool = default;
+};
+
 // The target of a `Direct` call -- the symbol identity. Each alternative is one
 // identity space, told apart by the table that resolves the name: a class of
 // this unit (`CallableTarget`), this unit's own namespace
 // (`UnitCallableTarget`), the closed set of runtime library entries
 // (`BuiltinFn`), another compilation unit's namespace
 // (`ExternalUnitCallableTarget`) or one of its classes
-// (`ExternalUnitClassMethodTarget`), the bodies of another unit that answer to
-// no name (`ExternalUnitMintedEntryTarget`), and the DPI-C name space
-// (`ForeignSymbolTarget`, LRM 35.4). Inside this unit a body is named by
-// its position and outside it by what the namespace published, so the two
+// (`ExternalUnitClassMethodTarget`), a declared struct's methods
+// (`StructMethodTarget`), the bodies of another unit that answer to no name
+// (`ExternalUnitMintedEntryTarget`), and the DPI-C name space
+// (`ForeignSymbolTarget`, LRM 35.4). Inside this unit a body is named by its
+// position and outside it by what the namespace published, so the two
 // namespace alternatives are total and do not overlap. Nothing here says
 // whether the call dispatches on an object -- that is the callee's receiver --
 // and none is recovered from the receiver's runtime type.
 using DirectTarget = std::variant<
     CallableTarget, UnitCallableTarget, support::BuiltinFn,
     ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
-    ExternalUnitMintedEntryTarget, ForeignSymbolTarget>;
+    StructMethodTarget, ExternalUnitMintedEntryTarget, ForeignSymbolTarget>;
 
 // A direct call whose callee is settled at compile time. The single shape for
 // every direct invocation: a user method, a built-in, a subroutine of this
@@ -426,15 +439,6 @@ struct ClassFieldTarget {
   auto operator==(const ClassFieldTarget&) const -> bool = default;
 };
 
-// Identity of a field of a compiler-generated nominal struct -- the shared
-// activation object a promoted automatic lives in (LRM 6.21) is one.
-struct StructFieldTarget {
-  StructId owner;
-  FieldId slot;
-
-  auto operator==(const StructFieldTarget&) const -> bool = default;
-};
-
 // Identity of a captured binding, which the closure declaration holds as a
 // field like any other storage a declaration declares.
 struct ClosureFieldTarget {
@@ -463,13 +467,13 @@ struct CrossUnitClassFieldTarget {
 // field names are keyed by, and a name is resolved by reading the arena the
 // access states rather than by classifying what the receiver turned out to be.
 //
-// A field is declared somewhere, which is what separates it from a part named
-// by position: a product declares its components nowhere -- the type is the
-// component list -- so reaching one is an operation on the value rather than a
-// name in an arena, and it is a call.
+// A field is storage an object or a closure keeps, reached through that object
+// or closure, which is what separates it from a part of a product -- a tuple's
+// component or a struct's member. A product is a value, reached whether it is
+// stored, computed or behind a pointer, so reaching a part of one is an
+// operation on the value rather than a name in an arena, and it is a call.
 using FieldRef = std::variant<
-    ClassFieldTarget, StructFieldTarget, ClosureFieldTarget,
-    CrossUnitClassFieldTarget>;
+    ClassFieldTarget, ClosureFieldTarget, CrossUnitClassFieldTarget>;
 
 // Field access through an explicit receiver expression: `receiver.field`. The
 // receiver is a value of whichever declaration the field names, reached by
@@ -695,8 +699,8 @@ struct Expr {
 }
 
 // The library entry a call names outright, if it names one. A call whose callee
-// is a callable, an indirect value, or another unit's symbol names none, so a
-// consumer asking which operation this is gets nothing rather than a guess.
+// is anything but a library entry names none, so a consumer asking which
+// operation this is gets nothing rather than a guess.
 [[nodiscard]] inline auto DirectBuiltinFn(const CallExpr& call)
     -> std::optional<support::BuiltinFn> {
   const auto* direct = std::get_if<Direct>(&call.callee);
@@ -766,6 +770,22 @@ struct Expr {
               .callee =
                   Direct{
                       .target = support::BuiltinFn::kComponent,
+                      .receiver = subject,
+                      .position = index},
+              .arguments = {}},
+      .type = component};
+}
+
+// The component at `index` of the value `subject` names, as a place a write
+// lands in: the reach-for-write form of the access above.
+[[nodiscard]] inline auto MakeComponentRefExpr(
+    ExprId subject, base::ComponentIndex index, TypeId component) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kComponentRef,
                       .receiver = subject,
                       .position = index},
               .arguments = {}},

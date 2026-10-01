@@ -78,12 +78,6 @@ class ManagedRef {
     return PackedArray::Bit(false);
   }
 
-  // LRM 8.4 / Table 6-7: an uninitialized handle is null. Dropping the share is
-  // what releases the object if this was the last handle to it.
-  auto ResetToDefault() -> void {
-    share_.reset();
-  }
-
   // LRM 8.4: a handle tested for a boolean value is 0 when null, 1 otherwise.
   explicit operator bool() const {
     return share_ != nullptr;
@@ -95,7 +89,6 @@ class ManagedRef {
 
 static_assert(LyraValue<ManagedRef>);
 static_assert(CaseEqualComparable<ManagedRef>);
-static_assert(Defaultable<ManagedRef>);
 static_assert(!Ordered<ManagedRef>);
 static_assert(!WildcardComparable<ManagedRef>);
 

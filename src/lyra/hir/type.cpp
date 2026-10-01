@@ -112,7 +112,8 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             return Combine(HashTypeId(seed, t.base_type), t.members.size());
           },
           [seed](const UnpackedStructType& t) {
-            return HashFields(seed, t.fields);
+            return Combine(
+                Combine(seed, t.declaration.unit_name), t.declaration.name);
           },
           [seed](const UnpackedUnionType& t) {
             return HashFields(seed, t.fields);

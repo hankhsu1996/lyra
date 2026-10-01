@@ -171,15 +171,9 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::PackedArrayType&) {
             out += "lyra::value::PackedArray";
           },
-          // An enum and a packed struct or union hold a packed array; their
-          // member names do not change how the value is stored.
+          // An enum holds a packed array; its member names do not change how
+          // the value is stored.
           [&](const mir::EnumType&) { out += "lyra::value::PackedArray"; },
-          [&](const mir::PackedStructType&) {
-            out += "lyra::value::PackedArray";
-          },
-          [&](const mir::PackedUnionType&) {
-            out += "lyra::value::PackedArray";
-          },
           [&](const mir::StringType&) { out += "lyra::value::String"; },
           [&](const mir::MachineCStringType&) { out += "const char*"; },
           [&](const mir::MachineBoolType&) { out += "bool"; },
@@ -207,7 +201,6 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::EventType&) { out += "lyra::runtime::NamedEvent"; },
           [&](const mir::RealType&) { out += "lyra::value::Real"; },
           [&](const mir::ShortRealType&) { out += "lyra::value::ShortReal"; },
-          [&](const mir::RealTimeType&) { out += "lyra::value::Real"; },
           [&](const mir::UnpackedArrayType& ua) {
             Write(
                 out, "lyra::value::UnpackedArray<", type(ua.element_type), ">");
@@ -230,8 +223,24 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::ObjectType& o) {
             Write(out, CppClassName(unit.GetClass(o.class_id), o.class_id));
           },
+          // A struct is the type its declaring unit defines: named as that unit
+          // names it, inside the unit's types namespace where another unit
+          // names it too, and from another unit after that unit's qualifier.
           [&](const mir::StructType& s) {
-            Write(out, CppStructName(s.struct_id));
+            std::visit(
+                Overloaded{
+                    [&](mir::StructId id) {
+                      Write(
+                          out, CppStructTypesNamespace(),
+                          "::", CppStructName(unit.GetStruct(id)));
+                    },
+                    [&](const mir::TypeDeclarationRef& ref) {
+                      Write(
+                          out, CppUnitScope(ref.unit_name),
+                          "::", CppStructTypesNamespace(),
+                          "::", ToCppName(ref.name));
+                    }},
+                s.declaration);
           },
           [&](const mir::ExternalUnitObjectType& e) {
             // The class name is read from what the other unit published, not
@@ -303,27 +312,19 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::VectorType& v) {
             Write(out, "std::vector<", type(v.element), ">");
           },
+          // A tuple is its components, so it is the library's product of them.
           [&](const mir::TupleType& t) {
-            out += "lyra::value::Tuple<";
-            WriteTypeList(out, unit, t.elements);
-            out += ">";
-          },
-          // An unpacked struct is a tuple of its member types; the member
-          // names do not change how it is stored.
-          [&](const mir::UnpackedStructType& s) {
-            out += "lyra::value::Tuple<";
-            WriteTypeList(out, unit, mir::MemberTypes(s.members));
-            out += ">";
+            Write(out, CppTupleComponents{.unit = &unit, .of = t.elements});
           },
           [&](const mir::UnionType& u) {
             out += "lyra::value::Union<";
-            WriteTypeList(out, unit, mir::MemberTypes(u.members));
+            WriteTypeList(out, unit, u.members);
             out += ">";
           },
           [&](const mir::EmptyType&) { out += "lyra::value::Empty"; },
           [&](const mir::TaggedUnionType& u) {
             out += "lyra::value::TaggedUnion<";
-            WriteTypeList(out, unit, mir::MemberTypes(u.members));
+            WriteTypeList(out, unit, u.members);
             out += ">";
           },
           [&](const mir::ObservableType& o) {
@@ -402,8 +403,6 @@ auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           // nothing to open.
           [&](const mir::PackedArrayType&) { return opens_no_storage(); },
           [&](const mir::EnumType&) { return opens_no_storage(); },
-          [&](const mir::PackedStructType&) { return opens_no_storage(); },
-          [&](const mir::PackedUnionType&) { return opens_no_storage(); },
           [&](const mir::UnpackedArrayType&) { return opens_no_storage(); },
           [&](const mir::DynamicArrayType&) { return opens_no_storage(); },
           [&](const mir::QueueType&) { return opens_no_storage(); },
@@ -419,7 +418,6 @@ auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::EventType&) { return opens_no_storage(); },
           [&](const mir::RealType&) { return opens_no_storage(); },
           [&](const mir::ShortRealType&) { return opens_no_storage(); },
-          [&](const mir::RealTimeType&) { return opens_no_storage(); },
           [&](const mir::ChandleType&) { return opens_no_storage(); },
           [&](const mir::VoidType&) { return opens_no_storage(); },
           [&](const mir::EmptyType&) { return opens_no_storage(); },
@@ -437,7 +435,6 @@ auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::CoroutineType&) { return opens_no_storage(); },
           [&](const mir::VectorType&) { return opens_no_storage(); },
           [&](const mir::TupleType&) { return opens_no_storage(); },
-          [&](const mir::UnpackedStructType&) { return opens_no_storage(); },
           [&](const mir::UnionType&) { return opens_no_storage(); },
           [&](const mir::TaggedUnionType&) { return opens_no_storage(); },
           [&](const mir::ObservableType&) { return opens_no_storage(); },
@@ -578,8 +575,6 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           },
           [&](const mir::PackedArrayType& t) { by_naming_itself(t); },
           [&](const mir::EnumType& t) { by_naming_itself(t); },
-          [&](const mir::PackedStructType& t) { by_naming_itself(t); },
-          [&](const mir::PackedUnionType& t) { by_naming_itself(t); },
           [&](const mir::StringType& t) { by_naming_itself(t); },
           [&](const mir::MachineCStringType& t) { by_naming_itself(t); },
           [&](const mir::MachineBoolType& t) { by_naming_itself(t); },
@@ -591,7 +586,6 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::EventType& t) { by_naming_itself(t); },
           [&](const mir::RealType& t) { by_naming_itself(t); },
           [&](const mir::ShortRealType& t) { by_naming_itself(t); },
-          [&](const mir::RealTimeType& t) { by_naming_itself(t); },
           [&](const mir::UnpackedArrayType& t) { by_naming_itself(t); },
           [&](const mir::DynamicArrayType& t) { by_naming_itself(t); },
           [&](const mir::QueueType& t) { by_naming_itself(t); },
@@ -617,7 +611,6 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::RefType& t) { by_naming_itself(t); },
           [&](const mir::VoidType& t) { by_naming_itself(t); },
           [&](const mir::TupleType& t) { by_naming_itself(t); },
-          [&](const mir::UnpackedStructType& t) { by_naming_itself(t); },
           [&](const mir::UnionType& t) { by_naming_itself(t); },
           [&](const mir::TaggedUnionType& t) { by_naming_itself(t); },
           [&](const mir::EmptyType& t) { by_naming_itself(t); },
@@ -630,6 +623,12 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::EvaluationAttemptsType& t) { by_naming_itself(t); },
           [&](const mir::ClosureType& t) { by_naming_itself(t); },
       });
+}
+
+void WriteOne(TargetText& out, const CppTupleComponents& components) {
+  out += "lyra::value::Tuple<";
+  WriteTypeList(out, *components.unit, components.of);
+  out += ">";
 }
 
 void WriteOne(TargetText& out, const CppClassRef& ref) {

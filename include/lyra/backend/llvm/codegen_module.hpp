@@ -11,6 +11,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
+#include "lyra/backend/llvm/codegen_tuple.hpp"
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
@@ -20,7 +21,6 @@
 #include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
-#include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type_descriptor_id.hpp"
 #include "lyra/lir/type_id.hpp"
 
@@ -58,6 +58,9 @@ class CodeGenModule {
   auto Types() -> CodeGenTypes& {
     return types_;
   }
+  auto Tuples() -> CodeGenTuples& {
+    return tuples_;
+  }
   auto Unit() const -> const lir::CompilationUnit& {
     return *unit_;
   }
@@ -77,7 +80,7 @@ class CodeGenModule {
       -> bool;
 
   // The cell holding the runtime definition of a type whose values the runtime
-  // builds -- a scope class, a struct, or a closure. The unit that declares one
+  // builds -- a scope class or a closure. The unit that declares one
   // fills its cell where it states everything else it declares; a reference
   // loads it and forwards the address without inspecting it, and a declaration
   // of this unit and one of another are named the same way.
@@ -137,10 +140,6 @@ class CodeGenModule {
   // runtime drives an instance through and the names it answers from.
   auto StateClass(llvm::IRBuilderBase& builder, lir::ClassId id)
       -> diag::Result<void>;
-  // States one compiler-generated record this unit declares, which adds storage
-  // for its fields and answers no name.
-  auto StateStruct(llvm::IRBuilderBase& builder, lir::StructId id)
-      -> diag::Result<void>;
   // One call into the runtime from a declaration body, whose result is
   // discarded where the entry answers with one.
   auto StateCall(
@@ -167,6 +166,7 @@ class CodeGenModule {
   const lir::CompilationUnit* unit_;
   TimeResolution time_;
   CodeGenTypes types_;
+  CodeGenTuples tuples_;
   base::Translation<lir::FunctionId, llvm::Function*> functions_;
   // Which of the unit's functions a class names as its construction, read the
   // other way round from how the unit states it: a class names the function

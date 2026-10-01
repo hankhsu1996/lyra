@@ -71,13 +71,6 @@ class Chandle {
     return PackedArray::Bit(false);
   }
 
-  // LRM 6.14: a chandle is always initialized to `null`. Satisfies the
-  // container OOB-shield contract so a chandle can be an associative-array
-  // element.
-  auto ResetToDefault() -> void {
-    p_ = nullptr;
-  }
-
   // LRM 6.14: a chandle tested for a boolean value is 0 when null, 1 otherwise.
   explicit operator bool() const {
     return p_ != nullptr;
@@ -89,7 +82,6 @@ class Chandle {
 
 static_assert(LyraValue<Chandle>);
 static_assert(CaseEqualComparable<Chandle>);
-static_assert(Defaultable<Chandle>);
 static_assert(!Ordered<Chandle>);
 static_assert(!WildcardComparable<Chandle>);
 

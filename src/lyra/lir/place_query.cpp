@@ -2,6 +2,7 @@
 
 #include <format>
 #include <optional>
+#include <span>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
@@ -79,11 +80,6 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
             // A closure carries no name of its own, so what a reader can be
             // told about a bad step is which kind of declaration it was on.
             return MemberList{.members = decl.captures, .owner = "a closure"};
-          },
-          [&](const StructType& record) -> std::optional<MemberList> {
-            const Struct& decl = unit.structs.Get(record.struct_id);
-            return MemberList{
-                .members = decl.fields, .owner = "a gathered scope"};
           }},
       *declaration);
 }
@@ -140,7 +136,7 @@ auto MakesValue(const InstrData& instr) -> bool {
           // keeping it is a step of its own.
           [](const LoadInstr&) { return false; },
           [](const CastInstr&) { return false; },
-          [](const ProductInstr&) { return true; },
+          [](const TupleInstr&) { return true; },
           [](const UnionInstr&) { return true; },
           [](const AggregateExtractInstr&) { return true; },
           [](const AggregateUpdateInstr&) { return true; },
@@ -196,17 +192,16 @@ auto PlaceType(
               current = *element;
             },
             [&](const ComponentProjection& projection) {
-              const Type& product = unit.types.Get(current);
-              if (!product.IsProduct()) {
+              const std::optional<std::span<const TypeId>> components =
+                  ProductElements(unit, current);
+              if (!components.has_value()) {
                 throw InternalError(
                     "lir: a component step over a type that is not a product");
               }
-              const std::vector<TypeId> components =
-                  product.ProductComponentTypes();
-              if (projection.index.value >= components.size()) {
+              if (projection.index.value >= components->size()) {
                 throw InternalError("lir: component step out of range");
               }
-              current = components[projection.index.value];
+              current = (*components)[projection.index.value];
             }},
         step);
   }

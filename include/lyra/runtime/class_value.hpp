@@ -57,11 +57,11 @@ class ClassValue : public GcObject {
   // not the value's own, so the release takes the address alone.
   static void operator delete(void* address);
 
-  // Where the property `declared_by` gave `slot` to lives on this value. The
-  // pair is the whole coordinate: a class extending another carries its base's
-  // properties as well as its own and may declare one of the same name, so
-  // which storage is meant is fixed by the class the access names (LRM 8.14)
-  // rather than by what this value is.
+  // Where the value of the property `declared_by` gave `slot` to lies on this
+  // value. The pair is the whole coordinate: a class extending another carries
+  // its base's properties as well as its own and may declare one of the same
+  // name, so which storage is meant is fixed by the class the access names (LRM
+  // 8.14) rather than by what this value is.
   [[nodiscard]] auto Member(
       const ObjectDefinition* declared_by, std::uint32_t slot) -> void*;
 

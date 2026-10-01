@@ -47,6 +47,7 @@
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
+#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class.hpp"
@@ -1762,16 +1763,8 @@ auto MatchesAnyLabel(
   for (const hir::ExprId label : labels) {
     auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(label), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    const mir::ExprId matched = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kCaseEqual,
-                            .receiver = selector},
-                    .arguments = {block.exprs.Add(*std::move(lowered))}},
-            .type = unit.builtins.bit1});
+    const mir::ExprId matched = BuildCaseEquality(
+        unit, block, selector, block.exprs.Add(*std::move(lowered)));
     // Every operand of a logical operator here is a stated predicate, so a
     // comparison's own 1-bit answer is reduced where it is produced.
     const mir::ExprId here = ReduceToCondition(unit, block, matched);

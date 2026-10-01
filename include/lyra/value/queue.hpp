@@ -141,6 +141,12 @@ class Queue {
     return data_[i];
   }
 
+  // The element type's default (LRM Table 7-1), the shape an out-of-range read
+  // returns and a derived container seeds its own out-of-range source with.
+  [[nodiscard]] auto ElementDefault() const -> const T& {
+    return shield_.Default();
+  }
+
   [[nodiscard]] auto ToOwned() const -> Queue {
     return *this;
   }
@@ -233,13 +239,6 @@ class Queue {
     return total;
   }
 
-  // LRM Table 6-7: a queue's default is the empty queue. When this container
-  // is itself the discard sink of an outer container, the outer scrubs it to
-  // canonical state before handing out a reference.
-  auto ResetToDefault() -> void {
-    data_.clear();
-  }
-
   // LRM 11.4.11: the two arms of a conditional operator whose condition is
   // ambiguous, combined element by element -- an element the arms agree on
   // survives, and one they disagree on, or cannot know, takes the element
@@ -249,7 +248,7 @@ class Queue {
   [[nodiscard]] auto MergeConditional(const Queue& other) const -> Queue {
     Queue result = *this;
     if (RawSize() != other.RawSize()) {
-      result.ResetToDefault();
+      result.data_.clear();
       return result;
     }
     for (std::size_t i = 0; i < result.data_.size(); ++i) {
@@ -577,7 +576,6 @@ static_assert(Indexable<Queue<PackedArray>>);
 // so despite the matching arity it carries its own `Slice` rather than claiming
 // that concept.
 static_assert(Ownable<Queue<PackedArray>>);
-static_assert(Defaultable<Queue<PackedArray>>);
 static_assert(ConditionallyMergeable<Queue<PackedArray>>);
 static_assert(Sortable<Queue<PackedArray>>);
 static_assert(OrdinalElements<Queue<PackedArray>>);

@@ -11,6 +11,9 @@
 #include "lyra/runtime/member_slots.hpp"
 #include "lyra/runtime/scope_program.hpp"
 #include "lyra/support/member_layout.hpp"
+#include "lyra/support/tuple_operations.hpp"
+#include "lyra/support/value_domain.hpp"
+#include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/runtime_value.hpp"
 
 namespace lyra::runtime {
@@ -25,6 +28,21 @@ auto HasBody(const ClosureBody& body) -> bool {
           [](const PerElementBody& b) { return b.run != nullptr; },
           [](const ValueBody& b) { return b.run != nullptr; }},
       body);
+}
+
+// What a body answering a value built in storage given here, taken out of it.
+// A tuple is built in storage its own type sizes, which the runtime then holds
+// it in; every other value fits storage laid out for any value.
+template <typename Run>
+auto Answered(
+    support::ValueDomain domain, const support::TupleOperations* tuple, Run run)
+    -> value::RuntimeValue {
+  if (tuple != nullptr) {
+    return value::RuntimeValue{
+        value::RuntimeTuple::Built(*tuple, [&](void* out) { run(out); })};
+  }
+  AnswerStorage answer{};
+  return TakeValue(domain, run(answer.bytes.data()));
 }
 
 // The capture schema, checked before any storage is built from it, because a
@@ -98,12 +116,10 @@ auto ClosureValue::RunPerElement(
         "this as a bug");
   }
   // The element and the index are borrowed for the call: the container holds
-  // them and the body only reads them. The answer is built in storage given
-  // here, and taken out of it.
-  AnswerStorage answer{};
-  return TakeValue(
-      body->result_domain,
-      body->run(this, HandleOf(item), HandleOf(index), answer.bytes.data()));
+  // them and the body only reads them.
+  return Answered(body->result_domain, body->result_tuple, [&](void* out) {
+    return body->run(this, HandleOf(item), HandleOf(index), out);
+  });
 }
 
 auto ClosureValue::RunValue() -> value::RuntimeValue {
@@ -113,9 +129,9 @@ auto ClosureValue::RunValue() -> value::RuntimeValue {
         "ClosureValue: this body is not one that answers a value on its own "
         "-- please report this as a bug");
   }
-  // The answer is built in storage given here, and taken out of it.
-  AnswerStorage answer{};
-  return TakeValue(body->result_domain, body->run(this, answer.bytes.data()));
+  return Answered(body->result_domain, body->result_tuple, [&](void* out) {
+    return body->run(this, out);
+  });
 }
 
 }  // namespace lyra::runtime

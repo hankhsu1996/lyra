@@ -112,12 +112,12 @@ Rust cannot.
    compressed early takes its collisions up with it, invisibly.
 
 2. **The key's parts hold identities, not renderings.** A value's identity is its constant; a type's
-   is its structure, except a class, which SystemVerilog identifies by its declaration (LRM 8.3) and
-   which therefore carries the unit that declares it; an interface's is the name of the unit it
-   instantiates, which is already how a unit is identified across the boundary. All of it excludes
-   arena ids, source spans, and any name that does not participate in identity. Ordering is
-   normalized so the result does not depend on traversal or enumeration order
-   (`specialization_model.md` inv 6).
+   is its structure, except a class and an unpacked structure, which SystemVerilog identifies by
+   their declarations (LRM 8.3, 6.22.1) and which therefore carry the unit that declares them; an
+   interface's is the name of the unit it instantiates, which is already how a unit is identified
+   across the boundary. All of it excludes arena ids, source spans, and any name that does not
+   participate in identity. Ordering is normalized so the result does not depend on traversal or
+   enumeration order (`specialization_model.md` inv 6).
 
    **A value is held as one spelling that is both its identity and what the name is folded from.**
    The name is a hash of the key's bytes, so those bytes have to tell every two values apart

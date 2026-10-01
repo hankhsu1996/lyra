@@ -92,11 +92,13 @@ void WriteDeclaration(
 }
 
 // `namespace N {` and its closing `}  // namespace N`.
-inline void OpenNamespace(TargetText& out, SourceName name) {
+template <typename Name>
+void OpenNamespace(TargetText& out, const Name& name) {
   Write(out, "namespace ", name, " {\n");
 }
 
-inline void CloseNamespace(TargetText& out, SourceName name) {
+template <typename Name>
+void CloseNamespace(TargetText& out, const Name& name) {
   Write(out, "}  // namespace ", name, "\n");
 }
 
@@ -105,6 +107,20 @@ inline void CloseNamespace(TargetText& out, SourceName name) {
 inline void AppendSection(TargetText& out, const TargetText& section) {
   const TargetText::Section placed(out);
   out += section.View();
+}
+
+// The same, inside the namespace `name`, which is opened only around text
+// there is.
+template <typename Name>
+void AppendSectionInNamespace(
+    TargetText& out, const Name& name, const TargetText& section) {
+  if (section.View().empty()) {
+    return;
+  }
+  const TargetText::Section placed(out);
+  OpenNamespace(out, name);
+  out += section.View();
+  CloseNamespace(out, name);
 }
 
 }  // namespace lyra::backend::cpp

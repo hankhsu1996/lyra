@@ -14,8 +14,8 @@ namespace lyra::support {
 // what an entry builds for one use -- what a print is assembled from, what a
 // wait registers, a write in progress into storage a wrapper stands for, a part
 // designated within one -- and what the generated side holds for a while --
-// the owner of a closure, an execution, a hold on a promoted scope, a
-// reference to storage somebody else owns.
+// the owner of a closure, an execution, a counted hold on a value, a reference
+// to storage somebody else owns.
 enum class LibraryObject : std::uint8_t {
   kClosure,
   kPrintItem,
@@ -31,7 +31,7 @@ enum class LibraryObject : std::uint8_t {
   kChannelCancellation,
   kErasedValue,
   kExecution,
-  kPromotedScope,
+  kSharedPointer,
   kOpenWrite,
   kDesignation,
   kObjectWrite,
@@ -41,8 +41,10 @@ enum class LibraryObject : std::uint8_t {
 // An object generated code holds by value: it gives the object storage in its
 // own frame, the library builds the object there, and the object ends where
 // the program that made it says. A value of every domain is one, and so is
-// each library object. What the library keeps for the whole run, and storage
-// an owner holds, is reached by address instead and is not one of these.
+// each library object -- except a tuple, which generated code lays out itself
+// as its type states; the tuple domain's object is how the library holds one.
+// What the library keeps for the whole run, and storage an owner holds, is
+// reached by address instead and is not one of these.
 //
 // Two sides name it, as they do a value domain: a backend gives the storage
 // and calls the entries that build and end an object, and the runtime defines
@@ -75,7 +77,7 @@ constexpr auto LayoutOf(ValueDomain domain) -> ObjectLayout {
     case ValueDomain::kEmpty:
       return {.size = 1, .align = 1, .ends_with_nothing_to_do = true};
     case ValueDomain::kTuple:
-      return {.size = 24, .align = 8, .ends_with_nothing_to_do = false};
+      return {.size = 8, .align = 8, .ends_with_nothing_to_do = false};
     case ValueDomain::kUnion:
       return {.size = 32, .align = 8, .ends_with_nothing_to_do = false};
     case ValueDomain::kTaggedUnion:
@@ -124,8 +126,8 @@ constexpr auto LayoutOf(LibraryObject object) -> ObjectLayout {
       return {.size = 112, .align = 8, .ends_with_nothing_to_do = false};
     case LibraryObject::kExecution:
       return {.size = 8, .align = 8, .ends_with_nothing_to_do = false};
-    case LibraryObject::kPromotedScope:
-      return {.size = 24, .align = 8, .ends_with_nothing_to_do = false};
+    case LibraryObject::kSharedPointer:
+      return {.size = 16, .align = 8, .ends_with_nothing_to_do = false};
     case LibraryObject::kOpenWrite:
       return {.size = 288, .align = 8, .ends_with_nothing_to_do = false};
     case LibraryObject::kDesignation:

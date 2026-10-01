@@ -98,11 +98,23 @@ class ObjectRef {
     return ManagedRef::IsUnknown();
   }
 
-  // LRM 8.4 / Table 6-7: an uninitialized reference is null, which for this one
-  // means naming no object and assuming no class.
-  auto ResetToDefault() -> void {
-    handle_.ResetToDefault();
-    view_ = nullptr;
+  // LRM 6.24.3 streams a class object as its members, which is not carried out
+  // yet; the execution backend answers a handle the same way. A structure with
+  // a handle member asks these only where the program measures it.
+  [[noreturn]] static auto BitstreamWidth() -> PackedArray {
+    throw SimulationError(
+        "$bits of a class object is not yet supported on this backend; please "
+        "open an issue asking for support");
+  }
+  [[noreturn]] static auto ToBitstream() -> PackedArray {
+    throw SimulationError(
+        "reading this value as a stream of bits is not yet supported on this "
+        "backend; please open an issue asking for support");
+  }
+  // LRM 20.9 counts over the bit stream.
+  [[nodiscard]] static auto CountBits(const PackedArray& control_bits)
+      -> PackedArray {
+    return ToBitstream().CountBits(control_bits);
   }
 
   explicit operator bool() const {
@@ -116,7 +128,6 @@ class ObjectRef {
 
 static_assert(LyraValue<ObjectRef>);
 static_assert(CaseEqualComparable<ObjectRef>);
-static_assert(Defaultable<ObjectRef>);
 static_assert(!Ordered<ObjectRef>);
 static_assert(!WildcardComparable<ObjectRef>);
 

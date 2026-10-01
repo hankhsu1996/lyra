@@ -200,9 +200,9 @@ arithmetic (`+` / `-` / `*` / `/` / `**`), unary negation, relational (`<` / `<=
 returning a 1-bit `PackedArray`), equality (`==` / `!=` returning 1-bit `PackedArray`),
 `IsBitIdentical` via `std::bit_cast<std::uint64_t>(double)` so `+0.0` / `-0.0` and NaN bit-patterns
 classify by identity (required for LRM 9.4.2 update-event detection), and the SV `int<->real`
-conversions. HIR-to-MIR's observable wrap rule treats `RealType` / `ShortRealType` / `RealTimeType`
-like any other value-storage type; a module-level `real` signal is observable through the same
-mechanism as a module-level `int` signal.
+conversions. HIR-to-MIR's observable wrap rule treats `RealType` / `ShortRealType` like any other
+value-storage type (a `realtime` is a `real` there, LRM 6.12); a module-level `real` signal is
+observable through the same mechanism as a module-level `int` signal.
 
 ## Forbidden shapes
 

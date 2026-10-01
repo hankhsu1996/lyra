@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/net_resolution.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
@@ -69,10 +70,14 @@ class RuntimeUnion {
   [[nodiscard]] static auto AcrossMembers(
       const RuntimeUnion& a, const RuntimeUnion& b) -> RuntimeUnion;
 
-  // Net resolution under the fold `fold` names (LRM 6.6). Two contributions
+  // Net resolution under each truth table (LRM 6.6). Two contributions
   // carrying the same member fold that member.
-  [[nodiscard]] auto ResolveNet(
-      const RuntimeUnion& other, NetResolution fold) const -> RuntimeUnion;
+  [[nodiscard]] auto ResolveTriState(const RuntimeUnion& other) const
+      -> RuntimeUnion;
+  [[nodiscard]] auto ResolveWiredAnd(const RuntimeUnion& other) const
+      -> RuntimeUnion;
+  [[nodiscard]] auto ResolveWiredOr(const RuntimeUnion& other) const
+      -> RuntimeUnion;
 
   // What a stronger contribution leaves a weaker one (LRM 28.12.1).
   [[nodiscard]] auto Dominating(const RuntimeUnion& weaker) const
@@ -92,6 +97,11 @@ class RuntimeUnion {
   [[nodiscard]] auto IsUnknown() const -> PackedArray;
 
  private:
+  // The active members of two contributions folded under one table; the three
+  // tables differ only in the member's own fold.
+  [[nodiscard]] auto FoldedWith(
+      const RuntimeUnion& other, NetResolution fold) const -> RuntimeUnion;
+
   std::size_t active_index_ = 0;
   // A single active member. Held in a vector so the header tolerates the
   // incomplete `RuntimeValue`, the same idiom the runtime aggregates share; it

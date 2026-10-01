@@ -323,34 +323,16 @@ cross-check predicts. This file owns only which instances are known and what is 
 
 ## An aggregate's members
 
-- [x] T8 -- An aggregate the source declared keeps its member names through lowering, so what a
-      value renders as is settled by its type rather than left outside it. The argument this item
-      said it needed first was re-opened and went the other way from the settled decision: the
-      language renders a value by the names its type declares (LRM 21.2.1.6), so the names are
-      observable behaviour rather than presentation, and a shape-interned product has no key to hang
-      them off. Reaching a member is unchanged and stays positional, which is what every IR that
-      carries a record type does -- the item as first written asked for a named access too, and the
-      survey did not support it.
-
-      What the item had underestimated is how far the same root reached. It named the unpacked
-      structure; the union, the tagged union, and both packed aggregates had lost their names the
-      same way, the packed pair by having no type of their own at all below the front end. All five
-      now name their members, and each projects to the representation it already had -- the product,
-      or the single vector -- so no value operation and no runtime realization changed.
-
-      **The names existing below the front end was the precondition, not the whole of it.** What
-      still has to reach the formatter is described in [`display.md`](display.md), whose recorded gap
-      names the mechanism: a print item that carries how its elements render. A container's elements
-      are counted at run time, so nothing composed at the lowering can reach them -- which is why the
-      one place this works today, an enumeration written as the whole operand, works only there.
-
-      Giving the packed pair a type of their own is what turned seven latent wrong answers into
-      build-visible ones: every site that had asked "is this integral?" by testing for the plain
-      vector stopped seeing a packed aggregate, and each was a question about integrality that had
-      been spelled as a question about one alternative. Two more sites had been reading the anonymous
-      product to mean a declared structure.
+- [x] T8 -- What a value of a declared aggregate renders as is settled by its type (LRM 21.2.1.6),
+      for a structure, a union and a tagged union, packed or unpacked, and for one a container
+      holds. The rendering is computation built from the source type, so the member names it prints
+      are the declaring type's own, and below the front end an aggregate is the generic type its
+      value is -- a product, a union, a sum, or the single vector a packed one projects onto. An
+      unpacked structure is its declaration there too (LRM 6.22.1), so two with the same member
+      types are two types, each printing its own names. Reaching a member stays positional, which is
+      what every IR that carries a record type does.
       [aggregate-names-are-type-content](../decisions/aggregate-names-are-type-content.md) holds the
-      argument, and what the two superseded records keep.
+      argument that first put the names on the type, and why it no longer holds.
 
 - [x] T38 -- A member access reads the receiver it states, for every kind of member it reaches. A
       capture of a closure is a member of the closure reached through the closure its body runs

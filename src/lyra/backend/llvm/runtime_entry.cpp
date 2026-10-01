@@ -95,22 +95,20 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "object_make";
     case RuntimeOp::kObjectDeref:
       return "object_deref";
-    case RuntimeOp::kMakePromotedScope:
-      return "make_promoted_scope";
-    case RuntimeOp::kPromotedScopeDeref:
-      return "promoted_scope_deref";
+    case RuntimeOp::kSharedCellMake:
+      return "shared_cell_make";
+    case RuntimeOp::kSharedPointerDeref:
+      return "shared_pointer_deref";
     case RuntimeOp::kMethod:
       return "method";
-    case RuntimeOp::kClassFindProperty:
-      return "class_find_property";
-    case RuntimeOp::kClassFindBehavior:
-      return "class_find_behavior";
     case RuntimeOp::kConst:
       return "const";
     case RuntimeOp::kToBool:
       return "to_bool";
     case RuntimeOp::kValueBox:
       return "value_box";
+    case RuntimeOp::kHeld:
+      return "held";
     case RuntimeOp::kMake:
       return "make";
     case RuntimeOp::kTagMatches:
@@ -244,7 +242,6 @@ auto MemberSlotRoleOf(const lir::TypeDeclaration& declaration)
           [](const lir::CrossUnitClassType&) {
             return MemberSlotRole::kVariable;
           },
-          [](const lir::StructType&) { return MemberSlotRole::kVariable; },
           [](const lir::ClosureType&) { return MemberSlotRole::kSnapshot; }},
       declaration);
 }
@@ -324,7 +321,7 @@ auto MemberStorageKindOf(
               case lir::PointerOwnership::kBorrowed:
                 return support::MemberStorageKind::kBorrowedHandle;
               case lir::PointerOwnership::kShared:
-                return support::MemberStorageKind::kPromotedScope;
+                return support::MemberStorageKind::kSharedPointer;
             }
             throw InternalError("llvm codegen: unknown pointer ownership");
           },
@@ -399,8 +396,6 @@ auto MemberStorageKindOf(
           [&](const lir::ManagedRefType& t) { return value_of(t); },
           [&](const lir::ChandleType& t) { return value_of(t); },
           [&](const lir::PackedArrayType& t) { return value_of(t); },
-          [&](const lir::PackedStructType& t) { return value_of(t); },
-          [&](const lir::PackedUnionType& t) { return value_of(t); },
           [&](const lir::UnpackedArrayType& t) { return value_of(t); },
           [&](const lir::DynamicArrayType& t) { return value_of(t); },
           [&](const lir::QueueType& t) { return value_of(t); },
@@ -408,18 +403,17 @@ auto MemberStorageKindOf(
           [&](const lir::StringType& t) { return value_of(t); },
           [&](const lir::RealType& t) { return value_of(t); },
           [&](const lir::ShortRealType& t) { return value_of(t); },
-          [&](const lir::RealTimeType& t) { return value_of(t); },
           [&](const lir::TupleType& t) { return value_of(t); },
-          [&](const lir::UnpackedStructType& t) { return value_of(t); },
+          [&](const lir::StructType& t) { return value_of(t); },
           [&](const lir::UnionType& t) { return value_of(t); },
           [&](const lir::TaggedUnionType& t) { return value_of(t); },
           [&](const lir::EmptyType& t) { return value_of(t); },
           // The rest name no storage a member can be. A machine primitive is a
           // computed value rather than a declaration's storage; an object-tree
-          // node, a generated storage record, a closure, a coroutine and a
-          // runtime facade are reached through a handle, so a member holding
-          // one holds that handle and arrives here as its own type; and a
-          // wildcard index and `void` have no runtime realization at all.
+          // node, a closure, a coroutine and a runtime facade are reached
+          // through a handle, so a member holding one holds that handle and
+          // arrives here as its own type; and a wildcard index and `void` have
+          // no runtime realization at all.
           [&](const lir::WildcardIndexType& t) { return none(t); },
           [&](const lir::MachineCStringType& t) { return none(t); },
           [&](const lir::MachineBoolType& t) { return none(t); },
@@ -429,7 +423,6 @@ auto MemberStorageKindOf(
           [&](const lir::VoidType& t) { return none(t); },
           [&](const lir::ObjectType& t) { return none(t); },
           [&](const lir::ExternalUnitObjectType& t) { return none(t); },
-          [&](const lir::StructType& t) { return none(t); },
           [&](const lir::CrossUnitClassType& t) { return none(t); },
           [&](const lir::OpaqueObjectType& t) { return none(t); },
           [&](const lir::RuntimeClassType& t) { return none(t); },
@@ -481,7 +474,7 @@ auto DeclaredStorageOf(
       return declared(domain_of(type));
     case support::MemberStorageKind::kBorrowedHandle:
     case support::MemberStorageKind::kReference:
-    case support::MemberStorageKind::kPromotedScope:
+    case support::MemberStorageKind::kSharedPointer:
     case support::MemberStorageKind::kNamedEvent:
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
@@ -637,6 +630,13 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRealtoa:
     case support::BuiltinFn::kIsUnknown:
     case support::BuiltinFn::kCountBits:
+    case support::BuiltinFn::kBitIdentical:
+    case support::BuiltinFn::kHasUnknown:
+    case support::BuiltinFn::kResolveTriState:
+    case support::BuiltinFn::kResolveWiredAnd:
+    case support::BuiltinFn::kResolveWiredOr:
+    case support::BuiltinFn::kDominating:
+    case support::BuiltinFn::kFilledLike:
     case support::BuiltinFn::kClog2:
     case support::BuiltinFn::kLn:
     case support::BuiltinFn::kLog10:

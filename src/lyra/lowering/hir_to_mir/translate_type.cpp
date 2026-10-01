@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -8,8 +9,12 @@
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
+#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/mir/struct_decl.hpp"
+#include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_declaration_ref.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -41,9 +46,8 @@ auto DeclaresObjects(const hir::TypePool& types, hir::TypeId type) -> bool {
 // Projects a recursive HIR packed array onto MIR's flat single-vector shape
 // (LRM 7.4.1). A scalar-bit terminal contributes how many states its bits have
 // and this one dimension; any other element (a nested packed array, or a packed
-// aggregate's
-// single-vector projection) contributes its own flat dimensions, onto which
-// this dimension prepends.
+// aggregate's single-vector projection) contributes its own flat dimensions,
+// onto which this dimension prepends.
 auto FlattenPackedArray(
     const UnitLowerer& unit_lowerer, const hir::PackedArrayType& pa)
     -> mir::PackedArrayType {
@@ -85,28 +89,58 @@ auto FlattenPackedAggregate(
   };
 }
 
-// The declared members of an aggregate, name and type in declaration order.
-// Where a packed member physically sits is not among them, being derived from
-// the kind of aggregate and the widths before it; nor is an unpacked member's
-// own declaration initializer (LRM 7.2.2), which is the value a default
-// construction composes at the site that needs one rather than part of what the
-// type is.
+// The types of an unpacked aggregate's members, in declaration order, which is
+// the position an access reaches each by. A member's own declaration
+// initializer (LRM 7.2.2) is not part of what the type is: it is the value a
+// default construction composes at the site that needs one.
 template <typename Field>
-auto TranslateMembers(
+auto TranslateMemberTypes(
     UnitLowerer& unit_lowerer, const std::vector<Field>& fields)
-    -> std::vector<mir::AggregateMember> {
-  std::vector<mir::AggregateMember> members;
-  members.reserve(fields.size());
+    -> std::vector<mir::TypeId> {
+  std::vector<mir::TypeId> types;
+  types.reserve(fields.size());
   for (const Field& field : fields) {
-    members.push_back(
-        mir::AggregateMember{
-            .name = field.name,
-            .type = unit_lowerer.TranslateType(field.type)});
+    types.push_back(unit_lowerer.TranslateType(field.type));
   }
-  return members;
+  return types;
 }
 
 }  // namespace
+
+auto UnitLowerer::TranslateStructType(const hir::UnpackedStructType& src)
+    -> mir::StructType {
+  if (src.declaration.unit_name == unit_.name) {
+    return mir::StructType{.declaration = unit_.structs.Declare()};
+  }
+  mir::TypeDeclarationRef declaration{
+      .unit_name = src.declaration.unit_name, .name = src.declaration.name};
+  // A struct another unit declares brings that unit's statement of its
+  // operations with it, which is a dependency on that unit.
+  unit_.ConsumeNamespaceOf(declaration.unit_name);
+  if (mir::FindExternalStruct(unit_, declaration) == nullptr) {
+    unit_.external_structs.push_back(
+        mir::ExternalStruct{
+            .declaration = declaration,
+            .elements = TranslateMemberTypes(*this, src.fields)});
+  }
+  return mir::StructType{.declaration = std::move(declaration)};
+}
+
+void UnitLowerer::DefineOwnStruct(
+    const hir::UnpackedStructType& src, mir::StructId id,
+    mir::TypeId structure) {
+  std::vector<mir::TypeId> elements = TranslateMemberTypes(*this, src.fields);
+  std::vector<mir::StructMethod> methods = StructMethodsOf(
+      *this,
+      mir::TypeDeclarationRef{
+          .unit_name = unit_.name, .name = src.declaration.name},
+      structure, elements);
+  unit_.structs.Define(
+      id, mir::StructDecl{
+              .name = src.declaration.name,
+              .elements = std::move(elements),
+              .methods = std::move(methods)});
+}
 
 auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
   return type.Visit(
@@ -122,17 +156,16 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           [&](const hir::PackedArrayType& src) -> mir::Type {
             return mir::Type{FlattenPackedArray(*this, src)};
           },
+          // A packed aggregate is the vector its members project onto: every
+          // value operation runs on that vector, and a member is reached as a
+          // part-select of it, which is settled before this layer.
           [&](const hir::PackedStructType& src) -> mir::Type {
-            return mir::Type{mir::PackedStructType{
-                .base = FlattenPackedAggregate(
-                    ProjectPackedAggregate(*this, type), src.signedness),
-                .members = TranslateMembers(*this, src.fields)}};
+            return mir::Type{FlattenPackedAggregate(
+                ProjectPackedAggregate(*this, type), src.signedness)};
           },
           [&](const hir::PackedUnionType& src) -> mir::Type {
-            return mir::Type{mir::PackedUnionType{
-                .base = FlattenPackedAggregate(
-                    ProjectPackedAggregate(*this, type), src.signedness),
-                .members = TranslateMembers(*this, src.fields)}};
+            return mir::Type{FlattenPackedAggregate(
+                ProjectPackedAggregate(*this, type), src.signedness)};
           },
           [&](const hir::EnumType& src) -> mir::Type {
             // An enumeration keeps a MIR type of its own, carrying its base's
@@ -163,25 +196,24 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             }};
           },
           [&](const hir::UnpackedStructType& src) -> mir::Type {
-            return mir::Type{mir::UnpackedStructType{
-                .members = TranslateMembers(*this, src.fields)}};
+            return mir::Type{TranslateStructType(src)};
           },
           [&](const hir::UnpackedUnionType& src) -> mir::Type {
             // The untagged overlapping-storage form (LRM 7.3) maps to
             // `UnionType`; the tagged, type-checked sum form (LRM 7.3.2) to
             // `TaggedUnionType` -- MIR keeps them as distinct types because
             // their value spaces and access semantics genuinely differ.
-            std::vector<mir::AggregateMember> members =
-                TranslateMembers(*this, src.fields);
+            std::vector<mir::TypeId> members =
+                TranslateMemberTypes(*this, src.fields);
             if (!src.tagged) {
               return mir::Type{mir::UnionType{.members = std::move(members)}};
             }
             // A `void` member (LRM 7.3.2) occupies a value slot, so its
             // component is the type carrying no information rather than the
             // absence of a type the SV keyword otherwise names.
-            for (mir::AggregateMember& member : members) {
-              if (unit_.types.Get(member.type).Is<mir::VoidType>()) {
-                member.type = unit_.types.Intern(mir::Type{mir::EmptyType{}});
+            for (mir::TypeId& member : members) {
+              if (unit_.types.Get(member).Is<mir::VoidType>()) {
+                member = unit_.types.Intern(mir::Type{mir::EmptyType{}});
               }
             }
             return mir::Type{
@@ -237,8 +269,9 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           [](const hir::ShortRealType&) -> mir::Type {
             return mir::Type{mir::ShortRealType{}};
           },
+          // LRM 6.12: `realtime` is synonymous with `real`.
           [](const hir::RealTimeType&) -> mir::Type {
-            return mir::Type{mir::RealTimeType{}};
+            return mir::Type{mir::RealType{}};
           },
           [](const hir::ChandleType&) -> mir::Type {
             return mir::Type{mir::ChandleType{}};

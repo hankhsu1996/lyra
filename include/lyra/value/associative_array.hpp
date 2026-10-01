@@ -218,13 +218,6 @@ class AssociativeArray {
     data_.erase(key);
   }
 
-  // LRM Table 6-7: an associative array's default is empty. When this container
-  // is itself the canonical-default slot of an outer container, the outer
-  // restores it to canonical state before handing out a reference.
-  auto ResetToDefault() -> void {
-    data_.clear();
-  }
-
   // LRM 7.8.6 / 7.9.11: a read of a nonexistent or invalid key returns the
   // user-specified default if one was set, otherwise the element-type default,
   // without allocating.
@@ -588,7 +581,6 @@ static_assert(LyraValue<AssociativeArray<PackedArray, PackedArray>>);
 static_assert(Sized<AssociativeArray<String, PackedArray>>);
 static_assert(BitstreamSizable<AssociativeArray<String, PackedArray>>);
 static_assert(AssocIndexable<AssociativeArray<String, PackedArray>, String>);
-static_assert(Defaultable<AssociativeArray<String, PackedArray>>);
 static_assert(IndexTraversal<AssociativeArray<String, PackedArray>, String>);
 static_assert(
     IndexTraversal<AssociativeArray<PackedArray, PackedArray>, PackedArray>);

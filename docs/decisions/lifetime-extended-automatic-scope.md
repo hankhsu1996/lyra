@@ -1,6 +1,6 @@
 # Lifetime-extended automatic scope storage
 
-Date: 2026-06-24 Status: accepted
+Date: 2026-06-24 (revised 2026-09-30: each lifted local is its own cell) Status: accepted
 
 ## Context
 
@@ -47,54 +47,55 @@ Two facts make the revision clean:
 
 ## Decision
 
-**An automatic lexical scope that may be borrowed by a process able to outlive it is realized as an
-explicit, shared-owned activation object rather than as coroutine-frame locals. The activation is
-reached through a handle exactly as a callable reaches its enclosing object through `self`: the
-handle is a pointer, and a promoted local is a member read as `handle->local`. The handle's type is
-`PointerType{kShared}` -- a shared pointer to the activation, the first producer of `kShared`.**
+**An automatic local that may be borrowed by a process able to outlive its scope is realized as a
+shared-owned cell rather than as a coroutine-frame local. The cell is reached through a handle
+exactly as a callable reaches its enclosing object through `self`: the handle is a pointer, and the
+local is the cell the handle points at, `*handle`. The handle's type is `PointerType{kShared}` -- a
+shared pointer to the cell, the only producer of `kShared`.**
 
-The handle is the whole mechanism. In the scope that declares the locals it is an ordinary local
-variable holding the shared pointer. A detached branch that borrows a promoted local captures that
-handle by value -- a shared-pointer copy, exactly how `self` is captured (a by-value pointer copy)
-and how a `move` closure in Rust captures an `Rc`. That single by-value capture does both jobs at
-once: the copy keeps the activation alive, and member access through it (`handle->local`) reads and
-writes the cell. There is no separate reference-into-the-cell and no separate lifetime token; the
-captured shared handle is both, which is ordinary shared-pointer practice.
+The handle is the whole mechanism. In the scope that declares the local it is an ordinary local
+variable holding the shared pointer. A detached branch that borrows the local captures that handle
+by value -- a shared-pointer copy, exactly how `self` is captured (a by-value pointer copy) and how
+a `move` closure in Rust captures an `Rc`. That single by-value capture does both jobs at once: the
+copy keeps the cell alive, and dereferencing it reads and writes the cell. There is no separate
+reference-into-the-cell and no separate lifetime token; the captured shared handle is both, which is
+ordinary shared-pointer practice.
 
 The model in detail:
 
-- **Granularity is the lexical automatic scope** -- a begin-end block of automatics, or a task body
-  -- not a single variable, and not automatically the whole task frame. When such a scope has a
-  detached borrowed descendant, the **entire** scope's slots are promoted into one activation
-  object. Promoting the whole scope (rather than only the escaping variable) keeps every reference
-  to a slot resolving to one logical cell, so a parent write and a branch read can never target
-  different backing. A nested automatic block whose lifetime differs gets its own activation owner.
+- **Which locals are lifted is decided per lexical scope; each lifted local is held on its own.** A
+  begin-end block of automatics, or a task body, whose locals a detached branch borrows has those
+  locals lifted, each into a cell of its own. Every reference to a lifted local -- in the declaring
+  scope and in any branch -- resolves through that local's one binding to its one cell, so a parent
+  write and a branch read can never target different backing. The cell is the variable's own (every
+  variable a waiting body declares is a cell,
+  [a-variable-a-body-declares-reports-its-writes](a-variable-a-body-declares-reports-its-writes.md)),
+  and a cell is storage that cannot be copied or moved, so it is held where it is made rather than
+  gathered into a value.
 
-- **A borrowing branch captures one handle per activation, by value.** Reaching the activation's
-  members needs only the handle, so a branch that borrows several locals of one activation captures
-  that activation's handle once and reads each local as `handle->local`; the dedup is the ordinary
-  one-capture-per-captured-value, by activation identity, with nothing per variable. The capture
-  propagates through nested closures exactly as `self` does: a nested branch that reaches an outer
-  activation captures the handle at each closure boundary it crosses.
+- **A borrowing branch captures one handle per lifted local it names, by value.** The dedup is the
+  ordinary one-capture-per-captured-value, by the local's identity. The capture propagates through
+  nested closures exactly as `self` does: a nested branch that reaches an outer local captures its
+  handle at each closure boundary it crosses.
 
 - **Lifetime is creation-to-terminal-disposal, by shared-pointer refcount.** The declaring scope
   holds the original handle; each borrowing branch holds a by-value copy taken when its closure is
   constructed (before the parent can return, and without reading the cell, so the branch still
   observes parent writes made after the fork). A holder drops its copy when its frame is destroyed
   by any path -- normal completion, `disable fork`, named-block disable, `$finish` teardown. The
-  activation is freed when the last copy drops. This is plain RAII on the shared pointer; no
-  explicit acquire / release step exists.
+  cell is freed when the last copy drops. This is plain RAII on the shared pointer; no explicit
+  acquire / release step exists.
 
   **"When its frame is destroyed" is the target's answer, not the model's, and the two targets do
   not give the same one.** Where the frame is the emitted language's own, the declaring copy drops
-  at the declaring scope's exit, so the activation is freed as soon as the last branch is done with
-  it. Where the frame owns nothing and storage belongs to a runtime store instead, the declaring
-  copy drops when the whole execution ends -- the same moment for a process body, later than the
-  scope for a task call or an inner block. Every path still frees it and no path leaks it; what
-  differs is how long after the language says the scope ended. The activation ending later than its
-  scope is unobservable, because a program cannot spell a destructor and so cannot ask -- but it is
-  a real cost, it grows with how often the block is entered rather than with what the body declares,
-  and it is not what this decision says.
+  at the declaring scope's exit, so the cell is freed as soon as the last branch is done with it.
+  Where the frame owns nothing and storage belongs to a runtime store instead, the declaring copy
+  drops when the whole execution ends -- the same moment for a process body, later than the scope
+  for a task call or an inner block. Every path still frees it and no path leaks it; what differs is
+  how long after the language says the scope ended. The cell ending later than its scope is
+  unobservable, because a program cannot spell a destructor and so cannot ask -- but it is a real
+  cost, it grows with how often the block is entered rather than with what the body declares, and it
+  is not what this decision says.
 
   **Nor is it a difference the layer contract admits.** Dropping at the scope's exit is half of what
   the shared wrapper means -- the same half `Rc` and `shared_ptr` mean by it -- rather than one
@@ -107,20 +108,20 @@ The model in detail:
   once, since whichever one gets the end for free must not then emit it twice.
 
 - **`join_any` needs no special ownership rule.** A completed branch drops its handle copy;
-  remaining branches keep theirs; the parent may proceed and drop its own; the activation survives
-  exactly while any holder retains a copy.
+  remaining branches keep theirs; the parent may proceed and drop its own; the cell survives exactly
+  while any holder retains a copy.
 
-- **Shared-owned values are constructed by a generic MIR operation**, parallel to the `kUnique`
-  owned-object construction, not by a backend-only `make_shared` trick. Scope-activation lowering is
-  its first producer; the construction story is general so a future consumer reuses it.
+- **Shared-owned storage is constructed by a generic MIR operation**, parallel to the `kUnique`
+  owned-object construction, not by a backend-only `make_shared` trick. Lifting a local is its first
+  producer; the construction story is general so a future consumer reuses it.
 
 - **The ownership graph is a refcounted DAG; no tracing GC.** The invariant that keeps it acyclic:
-  the scheduler owns process objects; a process closure owns its by-value `Shared<activation>`
-  handle copies; an activation owns **only data slots** -- never a process, a closure, or a join
-  group. The join group stays a pure synchronization object and never owns scope storage, so no
-  `activation -> process -> activation` cycle can form.
+  the scheduler owns process objects; a process closure owns its by-value `Shared<cell>` handle
+  copies; a cell owns **only its value** -- never a process, a closure, or a join group. The join
+  group stays a pure synchronization object and never owns scope storage, so no
+  `cell -> process -> cell` cycle can form.
 
-The implementation surface is minimal now: the activation object and its shared handle for the
+The implementation surface is minimal now: the lifted cell and its shared handle for the
 detached-fork case. The `kShared` ownership contract is general (a copyable handle that retains on
 copy, releases on destruction, has stable identity, and yields borrowed access) so the mode is not
 fork-specific, but no broad "every runtime object is shared" facility is built ahead of a second
@@ -133,20 +134,21 @@ consumer.
   time the parent may have written the cell), or if two branches share a mutable local, a spawn-time
   snapshot reads a stale or unshared value. Wrong answers, not a crash.
 
-- **Per-variable boxing.** Promoting only the escaping local risks split-brain storage -- the parent
-  keeps writing the frame slot while the branch reads the box -- and spreads the storage decision
-  across every read, write, reference-construction, and projection of that local. Per-scope
-  promotion keeps one backing per slot.
+- **Gathering a scope's lifted locals into one struct behind one handle**, which this decision chose
+  until every variable a waiting body declares became a cell. A struct is a value, copied, moved and
+  built from a default, and a cell can be none of those, since waiters are registered on it. What
+  the struct was chosen against -- boxing only the escaping local, so the parent writes the frame
+  slot while the branch reads the box -- does not arise here: a lifted local's one binding is where
+  every reference to it resolves, so it has one backing whether it shares an allocation or not.
 
 - **Keep the C++ coroutine frame alive.** Ties SV lifetime correctness to the C++ compiler's
   coroutine-frame placement, is not portable to a non-coroutine backend, and conflates the SV
-  activation storage with the implementation frame. The activation is an explicit Lyra runtime
-  object instead.
+  variable's storage with the implementation frame. The cell is held explicitly instead.
 
-- **The join group owns the scope storage.** Would let an activation be reached through the join
-  group that retains the branches that retain the activation -- the cycle the DAG invariant forbids
-  -- and composes poorly when one branch borrows from several unrelated activations. Closure-held
-  handles compose; the join group stays a synchronization object.
+- **The join group owns the scope storage.** Would let a cell be reached through the join group that
+  retains the branches that retain the cell -- the cycle the DAG invariant forbids -- and composes
+  poorly when one branch borrows from several unrelated scopes. Closure-held handles compose; the
+  join group stays a synchronization object.
 
 ## Consequences
 
@@ -158,9 +160,9 @@ consumer.
   available to later consumers (e.g. dynamically allocated, reference-counted runtime objects);
   cycle collection, if a future consumer needs it, is a separate decision revisited against that
   consumer's semantics, not assumed here.
-- Only a scope with a detached borrowed descendant is promoted; the common path keeps frame locals,
-  so ordinary procedural code is unchanged. A read or write in a promoted scope carries one pointer
-  indirection.
+- Only a scope with a detached borrowed descendant lifts locals; the common path keeps frame locals,
+  so ordinary procedural code is unchanged. A read or write of a lifted local carries one pointer
+  indirection, and each lifted local is an allocation of its own.
 - A detached fork branch is the only lowered construct that both aliases an enclosing automatic and
   can outlive its owner scope, so this promotion trigger is complete, not partial. The other
   deferred and concurrent forms do not reach the case: a traced (`$strobe` / `$monitor`) context has
@@ -185,14 +187,13 @@ consumer.
   indistinguishable by the time the runtime sees them, and the storage schema is where the
   difference has to be kept.
 
-- Backend proof obligations the mechanism must satisfy: every reference to a promoted local -- read,
-  write, reference-construction, and member / index projection -- resolves to member access through
-  the activation handle (`handle->local`), not a bare name; in the declaring scope the handle is a
-  local, in a detached branch it is a by-value-captured copy; local declarations preserve their
-  initialization order and side effects when realized as activation members; the activation is
-  destroyed when the last handle copy drops, not when the parent returns; and no generated helper,
-  capture wiring, system-task lowering, or debug mapping emits a promoted local's bare name outside
-  this single resolution path.
+- Backend proof obligations the mechanism must satisfy: every reference to a lifted local -- read,
+  write, reference-construction, wait, and member / index projection -- resolves to the cell reached
+  through its handle, not a bare name; in the declaring scope the handle is a local, in a detached
+  branch it is a by-value-captured copy; local declarations preserve their initialization order and
+  side effects when they initialize lifted cells; the cell is destroyed when the last handle copy
+  drops, not when the parent returns; and no generated helper, capture wiring, system-task lowering,
+  or debug mapping emits a lifted local's bare name outside this single resolution path.
 
 ## Cross-references
 
@@ -200,7 +201,7 @@ consumer.
   fork-scope cases; this decision revises its rejection of escape-boxing and frame-retention for the
   explicitly-automatic case.
 - `architecture/callable.md` -- a capture is an owned field whose snapshot-versus-alias is its type;
-  the activation handle is a by-value capture of a `PointerType{kShared}`, reached like `self`,
+  a lifted local's handle is a by-value capture of a `PointerType{kShared}`, reached like `self`,
   needing no new capture-kind axis.
 - `architecture/scheduling.md` -- closure capture lifetime: a lowering capturing a procedural lvalue
   must establish the fire-before-frame-dies guarantee or refuse; this decision is the "establish the

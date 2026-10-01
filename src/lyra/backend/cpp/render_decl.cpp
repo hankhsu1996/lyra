@@ -23,6 +23,8 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
+#include "lyra/mir/struct_decl.hpp"
+#include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
 
 namespace lyra::backend::cpp {
@@ -51,6 +53,58 @@ void WriteReceiverBinding(
   Write(
       out, CppType(unit, code.locals.Get(receiver).type), " ",
       CppLocalName(code.named_locals, receiver), " = ", from..., ";\n");
+}
+
+// Whether a body receives the object it runs against as a value rather than
+// through a pointer, which is how a struct's method receives its struct: it
+// runs against a copy, so it cannot change the object it is called on.
+auto ReceivesAValue(
+    const mir::CompilationUnit& unit, const mir::CallableCode& code) -> bool {
+  return code.receiver.has_value() &&
+         !unit.types.Get(code.locals.Get(*code.receiver).type)
+              .Is<mir::PointerType>();
+}
+
+// `static ` for a member function entered on no object (LRM 8.10).
+auto StaticPrefix(const mir::CallableCode& code) -> std::string_view {
+  return code.receiver.has_value() ? "" : "static ";
+}
+
+// What a member function's declaration and its definition share after its
+// name, `(params) -> R`, with `const` for a body receiving its object as a
+// value.
+void WriteMemberSignatureTail(
+    const mir::CompilationUnit& unit, const mir::CallableCode& code,
+    TargetText& out) {
+  out += "(";
+  WriteParameters(unit, code, code.ParamsAfterReceiver(), out);
+  Write(
+      out, ")", ReceivesAValue(unit, code) ? " const" : "", " -> ",
+      CppType(unit, code.result_type));
+}
+
+// The definition of a member function -- a class's method (LRM 8.6), static
+// method (LRM 8.10), process or lifecycle body, or a struct's method -- written
+// outside its type so the body can use any type of the unit as a complete one.
+// The body starts by binding its receiver, because MIR reaches the object
+// through a parameter like any other: `C* self = this;` for an object reached
+// through a pointer, `S self = *this;` for a struct received as a value.
+template <typename Owner, typename Member>
+void RenderMemberFunctionDef(
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    const Owner& owner, const Member& member, const mir::CallableCode& code,
+    TargetText& out) {
+  Write(out, "auto ", owner, "::", member);
+  WriteMemberSignatureTail(unit, code, out);
+  out += " ";
+  WriteBody(out, [&] {
+    if (code.receiver.has_value()) {
+      WriteReceiverBinding(
+          unit, code, out, ReceivesAValue(unit, code) ? "*this" : "this");
+    }
+    RenderBlockStatements(ScopeView::ForCode(unit, code, refusals), out);
+  });
+  out += "\n";
 }
 
 // Each field is declared as `Type name{};` and nothing more. Its initial value,
@@ -107,12 +161,10 @@ void RenderClassCallableDecl(
     const mir::CallableDecl& m, TargetText& out) {
   const mir::CallableCode& code = m.code;
   out.OpenLine();
-  // Entered on no object (LRM 8.10).
-  if (!code.receiver.has_value()) out += "static ";
+  out += StaticPrefix(code);
   out += VirtualPrefix(m);
-  Write(out, "auto ", CppClassCallableName(unit, s, id), "(");
-  WriteParameters(unit, code, code.ParamsAfterReceiver(), out);
-  Write(out, ") -> ", CppType(unit, code.result_type));
+  Write(out, "auto ", CppClassCallableName(unit, s, id));
+  WriteMemberSignatureTail(unit, code, out);
   out += OverrideSuffix(m);
   // `= 0` also makes C++ treat the class as abstract.
   std::visit(
@@ -127,29 +179,15 @@ void RenderClassCallableDecl(
   out += ";\n";
 }
 
-// The definition of a class function -- a method (LRM 8.6), a static method
-// (LRM 8.10), a process, or a lifecycle body -- written outside the class so
-// its body can use any class of the unit as a complete type. A method's body
-// starts with `Cls* self = this;`, because MIR reaches the receiver through a
-// parameter like any other. A pure virtual has no definition.
+// A class function's definition. A pure virtual has none.
 void RenderClassCallableDef(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
     mir::ClassId cls_id, const mir::Class& s, mir::CallableId id,
     const mir::CallableDecl& m, TargetText& out) {
-  const mir::CallableCode& code = m.code;
   if (!std::holds_alternative<mir::DefinedHere>(mir::FormOf(m))) return;
-  Write(
-      out, "auto ", CppClassName(s, cls_id),
-      "::", CppClassCallableName(unit, s, id), "(");
-  WriteParameters(unit, code, code.ParamsAfterReceiver(), out);
-  Write(out, ") -> ", CppType(unit, code.result_type), " ");
-  WriteBody(out, [&] {
-    if (code.receiver.has_value()) {
-      WriteReceiverBinding(unit, code, out, "this");
-    }
-    RenderBlockStatements(ScopeView::ForCode(unit, code, refusals), out);
-  });
-  out += "\n";
+  RenderMemberFunctionDef(
+      unit, refusals, CppClassName(s, cls_id),
+      CppClassCallableName(unit, s, id), m.code, out);
 }
 
 // A runtime callback, declared `static` so `&C::sv_adapter_0` is a plain
@@ -220,18 +258,6 @@ void RenderConstructor(
     RenderBlockStatements(scope_view, code);
   });
   code += "\n";
-}
-
-// A struct the compiler made to hold a scope's variables: fields only, with no
-// base, constructor, or methods.
-void RenderStruct(
-    const mir::CompilationUnit& unit, mir::StructId id,
-    const mir::StructDecl& decl, TargetText& out) {
-  Write(out, "struct ", CppStructName(id), " {\n");
-  out.Indent();
-  RenderFieldList(unit, {}, decl.fields, out);
-  out.Outdent();
-  out += "};\n";
 }
 
 // A class's static constant: declared `static const T name;` in the class and
@@ -448,6 +474,36 @@ void RenderFreeCallable(
   out += "\n";
 }
 
+// A struct the unit declares: the library's product of its components, as a
+// struct of its own so that two structs with the same components stay two
+// types (LRM 6.22.1), whose member functions are the struct's methods --
+// declared in it, and defined apart from it once every struct of the unit is
+// declared.
+void RenderStruct(
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    mir::StructId id, TargetText& declared, TargetText& defined) {
+  const mir::StructDecl& decl = unit.GetStruct(id);
+  const CppName name = CppStructName(decl);
+  const CppTupleComponents components{.unit = &unit, .of = decl.elements};
+  const MintedWord base = CppTupleBaseName();
+  Write(declared, "struct ", name, " : ", components, " {\n");
+  declared.Indent();
+  declared.OpenLine();
+  Write(declared, "using ", base, " = ", components, ";\n");
+  declared.OpenLine();
+  Write(declared, "using ", base, "::", base, ";\n");
+  for (const mir::StructMethod& method : decl.methods) {
+    const VerbatimName member = CppStructMethodName(method.answers);
+    declared.OpenLine();
+    Write(declared, StaticPrefix(method.code), "auto ", member);
+    WriteMemberSignatureTail(unit, method.code, declared);
+    declared += ";\n";
+    RenderMemberFunctionDef(unit, refusals, name, member, method.code, defined);
+  }
+  declared.Outdent();
+  declared += "};\n";
+}
+
 }  // namespace
 
 auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
@@ -457,11 +513,6 @@ auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
     TargetText& out = mir::IsPromised(unit, id) ? text.signature : text.code;
     Write(out, "class ", CppClassName(unit.GetClass(id), id), ";\n");
   }
-  // A struct holds a scope's variables inside one function, so no other unit
-  // ever names it.
-  for (const mir::StructId id : unit.structs.Ids()) {
-    Write(text.code, "struct ", CppStructName(id), ";\n");
-  }
   return text;
 }
 
@@ -469,9 +520,6 @@ auto RenderUnitClasses(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
     -> UnitClasses {
   UnitClasses text;
-  for (const mir::StructId id : unit.structs.Ids()) {
-    RenderStruct(unit, id, unit.GetStruct(id), text.internal);
-  }
   std::vector<bool> emitted(unit.classes.size(), false);
   for (const mir::ClassId id : unit.classes.Ids()) {
     AppendClassInDependencyOrder(unit, refusals, id, emitted, text);
@@ -575,6 +623,25 @@ auto RenderUnitCallables(
       RenderFreeCallable(unit, refusals, id, callable, text.code);
     }
   }
+  return text;
+}
+
+auto RenderUnitStructs(
+    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
+    -> UnitText {
+  // Another unit names a struct by the declaration it answers to, so it is
+  // declared where that unit reads, in the unit's types namespace, and its
+  // methods are defined in the same namespace in the code file.
+  TargetText declared;
+  TargetText definitions;
+  for (const mir::StructId id : unit.structs.Ids()) {
+    const TargetText::Section declared_section(declared);
+    const TargetText::Section defined_section(definitions);
+    RenderStruct(unit, refusals, id, declared, definitions);
+  }
+  UnitText text;
+  AppendSectionInNamespace(text.signature, CppStructTypesNamespace(), declared);
+  AppendSectionInNamespace(text.code, CppStructTypesNamespace(), definitions);
   return text;
 }
 

@@ -68,7 +68,7 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
 auto AssembledFrom(const lir::Type& built, std::vector<lir::Operand> parts)
     -> lir::InstrData {
   if (built.IsProduct()) {
-    return lir::ProductInstr{.components = std::move(parts)};
+    return lir::TupleInstr{.components = std::move(parts)};
   }
   if (built.Is<lir::MachineArrayType>()) {
     return lir::ArrayInstr{.elements = std::move(parts)};
@@ -151,8 +151,6 @@ auto ObjectClassOf(const mir::TypePool& types, mir::TypeId handle)
           // something no object model covers.
           [&](const mir::PackedArrayType&) { return not_an_object(); },
           [&](const mir::EnumType&) { return not_an_object(); },
-          [&](const mir::PackedStructType&) { return not_an_object(); },
-          [&](const mir::PackedUnionType&) { return not_an_object(); },
           [&](const mir::UnpackedArrayType&) { return not_an_object(); },
           [&](const mir::DynamicArrayType&) { return not_an_object(); },
           [&](const mir::QueueType&) { return not_an_object(); },
@@ -168,7 +166,6 @@ auto ObjectClassOf(const mir::TypePool& types, mir::TypeId handle)
           [&](const mir::EventType&) { return not_an_object(); },
           [&](const mir::RealType&) { return not_an_object(); },
           [&](const mir::ShortRealType&) { return not_an_object(); },
-          [&](const mir::RealTimeType&) { return not_an_object(); },
           [&](const mir::ChandleType&) { return not_an_object(); },
           [&](const mir::VoidType&) { return not_an_object(); },
           [&](const mir::EmptyType&) { return not_an_object(); },
@@ -182,7 +179,6 @@ auto ObjectClassOf(const mir::TypePool& types, mir::TypeId handle)
           [&](const mir::ManagedRefType&) { return not_an_object(); },
           [&](const mir::VectorType&) { return not_an_object(); },
           [&](const mir::TupleType&) { return not_an_object(); },
-          [&](const mir::UnpackedStructType&) { return not_an_object(); },
           [&](const mir::UnionType&) { return not_an_object(); },
           [&](const mir::TaggedUnionType&) { return not_an_object(); },
           [&](const mir::ObservableType&) { return not_an_object(); },
@@ -342,6 +338,15 @@ auto FunctionLowerer::LowerCallTarget(
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{ExternalMethodSymbol(
                           t.unit_name, t.class_name, t.method_name)};
+                    },
+                    // Reached by the symbol its declaring unit emits it under,
+                    // from that unit and from any other alike.
+                    [&](const mir::StructMethodTarget& t)
+                        -> diag::Result<lir::CallTarget> {
+                      return lir::CallTarget{lir::SymbolTarget{
+                          .symbol = lir::StructMethodSymbol(
+                              t.declaration.unit_name, t.declaration.name,
+                              t.answers)}};
                     },
                     [&](const mir::ExternalUnitMintedEntryTarget& t)
                         -> diag::Result<lir::CallTarget> {
@@ -587,7 +592,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     const lir::ValueId slot = fn_.values.Add(
         lir::Local{
             .name = "completion",
-            .type = payload,
+            .type = CompletionCellType(payload),
             .kind = lir::LocalKind::kParam});
     fn_.params.push_back(slot);
     completion_cell_ =
@@ -1020,10 +1025,21 @@ auto FunctionLowerer::HandOn(lir::Operand value) -> lir::Operand {
           .target = lir::CopyValueTarget{}, .args = {std::move(value)}}));
 }
 
+auto FunctionLowerer::CompletionCellType(lir::TypeId payload) -> lir::TypeId {
+  return unit_->Types().Intern(
+      lir::Type{lir::PointerType{
+          .pointee = payload,
+          .ownership = lir::PointerOwnership::kBorrowed,
+          .mutability = lir::Mutability::kMutable}});
+}
+
 auto FunctionLowerer::AllocateCompletionFor(lir::TypeId payload)
     -> lir::Operand {
   const lir::ValueId result = fn_.values.Add(
-      lir::Local{.name = {}, .type = payload, .kind = lir::LocalKind::kTemp});
+      lir::Local{
+          .name = {},
+          .type = CompletionCellType(payload),
+          .kind = lir::LocalKind::kTemp});
   // Into the entry block rather than where the call stands, so a call inside a
   // loop writes into one place instead of leaving a fresh one behind on every
   // iteration.
@@ -1751,9 +1767,6 @@ auto FunctionLowerer::MemberRefOf(const mir::FieldRef& field)
       Overloaded{
           [&](const mir::ClassFieldTarget& t) {
             return at(unit_->ClassValueType(t.owner), t.slot);
-          },
-          [&](const mir::StructFieldTarget& t) {
-            return at(unit_->StructValueType(t.owner), t.slot);
           },
           [&](const mir::ClosureFieldTarget& t) {
             return at(unit_->ClosureValueType(t.owner), t.slot);

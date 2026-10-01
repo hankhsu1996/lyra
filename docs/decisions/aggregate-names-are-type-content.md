@@ -1,6 +1,43 @@
 # A declared aggregate's member names are content of its type
 
-Date: 2026-09-10 Status: accepted
+Date: 2026-09-10 Status: superseded 2026-09-28 -- the section below says by what; the entry is kept
+because the survey of nominal against structural identity still stands
+
+## Revision (2026-09-28): the names have no reader below the front end
+
+The decision rested on one requirement: LRM 21.2.1.6 renders a value by the names its type declares,
+including where a container is traversed down to an element no compile-time text can reach, so
+"whatever carries the names has to travel with the type into the runtime". Point 4 then said what
+the names were for: "What the names are for is rendering."
+
+[rendering-a-value-by-its-type](rendering-a-value-by-its-type.md) answered that requirement without
+them. A rendering is a callable synthesized from the **SystemVerilog** type, and a container's is a
+loop over its elements calling the element type's own, so the run-time reach the argument above
+demanded is supplied by computation, and the names in it are literals of that computation. That
+entry's point 2 already keyed the rendering on the source type in order to tell a packed tagged
+union from an untagged one, which the MIR type cannot. `$typename` is answered in the front end.
+Every reader a member name had below the front end is therefore gone: what remained was the type
+dump and the interning hash, and a field read only by those says nothing any consumer acts on.
+
+So the conclusion inverts, for all five aggregates at once:
+
+- An unpacked structure became the `TupleType` of its member types; an untagged and a tagged
+  unpacked union are the union and the sum over their member types; a packed structure or union is
+  the vector its members project onto. None carries a member name.
+- Two declarations with the same member types render their own names, because the rendering was
+  never keyed by the MIR type. A conformance case pins exactly that pair. This revision also made
+  the two one type below the front end; a structure has since become a `StructType` naming its
+  declaration, for the operations its declaring unit states, so they are two types again and still
+  carry no member names ([unpacked-struct-representation](unpacked-struct-representation.md),
+  [a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md)).
+- `realtime` is `real` below the front end for the same reason: LRM 6.12 makes them synonyms and no
+  consumer below the front end told them apart.
+
+What stands from this entry: the nominal-versus-structural survey is correct about identity -- LRM
+6.22.2 makes a declared aggregate nominal. For a union and a packed aggregate that identity is
+checked in the front end and nothing below it observes it (point 5 already said as much); an
+unpacked structure carries it below, in its `StructType`. Member access stays positional, as point 4
+decided. A member's declaration initializer stays off the type, as point 6 decided.
 
 ## Why this decision matters
 
@@ -142,12 +179,15 @@ value-domain projection is the representation it shares with a type that names n
   Carrying the names to the formatter is a separate mechanism, and it belongs to the print operation
   rather than to the value.
 
-- **Reusing `StructType`, the nominal named aggregate MIR already has.** That category is the
-  compiler-generated promoted scope: storage with run-time identity, reached through a `Shared<>`
-  wrapper and realized as a generated record. A declared aggregate is a value that is copied whole
-  and has a value domain. Fusing them needs a discriminator every consumer then re-reads, which is
-  the shape [closure-environment-and-activation-frame](closure-environment-and-activation-frame.md)
-  rejected when it split the closure back out of that same type.
+- **Reusing `StructType`, the nominal named aggregate MIR already has.** Rejected here on the ground
+  that the category was the compiler-generated promoted scope -- "storage with run-time identity,
+  reached through a `Shared<>` wrapper and realized as a generated record", against a declared
+  aggregate that is "a value that is copied whole" -- so fusing them would need a discriminator.
+  Since reversed: the scope's storage is no aggregate at all -- each local it keeps is its own cell
+  held by the shared wrapper -- so the struct category holds only what the source declares, with no
+  role to discriminate
+  ([closure-environment-and-activation-frame](closure-environment-and-activation-frame.md),
+  [unpacked-struct-representation](unpacked-struct-representation.md)).
 
 ## Consequences
 

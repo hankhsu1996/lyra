@@ -385,17 +385,6 @@ auto PackedArray::IsFourState() const -> bool {
   return is_four_state_;
 }
 
-auto PackedArray::ResetToDefault() -> void {
-  // LRM Table 6-7 gives a state domain that has an unknown state a default of
-  // x, and one that has not a default of zero.
-  if (is_four_state_) {
-    SetAllValidBits(MutableValueWords(), bit_width_);
-    SetAllValidBits(MutableUnknownWords(), bit_width_);
-    return;
-  }
-  std::ranges::fill(MutableValueWords(), std::uint64_t{0});
-}
-
 auto PackedArray::FilledLike(
     const PackedArray& prototype, const PackedArray& fill) -> PackedArray {
   const auto low_bit = [](std::span<const std::uint64_t> words) -> bool {
@@ -1447,9 +1436,24 @@ auto PackedArray::MergeConditional(const PackedArray& other) const
   return FromWords(res_val, res_unk, bit_width_, is_signed_, true);
 }
 
-auto PackedArray::ResolveNet(const PackedArray& other, NetResolution fold) const
+auto PackedArray::ResolveTriState(const PackedArray& other) const
     -> PackedArray {
-  RequireSameStorageDomain(*this, other, "ResolveNet");
+  return FoldedWith(other, NetResolution::kTriState);
+}
+
+auto PackedArray::ResolveWiredAnd(const PackedArray& other) const
+    -> PackedArray {
+  return FoldedWith(other, NetResolution::kWiredAnd);
+}
+
+auto PackedArray::ResolveWiredOr(const PackedArray& other) const
+    -> PackedArray {
+  return FoldedWith(other, NetResolution::kWiredOr);
+}
+
+auto PackedArray::FoldedWith(const PackedArray& other, NetResolution fold) const
+    -> PackedArray {
+  RequireSameStorageDomain(*this, other, "FoldedWith");
   const auto words = WordCountForBits(bit_width_);
   const auto a_val = ValueWords();
   const auto b_val = other.ValueWords();

@@ -117,11 +117,6 @@ auto PlacementOf(const lir::CompilationUnit& unit, lir::TypeId declared_by)
             }
             return {.holder = HolderOf(unit, record->base), .ahead = {}};
           },
-          // A gathered scope is the storage a block promoted out of its frame,
-          // held as an object of its own and extending nothing.
-          [](const lir::StructType&) -> MemberPlacement {
-            return {.holder = support::ValueHolder::kObject, .ahead = 0};
-          },
           // A closure extends nothing, so a capture's place is its position
           // among the captures.
           [](const lir::ClosureType&) -> MemberPlacement {
@@ -210,8 +205,8 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           [&](const lir::ReceiveDepartureInstr&) -> diag::Result<llvm::Value*> {
             return LowerReceiveDeparture();
           },
-          [&](const lir::ProductInstr& product) -> diag::Result<llvm::Value*> {
-            return LowerProduct(product, result_type, out);
+          [&](const lir::TupleInstr& tuple) -> diag::Result<llvm::Value*> {
+            return LowerTuple(tuple, result_type, out);
           },
           [&](const lir::ArrayInstr& array) -> diag::Result<llvm::Value*> {
             return LowerArray(array, result_type);
@@ -277,12 +272,7 @@ auto CodeGenFunction::LowerLoad(
   }
   if (const std::optional<support::ValueDomain> cell =
           PlaceValueCellDomain(load.place, result_type)) {
-    const std::array<llvm::Value*, 1> args{*address};
-    return builder_.CreateCall(
-        Entry(
-            RuntimeSymbol(*cell, lir::ValueCellTarget::Op::kLoad),
-            module_->Types().Ptr(), args),
-        args);
+    return ValueCellContents(*cell, *address);
   }
   if (module_->Unit().types.Get(result_type).HeldObject().has_value()) {
     return *address;
@@ -297,6 +287,16 @@ auto CodeGenFunction::ContentsOf(
   return builder_.CreateCall(
       Entry(
           RuntimeSymbol(domain, kind, support::BuiltinFn::kLoad),
+          module_->Types().Ptr(), args),
+      args);
+}
+
+auto CodeGenFunction::ValueCellContents(
+    support::ValueDomain domain, llvm::Value* cell) -> llvm::Value* {
+  const std::array<llvm::Value*, 1> args{cell};
+  return builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(domain, lir::ValueCellTarget::Op::kLoad),
           module_->Types().Ptr(), args),
       args);
 }
@@ -320,8 +320,9 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     if (!address) {
       return std::unexpected(std::move(address.error()));
     }
+    const lir::TypeId stored = OperandType(store.value);
     if (const std::optional<support::ValueDomain> cell =
-            PlaceValueCellDomain(store.place, OperandType(store.value))) {
+            PlaceValueCellDomain(store.place, stored)) {
       const std::array<llvm::Value*, 2> args{*address, *value};
       return builder_.CreateCall(
           Entry(
@@ -329,19 +330,18 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
               module_->Types().Void(), args),
           args);
     }
-    if (const std::optional<support::RuntimeObject> object =
-            module_->Unit().types.Get(OperandType(store.value)).HeldObject()) {
-      // A frame slot of an owned type holds the object, and a store into one
+    if (module_->Unit().types.Get(stored).IsOwnedValue()) {
+      // A frame slot of an owned type holds the value, and a store into one
       // hands it the value along with its end, so the value moves in and
       // nothing is left behind where it was built.
       if (lir::IsPlaceLocal(*fn_, store.place.base) &&
           store.place.chain.empty()) {
-        RelocateObject(*object, *value, *address);
+        RelocateValue(stored, *value, *address);
         return nullptr;
       }
-      // Anything else a chain reaches is an object that is already there, and
-      // a store writes into it: whatever names that storage goes on naming it.
-      AssignObject(*object, *address, *value);
+      // Anything else a chain reaches is a value that is already there, and a
+      // store writes into it: whatever names that storage goes on naming it.
+      AssignValue(stored, *address, *value);
       return nullptr;
     }
     return builder_.CreateStore(*value, *address);
@@ -368,9 +368,11 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
 // any other base is a reference value, whose referent the opening dereference
 // names. Each further dereference reads the reference held in the storage
 // reached so far -- or, where that storage is a wrapper, reaches its contents
-// for a read -- a member step asks the instance for that member's storage, and
-// an element or component step asks the value reached so far for the one it
-// names, the way the access needs it.
+// for a read -- a member step asks the instance for that member's storage, or
+// for the bytes of a product that storage holds inline, a value cell a later
+// step continues into is opened through its own access, an
+// element step asks the value reached so far for the one it names, the way the
+// access needs it, and a component step lies at an offset in the product.
 auto CodeGenFunction::ResolvePlaceAddress(
     const lir::Place& place, Access access) -> diag::Result<llvm::Value*> {
   auto step = place.chain.begin();
@@ -437,7 +439,15 @@ auto CodeGenFunction::ResolvePlaceAddress(
             },
             [&](const lir::MemberProjection& projection)
                 -> diag::Result<llvm::Value*> {
-              return MemberStorage(address, projection.member);
+              auto slot = MemberStorage(address, projection.member);
+              if (!slot) {
+                return std::unexpected(std::move(slot.error()));
+              }
+              return InlineValueHandle(
+                  projection.member,
+                  ReachedType(
+                      place, std::distance(place.chain.begin(), step) + 1),
+                  *slot);
             },
             [&](const lir::ElementProjection& element)
                 -> diag::Result<llvm::Value*> {
@@ -459,30 +469,33 @@ auto CodeGenFunction::ResolvePlaceAddress(
                       module_->Types().Ptr(), args),
                   args);
             },
+            // A component step is taken only over a product, and a product's
+            // type lays it out, so its component lies at an offset from it,
+            // whoever holds the product.
             [&](const lir::ComponentProjection& component)
                 -> diag::Result<llvm::Value*> {
-              auto domain = DomainOf(reached);
-              if (!domain) {
-                return std::unexpected(std::move(domain.error()));
-              }
-              const std::array<llvm::Value*, 2> args{
-                  address, llvm::ConstantInt::get(
-                               llvm::Type::getInt64Ty(module_->Context()),
-                               component.index.value)};
-              return builder_.CreateCall(
-                  Entry(
-                      RuntimeSymbol(
-                          *domain, StepEntry(
-                                       access, support::BuiltinFn::kComponent,
-                                       support::BuiltinFn::kComponentRef)),
-                      module_->Types().Ptr(), args),
-                  args);
+              return ComponentAddress(reached, address, component.index.value);
             }},
         *step);
     if (!reached_storage) {
       return std::unexpected(std::move(reached_storage.error()));
     }
     address = *reached_storage;
+    // A value cell is not where the value it holds lies for every domain -- a
+    // tuple's cell holds a handle on bytes kept elsewhere -- so a step into the
+    // value continues from what the cell's own access hands out.
+    const std::ptrdiff_t reached_by =
+        std::distance(place.chain.begin(), step) + 1;
+    if (reached_by == std::ssize(place.chain)) {
+      continue;
+    }
+    const lir::Place cell_prefix{
+        .base = place.base,
+        .chain = {place.chain.begin(), place.chain.begin() + reached_by}};
+    if (const std::optional<support::ValueDomain> cell =
+            PlaceValueCellDomain(cell_prefix, ReachedType(place, reached_by))) {
+      address = ValueCellContents(*cell, address);
+    }
   }
   return address;
 }
@@ -540,6 +553,25 @@ auto CodeGenFunction::MemberStorage(
       llvm::Type::getInt8Ty(module_->Context()), owner, offset);
 }
 
+auto CodeGenFunction::InlineValueHandle(
+    const lir::StatedMemberRef& member, lir::TypeId value, llvm::Value* slot)
+    -> llvm::Value* {
+  const lir::CompilationUnit& unit = module_->Unit();
+  if (!unit.types.Get(value).IsProduct() ||
+      MemberStorageKindOf(
+          unit, value,
+          MemberSlotRoleOf(DeclarationOf(unit, member.declared_by))) !=
+          support::MemberStorageKind::kInlineValue) {
+    return slot;
+  }
+  const std::array<llvm::Value*, 1> args{slot};
+  return builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(support::ValueDomain::kTuple, RuntimeOp::kHeld),
+          module_->Types().Ptr(), args),
+      args);
+}
+
 // The type of the storage the chain has arrived at where step `index` applies,
 // which is the type of the place that stops just before it.
 auto CodeGenFunction::ReachedType(
@@ -553,7 +585,7 @@ auto CodeGenFunction::ReachedType(
 
 // The address of what `reference` refers to, given the type it is. Most
 // references are the address already and opening one is nothing. Two are not:
-// a class handle and a hold on a promoted scope each carry what they name as a
+// a class handle and a counted hold on a value each carry what they name as a
 // fact they hold rather than are, so the runtime answers which storage is
 // meant -- and for the handle that is also where one referring to no object is
 // caught (LRM 8.3).
@@ -569,7 +601,7 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
       case lir::PointerOwnership::kBorrowed:
         break;
       case lir::PointerOwnership::kShared:
-        op = RuntimeOp::kPromotedScopeDeref;
+        op = RuntimeOp::kSharedPointerDeref;
         break;
     }
   }
@@ -587,6 +619,8 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
 // holding one is lowered once for every caller, so it cannot ask which it was
 // lent (LRM 13.5.2) -- which is why the variable is recorded here, where the
 // place it came from still answers. Every other address is the address itself.
+// Either way what is addressed is the value where it lies, which a value cell
+// hands out through its own access.
 auto CodeGenFunction::LowerAddrOf(
     const lir::AddrOfInstr& addr, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
@@ -594,21 +628,26 @@ auto CodeGenFunction::LowerAddrOf(
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
+  const lir::TypeId reached_type =
+      ReachedType(addr.place, std::ssize(addr.place.chain));
+  llvm::Value* storage = *address;
+  if (const std::optional<support::ValueDomain> held =
+          PlaceValueCellDomain(addr.place, reached_type)) {
+    storage = ValueCellContents(*held, storage);
+  }
   const lir::TypePool& types = module_->Unit().types;
   if (!types.Get(result_type).Is<lir::RefType>()) {
-    return *address;
+    return storage;
   }
-  const lir::Type& reached =
-      types.Get(ReachedType(addr.place, std::ssize(addr.place.chain)));
-  if (const auto* cell = reached.As<lir::ObservableType>()) {
+  if (const auto* cell = types.Get(reached_type).As<lir::ObservableType>()) {
     auto domain = DomainOf(cell->value);
     if (!domain) {
       return std::unexpected(std::move(domain.error()));
     }
     return BuildInto(
-        RuntimeSymbol(*domain, RuntimeOp::kCellRefer), {*address}, out);
+        RuntimeSymbol(*domain, RuntimeOp::kCellRefer), {storage}, out);
   }
-  return BuildInto(RuntimeSymbol(RuntimeOp::kReferStorage), {*address}, out);
+  return BuildInto(RuntimeSymbol(RuntimeOp::kReferStorage), {storage}, out);
 }
 
 auto CodeGenFunction::IsHandleSequence(lir::TypeId type) const -> bool {
@@ -862,8 +901,13 @@ auto CodeGenFunction::ResolveCall(
     return std::unexpected(std::move(args.error()));
   }
   // Storage for what the callee builds goes last, whichever kind of callee it
-  // is: an entry of the library and a body of this program take it alike.
+  // is: an entry of the library and a body of this program take it alike. The
+  // library holds no tuple type of its own, so storage given for a tuple says
+  // which tuple it is before anything is built there.
   if (out != nullptr) {
+    if (module_->Unit().types.Get(result_type).IsProduct()) {
+      builder_.CreateStore(module_->Tuples().Operations(result_type), out);
+    }
     args->push_back(out);
   }
   auto callee = ResolveCallee(call, result_type, *args);
@@ -876,10 +920,11 @@ auto CodeGenFunction::ResolveCall(
 auto CodeGenFunction::LowerCall(
     const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
-  // Ending an object whose storage going away is the whole of its end is
-  // nothing to emit.
+  // Ending a value whose storage going away is the whole of its end is nothing
+  // to emit.
   if (std::holds_alternative<lir::EndValueTarget>(call.target) &&
-      support::LayoutOf(ObjectOf(OperandType(call.args.at(0))))
+      module_->Types()
+          .StorageOf(OperandType(call.args.at(0)))
           .ends_with_nothing_to_do) {
     return nullptr;
   }
@@ -1111,17 +1156,15 @@ auto CodeGenFunction::ResolveCallee(
           },
           [&](const lir::EndValueTarget&)
               -> diag::Result<llvm::FunctionCallee> {
-            return Entry(
-                RuntimeSymbol(
-                    ObjectOf(OperandType(call.args.at(0))),
-                    RuntimeOp::kDestroy),
-                result_type, args);
+            return OwnedCallee(
+                OperandType(call.args.at(0)), TupleLifecycle::kDestroy,
+                RuntimeOp::kDestroy, module_->Types().Map(result_type), args);
           },
           [&](const lir::CopyValueTarget&)
               -> diag::Result<llvm::FunctionCallee> {
-            return Entry(
-                RuntimeSymbol(ObjectOf(result_type), RuntimeOp::kCopy),
-                result_type, args);
+            return OwnedCallee(
+                result_type, TupleLifecycle::kCopy, RuntimeOp::kCopy,
+                module_->Types().Map(result_type), args);
           },
           [&](const lir::ControlEffectTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1177,41 +1220,29 @@ auto CodeGenFunction::LowerArray(
   return SpanOver(elements, module_->Types().Map(element_type));
 }
 
-// A product value is assembled by boxing each component into the erased
-// representation its own domain names, then collecting the boxed components.
-// The domains come from the result product type, so the generated side never
-// inspects a component's runtime representation.
-//
-// The components each have a domain of their own, so no entry can be named by
-// one of them and the caller is the only side that knows them all. A
-// homogeneous value's entry is named by its single domain instead, so what
-// crosses to one erased is decided at that entry rather than here.
-auto CodeGenFunction::LowerProduct(
-    const lir::ProductInstr& product, lir::TypeId result_type, llvm::Value* out)
+// A tuple value is laid out in place: it opens with its type's operation
+// table, and each component is built where the type's layout puts it, from a
+// value LIR ends on its own, so the tuple takes a copy.
+auto CodeGenFunction::LowerTuple(
+    const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
-  const std::vector<lir::TypeId> components =
-      module_->Unit().types.Get(result_type).ProductComponentTypes();
-  if (components.size() != product.components.size()) {
+  const TupleLayout& layout = module_->Types().LayoutOfTuple(result_type);
+  if (layout.components.size() != tuple.components.size()) {
     throw InternalError(
-        "llvm codegen: a product's result type does not describe the "
-        "components it is built from");
+        "llvm codegen: a tuple's result type does not describe the components "
+        "it is built from");
   }
-  std::vector<llvm::Value*> boxed;
-  boxed.reserve(product.components.size());
-  for (std::uint32_t i = 0; i < product.components.size(); ++i) {
-    auto domain = DomainOf(components[i]);
-    if (!domain) {
-      return std::unexpected(std::move(domain.error()));
-    }
-    auto component = LowerOperand(product.components[i]);
+  builder_.CreateStore(module_->Tuples().Operations(result_type), out);
+  for (std::size_t i = 0; i < tuple.components.size(); ++i) {
+    auto component = LowerOperand(tuple.components[i]);
     if (!component) {
       return std::unexpected(std::move(component.error()));
     }
-    boxed.push_back(Box(*domain, *component));
+    CopyValue(
+        layout.components[i], *component,
+        ComponentAddress(result_type, out, i));
   }
-  return BuildInto(
-      RuntimeSymbol(support::ValueDomain::kTuple, RuntimeOp::kMake),
-      {SpanOver(boxed, module_->Types().Ptr())}, out);
+  return out;
 }
 
 auto CodeGenFunction::UnionMemberDomain(
@@ -1232,8 +1263,9 @@ auto CodeGenFunction::UnionMemberDomain(
 auto CodeGenFunction::LowerUnion(
     const lir::UnionInstr& u, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
-  // The live member's value crosses boxed, the way a product's components do;
-  // the union domain's `make` takes which member is live beside it.
+  // The live member's value crosses boxed in its own domain, which the union
+  // holds no prototype to read off; the union domain's `make` takes which
+  // member is live beside it.
   auto member_domain = UnionMemberDomain(result_type, u.index.value);
   if (!member_domain) {
     return std::unexpected(std::move(member_domain.error()));
@@ -1767,17 +1799,14 @@ auto CodeGenFunction::PlaceValueCellDomain(
     const lir::Place& place, lir::TypeId value) const
     -> std::optional<support::ValueDomain> {
   // A value cell is storage the runtime built around a declaration's value and
-  // owns the representation of. It is reached by the member step naming it, or
-  // by dereferencing a pointer that arrived at one -- and the pointer form is
-  // how a name past another unit's signature reaches it (LRM 23.6). An element
-  // or a component is the value itself, where its container holds it; so is
-  // what a write opened on a wrapper reaches, and a base local's own slot.
+  // owns the representation of, and only the member step naming it reaches it:
+  // an address taken of one is of the value it holds, so what a dereference
+  // arrives at is the value. An element or a component is the value itself,
+  // where its container holds it; so is what a write opened on a wrapper
+  // reaches, and a base local's own slot.
   if (place.chain.empty()) {
     return std::nullopt;
   }
-  // The role of the slot a step reaches, where the step can reach a cell at
-  // all: a member's is its declaration's, and a pointer arriving at storage
-  // arrives at a variable.
   const std::optional<MemberSlotRole> role = std::visit(
       Overloaded{
           [&](const lir::MemberProjection& step)
@@ -1785,13 +1814,8 @@ auto CodeGenFunction::PlaceValueCellDomain(
             return MemberSlotRoleOf(
                 DeclarationOf(module_->Unit(), step.member.declared_by));
           },
-          [&](const lir::DerefProjection&) -> std::optional<MemberSlotRole> {
-            if (!module_->Unit()
-                     .types.Get(ReachedType(place, std::ssize(place.chain) - 1))
-                     .Is<lir::PointerType>()) {
-              return std::nullopt;
-            }
-            return MemberSlotRole::kVariable;
+          [](const lir::DerefProjection&) -> std::optional<MemberSlotRole> {
+            return std::nullopt;
           },
           [](const lir::ElementProjection&) -> std::optional<MemberSlotRole> {
             return std::nullopt;
@@ -1999,9 +2023,9 @@ auto CodeGenFunction::ConstructionOf(
           // The two that do construct take their operands differently, and the
           // difference is what each one is making. Building a node takes what a
           // node is built from -- where it hangs, what it is reached by, and
-          // the values its own class is parameterized by. A hold takes the
-          // definition alone, because the storage it holds was built elsewhere
-          // and it adds an owner rather than an object.
+          // the values its own class is parameterized by. A hold makes an empty
+          // variable's cell, so it takes nothing and is named by the domain
+          // the cell holds.
           [&](const lir::PointerType& p) -> diag::Result<Construction> {
             switch (p.ownership) {
               case lir::PointerOwnership::kUnique:
@@ -2009,11 +2033,22 @@ auto CodeGenFunction::ConstructionOf(
                     .symbol = RuntimeSymbol(RuntimeOp::kMakeScope),
                     .operand_form =
                         ScopeOperandsAfterDefinition{.defined = p.pointee}};
-              case lir::PointerOwnership::kShared:
-                return Construction{
-                    .symbol = RuntimeSymbol(RuntimeOp::kMakePromotedScope),
-                    .operand_form =
-                        OperandsAfterDefinition{.defined = p.pointee}};
+              case lir::PointerOwnership::kShared: {
+                const auto* cell = module_->Unit()
+                                       .types.Get(p.pointee)
+                                       .As<lir::ObservableType>();
+                if (cell == nullptr) {
+                  throw InternalError(
+                      "llvm codegen: a counted hold is made over a variable's "
+                      "cell -- please report this as a bug");
+                }
+                auto domain = DomainOf(cell->value);
+                if (!domain) {
+                  return std::unexpected(std::move(domain.error()));
+                }
+                return entry(
+                    RuntimeSymbol(*domain, RuntimeOp::kSharedCellMake));
+              }
               case lir::PointerOwnership::kBorrowed:
                 return no_construct();
             }
@@ -2033,9 +2068,6 @@ auto CodeGenFunction::ConstructionOf(
           // build over a host scalar: a constant of the destination's own
           // precision. Anything else the boundary hands back has no entry.
           [&](const lir::RealType&) -> diag::Result<Construction> {
-            return real_from_host();
-          },
-          [&](const lir::RealTimeType&) -> diag::Result<Construction> {
             return real_from_host();
           },
           [&](const lir::ShortRealType&) -> diag::Result<Construction> {
@@ -2058,12 +2090,6 @@ auto CodeGenFunction::ConstructionOf(
           // A value that is a vector of bits, or a host scalar standing beside
           // one.
           [&](const lir::PackedArrayType&) -> diag::Result<Construction> {
-            return no_construct();
-          },
-          [&](const lir::PackedStructType&) -> diag::Result<Construction> {
-            return no_construct();
-          },
-          [&](const lir::PackedUnionType&) -> diag::Result<Construction> {
             return no_construct();
           },
           [&](const lir::WildcardIndexType&) -> diag::Result<Construction> {
@@ -2093,16 +2119,16 @@ auto CodeGenFunction::ConstructionOf(
           [&](const lir::TupleType&) -> diag::Result<Construction> {
             return no_construct();
           },
-          [&](const lir::UnpackedStructType&) -> diag::Result<Construction> {
+          [&](const lir::StructType&) -> diag::Result<Construction> {
             return no_construct();
           },
+
+          // A union's value is made by the instruction that states which
+          // member it holds, never by a construction.
           [&](const lir::UnionType&) -> diag::Result<Construction> {
             return no_construct();
           },
           [&](const lir::TaggedUnionType&) -> diag::Result<Construction> {
-            return no_construct();
-          },
-          [&](const lir::StructType&) -> diag::Result<Construction> {
             return no_construct();
           },
           [&](const lir::MachineFunctionType&) -> diag::Result<Construction> {

@@ -51,11 +51,11 @@ auto LowerAutomaticVarDeclStmt(
   return initialized;
 }
 
-// A lifetime-extended automatic (LRM 6.21) is a cell in a field of the scope's
-// shared activation frame; its declaration initializes that cell through the
-// handle rather than a local's own. The field was recorded when the activation
-// scope opened; consume it here, in HIR id order, to register the binding its
-// references resolve through.
+// A lifetime-extended automatic (LRM 6.21) is a cell held by a shared pointer;
+// its declaration initializes that cell through the handle rather than a
+// local's own. The handle was recorded when the activation scope opened;
+// consume it here, in HIR id order, to register the binding its references
+// resolve through.
 auto LowerPromotedVarDeclStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
@@ -64,10 +64,7 @@ auto LowerPromotedVarDeclStmt(
   process.MapProceduralVar(v.var, pb);
   auto& block = *frame.current_block;
   mir::CompilationUnit& unit = process.Owner().Unit();
-  const mir::ExprId handle_ref = block.exprs.Add(frame.bindings->MakeReadExpr(
-      frame.bindings->EnsureCarrier(pb.handle_origin), block));
-  const mir::ExprId target = block.exprs.Add(
-      mir::MakeFieldAccessExpr(handle_ref, pb.field, pb.cell_type));
+  const mir::ExprId target = block.exprs.Add(PromotedVarPlace(frame, pb));
   mir::ExprId init_value{};
   if (hir_local.init.has_value()) {
     auto init_or =

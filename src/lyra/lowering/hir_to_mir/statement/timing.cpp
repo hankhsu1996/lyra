@@ -178,8 +178,7 @@ auto BuildDelayWaitStmt(
     // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
     // from them only in host precision, so the entry takes the wider and the
     // narrower reshapes into it.
-    duration_id =
-        ConvertToType(unit, block, duration_id, unit.builtins.realtime);
+    duration_id = ConvertToType(unit, block, duration_id, unit.builtins.real);
   }
 
   const mir::ExprId runtime_id =

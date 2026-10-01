@@ -40,16 +40,18 @@ reference to its whole.**
   13.5.2), so there is no slice step.
 - **The reference carries what holds the storage.** A reference is (a variable, an object, or
   nothing; the storage; whether the storage is the whole of the variable); storage nothing is told
-  about -- an automatic variable -- carries nothing. A write through a reference to a whole variable
-  and through one to a part of it is the same write: it asks the variable to admit it, compares the
-  part where anything waits, writes, and has the variable report, at the moment of the write. A
-  write through one to a property, or to a part of one, tells the object at the moment of the write
-  as well; the object's waiters reevaluate what they reached, so it is told nothing about which bits
-  moved, and nothing puts a property under a procedural continuous assignment (LRM 10.6). Only what
-  acts on the variable itself -- its sampled value -- needs the whole, and whether a reference names
-  the whole is said where it is formed, because a part can lie at the address its whole does (the
-  last component of a C++ `std::tuple` does). A wait through a reference registers on the holder
-  whatever part the reference names
+  about -- an automatic variable -- carries nothing. A property is lent as the reference to its own
+  storage, formed the way any other is, and handed to the object it belongs to, which becomes what
+  the reference carries. A write through a reference to a whole variable and through one to a part
+  of it is the same write: it asks the variable to admit it, compares the part where anything waits,
+  writes, and has the variable report, at the moment of the write. A write through one to a
+  property, or to a part of one, tells the object at the moment of the write as well; the object's
+  waiters reevaluate what they reached, so it is told nothing about which bits moved, and nothing
+  puts a property under a procedural continuous assignment (LRM 10.6). Only what acts on the
+  variable itself -- its sampled value -- needs the whole, and whether a reference names the whole
+  is said where it is formed, because a part can lie at the address its whole does (the last
+  component of a C++ `std::tuple` does). A wait through a reference registers on the holder whatever
+  part the reference names
   ([a-variable-a-body-declares-reports-its-writes](a-variable-a-body-declares-reports-its-writes.md)).
 - **What a write asks of the variable needs no type, except where the variable is in a rare state,
   and then the variable carries it.** Whether a procedural continuous assignment holds it (LRM 10.6)

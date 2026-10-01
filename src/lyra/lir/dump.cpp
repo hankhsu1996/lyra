@@ -10,8 +10,12 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
+#include "lyra/lir/struct_id.hpp"
+#include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
 
@@ -52,6 +56,12 @@ class LirDumper {
     for (const ClosureId id : unit_->closures.Ids()) {
       DumpClosure(id);
     }
+    for (const ExternalStruct& external : unit_->external_structs) {
+      DumpExternalStruct(external);
+    }
+    for (const StructId id : unit_->structs.Ids()) {
+      DumpStruct(id);
+    }
     for (const Function& fn : unit_->functions) {
       DumpFunction(fn);
     }
@@ -66,6 +76,36 @@ class LirDumper {
         std::format(
             "ExternalUnitObject \"{}.{}\" (#{})", object.unit_name,
             object.class_name, id.value));
+  }
+
+  void DumpStruct(StructId id) {
+    const Struct& declared = unit_->structs.Get(id);
+    Line(std::format(R"(Struct "{}" (#{}))", declared.name, id.value));
+    Indent();
+    DumpElements(declared.elements);
+    for (const StructMethod& method : declared.methods) {
+      Line(
+          std::format(
+              R"("{}": {})", support::ValueOperationName(method.answers),
+              unit_->functions.Get(method.function).name));
+    }
+    Dedent();
+  }
+
+  void DumpExternalStruct(const ExternalStruct& external) {
+    Line(
+        std::format(
+            "ExternalStruct \"{}.{}\"", external.declaration.unit_name,
+            external.declaration.name));
+    Indent();
+    DumpElements(external.elements);
+    Dedent();
+  }
+
+  void DumpElements(const std::vector<TypeId>& elements) {
+    for (std::size_t i = 0; i < elements.size(); ++i) {
+      Line(std::format("part[{}] : {}", i, FormatType(elements[i])));
+    }
   }
 
   void DumpExternalClass(const ExternalClass& cls) {
@@ -184,9 +224,8 @@ class LirDumper {
             [](const ReceiveDepartureInstr&) -> std::string {
               return "receive departure";
             },
-            [&](const ProductInstr& product) -> std::string {
-              return std::format(
-                  "product({})", FormatOperands(product.components));
+            [&](const TupleInstr& tuple) -> std::string {
+              return std::format("tuple({})", FormatOperands(tuple.components));
             },
             [&](const ArrayInstr& array) -> std::string {
               return std::format("array({})", FormatOperands(array.elements));
@@ -456,14 +495,30 @@ class LirDumper {
   }
 
   // One type as the table states it: its kind, and for a type that stands for
-  // storage or refers elsewhere, what it reaches. Those are the ones whose kind
-  // alone leaves the reader where they started.
+  // storage or refers elsewhere, what it reaches, and for a struct, which
+  // declaration it is. Those are the ones whose kind alone leaves the reader
+  // where they started.
   [[nodiscard]] auto DescribeType(TypeId id) const -> std::string {
     const Type& type = unit_->types.Get(id);
     if (const std::optional<TypeId> target = type.DerefTarget()) {
       return std::format("{}({})", type.KindName(), FormatType(*target));
     }
+    if (const auto* structure = type.As<StructType>()) {
+      return std::format(
+          "{}({})", type.KindName(), FormatStructRef(structure->declaration));
+    }
     return std::string{type.KindName()};
+  }
+
+  [[nodiscard]] static auto FormatStructRef(const StructRef& ref)
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [](StructId id) { return std::format("#{}", id.value); },
+            [](const TypeDeclarationRef& declared) {
+              return std::format("{}.{}", declared.unit_name, declared.name);
+            }},
+        ref);
   }
 
   void Line(std::string_view text) {

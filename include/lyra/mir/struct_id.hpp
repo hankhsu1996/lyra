@@ -7,11 +7,12 @@
 
 namespace lyra::mir {
 
-// Identity of a compiler-generated struct declaration within a compilation unit
-// -- a nominal field-bearing aggregate synthesized by lowering for a promoted
-// automatic scope. Unit-wide like `ClassId`, in its own registry. A generated
-// struct is a type in the type system, not a nominal object: it has no base, no
-// dispatch, and no lifecycle. A closure is a separate category (`ClosureId`).
+// Identity of a struct this compilation unit declares, whether the source
+// declared it (LRM 7.2) or a lowering made it for the locals a scope keeps past
+// its end (LRM 6.21). Unit-wide like `ClassId`, in its own registry. A struct
+// is a value, not a nominal object: it has no base, no dispatch, and no
+// lifecycle, and its members are reached by position. A closure is a separate
+// category (`ClosureId`).
 struct StructId {
   std::uint32_t value = base::kUnassignedId;
 

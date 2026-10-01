@@ -8,6 +8,7 @@
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/managed_ref.hpp"
+#include "lyra/value/net_resolution.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"

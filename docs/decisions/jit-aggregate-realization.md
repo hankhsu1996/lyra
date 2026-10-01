@@ -1,6 +1,8 @@
 # Aggregate values are runtime-owned opaque values on the JIT, not monomorphized
 
-Date: 2026-07-18 Status: accepted
+Date: 2026-07-18 Status: accepted for unions and containers; superseded for tuples by
+[a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md), once every value came to live
+in its maker's frame rather than behind a handle.
 
 ## Why this decision matters
 

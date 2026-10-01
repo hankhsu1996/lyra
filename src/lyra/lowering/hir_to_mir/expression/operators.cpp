@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -34,6 +35,7 @@
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -476,21 +478,30 @@ auto BuildMirBinaryExpr(
 
   // LRM 11.4.5 `===` / `!==` over any data type, including an aggregate, with a
   // wrapping `!` for the inequality form. The clause makes the result always a
-  // known 1'b0 or 1'b1, so the entry answers with a two-state bit whatever its
-  // operands carry; the call is stated at that, and a context wanting another
-  // representation takes the conversion.
+  // known 1'b0 or 1'b1, so the question answers with a two-state bit whatever
+  // its operands carry; the call is stated at that, and a context wanting
+  // another representation takes the conversion.
   if (case_equality) {
-    const mir::TypeId known = unit.builtins.bit1;
-    mir::ExprId answer = block.exprs.Add(MakeBuiltinFnCall(
-        support::BuiltinFn::kCaseEqual, lhs_id, {rhs_id}, known));
+    mir::ExprId answer = BuildCaseEquality(unit, block, lhs_id, rhs_id);
     if (op == hir::BinaryOp::kCaseInequality) {
       answer = block.exprs.Add(
           mir::Expr{
               .data =
                   mir::UnaryExpr{
                       .op = mir::UnaryOp::kLogicalNot, .operand = answer},
-              .type = known});
+              .type = block.exprs.Get(answer).type});
     }
+    return block.exprs.Get(ConvertToType(unit, block, answer, result_type));
+  }
+
+  // A struct's `==` and `!=` are its type's own answers, stated at the width
+  // and state each has.
+  if (logical_equality && lhs_ty.Is<mir::StructType>()) {
+    const mir::ExprId answer = BuildStructComparison(
+        unit, block,
+        op == hir::BinaryOp::kInequality ? support::ValueOperator::kInequality
+                                         : support::ValueOperator::kEquality,
+        lhs_id, rhs_id);
     return block.exprs.Get(ConvertToType(unit, block, answer, result_type));
   }
 
@@ -844,16 +855,21 @@ auto LowerHirConversionExpr(
     case hir::ConversionKind::kBitstreamCast: {
       auto packed_or = BuildToBitstream(unit, block, operand_id, operand.span);
       if (!packed_or) return std::unexpected(std::move(packed_or.error()));
-      return BuildFromBitstream(
+      auto value_or = BuildFromBitstream(
           unit, block, *packed_or, result_type, operand.span);
+      if (!value_or) return std::unexpected(std::move(value_or.error()));
+      return block.exprs.Get(*value_or);
     }
     // LRM 11.4.14 streaming operators, which slang marks as a conversion when
     // one feeds an assignment. The operand is already the stream the operator
     // built, so what is left is the target's own half of the clause: widen to
     // its width, then read the bits back as a value of it.
-    case hir::ConversionKind::kStreamingConcat:
-      return BuildFromBitstream(
+    case hir::ConversionKind::kStreamingConcat: {
+      auto value_or = BuildFromBitstream(
           unit, block, operand_id, result_type, operand.span);
+      if (!value_or) return std::unexpected(std::move(value_or.error()));
+      return block.exprs.Get(*value_or);
+    }
   }
   throw InternalError("LowerHirConversionExpr: unknown hir::ConversionKind");
 }

@@ -61,8 +61,6 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           // that fires subscribers on change.
           [&](const PackedArrayType&) { return wrap(); },
           [&](const EnumType&) { return wrap(); },
-          [&](const PackedStructType&) { return wrap(); },
-          [&](const PackedUnionType&) { return wrap(); },
           [&](const UnpackedArrayType&) { return wrap(); },
           [&](const DynamicArrayType&) { return wrap(); },
           [&](const QueueType&) { return wrap(); },
@@ -70,9 +68,8 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const StringType&) { return wrap(); },
           [&](const RealType&) { return wrap(); },
           [&](const ShortRealType&) { return wrap(); },
-          [&](const RealTimeType&) { return wrap(); },
           [&](const TupleType&) { return wrap(); },
-          [&](const UnpackedStructType&) { return wrap(); },
+          [&](const StructType&) { return wrap(); },
           [&](const UnionType&) { return wrap(); },
           [&](const TaggedUnionType&) { return wrap(); },
           [&](const EmptyType&) { return wrap(); },
@@ -90,10 +87,9 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           // own subscribe mechanism), a runtime facade (effects, files,
           // diagnostics, a runtime-library type), a coroutine result, a machine
           // primitive (a plain boolean, integer, float, C string, array, or
-          // code address), a compiler-generated promoted scope struct or
-          // closure, an internal index, `void`, the observable, net-cell and
-          // sampled-history wrappers themselves, which are already storage, and
-          // a write open on one of them.
+          // code address), a closure, an internal index, `void`, the
+          // observable, net-cell and sampled-history wrappers themselves, which
+          // are already storage, and a write open on one of them.
           [&](const WildcardIndexType&) { return bare(); },
           [&](const MachineCStringType&) { return bare(); },
           [&](const MachineBoolType&) { return bare(); },
@@ -123,7 +119,6 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const DesignationType&) { return bare(); },
           [&](const SampledHistoryType&) { return bare(); },
           [&](const EvaluationAttemptsType&) { return bare(); },
-          [&](const StructType&) { return bare(); },
           [&](const ClosureType&) { return bare(); },
       });
 }

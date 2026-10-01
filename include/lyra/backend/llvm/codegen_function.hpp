@@ -14,6 +14,7 @@
 
 #include <llvm/IR/IRBuilder.h>
 
+#include "lyra/backend/llvm/codegen_tuple.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
@@ -70,32 +71,48 @@ class CodeGenFunction {
   // path reaching an instruction then names the same storage, and a loop
   // reuses it rather than growing the stack on each turn.
   auto FrameStorage(llvm::Type* type) -> llvm::Value*;
+  // Frame storage of the size and alignment `layout` states.
+  auto LaidOutStorage(support::ObjectLayout layout) -> llvm::Value*;
   // Frame storage for one runtime object, sized and aligned as the library
   // states that object.
   auto ObjectStorage(support::RuntimeObject object) -> llvm::Value*;
-  // Where a value of `type` an instruction makes is built: storage for the
-  // runtime object an owned value is, and nothing for any other value, which
-  // the instruction answers as itself. Every owned value is built in storage
-  // its maker gives, as clang builds a class-type result through `sret`, and
-  // is ended by the end LIR states for it.
+  // Where a value of `type` an instruction makes is built: storage for an
+  // owned value, and nothing for any other value, which the instruction
+  // answers as itself. Every owned value is built in storage its maker gives,
+  // as clang builds a class-type result through `sret`, and is ended by the end
+  // LIR states for it.
   auto StorageFor(lir::TypeId type) -> llvm::Value*;
   // Calls the entry `symbol`, which builds its answer in `out`, handed to it
   // last; what the call answers is `out`.
   auto BuildInto(
       std::string_view symbol, std::vector<llvm::Value*> args, llvm::Value* out)
       -> llvm::Value*;
-  // The runtime object an owned value of `type` is.
+  // The runtime object an owned value of `type` is. For a product that is the
+  // tuple domain the library holds one as, while its lifecycle here is the one
+  // compiled for its type.
   [[nodiscard]] auto ObjectOf(lir::TypeId type) const -> support::RuntimeObject;
   // Ends the object `value` names, where ending one has anything to do.
   void EndObject(support::RuntimeObject object, llvm::Value* value);
-  // Writes `value` into the object already at `storage`, which goes on being
-  // that object.
-  void AssignObject(
-      support::RuntimeObject object, llvm::Value* storage, llvm::Value* value);
-  // Moves the object `value` names into `out`, and ends what the move left
-  // behind: the value now lives in `out` and nowhere else.
-  void RelocateObject(
-      support::RuntimeObject object, llvm::Value* value, llvm::Value* out);
+  // What carries out a lifecycle step on an owned value of `type`: the step
+  // compiled for its tuple type, as clang emits a class's implicit special
+  // members, or the entry the library defines over its object.
+  auto OwnedCallee(
+      lir::TypeId type, TupleLifecycle tuple_step, RuntimeOp object_op,
+      llvm::Type* result, std::span<llvm::Value* const> args)
+      -> llvm::FunctionCallee;
+  // Ends the value `value` names, where ending one has anything to do; copies
+  // it into `out`; writes it into the value already at `storage`, which goes
+  // on being that value; and moves it into `out` and ends what the move left
+  // behind, so the value lives in `out` and nowhere else.
+  void EndValue(lir::TypeId type, llvm::Value* value);
+  auto CopyValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
+      -> llvm::Value*;
+  void AssignValue(lir::TypeId type, llvm::Value* storage, llvm::Value* value);
+  void RelocateValue(lir::TypeId type, llvm::Value* value, llvm::Value* out);
+  // Where component `index` of a tuple lives, given where the tuple does.
+  auto ComponentAddress(
+      lir::TypeId tuple, llvm::Value* value, std::size_t index) -> llvm::Value*;
+
   // A value boxed into the erased representation of `domain`, in storage of
   // its own that lives until the call it is handed to returns.
   auto Box(support::ValueDomain domain, llvm::Value* value) -> llvm::Value*;
@@ -132,9 +149,9 @@ class CodeGenFunction {
       -> llvm::Value*;
   auto LowerArray(const lir::ArrayInstr& array, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
-  auto LowerProduct(
-      const lir::ProductInstr& product, lir::TypeId result_type,
-      llvm::Value* out) -> diag::Result<llvm::Value*>;
+  auto LowerTuple(
+      const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
+      -> diag::Result<llvm::Value*>;
   auto LowerUnion(
       const lir::UnionInstr& u, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
@@ -382,6 +399,10 @@ class CodeGenFunction {
   auto ContentsOf(
       support::ValueDomain domain, WrapperKind kind, llvm::Value* wrapper)
       -> llvm::Value*;
+  // The handle of the value the value cell at `cell` holds, which is not the
+  // cell's own address for every domain.
+  auto ValueCellContents(support::ValueDomain domain, llvm::Value* cell)
+      -> llvm::Value*;
   // Whether a type is the sequence of handles a declaration standing for
   // several objects builds. It belongs to no value domain -- what it holds are
   // objects, not values -- so an operation over one is answered by the entry
@@ -400,6 +421,13 @@ class CodeGenFunction {
   // the class.
   auto MemberStorage(llvm::Value* owner, const lir::StatedMemberRef& member)
       -> diag::Result<llvm::Value*>;
+  // What a member place names, given the slot its step reached and the type of
+  // the value it holds: the slot, except where the slot holds a value whose
+  // handle is not the object holding it -- a product kept inline, whose value
+  // is the bytes that object keeps.
+  auto InlineValueHandle(
+      const lir::StatedMemberRef& member, lir::TypeId value, llvm::Value* slot)
+      -> llvm::Value*;
 
   [[nodiscard]] auto ReachedType(
       const lir::Place& place, std::ptrdiff_t index) const -> lir::TypeId;

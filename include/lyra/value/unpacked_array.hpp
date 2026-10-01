@@ -18,6 +18,7 @@
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/net_resolution.hpp"
 #include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/position.hpp"
@@ -189,20 +190,14 @@ class UnpackedArray {
     return data_[i];
   }
 
-  [[nodiscard]] auto ToOwned() const -> UnpackedArray {
-    return *this;
+  // The element type's default (LRM Table 7-1), the shape an out-of-range read
+  // returns and a derived container seeds its own out-of-range source with.
+  [[nodiscard]] auto ElementDefault() const -> const T& {
+    return shield_.Default();
   }
 
-  // LRM Table 7-1 default for a fixed-size unpacked array is "Array, all of
-  // whose elements have the value specified in this table for that array's
-  // element type." When this container is itself the discard sink of an outer
-  // container, the outer scrubs it to the canonical all-defaults state before
-  // handing out a reference. This is O(N) in the unpacked dim and is the
-  // LRM-mandated cost of "all elements at default."
-  auto ResetToDefault() -> void {
-    for (auto& elem : data_) {
-      elem.ResetToDefault();
-    }
+  [[nodiscard]] auto ToOwned() const -> UnpackedArray {
+    return *this;
   }
 
   // LRM 11.4.11: the two arms of a conditional operator whose condition is
@@ -316,16 +311,20 @@ class UnpackedArray {
     return true;
   }
 
-  // Net resolution applied element-wise under the fold `fold` names (LRM 6.6).
-  // LRM 6.7.1 defines a net over an unpacked array as one net composed of its
+  // Net resolution applied element-wise under each truth table (LRM 6.6). LRM
+  // 6.7.1 defines a net over an unpacked array as one net composed of its
   // elements' bits, so folding two contributions is folding each element pair.
-  [[nodiscard]] auto ResolveNet(
-      const UnpackedArray& other, NetResolution fold) const -> UnpackedArray {
-    UnpackedArray resolved = *this;
-    for (std::size_t i = 0; i < resolved.data_.size(); ++i) {
-      resolved.data_[i] = resolved.data_[i].ResolveNet(other.data_[i], fold);
-    }
-    return resolved;
+  [[nodiscard]] auto ResolveTriState(const UnpackedArray& other) const
+      -> UnpackedArray {
+    return FoldedWith(other, NetResolution::kTriState);
+  }
+  [[nodiscard]] auto ResolveWiredAnd(const UnpackedArray& other) const
+      -> UnpackedArray {
+    return FoldedWith(other, NetResolution::kWiredAnd);
+  }
+  [[nodiscard]] auto ResolveWiredOr(const UnpackedArray& other) const
+      -> UnpackedArray {
+    return FoldedWith(other, NetResolution::kWiredOr);
   }
 
   // What a stronger contribution leaves a weaker one, element by element (LRM
@@ -536,6 +535,18 @@ class UnpackedArray {
   }
 
  private:
+  // Each element pair folded under one table; the three tables differ only in
+  // the elements' own fold.
+  [[nodiscard]] auto FoldedWith(
+      const UnpackedArray& other, NetResolution fold) const -> UnpackedArray {
+    UnpackedArray resolved = *this;
+    for (std::size_t i = 0; i < resolved.data_.size(); ++i) {
+      resolved.data_[i] =
+          ResolvedUnder(fold, resolved.data_[i], other.data_[i]);
+    }
+    return resolved;
+  }
+
   // The LRM 7.12 entry stream: a lazy view pairing each element with its
   // ordinal index, in declared order.
   [[nodiscard]] auto Entries() const {
@@ -633,7 +644,6 @@ static_assert(Indexable<UnpackedArray<PackedArray>>);
 static_assert(Sliceable<UnpackedArray<PackedArray>>);
 static_assert(SliceableRef<UnpackedArray<PackedArray>>);
 static_assert(Ownable<UnpackedArray<PackedArray>>);
-static_assert(Defaultable<UnpackedArray<PackedArray>>);
 static_assert(ConditionallyMergeable<UnpackedArray<PackedArray>>);
 static_assert(Sortable<UnpackedArray<PackedArray>>);
 static_assert(NetResolvable<UnpackedArray<PackedArray>>);

@@ -8,6 +8,7 @@
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/scope_program.hpp"
+#include "lyra/runtime/value_handle.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -25,10 +26,12 @@ namespace lyra::runtime {
 
 namespace {
 
+// Whether storage of type `T` is a variable's cell, whose value is reached
+// through the cell rather than at its address.
 template <typename T>
-auto Read(const void* handle) -> const T& {
-  return *static_cast<const T*>(handle);
-}
+constexpr bool kIsVariableCell = false;
+template <typename T>
+constexpr bool kIsVariableCell<ActivationValueCell<T>> = true;
 
 // Realizes a net's resolution node over the value domain the net is declared
 // in. LRM 6.7.1 admits a 4-state integral net and a fixed-size unpacked array,
@@ -129,8 +132,8 @@ MemberStorage::MemberStorage(MemberStorageDescriptor descriptor) {
           [this](const ReferenceStorage&) {
             object_.emplace<ErasedReference>();
           },
-          [this](const PromotedScopeStorage&) {
-            object_.emplace<PromotedScopeRef>();
+          [this](const SharedPointerStorage&) {
+            object_.emplace<SharedPointer>();
           },
           [this](const CancellationTargetStorage&) {
             object_.emplace<CancellationTarget>();
@@ -313,6 +316,18 @@ auto MemberStorage::Address() -> void* {
   return std::visit([](auto& cell) -> void* { return &cell; }, object_);
 }
 
+auto MemberStorage::ValueHandle() -> void* {
+  return std::visit(
+      []<typename Held>(Held& held) -> void* {
+        if constexpr (kIsVariableCell<Held>) {
+          return HandleTo(held.Storage());
+        } else {
+          return HandleTo(held);
+        }
+      },
+      object_);
+}
+
 void MemberStorage::AdoptFrom(void* handle) {
   const auto adopt = [handle]<typename T>(T& value) {
     value = Read<T>(handle);
@@ -323,10 +338,10 @@ void MemberStorage::AdoptFrom(void* handle) {
           // to read out.
           [&](BorrowedHandle& box) { box.target = handle; },
           [&](ErasedReference& reference) { adopt(reference); },
-          // Copying the hold is what keeps the promoted scope alive for as
+          // Copying the hold is what keeps the held struct alive for as
           // long as this owner lasts, which is the whole of LRM 6.21's
           // lifetime rule: no other step acquires anything and none releases.
-          [&](PromotedScopeRef& held) { adopt(held); },
+          [&](SharedPointer& held) { adopt(held); },
           [](CancellationTarget&) {
             throw InternalError(
                 "MemberStorage: a cancellation source is created by the scope "

@@ -71,7 +71,22 @@ auto RuntimeUnion::AcrossMembers(const RuntimeUnion& a, const RuntimeUnion& b)
       "their resolution has no defined value");
 }
 
-auto RuntimeUnion::ResolveNet(
+auto RuntimeUnion::ResolveTriState(const RuntimeUnion& other) const
+    -> RuntimeUnion {
+  return FoldedWith(other, NetResolution::kTriState);
+}
+
+auto RuntimeUnion::ResolveWiredAnd(const RuntimeUnion& other) const
+    -> RuntimeUnion {
+  return FoldedWith(other, NetResolution::kWiredAnd);
+}
+
+auto RuntimeUnion::ResolveWiredOr(const RuntimeUnion& other) const
+    -> RuntimeUnion {
+  return FoldedWith(other, NetResolution::kWiredOr);
+}
+
+auto RuntimeUnion::FoldedWith(
     const RuntimeUnion& other, NetResolution fold) const -> RuntimeUnion {
   if (active_index_ != other.active_index_) {
     return AcrossMembers(*this, other);

@@ -1,33 +1,41 @@
 #pragma once
 
-#include "lyra/base/arena.hpp"
-#include "lyra/mir/field.hpp"
+#include <string>
+#include <vector>
+
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/type_declaration_ref.hpp"
+#include "lyra/mir/type_id.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
 
-// A compiler-generated aggregate of storage, and nothing else. Synthesized by
-// HIR-to-MIR for a promoted automatic scope's locals. It is a plain aggregate
-// -- no base, no methods, no dispatch, no invoke (a scope is storage, not
-// callable), no lifecycle. A closure is a separate category (`ClosureDecl`),
-// not a struct with a body.
-//
-// Neither it nor its members carry a name. The source declares no such
-// aggregate -- it exists because a lowering gathered locals that outlive their
-// body -- so there is no identifier for it to be called by; and a local stays a
-// local when its storage moves here, reached by the position it sits at exactly
-// as it was before, so gathering it grants it no name either. A backend spells
-// both over the identities they sit at.
-//
-// How an instance is held -- by value, or through a `Shared` / owned / borrowed
-// pointer wrapper -- is the wrapper around the struct's type, never a property
-// of this declaration; that a promoted scope is reference storage is expressed
-// by the `Shared<>` handle that reaches it, not here.
-//
-// This declaration fixes only the field storage shape. Constructing an instance
-// and assigning its fields is executable scope-entry code, not part of the
-// declaration.
+// One body a struct answers an operation on its whole value with, defined over
+// its members -- two structs are equal when every pair of members is (LRM
+// 11.4.5). It takes the parameters the operation takes of any value, the value
+// it is asked of first where it is asked of one.
+struct StructMethod {
+  support::ValueOperation answers;
+  CallableCode code;
+};
+
+// A struct this unit declares: the name the source declared it under (LRM
+// 7.2), which is what another unit reaches it by, its members' types in
+// declaration order, which an access reaches by position, and a method for
+// every operation on a whole value its type has -- a real member leaves no case
+// equality (LRM 11.4.5), a real or a chandle no bit stream (LRM 6.24.3), and a
+// member not valid for a net nothing to resolve (LRM 6.7.1).
 struct StructDecl {
-  base::Arena<FieldDecl, FieldId> fields;
+  std::string name;
+  std::vector<TypeId> elements;
+  std::vector<StructMethod> methods;
+};
+
+// A struct another unit declares, as this unit reads it: the declaration it is
+// and its members' types, which is what a value of it needs here.
+struct ExternalStruct {
+  TypeDeclarationRef declaration;
+  std::vector<TypeId> elements;
 };
 
 }  // namespace lyra::mir

@@ -132,11 +132,25 @@ struct UnpackedAggregateField {
   auto operator==(const UnpackedAggregateField&) const -> bool = default;
 };
 
+// The declaration a type is, named the way any unit names it: the unit that
+// declares it and the name it has there. SystemVerilog identifies a structure
+// by its declaration rather than by its members (LRM 6.22.1), and a type that
+// crosses a unit boundary is declared by a unit the crossing ones already
+// depend on (LRM 6.22), so the pair identifies it from anywhere.
+struct TypeDeclarationRef {
+  std::string unit_name;
+  std::string name;
+
+  auto operator==(const TypeDeclarationRef&) const -> bool = default;
+};
+
 // LRM 7.2 unpacked structure: a heterogeneous aggregate whose members each hold
 // independent storage of their declared type. Distinct from a packed struct,
 // whose members share one bit vector; an unpacked member may be any type,
 // including a string, another unpacked aggregate, or a variable-size container.
+// Two declarations with the same members are two types (LRM 6.22.1).
 struct UnpackedStructType {
+  TypeDeclarationRef declaration;
   std::vector<UnpackedAggregateField> fields;
 
   auto operator==(const UnpackedStructType&) const -> bool = default;
@@ -386,9 +400,12 @@ class Type {
 // The types one compilation unit names. A type's identity here is its
 // structure, so two declarations spelling the same type are one entry however
 // each was reached -- read off the frontend, composed by the lowering, or taken
-// out of another unit's signature. That is what makes a `TypeId` mean a type
-// rather than a place where one happened to be written, and it is what keeps a
-// type arriving from outside from becoming a second copy of one already here.
+// out of another unit's signature. The declaration a class or an unpacked
+// structure names is part of that structure, which is how two of them with the
+// same members stay apart (LRM 8.3, 6.22.1). That is what makes a `TypeId` mean
+// a type rather than a place where one happened to be written, and it is what
+// keeps a type arriving from outside from becoming a second copy of one already
+// here.
 //
 // Identity is structural and not the frontend's: a pool outlives the frontend
 // object that fed it and belongs to one unit alone, so nothing in it may rest

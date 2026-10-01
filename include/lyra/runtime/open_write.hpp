@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <memory>
 
+#include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/formation.hpp"
 
@@ -74,8 +75,19 @@ class OpenWrite {
     if (!bracket_of_->undecided(bracket_.data())) {
       return;
     }
-    std::construct_at(Landing<Part>(landing_.data()), part);
+    std::construct_at(Landing<PartLanding<Part>>(landing_.data()), part);
     landing_of_ = &kLandingOf<Part>;
+  }
+
+  // The same, for a tuple where it lies. No object stands for one there -- a
+  // component of a tuple is bytes of the tuple holding it -- so the part is the
+  // tuple's bytes, and its value from before the write is a tuple of its own.
+  void LandTuple(void* part) {
+    if (!bracket_of_->undecided(bracket_.data())) {
+      return;
+    }
+    std::construct_at(Landing<TupleLanding>(landing_.data()), part);
+    landing_of_ = &kTupleLandingOf;
   }
 
  private:
@@ -106,7 +118,7 @@ class OpenWrite {
   template <MutationSink Sink>
   static constexpr BracketOf kBracketOf{
       .storage = [](void* room) -> void* {
-        return &Bracket<Sink>(room)->Storage();
+        return HandleTo(Bracket<Sink>(room)->Storage());
       },
       .undecided = [](void* room) -> bool {
         return Bracket<Sink>(room)->Undecided();
@@ -136,26 +148,44 @@ class OpenWrite {
     Part before;
   };
 
+  struct TupleLanding {
+    explicit TupleLanding(void* landed)
+        : part(landed), before(value::RuntimeTuple::CopyOf(landed)) {
+    }
+    void* part;
+    value::RuntimeTuple before;
+  };
+
   // What the landing room holds, asked of the part one write landed on. Ending
   // it tells the bracket what the landing found.
   struct LandingOf {
     void (*end)(void* room, const BracketOf& bracket_of, void* bracket);
   };
 
-  template <typename Part>
-  static auto Landing(void* room) -> PartLanding<Part>* {
-    static_assert(sizeof(PartLanding<Part>) <= kLandingCapacity);
-    static_assert(alignof(PartLanding<Part>) <= alignof(void*));
-    return static_cast<PartLanding<Part>*>(room);
+  template <typename Kept>
+  static auto Landing(void* room) -> Kept* {
+    static_assert(sizeof(Kept) <= kLandingCapacity);
+    static_assert(alignof(Kept) <= alignof(void*));
+    return static_cast<Kept*>(room);
   }
 
   template <typename Part>
   static constexpr LandingOf kLandingOf{
       .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
-        PartLanding<Part>* landing = Landing<Part>(room);
+        auto* landing = Landing<PartLanding<Part>>(room);
         if (!landing->before.IsBitIdentical(*landing->part)) {
           bracket_of.landed(
               bracket, LandedChange(landing->before, *landing->part));
+        }
+        std::destroy_at(landing);
+      }};
+
+  static constexpr LandingOf kTupleLandingOf{
+      .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
+        auto* landing = Landing<TupleLanding>(room);
+        if (!value::RuntimeTuple::BitIdentical(
+                landing->before.Bytes(), landing->part)) {
+          bracket_of.landed(bracket, MakeWholeValueProjectionTest());
         }
         std::destroy_at(landing);
       }};

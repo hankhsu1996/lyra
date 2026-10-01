@@ -14,10 +14,11 @@ namespace lyra::mir {
 // borrow). Callability is the unconditional presence of `invoke` -- a closure
 // is always callable, so there is no flag.
 //
-// Closure and struct share only the field substrate (`FieldDecl` / `FieldId`).
-// A closure is not a `StructDecl` with a body: the source gives it no name, it
-// is a callable value rather than storage a scope's variables live in, and its
-// one body is part of what it is.
+// A closure shares the field substrate (`FieldDecl` / `FieldId`) with the
+// object (`mir::Class`), since a capture is reached by the field id its
+// declaration gave it, as a property is. It is not a `StructDecl` with a body:
+// a struct is a value whose components are reached by position and which has no
+// invoke, while a closure's one body is part of what it is.
 struct ClosureDecl {
   base::Arena<FieldDecl, FieldId> fields;
   // A deterministic order over `fields` (a permutation of field ids) that a

@@ -14,7 +14,9 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
 
@@ -126,6 +128,17 @@ void Verify(const CompilationUnit& unit) {
     VerifyCode(unit, unit.GetClosure(id).invoke, [&] {
       return std::format("closure {} of unit '{}'", id.value, unit.name);
     });
+  }
+  for (const StructId id : unit.structs.Ids()) {
+    const StructDecl& declaration = unit.GetStruct(id);
+    for (const StructMethod& method : declaration.methods) {
+      VerifyCode(unit, method.code, [&] {
+        return std::format(
+            "method '{}' of struct {} in unit '{}'",
+            support::ValueOperationName(method.answers),
+            BodyLabel(declaration.name, id.value), unit.name);
+      });
+    }
   }
   for (const ClassId id : unit.classes.Ids()) {
     VerifyClass(unit, unit.GetClass(id));

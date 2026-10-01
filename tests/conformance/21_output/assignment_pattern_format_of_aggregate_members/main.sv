@@ -3,12 +3,18 @@
 // alike; prints a union as only its first declared element; and prints a tagged
 // union as the element its tag names (LRM 21.2.1.6). An aggregate a container
 // holds is traversed down to, so the names reach an element no source
-// expression names.
+// expression names. The names are the declaring type's own, so two structures
+// with the same member types each print theirs.
 module Top;
   typedef struct {
     int count;
     string label;
   } entry_t;
+
+  typedef struct {
+    int number;
+    string word;
+  } token_t;
 
   typedef struct packed {
     bit [3:0] high;
@@ -59,6 +65,8 @@ module Top;
   entry_t by_index [int];
   entry_t pending [$];
   entry_t absent [];
+  token_t token;
+  token_t tokens [$];
 
   string entry_text = "unset";
   string halves_text = "unset";
@@ -72,6 +80,8 @@ module Top;
   string by_index_text = "unset";
   string pending_text = "unset";
   string absent_text = "unset";
+  string token_text = "unset";
+  string tokens_text = "unset";
 
   initial begin
     entry = '{7, "seven"};
@@ -86,6 +96,8 @@ module Top;
     log[1] = '{2, "two"};
     by_index[10] = '{3, "three"};
     pending.push_back('{4, "four"});
+    token = '{5, "five"};
+    tokens.push_back('{6, "six"});
 
     entry_text = $sformatf("%p", entry);
     halves_text = $sformatf("%p", halves);
@@ -99,6 +111,8 @@ module Top;
     by_index_text = $sformatf("%p", by_index);
     pending_text = $sformatf("%p", pending);
     absent_text = $sformatf("%p", absent);
+    token_text = $sformatf("%p", token);
+    tokens_text = $sformatf("%p", tokens);
   end
 
   final begin
@@ -128,6 +142,11 @@ module Top;
       $fatal(1, "structures held by a queue printed as '%s'", pending_text);
     if (absent_text != "'{}")
       $fatal(1, "an empty container printed as '%s'", absent_text);
+    if (token_text != "'{number:5, word:\"five\"}")
+      $fatal(1, "a second structure of the same member types printed as '%s'",
+             token_text);
+    if (tokens_text != "'{'{number:6, word:\"six\"}}")
+      $fatal(1, "that structure held by a queue printed as '%s'", tokens_text);
     $display("All checks passed");
   end
 endmodule

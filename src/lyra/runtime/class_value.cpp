@@ -39,7 +39,7 @@ ClassValue::~ClassValue() = default;
 auto ClassValue::Member(const ObjectDefinition* declared_by, std::uint32_t slot)
     -> void* {
   return members_[RequireDefinition(declared_by)->first_member + slot]
-      .Address();
+      .ValueHandle();
 }
 
 }  // namespace lyra::runtime

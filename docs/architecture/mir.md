@@ -58,31 +58,32 @@ what the construct means.
   of these.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
   intra-unit object (a class of this unit) and an external-unit object (another compilation unit,
-  named); two composing wrappers, owning pointer and vector; and four nominal / structural
-  categories: the **tuple**, the one structural heterogeneous product (positional, shape-interned);
-  the **struct**, a nominal named field-bearing aggregate (declaration identity, named fields), used
-  for a compiler-generated promoted automatic scope reached through a `Shared<>` wrapper; the
+  named); two composing wrappers, pointer and vector, a pointer stating its ownership -- unique,
+  shared or borrowed, the last two written `Shared<T>` and `Borrowed<T>` in these docs; and four
+  categories: the **tuple**, the structural product (positional; interned by its components, so two
+  with the same components are one type); the **struct**, the nominal product (positional like the
+  tuple, but its identity is its declaration, so two with the same components are two types); the
   **closure**, an anonymous concrete callable value (capture fields plus one invoke body, a distinct
   type per site); and the **object** (`mir::Class`), the rich nominal object with methods and
-  dispatch. The three nominal ones share one **field substrate** -- a field declaration, a field id
-  keyed within one declaration, and one access node over both -- while staying distinct types; the
-  tuple shares none of it, because a product declares its components nowhere and reaching one is an
-  operation on the value rather than a name in an arena. An access names the declaration it reaches
-  into, so what the substrate shares is the vocabulary and never the identity. Structural versus
-  nominal, and storage versus callable, are the ordinary generic-language distinctions
-  (C++/Rust/LLVM carry them). "Activation frame" is a lowering role name for a `Shared<>` scope
-  struct, not a type category; a closure is not a struct-with-invoke but its own callable-value
-  category.
-- An aggregate the **source declared** -- a structure or a union, packed or unpacked -- is a type of
-  its own that names its members, beside the anonymous product a lowering composes for itself. The
-  member names are part of what the type is, because the language renders a value by them (LRM
-  21.2.1.6) and two values of one type must render alike; a type that stated only the component
-  types would leave that answer outside the type. Its **value-domain projection** is the
-  representation it shares with a type that names nothing -- the product for an unpacked aggregate,
-  the single vector for a packed one -- so a value operation reads the projection and never the
-  names, exactly as an enumeration projects to its base. Reaching a member is unchanged by this: an
-  access names a member by its declaration-order position, the carrier below the source level that
-  LLVM IR and Rust MIR both use over a nominal record type, and the name is what presentation reads.
+  dispatch. The tuple and the struct are the two products, and a component of either is reached the
+  same way: by its position, with an operation on the value, whether the value is stored, computed
+  or behind a pointer. The closure and the object share a **field substrate** -- a field
+  declaration, a field id keyed within one declaration, and one access node -- while staying
+  distinct types; an access names the declaration it reaches into, so what the substrate shares is
+  the vocabulary and never the identity. Structural versus nominal, and storage versus callable, are
+  the ordinary generic-language distinctions (C++/Rust/LLVM carry them).
+- A struct is an unpacked structure the source declared (LRM 7.2). It carries the name another unit
+  reaches it by and a method for each operation the language defines on its whole value, which every
+  unit naming it calls through the declaration; another unit holds it by that name. A local a scope
+  keeps past its end (LRM 6.21) is no struct: it is its own cell, reached through a `Shared<>`
+  wrapper. A closure is not a struct-with-invoke but its own callable-value category.
+- Every other aggregate the **source declared** is the generic type its value is: an unpacked union
+  a union and a tagged one a sum over its member types, and a packed structure or union the single
+  vector its members project onto. No member name is carried by any aggregate: an access names a
+  member by its declaration-order position, the carrier LLVM IR and Rust MIR both use, and what the
+  language reads a name for -- rendering a value (LRM 21.2.1.6) -- is computation built from the
+  source type before this layer. An enumeration's member list is part of what the type is, because
+  its value is asked for its member's name at run time (LRM 6.19.5).
 - Capability wrappers: types that represent a storage place instead of being a value -- an
   observable cell, a reference, a net's resolved value, a net driver's contribution. A capability
   wrapper composes over the value type it represents, and the wrapper and that storage are distinct
