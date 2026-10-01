@@ -61,6 +61,10 @@ struct SensitivityRead {
 // caller asks this one question; none of them wants the reads of the node's
 // own variables.
 //
+// A read counts wherever the text has it (LRM 9.2.2.2.1, 9.4.2.2). A condition
+// a parameter or a generate index happens to settle rules none out, so every
+// construction of one body reads alike and wakes on what the standard lists.
+//
 // `containing_symbol` is a slang plumbing requirement: slang's flow analysis
 // builds a name-lookup `EvalContext` from `symbol.getParentScope()`, so the
 // analyzer needs any symbol whose parent scope covers the analyzed node.

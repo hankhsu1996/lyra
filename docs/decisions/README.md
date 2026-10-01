@@ -176,7 +176,9 @@ the detail lives in the entry itself.
 - [lifetime-extended-automatic-scope](lifetime-extended-automatic-scope.md) -- an automatic scope a
   process may outlive is a shared-owned activation object; a detached branch captures the handle by
   value.
-- [read-set-inference](read-set-inference.md) -- read-set inference via slang flow analysis.
+- [read-set-inference](read-set-inference.md) -- read-set inference via slang flow analysis, asked
+  to rule no path out by a constant: what a body waits on is what its text reads, so every
+  construction of one body waits alike and wakes on a read its constants exclude.
 - [runtime-effects-as-generic-calls](runtime-effects-as-generic-calls.md) -- runtime effects lower
   to ordinary `CallExpr` with the engine handle as one argument.
 - [ambient-runtime-services](ambient-runtime-services.md) -- generated code reaches the runtime

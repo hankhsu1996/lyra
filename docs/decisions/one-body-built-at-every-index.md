@@ -141,7 +141,12 @@ the comparison rather than lowered into the scope.
 What an expression evaluated to takes no part either, and it cannot, because no position a block
 states is kept as a value: each is lowered as the expression it is, and two blocks that wrote the
 same expression state the same thing whatever it works out to. That had to be earned and was not
-true when this entry was written; the positions the lowering kept are now none.
+true when this entry was written. The last position found was not an expression at all: what a body
+waits on was computed with the paths its constants exclude left out, so blocks written alike waited
+on different things ([read-set-inference](read-set-inference.md)). Two are still kept, both in how a
+read is stated: a constant select that lands outside its object reads no bit, so the block where it
+does lists no read where its neighbours list one; and a read inside a function a procedure calls is
+stated as the bits it reached.
 
 **What the predict-then-check shape found while it stood, both times through a hole in the
 prediction.** A generate block declaring `import "DPI-C"` made two blocks that behave identically

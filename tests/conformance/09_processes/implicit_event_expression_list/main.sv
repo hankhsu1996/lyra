@@ -3,7 +3,9 @@
 // any of them changes (LRM 9.4.2.2). @* and @(*) are the same form, the
 // governed statement may be a single assignment or a statement group assigning
 // several targets, and a name reached through a hierarchical path is read by
-// the statement like any other.
+// the statement like any other. The list is every identifier that appears in
+// the statement, so one that appears under a condition a constant never
+// satisfies is in it too.
 module Top;
   int a;
   int b;
@@ -27,6 +29,17 @@ module Top;
 
   always @* with_hier = a + b + g.v;
 
+  localparam int kNever = 0;
+  int under_never;
+  int never_sink;
+  int never_runs;
+
+  always @* begin
+    never_runs++;
+    if (kNever == 1) never_sink = under_never;
+    else never_sink = 0;
+  end
+
   initial begin
     a = 1;
     b = 2;
@@ -37,6 +50,8 @@ module Top;
     b = 3;
     #1;
     g.v = 20;
+    #1;
+    under_never = 5;
     #1;
   end
 
@@ -50,6 +65,9 @@ module Top;
       $fatal(1, "block_diff was %0d, expected 4", block_diff);
     if (with_hier !== 30)
       $fatal(1, "with_hier was %0d, expected 30", with_hier);
+    if (never_runs !== 1)
+      $fatal(1, "an identifier under a condition never met ran the statement %0d times, expected 1",
+             never_runs);
     $display("All checks passed");
   end
 endmodule

@@ -419,6 +419,28 @@ specializations, not with instance count.
       [../decisions/a-part-is-the-select-the-source-wrote.md](../decisions/a-part-is-the-select-the-source-wrote.md)
       holds why which bits are watched stays the front end's answer.
 
+      **A block whose index or parameter settles a condition its body writes used to fall outside
+      them too, and no longer does.** What a body waits on was computed with every path its
+      constants exclude left out, so `always_comb if ((i % 2) == 0) y[i] = a[i]; else y[i] = 1'b0;`
+      waited on `a[i]` at one index and on nothing at the next, and blocks written alike were one
+      set of classes per index: 628,896 bytes and 180 classes added from 4 iterations to 64. The
+      same held under a `case`, a conditional operator, a logical operator's second operand, a
+      procedural loop the index bounds, `@*`, `wait`, and a continuous assignment. What a body waits
+      on is now what its text reads (LRM 9.2.2.2.1, 9.4.2.2), so each of those adds 33 bytes over
+      the same range, the digits of the loop bound.
+      [../decisions/read-set-inference.md](../decisions/read-set-inference.md) holds why, and what
+      it costs: a procedure wakes on a read in a branch its constants exclude, as the clause states,
+      which on Ibex is 1.0% more instructions (15.31 G to 15.47 G).
+
+      Still one class per index, for two causes of their own. A constant select that lands outside
+      its object at some index, which is how a chain is written inside a procedure
+      (`if (i > 0) y[i] = a[i - 1];`): at the index where it lands nowhere the read reaches no bit
+      and is not listed, so that block differs from its neighbours, and one block differing keeps
+      every block apart. And a read inside a function the procedure calls (`return a[i];`), which is
+      stated as the bits it reached and not as the select written there. Naming it by that select
+      was tried: it shares the body, and it also watches one run of bits as every select that makes
+      it up, which on Ibex raised the watched entries from 1838 to 2071.
+
       What it costs where nothing is gained, measured rather than waved at: a block that cannot
       share either way now carries the declaration instead of the folded literal, which is **359
       bytes per block** -- 15 blocks declaring a width through a named constant emit 154,362 bytes

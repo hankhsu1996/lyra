@@ -2694,6 +2694,24 @@ enough to warrant its own focused review.
       raised while lowering a construct reports the construct's source location and the unit,
       however deep the throw. Not blocked.
 
+- [ ] R159 -- What a body reads reaches the lowering as bits and is turned back into the selects the
+      source wrote by matching. The front end's flow analysis reports each read as a run of a
+      variable's bits; a body shared by many constructions needs the select instead, so the lowering
+      collects every select written in the body and matches their bits against each reported run,
+      naming the run where they cover it exactly. The producer knew which expression it read and
+      handed over only where it landed, and every miss of the matching costs sharing: a read inside
+      a called function is not matched at all, and a constant select that lands outside its object
+      at one index reaches no bit and so is not reported there, which keeps a loop's blocks apart
+      when one of them is that index. Matching function bodies too was tried and shares the body,
+      but watches one run as every select that makes it up, which raised a real design's watched
+      entries by an eighth. Target: the analysis reports each read as the select it read, with the
+      bits beside it where exclusion needs them, and the lowering matches nothing except for what is
+      left of a read once the procedure's own writes are taken out, which only bits can say. The
+      front end merges adjacent reads into one run before it reports them and its own tests hold
+      that, so this is a change to what its sensitivity list is, or a second list beside it, and
+      wants a design of its own. Copying how it keeps writes does not serve: a write another write
+      covers is dropped, and a read dropped that way differs between constructions.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,
