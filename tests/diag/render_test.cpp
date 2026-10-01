@@ -7,6 +7,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/kind.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
@@ -38,17 +39,15 @@ TEST(DiagRender, HostErrorColored) {
   EXPECT_NE(out.find(kAnsiEsc), std::string::npos);
 }
 
-TEST(DiagRender, InternalErrorIsAlwaysPlain) {
-  const auto out = lyra::diag::RenderInternalError("invariant violated");
-  EXPECT_EQ(out, "lyra: internal error: invariant violated\n");
-}
-
 // The exception carries the invariant that was violated and the fact that it is
 // a bug; naming it as an internal error belongs to whichever surface reports
 // it. Both would otherwise label it and the reader sees the label twice.
 TEST(DiagRender, InternalErrorLabelIsNotDoubled) {
   const lyra::InternalError error("llvm codegen: no runtime domain");
-  const auto out = lyra::diag::RenderInternalError(error.what());
+  lyra::diag::DiagnosticSink sink;
+  sink.Report(lyra::diag::InternalFailure(error));
+  const auto out = lyra::diag::RenderDiagnostics(
+      sink, nullptr, lyra::diag::RenderOptions{.use_color = false});
   EXPECT_FALSE(Has(out, "internal error: Internal error:")) << out;
   EXPECT_TRUE(Has(out, "lyra: internal error: llvm codegen: no runtime domain"))
       << out;

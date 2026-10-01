@@ -9,6 +9,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -66,6 +67,7 @@ template <ExprLowerer L>
 auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
   constexpr bool kProcedural = std::same_as<L, ProcessLowerer>;
+  const diag::FailureContext at(expr.span);
   const mir::TypeId result_type = lowerer.Owner().TranslateType(expr.type);
   auto raw_or = std::visit(
       Overloaded{

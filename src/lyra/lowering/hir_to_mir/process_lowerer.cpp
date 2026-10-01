@@ -10,6 +10,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -47,6 +48,7 @@ auto PromotedVarPlace(const WalkFrame& frame, const PromotedVarBinding& binding)
 
 auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
     -> diag::Result<mir::Stmt> {
+  const diag::FailureContext at(stmt.span);
   return std::visit(
       Overloaded{
           [&](const hir::EmptyStmt&) { return LowerEmptyStmt(stmt.label); },
@@ -283,6 +285,7 @@ auto CanWait(hir::SubroutineKind kind) -> bool {
 
 auto ProcessLowerer::Run(const hir::Process& src)
     -> diag::Result<mir::CallableCode> {
+  const diag::FailureContext at(src.span);
   switch (src.kind) {
     case hir::ProcessKind::kInitial:
     case hir::ProcessKind::kFinal:

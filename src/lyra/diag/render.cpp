@@ -34,6 +34,8 @@ auto KindLabel(DiagKind kind) -> std::string_view {
       return "unsupported:";
     case DiagKind::kHostError:
       return "error:";
+    case DiagKind::kInternalError:
+      return "internal error:";
     case DiagKind::kWarning:
       return "warning:";
     case DiagKind::kNote:
@@ -49,6 +51,7 @@ auto KindStyle(DiagKind kind) -> fmt::text_style {
     case DiagKind::kError:
     case DiagKind::kUnsupported:
     case DiagKind::kHostError:
+    case DiagKind::kInternalError:
       return fmt::fg(fmt::terminal_color::bright_red) | fmt::emphasis::bold;
     case DiagKind::kWarning:
       return fmt::fg(fmt::terminal_color::bright_magenta) | fmt::emphasis::bold;
@@ -64,6 +67,7 @@ auto IsShown(DiagKind kind, const RenderOptions& opts) -> bool {
     case DiagKind::kError:
     case DiagKind::kUnsupported:
     case DiagKind::kHostError:
+    case DiagKind::kInternalError:
     case DiagKind::kNote:
       return true;
     case DiagKind::kWarning:
@@ -230,6 +234,7 @@ auto RenderDiagnostics(
   std::string out;
   std::uint32_t error_count = 0;
   std::uint32_t warning_count = 0;
+  bool asks_for_report = false;
   for (const auto& d : sink.Diagnostics()) {
     if (!IsShown(d.primary.kind, opts)) {
       continue;
@@ -239,6 +244,10 @@ auto RenderDiagnostics(
       case DiagKind::kUnsupported:
       case DiagKind::kHostError:
         ++error_count;
+        break;
+      case DiagKind::kInternalError:
+        ++error_count;
+        asks_for_report = true;
         break;
       case DiagKind::kWarning:
         ++warning_count;
@@ -265,11 +274,12 @@ auto RenderDiagnostics(
         std::format("{} error{}", error_count, error_count == 1 ? "" : "s");
   }
   out += std::format("{} generated.\n", summary);
+  // Asked once for the run, however many of its failures were the compiler's
+  // own.
+  if (asks_for_report) {
+    out += std::format("{}\n", BugReportRequest());
+  }
   return out;
-}
-
-auto RenderInternalError(std::string_view message) -> std::string {
-  return std::format("lyra: internal error: {}\n", message);
 }
 
 }  // namespace lyra::diag

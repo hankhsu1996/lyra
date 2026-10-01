@@ -152,6 +152,11 @@ the detail lives in the entry itself.
   the stage goes on, so one run accounts for every unit and every member rather than for the first
   that stopped; a stage that reported anything is the last one that runs, and what it produced is
   discarded.
+- [a-compiler-failure-says-where](a-compiler-failure-says-where.md) -- whoever walks the design says
+  what it is working on, and the compiler's own failure collects that, so it is reported on one line
+  at a place in the source with the unit it was met in; it is the unit's failure and the other units
+  go on. Passing a location to every failing site, capturing it in the error type, a line per level
+  of work, and recovering at the body are rejected.
 - [the-request-names-its-products](the-request-names-its-products.md) -- what a compilation step
   answers with is decided by what was asked of it, so no caller asks whether a product it requested
   is there and the only absence left means the run failed; a depth fixed at compile time, one entry

@@ -2686,13 +2686,12 @@ enough to warrant its own focused review.
       take, on both backends. A struct named like its module met the same fold on the C++ backend
       and is kept apart by the namespace its structs are declared in. Not blocked.
 
-- [ ] R158 -- An internal error says what invariant broke and never where in the design: no source
-      line, no unit, no body. On a small case that costs nothing, but on a large design one of them
-      cannot be located at all -- a report from a design of more than a thousand units had to be
-      reduced by hand from a message naming only an index. The lowering knows which unit and which
-      body it is in at every step, and nothing carries that to the error. Target: an internal error
-      raised while lowering a construct reports the construct's source location and the unit,
-      however deep the throw. Not blocked.
+- [ ] R158 -- The compiler's own failure is reported at a source location while a body is lowered to
+      HIR and to MIR, and by the body's name below that. For a process the name below MIR is one the
+      compiler made, so a failure there says the unit and a name the source never wrote; and the C++
+      backend names no body at all, only the unit. Target: a body states where it came from in MIR
+      and LIR, so every stage reports the same place. It is the same fact a debugger's line table
+      needs. Not blocked.
 
 - [ ] R159 -- What a body reads reaches the lowering as bits and is turned back into the selects the
       source wrote by matching. The front end's flow analysis reports each read as a run of a
@@ -2711,6 +2710,17 @@ enough to warrant its own focused review.
       that, so this is a change to what its sensitivity list is, or a second list beside it, and
       wants a design of its own. Copying how it keeps writes does not serve: a write another write
       covers is dropped, and a read dropped that way differs between constructions.
+
+- [ ] R160 -- HIR has no check of its own, where MIR and LIR each have one run as a unit is
+      produced. A reference to a declaration that is not in scope where it stands is therefore found
+      by whatever lowers it, in that stage's terms, and not by the stage that wrote it. Target: a
+      unit's HIR is held to its own well-formedness where it is produced, failing in HIR's terms.
+      Not blocked.
+
+- [ ] R161 -- The compiler crashing without throwing -- a fault in memory, an abort, a stack
+      overflow, a fatal error inside the code generator -- says nothing about what it was working
+      on, because nothing is unwound to collect it. No real design has met one. Target: a crash
+      prints the work in progress on the thread that crashed. Not blocked.
 
 ## Out of Scope
 

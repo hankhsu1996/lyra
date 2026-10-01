@@ -20,6 +20,7 @@
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/symbol_name.hpp"
@@ -87,6 +88,8 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
     variable_schema_cells_.Append(DeclareVariableSchemaCell(id));
   }
   for (const lir::FunctionId id : unit_->functions.Ids()) {
+    const auto in_function =
+        diag::FailureContext::InFunction(unit_->functions.Get(id).name);
     auto generated = CodeGenFunction(*this, id).Run();
     if (!generated) {
       return std::unexpected(std::move(generated.error()));

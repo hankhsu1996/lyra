@@ -29,6 +29,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
@@ -50,6 +51,7 @@ UnitLowerer::UnitLowerer(
 }
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
+  const auto in_unit = diag::FailureContext::InUnit(unit_.name);
   DeclareStructuralIdentities(*scope_);
   if (auto r = InternOwnClassDeclarations(*scope_); !r) {
     return std::unexpected(std::move(r.error()));
@@ -138,6 +140,7 @@ auto UnitLowerer::TakeSignature() -> hir::UnitSignature {
 auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
     -> diag::Result<hir::CompilationUnit> {
   signatures_ = &signatures;
+  const auto in_unit = diag::FailureContext::InUnit(unit_.name);
   WalkFrame frame;
   StructuralScopeLowerer root(*this, *scope_);
   auto root_scope_or = root.Run(frame);

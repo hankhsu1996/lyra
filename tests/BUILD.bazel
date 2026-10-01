@@ -134,10 +134,35 @@ cc_test(
 )
 
 cc_test(
+    name = "diag_failure_context_tests",
+    srcs = ["diag/failure_context_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "//:diag",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "artifact_count_test",
     srcs = ["artifact_count_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
+        "//:compiler",
+        "//:diag",
+        "//:hir",
+        "@googletest//:gtest_main",
+        "@slang",
+    ],
+)
+
+cc_test(
+    name = "compiler_unit_failure_test",
+    srcs = ["compiler/unit_failure_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
         "//:compiler",
         "//:diag",
         "//:hir",

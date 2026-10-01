@@ -51,6 +51,8 @@ enum class DiagCode : std::uint32_t {
   kHostIoError,
   kHostBuildFailed,
 
+  kInternalFailure,
+
   kWarningPedantic,
 
   kRemarkLostSharing,

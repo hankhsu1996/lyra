@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace lyra {
 
@@ -24,6 +25,13 @@ class InternalError final : public std::logic_error {
   // unit that builds one -- and a thrown type reaches every unit that can
   // raise it.
   ~InternalError() override;
+
+  // The invariant alone, for a surface that reports several of these and asks
+  // for the bug report once.
+  [[nodiscard]] auto Invariant() const -> std::string_view;
 };
+
+// What every one of these asks of the reader, as `what()` ends with it.
+auto BugReportRequest() -> std::string_view;
 
 }  // namespace lyra

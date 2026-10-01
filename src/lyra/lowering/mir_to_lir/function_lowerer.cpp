@@ -18,6 +18,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/operator.hpp"
@@ -493,6 +494,7 @@ auto FunctionLowerer::LowerValueBuild(
 
 auto FunctionLowerer::RunValueBuild() -> diag::Result<lir::Function> {
   fn_.name = std::move(name_);
+  const auto in_function = diag::FailureContext::InFunction(fn_.name);
   // The type is the built expression's own, so a description and a constant
   // reach this the same way and neither is named here.
   fn_.result_type =
@@ -519,6 +521,7 @@ auto FunctionLowerer::RunValueBuild() -> diag::Result<lir::Function> {
 
 auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   fn_.name = std::move(name_);
+  const auto in_function = diag::FailureContext::InFunction(fn_.name);
   // A coroutine-bodied callable keeps its coroutine result type: coroutine-ness
   // is the call protocol carried by the type, so a backend realizes suspension
   // and completion from the type, never from a separate flag.

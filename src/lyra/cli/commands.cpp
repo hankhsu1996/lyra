@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <filesystem>
 #include <format>
 #include <functional>
@@ -35,6 +36,7 @@
 #include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/driver/artifact_store.hpp"
 #include "lyra/driver/cpp_build.hpp"
@@ -698,8 +700,22 @@ auto LoadDesign(const Invocation& invocation, CompilerWarnings warnings)
 
 using DesignCommand = auto (*)(const CommandContext&) -> int;
 
+// Carries out `command` and answers with its exit code. A failure of the
+// compiler's own that no unit contained ends the command here, while the
+// sources it may name are still held, and joins what the command reported.
+auto Attempt(DesignCommand command, const CommandContext& ctx) -> int {
+  try {
+    return command(ctx);
+  } catch (const std::exception& failure) {
+    ctx.sink->Report(diag::InternalFailure(failure));
+    return kCompilerFailureExit;
+  }
+}
+
 // Loads the design and hands it to `command`. Everything the command reports
-// goes into one sink, which is rendered here once the command is done.
+// goes into one sink, which is rendered here once the command is done. A
+// failure of the compiler's own anywhere in the run, contained by a unit or
+// not, is what the exit status says.
 auto RunOnDesign(
     const Invocation& invocation, CompilerWarnings warnings,
     DesignCommand command) -> int {
@@ -708,20 +724,20 @@ auto RunOnDesign(
     return 1;
   }
   diag::DiagnosticSink sink;
-  const int exit_code = command(
-      CommandContext{
-          .args = &design->args,
-          .elaborated = &design->elaborated,
-          .sink = &sink,
-          .dpi_inputs = design->dpi_inputs,
-          .program_path = invocation.program_path});
+  const int exit_code = Attempt(
+      command, CommandContext{
+                   .args = &design->args,
+                   .elaborated = &design->elaborated,
+                   .sink = &sink,
+                   .dpi_inputs = design->dpi_inputs,
+                   .program_path = invocation.program_path});
   const Reporter& report = *invocation.report;
   if (warnings == CompilerWarnings::kWithheld && !sink.HasErrors()) {
     report.WithoutWarnings()(sink, &design->elaborated.diag_sources);
   } else {
     report(sink, &design->elaborated.diag_sources);
   }
-  return exit_code;
+  return sink.HasInternalErrors() ? kCompilerFailureExit : exit_code;
 }
 
 // Empties the store. It consults no design and never reaches the compiler, so

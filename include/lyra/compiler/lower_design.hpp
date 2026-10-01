@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <expected>
 #include <optional>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -10,6 +11,7 @@
 #include "lyra/compiler/design_root.hpp"
 #include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/compilation_unit.hpp"
@@ -50,6 +52,11 @@ struct ExecutableDesign {
 // listed; whether any unit failed is the sink's answer. `produce` answering
 // with a diagnostic -- a backend that has no form for the unit -- is reported
 // like any other failure inside this stage, and that unit is not consumed.
+//
+// The compiler's own failure while it works on a unit is that unit's failure
+// too. A unit reads nothing another unit writes, so one of them breaking an
+// invariant says nothing about the rest: it is reported with what was being
+// worked on when it broke, and the other units go on.
 template <typename Produce, typename Consume>
 void LowerToHir(
     ElaboratedDesign& design, diag::DiagnosticSink& sink, std::size_t width,
@@ -58,11 +65,17 @@ void LowerToHir(
   support::ProduceInOrder(
       design.units.UnitCount(), width,
       [&](std::size_t i) -> Produced {
-        auto unit = design.units.LowerUnit(i);
-        if (!unit) {
-          return std::unexpected(std::move(unit.error()));
-        }
-        return produce(*std::move(unit));
+        return diag::ContainFailure([&]() -> Produced {
+          auto unit = design.units.LowerUnit(i);
+          if (!unit) {
+            return std::unexpected(std::move(unit.error()));
+          }
+          // The unit is handed on below, so the name it is known by here is a
+          // copy that lasts as long as the work on it.
+          const std::string name = unit->name;
+          const auto in_unit = diag::FailureContext::InUnit(name);
+          return produce(*std::move(unit));
+        });
       },
       [&](Produced produced) {
         if (produced) {
@@ -97,6 +110,7 @@ auto LowerToSemantic(
     return std::nullopt;
   }
 
+  const auto in_unit = diag::FailureContext::InUnit(kDesignRootUnitName);
   auto root = SynthesizeDesignRoot(
       design.units.Tops(), design.units.Signatures(), sources);
   if (!root) {
@@ -129,6 +143,7 @@ auto LowerToExecutable(
     return std::nullopt;
   }
 
+  const auto in_unit = diag::FailureContext::InUnit(kDesignRootUnitName);
   auto root = LowerUnitToExecutable(semantic->root);
   if (!root) {
     sink.Report(std::move(root.error()));

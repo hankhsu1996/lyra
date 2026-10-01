@@ -8,6 +8,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/place_query.hpp"
@@ -198,6 +199,7 @@ void VerifyLandings(const Function& fn) {
 }
 
 void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
+  const auto in_function = diag::FailureContext::InFunction(fn.name);
   const bool is_coroutine = unit.types.Get(fn.result_type).Is<CoroutineType>();
   for (const BasicBlock& block : fn.blocks) {
     for (const Instr& instr : block.instrs) {

@@ -29,6 +29,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
@@ -143,6 +144,8 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   // declaration pass, so this population order is a decl-availability concern,
   // not a reference-resolution one.
   for (const auto& member : slang_scope_->members()) {
+    const diag::FailureContext at(
+        owner_->SourceMapper().PointSpanOf(member.location));
     if (member.kind == slang::ast::SymbolKind::Instance) {
       auto r = PopulateInstanceMember(
           member.as<slang::ast::InstanceSymbol>(), frame);
@@ -275,6 +278,8 @@ auto StructuralScopeLowerer::DeclareSettledValue(
 auto StructuralScopeLowerer::PopulateMember(
     const slang::ast::Symbol& member, WalkFrame frame) -> diag::Result<void> {
   using slang::ast::SymbolKind;
+  const diag::FailureContext at(
+      owner_->SourceMapper().PointSpanOf(member.location));
   switch (member.kind) {
     case SymbolKind::Variable:
       return PopulateVariableMember(

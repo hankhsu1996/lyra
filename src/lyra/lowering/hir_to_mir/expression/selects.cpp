@@ -758,11 +758,11 @@ auto PartStartOf(Lowerer& lowerer, WalkFrame frame, hir::ExprId part)
     return within(sel->base_value, *step);
   }
   if (const auto* sel = std::get_if<hir::MemberAccessExpr>(&expr.data)) {
-    const ProjectedMember& member = ProjectedMemberAt(
-        ProjectPackedAggregate(
-            unit_lowerer,
-            unit_lowerer.Hir().types.Get(exprs.Get(sel->base_value).type)),
-        sel->field_index);
+    const PackedProjection projection = ProjectPackedAggregate(
+        unit_lowerer,
+        unit_lowerer.Hir().types.Get(exprs.Get(sel->base_value).type));
+    const ProjectedMember& member =
+        ProjectedMemberAt(projection, sel->field_index);
     return within(
         sel->base_value,
         RunStep(
