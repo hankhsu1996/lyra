@@ -2693,17 +2693,6 @@ enough to warrant its own focused review.
       and LIR, so every stage reports the same place. It is the same fact a debugger's line table
       needs. Not blocked.
 
-- [ ] R159 -- HIR has no check of its own, where MIR and LIR each have one run as a unit is
-      produced. A reference to a declaration that is not in scope where it stands is therefore found
-      by whatever lowers it, in that stage's terms, and not by the stage that wrote it. Target: a
-      unit's HIR is held to its own well-formedness where it is produced, failing in HIR's terms.
-      Not blocked.
-
-- [ ] R160 -- The compiler crashing without throwing -- a fault in memory, an abort, a stack
-      overflow, a fatal error inside the code generator -- says nothing about what it was working
-      on, because nothing is unwound to collect it. No real design has met one. Target: a crash
-      prints the work in progress on the thread that crashed. Not blocked.
-
 - [ ] R159 -- What a body reads reaches the lowering as bits and is turned back into the selects the
       source wrote by matching. The front end's flow analysis reports each read as a run of a
       variable's bits; a body shared by many constructions needs the select instead, so the lowering
@@ -2721,6 +2710,17 @@ enough to warrant its own focused review.
       that, so this is a change to what its sensitivity list is, or a second list beside it, and
       wants a design of its own. Copying how it keeps writes does not serve: a write another write
       covers is dropped, and a read dropped that way differs between constructions.
+
+- [ ] R160 -- HIR has no check of its own, where MIR and LIR each have one run as a unit is
+      produced. A reference to a declaration that is not in scope where it stands is therefore found
+      by whatever lowers it, in that stage's terms, and not by the stage that wrote it. Target: a
+      unit's HIR is held to its own well-formedness where it is produced, failing in HIR's terms.
+      Not blocked.
+
+- [ ] R161 -- The compiler crashing without throwing -- a fault in memory, an abort, a stack
+      overflow, a fatal error inside the code generator -- says nothing about what it was working
+      on, because nothing is unwound to collect it. No real design has met one. Target: a crash
+      prints the work in progress on the thread that crashed. Not blocked.
 
 ## Out of Scope
 
