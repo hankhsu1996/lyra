@@ -168,6 +168,11 @@ constexpr std::array kEntries{
             .kind = DiagKind::kHostError, .name = "host_build_failed"}},
 
     std::pair{
+        DiagCode::kInternalFailure,
+        DiagCodeInfo{
+            .kind = DiagKind::kInternalError, .name = "internal_failure"}},
+
+    std::pair{
         DiagCode::kWarningPedantic,
         DiagCodeInfo{.kind = DiagKind::kWarning, .name = "warning_pedantic"}},
 

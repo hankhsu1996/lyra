@@ -19,6 +19,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
@@ -295,6 +296,7 @@ auto LowerStatement(
     -> diag::Result<hir::Stmt> {
   const auto& mapper = proc.Owner().SourceMapper();
   const auto span = mapper.SpanOf(stmt.sourceRange);
+  const diag::FailureContext at(span);
   switch (stmt.kind) {
     case slang::ast::StatementKind::Empty:
       return LowerEmptyStmt(span);

@@ -8,12 +8,13 @@
 #include <fmt/core.h>
 #include <slang/driver/Driver.h>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/cli/command_line.hpp"
 #include "lyra/cli/commands.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/render.hpp"
+#include "lyra/diag/sink.hpp"
 
 auto main(int argc, char** argv) -> int {
   try {
@@ -69,11 +70,15 @@ auto main(int argc, char** argv) -> int {
             .simulation_args = std::move(argv_split.child),
             .program_path = program_path,
             .report = &report});
-  } catch (const lyra::InternalError& e) {
-    fmt::print(stderr, "{}", lyra::diag::RenderInternalError(e.what()));
-    return 2;
-  } catch (const std::exception& e) {
-    fmt::print(stderr, "lyra: error: {}\n", e.what());
-    return 2;
+  } catch (const std::exception& failure) {
+    // Nothing a command reads is left to render against here, so the report is
+    // plain and names no place.
+    lyra::diag::DiagnosticSink sink;
+    sink.Report(lyra::diag::InternalFailure(failure));
+    fmt::print(
+        stderr, "{}",
+        lyra::diag::RenderDiagnostics(
+            sink, nullptr, lyra::diag::RenderOptions{.use_color = false}));
+    return lyra::cli::kCompilerFailureExit;
   }
 }

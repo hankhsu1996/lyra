@@ -60,6 +60,10 @@ struct Invocation {
   const Reporter* report;
 };
 
+// The exit status of a run in which the compiler failed through a fault of its
+// own, which a caller tells apart from a design it refused.
+inline constexpr int kCompilerFailureExit = 2;
+
 // Carries out the command and answers with the process exit code.
 auto RunCommand(const Invocation& invocation) -> int;
 

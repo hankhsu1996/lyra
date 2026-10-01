@@ -24,7 +24,7 @@ namespace {
 // is a fact about the command line, like the exit status and the two streams,
 // so the harness reads it from the output rather than linking a compiler
 // library to learn it.
-constexpr std::string_view kInternalErrorReport = "lyra: internal error:";
+constexpr std::string_view kInternalErrorReport = "internal error:";
 
 // How lyra remarks on a definition it compiled once per parameter value because
 // instances handed different values lowered apart. The program is right, so the

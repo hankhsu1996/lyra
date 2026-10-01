@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <string_view>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
@@ -23,8 +22,5 @@ auto RenderDiagnostic(
 auto RenderDiagnostics(
     const DiagnosticSink& sink, const SourceManager* source_manager,
     const RenderOptions& opts = {}) -> std::string;
-
-// Compiler-bug channel: plain, never colored, no span.
-auto RenderInternalError(std::string_view message) -> std::string;
 
 }  // namespace lyra::diag

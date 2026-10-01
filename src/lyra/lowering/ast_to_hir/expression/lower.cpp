@@ -20,6 +20,7 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/failure_context.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/real_bits.hpp"
 #include "lyra/lowering/ast_to_hir/expression/aggregates.hpp"
@@ -119,6 +120,7 @@ auto LowerExprImpl(
     -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
   const auto span = unit_lowerer.SourceMapper().SpanOf(expr.sourceRange);
+  const diag::FailureContext at(span);
   constexpr bool kProcedural = std::same_as<Lowerer, ProcessLowerer>;
 
   switch (expr.kind) {
