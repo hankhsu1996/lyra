@@ -32,8 +32,16 @@ the variable is read. MIR states it as the variable's type, so the two backends 
 separately -- the execution backend already gave a cell to every local whose value the runtime
 keeps, and the C++ backend gave one to none.
 
-**D2. A wait may watch a variable the running body declares, named by that declaration.** A route is
-for storage elaboration sealed; a body's variable is found in the frame that declared it.
+**D2. A wait may watch a variable the running body has declared where the wait stands, named by that
+declaration.** A route is for storage elaboration sealed; a body's variable is found in the frame
+that declared it. What a wait's own region declares is not there yet: an implicit event control
+reads its whole statement (LRM 9.4.2.2) and a called function reports its whole body, but an
+automatic either of them declares comes into being only once it is entered and cannot be named from
+outside (LRM 6.21), so nothing writes it while the wait stands and it is left out; a static one
+exists throughout and is watched. Nothing writes a foreach index, an array method's iterator or a
+pattern's binding while a wait stands -- the first is read-only (LRM 12.7.3), the second exists only
+inside its method's expression (LRM 7.12), the third is set by the match (LRM 12.6) and the front
+end refuses any other write -- so no wait watches one wherever it stands.
 
 **D3. A wait on storage reached through a reference registers on whatever a write through the
 reference is told to** -- the variable, or the object a property belongs to (LRM 13.5.2, 9.4.2), and

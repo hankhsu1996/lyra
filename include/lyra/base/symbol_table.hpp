@@ -42,11 +42,21 @@ class SymbolTable {
   }
 
   [[nodiscard]] auto Get(Id id) const -> const T& {
-    if (id.value >= values_.size() || !values_[id.value].has_value()) {
+    const T* value = Find(id);
+    if (value == nullptr) {
       throw InternalError(
           std::format("SymbolTable::Get: id {} was never declared", id.value));
     }
-    return *values_[id.value];
+    return *value;
+  }
+
+  // What was declared for `id`, or null where nothing was yet, for a reader
+  // that can name the entity it wanted when there is none.
+  [[nodiscard]] auto Find(Id id) const -> const T* {
+    if (id.value >= values_.size() || !values_[id.value].has_value()) {
+      return nullptr;
+    }
+    return &*values_[id.value];
   }
 
  private:

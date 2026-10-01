@@ -14,6 +14,7 @@ class AnalysisManager;
 namespace slang::ast {
 class Expression;
 class Statement;
+class SubroutineSymbol;
 class Symbol;
 class TimingControl;
 class ValueSymbol;
@@ -50,12 +51,15 @@ struct SensitivityRead {
   std::variant<ReadOfWhole, ReadOfSelects, ReadOfBits> part;
 };
 
-// Reports every value read inside an arbitrary `slang::ast::Expression` or
-// `slang::ast::Statement`. The analyzer is intentionally generic -- it does
-// not know what feature is asking, and it does not filter out reads of
-// locally-declared symbols. LRM-specific transformations on top of the raw
-// read set (e.g. LRM 9.2.2.2.1 procedure-body sensitivity, which excludes
-// locals) live at the layer that knows about the construct, not here.
+// Reports the state an `slang::ast::Expression`, a `slang::ast::Statement`, or
+// a subroutine's body reads from outside itself: what exists before the node
+// runs, which is everything declared outside it and every static variable
+// declared inside (LRM 6.21). What the node brings into being itself -- an
+// automatic it declares, a subroutine's formals and result, an array method's
+// iterator, a pattern's binding -- holds nothing until the node runs and
+// nothing outside it can write, so a read of one is no read of state. Every
+// caller asks this one question; none of them wants the reads of the node's
+// own variables.
 //
 // `containing_symbol` is a slang plumbing requirement: slang's flow analysis
 // builds a name-lookup `EvalContext` from `symbol.getParentScope()`, so the
@@ -86,12 +90,17 @@ class SensitivityAnalyzer {
       const slang::ast::Symbol& containing_symbol)
       -> const std::vector<SensitivityRead>&;
 
+  // The state `subroutine`'s body reads from outside a call of it.
+  [[nodiscard]] auto AnalyzeReads(
+      const slang::ast::SubroutineSymbol& subroutine)
+      -> const std::vector<SensitivityRead>&;
+
   // The effective sensitivity of an `always_comb` / `always_latch` procedure
   // (LRM 9.2.2.2.1, 9.2.2.3): the reads that wake it, including reads inside
   // any function it calls, with locally-declared symbols and self-driven bit
   // ranges already excluded. This is the procedure-level surface, distinct from
-  // the raw read set of a single node, which reflects only call arguments
-  // across a function boundary (the `always @*` rule).
+  // the reads of a single node, which reflect only call arguments across a
+  // function boundary (the `always @*` rule).
   [[nodiscard]] auto AnalyzeProcedureSensitivity(
       const slang::ast::ProceduralBlockSymbol& proc)
       -> const std::vector<SensitivityRead>&;
@@ -119,6 +128,9 @@ class SensitivityAnalyzer {
   std::unordered_map<const slang::ast::Statement*, std::vector<SensitivityRead>>
       statement_cache_;
   std::unordered_map<
+      const slang::ast::SubroutineSymbol*, std::vector<SensitivityRead>>
+      subroutine_cache_;
+  std::unordered_map<
       const slang::ast::ProceduralBlockSymbol*, std::vector<SensitivityRead>>
       procedure_cache_;
   std::unordered_map<
@@ -126,5 +138,11 @@ class SensitivityAnalyzer {
       const slang::ast::TimingControl*>
       procedure_clock_cache_;
 };
+
+// Whether `symbol` holds state before a call of `subroutine` runs, by the same
+// rule the analyzer reads with.
+[[nodiscard]] auto HoldsStateBeforeItRuns(
+    const slang::ast::Symbol& symbol,
+    const slang::ast::SubroutineSymbol& subroutine) -> bool;
 
 }  // namespace lyra::lowering::ast_to_hir

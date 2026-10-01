@@ -124,9 +124,8 @@ against `new.ExtractBits(lsb, width)` for any-change waiters and
 
 At AST -> HIR, `LowerSignalEventTrigger`:
 
-1. Looks up the leaf set in `SensitivityReadStore` keyed by the event expression
-   (`SignalEventControl::expr`). The store builder runs a fresh `DefaultDFA` per event expression
-   from inside `setCustomDFAProvider`, mirroring the pattern already used for `wait` conds.
+1. Takes the leaf set from the read analysis of the event expression (`SignalEventControl::expr`): a
+   fresh `DefaultDFA` run on that expression, the same pattern used for `wait` conds.
 2. Attaches the SV edge identifier to each leaf. For the single-leaf case (DFA returned exactly one
    `(symbol, bit_range)` pair), the leaf's bit range is collapsed to `(lo, lo)` so the runtime
    monitors only the LSB of the expression per LRM 9.4.2.

@@ -26,11 +26,11 @@ auto ReadsOfWaitedExpression(
     diag::SourceSpan span) -> diag::Result<hir::Reads>;
 
 // What a call of `function` can read, stated so its own report can evaluate
-// it: over its formals, the object it runs on, and storage declared outside
-// it. Its own variables hold nothing yet when it reports, so what it reaches
-// through one of them is covered by every object, and a call it makes is handed
-// its type's default for an argument that reads one. `frame` is the frame the
-// body lowered in, after it lowered.
+// it: over its formals, the object it runs on, and storage that exists before
+// its body runs. Its automatic variables hold nothing yet when it reports, so
+// what it reaches through one of them is covered by every object, and a call it
+// makes is handed its type's default for an argument that reads one. `frame` is
+// the frame the body lowered in, after it lowered.
 auto ReadsOfFunctionBody(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::SubroutineSymbol& function, diag::SourceSpan span)

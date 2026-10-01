@@ -177,50 +177,33 @@ walker now forces a second migration later when the residual case starts matteri
 
 ## The decision
 
-All read-set inference is driven by slang's existing flow-analysis framework. We do not write a
-subclass; we do not write a hand walker. We drive two slang surfaces:
+All read-set inference is driven by slang's existing flow-analysis framework, through one analyzer
+the lowering owns. We do not write a subclass; we do not write a hand walker.
 
-1. **`AnalysisManager::setCustomDFAProvider`** is set to a callback that:
-   - Constructs `DefaultDFA(context, symbol, /*reportDiags=*/true)`
-   - Calls `dfa.run()` to do the procedure-level analysis (always_comb / always_latch / `@*` /
-     continuous assignment, depending on the symbol kind)
-   - Iterates `dfa.getTimedStatements()` to find every `WaitStatement`. For each one, constructs a
-     **fresh** `DefaultDFA` and calls `DefaultDFA::AbstractFlowAnalysis::run(wait.cond)` directly.
-     The resulting `getRValues()` is the per-wait sensitivity list.
-   - Records both procedure-level and per-wait results into a project-owned `SensitivityReadStore`
-     under a mutex (the callback may be invoked concurrently from worker threads).
-   - Returns the same `AnalyzedProcedure` slang's default path would have returned, so downstream
-     listeners and consumers see no behavioural difference.
+- **A procedure's own sensitivity** (`always_comb` / `always_latch`, LRM 9.2.2.2.1) is slang's
+  `AnalyzedProcedure::getSensitivityList()`, built from a `DefaultDFA` run over the procedure.
+- **Any other node** -- an expression a wait or a sampled value function or a continuous assignment
+  reads, a statement an `@*` gates, a subroutine's body a wait asks about -- is analyzed by running
+  a fresh `DefaultDFA` on that node through `AbstractFlowAnalysis::run`. Feeding a wait's condition
+  in directly bypasses slang's `visitStmt(WaitStatement)` (`AbstractFlowAnalysis.h:603-612`), which
+  would suppress rvalue tracking inside a timing control, so its reads land in `rvalues` like any
+  other expression's.
 
-2. **`AnalysisManager::addListener`** is set to a callback that only reads from the already-built
-   `AnalyzedProcedure` -- it harvests `getSensitivityList()` and `getImplicitEventReadSets()` for
-   the procedure-level cases. It does not need `AnalysisContext`, which is why it is split from the
-   provider above. Listener and provider coexist.
+**What the analyzer answers is the state a node reads from outside itself, and every consumer asks
+exactly that.** slang's `rvalues` hold every symbol the node reads, including those the node brings
+into being: an automatic it declares, a subroutine's formals and result, an array method's iterator
+(LRM 7.12), a pattern's binding (LRM 12.6). None of these holds anything before the node runs, and
+none can be written from outside it (LRM 6.21), so a read of one is no dependency. The analyzer
+drops them -- F6's local-symbol exclusion, applied to every node rather than only to a procedure --
+and keeps a static variable declared inside, which exists from time zero. slang draws the same line
+after its own analysis for `always_comb` (`isLocal`). Leaving it to each consumer was tried: one
+consumer filtered, one did not and crashed on `always @(*) for (int j ...)`, and one counted an
+iterator as an automatic input and refused a legal `$changed`.
 
-Per-wait analysis works precisely because the cond expression is fed to `AbstractFlowAnalysis::run`
-directly. slang's `visitStmt(WaitStatement)` (`AbstractFlowAnalysis.h:603-612`) -- which wraps the
-cond in `enterTimingControlExpr` / `leaveTimingControlExpr` and would suppress rvalue tracking per
-LRM 9.4.2.2 -- never fires, because we bypass that visitor entry point. The cond is analyzed as an
-ordinary expression, and its reads land in `rvalues` like any other expression's reads.
-
-The `SensitivityReadStore` is keyed by slang's two analyzable AST hierarchies:
-`const ast::Statement*` for whole-statement read sets (procedural-block bodies and `@*` regions,
-where slang's listener attaches the read set to a statement) and `const ast::Expression*` for
-sub-expression read sets (the wait cond expression and the continuous assignment's
-`AssignmentExpression`, where we ran or harvested the analysis on an expression subtree). The keying
-split mirrors slang's own AST hierarchy split rather than enumerating specific source-language
-features, so future per-expression analyses (LRM 16 property / assertion expressions, LRM 15.6
-`wait_order` event-list expressions) plug into the existing Expression bucket without API changes.
-Both buckets flow into `TranslateSensitivityReads` on the way to HIR `SensitivityEntry`.
-
-The only project-owned code involved is:
-
-- The two callback lambdas (~30 lines each)
-- A `FlattenReadSet` helper that walks `getRValues()` into `vector<SensitivityRead>` (mirrors
-  `AnalyzedProcedure.cpp:223-227`)
-- The map-shape change and consumer-side lookup migrations
-
-No subclass, no state type, no hook overrides, no use of slang's `detail::` namespace.
+The project-owned code is the analyzer: the flattening of `getRValues()` into
+`vector<SensitivityRead>` (mirrors `AnalyzedProcedure.cpp:223-227`), the collection of what a node
+declares, and a cache per node. No subclass, no state type, no hook overrides, no use of slang's
+`detail::` namespace.
 
 ## Rejected alternatives
 
@@ -273,26 +256,20 @@ File a slang PR adding `getWaitSensitivity(WaitStatement*)` and similar to `Anal
 Deferred -- not categorically rejected. slang's current API is composable enough that a downstream
 consumer (us) can implement the per-wait extraction in a few lines. Upstreaming an "is-per-wait"
 accessor is a reasonable contribution to make later for reusability, but we do not gate on it. If we
-contribute upstream, the project-owned callback shrinks to a few lines of API translation.
+contribute upstream, the project-owned analyzer shrinks to a few lines of API translation.
 
 ## Consequences
 
 ### Immediate
 
-- Sensitivity inference lives in `lowering/ast_to_hir/sensitivity.{hpp,cpp}`, alongside the store
-  types and the slang-to-HIR `TranslateSensitivityReads`. The producer is
-  `BuildSensitivityReadStore(compilation)`, which sets a `CustomDFAProvider` (per-wait DFA, store
-  writes) and an `addListener` callback (procedure-level + `@*` region + continuous assignment store
-  writes). The previous single `unordered_map<const Statement*, vector<SensitivityRead>>` becomes a
-  two-keyed `SensitivityReadStore` keyed by `Statement*` (procedure body / `@*` region) and
-  `Expression*` (wait cond / continuous-assignment expression). `compile.cpp` shrinks to
-  orchestration -- it just calls `BuildSensitivityReadStore` and threads the result through
-  `LowerCompilationFacts`.
+- Sensitivity inference lives in `lowering/ast_to_hir/sensitivity.{hpp,cpp}`: one analyzer the
+  lowering asks per node as it reaches it, caching by node, and handing what it finds to the
+  slang-to-HIR translation. Nothing is precomputed over the whole compilation.
 - The hand-coded walkers in `include/lyra/lowering/ast_to_hir/sensitivity.hpp` (the
   `ExpressionReadCollector`) and `src/lyra/lowering/ast_to_hir/statement/lower.cpp` (the
   `WaitCondReadCollector`) are deleted.
-- Wait-statement and continuous-assignment lowering switch from walker invocation to map lookup,
-  symmetric with how always_comb already looks up by procedure-body statement.
+- Wait-statement and continuous-assignment lowering switch from walker invocation to asking the
+  analyzer, symmetric with how always_comb asks for its procedure's list.
 - Continuous assignment gains correctness it did not have before: function calls with output
   arguments in the RHS, embedded assignments, and compound expressions are now read-set-correct.
 - Wait cond inherits the same correctness.
@@ -307,19 +284,15 @@ contribute upstream, the project-owned callback shrinks to a few lines of API tr
   analysis handles assertion bodies. Per-assertion read-set extraction follows the same per-sub-tree
   `DefaultDFA::run` pattern.
 - Other compile-time analyses that would otherwise re-walk the AST (unused-write detection,
-  dead-code analysis, lint-style checks) can use the same custom-DFA-provider hook to drive flow
-  analysis once and extract multiple result kinds in a single pass.
+  dead-code analysis, lint-style checks) can drive the same flow analysis per node and extract other
+  result kinds from it.
 
 ### Operational
 
 - Project owns no DFA implementation. Updates to slang's `DataFlowState`, flow-analysis internals,
   or read-set tracking are transparent. The surface we depend on is `slang::analysis::DefaultDFA`,
-  `slang::analysis::DataFlowState`, `setCustomDFAProvider`, `addListener`, `AnalyzedProcedure`'s
-  public accessors, and `AbstractFlowAnalysis::run` -- all public, all `SLANG_EXPORT`.
-- Listener and provider may be invoked from multiple worker threads
-  (`AnalysisScopeVisitor.h:117-122` runs inside thread-pool worker tasks). The store-write side is
-  protected by a single `std::mutex`. Per-listener cost is dominated by DFA execution; the
-  store-write critical section is trivial, so contention is negligible.
+  `slang::analysis::DataFlowState`, `AnalyzedProcedure`'s public accessors, and
+  `AbstractFlowAnalysis::run` -- all public, all `SLANG_EXPORT`.
 - Each DFA instance is single-use: the flow-analysis result fields (`rvalues`, `lvalues`,
   `symbolToSlot`, `timedStatements`, ...) accumulate across `run()` calls and are never cleared by
-  the framework. Per-wait DFAs are freshly constructed inside the provider callback.
+  the framework. Every node is analyzed by a freshly constructed one.

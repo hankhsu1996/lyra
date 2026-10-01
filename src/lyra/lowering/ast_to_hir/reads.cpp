@@ -49,21 +49,6 @@ auto IsVirtualInterface(const slang::ast::Type& type) -> bool {
   return type.getCanonicalType().isVirtualInterface();
 }
 
-// Whether `symbol` is declared by `function`'s own body -- a formal, the
-// implicit result, or a local of any block inside it.
-auto DeclaredWithin(
-    const slang::ast::Symbol& symbol,
-    const slang::ast::SubroutineSymbol& function) -> bool {
-  const slang::ast::Scope& body = function;
-  for (const slang::ast::Scope* scope = symbol.getParentScope();
-       scope != nullptr; scope = scope->asSymbol().getParentScope()) {
-    if (scope == &body) {
-      return true;
-    }
-  }
-  return false;
-}
-
 auto IsFormalOf(
     const slang::ast::Symbol& symbol,
     const slang::ast::SubroutineSymbol& function) -> bool {
@@ -76,8 +61,9 @@ auto IsFormalOf(
 
 // Whether a function's report can evaluate `expr` where it stands, which is
 // ahead of the body: reading its formals, the object it runs on and storage
-// declared outside it, and nothing else. Its own variables hold nothing yet, a
-// handle it has not tested may be null, and a call may do either.
+// that exists before the body runs, and nothing else. Its automatic variables
+// hold nothing yet, a handle it has not tested may be null, and a call may do
+// either.
 class ReportCanEvaluate
     : public slang::ast::ASTVisitor<
           ReportCanEvaluate, slang::ast::VisitFlags::Expressions> {
@@ -92,8 +78,8 @@ class ReportCanEvaluate
 
   void handle(const slang::ast::NamedValueExpression& named) {
     const slang::ast::Symbol& symbol = named.symbol;
-    if (DeclaredWithin(symbol, *function_) && !IsFormalOf(symbol, *function_) &&
-        &symbol != function_->thisVar) {
+    if (!HoldsStateBeforeItRuns(symbol, *function_) &&
+        !IsFormalOf(symbol, *function_) && &symbol != function_->thisVar) {
       evaluable_ = false;
     }
   }
@@ -448,16 +434,8 @@ auto ReadsOfFunctionBody(
   auto reads = std::move(collector).TakeReads();
   if (!reads) return refused_when_asked(std::move(reads.error()));
 
-  // What the body declares is not read before the body runs, so only storage
-  // outside it is a cell the report names.
-  std::vector<SensitivityRead> outside;
-  for (const SensitivityRead& read :
-       proc.Owner().Sensitivity().AnalyzeReads(function.getBody(), function)) {
-    if (!DeclaredWithin(*read.symbol, function)) {
-      outside.push_back(read);
-    }
-  }
-  auto sealed = proc.Owner().TranslateSensitivityReads(proc, outside, frame);
+  auto sealed = proc.Owner().TranslateSensitivityReads(
+      proc, proc.Owner().Sensitivity().AnalyzeReads(function), frame);
   if (!sealed) return refused_when_asked(std::move(sealed.error()));
   AddSealed(reads->leaves, *std::move(sealed));
   return reads;
