@@ -10,6 +10,9 @@
 
 namespace lyra::support {
 
+// How a process ended and what it wrote. A process may write any amount, so
+// each stream is kept up to a bound, and one that went past it ends with a line
+// saying the rest is not shown.
 struct ProcessResult {
   int exit_code = 0;
   std::string stdout_text;
