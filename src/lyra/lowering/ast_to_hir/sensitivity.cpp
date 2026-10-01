@@ -10,6 +10,7 @@
 
 #include <slang/analysis/AbstractFlowAnalysis.h>
 #include <slang/analysis/AnalysisManager.h>
+#include <slang/analysis/AnalysisOptions.h>
 #include <slang/analysis/AnalyzedProcedure.h>
 #include <slang/analysis/DFAResults.h>
 #include <slang/analysis/DataFlowAnalysis.h>
@@ -243,7 +244,11 @@ auto FlattenSensitivityList(
 }  // namespace
 
 SensitivityAnalyzer::SensitivityAnalyzer()
-    : manager_(std::make_unique<slang::analysis::AnalysisManager>()),
+    : manager_(
+          std::make_unique<slang::analysis::AnalysisManager>(
+              slang::analysis::AnalysisOptions{
+                  .flags = slang::analysis::AnalysisFlags::
+                      IgnoreConstantConditions})),
       context_(std::make_unique<slang::analysis::AnalysisContext>(*manager_)) {
 }
 

@@ -268,6 +268,52 @@ endmodule
       1U);
 }
 
+TEST(ArtifactCount, BlocksWhoseIndexSettlesAConditionAreCompiledOnce) {
+  // Each block's index settles a condition its body writes, so at one index a
+  // branch is never taken and at the next it is. What the body reads is still
+  // what its text reads (LRM 9.2.2.2.1, 9.4.2.2), so every block waits on the
+  // same things -- under an `if`, a `case`, a conditional operator, a logical
+  // operator's second operand, a loop the index bounds, `@*` and `wait`, in a
+  // procedure and in a continuous assignment alike.
+  EXPECT_EQ(
+      CompiledBlocksOfGenerate(
+          R"(
+module Top;
+  logic [7:0] a;
+  logic [7:0] by_if, by_case, by_conditional, by_operand, by_star, by_wait;
+  logic by_loop [8];
+  for (genvar i = 0; i < 8; i += 1) begin : g
+    always_comb begin
+      if ((i % 2) == 0) by_if[i] = a[i];
+      else by_if[i] = 1'b0;
+    end
+    always_comb begin
+      case (i % 2)
+        0: by_case[i] = a[i];
+        default: by_case[i] = 1'b0;
+      endcase
+    end
+    assign by_conditional[i] = ((i % 2) == 0) ? a[i] : 1'b0;
+    always_comb by_operand[i] = ((i % 2) == 0) && a[i];
+    always_comb begin
+      by_loop[i] = 1'b0;
+      for (int j = 0; j <= i; j++) by_loop[i] ^= a[j];
+    end
+    always @* begin
+      if (i == 0) by_star[i] = a[i];
+      else by_star[i] = 1'b0;
+    end
+    initial begin
+      wait (((i % 2) == 0) ? a[i] : 1'b1);
+      by_wait[i] = 1'b1;
+    end
+  end
+endmodule
+)",
+          0),
+      1U);
+}
+
 TEST(
     ArtifactCount,
     BlocksSizingADeclarationThroughSuchAConstantAreCompiledApart) {

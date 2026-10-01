@@ -200,6 +200,33 @@ after its own analysis for `always_comb` (`isLocal`). Leaving it to each consume
 consumer filtered, one did not and crashed on `always @(*) for (int j ...)`, and one counted an
 iterator as an automatic input and refused a legal `$changed`.
 
+**The analysis rules no path out by a value.** slang's flow analysis evaluates a condition against
+the elaborated instance and leaves out what is only read on a path a constant excludes: the side of
+an `if`, a `case` or a conditional operator that a parameter or a generate index never takes, the
+operand a logical operator skips, and the bits a `for` with known bounds never reaches, which it
+finds by unrolling the loop. Its own source calls that a heuristic and says no rule in the standard
+defines it. The standard's list is what is read within the block (LRM 9.2.2.2.1) or appears in the
+statement (9.4.2.2), with no exception for a branch that cannot be taken, and a select indexed by a
+loop variable is not a static prefix (11.5.3). So the analyzer asks for that list: the front end's
+`IgnoreConstantConditions` option, which the fork carries.
+
+The requirement it serves is that one body compiled for many constructions reads the same thing in
+each. A generate index or a parameter read as a value is supplied at construction, so a read set
+that depends on what one of them settles differs between constructions whose text is identical, and
+they stop being one body: a loop whose procedure branched on its index was one set of scope classes
+per iteration, which on a design measured outside the project was most of its largest unit. slang
+and Verilator both compute sensitivity after every instance is elaborated apart, where the constant
+is simply known; compiling once for all of them is the condition that differs here.
+
+It costs wake-ups and nothing else. Ruling no path out can only add reads, so a procedure wakes on a
+read in a branch its constants exclude and recomputes the same values, which is the behaviour the
+clause states and is visible where the body has an effect besides its writes. Measured on Ibex
+running its hello program to the software's own `$finish`, optimized, on the execution backend:
+15,312,161,333 instructions before and 15,465,115,671 after, 1.0% more, with the same instruction
+trace; the design's watched entries go from 1838 to 1867. Deciding at construction which reads an
+instance arms would give the narrower set back to a body with no such effect; nothing does that
+today.
+
 The project-owned code is the analyzer: the flattening of `getRValues()` into
 `vector<SensitivityRead>` (mirrors `AnalyzedProcedure.cpp:223-227`), the collection of what a node
 declares, and a cache per node. No subclass, no state type, no hook overrides, no use of slang's
