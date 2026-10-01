@@ -1,5 +1,6 @@
 #include "lyra/support/subprocess.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -23,6 +24,11 @@
 namespace lyra::support {
 
 namespace {
+
+// How much of each stream is kept. A tool that fails can print without end, and
+// what tells a person why it failed is at the start.
+constexpr std::size_t kKeptPerStream = std::size_t{4} * 1024 * 1024;
+constexpr std::string_view kRestNotShown = "\n... the rest is not shown ...\n";
 
 auto IsExecutableFile(const std::filesystem::path& path) -> bool {
   std::error_code ec;
@@ -235,7 +241,17 @@ auto RunProcessesCaptured(
           owners[entry].is_stdout ? result.stdout_text : result.stderr_text;
       const ssize_t n = read(fd, buffer.data(), buffer.size());
       if (n > 0) {
-        text.append(buffer.data(), static_cast<std::size_t>(n));
+        // The note takes the text past the bound, so it is written once and
+        // whatever is read after it is dropped.
+        if (text.size() < kKeptPerStream) {
+          text.append(
+              buffer.data(),
+              std::min(
+                  static_cast<std::size_t>(n), kKeptPerStream - text.size()));
+          if (text.size() == kKeptPerStream) {
+            text += kRestNotShown;
+          }
+        }
         continue;
       }
       close(fd);

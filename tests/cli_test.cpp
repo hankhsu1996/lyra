@@ -820,6 +820,56 @@ TEST(LyraBuild, AValueEndsWithTheExpressionThatMadeIt) {
       << "stdout: " << ran.stdout_text;
 }
 
+// A tool the build runs may print any amount, and the build keeps a bounded
+// part of it. A link that fails with a flood of errors is therefore reported as
+// a failed build like any other, with the start of what the linker said. The
+// host compiler here is a stand-in that only fails loudly, which the backend
+// that compiles no C++ reaches at the link.
+TEST(LyraBuild, AToolThatFailsLoudlyIsReportedWithinABound) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteTrivialSource(src);
+
+  const auto loud = *tmp_or / "loud-cxx";
+  std::ofstream(loud)
+      << "#!/bin/sh\n"
+      << "echo 'ld: error: the first relocation is out of range' >&2\n"
+      << "yes 'ld: error: relocation out of range' | head -c 67108864 >&2\n"
+      << "exit 1\n";
+  std::filesystem::permissions(
+      loud, std::filesystem::perms::owner_all,
+      std::filesystem::perm_options::add);
+
+  const std::vector<std::string> args = {
+      "build",
+      "--backend",
+      "llvm",
+      "--cxx",
+      loud.string(),
+      "--top",
+      "Test",
+      "-o",
+      (*tmp_or / "program").string(),
+      "--cache-dir",
+      (*tmp_or / "cache").string(),
+      src.string()};
+  const auto built = RunChildProcess(lyra, args, 120s);
+  EXPECT_EQ(built.exit_code, 1)
+      << "the build did not end as a reported failure";
+
+  const std::string& said = built.stderr_text;
+  ASSERT_LT(said.size(), 8ULL * 1024 * 1024)
+      << "the build passed on " << said.size()
+      << " bytes of what the linker said";
+  EXPECT_NE(said.find("linking the program failed"), std::string::npos);
+  EXPECT_NE(
+      said.find("the first relocation is out of range"), std::string::npos);
+  EXPECT_NE(said.find("the rest is not shown"), std::string::npos);
+}
+
 // An option means something to a command or it is refused by name, and the
 // refusal says which commands do take it. What is refused is a function of the
 // command alone: an option the command acts on stands even where this time it

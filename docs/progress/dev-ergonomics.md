@@ -206,6 +206,12 @@ layer directly.
       emitted objects fails on anything else. `decisions/a-published-operation-is-compiled-once.md`
       settles the shape.
 
+- [x] D18 -- A tool the build runs can print any amount without taking the build down with it. A
+      link that failed with tens of gigabytes of errors used to end the build on its own memory
+      before it reported anything; a failing compile or link is now reported with the start of what
+      the tool said, whatever the amount. Measured on a stand-in compiler printing 6 GB from each of
+      three compiles: the build peaks at 92 MB and ends as a reported failure.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language
