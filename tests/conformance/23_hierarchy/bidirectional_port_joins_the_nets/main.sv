@@ -185,6 +185,18 @@ module Top;
     Leaf bit_pad(.w(per_block[e]), .en(e % 2 == 1));
   end
 
+  // A member of a packed structure is a run of the net's positions like any
+  // other part, the first member the most significant (LRM 7.2.1), so the child
+  // reaches that member and this module's driver on another keeps its own.
+  typedef struct packed {
+    logic       first;
+    logic [1:0] middle;
+    logic       last;
+  } frame_t;
+  wire frame_t framed;
+  Leaf member_pad(.w(framed.first), .en(1'b1));
+  assign framed.last = 1'b0;
+
   logic undriven;
   logic driven_from_child;
   logic driven_from_parent;
@@ -346,6 +358,11 @@ module Top;
     // block joined to another's position would show here.
     if (per_block !== 4'b1z1z)
       $fatal(1, "per_block was %b, expected 1z1z", per_block);
+    // The child drives the first member and nothing reaches the middle one, so
+    // a join landing on another member's positions would conflict with the
+    // driver of the last.
+    if (framed !== 4'b1zz0)
+      $fatal(1, "framed was %b, expected 1zz0", framed);
     $display("All checks passed");
   end
 endmodule

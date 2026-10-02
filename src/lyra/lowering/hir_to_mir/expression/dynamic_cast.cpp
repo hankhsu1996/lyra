@@ -7,12 +7,12 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -177,7 +177,7 @@ auto LowerHirDynamicCastExpr(
   auto target_or = lowerer.LowerLhsExpr(
       lowerer.HirExprs().Get(c.destination), steps.Frame().WithBlock(&taken));
   if (!target_or) return std::unexpected(std::move(target_or.error()));
-  const WriteTarget target = *std::move(target_or);
+  const AccessPath target = *std::move(target_or);
   taken.AppendStmt(
       mir::ExprStmt{
           .expr = taken.exprs.Add(BuildStoreExpr(

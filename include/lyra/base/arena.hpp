@@ -8,6 +8,7 @@
 
 #include "lyra/base/id_range.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/relocating_append.hpp"
 
 namespace lyra::base {
 
@@ -51,6 +52,7 @@ class Arena {
 
   auto Add(T value) -> Id {
     const Id id{static_cast<std::uint32_t>(items_.size())};
+    MoveBeforeAppendUnderSanitizer(items_);
     items_.push_back(std::move(value));
     return id;
   }

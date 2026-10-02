@@ -4,8 +4,8 @@
 #include <optional>
 #include <utility>
 
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -62,8 +62,8 @@ auto IntegrateStaticInitializer(
   }
 
   const mir::Expr assign_expr = BuildStoreExpr(
-      unit, value_block, WriteTarget{.owner = target, .descent = {}},
-      init_value, std::nullopt, storage_type);
+      unit, value_block, AccessPath{.owner = target, .descent = {}}, init_value,
+      std::nullopt, storage_type);
   value_block.AppendStmt(
       mir::ExprStmt{.expr = value_block.exprs.Add(assign_expr)});
   return {};

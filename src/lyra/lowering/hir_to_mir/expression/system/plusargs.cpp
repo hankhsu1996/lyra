@@ -87,7 +87,7 @@ auto LowerValuePlusargs(
   const mir::TypeId target_type = unit_lowerer.TranslateType(target_hir.type);
   auto place_or = lowerer.LowerLhsExpr(target_hir, step_frame);
   if (!place_or) return std::unexpected(std::move(place_or.error()));
-  WriteTarget target_place = *std::move(place_or);
+  AccessPath target_place = *std::move(place_or);
   auto incoming_or = lowerer.LowerExpr(target_hir, step_frame);
   if (!incoming_or) return std::unexpected(std::move(incoming_or.error()));
   const mir::ExprId incoming_id = body.exprs.Add(*std::move(incoming_or));

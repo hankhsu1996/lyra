@@ -19,10 +19,10 @@
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/declared_variable.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -153,13 +153,20 @@ class ProcessLowerer {
   auto LowerExpr(const hir::Expr& expr, WalkFrame frame)
       -> diag::Result<mir::Expr>;
 
-  // LHS-context expression dispatcher: same dispatch as `LowerExpr` but
-  // peeling rather than composing, so what comes out is the place a write
-  // lands in and the descent that reaches the part written. A capability
-  // wrapper leaf flows out as the bare wrapper, which is what a destination
-  // re-roots from and what a reference binds to.
+  // Dispatcher for an expression named as a part rather than read: same
+  // dispatch as `LowerExpr` but peeling rather than composing, so what comes
+  // out is the place that owns the value and the descent that reaches the
+  // part. A capability wrapper leaf flows out as the bare wrapper, which is
+  // what a destination re-roots from and what a reference binds to. Nothing is
+  // appended, so a construct that only names the part -- a wait, a join of
+  // nets -- asks this.
+  auto LowerAccessPath(const hir::Expr& expr, WalkFrame frame)
+      -> diag::Result<AccessPath>;
+
+  // The same part as the target of a write, with the checks the write owes
+  // before it lands appended where the statement is reached.
   auto LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
-      -> diag::Result<WriteTarget>;
+      -> diag::Result<AccessPath>;
 
   // Central statement dispatcher. One switch over `hir::Stmt::data` routing
   // each kind to its per-family handler.

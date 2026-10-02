@@ -7,9 +7,9 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -84,12 +84,12 @@ auto LowerContinuousAssign(
   // until the Resolve pass below decides the target is one.
   std::optional<AttachedDriver> driver;
   const auto lower_destination =
-      [&](const WalkFrame& frame) -> diag::Result<WriteTarget> {
+      [&](const WalkFrame& frame) -> diag::Result<AccessPath> {
     mir::Block& block = *frame.current_block;
     auto named_or = lowerer.LowerLhsExpr(hir_lhs, frame);
     if (!named_or) return std::unexpected(std::move(named_or.error()));
     if (!driver.has_value()) return named_or;
-    WriteTarget rerooted = *std::move(named_or);
+    AccessPath rerooted = *std::move(named_or);
     rerooted.owner = DriverAccess(frame, block, *driver);
     return rerooted;
   };

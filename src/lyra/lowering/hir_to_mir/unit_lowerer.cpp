@@ -22,6 +22,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/unit_signature.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
@@ -29,7 +30,6 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -196,7 +196,7 @@ auto PopulateNamespaceOwnStorage(
           mir::ExprStmt{
               .expr = value_block.exprs.Add(BuildStoreExpr(
                   unit, value_block,
-                  WriteTarget{
+                  AccessPath{
                       .owner = make_cell(value_block, variable, cell_type),
                       .descent = {}},
                   value_id, std::nullopt, value_type))});

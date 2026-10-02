@@ -17,6 +17,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/with_clause_id.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
@@ -41,7 +42,6 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
@@ -403,7 +403,7 @@ auto LowerBuiltinMethodCall(
     if (entry.mutates_receiver) {
       auto recv_or = lowerer.LowerLhsExpr(object, frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      receiver = TargetPlace(lowerer.Owner().Unit(), block, *recv_or);
+      receiver = PathPlace(lowerer.Owner().Unit(), block, *recv_or);
     } else {
       auto recv_or = lowerer.LowerExpr(object, frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));

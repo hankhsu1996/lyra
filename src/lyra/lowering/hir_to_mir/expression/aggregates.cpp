@@ -12,13 +12,13 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/packed_concat.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -405,8 +405,8 @@ auto LowerHirAssignmentPatternKeyedExpr(
     const mir::ExprId value_id = body.exprs.Add(*std::move(value));
     const mir::ExprId owner =
         body.exprs.Add(mir::MakeLocalRefExpr(built, result_type));
-    const WriteTarget target = DescendInto(
-        WriteTarget{.owner = owner, .descent = {}},
+    const AccessPath target = DescendInto(
+        AccessPath{.owner = owner, .descent = {}},
         ElementStep(
             lowerer.Owner(), body, result_type, index_id, element_type));
     body.AppendStmt(

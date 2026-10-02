@@ -29,7 +29,7 @@ auto LowerHirAssignExpr(
 // One part of a left-hand-side destructuring (LRM 11.4.12): the place it
 // writes, the share of the distributed value it takes, and that share's type.
 struct DestructuredPart {
-  WriteTarget target;
+  AccessPath target;
   mir::ExprId value;
   mir::TypeId type;
 };

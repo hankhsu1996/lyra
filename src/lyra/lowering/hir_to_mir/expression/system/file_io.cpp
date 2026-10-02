@@ -145,7 +145,7 @@ auto RequireStringDestination(
 // delivered, and all of it is replaced.
 auto BuildTextRead(
     ProcessLowerer& process, BlockBuilder& steps, support::BuiltinFn builtin_fn,
-    std::vector<mir::ExprId> operands, WriteTarget destination,
+    std::vector<mir::ExprId> operands, AccessPath destination,
     mir::TypeId destination_type) -> mir::Expr {
   auto& unit = process.Owner().Unit();
   const mir::TypeId count_type = unit.builtins.int_type;
@@ -236,7 +236,7 @@ auto LowerFileReadCall(
   const mir::TypeId dest_type = unit_lowerer.TranslateType(dest_hir.type);
   auto dest_or = process.LowerLhsExpr(dest_hir, step_frame);
   if (!dest_or) return std::unexpected(std::move(dest_or.error()));
-  WriteTarget dest_place = *std::move(dest_or);
+  AccessPath dest_place = *std::move(dest_or);
   const CompletionLayout layout = BuildCompletionLayout(
       {CalleeFormal{
           .direction = hir::ParamDirection::kInOut, .type = dest_type}},

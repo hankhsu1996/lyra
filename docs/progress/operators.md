@@ -14,7 +14,8 @@ Done when:
 
 ## Actionable
 
-Every numbered item is closed. What stays open is the forms recorded as rejected under them.
+W17 is open: the logical operators do not short-circuit. Every other numbered item is closed, and
+what stays open under them is the forms recorded as rejected.
 
 ## Sub-Steps
 
@@ -153,6 +154,21 @@ merged node.
       every target shape -- a whole variable, an element of an unpacked array or a queue, a bit or
       part select, a struct or union member, a string character -- and for every operator the clause
       admits, the shifts included.
+- [x] W16 -- Reaching a member of a packed tagged union evaluates the union once (LRM 11.9, 11.3.5,
+      11.4.1). The access is checked against the tag, and the check reads the same evaluation the
+      access takes the member from: an index on the way to the union runs once for a read, a write,
+      a write of part of the member, an assignment operator, an increment and a nonblocking
+      assignment. Before this a read ran it twice and every write three times; an unpacked tagged
+      union was already right.
+
+### Evaluation order
+
+- [ ] W17 -- `&&`, `||` and `->` evaluate both operands whatever the first one is, where LRM 11.3.5
+      requires the second to be skipped once the first settles the result, along with every side
+      effect and run-time error its evaluation would have had. A function called in the skipped
+      operand runs, and a check the operand carries is raised: `if (h != null && h.ready)` reaches
+      through a null handle. `?:` is right. The corpus holds the case and records it as a defect on
+      both paths.
 
 ## Cross-references
 
