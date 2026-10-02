@@ -101,6 +101,13 @@ Two blocks are one body when everything outside their conditionals agrees and, f
 both produced a body for, those bodies are one body in their turn. What that produces is one block
 holding every body either of them produced.
 
+**A conditional may sit at any depth beneath the two blocks, not only directly in them.** A
+conditional on an outer loop's index written inside an inner loop is selected the same way by every
+block of one inner loop, so that inner loop is one body holding one alternative, and two outer
+blocks differ in what their inner loops hold. That is still only which alternative stood. So a loop
+or a bare block that two blocks both hold is compared scope for scope, each pair merged in its turn,
+and what is asked of the pair is the same question asked of the blocks.
+
 **A body cannot come from the index where its alternative was not selected, and that is forced
 rather than chosen.** An arm is frequently unselected precisely because it would not elaborate
 there: `if (i > 0) begin ... g[i-1].x ... end` names something that does not exist at index 0. The
@@ -166,6 +173,10 @@ where every consumer of a route asks it.
   10,132 of declarations and 16 classes against 522,167 / 214,675 / 386, and at 256 iterations
   22,244 and 10,135 -- again the digits in the loop bound. A loop whose `case` sits inside an outer
   `if` emits 22,077 / 10,170 / 16 against 509,649 / 214,509 / 386, and 22,078 / 10,173 at 256.
+
+- It reaches a conditional under a nested loop as well. An `if` on the outer index inside an inner
+  loop of four emits 5 classes at 4 outer iterations and at 64, where it emitted 13 and 193: three
+  classes and 10.8 KB per outer iteration, with both alternatives empty.
 
 - Two alternatives of one construct may carry the same name, which the standard allows precisely
   because at most one is instantiated (LRM 27.5). They are separate members of the enclosing scope

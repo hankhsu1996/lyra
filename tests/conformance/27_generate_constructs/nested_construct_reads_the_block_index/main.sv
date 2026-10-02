@@ -32,6 +32,34 @@ module Top;
     end
   end
 
+  // The same, reading the outer index alone, so every block of one inner loop
+  // selects the same alternative and the next outer block's select the other.
+  int banded [4][3] = '{'{-1, -1, -1}, '{-1, -1, -1}, '{-1, -1, -1},
+                        '{-1, -1, -1}};
+  for (genvar b = 0; b < 4; b++) begin : band
+    for (genvar s = 0; s < 3; s++) begin : slot
+      if ((b % 2) == 0) begin : even
+        initial banded[b][s] = b * 10 + s;
+      end else begin : odd
+        initial banded[b][s] = 1000 + b * 10 + s;
+      end
+    end
+  end
+
+  // The same again, where each block of the inner loop also declares a width
+  // its own index fixes.
+  int sized [3][3] = '{'{-1, -1, -1}, '{-1, -1, -1}, '{-1, -1, -1}};
+  for (genvar o = 0; o < 3; o++) begin : outer
+    for (genvar w = 1; w < 4; w++) begin : width
+      logic [w:0] ones = '1;
+      if (o == 0) begin : first
+        initial sized[o][w - 1] = $bits(ones);
+      end else begin : rest
+        initial sized[o][w - 1] = $countones(ones) + 10 * o;
+      end
+    end
+  end
+
   // A loop whose bound reads the index, inside a named block of the block.
   int triangle [4][4] = '{'{-1, -1, -1, -1}, '{-1, -1, -1, -1},
                           '{-1, -1, -1, -1}, '{-1, -1, -1, -1}};
@@ -89,6 +117,18 @@ module Top;
     foreach (diagonal[r, c]) begin
       if (diagonal[r][c] !== ((r == c) ? 1 : 0))
         $fatal(1, "diagonal[%0d][%0d] was %0d", r, c, diagonal[r][c]);
+    end
+
+    foreach (banded[b, s]) begin
+      if (banded[b][s] !== (((b % 2) == 0) ? 0 : 1000) + b * 10 + s)
+        $fatal(1, "banded[%0d][%0d] was %0d", b, s, banded[b][s]);
+    end
+
+    // Block `width[w]` holds w + 1 bits, all set, and writes sized[o][w - 1].
+    foreach (sized[o, n]) begin
+      if (sized[o][n] !== n + 2 + 10 * o)
+        $fatal(1, "sized[%0d][%0d] was %0d, expected %0d", o, n, sized[o][n],
+               n + 2 + 10 * o);
     end
 
     foreach (triangle[t, u]) begin
