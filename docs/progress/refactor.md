@@ -2722,6 +2722,17 @@ enough to warrant its own focused review.
       on, because nothing is unwound to collect it. No real design has met one. Target: a crash
       prints the work in progress on the thread that crashed. Not blocked.
 
+- [ ] R162 -- A loop that counts out no block at one index keeps the blocks of the loop around it
+      apart. A loop written inside another, with a bound that reads the outer index -- a triangle, a
+      reduction tree's levels -- counts nothing out where that bound is zero. There it is stated as
+      no construct at all rather than as the loop the source wrote, so that one outer block differs
+      from its siblings and the outer loop becomes one scope per index: 113 scope classes at 64
+      outer iterations, where the same loop with a bound that never reaches zero emits 3. Target: a
+      loop is stated wherever the source wrote it, with its index and its three expressions, whether
+      or not any index produced a body there, and two blocks stating the same loop are one where
+      either has a body -- which is what the alternatives of a conditional already do. A loop with
+      no body is a shape the lowering to MIR does not take yet. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

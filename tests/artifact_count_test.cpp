@@ -489,6 +489,89 @@ TEST(ArtifactCount, ANestedConditionalHoldsEveryAlternative) {
   EXPECT_EQ(CompiledBlocksOfGenerate(kNestedInSelectedSide, 1), 3U);
 }
 
+// A conditional on the outer index, written inside an inner loop. Every inner
+// block of one outer block selects the same alternative, so the inner loop of
+// that outer block is one body holding that alternative alone, and two outer
+// blocks then differ in what their inner loops hold. That is still only which
+// alternative stood, so both loops are one body each and the conditional holds
+// both alternatives.
+constexpr std::string_view kChoiceUnderAnInnerLoop = R"(
+module Top;
+  int sink [8][4];
+  for (genvar g = 0; g < 8; g += 1) begin : gg
+    for (genvar i = 0; i < 4; i += 1) begin : gi
+      if ((g % 2) == 0) begin : t
+        initial sink[g][i] = 1;
+      end else begin : f
+        initial sink[g][i] = 2;
+      end
+    end
+  end
+endmodule
+)";
+
+TEST(ArtifactCount, ALoopWhoseInnerLoopChoosesByTheOuterIndexIsCompiledOnce) {
+  EXPECT_EQ(CompiledBlocksOfGenerate(kChoiceUnderAnInnerLoop, 0), 1U);
+}
+
+TEST(ArtifactCount, TheInnerLoopOfSuchALoopIsCompiledOnce) {
+  EXPECT_EQ(CompiledBlocksOfGenerate(kChoiceUnderAnInnerLoop, 1), 1U);
+}
+
+TEST(ArtifactCount, AChoiceUnderAnInnerLoopHoldsEveryAlternative) {
+  EXPECT_EQ(CompiledBlocksOfGenerate(kChoiceUnderAnInnerLoop, 2), 2U);
+}
+
+// The same conditional, inside an inner loop whose own blocks are compiled
+// apart because each declares a width its index fixes. The outer blocks agree
+// on those inner blocks one for one, and differ only in which alternative
+// stood inside each, so the outer loop is one body around an inner loop that
+// is not.
+constexpr std::string_view kChoiceUnderAnInnerLoopCompiledApart = R"(
+module Top;
+  for (genvar g = 0; g < 4; g += 1) begin : gg
+    for (genvar i = 1; i < 4; i += 1) begin : gi
+      logic [i:0] wide;
+      if (g == 0) begin : t
+        initial wide = '0;
+      end else begin : f
+        initial wide = '1;
+      end
+    end
+  end
+endmodule
+)";
+
+TEST(ArtifactCount, ALoopAroundBlocksCompiledApartThatChooseIsCompiledOnce) {
+  EXPECT_EQ(
+      CompiledBlocksOfGenerate(kChoiceUnderAnInnerLoopCompiledApart, 0), 1U);
+}
+
+TEST(ArtifactCount, TheBlocksCompiledApartStayApart) {
+  EXPECT_EQ(
+      CompiledBlocksOfGenerate(kChoiceUnderAnInnerLoopCompiledApart, 1), 3U);
+}
+
+TEST(ArtifactCount, ALoopWhoseInnerLoopsDeclareDifferentlyIsCompiledApart) {
+  // Each outer block's inner loop is one body, and that body declares a width
+  // the outer index fixes. The inner loops then differ in a type, which no
+  // construction supplies, so the outer count has to follow the indices.
+  EXPECT_EQ(
+      CompiledBlocksOfGenerate(
+          R"(
+module Top;
+  for (genvar g = 1; g < 5; g += 1) begin : gg
+    for (genvar i = 0; i < 4; i += 1) begin : gi
+      logic [g:0] wide;
+      initial wide = '0;
+    end
+  end
+endmodule
+)",
+          0),
+      4U);
+}
+
 // A child handed a different value at every index, which it only ever reads as
 // a value (LRM 23.10) -- in its body, and in the default of an input port the
 // instance leaves unconnected, which is the child's own expression (LRM
