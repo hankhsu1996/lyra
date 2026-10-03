@@ -9,4 +9,3 @@
 # A case may appear in this file or in the refusal record, never both.
 08_classes/property_write_evaluates_its_handle_once: "a write ran the handle's call 2 times, expected 1"
 11_operators/logical_operators_short_circuit: "the right operand of && ran 1 times behind a 0, expected 0"
-11_operators/real_shortreal_result_type: "narrow_square was 1.000244155526, expected 1.000244140625"
