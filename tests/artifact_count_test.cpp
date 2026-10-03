@@ -600,6 +600,60 @@ TEST(ArtifactCount, AChildGivenAValuePerIndexIsCompiledOnceAndSoIsTheLoop) {
   EXPECT_EQ(BlocksOfGenerate(*design, 0), 1U);
 }
 
+TEST(ArtifactCount, BlocksReadingSeveralOfTheirOwnVariablesAreCompiledOnce) {
+  // Every block declares the variables its procedures wait on, so each block's
+  // are declarations of its own. What a procedure waits on is a set (LRM
+  // 9.2.2.2.1, 9.4.2.1, 9.4.2.2), and the blocks write the same text, so they
+  // state the same thing -- through `always_comb`, `@*`, a continuous
+  // assignment, and a `wait`.
+  EXPECT_EQ(
+      CompiledBlocksOfGenerate(
+          R"(
+module Top;
+  logic by_comb [8];
+  logic by_star [8];
+  logic by_assign [8];
+  logic by_wait [8];
+  for (genvar i = 0; i < 8; i += 1) begin : g
+    logic a, b, c, d, e, f, h, k;
+    always_comb by_comb[i] = f ^ c ^ h ^ a ^ e ^ k ^ b ^ d;
+    always @* by_star[i] = k & a & f & b & h & c & e & d;
+    assign by_assign[i] = d | h | b | f | a | k | c | e;
+    initial begin
+      wait (e + a + k + c + f + b + h + d > 3);
+      by_wait[i] = 1'b1;
+    end
+  end
+endmodule
+)",
+          0),
+      1U);
+}
+
+TEST(ArtifactCount, InstancesReadingSeveralOfTheirOwnVariablesAreOneUnit) {
+  // Each instance has variables of its own and is handed its own value, which
+  // it only reads. Two instances wait on the same things in the same text, so
+  // one unit serves every value and nothing is caught lowering apart.
+  const auto design = LowerDesign(R"(
+module Leaf #(parameter int K = 0) (input logic clk, output logic [7:0] o);
+  logic [7:0] a, b, c, d, e, f, h, k;
+  always_ff @(posedge clk) a <= 8'(K);
+  always_comb o = f ^ c ^ h ^ a ^ e ^ k ^ b ^ d;
+endmodule
+
+module Top;
+  logic clk;
+  logic [7:0] o [4];
+  Leaf #(.K(1)) one (.clk(clk), .o(o[0]));
+  Leaf #(.K(2)) two (.clk(clk), .o(o[1]));
+  Leaf #(.K(3)) three (.clk(clk), .o(o[2]));
+  Leaf #(.K(4)) four (.clk(clk), .o(o[3]));
+endmodule
+)");
+  ASSERT_TRUE(design.has_value());
+  EXPECT_EQ(UnitsOf(*design, "Leaf"), 1U);
+}
+
 TEST(ArtifactCount, AValueSelectingWhatAChildWatchesIsCompiledOnce) {
   // Each child selects by its parameter the bit it reads, so each watches a
   // different bit (LRM 11.5.3) -- through a continuous assignment, an event

@@ -229,6 +229,12 @@ coverage. So does a run that remarks it lost sharing: the program is right, but 
 compiled once per parameter value because its instances lowered apart after they were predicted to
 share one unit, and nothing the case checks can see that.
 
+The compiler holds each instance of a design to the compiled unit it shares, and a run where one
+lowers differently fails as a compiler bug. Two instances that share a unit while lowering
+differently are one of them built as the other, and a case sees that only where it happens to check
+the instance that came out wrong -- which is why a case about something that differs between
+instances checks an instance other than the first.
+
 ## Where a path answers wrongly
 
 A wrong answer is not a refusal, so it is recorded separately, in `tests/paths/<path>.defects.yaml`,

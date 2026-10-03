@@ -2233,15 +2233,20 @@ enough to warrant its own focused review.
       design; carry that order into what is emitted and the compiler answers differently the second
       time, which nothing a simulated program can observe will report.
 
-      One such leak is closed, at the boundary where the front end's reads become identities this
-      compiler minted, and a check now compiles every corpus design twice and compares what was
-      written. That is an instance plus a detector: nothing stops the next one being written, and
-      the detector reports only what some design happens to exercise. Target: the leak cannot be
-      written. Every container keyed by a front-end pointer answers lookups and cannot be iterated,
-      so a pass that wants an order has to key on something the design decides -- which is what the
-      rule already says, stated so that the compiler holds it. About forty-six declarations, almost
-      all of them caches that never wanted iteration. Not blocked. Found while settling why one
-      design emitted two programs.
+      Two such leaks are closed, and both were the same set: what a body reads. The first reached
+      the written program, was closed by ordering the list a wait carries, and got a check that
+      compiles every corpus design twice and compares what was written. The second reached only
+      the lowered form -- what turning each read into this compiler's form allocated on the way --
+      so the written program repeated, that check stayed green, and what it cost was sharing: two
+      copies of one body compared unequal. It is closed where the set is built, the front end
+      keeping reads in the order the text makes them, and a second check holds the lowered form of
+      every corpus design to repeating. That is two instances and two detectors, and each detector
+      reports only what some design happens to exercise. Target: the leak cannot be written. Every
+      container keyed by a front-end pointer answers lookups and cannot be iterated, so a pass that
+      wants an order has to key on something the design decides -- which is what the rule already
+      says, stated so that the compiler holds it. About fifty-five declarations in the lowering
+      from the front end, almost all of them caches that never wanted iteration. Not blocked.
+      Found while settling why one design emitted two programs.
 
 - [x] R134 -- Where a function an emitted unit calls is defined. This entry was written as "where a
       value operation is defined", on the reading that a unit's remaining object was copies of the

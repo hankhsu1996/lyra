@@ -30,10 +30,10 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// Every value path the node writes, each with its longest static prefix as this
-// elaboration settles it. A path is visited from the expression that heads it,
-// which reaches the reads inside its selectors too, so an expression is taken
-// whole and not descended into again.
+// Every value path in the node's text, each with its longest static prefix as
+// this elaboration settles it. A path is visited from the expression that heads
+// it, which reaches the reads inside its selectors too, so an expression is
+// taken whole and not descended into again.
 class PathCollector : public slang::ast::ASTVisitor<
                           PathCollector, slang::ast::VisitFlags::AllGood> {
  public:
@@ -170,31 +170,50 @@ auto PartRead(
   return named;
 }
 
+// The expression each name reaching `symbol` starts at, over `paths`, each
+// stated once and in the order the text has them.
+auto NamesReaching(
+    const slang::ast::ValueSymbol& symbol,
+    std::span<const slang::ast::ValuePath> paths)
+    -> std::vector<const slang::ast::Expression*> {
+  std::vector<const slang::ast::Expression*> names;
+  for (const slang::ast::ValuePath& path : paths) {
+    if (path.rootExpr == nullptr || path.rootSymbol() != &symbol) continue;
+    if (!std::ranges::contains(names, path.rootExpr)) {
+      names.push_back(path.rootExpr);
+    }
+  }
+  return names;
+}
+
 // Flattens slang's `(symbol, bitMap)` `ReadSet` into one read per run of a
 // symbol's bits, each named by the prefixes in `paths` that make it up.
 // Disjoint runs of the same symbol stay disjoint so downstream can preserve
 // precision.
 //
-// What comes back stands for a set and carries no order of its own: it is
-// handed over in whatever order the front end's own container iterates, which
-// is where its symbols happened to be allocated. Whoever turns these into
-// something the compiled artifact carries settles an order there, against the
-// identities that step gives them.
+// What comes back stands for a set (LRM 9.4.2.1), and is in the order the
+// analyzed text first reads each symbol, which is the order the front end keeps
+// them in. Two copies of one text therefore hand their reads over alike, and so
+// whatever a later step builds from them, one read at a time, is built alike.
 auto FlattenReadSet(
     const slang::analysis::DFAResults::ReadSet& reads,
     std::span<const slang::ast::ValuePath> paths)
     -> std::vector<SensitivityRead> {
   std::vector<SensitivityRead> out;
   for (const auto& [symbol, bitmap] : reads) {
+    const std::vector<const slang::ast::Expression*> names =
+        NamesReaching(*symbol, paths);
     for (auto it = bitmap.begin(); it != bitmap.end(); ++it) {
       out.push_back(
-          {.symbol = symbol, .part = PartRead(*symbol, it.bounds(), paths)});
+          {.symbol = symbol,
+           .part = PartRead(*symbol, it.bounds(), paths),
+           .reached_by = names});
     }
   }
   return out;
 }
 
-// The value paths `node` writes, settled against the scope around
+// The value paths in `node`'s text, settled against the scope around
 // `containing_symbol`.
 template <typename Node>
 auto PathsOf(const Node& node, const slang::ast::Symbol& containing_symbol)
@@ -224,19 +243,75 @@ auto RunDfa(
   return reads;
 }
 
+// Every subroutine with a body that `node` calls, and that those call in turn.
+// A procedure's implicit list includes what such a function reads (LRM
+// 9.2.2.2.1), and that read is named in the function's own text.
+class CalledSubroutines
+    : public slang::ast::ASTVisitor<
+          CalledSubroutines, slang::ast::VisitFlags::AllGood> {
+ public:
+  explicit CalledSubroutines(
+      std::vector<const slang::ast::SubroutineSymbol*>& called)
+      : called_(&called) {
+  }
+
+  void handle(const slang::ast::CallExpression& call) {
+    visitDefault(call);
+    const auto* const* named =
+        std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
+    if (named == nullptr || std::ranges::contains(*called_, *named)) return;
+    const slang::ast::SubroutineSymbol& subroutine = **named;
+    // A foreign function has no body here to read (LRM 35.4).
+    if (subroutine.flags.has(slang::ast::MethodFlags::DPIImport)) return;
+    called_->push_back(&subroutine);
+    subroutine.getBody().visit(*this);
+  }
+
+ private:
+  std::vector<const slang::ast::SubroutineSymbol*>* called_;
+};
+
+// The value paths in the bodies of the subroutines `proc` calls.
+auto PathsOfCalledBodies(const slang::ast::ProceduralBlockSymbol& proc)
+    -> std::vector<slang::ast::ValuePath> {
+  std::vector<const slang::ast::SubroutineSymbol*> called;
+  CalledSubroutines collector(called);
+  proc.visit(collector);
+  std::vector<slang::ast::ValuePath> paths;
+  for (const slang::ast::SubroutineSymbol* subroutine : called) {
+    slang::ast::EvalContext eval_context(*subroutine);
+    PathCollector in_body(eval_context, paths);
+    subroutine->getBody().visit(in_body);
+  }
+  return paths;
+}
+
 // Flattens slang's procedure-level sensitivity list (LRM 9.2.2.2.1) into the
 // same shape as a node's reads. slang has already narrowed each entry's bit
 // range to the bits that wake the procedure and excluded the procedure's locals
 // and self-driven bits.
+//
+// A read is named as a select only where the procedure's own text selects it,
+// so `paths` is that text's. The names reaching it are also taken from
+// `called_paths`, because a read the list holds may be one a called function
+// makes.
 auto FlattenSensitivityList(
     const slang::analysis::AnalyzedProcedure& analyzed,
-    std::span<const slang::ast::ValuePath> paths)
+    std::span<const slang::ast::ValuePath> paths,
+    std::span<const slang::ast::ValuePath> called_paths)
     -> std::vector<SensitivityRead> {
   std::vector<SensitivityRead> out;
   for (const auto& read : analyzed.getSensitivityList().reads) {
+    std::vector<const slang::ast::Expression*> names =
+        NamesReaching(*read.symbol, paths);
+    for (const slang::ast::Expression* name :
+         NamesReaching(*read.symbol, called_paths)) {
+      names.push_back(name);
+    }
     out.push_back(
         {.symbol = read.symbol,
-         .part = PartRead(*read.symbol, read.bitRange, paths)});
+         .part = PartRead(*read.symbol, read.bitRange, paths),
+         .reached_by = std::move(names)});
   }
   return out;
 }
@@ -318,7 +393,8 @@ auto SensitivityAnalyzer::AnalyzeProcedureSensitivity(
   const slang::analysis::AnalyzedProcedure analyzed(
       *context_, proc, nullptr, dfa);
   auto [inserted_it, _] = procedure_cache_.emplace(
-      &proc, FlattenSensitivityList(analyzed, PathsOf(proc, proc)));
+      &proc, FlattenSensitivityList(
+                 analyzed, PathsOf(proc, proc), PathsOfCalledBodies(proc)));
   return inserted_it->second;
 }
 

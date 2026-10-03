@@ -129,7 +129,13 @@ B  The interface port
       which is what a name into any other unit's body already does: the port says where the descent
       starts and never how far it may go. Reads, writes, and change observation ride that route, so
       a process in the module re-triggers when an interface member changes, and a write through the
-      port is immediately the interface's value.
+      port is immediately the interface's value. What a body waits on rides it too, in every form a
+      body waits in -- an event control, `always_comb` and `@*`, a `wait`, a function the procedure
+      calls, a continuous assignment, a connection to a child's port, a sampled value -- so two
+      instances of one module bound to two interface instances each wake on their own. That used to
+      hold for the first instance only: a wait was routed from where the read landed in the instance
+      analyzed, which is a name on the elaborated hierarchy, and every instance of the unit watched
+      that one.
 - [x] B3 -- The actual on the connection is an interface instance named in the instantiating scope,
       whether that is a local instance, an element of an interface array, or an instance reached by
       hierarchical name. LRM 25.3 forbids the hierarchical form from resolving through an arrayed

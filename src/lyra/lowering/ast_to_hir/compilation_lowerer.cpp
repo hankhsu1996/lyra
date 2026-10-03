@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -29,6 +30,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/dump.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
@@ -72,14 +74,20 @@ auto ApplicationOf(
   return application;
 }
 
-// What the collection found: the distinct units, and the instances that share
-// a unit while being handed values none of its earlier instances was. A unit
-// compiles one body for every instance handed any value, and that is sound only
-// if those instances lower to what the unit lowers to; the witnesses are what
-// that is checked against.
+// What the collection found: the distinct units, and every other instance,
+// each of which shares one of them. A unit compiles one body for all of its
+// instances, and that is sound only if each lowers to what the unit lowers to,
+// so each is checked against it.
+//
+// The two kinds differ in what a difference means. A witness was handed values
+// none of the unit's earlier instances was, so a difference is those values
+// reaching the body, and keeping them in the unit's identity separates the
+// two. A repeat is one application with an earlier instance, so nothing a unit
+// is told apart by separates them and a difference has no such answer.
 struct Collected {
   std::vector<CollectedUnit> units;
   std::vector<CollectedUnit> witnesses;
+  std::vector<CollectedUnit> repeats;
 };
 
 // Collects the distinct units reachable from the tops. slang owns the
@@ -97,9 +105,8 @@ struct Collected {
 // never inside the unit, so the unit itself is the same.
 //
 // Descending reaches each occurrence's own body, so a child is collected under
-// what its own parent fixed for it. An occurrence whose key and whose supplied
-// values are both already held stops here, so reaching every body costs one
-// visit per distinct application and nothing more.
+// what its own parent fixed for it, and every occurrence is reached, because
+// each is held to the unit it shares.
 //
 // Two keys reaching one name would silently make two units into one, so the
 // name a unit is known by is checked against the key it came from rather than
@@ -160,11 +167,16 @@ struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
           "UnitCollector: two specializations reached one name, so the name "
           "no longer tells the units apart");
     }
-    if (!applications.insert(ApplicationOf(inst, name, *policy)).second) {
-      return;
+    const bool repeat =
+        !applications.insert(ApplicationOf(inst, name, *policy)).second;
+    std::vector<CollectedUnit>* collected_as = &found.witnesses;
+    if (fresh) {
+      collected_as = &found.units;
+    } else if (repeat) {
+      collected_as = &found.repeats;
     }
-    (fresh ? found.units : found.witnesses)
-        .push_back(CollectedUnit{.body = &inst.body, .name = std::move(name)});
+    collected_as->push_back(
+        CollectedUnit{.body = &inst.body, .name = std::move(name)});
     visitDefault(inst);
   }
 };
@@ -348,6 +360,30 @@ auto LowerBodiesOf(
   return lowerer.LowerBodies(signatures);
 }
 
+// The first line two units' dumps disagree on, as a clause for a report. Two
+// units that compare unequal say nothing about where, and whoever reads the
+// report has only the two instances' names to start from otherwise.
+auto WhereTheyFirstDiffer(
+    const hir::CompilationUnit& unit, const hir::CompilationUnit& instance)
+    -> std::string {
+  const std::string of_unit = hir::DumpHir(unit);
+  const std::string of_instance = hir::DumpHir(instance);
+  std::string_view left = of_unit;
+  std::string_view right = of_instance;
+  while (!left.empty() && !right.empty()) {
+    const std::string_view left_line = left.substr(0, left.find('\n'));
+    const std::string_view right_line = right.substr(0, right.find('\n'));
+    if (left_line != right_line) {
+      return std::format(
+          ": the unit states `{}` where the instance states `{}`", left_line,
+          right_line);
+    }
+    left.remove_prefix(std::min(left.size(), left_line.size() + 1));
+    right.remove_prefix(std::min(right.size(), right_line.size() + 1));
+  }
+  return ": one states more than the other";
+}
+
 // The definitions a witness of which lowered apart from the unit it shares.
 // Each unit with witnesses is lowered once here and each of its witnesses
 // beside it, one at a time and dropped after, so only one unit and one witness
@@ -361,21 +397,51 @@ auto LowerBodiesOf(
 // turn to report: a unit that fails has nothing to hold a witness against, and
 // a witness that fails where its unit did not has lowered apart, so its
 // definition is kept whole and the witness reports in a turn of its own.
+//
+// A repeat is held to the same comparison and has no such answer. It agrees
+// with an earlier instance on everything a unit is told apart by, so one that
+// lowers to something else was told apart by nothing: the identity is missing
+// what distinguishes them, or the lowering states one text two ways. Either is
+// this compiler's defect, and sharing the unit anyway would build one of the
+// two instances as the other.
 auto DefinitionsLoweredApart(
     const LoweringFacts& facts, const Collected& collected,
     const hir::UnitSignatures& signatures, diag::DiagnosticSink& sink)
     -> Definitions {
-  std::unordered_map<std::string_view, std::vector<const CollectedUnit*>>
-      witnesses_of;
+  using InstancesByUnit =
+      std::unordered_map<std::string_view, std::vector<const CollectedUnit*>>;
+  InstancesByUnit witnesses_of;
   for (const CollectedUnit& witness : collected.witnesses) {
     witnesses_of[witness.name].push_back(&witness);
+  }
+  InstancesByUnit repeats_of;
+  for (const CollectedUnit& repeat : collected.repeats) {
+    repeats_of[repeat.name].push_back(&repeat);
   }
   Definitions apart;
   for (const CollectedUnit& unit : collected.units) {
     const auto witnesses = witnesses_of.find(unit.name);
-    if (witnesses == witnesses_of.end()) continue;
+    const auto repeats = repeats_of.find(unit.name);
+    if (witnesses == witnesses_of.end() && repeats == repeats_of.end()) {
+      continue;
+    }
     const auto shared = LowerBodiesOf(facts, unit, signatures);
     if (!shared) continue;
+    if (repeats != repeats_of.end()) {
+      for (const CollectedUnit* repeat : repeats->second) {
+        const auto lowered = LowerBodiesOf(facts, *repeat, signatures);
+        if (lowered && *lowered == *shared) continue;
+        throw InternalError(
+            std::format(
+                "DefinitionsLoweredApart: instance '{}' shares unit '{}' with "
+                "an instance it agrees with on everything a unit is told apart "
+                "by, and lowers to something that unit does not{}",
+                repeat->body->getHierarchicalPath(), unit.name,
+                lowered ? WhereTheyFirstDiffer(*shared, *lowered)
+                        : std::string{", because it does not lower at all"}));
+      }
+    }
+    if (witnesses == witnesses_of.end()) continue;
     for (const CollectedUnit* witness : witnesses->second) {
       const auto lowered = LowerBodiesOf(facts, *witness, signatures);
       if (lowered && *lowered == *shared) continue;

@@ -44,11 +44,19 @@ struct ReadOfBits {
   std::uint64_t last = 0;
 };
 
-// One leaf read produced by `SensitivityAnalyzer`: which symbol, and which part
-// of it.
+// One leaf read produced by `SensitivityAnalyzer`: which symbol, which part of
+// it, and the names the analyzed text reaches it by.
+//
+// The symbol says where a read landed in the instance that was analyzed, which
+// is not always where the same text lands in another instance: a name through
+// an interface port reaches whatever that port is bound to (LRM 25.3). So the
+// names are kept beside it, as the expression each one starts at, for whoever
+// states the read for every instance at once. Empty where the read was put
+// together without a text to take them from.
 struct SensitivityRead {
   const slang::ast::ValueSymbol* symbol = nullptr;
   std::variant<ReadOfWhole, ReadOfSelects, ReadOfBits> part;
+  std::vector<const slang::ast::Expression*> reached_by;
 };
 
 // Reports the state an `slang::ast::Expression`, a `slang::ast::Statement`, or

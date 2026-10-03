@@ -98,11 +98,14 @@ class DeclaredDesign {
   // module declaring either is a design element and not a design, and is
   // reported.
   //
-  // Instances handed different values of a parameter share one unit only
-  // where each lowers to what the unit lowers to, which is checked here, one
-  // instance beside its unit at a time. A definition where one does not is
-  // declared again with every parameter deciding its unit, and a remark says
-  // so; what comes back is always the design each instance describes.
+  // Instances share one unit only where each lowers to what the unit lowers
+  // to, which is checked here for every instance, one beside its unit at a
+  // time. Where instances handed different values of a parameter do not, the
+  // definition is declared again with every parameter deciding its unit, and
+  // a remark says so; what comes back is always the design each instance
+  // describes. Where instances handed the same values do not, nothing a unit
+  // is told apart by separates them, so no unit could be named for each: that
+  // is this compiler's defect and is thrown as one.
   static auto Declare(
       std::unique_ptr<slang::ast::Compilation> front_end,
       const frontend::SlangSourceMapper& source_mapper,

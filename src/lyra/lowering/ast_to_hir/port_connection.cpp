@@ -537,7 +537,9 @@ auto ConnectDataPort(
       if (!peer_or) return std::unexpected(std::move(peer_or.error()));
       peer = frame.Exprs().Add(*std::move(peer_or));
       auto entries = unit_lowerer.TranslateSensitivityReads(
-          scope, {SensitivityRead{.symbol = internal, .part = ReadOfWhole{}}},
+          scope,
+          {SensitivityRead{
+              .symbol = internal, .part = ReadOfWhole{}, .reached_by = {}}},
           frame);
       if (!entries) return std::unexpected(std::move(entries.error()));
       sensitivity = *std::move(entries);

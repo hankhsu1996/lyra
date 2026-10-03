@@ -227,6 +227,27 @@ trace; the design's watched entries go from 1838 to 1867. Deciding at constructi
 instance arms would give the narrower set back to a body with no such effect; nothing does that
 today.
 
+**A read set arrives in the order the text makes its reads.** What a body waits on is a set (LRM
+9.4.2.1), but turning each read into this compiler's own form allocates as it goes, and two forms
+are compared position for position to decide whether two copies of one body are one artifact. The
+front end kept reads in a hash table keyed on each symbol's address, so two copies of one text
+enumerated them differently and compared unequal: a loop whose blocks each read three of their own
+variables in an `always_comb` was 8 scope classes per iteration (68 at 8 blocks, 260 at 32, and 12
+at both once fixed), and a module handed different values of a parameter lost its sharing. The fork
+keeps reads the way it already keeps writes, in the order each symbol is first read, and nothing
+here sorts them.
+
+**A read keeps the names the text reached it by.** The analysis states the symbol a read landed on
+in the instance analyzed, and that is not where the same text lands in another instance: a name
+through an interface port reaches whatever the port is bound to (LRM 25.3). Routing a wait from the
+symbol made every instance of a unit watch the first instance's interface. So each read carries the
+expression every name reaching it starts at, taken from the value paths of the analyzed text and,
+for a procedure's implicit list, of the bodies of the functions it calls; a name through a port is
+watched through the port, exactly as an expression through one is read, and any other name from
+where the symbol sits. Searching the reader's ports for the one bound to the symbol's interface
+guesses the name from the landing, and is wrong where two ports carry one instance or the text named
+it another way.
+
 The project-owned code is the analyzer: the flattening of `getRValues()` into
 `vector<SensitivityRead>` (mirrors `AnalyzedProcedure.cpp:223-227`), the collection of what a node
 declares, and a cache per node. No subclass, no state type, no hook overrides, no use of slang's
