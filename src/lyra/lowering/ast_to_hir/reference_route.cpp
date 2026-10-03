@@ -14,6 +14,7 @@
 #include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
@@ -1063,12 +1064,46 @@ auto UnitLowerer::WatchedEntriesOf(
         }
         break;
       }
+      // The same text watches, in each instance, what that instance's own names
+      // reach. A name through an interface port reaches whatever the port is
+      // bound to (LRM 25.3), so such a read is watched through the port; any
+      // other name reaches the same storage in every instance, which is where
+      // the symbol sits.
       case Referent::kVariableStorage:
       case Referent::kNetStorage: {
-        auto cell = ResolveValueTarget(frame, target, span);
-        if (!cell) return std::unexpected(std::move(cell.error()));
-        if (auto observed = observe_cell(*std::move(cell)); !observed) {
-          return std::unexpected(std::move(observed.error()));
+        std::vector<hir::ValueTarget> cells;
+        bool named_otherwise = read.reached_by.empty();
+        for (const slang::ast::Expression* name : read.reached_by) {
+          const auto* hierarchical =
+              name->as_if<slang::ast::HierarchicalValueExpression>();
+          if (hierarchical == nullptr || !hierarchical->ref.isViaIfacePort()) {
+            named_otherwise = true;
+            continue;
+          }
+          auto through = ReachOneThroughInterfacePort(frame, hierarchical->ref);
+          if (!through.has_value()) {
+            return diag::Fail(
+                span, diag::DiagCode::kUnsupportedExpressionForm,
+                "waiting on a name reached through an interface port by a path "
+                "of this shape is not yet supported");
+          }
+          auto route =
+              MakeRoutedValueRef(target, frame.Current(), *std::move(through));
+          if (!route) return std::unexpected(std::move(route.error()));
+          const hir::ValueTarget cell{*route};
+          if (!std::ranges::contains(cells, cell)) cells.push_back(cell);
+        }
+        if (named_otherwise) {
+          auto cell = ResolveValueTarget(frame, target, span);
+          if (!cell) return std::unexpected(std::move(cell.error()));
+          if (!std::ranges::contains(cells, *cell)) {
+            cells.push_back(*std::move(cell));
+          }
+        }
+        for (const hir::ValueTarget& cell : cells) {
+          if (auto observed = observe_cell(cell); !observed) {
+            return std::unexpected(std::move(observed.error()));
+          }
         }
         break;
       }
@@ -1084,16 +1119,6 @@ auto UnitLowerer::WatchedEntriesOf(
     }
   }
 
-  // What arrives here is a set: a process woken by any of these is woken the
-  // same way however they are written down, and what hands them over reaches
-  // them through the front end's own containers, which order by where its
-  // symbols were allocated. What leaves here is a sequence the compiled
-  // artifact carries, and an artifact is a function of the design -- so the
-  // order is settled against the identities this step has just given them,
-  // which the design decides and nothing about the run touches. The runs of
-  // one symbol arrive in bit order and the parts of one run in source order,
-  // and a stable sort keeps both.
-  std::ranges::stable_sort(out, {}, &hir::SensitivityEntry::cell);
   return out;
 }
 

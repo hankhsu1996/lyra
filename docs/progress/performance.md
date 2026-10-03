@@ -441,6 +441,21 @@ specializations, not with instance count.
       was tried: it shares the body, and it also watches one run of bits as every select that makes
       it up, which on Ibex raised the watched entries from 1838 to 2071.
 
+      **A body waiting on two or more variables of its own used to fall outside them as well, for
+      a reason no construct explains.** What a body waits on arrived in the order the front end's
+      table of reads enumerated them, which follows where each variable was allocated, so two
+      copies of one body stated the same reads at different positions and compared unequal. A loop
+      whose blocks each declare three variables and read them in an `always_comb` was 8 classes per
+      iteration (68 at 8 iterations, 260 at 32) and is 12 at both; a module instantiated with
+      different values of a parameter it only reads reported lost sharing and was compiled once per
+      value. Reads now arrive in the order the text makes them.
+      [../decisions/read-set-inference.md](../decisions/read-set-inference.md) holds why the order
+      is settled there. Every corpus design is now lowered twice and held to stating one thing, and
+      every instance of every design is lowered and held to the unit it shares, on every run. That
+      costs a lowering per instance and nothing after it, since what is compared is dropped before
+      anything is compiled: 1.06 s to 1.15 s for Ibex's front half, 3.3 s to 15.2 s on 18,000
+      identical instances, with peak memory within 5%.
+
       What it costs where nothing is gained, measured rather than waved at: a block that cannot
       share either way now carries the declaration instead of the folded literal, which is **359
       bytes per block** -- 15 blocks declaring a width through a named constant emit 154,362 bytes

@@ -335,7 +335,10 @@ cc_test(
 # host tool, so it runs wherever the cheap targets run.
 cc_test(
     name = "repeatable_emission_test",
-    srcs = ["repeatable_emission_test.cpp"],
+    srcs = [
+        "compiled_twice.hpp",
+        "repeatable_emission_test.cpp",
+    ],
     copts = LYRA_COPTS,
     data = CONFORMANCE_DATA,
     shard_count = 8,
@@ -344,6 +347,30 @@ cc_test(
         "//:compiler",
         "//:diag",
         "//:driver",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@fmt",
+        "@googletest//:gtest",
+        "@slang",
+    ],
+)
+
+# The same two compilations, held to stating the same thing where the written
+# text cannot show a difference: the form two copies of one body are compared
+# in to decide whether they are one artifact.
+cc_test(
+    name = "repeatable_lowering_test",
+    srcs = [
+        "compiled_twice.hpp",
+        "repeatable_lowering_test.cpp",
+    ],
+    copts = LYRA_COPTS,
+    data = CONFORMANCE_DATA,
+    shard_count = 8,
+    deps = [
+        ":framework",
+        "//:compiler",
+        "//:diag",
+        "//:hir",
         "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
         "@googletest//:gtest",

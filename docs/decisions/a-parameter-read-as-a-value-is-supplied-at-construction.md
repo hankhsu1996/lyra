@@ -98,6 +98,16 @@ derive. Where one differs, the definition is kept whole, with every parameter in
 was before this record -- and the design is declared again with that answer. So an incomplete
 classification costs sharing, and the program is the one each instance's own body describes.
 
+An instance handed the same values as an earlier one is compared too, on every run. Skipping it
+rested on a second prediction -- that a definition, its key and its supplied values are everything a
+lowering can depend on -- and that one was unchecked: a wait through an interface port was routed
+from where the name landed in the first instance, so two instances agreeing on all three lowered
+differently and the second was built as the first. Such an instance has no fallback, because nothing
+a unit is told apart by separates it from the one it repeats, so no name exists to give each its own
+unit; a difference is reported as this compiler's defect, naming the instance and the first line the
+two forms disagree on. What it costs is a lowering per instance and nothing after it, which is the
+axis North Star invariant 2 leaves out: 0.09 s on Ibex's 1.06 s front half.
+
 The comparison is only as good as the equality, so HIR equality is derived and exact: every node's
 `operator==` is the defaulted one, and a real value is held as the bits that represent it. A number
 compares 0.0 and -0.0 equal, and dividing by each gives infinities of opposite sign, so a comparison

@@ -56,15 +56,16 @@ references another; ownership is which entity holds a given piece of state.
    it, and a consumer's "is this mine" is an equality against that, never a property of the target
    reconstructed from its surroundings. Where every such identity in a layer is unit-wide, this
    costs nothing and states itself._
-10. A list standing for a set is ordered by the identities in it, never by the order they were
-    enumerated in. A set arrives through whatever container produced it, and the front end's
-    containers key on where its symbols were allocated, so their enumeration order is a fact about
-    the run rather than about the design -- carried into what is compiled, it makes the same design
-    compile to two different things. The step that gives such a set its identities is therefore the
-    step that orders it: by then an order the design decides is on hand, and nothing else is needed.
-    _Consequence: a pass turning an unordered thing into an ordered one settles the order where the
-    identities are, rather than passing an enumeration on for a later pass to inherit; and a
-    container keyed on a front-end pointer is answered by lookup, never iterated._
+10. A set reaches this compiler in an order the design decides, and nothing downstream reorders it.
+    A container keyed on where its entries were allocated enumerates in an order that is a fact
+    about the run rather than about the design; carried into what is compiled, it makes the same
+    design compile to two different things, and two copies of one text state two things. Giving each
+    entry its identity is not a place to repair that, because it is done one entry at a time and
+    allocates as it goes: whatever it creates is already positioned by the order the entries came
+    in, and a position is what two forms are compared on. So the order is settled where the set is
+    built, by keeping the order the text produced its entries in. _Consequence: the component that
+    builds a set keeps it in the order its entries first arose; a consumer walks it and does not
+    sort; and a container keyed on a front-end pointer is answered by lookup, never iterated._
 
 ## Boundary to Adjacent Layers
 
