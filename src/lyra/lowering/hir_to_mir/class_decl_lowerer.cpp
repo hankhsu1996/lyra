@@ -13,6 +13,7 @@
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
@@ -20,7 +21,6 @@
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/object_record.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -178,7 +178,7 @@ auto LowerStaticStorageInto(
     block.AppendStmt(
         mir::ExprStmt{
             .expr = block.exprs.Add(BuildStoreExpr(
-                unit, block, WriteTarget{.owner = target, .descent = {}},
+                unit, block, AccessPath{.owner = target, .descent = {}},
                 value_id, std::nullopt, prop_type))});
   }
 

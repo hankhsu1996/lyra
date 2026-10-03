@@ -30,6 +30,7 @@ jobs:
               - 'examples/**'
               - 'BUILD.bazel'
               - 'MODULE.bazel'
+              - 'tools/bazel/**'
               - '.bazelrc'
               - '.github/workflows/bazel-build.yml'
 

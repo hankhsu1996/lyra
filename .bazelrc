@@ -87,6 +87,14 @@ build:asan --copt='-fno-omit-frame-pointer'
 build:asan --copt='-O1'
 build:asan --linkopt='-fsanitize=address'
 build:asan --strip=never
+# The instrumentation leaves one common symbol of its own in every object, which
+# the check for a symbol defined twice in a static library reads as a
+# definition repeated across the archive.
+build:asan --features=-symbol_check
+# GCC reports a value as possibly uninitialized on paths the instrumentation
+# adds, in code that is clean without it. That one stays a warning here; every
+# other warning is as fatal as in an ordinary build.
+build:asan --copt='-Wno-error=maybe-uninitialized'
 
 # Shared cache and result streaming with actions still running locally, so the
 # compiler is the one named above. Needs a BuildBuddy key via `--remote_header`.

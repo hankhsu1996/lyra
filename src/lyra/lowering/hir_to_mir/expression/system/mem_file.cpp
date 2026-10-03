@@ -222,7 +222,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
   // not address keeps what it held, and it rides the completion back out (LRM
   // 13.5, 21.4). A dump only reads it. Either way its place is bound here,
   // which is the once it is evaluated.
-  std::optional<WriteTarget> mem_place;
+  std::optional<AccessPath> mem_place;
   if (!is_store) {
     auto place_or = process.LowerLhsExpr(mem_hir, step_frame);
     if (!place_or) return std::unexpected(std::move(place_or.error()));

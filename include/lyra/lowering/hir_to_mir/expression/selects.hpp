@@ -9,8 +9,8 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -18,12 +18,6 @@
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
-
-// Reading a run of a packed value's vector by position, for a consumer that
-// has no source-level select to lower: pattern matching (LRM 12.6)
-// destructures a value the source named only as a whole. Both entries produce
-// the read side only; a write reaches a member through the member-access
-// lowering below.
 
 // The step `receiver[idx]` takes (LRM 7.4.5 / 7.5 / 7.8 / 7.10 / 11.5.1), with
 // `idx` written in the coordinates the receiver was declared with. A packed
@@ -41,6 +35,12 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto BuildElementAccessCallExpr(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr;
+
+// The three below read a run of a packed value's vector by position, for a
+// consumer that has no source-level select to lower: pattern matching (LRM
+// 12.6) destructures a value the source named only as a whole. Each names
+// `base` more than once where a tag is involved, so `base` is a read that
+// evaluates nothing -- a local the caller bound.
 
 // The `width` bits starting at `bit_offset`, as an owned value of
 // `result_type`. Unguarded: the caller states which bits it wants.
@@ -67,22 +67,17 @@ namespace lyra::lowering::hir_to_mir {
     const PackedProjection& projection, base::ComponentIndex index)
     -> mir::ExprId;
 
-// Where a part of a value lies: the value at the root of the selects naming it,
-// and the part's lowest bit, counted from that value's least significant bit in
-// the position type. How many bits the part spans is its own type's.
-struct PartStart {
-  hir::ExprId whole = {};
-  mir::ExprId first = {};
-};
-
-// Where `part` lies (LRM 7.2.1, 11.5.1), each select taken as the step a read
-// of it takes -- so a wait on a part and a read of it cannot disagree about
-// where it lies. The start stays an expression, because an index may be a
-// value each construction of the body is given. A part that selects nothing is
-// the whole value, starting at its first bit.
-template <typename Lowerer>
-auto PartStartOf(Lowerer& lowerer, WalkFrame frame, hir::ExprId part)
-    -> diag::Result<PartStart>;
+// The checks a write to `target` owes before it lands: a step into a member of
+// a tagged union is taken only where the tag names that member (LRM 11.9).
+// Each is appended to the frame's block as a statement of its own, because
+// nothing short-circuits the target of a write and so the check has no
+// occurrence to be evaluated inside of. The check reads what the write then
+// descends through, so the indices on the way to a checked step are evaluated
+// here, once, and `target` comes back naming those results (LRM 11.4.1). A
+// construct that only names the part -- a wait, a join of nets -- writes
+// nothing and owes none.
+void AppendTagChecks(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath& target);
 
 // A select's meaning is independent of the enclosing scope, so one template
 // over the pass class serves both the procedural and structural contexts;
@@ -104,33 +99,33 @@ auto LowerHirClassPropertyAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
-// LHS-context selector lowerings: like the read-context handlers but peeling
-// rather than composing. Each adds one step to the descent and recurses into
-// its base in write context, so what comes back is rooted at the cell itself
-// rather than at the storage it stands for.
+// A select named as a part rather than read: the path its base names, one step
+// deeper. Each adds the same step the read of it takes and appends nothing, so
+// what comes back is rooted at the cell itself rather than at the storage it
+// stands for, and is the one statement of the part every use of it is given.
 template <ExprLowerer Lowerer>
-auto LowerHirElementSelectExprLhs(
+auto LowerHirElementSelectExprPath(
     Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,
-    mir::TypeId result_type) -> diag::Result<WriteTarget>;
+    mir::TypeId result_type) -> diag::Result<AccessPath>;
 template <ExprLowerer Lowerer>
-auto LowerHirRangeSelectExprLhs(
+auto LowerHirRangeSelectExprPath(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
-    mir::TypeId result_type) -> diag::Result<WriteTarget>;
+    mir::TypeId result_type) -> diag::Result<AccessPath>;
 template <ExprLowerer Lowerer>
-auto LowerHirMemberAccessExprLhs(
+auto LowerHirMemberAccessExprPath(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
-    mir::TypeId result_type) -> diag::Result<WriteTarget>;
+    mir::TypeId result_type) -> diag::Result<AccessPath>;
 // A property of the object `receiver` reaches, as the target of a write: the
 // property's own place, lying in that object, which the write is opened on.
 template <ExprLowerer Lowerer>
-auto PropertyWriteTarget(
+auto PropertyPath(
     Lowerer& lowerer, const WalkFrame& frame, mir::ExprId receiver,
     const hir::ClassPropertyTarget& target, mir::TypeId result_type)
-    -> WriteTarget;
+    -> AccessPath;
 template <ExprLowerer Lowerer>
-auto LowerHirClassPropertyAccessExprLhs(
+auto LowerHirClassPropertyAccessExprPath(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
-    mir::TypeId result_type) -> diag::Result<WriteTarget>;
+    mir::TypeId result_type) -> diag::Result<AccessPath>;
 
 // A member of the interface instance a virtual interface holds (LRM 25.9), as
 // the member's own storage, in either context: a read takes the value it holds

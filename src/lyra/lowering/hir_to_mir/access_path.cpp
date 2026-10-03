@@ -1,4 +1,4 @@
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -11,6 +11,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
+#include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
@@ -46,7 +47,7 @@ auto CallEntry(
 void RefuseNetCell(const mir::Type& place_ty) {
   if (place_ty.Is<mir::ResolvedType>()) {
     throw InternalError(
-        "lhs_store: a net's cell takes no value a write may put there; the "
+        "access path: a net's cell takes no value a write may put there; the "
         "destination is one of its drivers");
   }
 }
@@ -65,7 +66,7 @@ auto DesignatingStepOf(const DescentStep& step) -> DesignatingStep {
       support::RuntimeEntryOf(step.part_entry).selects;
   if (!selects.has_value()) {
     throw InternalError(
-        "lhs_store: a step of a write's descent reaches a part, and this one "
+        "access path: a step of a write's descent reaches a part, and this one "
         "names an entry that reaches none");
   }
   switch (*selects) {
@@ -76,7 +77,7 @@ auto DesignatingStepOf(const DescentStep& step) -> DesignatingStep {
     case support::PartSelection::kSlice:
       return {.entry = support::BuiltinFn::kDesignateSlice, .lands = true};
   }
-  throw InternalError("lhs_store: unknown part selection");
+  throw InternalError("access path: unknown part selection");
 }
 
 // A step of a target's descent taken on a reference. Only an element and a
@@ -87,7 +88,8 @@ auto ReferringStepOf(const DescentStep& step) -> support::BuiltinFn {
       support::RuntimeEntryOf(step.part_entry).selects;
   if (!selects.has_value()) {
     throw InternalError(
-        "lhs_store: a step of a lent target's descent reaches a part, and this "
+        "access path: a step of a lent target's descent reaches a part, and "
+        "this "
         "one names an entry that reaches none");
   }
   switch (*selects) {
@@ -97,21 +99,22 @@ auto ReferringStepOf(const DescentStep& step) -> support::BuiltinFn {
       return support::BuiltinFn::kReferComponent;
     case support::PartSelection::kSlice:
       throw InternalError(
-          "lhs_store: a slice may not be passed by reference (LRM 13.5.2), so "
+          "access path: a slice may not be passed by reference (LRM 13.5.2), "
+          "so "
           "no lent target reaches one");
   }
-  throw InternalError("lhs_store: unknown part selection");
+  throw InternalError("access path: unknown part selection");
 }
 
 // The owner as a write reaches it: through a write opened on the object it is a
 // property of, where it is one, so that ending the write tells the object.
 auto WrittenOwner(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId {
-  if (!target.object.has_value()) {
-    return target.owner;
+  if (!path.object.has_value()) {
+    return path.owner;
   }
-  return PropertyWrittenThrough(unit, block, *target.object, target.owner);
+  return PropertyWrittenThrough(unit, block, *path.object, path.owner);
 }
 
 // `lhs op= rhs`, at an operator whose two forms are the whole of what an
@@ -121,10 +124,10 @@ auto WrittenOwner(
 // which reaches it once for the same reason (LRM 11.4.1). Both are ordinary MIR
 // nodes with nothing left to decide.
 auto BuildCompoundExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target,
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
     mir::ExprId rhs_id, CompoundOperation op, mir::TypeId result_type)
     -> mir::Expr {
-  const mir::ExprId place = TargetPlace(unit, block, target);
+  const mir::ExprId place = PathPlace(unit, block, path);
   return std::visit(
       Overloaded{
           [&](mir::BinaryOp applied) -> mir::Expr {
@@ -161,25 +164,25 @@ auto StepArguments(
   return arguments;
 }
 
-auto DescendInto(WriteTarget base, DescentStep step) -> WriteTarget {
+auto DescendInto(AccessPath base, DescentStep step) -> AccessPath {
   base.descent.push_back(std::move(step));
   return base;
 }
 
-auto TargetValueType(
+auto PathValueType(
     const mir::CompilationUnit& unit, const mir::Block& block,
-    const WriteTarget& target) -> mir::TypeId {
-  if (!target.descent.empty()) {
-    return target.descent.back().part_type;
+    const AccessPath& path) -> mir::TypeId {
+  if (!path.descent.empty()) {
+    return path.descent.back().part_type;
   }
-  const mir::TypeId owner_type = block.exprs.Get(target.owner).type;
+  const mir::TypeId owner_type = block.exprs.Get(path.owner).type;
   const mir::Type& owner_ty = unit.types.Get(owner_type);
   return owner_ty.IsCapabilityWrapper() ? owner_ty.WrappedValueType()
                                         : owner_type;
 }
 
-auto TargetPlace(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+auto PathPlace(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId {
   const auto reach = [&](support::BuiltinFn entry, mir::ExprId from,
                          const DescentStep& step, mir::TypeId type) {
@@ -187,11 +190,10 @@ auto TargetPlace(
         block, entry, step.position, from, StepArguments(unit, block, step),
         type);
   };
-  const mir::Type& owner_ty =
-      unit.types.Get(block.exprs.Get(target.owner).type);
-  auto step = target.descent.begin();
-  const mir::ExprId owner = WrittenOwner(unit, block, target);
+  auto step = path.descent.begin();
+  const mir::ExprId owner = WrittenOwner(unit, block, path);
   mir::ExprId reached = owner;
+  const mir::Type& owner_ty = unit.types.Get(block.exprs.Get(path.owner).type);
   if (owner_ty.IsCapabilityWrapper()) {
     RefuseNetCell(owner_ty);
     // The write is opened on the wrapper, the whole of what the wrapper holds
@@ -218,7 +220,7 @@ auto TargetPlace(
     mir::ExprId designation = CallEntry(
         block, support::BuiltinFn::kDesignateWhole, std::nullopt, write, {},
         designated(value));
-    while (step != target.descent.end() &&
+    while (step != path.descent.end() &&
            unit.types.Get(value).PartsAreStorage()) {
       const DescentStep& taken = *step++;
       const DesignatingStep designating = DesignatingStepOf(taken);
@@ -231,26 +233,26 @@ auto TargetPlace(
     }
     reached = block.exprs.Add(mir::MakeDerefExpr(designation, value));
   }
-  for (; step != target.descent.end(); ++step) {
+  for (; step != path.descent.end(); ++step) {
     reached = reach(step->part_entry, reached, *step, step->part_type);
   }
   return reached;
 }
 
-auto TargetReference(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+auto PathReference(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId {
   mir::ExprId reference =
-      target.object.has_value()
-          ? PropertyReferred(unit, block, *target.object, target.owner)
+      path.object.has_value()
+          ? PropertyReferred(unit, block, *path.object, path.owner)
           : BuildReferenceArg(
-                unit, block, target.owner, block.exprs.Get(target.owner).type);
+                unit, block, path.owner, block.exprs.Get(path.owner).type);
   mir::TypeId value =
-      TargetValueType(unit, block, {.owner = target.owner, .descent = {}});
-  for (const DescentStep& step : target.descent) {
+      PathValueType(unit, block, {.owner = path.owner, .descent = {}});
+  for (const DescentStep& step : path.descent) {
     if (!unit.types.Get(value).PartsAreStorage()) {
       throw InternalError(
-          "lhs_store: a part lent by reference is storage of its own (LRM "
+          "access path: a part lent by reference is storage of its own (LRM "
           "13.5.2), and this descent reaches into a value whose parts are not");
     }
     value = step.part_type;
@@ -264,17 +266,16 @@ auto TargetReference(
   return reference;
 }
 
-auto ReadTargetValue(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+auto PathValue(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId {
-  const mir::Type& owner_ty =
-      unit.types.Get(block.exprs.Get(target.owner).type);
-  mir::ExprId reached = target.owner;
+  const mir::Type& owner_ty = unit.types.Get(block.exprs.Get(path.owner).type);
+  mir::ExprId reached = path.owner;
   if (owner_ty.IsCapabilityWrapper()) {
     reached = block.exprs.Add(
-        mir::MakeCellLoadCallExpr(target.owner, owner_ty.WrappedValueType()));
+        mir::MakeCellLoadCallExpr(path.owner, owner_ty.WrappedValueType()));
   }
-  for (const DescentStep& step : target.descent) {
+  for (const DescentStep& step : path.descent) {
     reached = CallEntry(
         block, step.value_entry, step.position, reached,
         StepArguments(unit, block, step), step.part_type);
@@ -282,8 +283,28 @@ auto ReadTargetValue(
   return reached;
 }
 
+auto RunWithinOwner(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    -> PathRun {
+  mir::ExprId first = BuildConstantPosition(unit, block, 0);
+  for (const DescentStep& step : path.descent) {
+    // A step that reaches a run is the one that states a count, and its one
+    // operand is where the run starts.
+    if (!step.count.has_value()) {
+      throw InternalError(
+          "access path: a part of a packed value is reached by runs of a fixed "
+          "count from one start, and this descent takes a step that is not "
+          "one");
+    }
+    first = BuildPositionSum(unit, block, first, step.operands.front());
+  }
+  const mir::TypeId part = PathValueType(unit, block, path);
+  return PathRun{
+      .first = first, .width = unit.types.Get(part).PackedShape().BitWidth()};
+}
+
 auto BuildStoreExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target,
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
     mir::ExprId rhs_id, std::optional<CompoundOperation> compound_op,
     mir::TypeId result_type) -> mir::Expr {
   // A compound store computes its value through the operator, which already
@@ -294,18 +315,16 @@ auto BuildStoreExpr(
   // bound -- is the axis it leaves to assignment.
   if (compound_op.has_value()) {
     return BuildCompoundExpr(
-        unit, block, target, rhs_id, *compound_op, result_type);
+        unit, block, path, rhs_id, *compound_op, result_type);
   }
-  rhs_id =
-      ConvertToType(unit, block, rhs_id, TargetValueType(unit, block, target));
+  rhs_id = ConvertToType(unit, block, rhs_id, PathValueType(unit, block, path));
   // Replacing the whole of what a capability wrapper holds acts on the wrapper
   // -- the value lands in its storage and it reports the change to whatever is
   // watching -- so it is a call taking the wrapper as its destination. A store
   // that descends writes a part, which reaches storage the way a read does and
   // assigns through what it reaches.
-  const mir::Type& owner_ty =
-      unit.types.Get(block.exprs.Get(target.owner).type);
-  if (target.descent.empty() && owner_ty.IsCapabilityWrapper() &&
+  const mir::Type& owner_ty = unit.types.Get(block.exprs.Get(path.owner).type);
+  if (path.descent.empty() && owner_ty.IsCapabilityWrapper() &&
       !owner_ty.Is<mir::ResolvedType>()) {
     // The operands are the destination and the value, and nothing else: the
     // engine the wrapper reports through is the ambient one, which has the
@@ -316,14 +335,14 @@ auto BuildStoreExpr(
                 .callee =
                     mir::Direct{
                         .target = support::BuiltinFn::kStore,
-                        .receiver = WrittenOwner(unit, block, target)},
+                        .receiver = WrittenOwner(unit, block, path)},
                 .arguments = {rhs_id}},
         .type = unit.builtins.void_type};
   }
   return mir::Expr{
       .data =
           mir::AssignExpr{
-              .target = TargetPlace(unit, block, target), .value = rhs_id},
+              .target = PathPlace(unit, block, path), .value = rhs_id},
       .type = result_type};
 }
 

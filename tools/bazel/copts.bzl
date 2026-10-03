@@ -9,8 +9,11 @@ its own warning policy.
 # it safe to keep the set strict: no suppression is ever owed to third-party
 # code.
 #
-# -Wswitch catches a no-default switch that omits an enumerator;
-# -Wreturn-type catches falling off the end of a non-void function.
+# -Werror: a warning fails the build. Most compiles run on a machine nobody is
+# watching, where a warning is printed once and is gone from every later build
+# that takes the result from a cache, so one that is not fatal is read by no
+# one. Lyra is built by two compilers and each warns about things the other
+# does not, so a build is clean only when both are.
 #
 # -Wno-unused-command-line-argument: the header-parse action is handed both
 # -fsyntax-only and -c, so the driver reports -c as unused once per header.
@@ -27,8 +30,7 @@ its own warning policy.
 LYRA_COPTS = [
     "-Wall",
     "-Wextra",
-    "-Werror=switch",
-    "-Werror=return-type",
+    "-Werror",
     "-Wno-unused-command-line-argument",
     "-fno-semantic-interposition",
 ]

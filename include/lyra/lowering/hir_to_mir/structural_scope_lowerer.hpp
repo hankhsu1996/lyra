@@ -18,11 +18,11 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -199,10 +199,17 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto LowerExpr(const hir::Expr& expr, WalkFrame frame) const
       -> diag::Result<mir::Expr>;
 
-  // LHS-context expression dispatcher: addressable kinds only, no auto-Get
-  // wrap, peeled into the place a write lands in and the descent above it.
+  // Dispatcher for an expression named as a part rather than read: addressable
+  // kinds only, no auto-Get wrap, peeled into the place that owns the value and
+  // the descent above it. Nothing is appended, so a construct that only names
+  // the part -- a wait, a join of nets -- asks this.
+  [[nodiscard]] auto LowerAccessPath(
+      const hir::Expr& expr, WalkFrame frame) const -> diag::Result<AccessPath>;
+
+  // The same part as the target of a write, with the checks the write owes
+  // before it lands appended where the statement is reached.
   [[nodiscard]] auto LowerLhsExpr(const hir::Expr& expr, WalkFrame frame) const
-      -> diag::Result<WriteTarget>;
+      -> diag::Result<AccessPath>;
 
   [[nodiscard]] auto Owner() const -> UnitLowerer& {
     return *owner_;

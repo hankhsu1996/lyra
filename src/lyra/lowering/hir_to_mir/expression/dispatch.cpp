@@ -234,39 +234,41 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
   return raw_or;
 }
 
-// The LHS-context dispatcher, shared by both pass classes. Addressable kinds
-// only, and no `Get` auto-wrap, so an observable-cell leaf flows out as the
-// bare cell the assignment target needs. It peels rather than composes: a kind
-// that reaches a part of a value adds one step to the descent and recurses,
-// and every other kind is the place the descent bottoms out in.
+// The dispatcher for an expression named as a part rather than read, shared by
+// both pass classes. Addressable kinds only, and no `Get` auto-wrap, so an
+// observable-cell leaf flows out as the bare cell. It peels rather than
+// composes: a kind that reaches a part of a value adds one step to the descent
+// and recurses, and every other kind is the place the descent bottoms out in.
+// It appends nothing, so what it answers with is only a statement of which
+// part is named.
 template <ExprLowerer L>
-auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
-    -> diag::Result<WriteTarget> {
+auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<AccessPath> {
   constexpr bool kProcedural = std::same_as<L, ProcessLowerer>;
   const mir::TypeId result_type = lowerer.Owner().TranslateType(expr.type);
-  // A kind that reaches no part of a value is where a write lands, so what it
-  // lowers to is the whole target.
+  // A kind that reaches no part of a value is the place that owns one, so what
+  // it lowers to is a path that descends nowhere.
   const auto as_place =
-      [&](diag::Result<mir::Expr> lowered) -> diag::Result<WriteTarget> {
+      [&](diag::Result<mir::Expr> lowered) -> diag::Result<AccessPath> {
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    return WriteTarget{
+    return AccessPath{
         .owner = frame.current_block->exprs.Add(*std::move(lowered)),
         .descent = {}};
   };
-  const auto not_a_write_target = []() -> diag::Result<WriteTarget> {
+  const auto names_no_storage = []() -> diag::Result<AccessPath> {
     throw InternalError(
-        "LHS expression lowering: non-addressable HIR expression in LHS "
-        "context");
+        "access path lowering: an expression that names no storage was named "
+        "as a part");
   };
   return std::visit(
       Overloaded{
-          [&](const hir::PrimaryExpr& p) -> diag::Result<WriteTarget> {
+          [&](const hir::PrimaryExpr& p) -> diag::Result<AccessPath> {
             if constexpr (kProcedural) {
               // A property named bare is one of the object the method runs on
               // (LRM 8.4), and a write to it is opened on that object.
               if (const auto* property =
                       std::get_if<hir::ClassPropertyRef>(&p.data)) {
-                return PropertyWriteTarget(
+                return PropertyPath(
                     lowerer, frame,
                     frame.current_block->exprs.Add(MakeSelfRefExpr(
                         frame, frame.current_class->self_pointer_type)),
@@ -279,31 +281,32 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                   lowerer, frame, p.data, result_type));
             }
           },
-          [&](const hir::ElementSelectExpr& sel) -> diag::Result<WriteTarget> {
-            return LowerHirElementSelectExprLhs(
+          [&](const hir::ElementSelectExpr& sel) -> diag::Result<AccessPath> {
+            return LowerHirElementSelectExprPath(
                 lowerer, frame, sel, result_type);
           },
-          [&](const hir::RangeSelectExpr& sel) -> diag::Result<WriteTarget> {
-            return LowerHirRangeSelectExprLhs(lowerer, frame, sel, result_type);
+          [&](const hir::RangeSelectExpr& sel) -> diag::Result<AccessPath> {
+            return LowerHirRangeSelectExprPath(
+                lowerer, frame, sel, result_type);
           },
-          [&](const hir::MemberAccessExpr& sel) -> diag::Result<WriteTarget> {
-            return LowerHirMemberAccessExprLhs(
+          [&](const hir::MemberAccessExpr& sel) -> diag::Result<AccessPath> {
+            return LowerHirMemberAccessExprPath(
                 lowerer, frame, sel, result_type);
           },
           [&](const hir::ClassPropertyAccessExpr& sel)
-              -> diag::Result<WriteTarget> {
-            return LowerHirClassPropertyAccessExprLhs(
+              -> diag::Result<AccessPath> {
+            return LowerHirClassPropertyAccessExprPath(
                 lowerer, frame, sel, result_type);
           },
           [&](const hir::InterfaceMemberAccessExpr& sel)
-              -> diag::Result<WriteTarget> {
+              -> diag::Result<AccessPath> {
             return as_place(
                 LowerHirInterfaceMemberAccessExpr(lowerer, frame, sel));
           },
           // A destructuring target is written as a whole: the join stands for
           // the run of destinations the source spelled, and each run reaches
           // its own place from inside it.
-          [&](const hir::ConcatExpr& c) -> diag::Result<WriteTarget> {
+          [&](const hir::ConcatExpr& c) -> diag::Result<AccessPath> {
             return as_place(
                 LowerHirConcatExpr(lowerer, frame, c, expr.type, result_type));
           },
@@ -313,7 +316,7 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           // targets, so the assignment that consumes it distributes the shares
           // itself. Every context that can reach one does that; a context that
           // cannot is one where the assignment is not a statement of its own.
-          [&](const hir::StreamingConcatExpr&) -> diag::Result<WriteTarget> {
+          [&](const hir::StreamingConcatExpr&) -> diag::Result<AccessPath> {
             return diag::Fail(
                 expr.span, diag::DiagCode::kUnsupportedExpressionForm,
                 "a streaming operator is not yet supported as the target of "
@@ -323,37 +326,47 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           // whose every element can be assigned to, and refuses the program
           // otherwise, so a form arriving here that reaches no storage means a
           // target was lowered to something the source did not name.
-          [&](const hir::UnaryExpr&) { return not_a_write_target(); },
-          [&](const hir::BinaryExpr&) { return not_a_write_target(); },
-          [&](const hir::ConditionalExpr&) { return not_a_write_target(); },
-          [&](const hir::AssignExpr&) { return not_a_write_target(); },
-          [&](const hir::IncDecExpr&) { return not_a_write_target(); },
-          [&](const hir::CallExpr&) { return not_a_write_target(); },
-          [&](const hir::ConversionExpr&) { return not_a_write_target(); },
+          [&](const hir::UnaryExpr&) { return names_no_storage(); },
+          [&](const hir::BinaryExpr&) { return names_no_storage(); },
+          [&](const hir::ConditionalExpr&) { return names_no_storage(); },
+          [&](const hir::AssignExpr&) { return names_no_storage(); },
+          [&](const hir::IncDecExpr&) { return names_no_storage(); },
+          [&](const hir::CallExpr&) { return names_no_storage(); },
+          [&](const hir::ConversionExpr&) { return names_no_storage(); },
           [&](const hir::InterfaceInstanceAccessExpr&) {
-            return not_a_write_target();
+            return names_no_storage();
           },
-          [&](const hir::ValueRangeExpr&) { return not_a_write_target(); },
-          [&](const hir::InsideExpr&) { return not_a_write_target(); },
-          [&](const hir::ReplicationExpr&) { return not_a_write_target(); },
-          [&](const hir::AssignmentPatternExpr&) {
-            return not_a_write_target();
-          },
+          [&](const hir::ValueRangeExpr&) { return names_no_storage(); },
+          [&](const hir::InsideExpr&) { return names_no_storage(); },
+          [&](const hir::ReplicationExpr&) { return names_no_storage(); },
+          [&](const hir::AssignmentPatternExpr&) { return names_no_storage(); },
           [&](const hir::AssignmentPatternReplicationExpr&) {
-            return not_a_write_target();
+            return names_no_storage();
           },
           [&](const hir::AssignmentPatternKeyedExpr&) {
-            return not_a_write_target();
+            return names_no_storage();
           },
           [&](const hir::AssociativeAssignmentPatternExpr&) {
-            return not_a_write_target();
+            return names_no_storage();
           },
-          [&](const hir::DynamicArrayNewExpr&) { return not_a_write_target(); },
-          [&](const hir::ClassNewExpr&) { return not_a_write_target(); },
-          [&](const hir::TaggedUnionExpr&) { return not_a_write_target(); },
-          [&](const hir::DynamicCastExpr&) { return not_a_write_target(); },
+          [&](const hir::DynamicArrayNewExpr&) { return names_no_storage(); },
+          [&](const hir::ClassNewExpr&) { return names_no_storage(); },
+          [&](const hir::TaggedUnionExpr&) { return names_no_storage(); },
+          [&](const hir::DynamicCastExpr&) { return names_no_storage(); },
       },
       expr.data);
+}
+
+// The part `expr` names as the target of a write, shared by both pass classes:
+// the path, with the checks the write owes before it lands appended where the
+// statement is reached.
+template <ExprLowerer L>
+auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<AccessPath> {
+  auto target = LowerAccessPathImpl(lowerer, expr, frame);
+  if (!target) return std::unexpected(std::move(target.error()));
+  AppendTagChecks(lowerer.Owner(), frame, *target);
+  return target;
 }
 
 }  // namespace
@@ -363,8 +376,13 @@ auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
   return LowerExprImpl(*this, expr, frame);
 }
 
+auto ProcessLowerer::LowerAccessPath(const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<AccessPath> {
+  return LowerAccessPathImpl(*this, expr, frame);
+}
+
 auto ProcessLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
-    -> diag::Result<WriteTarget> {
+    -> diag::Result<AccessPath> {
   return LowerLhsExprImpl(*this, expr, frame);
 }
 
@@ -373,8 +391,13 @@ auto StructuralScopeLowerer::LowerExpr(
   return LowerExprImpl(*this, expr, frame);
 }
 
+auto StructuralScopeLowerer::LowerAccessPath(
+    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<AccessPath> {
+  return LowerAccessPathImpl(*this, expr, frame);
+}
+
 auto StructuralScopeLowerer::LowerLhsExpr(
-    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<WriteTarget> {
+    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<AccessPath> {
   return LowerLhsExprImpl(*this, expr, frame);
 }
 

@@ -8,7 +8,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/pattern_id.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 
@@ -27,8 +27,11 @@ concept ExprLowerer = requires(
     L& lowerer, const hir::Expr& expr, WalkFrame frame) {
   { lowerer.LowerExpr(expr, frame) } -> std::same_as<diag::Result<mir::Expr>>;
   {
+    lowerer.LowerAccessPath(expr, frame)
+  } -> std::same_as<diag::Result<AccessPath>>;
+  {
     lowerer.LowerLhsExpr(expr, frame)
-  } -> std::same_as<diag::Result<WriteTarget>>;
+  } -> std::same_as<diag::Result<AccessPath>>;
   {
     lowerer.HirExprs()
   } -> std::convertible_to<const base::Arena<hir::Expr, hir::ExprId>&>;

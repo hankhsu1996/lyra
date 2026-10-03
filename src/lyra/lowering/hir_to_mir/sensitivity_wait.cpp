@@ -12,12 +12,12 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
-#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -225,16 +225,14 @@ auto WatchedRunOf(
             return WholeRun(unit, block);
           },
           [&](const hir::WatchedSelect& select) -> diag::Result<WatchedRun> {
-            auto start =
-                PartStartOf(lowerer, frame.WithBlock(&block), select.prefix);
-            if (!start) return std::unexpected(std::move(start.error()));
-            const mir::TypeId part_type = lowerer.Owner().TranslateType(
-                lowerer.HirExprs().Get(select.prefix).type);
+            auto part = lowerer.LowerAccessPath(
+                lowerer.HirExprs().Get(select.prefix), frame.WithBlock(&block));
+            if (!part) return std::unexpected(std::move(part.error()));
+            const PathRun run = RunWithinOwner(unit, block, *part);
             return WatchedRun{
                 .first = ConvertToType(
-                    unit, block, start->first, unit.builtins.int_type),
-                .width = int_literal(
-                    unit.types.Get(part_type).PackedShape().BitWidth())};
+                    unit, block, run.first, unit.builtins.int_type),
+                .width = int_literal(run.width)};
           },
           [&](const hir::WatchedBits& bits) -> diag::Result<WatchedRun> {
             return WatchedRun{

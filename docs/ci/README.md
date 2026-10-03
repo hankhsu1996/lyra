@@ -136,7 +136,7 @@ Each runs on push to `main` and on pull requests.
 
 | Workflow               | What it enforces                                               |
 | ---------------------- | -------------------------------------------------------------- |
-| `bazel-build.yml`      | `bazel build //...`, then the default test set                 |
+| `bazel-build.yml`      | `bazel build //...` with warnings fatal, then the default set  |
 | `cpp-style.yml`        | `clang-format` over `src include tests`, plus C++ style policy |
 | `bazel-lint.yml`       | `buildifier` formatting and lint warnings                      |
 | `md-format.yml`        | Prettier over every markdown file                              |
@@ -181,8 +181,10 @@ program the host-compiling group builds. It **gates its own run**, for the reaso
 does: a sanitizer report carries a stack trace and names a defect. What makes it worth a nightly at
 all is that the class it catches is invisible to every other job: a reference held into a pool that
 has since grown reads correctly until the storage happens to move, so a green ordinary run is
-consistent with the code being wrong. It narrows that rather than closing it -- it sees only the
-executions the corpus reaches, and only those where the move landed in between.
+consistent with the code being wrong. Under the sanitizer a pool moves its storage on every append,
+so such a reference is reported on every execution that reads it; what the job still cannot see is
+an execution the corpus does not reach. It runs under remote execution where the key is set, like
+the gate, because one image then both compiles the tests and runs them.
 
 `benchmark-nightly.yml` builds every case under `tests/benchmark/` and times it beside Verilator on
 the same sources, giving each tool the amount of work it needs to reach the same duration. It gates

@@ -7,9 +7,9 @@ name: Address Sanitizer (Nightly)
 # nothing either way. Review is what stands between that shape and the tree, and
 # review has already missed one.
 #
-# This closes none of that by itself: it reports only the executions the corpus
-# reaches, and only the ones where the storage actually moved. What it buys is
-# that the failures stop being silent.
+# Under the sanitizer a pool moves its storage on every append, so a reference
+# held across one is reported on every execution that reads it. What this still
+# cannot see is an execution the corpus does not reach.
 #
 # It runs the merge gate's own set rather than the `nightly` complement, because
 # that is the set which exercises the compiler itself -- the pools live in
@@ -40,10 +40,16 @@ jobs:
       - name: Setup Clang
         uses: ./.github/actions/setup-clang
 
-      # Runs on the runner rather than through remote execution, for the reason
-      # the host C++ nightly gives: the sanitizer runtime has to be the one
-      # belonging to the compiler installed above, and an action sent to the
-      # remote image would build under a different toolchain.
+      # Remote execution compiles and runs under one image, so the sanitizer
+      # runtime a test loads is the one its compiler linked against, and
+      # instrumenting every dependency costs the runner nothing. Without the key
+      # the same command builds here under the clang installed above.
       - name: Test
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          bazel test //... --config=asan --verbose_failures
+          RBE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel test //... --config=asan --verbose_failures $RBE_FLAGS

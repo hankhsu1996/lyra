@@ -8,6 +8,7 @@
 
 #include "lyra/base/id_range.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/relocating_append.hpp"
 
 namespace lyra::base {
 
@@ -33,6 +34,7 @@ class Registry {
  public:
   auto Declare() -> Id {
     const Id id{static_cast<std::uint32_t>(slots_.size())};
+    MoveBeforeAppendUnderSanitizer(slots_);
     slots_.emplace_back(std::nullopt);
     return id;
   }

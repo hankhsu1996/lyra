@@ -15,13 +15,13 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
@@ -871,7 +871,7 @@ auto EmitSubroutineCall(
       case hir::ParamDirection::kConstRef: {
         auto arg_or = lowerer.LowerLhsExpr(hir_arg, frame);
         if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-        call_args.push_back(TargetReference(unit, block, *arg_or));
+        call_args.push_back(PathReference(unit, block, *arg_or));
         break;
       }
 
@@ -1181,7 +1181,7 @@ auto EmitReportingCall(
         }
         auto place = lowerer.LowerLhsExpr(hir_arg, at);
         if (!place) return std::unexpected(std::move(place.error()));
-        call_args.push_back(TargetReference(unit, block, *place));
+        call_args.push_back(PathReference(unit, block, *place));
         break;
       }
     }

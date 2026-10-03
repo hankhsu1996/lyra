@@ -127,9 +127,14 @@ is.
 - Holding a `Get` reference across a same-arena `Add` and reading it afterward is a forbidden shape.
   No static check refuses it, so what is left is the contract, projection at the call site, review,
   and -- since 2026-09-11 -- a nightly that runs the merge gate's own set under the address
-  sanitizer. The sanitizer answers only for the executions the corpus reaches and only where the
-  storage actually moved, so it narrows the gap rather than closing it; the contract is still what
-  the shape is judged against.
+  sanitizer. Under the sanitizer a pool moves its storage on every append, so the forbidden shape is
+  reported on every execution that reads such a reference and not only where growth happened to
+  land. It still answers only for the executions the corpus reaches, so it narrows the gap rather
+  than closing it; the contract is still what the shape is judged against.
+- That nightly failed at build from its first run until 2026-10-01 and so checked nothing for three
+  weeks. Run for the first time, it reported three references held across an append, in code a
+  design of any size reaches. A detector is part of this decision only while it runs: one that has
+  never been green has never said anything.
 - Review alone was measured and found insufficient, which the "discipline alone" rejection
   predicted. One violation stood in the tree: a reference to the result type's packed shape,
   captured by a lambda that interned a fresh type on every run it emitted, so the second call read

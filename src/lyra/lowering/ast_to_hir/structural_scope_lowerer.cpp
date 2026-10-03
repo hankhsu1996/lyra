@@ -61,7 +61,7 @@ namespace {
 template <typename Ref>
 auto ReservedOwnedChild(
     const UnitLowerer& owner, const slang::ast::Symbol& child,
-    std::string_view what) -> const Ref& {
+    std::string_view what) -> Ref {
   const auto binding = owner.LookupOwnedChildBinding(child);
   const auto* reserved =
       binding.has_value() ? std::get_if<Ref>(&binding->child) : nullptr;

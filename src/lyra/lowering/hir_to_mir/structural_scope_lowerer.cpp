@@ -22,6 +22,7 @@
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -34,10 +35,8 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
-#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/forwarding_entry.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -1244,6 +1243,34 @@ void InstallInterfacePortConnection(
                   .type = member_type})});
 }
 
+// One side of a join: the net whole, and where the joined run starts in it.
+struct JoinedNet {
+  mir::ExprId net;
+  mir::ExprId start;
+};
+
+// The side of a join `part` names: the net it is part of, and the position
+// `offset` into that part lies at within the net.
+auto JoinedSide(
+    const StructuralScopeLowerer& lowerer, WalkFrame resolve_frame,
+    hir::ExprId part, std::uint32_t offset) -> diag::Result<JoinedNet> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *resolve_frame.current_block;
+  auto named = lowerer.LowerAccessPath(
+      lowerer.HirScope().exprs.Get(part), resolve_frame);
+  if (!named) return std::unexpected(std::move(named.error()));
+  const PathRun run = RunWithinOwner(unit, block, *named);
+  return JoinedNet{
+      .net = named->owner,
+      .start = ConvertToType(
+          unit, block,
+          BuildPositionSum(
+              unit, block, run.first,
+              BuildConstantPosition(
+                  unit, block, static_cast<std::int64_t>(offset))),
+          unit.builtins.int_type)};
+}
+
 // Realizes the runs of nets this scope's constructs place in one resolution
 // (LRM 23.3.3.7, 10.11). Each is one statement in the resolve body, beside the
 // `ref` port's bind: no driver is attached and no process is registered,
@@ -1257,38 +1284,11 @@ auto InstallNetJoins(StructuralScopeLowerer& lowerer, WalkFrame resolve_frame)
   mir::Block& block = *resolve_frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  // One side of a join: the net whole, and where the run starts in it -- the
-  // start of the part the source named, and the offset into that part.
-  struct Side {
-    mir::ExprId net;
-    mir::ExprId start;
-  };
-  const auto side_of = [&](hir::ExprId part,
-                           std::uint32_t offset) -> diag::Result<Side> {
-    auto start = PartStartOf(std::as_const(lowerer), resolve_frame, part);
-    if (!start) return std::unexpected(std::move(start.error()));
-    auto net =
-        lowerer.LowerLhsExpr(hir_scope.exprs.Get(start->whole), resolve_frame);
-    if (!net) return std::unexpected(std::move(net.error()));
-    if (!net->descent.empty()) {
-      throw InternalError(
-          "InstallNetJoins: the value a part of a net lies in is the net "
-          "itself");
-    }
-    return Side{
-        .net = net->owner,
-        .start = ConvertToType(
-            unit, block,
-            BuildPositionSum(
-                unit, block, start->first,
-                BuildConstantPosition(
-                    unit, block, static_cast<std::int64_t>(offset))),
-            unit.builtins.int_type)};
-  };
   for (const hir::NetJoin& join : hir_scope.net_joins) {
-    auto here = side_of(join.here, join.here_offset);
+    auto here = JoinedSide(lowerer, resolve_frame, join.here, join.here_offset);
     if (!here) return std::unexpected(std::move(here.error()));
-    auto there = side_of(join.there, join.there_offset);
+    auto there =
+        JoinedSide(lowerer, resolve_frame, join.there, join.there_offset);
     if (!there) return std::unexpected(std::move(there.error()));
     const mir::TypeId net_ptr_type = unit.types.Intern(
         mir::Type{mir::PointerType{
@@ -1381,7 +1381,7 @@ auto InstallPortConnections(
         }
         const mir::ExprId bind = BindReferenceSlot(
             resolve_block, target,
-            TargetReference(unit_lowerer.Unit(), resolve_block, *peer_or));
+            PathReference(unit_lowerer.Unit(), resolve_block, *peer_or));
         resolve_block.AppendStmt(mir::ExprStmt{.expr = bind});
         continue;
       }
@@ -1639,7 +1639,7 @@ auto LowerRepeatedGenerate(
       mir::ExprStmt{
           .expr = body.exprs.Add(BuildStoreExpr(
               unit_lowerer.Unit(), body,
-              WriteTarget{.owner = index_place(body), .descent = {}},
+              AccessPath{.owner = index_place(body), .descent = {}},
               body.exprs.Add(*std::move(initial_or)), std::nullopt,
               index_type))});
 
@@ -2679,6 +2679,15 @@ void FinalizeConstructor(
       .code = std::move(ctor_code), .base_args = std::move(base_args)};
 }
 
+// Whether a declared object of this type is an owned child (a pointer, a
+// vector, an object) or a cross-instance reference slot. Its declaration shape
+// alone fixes such a field, so it takes no value and is no signal a name
+// answers for.
+auto IsOwnedChildOrReferenceSlot(const mir::Type& type) -> bool {
+  return type.Is<mir::PointerType>() || type.Is<mir::VectorType>() ||
+         type.Is<mir::ObjectType>() || type.Is<mir::ExternalUnitObjectType>();
+}
+
 }  // namespace
 
 auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
@@ -2812,7 +2821,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::ExprStmt{
             .expr = ctor_block.exprs.Add(BuildStoreExpr(
                 unit_lowerer.Unit(), ctor_block,
-                WriteTarget{.owner = target, .descent = {}},
+                AccessPath{.owner = target, .descent = {}},
                 ctor_block.exprs.Add(
                     mir::MakeLocalRefExpr(handed.local, handed.value.type)),
                 std::nullopt, handed.value.type))});
@@ -2840,7 +2849,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::ExprStmt{
             .expr = ctor_block.exprs.Add(BuildStoreExpr(
                 unit_lowerer.Unit(), ctor_block,
-                WriteTarget{.owner = settled_target, .descent = {}},
+                AccessPath{.owner = settled_target, .descent = {}},
                 ctor_block.exprs.Add(*std::move(value_or)), std::nullopt,
                 settled_type))});
   }
@@ -2856,20 +2865,22 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const mir::TypeId mir_value_type = unit_lowerer.TranslateType(d.type);
     const auto* net = std::get_if<hir::StructuralNetDecl>(&d.kind);
     const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
-    const mir::Type& var_type = unit_lowerer.Unit().types.Get(mir_value_type);
-    // Owned children (pointer / vector / object), cross-instance reference
-    // slots (borrowed pointers filled in the resolve phase), and named events
-    // have no "value assignment" -- their declaration shape itself fixes the
-    // field at construction. A net takes none either: its value is produced by
-    // its drivers, seeded when each driver updates in the initialize phase.
-    // Value-typed variables (integral, string, real, unpacked / dynamic array)
-    // receive an LRM 10.5 initialization statement, run in the initialize
-    // phase after the tree's references resolve, not in the constructor.
+    // Both are asked of the type here, ahead of the statements built below,
+    // because building one may add a type and the type table then moves.
+    const bool is_child_or_reference_slot = IsOwnedChildOrReferenceSlot(
+        unit_lowerer.Unit().types.Get(mir_value_type));
+    const bool is_event =
+        unit_lowerer.Unit().types.Get(mir_value_type).Is<mir::EventType>();
+    // Owned children, cross-instance reference slots (borrowed pointers filled
+    // in the resolve phase), and named events have no "value assignment" --
+    // their declaration shape itself fixes the field at construction. A net
+    // takes none either: its value is produced by its drivers, seeded when each
+    // driver updates in the initialize phase. Value-typed variables (integral,
+    // string, real, unpacked / dynamic array) receive an LRM 10.5
+    // initialization statement, run in the initialize phase after the tree's
+    // references resolve, not in the constructor.
     const bool is_assignable_value =
-        var != nullptr && !var_type.Is<mir::PointerType>() &&
-        !var_type.Is<mir::VectorType>() && !var_type.Is<mir::ObjectType>() &&
-        !var_type.Is<mir::ExternalUnitObjectType>() &&
-        !var_type.Is<mir::EventType>();
+        var != nullptr && !is_child_or_reference_slot && !is_event;
     if (is_assignable_value) {
       const mir::ExprId init_target = initialize_block.exprs.Add(
           mir::MakeFieldAccessExpr(
@@ -2886,7 +2897,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       const auto emit_value_store = [&](mir::ExprId value_id) {
         append_stmt(BuildStoreExpr(
             unit_lowerer.Unit(), initialize_block,
-            WriteTarget{.owner = init_target, .descent = {}}, value_id,
+            AccessPath{.owner = init_target, .descent = {}}, value_id,
             std::nullopt, mir_value_type));
       };
 
@@ -2968,9 +2979,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     // registering one would offer a name no reference can spell, and two loops
     // counting with the same genvar would offer it twice.
     const bool is_signal =
-        hir::AnsweredByName(d) && !var_type.Is<mir::PointerType>() &&
-        !var_type.Is<mir::VectorType>() && !var_type.Is<mir::ObjectType>() &&
-        !var_type.Is<mir::ExternalUnitObjectType>();
+        hir::AnsweredByName(d) && !is_child_or_reference_slot;
     if (is_signal) {
       const mir::ExprId var_ref = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(

@@ -5,6 +5,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -15,7 +16,18 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// One step of a write target's descent: the entry that answers with the part's
+// What a step into a member of a tagged packed union requires of the union
+// (LRM 7.3.2, 11.9): its tag, the `tag_bits` most significant bits of the
+// union's vector, holds the declaration-order position of `member`.
+//
+//   typedef union tagged packed { logic [3:0] a; logic [3:0] b; } u_t;
+//   u.b    a step valid only while the one tag bit of `u` is 1
+struct RequiredTag {
+  std::uint32_t tag_bits = 0;
+  base::ComponentIndex member = {};
+};
+
+// One step of a descent into a value: the entry that answers with the part's
 // value, the entry that answers with the part itself, and the operands both of
 // them take beside it.
 //
@@ -40,6 +52,10 @@ struct DescentStep {
   // nothing freezes it.
   std::optional<std::uint64_t> count;
   mir::TypeId part_type;
+  // What the value stepped into has to hold for the step to be valid, where
+  // the part is a member of a tagged union. Reading the part and writing it
+  // each check it their own way, and naming the part checks nothing.
+  std::optional<RequiredTag> required_tag = std::nullopt;
 };
 
 // What a call realizing `step` is handed beside its receiver: the step's
@@ -48,9 +64,11 @@ struct DescentStep {
     const mir::CompilationUnit& unit, mir::Block& block,
     const DescentStep& step) -> std::vector<mir::ExprId>;
 
-// What a write targets: the place that owns the whole value, and the descent
-// that reaches the part written. A target that designates no part descends
-// nowhere and is its own place.
+// A part of a value named from its owner: the place that owns the whole value,
+// and the descent that reaches the part. A write lands in it, a reference is
+// formed over it, a wait watches it and a join of nets covers it, and each is
+// handed this one statement of which part it is. A path that names no part
+// descends nowhere and is its owner's own place.
 //
 // Where the owner is a property of an object (LRM 8.4), `object` is that
 // object, as the address its members are reached through. A write to the
@@ -63,26 +81,25 @@ struct DescentStep {
 // entry, composed through the receiver -- because a consumer that met the
 // descent itself would have to decide which operation each step is, which is
 // the decision this layer is here to make.
-struct WriteTarget {
+struct AccessPath {
   mir::ExprId owner;
   std::vector<DescentStep> descent;
   std::optional<mir::ExprId> object = std::nullopt;
 };
 
-// The same target one step deeper. This is the only thing that builds a
-// descent, so the path gains exactly one step per level of the source's own
-// nesting and the owner is whatever the peel reached that was not a descent.
-[[nodiscard]] auto DescendInto(WriteTarget base, DescentStep step)
-    -> WriteTarget;
+// The same path one step deeper. This is the only thing that builds a descent,
+// so the path gains exactly one step per level of the source's own nesting and
+// the owner is whatever the peel reached that was not a descent.
+[[nodiscard]] auto DescendInto(AccessPath base, DescentStep step) -> AccessPath;
 
 // The type of the value a further step would descend into: the part the descent
 // has reached so far, or what the owner's place holds where it has reached
 // none. A step asks this to settle which entries realize it.
-[[nodiscard]] auto TargetValueType(
+[[nodiscard]] auto PathValueType(
     const mir::CompilationUnit& unit, const mir::Block& block,
-    const WriteTarget& target) -> mir::TypeId;
+    const AccessPath& path) -> mir::TypeId;
 
-// The place the target designates: the owner's own storage, then one reaching
+// The place the path designates: the owner's own storage, then one reaching
 // call per step. Storing into the result writes the part, and applying a method
 // that changes its receiver to it changes the part, because a place is what
 // both take.
@@ -94,24 +111,40 @@ struct WriteTarget {
 // forming each did, and the place is where the last of them is dereferenced.
 // An owner that is a property of an object is reached through a write opened on
 // the object.
-[[nodiscard]] auto TargetPlace(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+[[nodiscard]] auto PathPlace(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
 
-// The target as a reference (LRM 13.5.2): a reference to the whole of what the
+// The path as a reference (LRM 13.5.2): a reference to the whole of what the
 // owner holds, then one step per part, each taken on the reference before it.
 // What a reference to a part belongs to travels with it, so a write through it
 // is a write of the owner at the moment it lands, however long the reference is
 // held.
-[[nodiscard]] auto TargetReference(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+[[nodiscard]] auto PathReference(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
 
-// The target as an expression yielding the part's value, for a caller that
-// reads it and writes nothing.
-[[nodiscard]] auto ReadTargetValue(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target)
+// The path as an expression yielding the part's value, for a caller that reads
+// it and writes nothing.
+[[nodiscard]] auto PathValue(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
+
+// Which bits of the owner's packed value a path names: the lowest bit, counted
+// from the value's least significant bit in the position type, and how many
+// bits the part spans.
+struct PathRun {
+  mir::ExprId first;
+  std::uint64_t width = 0;
+};
+
+// The run a path names within its owner (LRM 7.2.1, 11.5.1). Every step into a
+// packed value is a run of it, so the part starts at the sum of where the steps
+// start, and that sum stays an expression because a step's position may be a
+// value the program or a construction supplies.
+[[nodiscard]] auto RunWithinOwner(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    -> PathRun;
 
 // What an assignment applies to the value its target holds (LRM 11.4.1): an
 // operator the target language applies to two values of one type, or the
@@ -121,14 +154,15 @@ struct WriteTarget {
 // classifies anything.
 using CompoundOperation = std::variant<mir::BinaryOp, support::BuiltinFn>;
 
-// Builds `lhs = rhs` or `lhs op= rhs` against the target. Three shapes come out
-// of it, each an ordinary MIR node with nothing left to decide: replacing the
-// whole of what a capability wrapper holds acts on the wrapper, so it is a call
-// taking the wrapper as its destination; applying a library-performed operator
-// is a call on the place the target designates, which updates what that place
-// holds; every other write is a store into that place, compound or not.
+// Builds `lhs = rhs` or `lhs op= rhs` against the part `path` names. Three
+// shapes come out of it, each an ordinary MIR node with nothing left to decide:
+// replacing the whole of what a capability wrapper holds acts on the wrapper,
+// so it is a call taking the wrapper as its destination; applying a
+// library-performed operator is a call on the place the path designates, which
+// updates what that place holds; every other write is a store into that place,
+// compound or not.
 [[nodiscard]] auto BuildStoreExpr(
-    mir::CompilationUnit& unit, mir::Block& block, const WriteTarget& target,
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
     mir::ExprId rhs_id, std::optional<CompoundOperation> compound_op,
     mir::TypeId result_type) -> mir::Expr;
 

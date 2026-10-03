@@ -212,6 +212,13 @@ layer directly.
       the tool said, whatever the amount. Measured on a stand-in compiler printing 6 GB from each of
       three compiles: the build peaks at 92 MB and ends as a reported failure.
 
+- [x] D19 -- A read of an object that is gone fails a gate instead of reaching a user. A warning in
+      Lyra's own sources fails the build under either compiler, and the address sanitizer run builds
+      and reports a reference held across a pool's growth on every execution that reads one, not
+      only where the growth happened to move the storage. Before this the one compiler warning in
+      the tree named a defect that made a design wait on the wrong bits of a packed structure's
+      first member, and the sanitizer run had failed at build on every run since it was added.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

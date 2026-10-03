@@ -14,10 +14,10 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -141,9 +141,9 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
 // is the one that tells the object.
 auto FreezeTarget(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
-    ClosureBuilder& closure, const WriteTarget& target,
-    mir::ExprId captured_owner) -> WriteTarget {
-  WriteTarget frozen = target;
+    ClosureBuilder& closure, const AccessPath& target,
+    mir::ExprId captured_owner) -> AccessPath {
+  AccessPath frozen = target;
   frozen.owner = captured_owner;
   if (target.object.has_value()) {
     frozen.object =
@@ -165,13 +165,13 @@ auto FreezeTarget(
 // snapshotted, and each operand is snapshotted. LRM 10.4.2 settles both there,
 // however much later the update runs.
 struct FrozenAssignment {
-  WriteTarget target;
+  AccessPath target;
   std::vector<mir::ExprId> operands;
 };
 
 auto FreezeAssignmentInto(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
-    ClosureBuilder& closure, const WriteTarget& target_in_outer,
+    ClosureBuilder& closure, const AccessPath& target_in_outer,
     std::span<const mir::ExprId> operands_in_outer) -> FrozenAssignment {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& outer_block = *outer_frame.current_block;
@@ -220,7 +220,7 @@ auto CheckTargetOutlivesUpdate(
 template <typename EffectFn>
 auto ApplyAssignEffect(
     ProcessLowerer& process, WalkFrame frame, const hir::EffectTiming& timing,
-    diag::SourceSpan span, const WriteTarget& target_in_outer,
+    diag::SourceSpan span, const AccessPath& target_in_outer,
     std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
     -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
@@ -273,7 +273,7 @@ auto LowerHirAssignExpr(
           ? std::optional{LowerCompoundOperation(*a.compound_op)}
           : std::nullopt;
   const std::array<mir::ExprId, 1> operands{rhs_id};
-  const auto store = [&](mir::Block& blk, const WriteTarget& target,
+  const auto store = [&](mir::Block& blk, const AccessPath& target,
                          std::span<const mir::ExprId> ops) -> mir::Expr {
     return BuildStoreExpr(
         lowerer.Owner().Unit(), blk, target, ops[0], compound_op, result_type);

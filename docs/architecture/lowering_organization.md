@@ -224,7 +224,7 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
 
     _Current implementation:_ the context-free expression handlers (operators, selects, aggregate
     value-builds) are single function templates over the pass class on both lowering boundaries. At
-    HIR-to-MIR the template recurses through `LowerExpr` / `LowerLhsExpr` and reaches
+    HIR-to-MIR the template recurses through `LowerExpr` / `LowerAccessPath` and reaches
     sub-expressions through a uniform `HirExprs()` accessor; at AST-to-HIR it recurses through
     `LowerExpr` and interns through the walk position's single expression arena, so the pass class's
     own surface is just `LowerExpr` and the accessor reaching the enclosing unit. Each is

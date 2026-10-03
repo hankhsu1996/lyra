@@ -8,7 +8,7 @@
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
-#include "lyra/lowering/hir_to_mir/lhs_store.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -58,7 +58,7 @@ auto ProjectCompletionComponent(
 // where the call is written so the store reaches the place the call named
 // rather than one a re-evaluation of the actual would reach (LRM 13.5).
 struct CompletionWriteback {
-  WriteTarget place;
+  AccessPath place;
   base::ComponentIndex component;
   mir::TypeId type;
 };
