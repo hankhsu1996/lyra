@@ -219,11 +219,6 @@ case holds it is one nothing watches.
       assignment outdates every element reference, and a removal outdates only what it removed. So a
       reference held across a `push_front` must still name the element it named before, though every
       position has moved. Nothing implements any of this, and no case holds it.
-- [ ] A product of two `shortreal` operands assigned to a `real` keeps double precision instead of
-      rounding to single. LRM 11.3.1 makes the result type operand-driven, so the product is
-      `shortreal` and narrows before it reaches the wider destination. The front end propagates the
-      assignment's type into the operands, so the narrowing never happens; the defect is upstream of
-      anything Lyra can decide.
 
 ## Chandle
 

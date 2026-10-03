@@ -530,6 +530,13 @@ the detail lives in the entry itself.
   capability; sensitivity uses the correct per-consumer slang surface and never reclassifies from
   `ValueSymbol + global table + HopsTo`; reading, writing and observing one target consult the one
   translation instead of each recomputing it, so an assignment's target is validated nowhere.
+- [a-real-destination-widens-a-shortreal-operation](a-real-destination-widens-a-shortreal-operation.md)
+  -- the standard does not say whether `real` against `shortreal` is a type or a size, so whether a
+  `real` destination widens a product of two `shortreal` operands is open and tools split on it.
+  Lyra takes the front end's answer, the destination widens, because the operator's type is the
+  front end's fact and arrives indistinguishable from `real * int`; no conformance case asserts
+  either reading. Undoing the conversions in the lowering, changing the front end, and recording the
+  wider value as a defect are rejected.
 - [cross-unit-class-translation](cross-unit-class-translation.md) -- AST-to-HIR splits class
   interning into a top-down `InternLocalClass` (never asks "which CU?") and a boundary
   `ResolveClassRef` (walks slang's parent chain only when a class is not already cached);
