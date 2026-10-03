@@ -87,12 +87,6 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return LowerHirBinaryExpr(lowerer, frame, b, result_type);
           },
           [&](const hir::ConditionalExpr& c) -> diag::Result<mir::Expr> {
-            // Both contexts have a statement stream to put the chain a
-            // binding predicate needs in, so neither is special.
-            if (DeclaresBindings(c)) {
-              return LowerHirBindingConditionalExpr(
-                  lowerer, frame, c, result_type);
-            }
             return LowerHirConditionalExpr(lowerer, frame, c, result_type);
           },
           [&](const hir::AssignExpr& a) -> diag::Result<mir::Expr> {

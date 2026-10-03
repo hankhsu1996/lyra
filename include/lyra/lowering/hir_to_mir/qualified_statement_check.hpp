@@ -1,16 +1,19 @@
 #pragma once
 
+// What `unique`, `unique0` and `priority` add to a conditional or case
+// statement (LRM 12.4.2, 12.5.3): the claims a qualifier makes about the
+// statement's arms, and the reports it owes where a run breaks one.
+
 #include <optional>
-#include <string>
+#include <span>
 #include <vector>
 
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
-#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -31,8 +34,10 @@ struct QualifiedAssertions {
 
 // LRM 12.4.2 and 12.5.3. An explicit `else` or `default` covers every value the
 // arms left, so a statement carrying one claims nothing about whether some arm
-// holds; what it claims about two arms holding at once is untouched.
-auto AssertionsOf(hir::UniquePriorityCheck check, bool has_catch_all)
+// holds; what it claims about two arms holding at once is untouched. A
+// statement with no qualifier claims nothing.
+auto AssertionsOf(
+    std::optional<hir::UniquePriorityCheck> check, bool has_catch_all)
     -> QualifiedAssertions;
 
 // What a violation report calls the arms of the statement it is about: LRM
@@ -40,60 +45,27 @@ auto AssertionsOf(hir::UniquePriorityCheck check, bool has_catch_all)
 // 12.5.3 over a case statement's items.
 enum class QualifiedArmKind { kCondition, kCaseItem };
 
-// An if-else-if series: its arms in order, each the `else if` of the one
-// before, and the `else` that ends it. A nested `if` with a qualifier or a
-// label of its own is a statement in its own right, so it ends the series as
-// its `else`. A qualifier governs the whole series rather than the one `if`
-// that carries it (LRM 12.4.2), so both the arms it checks and the `else` that
-// discharges its totality assertion are read off the series.
-struct IfSeries {
-  std::vector<const hir::IfStmt*> arms;
-  std::optional<hir::StmtId> else_arm;
-};
+// The arm a statement runs when none of its own held: the source's own `else`
+// or `default` where it wrote one, and where it did not, the report a
+// qualifier asserting totality owes -- arriving there is the violation. A
+// statement never carries both, because an explicit catch-all is what
+// discharges that assertion. Reporting is deferred to the Observed region as
+// LRM 12.4.2.1 requires.
+auto BuildFallThrough(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    std::optional<mir::Block> catch_all,
+    std::optional<hir::UniquePriorityCheck> check, QualifiedArmKind arm_kind,
+    diag::SourceSpan span) -> std::optional<mir::Block>;
 
-auto SeriesOf(const hir::ProceduralBody& proc, const hir::IfStmt& root)
-    -> IfSeries;
-
-// The arm a statement asserting totality runs when none of its own matched:
-// arriving there is the violation, so this reports it and carries nothing else.
-// Reporting is deferred to the Observed region as LRM 12.4.2.1 requires, which
-// is why the arm submits rather than emits, and the submitted body reads
-// nothing the statement computed.
-auto BuildTotalityReportScope(
-    UnitLowerer& unit_lowerer, WalkFrame frame, hir::UniquePriorityCheck check,
-    QualifiedArmKind arm_kind, diag::SourceSpan span) -> mir::Block;
-
-// The arm a series runs when none of its conditions held: the source's own
-// `else` where it wrote one, and the report totality owes where it did not. A
-// series never carries both, because an explicit `else` is what discharges that
-// assertion (LRM 12.4.2).
-auto LowerIfFallThrough(
-    ProcessLowerer& process, WalkFrame frame, const IfSeries& series,
-    hir::UniquePriorityCheck check, diag::SourceSpan span)
-    -> diag::Result<std::optional<mir::Block>>;
-
-struct QualifiedArm {
-  mir::ExprId predicate;
-  mir::Block body;
-};
-
-// Assembles a statement that asserts uniqueness: every arm's predicate is
-// evaluated and snapshotted up front, the cascade then dispatches on those
-// snapshots, and a body submitted to the Observed region counts them and
-// reports where more than one held. `wrapper` arrives staged with whatever
-// prelude the statement needs -- a case puts its selector snapshot there -- and
-// each arm's body is pre-lowered. `fall_through` is the arm reached when no
-// predicate held, which is the source's own catch-all where it wrote one and
-// the report totality owes where it did not.
-auto BuildUniquenessCheckCascade(
-    UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block wrapper,
-    std::vector<QualifiedArm> arms, std::optional<mir::Block> fall_through,
-    hir::UniquePriorityCheck check, QualifiedArmKind arm_kind,
-    std::optional<std::string> outer_label, diag::SourceSpan span) -> mir::Stmt;
-
-auto LowerUniquenessIfSeries(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const IfSeries& series, hir::UniquePriorityCheck check,
-    diag::SourceSpan span) -> diag::Result<mir::Stmt>;
+// What a statement asserting uniqueness does before it selects an arm: `held`
+// is every arm's answer, already evaluated in `frame`'s block, and each is kept
+// there as a bit. A body submitted to the Observed region counts the bits and
+// reports where more than one arm held (LRM 12.4.2.1). Answers with the locals
+// holding the bits, in arm order, which is what the statement then selects by.
+auto BuildUniquenessCheck(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    std::span<const mir::ExprId> held, hir::UniquePriorityCheck check,
+    QualifiedArmKind arm_kind, diag::SourceSpan span)
+    -> std::vector<mir::LocalId>;
 
 }  // namespace lyra::lowering::hir_to_mir

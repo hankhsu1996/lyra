@@ -501,9 +501,7 @@ class PackedArray {
   [[nodiscard]] auto operator||(const PackedArray& other) const -> PackedArray;
   [[nodiscard]] auto operator!() const -> PackedArray;
 
-  // SV `->` and `<->` have no C++ operator counterpart; method-only.
-  [[nodiscard]] auto LogicalImplication(const PackedArray& other) const
-      -> PackedArray;
+  // SV `<->` has no C++ operator counterpart; method-only.
   [[nodiscard]] auto LogicalEquivalence(const PackedArray& other) const
       -> PackedArray;
 

@@ -38,6 +38,17 @@ class UnitLowerer;
     support::BuiltinFn entry, std::optional<mir::ExprId> receiver,
     std::vector<mir::ExprId> operands, mir::TypeId result) -> mir::ExprId;
 
+// Whether a bit of a value of `type` can be unknown, so that read for its truth
+// or compared it can answer neither true nor false (LRM 11.4.5, 11.4.7).
+[[nodiscard]] auto CarriesUnknowns(
+    const mir::CompilationUnit& unit, mir::TypeId type) -> bool;
+
+// The one-bit type of a truth or a comparison over values of `operands`, which
+// is four-state exactly where one of them carries unknowns.
+[[nodiscard]] auto OneBitAnswerType(
+    const mir::CompilationUnit& unit, std::span<const mir::TypeId> operands)
+    -> mir::TypeId;
+
 // LRM 11.4.5 `==` or `!=` on two structs of one type, as the struct's method
 // for it: one bit, which can be unknown exactly where a member can hold an
 // unknown.

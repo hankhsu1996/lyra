@@ -18,6 +18,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -26,6 +27,7 @@
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -34,7 +36,6 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/mir/unary_op.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -75,197 +76,201 @@ auto SubjectMember(
       owner.TranslateType(projection.members[index.value].type)));
 }
 
-// The 1-bit test that `subject`, whose type is `subject_type`, currently holds
-// the component at `index`. The two representations answer it differently -- an
+// The test that `subject`, whose type is `subject_type`, currently holds the
+// component at `index`. The two representations answer it differently -- an
 // unpacked union carries the tag as its own discriminant, a packed one as a run
 // of the vector -- so the test is the one place a pattern walk still sees which
 // representation it is standing on.
 auto BuildTagTest(
     UnitLowerer& owner, mir::Block& block, mir::ExprId subject,
-    hir::TypeId subject_type, base::ComponentIndex index) -> mir::Expr {
+    hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId {
   const hir::Type& ty = owner.Hir().types.Get(subject_type);
   if (ty.Is<hir::UnpackedUnionType>()) {
-    // The tag test answers with a machine boolean; re-shaping that answer into
-    // a 1-bit integral is a value conversion, so it is stated here rather than
-    // left for a backend to insert around the test.
-    const mir::TypeId bit1 = owner.Unit().builtins.bit1;
-    const mir::ExprId is_tagged = block.exprs.Add(
+    return block.exprs.Add(
         mir::MakeTagMatchesExpr(
             subject, index, owner.Unit().builtins.machine_bool));
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee = mir::Direct{.target = support::BuiltinFn::kFromBool},
-                .arguments = {is_tagged}},
-        .type = bit1};
   }
-  const PackedProjection projection = ProjectPackedAggregate(owner, ty);
-  return block.exprs.Get(
-      BuildPackedTagTest(owner, block, subject, projection, index));
+  return BuildPackedTagTest(
+      owner, block, subject, ProjectPackedAggregate(owner, ty), index);
 }
 
-}  // namespace
-
-auto BuildUnlessTaken(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId taken,
-    mir::BlockId scope) -> mir::IfStmt {
-  const mir::TypeId bit1_type = unit.builtins.bit1;
-  const mir::ExprId flag_ref =
-      block.exprs.Add(mir::MakeLocalRefExpr(taken, bit1_type));
-  const mir::ExprId not_taken = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::UnaryExpr{
-                  .op = mir::UnaryOp::kLogicalNot, .operand = flag_ref},
-          .type = bit1_type});
-  return mir::IfStmt{
-      .condition = ReduceToCondition(unit, block, not_taken),
-      .then_scope = scope,
-      .else_scope = std::nullopt};
-}
-
+// Adds to `tests` the conditions a pattern imposes on `subject`, the expression
+// reaching the value it is matched against, in the order they have to be tried:
+// the pattern matches where every one holds, and a later one may only be
+// evaluated once the ones before it held, since a tagged member is read only
+// under its tag (LRM 11.9). A pattern that matches unconditionally -- a
+// wildcard, a bare identifier, a structure of those -- adds nothing. Descending
+// is one expression deep: how a level comes apart is read from that level's
+// pattern node, which carries the type of what it matches.
 template <ExprLowerer Lowerer>
-void EmitPatternBindings(
-    Lowerer& lowerer, WalkFrame decl_frame, WalkFrame assign_frame,
+auto CollectPatternTests(
+    Lowerer& lowerer, WalkFrame frame, mir::ExprId subject,
+    hir::PatternId pattern_id, std::vector<mir::ExprId>& tests)
+    -> diag::Result<void> {
+  auto& owner = lowerer.Owner();
+  auto& unit = owner.Unit();
+  const hir::Pattern& pattern = lowerer.HirPatterns().Get(pattern_id);
+  auto& block = *frame.current_block;
+  return std::visit(
+      Overloaded{
+          [&](const hir::WildcardPattern&) -> diag::Result<void> { return {}; },
+          [&](const hir::VariablePattern&) -> diag::Result<void> { return {}; },
+          [&](const hir::ConstantPattern& c) -> diag::Result<void> {
+            auto constant_or =
+                lowerer.LowerExpr(lowerer.HirExprs().Get(c.value), frame);
+            if (!constant_or) {
+              return std::unexpected(std::move(constant_or.error()));
+            }
+            const mir::ExprId constant =
+                block.exprs.Add(*std::move(constant_or));
+            tests.push_back(block.exprs.Add(BuildMirBinaryExpr(
+                unit, block, hir::BinaryOp::kEquality, subject, constant,
+                OneBitAnswerType(
+                    unit, std::array{
+                              block.exprs.Get(subject).type,
+                              block.exprs.Get(constant).type}))));
+            return {};
+          },
+          [&](const hir::TaggedPattern& tagged) -> diag::Result<void> {
+            tests.push_back(BuildTagTest(
+                owner, block, subject, pattern.subject_type,
+                tagged.member_index));
+            if (!tagged.value_pattern.has_value()) return {};
+            return CollectPatternTests(
+                lowerer, frame,
+                SubjectMember(
+                    owner, block, subject, pattern.subject_type,
+                    tagged.member_index),
+                *tagged.value_pattern, tests);
+          },
+          [&](const hir::StructurePattern& structure) -> diag::Result<void> {
+            for (const auto& [field, field_pattern] :
+                 structure.field_patterns) {
+              auto collected = CollectPatternTests(
+                  lowerer, frame,
+                  SubjectMember(
+                      owner, block, subject, pattern.subject_type,
+                      base::ComponentIndex{static_cast<std::uint32_t>(field)}),
+                  field_pattern, tests);
+              if (!collected) return collected;
+            }
+            return {};
+          },
+      },
+      pattern.data);
+}
+
+// Declares each identifier the pattern introduces as a local of `declared_in`'s
+// block and assigns it, from the matching position of the subject, in
+// `matched`'s block; registers it so what follows resolves references to it.
+template <ExprLowerer Lowerer>
+void BindPatternIdentifiers(
+    Lowerer& lowerer, const WalkFrame& declared_in, const WalkFrame& matched,
     mir::ExprId subject, hir::PatternId pattern_id) {
   auto& owner = lowerer.Owner();
   const hir::Pattern& pattern = lowerer.HirPatterns().Get(pattern_id);
-  auto& assign_block = *assign_frame.current_block;
+  mir::Block& assigned = *matched.current_block;
   std::visit(
       Overloaded{
           [&](const hir::WildcardPattern&) {},
           [&](const hir::ConstantPattern&) {},
-          [&](const hir::VariablePattern& v) {
-            const mir::TypeId local_type =
-                owner.TranslateType(pattern.subject_type);
-            const mir::LocalId local_id = assign_frame.bindings->DeclareNamed(
-                BindingOriginId::Pattern(pattern_id), v.name, local_type);
+          [&](const hir::VariablePattern& variable) {
+            const mir::TypeId type = owner.TranslateType(pattern.subject_type);
+            const mir::LocalId local = matched.bindings->DeclareNamed(
+                BindingOriginId::Pattern(pattern_id), variable.name, type);
 
-            auto& decl_block = *decl_frame.current_block;
-            const mir::ExprId default_id =
-                decl_block.exprs.Add(BuildDefaultValueExpr(
-                    lowerer.Owner().Unit(), decl_block, local_type));
-            decl_block.AppendStmt(
-                mir::LocalDeclStmt{.target = local_id, .init = default_id});
-
-            const mir::ExprId target = assign_block.exprs.Add(
-                mir::MakeLocalRefExpr(local_id, local_type));
-            assign_block.AppendStmt(
+            mir::Block& declared = *declared_in.current_block;
+            declared.AppendStmt(
+                mir::LocalDeclStmt{
+                    .target = local,
+                    .init = declared.exprs.Add(
+                        BuildDefaultValueExpr(owner.Unit(), declared, type))});
+            assigned.AppendStmt(
                 mir::ExprStmt{
-                    .expr = assign_block.exprs.Add(
-                        mir::MakeAssignExpr(target, subject, local_type))});
+                    .expr = assigned.exprs.Add(
+                        mir::MakeAssignExpr(
+                            assigned.exprs.Add(
+                                mir::MakeLocalRefExpr(local, type)),
+                            subject, type))});
           },
-          [&](const hir::TaggedPattern& tp) {
-            if (!tp.value_pattern.has_value()) return;
-            EmitPatternBindings(
-                lowerer, decl_frame, assign_frame,
+          [&](const hir::TaggedPattern& tagged) {
+            if (!tagged.value_pattern.has_value()) return;
+            BindPatternIdentifiers(
+                lowerer, declared_in, matched,
                 SubjectMember(
-                    owner, assign_block, subject, pattern.subject_type,
-                    tp.member_index),
-                *tp.value_pattern);
+                    owner, assigned, subject, pattern.subject_type,
+                    tagged.member_index),
+                *tagged.value_pattern);
           },
-          [&](const hir::StructurePattern& sp) {
-            for (const auto& [field_index, sub_pat_id] : sp.field_patterns) {
-              EmitPatternBindings(
-                  lowerer, decl_frame, assign_frame,
+          [&](const hir::StructurePattern& structure) {
+            for (const auto& [field, field_pattern] :
+                 structure.field_patterns) {
+              BindPatternIdentifiers(
+                  lowerer, declared_in, matched,
                   SubjectMember(
-                      owner, assign_block, subject, pattern.subject_type,
-                      base::ComponentIndex{
-                          static_cast<std::uint32_t>(field_index)}),
-                  sub_pat_id);
+                      owner, assigned, subject, pattern.subject_type,
+                      base::ComponentIndex{static_cast<std::uint32_t>(field)}),
+                  field_pattern);
             }
           },
       },
       pattern.data);
 }
 
+}  // namespace
+
+// The match as steps:
+//
+//   m = every test of the pattern holds for the subject
+//   if (m) assign the pattern's identifiers from the subject
+//   m
+//
+// Whether it matched is read twice, to assign and as the answer, so the tests
+// run once into a local.
 template <ExprLowerer Lowerer>
-auto BuildPatternPredicate(
-    Lowerer& lowerer, WalkFrame frame, mir::ExprId subject,
-    hir::PatternId pattern_id) -> diag::Result<std::optional<mir::ExprId>> {
-  auto& owner = lowerer.Owner();
-  auto& unit = owner.Unit();
-  const hir::Pattern& pattern = lowerer.HirPatterns().Get(pattern_id);
-  const mir::TypeId bit1_type = unit.builtins.bit1;
-  auto& enc_block = *frame.current_block;
-  return std::visit(
-      Overloaded{
-          [&](const hir::WildcardPattern&)
-              -> diag::Result<std::optional<mir::ExprId>> {
-            return std::optional<mir::ExprId>{};
-          },
-          [&](const hir::ConstantPattern& c)
-              -> diag::Result<std::optional<mir::ExprId>> {
-            auto lit_or =
-                lowerer.LowerExpr(lowerer.HirExprs().Get(c.value), frame);
-            if (!lit_or) return std::unexpected(std::move(lit_or.error()));
-            const mir::ExprId lit_id = enc_block.exprs.Add(*std::move(lit_or));
-            return enc_block.exprs.Add(BuildMirBinaryExpr(
-                unit, enc_block, hir::BinaryOp::kEquality, subject, lit_id,
-                bit1_type));
-          },
-          [&](const hir::VariablePattern&)
-              -> diag::Result<std::optional<mir::ExprId>> {
-            return std::optional<mir::ExprId>{};
-          },
-          [&](const hir::TaggedPattern& tp)
-              -> diag::Result<std::optional<mir::ExprId>> {
-            // The tag test guards the component read, which is checked (LRM
-            // 11.9): the read is the operand LRM 11.3.5 short-circuits away
-            // when the tag names another member.
-            const mir::ExprId tag_check = enc_block.exprs.Add(BuildTagTest(
-                owner, enc_block, subject, pattern.subject_type,
-                tp.member_index));
-            if (!tp.value_pattern.has_value()) {
-              return std::optional<mir::ExprId>{tag_check};
-            }
-            auto inner_or = BuildPatternPredicate(
-                lowerer, frame,
-                SubjectMember(
-                    owner, enc_block, subject, pattern.subject_type,
-                    tp.member_index),
-                *tp.value_pattern);
-            if (!inner_or) return std::unexpected(std::move(inner_or.error()));
-            if (!inner_or->has_value()) {
-              return std::optional<mir::ExprId>{tag_check};
-            }
-            const std::array<mir::ExprId, 2> tests{tag_check, **inner_or};
-            return BuildMirLogicalAnd(unit, enc_block, bit1_type, tests);
-          },
-          [&](const hir::StructurePattern& sp)
-              -> diag::Result<std::optional<mir::ExprId>> {
-            std::vector<mir::ExprId> tests;
-            tests.reserve(sp.field_patterns.size());
-            for (const auto& [field_index, sub_pat_id] : sp.field_patterns) {
-              auto sub_or = BuildPatternPredicate(
-                  lowerer, frame,
-                  SubjectMember(
-                      owner, enc_block, subject, pattern.subject_type,
-                      base::ComponentIndex{
-                          static_cast<std::uint32_t>(field_index)}),
-                  sub_pat_id);
-              if (!sub_or) return std::unexpected(std::move(sub_or.error()));
-              if (sub_or->has_value()) tests.push_back(**sub_or);
-            }
-            // A structure of patterns that each constrain nothing constrains
-            // nothing itself, which an enclosing pattern must be able to see.
-            if (tests.empty()) return std::optional<mir::ExprId>{};
-            return BuildMirLogicalAnd(unit, enc_block, bit1_type, tests);
-          },
-      },
-      pattern.data);
+auto PatternPredicate(
+    Lowerer& lowerer, const WalkFrame& declared_in, mir::LocalId subject,
+    mir::TypeId subject_type, hir::PatternId pattern) -> Predicate {
+  const mir::TypeId bit = lowerer.Owner().Unit().builtins.bit1;
+  return Predicate{
+      .type = bit,
+      .evaluate = [&lowerer, declared_in, subject, subject_type, pattern,
+                   bit](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+        const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+        BlockBuilder steps(at);
+        mir::Block& body = steps.Body();
+        const auto read_subject = [&](mir::Block& block) {
+          return block.exprs.Add(mir::MakeLocalRefExpr(subject, subject_type));
+        };
+
+        std::vector<mir::ExprId> tests;
+        auto collected = CollectPatternTests(
+            lowerer, steps.Frame(), read_subject(body), pattern, tests);
+        if (!collected) return std::unexpected(std::move(collected.error()));
+        const mir::LocalId matched = steps.DeclareLocal(
+            bit, ConditionAsBit(unit, body, AllHold(unit, body, tests)));
+        const auto read_matched = [&] {
+          return body.exprs.Add(mir::MakeLocalRefExpr(matched, bit));
+        };
+
+        mir::Block bound;
+        BindPatternIdentifiers(
+            lowerer, declared_in, steps.Frame().WithBlock(&bound),
+            read_subject(bound), pattern);
+        body.AppendStmt(
+            mir::IfStmt{
+                .condition = ReduceToCondition(unit, body, read_matched()),
+                .then_scope = body.child_scopes.Add(std::move(bound)),
+                .else_scope = std::nullopt});
+        return at.current_block->exprs.Add(steps.Build(read_matched()));
+      }};
 }
 
-template void EmitPatternBindings(
-    ProcessLowerer&, WalkFrame, WalkFrame, mir::ExprId, hir::PatternId);
-template void EmitPatternBindings(
-    const StructuralScopeLowerer&, WalkFrame, WalkFrame, mir::ExprId,
-    hir::PatternId);
-template auto BuildPatternPredicate(
-    ProcessLowerer&, WalkFrame, mir::ExprId, hir::PatternId)
-    -> diag::Result<std::optional<mir::ExprId>>;
-template auto BuildPatternPredicate(
-    const StructuralScopeLowerer&, WalkFrame, mir::ExprId, hir::PatternId)
-    -> diag::Result<std::optional<mir::ExprId>>;
+template auto PatternPredicate(
+    ProcessLowerer&, const WalkFrame&, mir::LocalId, mir::TypeId,
+    hir::PatternId) -> Predicate;
+template auto PatternPredicate(
+    const StructuralScopeLowerer&, const WalkFrame&, mir::LocalId, mir::TypeId,
+    hir::PatternId) -> Predicate;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -1,10 +1,26 @@
 // A case item may name several expressions separated by commas, and the item is
-// selected when the case expression matches any one of them (LRM 12.5).
+// selected when the case expression matches any one of them. The item
+// expressions are evaluated and compared in the order they are written, and
+// the search ends at the first that matches, so an expression after it in the
+// same list is never evaluated (LRM 12.5). That holds for casez and for a case
+// inside, which match differently and search the same way (LRM 12.5.1,
+// 12.5.4).
 module Top;
+  int calls;
+
+  function automatic int counted(int v);
+    calls = calls + 1;
+    return v;
+  endfunction
+
   int sel;
   int list_head;
   int list_tail;
   int outside_list;
+  int case_stops = -1;
+  int case_continues = -1;
+  int casez_stops = -1;
+  int case_inside_stops = -1;
 
   initial begin
     sel = 1;
@@ -32,6 +48,35 @@ module Top;
       1, 2: outside_list = 12;
       default: outside_list = 99;
     endcase
+
+    sel = 2;
+    calls = 0;
+    case (sel)
+      counted(2), counted(3): ;
+      default: calls = calls + 100;
+    endcase
+    case_stops = calls;
+
+    calls = 0;
+    case (sel)
+      counted(1), counted(2), counted(3): ;
+      default: calls = calls + 100;
+    endcase
+    case_continues = calls;
+
+    calls = 0;
+    casez (sel)
+      counted(2), counted(3): ;
+      default: calls = calls + 100;
+    endcase
+    casez_stops = calls;
+
+    calls = 0;
+    case (sel) inside
+      counted(2), counted(3): ;
+      default: calls = calls + 100;
+    endcase
+    case_inside_stops = calls;
   end
 
   final begin
@@ -41,6 +86,18 @@ module Top;
       $fatal(1, "list_tail was %0d, expected 12", list_tail);
     if (outside_list !== 99)
       $fatal(1, "outside_list was %0d, expected 99", outside_list);
+    if (case_stops !== 1)
+      $fatal(1, "a case list evaluated %0d expressions to reach its first, expected 1",
+             case_stops);
+    if (case_continues !== 2)
+      $fatal(1, "a case list evaluated %0d expressions to reach its second, expected 2",
+             case_continues);
+    if (casez_stops !== 1)
+      $fatal(1, "a casez list evaluated %0d expressions to reach its first, expected 1",
+             casez_stops);
+    if (case_inside_stops !== 1)
+      $fatal(1, "a case inside list evaluated %0d expressions to reach its first, expected 1",
+             case_inside_stops);
     $display("All checks passed");
   end
 endmodule

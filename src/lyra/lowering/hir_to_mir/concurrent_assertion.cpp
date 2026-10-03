@@ -410,27 +410,19 @@ auto LowerAdvance(
     mir::Block reached;
     const WalkFrame sampled =
         frame.WithBlock(&reached).WithReadsAsOf(ReadsAsOf::kPreponed);
-    std::optional<mir::ExprId> condition;
+    std::vector<mir::ExprId> conjuncts;
     for (const hir::ExprId conjunct : automaton.positions[position].conjuncts) {
       auto lowered =
           action.LowerExpr(action.HirBody().exprs.Get(conjunct), sampled);
       if (!lowered) return std::unexpected(std::move(lowered.error()));
-      const mir::ExprId reduced = ReduceToCondition(
-          unit, reached, reached.exprs.Add(*std::move(lowered)));
-      condition = condition.has_value()
-                      ? Op(reached, unit.builtins.machine_bool,
-                           mir::BinaryOp::kLogicalAnd, *condition, reduced)
-                      : reduced;
+      conjuncts.push_back(reached.exprs.Add(*std::move(lowered)));
     }
     // A position with no conjunct is a tick a delay measures across, which
-    // matches whatever the design does there, so its bit is set outright.
-    if (condition.has_value()) {
-      mir::Block held;
-      OrInto(held, word_type, hold, at);
-      AppendIf(reached, *condition, std::move(held));
-    } else {
-      OrInto(reached, word_type, hold, at);
-    }
+    // matches whatever the design does there, so its bit is set whenever it is
+    // reached.
+    mir::Block held;
+    OrInto(held, word_type, hold, at);
+    AppendIf(reached, AllHold(unit, reached, conjuncts), std::move(held));
     AppendIf(body, AnyOf(body, unit, need, at), std::move(reached));
   }
 

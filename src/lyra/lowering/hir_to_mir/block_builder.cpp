@@ -14,6 +14,13 @@ BlockBuilder::BlockBuilder(const WalkFrame& enclosing)
       frame_(enclosing.WithBlock(&body_)) {
 }
 
+auto BlockBuilder::DeclareLocal(mir::TypeId type, mir::ExprId init)
+    -> mir::LocalId {
+  const mir::LocalId local = frame_.bindings->DeclareAnonymous(type);
+  body_.AppendStmt(mir::LocalDeclStmt{.target = local, .init = init});
+  return local;
+}
+
 auto BlockBuilder::Build(mir::ExprId value) -> mir::Expr {
   const mir::TypeId type = body_.exprs.Get(value).type;
   return mir::Expr{

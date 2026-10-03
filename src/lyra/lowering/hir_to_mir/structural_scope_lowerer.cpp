@@ -1759,34 +1759,17 @@ auto MatchesAnyLabel(
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
 
-  std::optional<mir::ExprId> any;
+  std::vector<mir::ExprId> matches;
+  matches.reserve(labels.size());
   for (const hir::ExprId label : labels) {
     auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(label), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    const mir::ExprId matched = BuildCaseEquality(
-        unit, block, selector, block.exprs.Add(*std::move(lowered)));
-    // Every operand of a logical operator here is a stated predicate, so a
-    // comparison's own 1-bit answer is reduced where it is produced.
-    const mir::ExprId here = ReduceToCondition(unit, block, matched);
-    any = any.has_value() ? block.exprs.Add(
-                                mir::Expr{
-                                    .data =
-                                        mir::BinaryExpr{
-                                            .op = mir::BinaryOp::kLogicalOr,
-                                            .lhs = *any,
-                                            .rhs = here},
-                                    .type = unit.builtins.machine_bool})
-                          : here;
+    matches.push_back(BuildCaseEquality(
+        unit, block, selector, block.exprs.Add(*std::move(lowered))));
   }
   // An item the source gave no label matches nothing of its own, which is what
   // a `default` is; it is reached by the search running out instead.
-  if (!any.has_value()) {
-    return block.exprs.Add(
-        mir::Expr{
-            .data = mir::MachineBoolLiteral{.value = false},
-            .type = unit.builtins.machine_bool});
-  }
-  return *any;
+  return AnyHolds(unit, block, matches);
 }
 
 // A `case` searches its items in the order the source wrote them and stops at

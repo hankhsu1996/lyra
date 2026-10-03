@@ -1,6 +1,6 @@
 // The conditional operator returns its first expression when the predicate
 // is true and its second when the predicate is false, evaluating only the one
-// it returns. When the predicate is ambiguous both expressions are evaluated
+// it returns, whatever that expression is made of. When the predicate is ambiguous both expressions are evaluated
 // and compared: the operator returns that value where they are logically
 // equivalent, and otherwise merges them bit by bit, keeping a bit the two
 // agree on and making every other bit x. The two expressions are
@@ -12,6 +12,19 @@
 // element type's default
 // (LRM 11.4.11, Table 11-20, Table 7-1, 11.3.2, 11.6.1, Table 11-21).
 module Top;
+  typedef union tagged {
+    void Invalid;
+    int  Valid;
+  } vint_t;
+
+  int calls;
+
+  function automatic int counted(int v);
+    calls = calls + 1;
+    return v;
+  endfunction
+
+  int matching_arm_skipped = -1;
   int picked_true;
   int picked_false;
   int picked_literal_true;
@@ -99,6 +112,18 @@ module Top;
     ambiguous = 1'bx;
     part_from_merged_arms = 4'b0000;
     part_from_merged_arms[1:0] = ambiguous ? narrow_arm[3:2] : 2'b01;
+
+    // An arm that is itself a pattern-matching conditional takes steps to
+    // evaluate, and none of them run when the arm is not the one returned.
+    begin
+      vint_t held;
+      held = tagged Valid 5;
+      calls = 0;
+      a = (flag == 0)
+          ? (held matches tagged Valid .n ? counted(n) : counted(0))
+          : 1;
+      matching_arm_skipped = calls;
+    end
   end
 
   final begin
@@ -143,6 +168,9 @@ module Top;
     if (part_from_merged_arms !== 4'b00xx)
       $fatal(1, "part_from_merged_arms was %b, expected 00xx",
              part_from_merged_arms);
+    if (matching_arm_skipped !== 0)
+      $fatal(1, "the arm not returned ran %0d calls, expected 0",
+             matching_arm_skipped);
     $display("All checks passed");
   end
 endmodule

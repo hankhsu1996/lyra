@@ -1,7 +1,5 @@
 #include "lyra/lowering/hir_to_mir/qualified_statement_check.hpp"
 
-#include <cstddef>
-#include <expected>
 #include <format>
 #include <optional>
 #include <span>
@@ -12,18 +10,17 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
-#include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
-#include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -112,133 +109,121 @@ void SubmitToObservedRegion(
   block.AppendStmt(mir::ExprStmt{.expr = submit_id});
 }
 
-// A predicate snapshot bound for capture: the wrapper local holding the value
-// frozen at check time, plus the synthesized origin a deferred body forwards it
-// through.
-struct SnapshotBinding {
+// Whether one arm held, frozen at check time as a bit: the local holding it,
+// and the synthesized origin a deferred body forwards it through.
+struct HeldArm {
   mir::LocalId local;
   BindingOriginId origin;
 };
 
-auto SnapshotPredicate(
-    UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block& wrapper,
-    mir::TypeId predicate_type, mir::ExprId predicate_expr_id)
-    -> SnapshotBinding {
-  const BindingOriginId origin =
-      BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
-  const mir::LocalId local = SnapshotExprToLocal(
-      unit_lowerer, frame, wrapper, predicate_type, predicate_expr_id, origin);
-  return {.local = local, .origin = origin};
-}
-
-// Counts the arms that held and reports where more than one did. A uniqueness
-// violation is exactly that count exceeding one, for `unique` and `unique0`
-// alike; the two differ in whether totality is also asserted, which this body
-// does not decide (LRM 12.4.2, 12.5.3).
-auto BuildUniquenessCheckBody(
-    UnitLowerer& unit_lowerer, const WalkFrame& wrapper_frame,
+// The body the Observed region runs: counts the arms that held and reports
+// where more than one did. A uniqueness violation is exactly that count
+// exceeding one, for `unique` and `unique0` alike; the two differ in whether
+// totality is also asserted, which this body does not decide (LRM 12.4.2,
+// 12.5.3).
+auto BuildUniquenessReportBody(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
     hir::UniquePriorityCheck check, QualifiedArmKind arm_kind,
-    const std::vector<SnapshotBinding>& snapshot_vars, std::string origin)
-    -> mir::Expr {
-  ClosureBuilder closure(unit_lowerer.Unit(), wrapper_frame);
+    std::span<const HeldArm> arms, std::string origin) -> mir::Expr {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::TypeId int_type = unit.builtins.int_type;
+  ClosureBuilder closure(unit, frame);
   mir::Block& body = closure.Body();
 
-  const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
-
-  std::vector<mir::ExprId> inner_reads;
-  inner_reads.reserve(snapshot_vars.size());
-  for (const SnapshotBinding& snap : snapshot_vars) {
-    const BodyBindingRef ref = closure.Bindings().EnsureCarrier(snap.origin);
-    inner_reads.push_back(
-        body.exprs.Add(closure.Bindings().MakeReadExpr(ref, body)));
-  }
-
-  const mir::LocalId count_var = closure.Bindings().DeclareAnonymous(int_type);
-
-  const mir::ExprId zero_init_id =
-      BuildIntLiteral(unit_lowerer.Unit(), body, 0);
+  const mir::LocalId count = closure.Bindings().DeclareAnonymous(int_type);
+  const auto read_count = [&](mir::Block& block) {
+    return block.exprs.Add(mir::MakeLocalRefExpr(count, int_type));
+  };
   body.AppendStmt(
-      mir::LocalDeclStmt{.target = count_var, .init = zero_init_id});
-
-  for (const mir::ExprId bit_read : inner_reads) {
-    const mir::ExprId one_lit = BuildIntLiteral(unit_lowerer.Unit(), body, 1);
-    const mir::ExprId zero_lit = BuildIntLiteral(unit_lowerer.Unit(), body, 0);
-    const mir::ExprId cond_value = body.exprs.Add(
+      mir::LocalDeclStmt{
+          .target = count, .init = BuildIntLiteral(unit, body, 0)});
+  for (const HeldArm& arm : arms) {
+    const mir::ExprId held = body.exprs.Add(closure.Bindings().MakeReadExpr(
+        closure.Bindings().EnsureCarrier(arm.origin), body));
+    const mir::ExprId one_if_held = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::ConditionalExpr{
-                    .condition =
-                        ReduceToCondition(unit_lowerer.Unit(), body, bit_read),
-                    .then_value = one_lit,
-                    .else_value = zero_lit},
+                    .condition = ReduceToCondition(unit, body, held),
+                    .then_value = BuildIntLiteral(unit, body, 1),
+                    .else_value = BuildIntLiteral(unit, body, 0)},
             .type = int_type});
-    const mir::ExprId count_read =
-        body.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
-    const mir::ExprId added = body.exprs.Add(
+    const mir::ExprId counted = body.exprs.Add(
         mir::Expr{
             .data =
                 mir::BinaryExpr{
                     .op = mir::BinaryOp::kAdd,
-                    .lhs = count_read,
-                    .rhs = cond_value},
+                    .lhs = read_count(body),
+                    .rhs = one_if_held},
             .type = int_type});
-    const mir::ExprId count_target =
-        body.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
-    const mir::ExprId assign = body.exprs.Add(
-        mir::Expr{
-            .data = mir::AssignExpr{.target = count_target, .value = added},
-            .type = int_type});
-    body.AppendStmt(mir::ExprStmt{.expr = assign});
+    body.AppendStmt(
+        mir::ExprStmt{
+            .expr = body.exprs.Add(
+                mir::MakeAssignExpr(read_count(body), counted, int_type))});
   }
 
-  const mir::ExprId final_count_read =
-      body.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
-  const mir::ExprId one_lit = BuildIntLiteral(unit_lowerer.Unit(), body, 1);
-  const mir::ExprId violated_id = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::BinaryExpr{
-                  .op = mir::BinaryOp::kGreaterThan,
-                  .lhs = final_count_read,
-                  .rhs = one_lit},
-          .type = int_type});
-
-  const ArmNoun noun = NounFor(arm_kind);
   mir::Block report;
   std::vector<mir::RuntimePrintItem> items;
   items.emplace_back(
       mir::RuntimePrintLiteral{
           .text = std::format("{} violation: ", KeywordOf(check))});
-  const mir::ExprId count_in_report =
-      report.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
   items.emplace_back(
       mir::RuntimePrintValue(
-          count_in_report, int_type,
+          read_count(report), int_type,
           mir::FormatSpec(
               value::FormatKind::kDecimal, mir::FormatModifiers{})));
   items.emplace_back(
       mir::RuntimePrintLiteral{
           .text = std::format(
-              " of {} {} matched", snapshot_vars.size(), noun.many)});
-  AppendReportEmit(
-      unit_lowerer.Unit(), report, std::move(items), std::move(origin));
+              " of {} {} matched", arms.size(), NounFor(arm_kind).many)});
+  AppendReportEmit(unit, report, std::move(items), std::move(origin));
 
-  const mir::BlockId report_scope_id = body.child_scopes.Add(std::move(report));
+  const mir::ExprId violated = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kGreaterThan,
+                  .lhs = read_count(body),
+                  .rhs = BuildIntLiteral(unit, body, 1)},
+          .type = unit.builtins.bit1});
   body.AppendStmt(
       mir::IfStmt{
-          .condition =
-              ReduceToCondition(unit_lowerer.Unit(), body, violated_id),
-          .then_scope = report_scope_id,
+          .condition = ReduceToCondition(unit, body, violated),
+          .then_scope = body.child_scopes.Add(std::move(report)),
           .else_scope = std::nullopt});
-
   return closure.BuildVoid();
+}
+
+// The arm a statement asserting totality runs when none of its own held. The
+// body it submits reads nothing the statement computed.
+auto BuildTotalityReportScope(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    hir::UniquePriorityCheck check, QualifiedArmKind arm_kind,
+    diag::SourceSpan span) -> mir::Block {
+  mir::Block scope;
+  ClosureBuilder closure(unit_lowerer.Unit(), frame.WithBlock(&scope));
+  std::vector<mir::RuntimePrintItem> items;
+  items.emplace_back(
+      mir::RuntimePrintLiteral{
+          .text = std::format(
+              "{} violation: no {} matched", KeywordOf(check),
+              NounFor(arm_kind).one)});
+  AppendReportEmit(
+      unit_lowerer.Unit(), closure.Body(), std::move(items),
+      FormatRuntimeOriginString(span, unit_lowerer.SourceManager()));
+  SubmitToObservedRegion(unit_lowerer, scope, closure.BuildVoid());
+  return scope;
 }
 
 }  // namespace
 
-auto AssertionsOf(hir::UniquePriorityCheck check, bool has_catch_all)
+auto AssertionsOf(
+    std::optional<hir::UniquePriorityCheck> check, bool has_catch_all)
     -> QualifiedAssertions {
-  switch (check) {
+  if (!check.has_value()) {
+    return {.uniqueness = false, .totality = false};
+  }
+  switch (*check) {
     case hir::UniquePriorityCheck::kUnique:
       return {.uniqueness = true, .totality = !has_catch_all};
     case hir::UniquePriorityCheck::kUnique0:
@@ -249,178 +234,45 @@ auto AssertionsOf(hir::UniquePriorityCheck check, bool has_catch_all)
   throw InternalError("AssertionsOf: unknown HIR UniquePriorityCheck");
 }
 
-auto SeriesOf(const hir::ProceduralBody& proc, const hir::IfStmt& root)
-    -> IfSeries {
-  IfSeries out;
-  out.arms.push_back(&root);
-  std::optional<hir::StmtId> cur_else = root.else_stmt;
-  while (cur_else.has_value()) {
-    const hir::Stmt& s = proc.stmts.Get(*cur_else);
-    const auto* nested = std::get_if<hir::IfStmt>(&s.data);
-    if (nested == nullptr || nested->check.has_value() || s.label.has_value()) {
-      out.else_arm = cur_else;
-      break;
-    }
-    out.arms.push_back(nested);
-    cur_else = nested->else_stmt;
+auto BuildFallThrough(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    std::optional<mir::Block> catch_all,
+    std::optional<hir::UniquePriorityCheck> check, QualifiedArmKind arm_kind,
+    diag::SourceSpan span) -> std::optional<mir::Block> {
+  if (AssertionsOf(check, catch_all.has_value()).totality) {
+    return BuildTotalityReportScope(
+        unit_lowerer, frame, *check, arm_kind, span);
   }
-  return out;
+  return catch_all;
 }
 
-auto BuildTotalityReportScope(
-    UnitLowerer& unit_lowerer, WalkFrame frame, hir::UniquePriorityCheck check,
-    QualifiedArmKind arm_kind, diag::SourceSpan span) -> mir::Block {
-  mir::Block scope;
-  const WalkFrame scope_frame = frame.WithBlock(&scope);
+auto BuildUniquenessCheck(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    std::span<const mir::ExprId> held, hir::UniquePriorityCheck check,
+    QualifiedArmKind arm_kind, diag::SourceSpan span)
+    -> std::vector<mir::LocalId> {
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& block = *frame.current_block;
 
-  ClosureBuilder closure(unit_lowerer.Unit(), scope_frame);
-  std::vector<mir::RuntimePrintItem> items;
-  items.emplace_back(
-      mir::RuntimePrintLiteral{
-          .text = std::format(
-              "{} violation: no {} matched", KeywordOf(check),
-              NounFor(arm_kind).one)});
-  AppendReportEmit(
-      unit_lowerer.Unit(), closure.Body(), std::move(items),
-      FormatRuntimeOriginString(span, unit_lowerer.SourceManager()));
-
-  SubmitToObservedRegion(unit_lowerer, scope, closure.BuildVoid());
-  return scope;
-}
-
-auto BuildUniquenessCheckCascade(
-    UnitLowerer& unit_lowerer, WalkFrame frame, mir::Block wrapper,
-    std::vector<QualifiedArm> arms, std::optional<mir::Block> fall_through,
-    hir::UniquePriorityCheck check, QualifiedArmKind arm_kind,
-    std::optional<std::string> outer_label, diag::SourceSpan span)
-    -> mir::Stmt {
-  const mir::TypeId int_type = unit_lowerer.Unit().builtins.int_type;
-
-  // The snapshots land in the wrapper, so they are taken through a
-  // wrapper-local frame; the cascade levels each derive their own below. They
-  // are body-locals of this callable, so every read names them directly with no
-  // nesting bookkeeping.
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
-
-  std::vector<SnapshotBinding> snapshot_vars;
-  snapshot_vars.reserve(arms.size());
-  for (const auto& arm : arms) {
-    snapshot_vars.push_back(SnapshotPredicate(
-        unit_lowerer, wrapper_frame, wrapper,
-        wrapper.exprs.Get(arm.predicate).type, arm.predicate));
+  std::vector<HeldArm> arms;
+  std::vector<mir::LocalId> locals;
+  arms.reserve(held.size());
+  locals.reserve(held.size());
+  for (const mir::ExprId arm_held : held) {
+    const BindingOriginId origin =
+        BindingOriginId::Synthesized(unit_lowerer.NextSynthesizedSite(), 0);
+    const mir::LocalId local = SnapshotExprToLocal(
+        unit_lowerer, frame, block, unit.builtins.bit1,
+        ConditionAsBit(unit, block, arm_held), origin);
+    arms.push_back({.local = local, .origin = origin});
+    locals.push_back(local);
   }
-
   SubmitToObservedRegion(
-      unit_lowerer, wrapper,
-      BuildUniquenessCheckBody(
-          unit_lowerer, wrapper_frame, check, arm_kind, snapshot_vars,
+      unit_lowerer, block,
+      BuildUniquenessReportBody(
+          unit_lowerer, frame, check, arm_kind, arms,
           FormatRuntimeOriginString(span, unit_lowerer.SourceManager())));
-
-  // The dispatch is folded from the innermost arm outward, each level becoming
-  // the one below it's else, so what the wrapper ends up carrying is a single
-  // arm reached however the snapshots came out.
-  std::optional<mir::Block> tail = std::move(fall_through);
-  for (std::size_t i = arms.size(); i-- > 0;) {
-    mir::Block level_block;
-    const mir::ExprId cond_read = level_block.exprs.Add(
-        mir::MakeLocalRefExpr(snapshot_vars[i].local, int_type));
-
-    const mir::BlockId body_scope_id =
-        level_block.child_scopes.Add(std::move(arms[i].body));
-    std::optional<mir::BlockId> else_scope_id;
-    if (tail.has_value()) {
-      else_scope_id = level_block.child_scopes.Add(std::move(*tail));
-    }
-
-    level_block.AppendStmt(
-        mir::IfStmt{
-            .condition =
-                ReduceToCondition(unit_lowerer.Unit(), level_block, cond_read),
-            .then_scope = body_scope_id,
-            .else_scope = else_scope_id});
-    tail = std::move(level_block);
-  }
-
-  if (tail.has_value()) {
-    const mir::BlockId tail_id = wrapper.child_scopes.Add(std::move(*tail));
-    wrapper.AppendStmt(mir::BlockStmt{.scope = tail_id});
-  }
-
-  const mir::BlockId wrapper_scope_id =
-      frame.current_block->child_scopes.Add(std::move(wrapper));
-
-  return mir::Stmt{
-      .label = std::move(outer_label),
-      .data = mir::BlockStmt{.scope = wrapper_scope_id}};
-}
-
-auto LowerIfFallThrough(
-    ProcessLowerer& process, WalkFrame frame, const IfSeries& series,
-    hir::UniquePriorityCheck check, diag::SourceSpan span)
-    -> diag::Result<std::optional<mir::Block>> {
-  const bool has_catch_all = series.else_arm.has_value();
-  if (has_catch_all) {
-    auto else_or = LowerStmtIntoChildScope(process, frame, *series.else_arm);
-    if (!else_or) return std::unexpected(std::move(else_or.error()));
-    return std::optional<mir::Block>(std::move(*else_or));
-  }
-  if (!AssertionsOf(check, has_catch_all).totality) {
-    return std::optional<mir::Block>{};
-  }
-  return std::optional<mir::Block>(BuildTotalityReportScope(
-      process.Owner(), frame, check, QualifiedArmKind::kCondition, span));
-}
-
-auto LowerUniquenessIfSeries(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const IfSeries& series, hir::UniquePriorityCheck check,
-    diag::SourceSpan span) -> diag::Result<mir::Stmt> {
-  const mir::TypeId bit1_type = process.Owner().Unit().builtins.bit1;
-
-  mir::Block wrapper;
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
-
-  // LRM 12.4.2 evaluates every arm's predicate before any arm's statement
-  // runs, so each arm's clause chain is emitted here with an empty then-arm
-  // and its outcome left in a flag. Reducing an arm to a flag is what makes
-  // arm shape invisible to the check: one clause or several, pattern or not,
-  // every arm answers the same question the same way.
-  std::vector<QualifiedArm> arms;
-  arms.reserve(series.arms.size());
-  for (const hir::IfStmt* arm : series.arms) {
-    const mir::LocalId held =
-        wrapper_frame.bindings->DeclareAnonymous(bit1_type);
-    const mir::ExprId not_held =
-        BuildBit1Literal(process.Owner().Unit(), wrapper, false);
-    wrapper.AppendStmt(mir::LocalDeclStmt{.target = held, .init = not_held});
-
-    auto chain_or = BuildClauseChainIf(
-        process, wrapper_frame,
-        std::span<const hir::ConditionClause>{arm->conditions}, held,
-        [](WalkFrame) -> diag::Result<void> { return {}; });
-    if (!chain_or) return std::unexpected(std::move(chain_or.error()));
-    wrapper.AppendStmt(*std::move(chain_or));
-
-    auto body_or =
-        LowerStmtIntoChildScope(process, wrapper_frame, arm->then_stmt);
-    if (!body_or) return std::unexpected(std::move(body_or.error()));
-    arms.push_back(
-        QualifiedArm{
-            .predicate =
-                wrapper.exprs.Add(mir::MakeLocalRefExpr(held, bit1_type)),
-            .body = std::move(*body_or)});
-  }
-
-  auto fall_through_or =
-      LowerIfFallThrough(process, wrapper_frame, series, check, span);
-  if (!fall_through_or) {
-    return std::unexpected(std::move(fall_through_or.error()));
-  }
-
-  return BuildUniquenessCheckCascade(
-      process.Owner(), frame, std::move(wrapper), std::move(arms),
-      std::move(*fall_through_or), check, QualifiedArmKind::kCondition,
-      std::move(label), span);
+  return locals;
 }
 
 }  // namespace lyra::lowering::hir_to_mir

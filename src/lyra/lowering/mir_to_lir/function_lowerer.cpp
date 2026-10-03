@@ -3525,17 +3525,8 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             if (!rhs) {
               return rhs;
             }
-            // A logical or equality operator composing machine booleans -- the
-            // reduced predicates a real- or string-family `&&` / `||` / `<->`
-            // builds before `from_bool` widens the result back -- stays a
-            // machine boolean; its surface 1-bit type is restored by the
-            // enclosing `from_bool`.
-            const lir::TypeId result_type =
-                lir::OperandType(fn_, *lhs) == unit_->MachineBoolType()
-                    ? unit_->MachineBoolType()
-                    : unit_->TranslateType(type);
             return Emit(
-                result_type,
+                unit_->TranslateType(type),
                 lir::BinaryInstr{
                     .op = op, .lhs = *std::move(lhs), .rhs = *std::move(rhs)});
           },

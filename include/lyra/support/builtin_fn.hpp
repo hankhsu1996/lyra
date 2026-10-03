@@ -1008,7 +1008,6 @@ enum class BuiltinFn : std::uint16_t {
   kLogicalShiftRightAssign,
   kArithmeticShiftRightAssign,
   kBitwiseXnor,
-  kLogicalImplication,
   kLogicalEquivalence,
   kWildcardEquals,
   kCaseEqual,

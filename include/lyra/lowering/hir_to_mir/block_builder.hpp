@@ -4,7 +4,9 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -46,6 +48,10 @@ class BlockBuilder {
   [[nodiscard]] auto Bindings() const -> CallableBindings& {
     return *frame_.bindings;
   }
+  // A local of the steps, declared holding `init`: what a step computes once
+  // and the steps after it read more than once.
+  [[nodiscard]] auto DeclareLocal(mir::TypeId type, mir::ExprId init)
+      -> mir::LocalId;
 
   // Attaches the block to the enclosing one and yields the expression, typed as
   // the value it ends with. Single-use.
