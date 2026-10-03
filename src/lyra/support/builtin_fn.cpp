@@ -1230,10 +1230,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .mutates_receiver = true};
     case BuiltinFn::kBitwiseXnor:
       return {.name = "bitwise_xnor", .declaration = Method{"BitwiseXnor"}};
-    case BuiltinFn::kLogicalImplication:
-      return {
-          .name = "logical_implication",
-          .declaration = Method{"LogicalImplication"}};
     case BuiltinFn::kLogicalEquivalence:
       return {
           .name = "logical_equivalence",

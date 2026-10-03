@@ -12,14 +12,15 @@
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 // The operator a target applies to two values of one type, for a source
-// operator that names one. An operator a library performs names none and does
-// not reach this.
+// operator that names one. An operator a library performs names none, nor does
+// one that may leave an operand unevaluated, and neither reaches this.
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp;
 
 // What an assignment applies to the value its target holds, for the operator
@@ -30,36 +31,29 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp;
 // that. This is the one place that fork is taken.
 auto LowerCompoundOperation(hir::BinaryOp op) -> CompoundOperation;
 
-// HIR-to-MIR binary-operator realization. Takes the lowered operand ids
-// (already in `block`) and dispatches on `(op, lhs_type, rhs_type)`: an
-// operator a library performs lifts to a `CallExpr` against the entry that
-// performs it; real / string comparison and logical operators wrap in
-// `kFromBool` (the logical family reading each operand as a machine boolean
-// first); the rest produce a native `BinaryExpr` for the backend to render
-// mechanically. The single producer of a binary operator, so it is also the one
-// place that guarantees a word-parallel operator's operands share a storage
-// domain (LRM 11.6.1), inserting the reconciling conversion any synthesized
-// site would otherwise have to remember. `unit` is mutable because reconciling
-// may intern the operands' common type.
+// A source binary operator over two operands that are both evaluated. Takes the
+// lowered operand ids (already in `block`): an operator a library performs is a
+// call of the entry that performs it, and the rest are the operator a target
+// applies. `&&`, `||` and `->` may leave their second operand unevaluated, so
+// they are selections built before both operands are lowered and never reach
+// this.
 auto BuildMirBinaryExpr(
-    mir::CompilationUnit& unit, mir::Block& block, hir::BinaryOp op,
+    const mir::CompilationUnit& unit, mir::Block& block, hir::BinaryOp op,
     mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)
     -> mir::Expr;
 
-// The conjunction / disjunction of `tests`, appended to `block`: the n-ary
-// form of the binary operator above. MIR has only binary operators, so a
-// lowering that synthesizes a boolean from a list -- a case item's labels, a
-// membership test's items, a clause sequence, a structure pattern's fields --
-// folds it here instead of growing the chain by hand. Having nothing to fold
-// is not a case for the caller to branch on: it is the empty fold, whose value
-// is that operator's identity. Both operators short-circuit, so argument order
-// is evaluation order.
+// The conjunction and the disjunction of `tests`, every one of them evaluated,
+// appended to `block` at `type`, which each test already has: for truths the
+// language evaluates all of -- a membership test's items (LRM 11.4.13), a
+// range's two bounds, a structure's members (LRM 11.4.5). A list searched only
+// as far as the answer is open is a condition search instead. Having nothing to
+// fold is not a case for the caller to branch on: it is the empty fold, whose
+// value is the operator's identity.
 auto BuildMirLogicalAnd(
-    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId bit1_type,
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
     std::span<const mir::ExprId> tests) -> mir::ExprId;
-
 auto BuildMirLogicalOr(
-    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId bit1_type,
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
     std::span<const mir::ExprId> tests) -> mir::ExprId;
 
 // An operator's meaning is independent of the enclosing scope, so one template
@@ -91,25 +85,6 @@ auto LowerHirConversionExpr(
 template <ExprLowerer Lowerer>
 auto LowerHirIncDecExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::IncDecExpr& inc,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
-
-// Whether a `?:` predicate declares identifiers, which it does when any clause
-// matches a pattern (LRM 12.6.3). Such a predicate cannot stay an rvalue, and
-// is lowered by the form below.
-[[nodiscard]] auto DeclaresBindings(const hir::ConditionalExpr& c) -> bool;
-
-// The clause-chain `?:` whose predicate declares identifiers (LRM 12.6.3).
-// A binding needs storage and a statement to initialize it, so the arms
-// become assignments into a result local and the expression reads it back.
-// Such a `?:` in the else arm, of the same type, continues the chain rather
-// than nesting in it. One without bindings does not: a lone four-state
-// condition that is unknown merges both arms (LRM 11.4.11), which an `if`
-// cannot say.
-// A structural predicate cannot declare bindings -- AST-to-HIR rejects one --
-// so this form is procedural only.
-template <ExprLowerer Lowerer>
-auto LowerHirBindingConditionalExpr(
-    Lowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
 
+#include <array>
 #include <expected>
 #include <optional>
 #include <string>
@@ -290,9 +291,8 @@ auto LowerValueChangeCall(
                 unit, block, hir::BinaryOp::kCaseInequality,
                 BuildLeastSignificantBit(unit, block, prior, *bit_type), target,
                 result_type));
-            return BuildMirBinaryExpr(
-                unit, block, hir::BinaryOp::kLogicalAnd, reached, held_before,
-                result_type);
+            return block.exprs.Get(BuildMirLogicalAnd(
+                unit, block, result_type, std::array{reached, held_before}));
           }},
       ComparisonOf(ref.reading));
 }

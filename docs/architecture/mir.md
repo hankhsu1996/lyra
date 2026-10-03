@@ -445,15 +445,20 @@ already been reduced to what a branch tests. LRM 11.4.11 reads a predicate's tru
 -- a predicate that can be ambiguous selects neither arm, evaluating both and combining them -- and
 that third answer is not a second node: three outcomes over one predicate is a chain of two
 selections over the two ways it can settle, which the conditional and the entry that combines two
-results already express. Which shape a source-level conditional takes follows from its predicate's
-type and is settled at HIR-to-MIR, so no consumer derives it. A value-build primitive spells a value
-rather than operating on values that already exist -- a structured literal is one, and so is every
-peer language's array or aggregate literal. Select expressions are access primitives. Each of these
-stays in MIR for the same reason: removing it would require expanding into a statement-form rewrite
-that does not fit the expression context. Composing values that already exist is not this. A
-concatenation or a replication is an operation over its operands, which every peer reaches through a
-library call and none of them spells as a node, so it is a `CallExpr` against the entry that
-performs it.
+results already express. The same holds of every operator whose second operand runs only where the
+first leaves the answer open: SystemVerilog's `a && b` is `a ? b : 0` over the operands' truths,
+`a || b` is `a ? 1 : b`, and `a -> b` is `a ? b : 1` (LRM 11.4.7), so no operator of the expression
+set skips an operand and no backend's own rules decide whether one runs. An arm is needed on two of
+the three outcomes, so it is evaluated once into a local on those and read from there, which keeps a
+chain of such selections linear in its length. Which shape a source-level conditional takes follows
+from its predicate's type and is settled at HIR-to-MIR, so no consumer derives it. A value-build
+primitive spells a value rather than operating on values that already exist -- a structured literal
+is one, and so is every peer language's array or aggregate literal. Select expressions are access
+primitives. Each of these stays in MIR for the same reason: removing it would require expanding into
+a statement-form rewrite that does not fit the expression context. Composing values that already
+exist is not this. A concatenation or a replication is an operation over its operands, which every
+peer reaches through a library call and none of them spells as a node, so it is a `CallExpr` against
+the entry that performs it.
 
 A callable is one concept: callable code (a signature, plus a body where the declaration defines it)
 and a callable value (code plus a bound environment). A closure is a callable value with a captured

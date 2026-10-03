@@ -2,10 +2,6 @@
 // implicitly declared, and that scope extends to the optional filter expression
 // beside it as well as to the statement on the right-hand side, so the filter
 // reads what the pattern bound (LRM 12.6.1).
-//
-// Parked: the emitted project does not compile, the filter naming an identifier
-// the emitted scope never declares, so this case cannot reach a check to fail
-// at.
 module Top;
   typedef union tagged {
     int Simple;

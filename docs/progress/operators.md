@@ -14,8 +14,7 @@ Done when:
 
 ## Actionable
 
-W17 is open: the logical operators do not short-circuit. Every other numbered item is closed, and
-what stays open under them is the forms recorded as rejected.
+Every numbered item is closed. What stays open is the forms recorded as rejected under them.
 
 ## Sub-Steps
 
@@ -39,9 +38,9 @@ The numeric IDs (W1..W15) imply execution order; where a cut is independent the 
       derived type naming the one object (LRM 8.4). What an operand of the null literal is compared
       at is the handle's type, which is what a case statement's item expressions are brought to as
       well (LRM 12.5).
-  - [x] The conditional operator's `&&&` multi-condition form (LRM 12.4): the `&&&`-separated
-        conditions form a conjunction, taken iff every condition is true, desugared to the same
-        chained logical-AND the `if`-statement predicate uses.
+  - [x] The conditional operator's `&&&` multi-condition form (LRM 12.6.3): the `&&&`-separated
+        conditions form a sequential conjunction, taken iff every condition is true, as the
+        `if`-statement predicate's are.
   - [x] The conditional operator's `matches` pattern form (LRM 11.4.11 / 12.6): the identifiers a
         pattern binds are in scope in the true arm, and a chain of such conditionals selects the
         first that holds however long it is.
@@ -163,12 +162,23 @@ merged node.
 
 ### Evaluation order
 
-- [ ] W17 -- `&&`, `||` and `->` evaluate both operands whatever the first one is, where LRM 11.3.5
-      requires the second to be skipped once the first settles the result, along with every side
-      effect and run-time error its evaluation would have had. A function called in the skipped
-      operand runs, and a check the operand carries is raised: `if (h != null && h.ready)` reaches
-      through a null handle. `?:` is right. The corpus holds the case and records it as a defect on
-      both paths.
+- [x] W17 -- An operand runs only when the language calls for it (LRM 11.3.5). `&&`, `||` and `->`
+      evaluate their second operand only where the first leaves the answer open, an unknown first
+      operand included, whatever kind of value either operand is, so a skipped call does not run, a
+      skipped increment does not happen and a guard against a null handle holds. The same holds for
+      a case item's list of expressions, searched only up to its first match in every form of case
+      (LRM 12.5); for `&&&` clauses, each evaluated only once every one before it was true (LRM
+      12.6.2, 12.6.3); and for a pattern-matching case item's filter, evaluated only after its
+      pattern matched and with what the pattern bound (LRM 12.6.1). A series of `&&&` clauses is one
+      predicate wherever it is written: it is the truth of its first clause that is not true, so a
+      series that reaches an unknown clause is unknown, which an `if` does not take and a
+      conditional operator answers by combining both expressions (LRM 11.4.11), a clause that
+      matches a pattern included. The standard does not say whether an unknown clause ends the
+      series; this is the reading the front end's constant evaluation takes, so an expression means
+      the same at elaboration and at run time. An expression that takes several steps to evaluate,
+      such as a pattern-matching conditional, takes them where it stands, so an arm not selected
+      takes none and a loop condition takes them before each pass. `<->` and `inside` evaluate every
+      operand. A chain of conditionals over four-state predicates emits text linear in its length.
 
 ## Cross-references
 

@@ -9,6 +9,10 @@ namespace lyra::mir {
 // the entry that performs it, and reaches no node here. That holds wherever an
 // operator is written, an assignment applying one included: which entry applies
 // it to what a place holds is settled where the assignment is built.
+//
+// Both operands are evaluated, whichever operator it is, so the logical pair
+// here combines two truths already computed. An operand evaluated only where
+// the other leaves the answer open is the arm of a conditional instead.
 enum class BinaryOp {
   kAdd,
   kSub,

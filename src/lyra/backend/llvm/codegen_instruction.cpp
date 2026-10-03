@@ -659,11 +659,9 @@ auto CodeGenFunction::LowerBinary(
     -> diag::Result<llvm::Value*> {
   const lir::TypeId operand_type = OperandType(binary.lhs);
   // A machine integer is a native value, not a value-domain handle: its
-  // operator is a machine instruction, not a runtime-library call. Two things
-  // arrive this way -- the reduced predicates a real- or string-family `&&` /
-  // `||` / `<->` composes, combined before `from_bool` widens the result back
-  // to a 1-bit packed, and the words a synthesized transition computes over,
-  // which stand for no value of the design at all.
+  // operator is a machine instruction, not a runtime-library call. What arrives
+  // this way is the words a synthesized transition computes over, which stand
+  // for no value of the design at all.
   if (const std::optional<lir::Signedness> signedness =
           module_->Unit().types.Get(operand_type).MachineIntegerSignedness()) {
     return LowerMachineBinary(binary, *signedness);
@@ -699,11 +697,10 @@ auto CodeGenFunction::LowerMachineBinary(
   if (!rhs) {
     return std::unexpected(std::move(rhs.error()));
   }
-  // Every operator of the set has a machine integer's answer, and the operand's
-  // own signedness is what division, remainder and the ordering comparisons
-  // need. The logical pair is the bitwise one here, because a machine value
-  // carrying a predicate is one bit wide and a value of any other width is
-  // reduced to a predicate before it reaches a logical operator.
+  // The operand's own signedness is what division, remainder and the ordering
+  // comparisons need. A logical operator over machine values would have to
+  // decide whether its second operand runs, which a selection states instead,
+  // so none arrives here.
   const bool is_signed = signedness == lir::Signedness::kSigned;
   switch (binary.op) {
     case lir::BinaryOp::kAdd:
@@ -719,11 +716,14 @@ auto CodeGenFunction::LowerMachineBinary(
       return is_signed ? builder_.CreateSRem(*lhs, *rhs)
                        : builder_.CreateURem(*lhs, *rhs);
     case lir::BinaryOp::kBitwiseAnd:
-    case lir::BinaryOp::kLogicalAnd:
       return builder_.CreateAnd(*lhs, *rhs);
     case lir::BinaryOp::kBitwiseOr:
-    case lir::BinaryOp::kLogicalOr:
       return builder_.CreateOr(*lhs, *rhs);
+    case lir::BinaryOp::kLogicalAnd:
+    case lir::BinaryOp::kLogicalOr:
+      throw InternalError(
+          "llvm codegen: a logical operator over machine values; a condition "
+          "search is a selection");
     case lir::BinaryOp::kBitwiseXor:
       return builder_.CreateXor(*lhs, *rhs);
     case lir::BinaryOp::kEquality:

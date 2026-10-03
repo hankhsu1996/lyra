@@ -1135,8 +1135,6 @@ void lyra_rt_packed_arithmetic_shift_right_assign(
     void* value, const void* amount);
 auto lyra_rt_packed_bitwise_xnor(const void* lhs, const void* rhs, void* out)
     -> void*;
-auto lyra_rt_packed_logical_implication(
-    const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_packed_logical_equivalence(
     const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_packed_case_equal(const void* lhs, const void* rhs, void* out)

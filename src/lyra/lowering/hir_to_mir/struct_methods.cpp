@@ -15,6 +15,7 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/bit_vector.hpp"
@@ -107,31 +108,6 @@ auto IsValidForNet(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
   return false;
 }
 
-// Whether a bit of a value of `type` can be unknown, which decides whether its
-// equality can be (LRM 11.4.5).
-auto CarriesUnknowns(const mir::CompilationUnit& unit, mir::TypeId type)
-    -> bool {
-  const mir::Type& t = unit.types.Get(type);
-  if (t.IsIntegralPacked()) {
-    return IsFourState(t.PackedShape().state_kind);
-  }
-  return std::ranges::any_of(PartTypes(unit, type), [&](mir::TypeId part) {
-    return CarriesUnknowns(unit, part);
-  });
-}
-
-// The one-bit answer `==` gives over a product of `parts`, which is unknown
-// exactly where a part can be.
-auto EqualityTypeOver(
-    const mir::CompilationUnit& unit, std::span<const mir::TypeId> parts)
-    -> mir::TypeId {
-  const bool unknowable = std::ranges::any_of(
-      parts, [&](mir::TypeId part) { return CarriesUnknowns(unit, part); });
-  return unknowable ? mir::PackedVectorOf(
-                          unit.types, 1, mir::IntegralStateKind::kFourState)
-                    : unit.builtins.bit1;
-}
-
 // A net's own contribution is a value of its type every bit of which is one
 // fill (LRM 6.7.1).
 auto FillType(const mir::CompilationUnit& unit) -> mir::TypeId {
@@ -173,15 +149,6 @@ auto StructMethodCall(
                   .declaration = std::move(declaration), .answers = answers},
           .receiver = receiver},
       std::move(operands), result);
-}
-
-auto AsBool(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId bit)
-    -> mir::ExprId {
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = bit},
-          .type = unit.builtins.machine_bool});
 }
 
 auto Combined(
@@ -255,7 +222,7 @@ class Synthesizer {
   }
   // The one-bit answer `==` gives over two of this struct.
   auto EqualityType() -> mir::TypeId {
-    return EqualityTypeOver(Unit(), members_);
+    return OneBitAnswerType(Unit(), members_);
   }
 
   // The stream this struct makes, which every method over one has.
@@ -332,22 +299,19 @@ auto Synthesizer::Equality() -> mir::StructMethod {
   return Method(
       support::ValueOperator::kEquality, {structure_, structure_}, answer_type,
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        mir::ExprId answer = ConvertToType(
-            Unit(), block, BuildBit1Literal(Unit(), block, true), answer_type);
+        std::vector<mir::ExprId> equal;
+        equal.reserve(members_.size());
         for (std::size_t i = 0; i < members_.size(); ++i) {
           const mir::ExprId lhs = Member(block, p[0], i);
           const mir::ExprId rhs = Member(block, p[1], i);
-          const mir::ExprId member = ConvertToType(
+          equal.push_back(ConvertToType(
               Unit(), block,
               block.exprs.Add(BuildMirBinaryExpr(
                   Unit(), block, hir::BinaryOp::kEquality, lhs, rhs,
-                  EqualityTypeOver(Unit(), {&members_[i], 1}))),
-              answer_type);
-          answer = block.exprs.Add(BuildMirBinaryExpr(
-              Unit(), block, hir::BinaryOp::kLogicalAnd, answer, member,
+                  OneBitAnswerType(Unit(), {&members_[i], 1}))),
               answer_type));
         }
-        return answer;
+        return BuildMirLogicalAnd(Unit(), block, answer_type, equal);
       });
 }
 
@@ -375,16 +339,13 @@ auto Synthesizer::CaseEqual() -> mir::StructMethod {
   return Method(
       support::BuiltinFn::kCaseEqual, {structure_, structure_}, bit,
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        mir::ExprId answer = BuildBit1Literal(Unit(), block, true);
+        std::vector<mir::ExprId> equal;
+        equal.reserve(members_.size());
         for (std::size_t i = 0; i < members_.size(); ++i) {
-          answer = Combined(
-              block, mir::BinaryOp::kLogicalAnd, answer,
-              BuildCaseEquality(
-                  Unit(), block, Member(block, p[0], i),
-                  Member(block, p[1], i)),
-              bit);
+          equal.push_back(BuildCaseEquality(
+              Unit(), block, Member(block, p[0], i), Member(block, p[1], i)));
         }
-        return answer;
+        return BuildMirLogicalAnd(Unit(), block, bit, equal);
       });
 }
 
@@ -393,17 +354,13 @@ auto Synthesizer::BitIdentical() -> mir::StructMethod {
   return Method(
       support::BuiltinFn::kBitIdentical, {structure_, structure_}, boolean,
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        mir::ExprId answer =
-            AsBool(Unit(), block, BuildBit1Literal(Unit(), block, true));
+        std::vector<mir::ExprId> identical;
+        identical.reserve(members_.size());
         for (std::size_t i = 0; i < members_.size(); ++i) {
-          answer = Combined(
-              block, mir::BinaryOp::kLogicalAnd, answer,
-              BuildBitIdentity(
-                  Unit(), block, Member(block, p[0], i),
-                  Member(block, p[1], i)),
-              boolean);
+          identical.push_back(BuildBitIdentity(
+              Unit(), block, Member(block, p[0], i), Member(block, p[1], i)));
         }
-        return answer;
+        return AllHold(Unit(), block, identical);
       });
 }
 
@@ -412,14 +369,13 @@ auto Synthesizer::HasUnknown() -> mir::StructMethod {
   return Method(
       support::BuiltinFn::kHasUnknown, {structure_}, boolean,
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        mir::ExprId answer =
-            AsBool(Unit(), block, BuildBit1Literal(Unit(), block, false));
+        std::vector<mir::ExprId> unknown;
+        unknown.reserve(members_.size());
         for (std::size_t i = 0; i < members_.size(); ++i) {
-          answer = Combined(
-              block, mir::BinaryOp::kLogicalOr, answer,
-              BuildHasUnknown(Unit(), block, Member(block, p[0], i)), boolean);
+          unknown.push_back(
+              BuildHasUnknown(Unit(), block, Member(block, p[0], i)));
         }
-        return answer;
+        return AnyHolds(Unit(), block, unknown);
       });
 }
 
@@ -615,6 +571,29 @@ auto StructMethodsOf(
   return methods;
 }
 
+auto CarriesUnknowns(const mir::CompilationUnit& unit, mir::TypeId type)
+    -> bool {
+  const mir::Type& t = unit.types.Get(type);
+  if (t.IsIntegralPacked()) {
+    return IsFourState(t.PackedShape().state_kind);
+  }
+  return std::ranges::any_of(PartTypes(unit, type), [&](mir::TypeId part) {
+    return CarriesUnknowns(unit, part);
+  });
+}
+
+auto OneBitAnswerType(
+    const mir::CompilationUnit& unit, std::span<const mir::TypeId> operands)
+    -> mir::TypeId {
+  const bool carries_unknowns = std::ranges::any_of(
+      operands,
+      [&](mir::TypeId operand) { return CarriesUnknowns(unit, operand); });
+  return carries_unknowns
+             ? mir::PackedVectorOf(
+                   unit.types, 1, mir::IntegralStateKind::kFourState)
+             : unit.builtins.bit1;
+}
+
 auto BuildValueOperation(
     const mir::CompilationUnit& unit, mir::Block& block,
     support::BuiltinFn entry, std::optional<mir::ExprId> receiver,
@@ -645,7 +624,7 @@ auto BuildStructComparison(
   }
   return StructMethodCall(
       block, *std::move(structure), comparison, lhs, {rhs},
-      EqualityTypeOver(unit, *mir::ProductElements(unit, type)));
+      OneBitAnswerType(unit, *mir::ProductElements(unit, type)));
 }
 
 auto BuildCaseEquality(

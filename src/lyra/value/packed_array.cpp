@@ -1860,20 +1860,6 @@ auto PackedArray::operator!() const -> PackedArray {
   throw InternalError("operator!: unhandled Truthiness");
 }
 
-auto PackedArray::LogicalImplication(const PackedArray& other) const
-    -> PackedArray {
-  const auto a = Truth();
-  const auto b = other.Truth();
-  const bool result_four_state = is_four_state_ || other.is_four_state_;
-  if (a == Truthiness::kKnownZero || b == Truthiness::kKnownNonzero) {
-    return OneBitResult(true, result_four_state);
-  }
-  if (a == Truthiness::kKnownNonzero && b == Truthiness::kKnownZero) {
-    return OneBitResult(false, result_four_state);
-  }
-  return AllX(1U, false);
-}
-
 auto PackedArray::LogicalEquivalence(const PackedArray& other) const
     -> PackedArray {
   const auto a = Truth();

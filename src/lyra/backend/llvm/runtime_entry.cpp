@@ -676,7 +676,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kLogicalShiftRightAssign:
     case support::BuiltinFn::kArithmeticShiftRightAssign:
     case support::BuiltinFn::kBitwiseXnor:
-    case support::BuiltinFn::kLogicalImplication:
     case support::BuiltinFn::kLogicalEquivalence:
     case support::BuiltinFn::kWildcardEquals:
     case support::BuiltinFn::kCaseEqual:

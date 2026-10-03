@@ -1,8 +1,18 @@
 // A while-loop evaluates its control expression before each pass and repeats
 // its statement for as long as that expression is true, so whatever the body
 // changes is what ends the loop. A while-loop whose expression is not true when
-// it is reached does not execute its statement at all (LRM 12.7.4).
+// it is reached does not execute its statement at all (LRM 12.7.4). An
+// expression that takes several steps to evaluate, such as a pattern-matching
+// conditional, takes them all again before each pass.
 module Top;
+  typedef union tagged {
+    void Invalid;
+    int  Valid;
+  } vint_t;
+
+  vint_t counter;
+  int matching_passes;
+
   int up;
   int sum;
   int down;
@@ -40,6 +50,16 @@ module Top;
       hits = hits + 1;
       guard = guard + 1;
     end
+
+    // The bound of 10 passes keeps a condition evaluated only once from
+    // looping forever; read once, the condition would hold on every pass.
+    counter = tagged Valid 0;
+    matching_passes = 0;
+    while (matching_passes < 10 &&
+           (counter matches tagged Valid .n ? n : 100) < 3) begin
+      counter = tagged Valid (counter.Valid + 1);
+      matching_passes = matching_passes + 1;
+    end
   end
 
   final begin
@@ -51,6 +71,9 @@ module Top;
     if (doublings !== 8) $fatal(1, "doublings was %0d, expected 8", doublings);
     if (hits !== 0) $fatal(1, "hits was %0d, expected 0", hits);
     if (guard !== 5) $fatal(1, "guard was %0d, expected 5", guard);
+    if (matching_passes !== 3)
+      $fatal(1, "a matching condition allowed %0d passes, expected 3",
+             matching_passes);
     $display("All checks passed");
   end
 endmodule

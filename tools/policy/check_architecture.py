@@ -905,7 +905,6 @@ A020_STANDING = frozenset({
      "slang::ast::TimingControlKind"),
     ("src/lyra/lowering/ast_to_hir/type.cpp", "slang::ast::SymbolKind"),
     ("src/lyra/lowering/ast_to_hir/unit_identity.cpp", "SymbolKind"),
-    ("src/lyra/lowering/hir_to_mir/expression/operators.cpp", "hir::BinaryOp"),
     ("src/lyra/lowering/hir_to_mir/expression/system/bit_vector.cpp",
      "support::BitCountReading"),
     ("src/lyra/lowering/hir_to_mir/expression/system/file_io.cpp",

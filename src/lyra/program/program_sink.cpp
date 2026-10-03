@@ -729,8 +729,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_packed_arithmetic_shift_right_assign",
       &lyra_rt_packed_arithmetic_shift_right_assign);
   add("lyra_rt_packed_bitwise_xnor", &lyra_rt_packed_bitwise_xnor);
-  add("lyra_rt_packed_logical_implication",
-      &lyra_rt_packed_logical_implication);
   add("lyra_rt_packed_logical_equivalence",
       &lyra_rt_packed_logical_equivalence);
   add("lyra_rt_packed_case_equal", &lyra_rt_packed_case_equal);

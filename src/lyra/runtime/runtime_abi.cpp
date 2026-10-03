@@ -3237,12 +3237,6 @@ auto lyra_rt_packed_bitwise_xnor(const void* lhs, const void* rhs, void* out)
       out, Read<PackedArray>(lhs).BitwiseXnor(Read<PackedArray>(rhs)));
 }
 
-auto lyra_rt_packed_logical_implication(
-    const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(
-      out, Read<PackedArray>(lhs).LogicalImplication(Read<PackedArray>(rhs)));
-}
-
 auto lyra_rt_packed_logical_equivalence(
     const void* lhs, const void* rhs, void* out) -> void* {
   return Emplace(
