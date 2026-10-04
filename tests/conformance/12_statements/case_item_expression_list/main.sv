@@ -2,15 +2,26 @@
 // selected when the case expression matches any one of them. The item
 // expressions are evaluated and compared in the order they are written, and
 // the search ends at the first that matches, so an expression after it in the
-// same list is never evaluated (LRM 12.5). That holds for casez and for a case
-// inside, which match differently and search the same way (LRM 12.5.1,
-// 12.5.4).
+// same list is never evaluated (LRM 12.5) -- nor anything evaluating it would
+// take, such as the handle a property is written through (LRM 8.4). That holds
+// for casez and for a case inside, which match differently and search the same
+// way (LRM 12.5.1, 12.5.4).
 module Top;
+  class Holder;
+    int count;
+  endclass
+
   int calls;
+  Holder kept;
 
   function automatic int counted(int v);
     calls = calls + 1;
     return v;
+  endfunction
+
+  function automatic Holder counted_holder();
+    calls = calls + 1;
+    return kept;
   endfunction
 
   int sel;
@@ -21,6 +32,7 @@ module Top;
   int case_continues = -1;
   int casez_stops = -1;
   int case_inside_stops = -1;
+  int write_after_match = -1;
 
   initial begin
     sel = 1;
@@ -77,6 +89,14 @@ module Top;
       default: calls = calls + 100;
     endcase
     case_inside_stops = calls;
+
+    kept = new;
+    calls = 0;
+    case (sel)
+      counted(2), (counted_holder().count = 2): ;
+      default: calls = calls + 100;
+    endcase
+    write_after_match = calls;
   end
 
   final begin
@@ -98,6 +118,9 @@ module Top;
     if (case_inside_stops !== 1)
       $fatal(1, "a case inside list evaluated %0d expressions to reach its first, expected 1",
              case_inside_stops);
+    if (write_after_match !== 1 || kept.count !== 0)
+      $fatal(1, "a write after the matching expression ran %0d calls and left %0d, expected 1 and 0",
+             write_after_match, kept.count);
     $display("All checks passed");
   end
 endmodule

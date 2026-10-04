@@ -211,8 +211,10 @@ auto BuildConjunction(
   auto first_or = terms.front().evaluate(steps.Frame());
   if (!first_or) return std::unexpected(std::move(first_or.error()));
   const mir::LocalId held = steps.DeclareLocal(series_type, truth(*first_or));
-  auto rest_or =
-      BuildConjunction(unit, terms.subspan(1), series_type, steps.Frame());
+  auto rest_or = ConditionallyEvaluated(
+      steps.Frame(), [&](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+        return BuildConjunction(unit, terms.subspan(1), series_type, at);
+      });
   if (!rest_or) return std::unexpected(std::move(rest_or.error()));
   const mir::ExprId value = body.exprs.Add(MakeConditional(
       ReduceToCondition(unit, body, ReadLocal(body, held, series_type)),
@@ -221,6 +223,14 @@ auto BuildConjunction(
 }
 
 }  // namespace
+
+auto ConditionallyEvaluated(const WalkFrame& frame, const Evaluation& operand)
+    -> diag::Result<mir::ExprId> {
+  BlockBuilder point(frame);
+  auto value_or = operand(point.Frame());
+  if (!value_or) return std::unexpected(std::move(value_or.error()));
+  return frame.current_block->exprs.Add(point.Build(*value_or));
+}
 
 auto BuildTruth(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
@@ -304,9 +314,9 @@ auto BuildSelection(
   }
   auto predicate_or = predicate.evaluate(frame);
   if (!predicate_or) return std::unexpected(std::move(predicate_or.error()));
-  auto then_or = then_arm(frame);
+  auto then_or = ConditionallyEvaluated(frame, then_arm);
   if (!then_or) return std::unexpected(std::move(then_or.error()));
-  auto else_or = else_arm(frame);
+  auto else_or = ConditionallyEvaluated(frame, else_arm);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   return MakeConditional(
       ReduceToCondition(unit, *frame.current_block, *predicate_or), *then_or,

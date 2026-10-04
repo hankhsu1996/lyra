@@ -180,8 +180,13 @@ merged node.
       series; this is the reading the front end's constant evaluation takes, so an expression means
       the same at elaboration and at run time. An expression that takes several steps to evaluate,
       such as a pattern-matching conditional, takes them where it stands, so an arm not selected
-      takes none and a loop condition takes them before each pass. `<->` and `inside` evaluate every
-      operand. A chain of conditionals over four-state predicates emits text linear in its length.
+      takes none and a loop condition takes them before each pass. That covers the steps a write
+      takes on the way to its target: a property written in an operand not taken does not compute
+      the handle it would be written through, and a tagged union's member written there neither runs
+      its index nor fails its tag check (LRM 11.9), wherever the operand stands -- an arm of `?:`,
+      the second operand of `&&`, `||` or `->`, a later `&&&` clause, a later expression of a case
+      item. `<->` and `inside` evaluate every operand. A chain of conditionals over four-state
+      predicates emits text linear in its length.
 
 ## Cross-references
 

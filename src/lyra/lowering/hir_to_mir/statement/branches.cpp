@@ -329,10 +329,16 @@ auto LowerCaseStmt(
     if (labels.empty()) {
       throw InternalError("LowerCaseStmt: case item has no labels");
     }
+    // The search ends at the first label that matches, so each label after
+    // the first is evaluated only on the runs the ones before it missed.
     std::vector<mir::ExprId> tests;
     tests.reserve(labels.size());
     for (const hir::ExprId label_expr : labels) {
-      auto test_or = label_test(at, label_expr);
+      const Evaluation test = [&](const WalkFrame& point) {
+        return label_test(point, label_expr);
+      };
+      auto test_or =
+          tests.empty() ? test(at) : ConditionallyEvaluated(at, test);
       if (!test_or) return std::unexpected(std::move(test_or.error()));
       tests.push_back(*test_or);
     }

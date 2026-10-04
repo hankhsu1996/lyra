@@ -5,7 +5,15 @@
 // matched, since what the filter reads is what the pattern bound (LRM 12.6.1).
 // A clause whose value is unknown has not succeeded either, so the clauses
 // after it are not evaluated and an if statement does not take the predicate.
+// A clause not evaluated takes none of what evaluating it would, such as the
+// handle a property is written through (LRM 8.4).
 module Top;
+  class Holder;
+    int count;
+  endclass
+
+  Holder kept;
+
   typedef union tagged {
     void Invalid;
     int  Valid;
@@ -18,6 +26,12 @@ module Top;
     return v;
   endfunction
 
+  function automatic Holder counted_holder();
+    calls = calls + 1;
+    return kept;
+  endfunction
+
+  int write_clause_skipped = -1;
   int if_clause_skipped = -1;
   int conditional_clause_skipped = -1;
   int conditional_clause_needed = -1;
@@ -66,6 +80,11 @@ module Top;
       default: calls = calls + 100;
     endcase
     filter_after_matched_pattern = calls;
+
+    kept = new;
+    calls = 0;
+    if (low &&& ((counted_holder().count = 6) > 0)) calls = calls + 100;
+    write_clause_skipped = calls;
   end
 
   final begin
@@ -87,6 +106,9 @@ module Top;
     if (clause_after_unknown !== 0)
       $fatal(1, "an if clause after an unknown one left %0d, expected 0",
              clause_after_unknown);
+    if (write_clause_skipped !== 0 || kept.count !== 0)
+      $fatal(1, "a later clause writing a property ran %0d calls and left %0d, expected 0 and 0",
+             write_clause_skipped, kept.count);
     $display("All checks passed");
   end
 endmodule
