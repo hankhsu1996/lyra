@@ -631,7 +631,7 @@ auto PopulateForeignImportBoundary(
   struct Writeback {
     mir::LocalId temp{};
     mir::TypeId carrier_type{};
-    hir::ExprId actual{};
+    AccessPath actual;
     support::DpiCarrier carrier{};
     mir::TypeId sv_type{};
   };
@@ -645,10 +645,26 @@ auto PopulateForeignImportBoundary(
     const hir::DpiParamAbi& param = import.params[i];
     const support::DpiCarrier& carrier = param.carrier;
 
-    auto sv_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
-    if (!sv_or) return std::unexpected(std::move(sv_or.error()));
-    const mir::TypeId actual_type = sv_or->type;
-    const mir::ExprId seed_sv = body.exprs.Add(*std::move(sv_or));
+    // An actual the foreign side writes back to is read to seed its boundary
+    // object and written once the call returns, and the source writes it once.
+    std::optional<AccessPath> written_place;
+    mir::TypeId actual_type{};
+    mir::ExprId seed_sv{};
+    if (support::DpiDirectionWritesBack(param.direction)) {
+      const hir::Expr& actual_hir = hir_exprs.Get(actual);
+      auto place_or = lowerer.LowerLhsExpr(actual_hir, cframe);
+      if (!place_or) return std::unexpected(std::move(place_or.error()));
+      actual_type = unit_lowerer.TranslateType(actual_hir.type);
+      ReadThenWritten taken =
+          ReadThenWrite(unit_lowerer, cframe, *std::move(place_or));
+      seed_sv = taken.incoming;
+      written_place = std::move(taken.place);
+    } else {
+      auto sv_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
+      if (!sv_or) return std::unexpected(std::move(sv_or.error()));
+      actual_type = sv_or->type;
+      seed_sv = body.exprs.Add(*std::move(sv_or));
+    }
 
     if (CrossesByValue(param)) {
       call_args.push_back(MarshalSvToCarrier(unit, body, seed_sv, carrier));
@@ -670,12 +686,12 @@ auto PopulateForeignImportBoundary(
     call_args.push_back(
         BuildBoundaryArgument(unit, body, carrier, temp, carrier_type));
 
-    if (support::DpiDirectionWritesBack(param.direction)) {
+    if (written_place.has_value()) {
       writebacks.push_back(
           Writeback{
               .temp = temp,
               .carrier_type = carrier_type,
-              .actual = actual,
+              .actual = *std::move(written_place),
               .carrier = carrier,
               // An open array's shape is the actual's, fixed only at the call
               // (LRM 35.6.1.1), where every other carrier reads back into the
@@ -708,8 +724,6 @@ auto PopulateForeignImportBoundary(
   }
 
   for (const Writeback& wb : writebacks) {
-    auto lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(wb.actual), cframe);
-    if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
     const mir::ExprId temp_ref =
         body.exprs.Add(mir::MakeLocalRefExpr(wb.temp, wb.carrier_type));
 
@@ -717,7 +731,7 @@ auto PopulateForeignImportBoundary(
         unit_lowerer, cframe, wb.carrier, temp_ref, wb.carrier_type,
         wb.sv_type);
     const mir::Expr assign =
-        BuildStoreExpr(unit, body, *lhs_or, rhs_id, std::nullopt, wb.sv_type);
+        BuildStoreExpr(unit, body, wb.actual, rhs_id, std::nullopt, wb.sv_type);
     body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign)});
   }
 

@@ -5,8 +5,6 @@
 //   - while / do-while loops (12.7.2)
 //   - repeat loop (12.7.2)
 //   - forever loop (12.7.2)
-// foreach is handled separately in foreach.cpp because of its closure-shaped
-// rewrite into a counter-driven for loop.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"

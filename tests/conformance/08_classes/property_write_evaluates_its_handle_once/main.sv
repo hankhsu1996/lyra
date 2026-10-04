@@ -10,6 +10,7 @@ module Top;
     int         plain;
     int         many [0:3];
     logic [7:0] bits;
+    int         count;
   endclass
 
   Holder held;
@@ -28,6 +29,12 @@ module Top;
   int on_bit_write = -1;
   int on_assignment_operator = -1;
   int on_nonblocking = -1;
+  int on_loop_increment = -1;
+  int on_loop_assignment = -1;
+  int on_while_condition = -1;
+  int on_do_condition = -1;
+  int while_passes;
+  int do_passes;
 
   initial begin
     held = new;
@@ -56,6 +63,31 @@ module Top;
     calls = 0;
     counted().plain <= 11;
     on_nonblocking = calls;
+
+    // "Once each time the access is evaluated" is once per evaluation: a loop's
+    // step is evaluated after every iteration, so an increment written there
+    // runs the handle's call once per step, and an assignment written there
+    // does too. A while-loop's condition is evaluated before each pass and a
+    // do...while-loop's after each (LRM 12.7.4, 12.7.5), so an increment
+    // written in either runs the call once per evaluation of the condition,
+    // the one that ends the loop included.
+    calls = 0;
+    for (int i = 0; i < 3; counted().many[0]++) i++;
+    on_loop_increment = calls;
+
+    calls = 0;
+    for (int i = 0; i < 3; counted().many[1] = i) i++;
+    on_loop_assignment = calls;
+
+    held.count = 0;
+    calls = 0;
+    while (counted().count++ < 3) while_passes = while_passes + 1;
+    on_while_condition = calls;
+
+    held.count = 0;
+    calls = 0;
+    do do_passes = do_passes + 1; while (counted().count++ < 3);
+    on_do_condition = calls;
   end
 
   final begin
@@ -79,6 +111,30 @@ module Top;
       $fatal(1,
              "a nonblocking assignment ran the handle's call %0d times, expected 1",
              on_nonblocking);
+    if (on_loop_increment !== 3)
+      $fatal(1,
+             "an increment in a loop's step ran the handle's call %0d times over 3 steps, expected 3",
+             on_loop_increment);
+    if (on_loop_assignment !== 3)
+      $fatal(1,
+             "an assignment in a loop's step ran the handle's call %0d times over 3 steps, expected 3",
+             on_loop_assignment);
+    if (held.many[0] !== 3)
+      $fatal(1, "the loop left many[0] at %0d, expected 3", held.many[0]);
+    if (while_passes !== 3)
+      $fatal(1, "the while-loop made %0d passes, expected 3", while_passes);
+    if (on_while_condition !== 4)
+      $fatal(1,
+             "a while-loop's condition ran the handle's call %0d times over 4 evaluations, expected 4",
+             on_while_condition);
+    if (do_passes !== 4)
+      $fatal(1, "the do...while-loop made %0d passes, expected 4", do_passes);
+    if (on_do_condition !== 4)
+      $fatal(1,
+             "a do...while-loop's condition ran the handle's call %0d times over 4 evaluations, expected 4",
+             on_do_condition);
+    if (held.count !== 4)
+      $fatal(1, "the loops left count at %0d, expected 4", held.count);
     // The accesses themselves took effect.
     if (got !== 4) $fatal(1, "the read answered %0d, expected 4", got);
     if (held.plain !== 11)

@@ -5,6 +5,7 @@
 #include <expected>
 #include <limits>
 #include <optional>
+#include <span>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -162,16 +163,32 @@ auto LowerDistributionSystemSubroutineCall(
   mir::Block& body = steps.Body();
   const WalkFrame& step_frame = steps.Frame();
 
+  // LRM 20.14.1 / 20.14.2 make the seed an integral variable the draw reads and
+  // advances. A seed declared as something other than the entry's own operand
+  // type is read through a conversion, and the variable is what the conversion
+  // reads -- the store then lands the advanced value in the declared type,
+  // which is what the design reads next.
+  const hir::Expr& hir_seed =
+      hir_exprs.Get(SeedVariable(hir_exprs, operands[0]));
+  const mir::TypeId seed_type = unit_lowerer.TranslateType(hir_seed.type);
+  auto seed_place_or = lowerer.LowerLhsExpr(hir_seed, step_frame);
+  if (!seed_place_or) {
+    return std::unexpected(std::move(seed_place_or.error()));
+  }
+  const ReadThenWritten seed =
+      ReadThenWrite(unit_lowerer, step_frame, *std::move(seed_place_or));
+
+  // Every argument is an integer value (LRM 20.14.2) whatever integral type the
+  // design declared it, and the generator works in 32 signed bits.
   std::vector<mir::ExprId> arguments;
   arguments.reserve(operands.size());
-  for (const hir::ExprId operand : operands) {
+  arguments.push_back(ConvertToType(unit, body, seed.incoming, int_type));
+  for (const hir::ExprId operand : std::span{operands}.subspan(1)) {
     auto lowered = lowerer.LowerExpr(hir_exprs.Get(operand), step_frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
     const mir::ExprId raw = body.exprs.Add(*std::move(lowered));
-    // Every argument is an integer value (LRM 20.14.2) whatever integral type
-    // the design declared it, and the generator works in 32 signed bits.
     arguments.push_back(ConvertToType(unit, body, raw, int_type));
   }
   // LRM Annex N Table N.1: a seeded `$random` is the uniform draw bounded by
@@ -197,19 +214,6 @@ auto LowerDistributionSystemSubroutineCall(
       steps.Bindings().DeclareAnonymous(payload_type);
   body.AppendStmt(mir::LocalDeclStmt{.target = completion, .init = draw_call});
 
-  // LRM 20.14.1 / 20.14.2 make the seed an integral variable the draw advances,
-  // so what the store writes back to is that variable. A seed declared as
-  // something other than the entry's own operand type is read through a
-  // conversion, and the variable is what the conversion reads -- the store then
-  // lands the advanced value in the declared type, which is what the design
-  // reads next.
-  const hir::Expr& hir_seed =
-      hir_exprs.Get(SeedVariable(hir_exprs, operands[0]));
-  const mir::TypeId seed_type = unit_lowerer.TranslateType(hir_seed.type);
-  auto seed_place_or = lowerer.LowerLhsExpr(hir_seed, step_frame);
-  if (!seed_place_or) {
-    return std::unexpected(std::move(seed_place_or.error()));
-  }
   const mir::ExprId advanced = ConvertToType(
       unit, body,
       ProjectCompletionComponent(
@@ -218,7 +222,7 @@ auto LowerDistributionSystemSubroutineCall(
   body.AppendStmt(
       mir::ExprStmt{
           .expr = body.exprs.Add(BuildStoreExpr(
-              unit, body, *seed_place_or, advanced, std::nullopt, seed_type))});
+              unit, body, seed.place, advanced, std::nullopt, seed_type))});
 
   return steps.Build(ProjectCompletionComponent(
       body, completion, payload_type, kDrawnValue, int_type));

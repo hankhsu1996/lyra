@@ -81,14 +81,13 @@ void AppendRuntimeEffectStmt(
 
 // Builds the diagnostic broker expression `current_runtime().Diagnostic()`:
 // a `Diagnostic` method call on the engine handle, typed as the unit's
-// `diagnostic` builtin. Returns the call detached; the caller interns it.
-// The caller supplies `runtime_id` because every site that reaches the broker
-// is a chain that already has one interned in the surrounding sequence.
+// `diagnostic` builtin. Returns the call detached; the caller interns it. The
+// engine handle is interned into `block` as a child.
 // LRM 20.10 `$info` / `$warning` / `$error` thread the resulting handle as
 // the receiver of their severity-fixed Emit methods, and so does the report a
 // tool issues on its own behalf.
 [[nodiscard]] auto BuildDiagnosticCallExpr(
-    const mir::CompilationUnit& unit, mir::ExprId runtime_id) -> mir::Expr;
+    const mir::CompilationUnit& unit, mir::Block& block) -> mir::Expr;
 
 // The call handing one report to the diagnostic broker at `severity` (LRM
 // 20.10): the origin the dispatcher attributes and rate-limits by, and the text
@@ -115,14 +114,13 @@ void AppendToolReportStmt(
 // Builds the format-text expression `value::Format(items,
 // runtime.TimeFormat())`: a value-layer free call over the print-item array
 // that yields an SV `string`, taking the engine's `$timeformat` state as an
-// explicit operand. The `TimeFormat` reader call is interned into `block` as a
-// child; the outer Format call is returned detached for the caller to intern.
-// The caller supplies `runtime_id` because a chained call already has one
-// interned in the surrounding sequence. LRM 20.4.3 / 21.2.1: the `$display`,
+// explicit operand. The `TimeFormat` reader call and the engine handle it reads
+// are interned into `block` as children; the outer Format call is returned
+// detached for the caller to intern. LRM 20.4.3 / 21.2.1: the `$display`,
 // `$info`, and `$sformat` families and the deferred-check cascade all format
 // through this one path.
 [[nodiscard]] auto BuildFormatCallExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId runtime_id,
+    const mir::CompilationUnit& unit, mir::Block& block,
     mir::ExprId items_array) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

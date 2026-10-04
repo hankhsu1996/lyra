@@ -68,6 +68,14 @@ that identity is the suspect, not the analysis.
    Downstream layers consume HIR identity, never frontend identity. _Source-faithful consequence:
    the cutover from frontend to compiler-owned identity happens at one boundary, not by gradual
    propagation._
+7. An expression the source wrote once is one node, held by one construct. A construct whose meaning
+   uses an operand several times -- `$` in a queue's index, a `foreach` over an array, a net joined
+   to several others -- states the operand once and says what the construct is; working out how
+   often and where the operand is then read is the translation's job. A description of what a body
+   reads or waits on names expressions the body already holds and is not a second holder. The unit's
+   verification refuses a unit that breaks this, where the unit is produced. _Source-faithful
+   consequence: HIR is a tree because the source is one, and a node with two holders is a
+   translation done a layer early._
 
 ## Boundary to Adjacent Layers
 

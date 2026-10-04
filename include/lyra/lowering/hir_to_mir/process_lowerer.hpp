@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <format>
 #include <map>
 #include <optional>
@@ -316,6 +317,11 @@ class ProcessLowerer {
     return binding;
   }
 
+  // A label no other loop of this body carries.
+  [[nodiscard]] auto NextLoopLabel() -> mir::LoopLabelId {
+    return mir::LoopLabelId{loop_label_count_++};
+  }
+
   // The owner class's constructor-time frame -- the base each body lowering
   // extends with its own block / bindings. Carries the outer-class context
   // (self pointer type, scope chain) so a body frame derived from it
@@ -384,6 +390,7 @@ class ProcessLowerer {
   std::vector<DeclaredVariable> output_locals_;
 
   std::map<hir::ProceduralVarId, PromotedVarBinding> pending_activation_;
+  std::uint32_t loop_label_count_ = 0;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

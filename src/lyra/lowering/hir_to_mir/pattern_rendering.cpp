@@ -11,17 +11,20 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -47,11 +50,6 @@ constexpr std::string_view kNameMark = ":";
 // An element of a pattern occupies no field of its own (LRM 21.2.1.6), which
 // is what the spec a leaf is handed asks for.
 constexpr std::int32_t kNoField = 0;
-
-// The index an associative traversal reports it visited: a completion carries
-// the result first and then what each output formal received (LRM 7.9.4), and
-// this entry has one.
-constexpr base::ComponentIndex kVisitedIndex{1};
 
 auto Read(const WalkFrame& frame, mir::LocalId local, mir::TypeId type)
     -> mir::ExprId {
@@ -140,8 +138,8 @@ class Renderer {
       -> mir::ExprId;
   auto TraversalStep(
       const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
-      mir::LocalId key, mir::TypeId key_type, mir::TypeId visit_type,
-      support::BuiltinFn entry) -> mir::ExprId;
+      mir::LocalId key, mir::TypeId key_type, support::BuiltinFn entry)
+      -> mir::ExprId;
 
   UnitLowerer* unit_lowerer_;
 };
@@ -192,9 +190,7 @@ auto Renderer::FormatLeaf(
           mir::FormatModifiers{.width = kNoField}))};
   const mir::ExprId array =
       block.exprs.Add(BuildPrintItemsArray(Unit(), block, items, 0));
-  const mir::ExprId runtime =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(Owner()));
-  return block.exprs.Add(BuildFormatCallExpr(Unit(), block, runtime, array));
+  return block.exprs.Add(BuildFormatCallExpr(Unit(), block, array));
 }
 
 auto Renderer::Named(
@@ -453,8 +449,11 @@ auto Renderer::BuildEnumeration(
   const mir::TypeId mir_type = Owner().TranslateType(type);
   mir::Block& block = *frame.current_block;
 
-  const mir::ExprId name = block.exprs.Add(BuildEnumNameCallExpr(
-      Owner(), block, Read(frame, value, mir_type), type));
+  // The name is asked for whether it is empty and is then the answer, so it is
+  // looked up once.
+  const mir::ExprId name = EvaluatedOnce(
+      frame, block.exprs.Add(BuildEnumNameCallExpr(
+                 Owner(), block, Read(frame, value, mir_type), type)));
   const mir::ExprId base_text =
       FormatLeaf(frame, Read(frame, value, mir_type), mir_type);
 
@@ -609,39 +608,19 @@ auto Renderer::BuildIndexedElements(
   return Join(frame, {Read(frame, text, StringType()), Text(frame, kClose)});
 }
 
-// One step of the LRM 7.9.4 / 7.9.6 traversal: the call reports whether it
-// visited an entry and hands back the index it visited, which the step writes
-// into the key before the body reads it.
+// One step of the LRM 7.9.4 / 7.9.6 traversal of `value`, leaving the index it
+// visited in `key` and answering whether it visited an entry.
 auto Renderer::TraversalStep(
     const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
-    mir::LocalId key, mir::TypeId key_type, mir::TypeId visit_type,
-    support::BuiltinFn entry) -> mir::ExprId {
+    mir::LocalId key, mir::TypeId key_type, support::BuiltinFn entry)
+    -> mir::ExprId {
   BlockBuilder step(frame);
   const WalkFrame& inner = step.Frame();
-  mir::Block& body = step.Body();
-
-  const mir::ExprId visited = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = entry,
-                          .receiver = Read(inner, value, mir_type)},
-                  .arguments = {Read(inner, key, key_type)}},
-          .type = visit_type});
-  const mir::LocalId visit = step.Bindings().DeclareAnonymous(visit_type);
-  body.AppendStmt(mir::LocalDeclStmt{.target = visit, .init = visited});
-
-  const mir::ExprId index = body.exprs.Add(
-      mir::MakeComponentExpr(
-          Read(inner, visit, visit_type), kVisitedIndex, key_type));
-  body.AppendStmt(mir::ExprStmt{.expr = Assign(inner, key, key_type, index)});
-
-  const mir::ExprId more = body.exprs.Add(
-      mir::MakeComponentExpr(
-          Read(inner, visit, visit_type), kCompletionResult, IntType()));
-  return frame.current_block->exprs.Add(step.Build(more));
+  const mir::ExprId array = Read(inner, value, mir_type);
+  return frame.current_block->exprs.Add(BuildAssociativeTraversal(
+      Owner(), step, entry, array,
+      AccessPath{.owner = Read(inner, key, key_type), .descent = {}}, key_type,
+      IntType()));
 }
 
 // The entries of an associative array (LRM 7.8), each printed under the index
@@ -654,8 +633,6 @@ auto Renderer::BuildAssociativeEntries(
   const mir::TypeId mir_type = Owner().TranslateType(type);
   const mir::TypeId key_type = Owner().TranslateType(array.key_type);
   const mir::TypeId element_mir = Owner().TranslateType(array.element_type);
-  const mir::TypeId visit_type =
-      CompletionPayloadType(Unit(), {IntType(), key_type});
   mir::Block& block = *frame.current_block;
 
   const mir::LocalId text = frame.bindings->DeclareAnonymous(StringType());
@@ -711,11 +688,9 @@ auto Renderer::BuildAssociativeEntries(
   const mir::BlockId loop_scope = block.child_scopes.Add(std::move(loop_body));
 
   const mir::ExprId first = TraversalStep(
-      frame, value, mir_type, key, key_type, visit_type,
-      support::BuiltinFn::kAssocFirst);
+      frame, value, mir_type, key, key_type, support::BuiltinFn::kAssocFirst);
   const mir::ExprId next = TraversalStep(
-      frame, value, mir_type, key, key_type, visit_type,
-      support::BuiltinFn::kAssocNext);
+      frame, value, mir_type, key, key_type, support::BuiltinFn::kAssocNext);
   const mir::ExprId next_more = Assign(frame, more, IntType(), next);
   const mir::ExprId next_ordinal = Assign(
       frame, ordinal, IntType(),

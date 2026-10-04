@@ -53,10 +53,7 @@ auto BuildSFormatCallExpr(
   const mir::ExprId items_array = block.exprs.Add(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-
-  return BuildFormatCallExpr(unit, block, runtime_id, items_array);
+  return BuildFormatCallExpr(unit, block, items_array);
 }
 
 }  // namespace

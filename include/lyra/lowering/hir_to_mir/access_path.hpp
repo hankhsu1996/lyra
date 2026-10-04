@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -124,11 +126,103 @@ struct AccessPath {
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
 
+// The read `step` takes from the value `receiver` names: its value entry,
+// answering at the part's type.
+[[nodiscard]] auto StepRead(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const DescentStep& step, mir::ExprId receiver) -> mir::Expr;
+
+// What a step's read answered with, as a value a consumer may keep. A packed
+// part is answered as a view of the value it is a part of, so it is taken as a
+// value of its own (Rust's `&[T]::to_owned() -> Vec<T>` pattern); any other
+// part already is one.
+[[nodiscard]] auto OwnedValue(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::Expr read)
+    -> mir::Expr;
+
+// The type a read of a part of `source_type` answers at, where the part is
+// declared `part_type`. LRM 11.8.1: a part-select is unsigned regardless of the
+// operands, and its state domain follows the value it selects from, so a member
+// of a packed aggregate (LRM 7.2.1, selected as a part-select of the
+// aggregate's vector) is produced with the member's dimensions, unsigned, in
+// the aggregate's state domain. The member's declared signedness and, for a
+// 2-state member of a 4-state aggregate, its narrower state domain are reached
+// by an explicit conversion of what was read. A part of a value that is not
+// packed is read at its declared type.
+[[nodiscard]] auto PartSelectNaturalType(
+    mir::CompilationUnit& unit, mir::TypeId source_type, mir::TypeId part_type)
+    -> mir::TypeId;
+
 // The path as an expression yielding the part's value, for a caller that reads
-// it and writes nothing.
+// it and writes nothing. A packed part is yielded as the view its step answers
+// with.
 [[nodiscard]] auto PathValue(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
+
+// The path's value as one a consumer may keep, at the type the part is declared
+// with: a packed part is read at the type the read answers at, taken as a value
+// of its own, and brought to its declared type.
+[[nodiscard]] auto PathOwnedValue(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    -> mir::ExprId;
+
+// The place `place` names, with whatever is computed on the way to it evaluated
+// here, once: a pointer or a handle the place is reached through is bound to a
+// local of the enclosing body, and the place is formed over that, so it may
+// stand at several places. A place is a name, or a field or a dereference over
+// what it is reached through; a value a computation yields is no place and is
+// refused.
+[[nodiscard]] auto SettledPlace(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId place)
+    -> mir::ExprId;
+
+// The same path with everything it computes evaluated here, once: the way to
+// its owner, the object a property belongs to, and every operand of its steps.
+// A path describes nodes that are evaluated wherever it is taken, so one taken
+// at more than one place is settled first.
+[[nodiscard]] auto Settled(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path)
+    -> AccessPath;
+
+// A part a construct reads at several places: where its owner lies and the
+// descent to it, neither evaluating anything, and the block their nodes are
+// named in. Every read of it reaches the same part. A read asks nothing of the
+// object a property belongs to, so none is named.
+struct SettledPath {
+  const mir::Block* named_in = nullptr;
+  mir::ExprId owner;
+  std::vector<DescentStep> descent;
+};
+
+// `path` settled in the frame's block, for a construct that reads through it
+// and writes nothing.
+[[nodiscard]] auto SettledForRead(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path)
+    -> SettledPath;
+
+// `settled` as a path whose nodes are named in `to`. A node belongs to the
+// block it was added to, so a block nested under the one a path was settled in
+// -- a loop's body, a run of steps -- names the path's nodes afresh to read
+// through it; they evaluate nothing, so the path named again reaches the same
+// part.
+[[nodiscard]] auto NamedIn(const SettledPath& settled, mir::Block& to)
+    -> AccessPath;
+
+// An operand a construct reads and then writes: the place the write lands in,
+// and the value it holds going in.
+struct ReadThenWritten {
+  AccessPath place;
+  mir::ExprId incoming;
+};
+
+// `place` as an operand that is read and then written (LRM 13.5 `inout`): the
+// path is settled here, and the value going in is read through it at the type
+// the part is declared with, so the source's one operand is evaluated once
+// however far apart the read and the write stand.
+[[nodiscard]] auto ReadThenWrite(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath place)
+    -> ReadThenWritten;
 
 // Which bits of the owner's packed value a path names: the lowest bit, counted
 // from the value's least significant bit in the position type, and how many

@@ -296,12 +296,12 @@ this list is what remembers.
       refusal names the construct and is the same whichever unit declares the base. What it waits on
       is a default value crossing into the scope that needs it: the expression is written in the
       declaring class's own scope, so a class extending it cannot simply lower it in its own.
-- [ ] A write to a property evaluates the handle it is reached through twice (LRM 8.4, 11.3.5,
-      11.4.1): `next().count = 1` calls `next` two times, for a whole write, a write of an element
-      or a bit of the property, an assignment operator and a nonblocking assignment alike. A read
-      evaluates it once. The write names the handle once to reach the property and once to name the
-      object that hears the write. The corpus holds the case and records it as a defect on both
-      paths.
+- [x] A write to a property evaluates the handle it is reached through once (LRM 8.4, 11.3.5,
+      11.4.1): `next().count = 1` calls `next` one time, for a whole write, a write of an element or
+      a bit of the property, an assignment operator and a nonblocking assignment alike, as a read
+      does. The handle reaches the property and names the object that hears the write, and both read
+      one evaluation of it. A write standing in a loop's condition or step evaluates the handle once
+      each time that condition or step is evaluated.
 
 ## Open Questions and Deferred Choices
 

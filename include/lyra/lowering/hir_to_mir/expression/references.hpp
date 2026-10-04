@@ -6,6 +6,7 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/primary.hpp"
+#include "lyra/hir/procedural_var.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -24,6 +25,15 @@ auto LowerHirPrimaryExprProc(
 auto LowerHirPrimaryExprStructural(
     const StructuralScopeLowerer& lowerer, WalkFrame frame,
     const hir::Primary& p, mir::TypeId result_type) -> diag::Result<mir::Expr>;
+
+// The storage a variable a body declares is reached at, named in the frame's
+// block: its cell where it has one, the local itself where it is the value.
+// Whichever of the body's storage classes holds the variable (LRM 6.21), this
+// is the one way it is reached, whether the source names it or a construct
+// reads and writes it unnamed. The expression evaluates nothing.
+auto LowerProceduralVarRefExpr(
+    ProcessLowerer& process, const WalkFrame& frame, hir::ProceduralVarId var)
+    -> mir::Expr;
 
 // Translate a folded HIR integral constant to its MIR form. Shared by
 // primary-literal lowering and member-default materialization.

@@ -43,6 +43,13 @@ struct ThisHandle {
   auto operator==(const ThisHandle&) const -> bool = default;
 };
 
+// LRM 7.10.1 `$` in a queue's index or slice bound: the index of the last
+// element of the queue the innermost select enclosing it is taken from. It
+// names no queue itself; which one it asks follows from where it stands.
+struct QueueLastIndex {
+  auto operator==(const QueueLastIndex&) const -> bool = default;
+};
+
 // The routed reference to an object is a primary where an interface instance is
 // named as a value (LRM 25.9): the name stands for the instance itself, which a
 // virtual interface may then hold, rather than for a member of it.
@@ -55,7 +62,8 @@ struct ThisHandle {
 // a read), not by an extra type tag.
 using Primary = std::variant<
     IntegerLiteral, StringLiteral, RealLiteral, NullLiteral, ThisHandle,
-    ProceduralVarRef, ClassPropertyRef, StaticPropertyRef, RoutedValueRef,
-    RoutedObjectRef, IterationBindingRef, PatternVarRef, ExternalUnitValueRef>;
+    QueueLastIndex, ProceduralVarRef, ClassPropertyRef, StaticPropertyRef,
+    RoutedValueRef, RoutedObjectRef, IterationBindingRef, PatternVarRef,
+    ExternalUnitValueRef>;
 
 }  // namespace lyra::hir

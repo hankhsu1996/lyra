@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <utility>
@@ -13,9 +14,12 @@
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/verify.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -151,6 +155,80 @@ auto BuildCompoundExpr(
       op);
 }
 
+// The node `id` of `from`, named again in `to`. Only a node that evaluates
+// nothing can be: a name, a constant, or a place formed over those means the
+// same wherever it is written, while a computation written again would run
+// again.
+auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
+    -> mir::ExprId {
+  const mir::Expr& node = from.exprs.Get(id);
+  const auto again = [&](mir::ExprId operand) {
+    return NamedAgain(from, to, operand);
+  };
+  const auto computes = []() -> mir::ExprData {
+    throw InternalError(
+        "access path: a settled path evaluates nothing, and this one holds a "
+        "node that computes");
+  };
+  mir::ExprData data = std::visit(
+      Overloaded{
+          [](const mir::StringLiteral& e) -> mir::ExprData { return e; },
+          [](const mir::NullLiteral& e) -> mir::ExprData { return e; },
+          [](const mir::MachineBoolLiteral& e) -> mir::ExprData { return e; },
+          [](const mir::MachineIntLiteral& e) -> mir::ExprData { return e; },
+          [](const mir::MachineFloatLiteral& e) -> mir::ExprData { return e; },
+          [](const mir::ReferenceExpr& e) -> mir::ExprData { return e; },
+          [&](const mir::DerefExpr& e) -> mir::ExprData {
+            return mir::DerefExpr{.pointer = again(e.pointer)};
+          },
+          [&](const mir::AddressOfExpr& e) -> mir::ExprData {
+            return mir::AddressOfExpr{.operand = again(e.operand)};
+          },
+          [&](const mir::MachineArrayDataExpr& e) -> mir::ExprData {
+            return mir::MachineArrayDataExpr{.array = again(e.array)};
+          },
+          [&](const mir::FieldAccessExpr& e) -> mir::ExprData {
+            return mir::FieldAccessExpr{
+                .receiver = again(e.receiver), .field = e.field};
+          },
+          [&](const mir::UnaryExpr&) { return computes(); },
+          [&](const mir::BinaryExpr&) { return computes(); },
+          [&](const mir::CastExpr&) { return computes(); },
+          [&](const mir::ConditionalExpr&) { return computes(); },
+          [&](const mir::BlockExpr&) { return computes(); },
+          [&](const mir::AssignExpr&) { return computes(); },
+          [&](const mir::IncDecExpr&) { return computes(); },
+          [&](const mir::CallExpr&) { return computes(); },
+          [&](const mir::MoveExpr&) { return computes(); },
+          [&](const mir::ClosureExpr&) { return computes(); },
+          [&](const mir::CompositeExpr&) { return computes(); },
+          [&](const mir::AwaitExpr&) { return computes(); },
+          [&](const mir::WaitExpr&) { return computes(); },
+          [&](const mir::VectorGetExpr&) { return computes(); }},
+      node.data);
+  return to.exprs.Add(mir::Expr{.data = std::move(data), .type = node.type});
+}
+
+// The type of the value the last step of `path`, which takes at least one,
+// selects within. Every step into a packed value is a run of that one vector
+// (LRM 7.2.1), so where the steps at the end of the descent each enter a packed
+// value, what the last of them selects within is the outermost of those.
+auto ValueSelectedWithin(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    const AccessPath& path) -> mir::TypeId {
+  const auto stepped_into = [&](std::size_t step) {
+    return step == 0 ? PathValueType(
+                           unit, block, {.owner = path.owner, .descent = {}})
+                     : path.descent[step - 1].part_type;
+  };
+  std::size_t first = path.descent.size() - 1;
+  while (first > 0 &&
+         unit.types.Get(stepped_into(first - 1)).IsIntegralPacked()) {
+    --first;
+  }
+  return stepped_into(first);
+}
+
 }  // namespace
 
 auto StepArguments(
@@ -276,11 +354,201 @@ auto PathValue(
         mir::MakeCellLoadCallExpr(path.owner, owner_ty.WrappedValueType()));
   }
   for (const DescentStep& step : path.descent) {
-    reached = CallEntry(
-        block, step.value_entry, step.position, reached,
-        StepArguments(unit, block, step), step.part_type);
+    reached = block.exprs.Add(StepRead(unit, block, step, reached));
   }
   return reached;
+}
+
+auto StepRead(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const DescentStep& step, mir::ExprId receiver) -> mir::Expr {
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target = step.value_entry,
+                      .receiver = receiver,
+                      .position = step.position},
+              .arguments = StepArguments(unit, block, step)},
+      .type = step.part_type};
+}
+
+auto OwnedValue(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::Expr read)
+    -> mir::Expr {
+  const mir::TypeId type = read.type;
+  if (!unit.types.Get(type).IsIntegralPacked()) {
+    return read;
+  }
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kToOwned,
+                      .receiver = block.exprs.Add(std::move(read))},
+              .arguments = {}},
+      .type = type};
+}
+
+auto PartSelectNaturalType(
+    mir::CompilationUnit& unit, mir::TypeId source_type, mir::TypeId part_type)
+    -> mir::TypeId {
+  const auto& source = unit.types.Get(source_type);
+  const auto& part = unit.types.Get(part_type);
+  if (!source.IsIntegralPacked() || !part.IsIntegralPacked()) {
+    return part_type;
+  }
+  mir::PackedArrayType natural = part.PackedShape();
+  natural.signedness = mir::Signedness::kUnsigned;
+  natural.state_kind = source.PackedShape().state_kind;
+  return unit.types.Intern(mir::Type{std::move(natural)});
+}
+
+auto PathOwnedValue(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    -> mir::ExprId {
+  // A path that descends nowhere reads the whole of what its owner holds,
+  // which is a value of its own.
+  if (path.descent.empty()) {
+    return PathValue(unit, block, path);
+  }
+  AccessPath into = path;
+  DescentStep last = std::move(into.descent.back());
+  into.descent.pop_back();
+  const mir::TypeId declared = last.part_type;
+  last.part_type = PartSelectNaturalType(
+      unit, ValueSelectedWithin(unit, block, path), declared);
+  const mir::ExprId receiver = PathValue(unit, block, into);
+  const mir::ExprId owned = block.exprs.Add(
+      OwnedValue(unit, block, StepRead(unit, block, last, receiver)));
+  return ConvertToType(unit, block, owned, declared);
+}
+
+auto SettledPlace(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId place)
+    -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  if (mir::EvaluatesNothing(block, place)) {
+    return place;
+  }
+  // By value: forming the settled place appends to the pool this views.
+  const mir::Expr node = block.exprs.Get(place);
+  // A pointer a computation yields is a value, and holding it in a local names
+  // the same object. Any other value a computation yields names no storage a
+  // place could be formed over again, and no path is rooted at one.
+  const auto computed = [&]() -> mir::ExprId {
+    if (unit_lowerer.Unit().types.Get(node.type).Is<mir::PointerType>()) {
+      return EvaluatedOnce(frame, place);
+    }
+    throw InternalError(
+        "access path: a place named at more than one point is a name, or a "
+        "field or a dereference over what it is reached through, and this one "
+        "is a value a computation yields");
+  };
+  return std::visit(
+      Overloaded{
+          [&](const mir::FieldAccessExpr& field) -> mir::ExprId {
+            return block.exprs.Add(
+                mir::MakeFieldAccessExpr(
+                    SettledPlace(unit_lowerer, frame, field.receiver),
+                    field.field, node.type));
+          },
+          [&](const mir::DerefExpr& deref) -> mir::ExprId {
+            const mir::TypeId reached_through =
+                block.exprs.Get(deref.pointer).type;
+            // A capability wrapper is storage, so what it is reached through
+            // is settled and the wrapper stays where it is; a pointer or a
+            // handle is a value, and holding it in a local names the same
+            // object.
+            if (unit_lowerer.Unit()
+                    .types.Get(reached_through)
+                    .IsCapabilityWrapper()) {
+              return block.exprs.Add(
+                  mir::MakeDerefExpr(
+                      SettledPlace(unit_lowerer, frame, deref.pointer),
+                      node.type));
+            }
+            return block.exprs.Add(
+                mir::MakeDerefExpr(
+                    EvaluatedOnce(frame, deref.pointer), node.type));
+          },
+          [&](const mir::StringLiteral&) { return computed(); },
+          [&](const mir::NullLiteral&) { return computed(); },
+          [&](const mir::MachineBoolLiteral&) { return computed(); },
+          [&](const mir::MachineIntLiteral&) { return computed(); },
+          [&](const mir::MachineFloatLiteral&) { return computed(); },
+          [&](const mir::ReferenceExpr&) { return computed(); },
+          [&](const mir::AddressOfExpr&) { return computed(); },
+          [&](const mir::MachineArrayDataExpr&) { return computed(); },
+          [&](const mir::UnaryExpr&) { return computed(); },
+          [&](const mir::BinaryExpr&) { return computed(); },
+          [&](const mir::CastExpr&) { return computed(); },
+          [&](const mir::ConditionalExpr&) { return computed(); },
+          [&](const mir::BlockExpr&) { return computed(); },
+          [&](const mir::AssignExpr&) { return computed(); },
+          [&](const mir::IncDecExpr&) { return computed(); },
+          [&](const mir::CallExpr&) { return computed(); },
+          [&](const mir::MoveExpr&) { return computed(); },
+          [&](const mir::ClosureExpr&) { return computed(); },
+          [&](const mir::CompositeExpr&) { return computed(); },
+          [&](const mir::AwaitExpr&) { return computed(); },
+          [&](const mir::WaitExpr&) { return computed(); },
+          [&](const mir::VectorGetExpr&) { return computed(); }},
+      node.data);
+}
+
+auto Settled(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path)
+    -> AccessPath {
+  path.owner = SettledPlace(unit_lowerer, frame, path.owner);
+  if (path.object.has_value()) {
+    path.object = EvaluatedOnce(frame, *path.object);
+  }
+  for (DescentStep& step : path.descent) {
+    for (mir::ExprId& operand : step.operands) {
+      operand = EvaluatedOnce(frame, operand);
+    }
+  }
+  return path;
+}
+
+auto SettledForRead(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path)
+    -> SettledPath {
+  path.object = std::nullopt;
+  AccessPath settled = Settled(unit_lowerer, frame, std::move(path));
+  return SettledPath{
+      .named_in = frame.current_block,
+      .owner = settled.owner,
+      .descent = std::move(settled.descent)};
+}
+
+auto NamedIn(const SettledPath& settled, mir::Block& to) -> AccessPath {
+  const mir::Block& from = *settled.named_in;
+  AccessPath path{.owner = settled.owner, .descent = settled.descent};
+  // Naming a node again reads it out of one pool while adding to the other, so
+  // the two are different pools; a path already named in `to` is the answer.
+  if (&from == &to) {
+    return path;
+  }
+  path.owner = NamedAgain(from, to, path.owner);
+  for (DescentStep& step : path.descent) {
+    for (mir::ExprId& operand : step.operands) {
+      operand = NamedAgain(from, to, operand);
+    }
+  }
+  return path;
+}
+
+auto ReadThenWrite(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath place)
+    -> ReadThenWritten {
+  AccessPath settled = Settled(unit_lowerer, frame, std::move(place));
+  const mir::ExprId incoming =
+      PathOwnedValue(unit_lowerer.Unit(), *frame.current_block, settled);
+  return ReadThenWritten{.place = std::move(settled), .incoming = incoming};
 }
 
 auto RunWithinOwner(

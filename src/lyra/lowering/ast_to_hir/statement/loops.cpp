@@ -24,13 +24,12 @@ auto LowerForLoopStmt(
   // empty and `loopVars` only points at the already-declared symbol. The
   // preceding VarDeclStatement carries the initializer, so loopVars is
   // informational only and is ignored here.
-  std::vector<hir::ForInit> hir_init;
+  std::vector<hir::ExprId> hir_init;
   hir_init.reserve(fs.initializers.size());
   for (const auto* init_expr : fs.initializers) {
     auto init_or = proc.LowerExpr(*init_expr, frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    hir_init.emplace_back(
-        hir::ForInitExpr{.expr = frame.Exprs().Add(*std::move(init_or))});
+    hir_init.push_back(frame.Exprs().Add(*std::move(init_or)));
   }
   std::optional<hir::ExprId> cond_id;
   if (fs.stopExpr != nullptr) {
@@ -55,7 +54,7 @@ auto LowerForLoopStmt(
     if (!step_or) return std::unexpected(std::move(step_or.error()));
     step_ids.push_back(frame.Exprs().Add(*std::move(step_or)));
   }
-  auto body_stmt = proc.LowerStmt(fs.body, frame.WithoutBreakLabel());
+  auto body_stmt = proc.LowerStmt(fs.body, frame);
   if (!body_stmt) return std::unexpected(std::move(body_stmt.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->stmts.Add(*std::move(body_stmt));
@@ -81,7 +80,7 @@ auto LowerWhileLoopStmt(
   auto cond_or = proc.LowerExpr(ws.cond, frame);
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_or));
-  auto body_or = proc.LowerStmt(ws.body, frame.WithoutBreakLabel());
+  auto body_or = proc.LowerStmt(ws.body, frame);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->stmts.Add(*std::move(body_or));
@@ -98,7 +97,7 @@ auto LowerRepeatLoopStmt(
   auto count_or = proc.LowerExpr(rs.count, frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const hir::ExprId count_id = frame.Exprs().Add(*std::move(count_or));
-  auto body_or = proc.LowerStmt(rs.body, frame.WithoutBreakLabel());
+  auto body_or = proc.LowerStmt(rs.body, frame);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->stmts.Add(*std::move(body_or));
@@ -112,7 +111,7 @@ auto LowerDoWhileLoopStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::DoWhileLoopStatement& ds, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  auto body_or = proc.LowerStmt(ds.body, frame.WithoutBreakLabel());
+  auto body_or = proc.LowerStmt(ds.body, frame);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->stmts.Add(*std::move(body_or));
@@ -133,7 +132,7 @@ auto LowerForeverLoopStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ForeverLoopStatement& fs, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  auto body_or = proc.LowerStmt(fs.body, frame.WithoutBreakLabel());
+  auto body_or = proc.LowerStmt(fs.body, frame);
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->stmts.Add(*std::move(body_or));

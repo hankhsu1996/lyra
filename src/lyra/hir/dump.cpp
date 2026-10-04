@@ -604,6 +604,9 @@ class HirDumper {
             },
             [](const NullLiteral&) -> std::string { return "NullLiteral"; },
             [](const ThisHandle&) -> std::string { return "ThisHandle"; },
+            [](const QueueLastIndex&) -> std::string {
+              return "QueueLastIndex";
+            },
             [](const ProceduralVarRef& r) -> std::string {
               return std::format("ProceduralVar[{}]", r.var.value);
             },
@@ -1870,11 +1873,18 @@ class HirDumper {
       Line(std::format("PortConnection[{}] {}", id.value, body));
     }
     for (const NetJoin& join : s.net_joins) {
-      Line(
-          std::format(
-              "NetJoin Expr[{}][{}+:{}] = Expr[{}][{}+:{}]", join.here.value,
-              join.here_offset, join.width, join.there.value, join.there_offset,
-              join.width));
+      std::string sides;
+      for (const NetSide& side : join.sides) {
+        if (!sides.empty()) sides += " = ";
+        std::string runs;
+        for (const NetRun& run : side) {
+          if (!runs.empty()) runs += ", ";
+          runs += std::format(
+              "Expr[{}][{}+:{}]", run.part.value, run.offset, run.width);
+        }
+        sides += std::format("{{{}}}", runs);
+      }
+      Line(std::format("NetJoin {}", sides));
     }
     Dedent();
     scope_stack_.pop_back();
@@ -2427,37 +2437,14 @@ class HirDumper {
   void DumpForStmtNode(const ProceduralBody& p, StmtId id, const ForStmt& f) {
     Line(
         std::format(
-            "Stmt[{}] ForStmt (init={}, step={}{})", id.value, f.init.size(),
-            f.step.size(),
-            f.break_label.has_value()
-                ? std::format(", break_label={}", f.break_label->value)
-                : ""));
+            "Stmt[{}] ForStmt (init={}, step={})", id.value, f.init.size(),
+            f.step.size()));
     Indent();
     for (std::size_t k = 0; k < f.init.size(); ++k) {
-      std::visit(
-          Overloaded{
-              [&](const ForInitDecl& d) {
-                Line(
-                    std::format(
-                        "init[{}]: Decl var=ProceduralVar[{}]", k,
-                        d.var.value));
-                if (d.init.has_value()) {
-                  Indent();
-                  Line(
-                      std::format(
-                          "Expr[{}] {}", d.init->value,
-                          FormatProcExpr(p, *d.init)));
-                  Dedent();
-                }
-              },
-              [&](const ForInitExpr& e) {
-                Line(
-                    std::format(
-                        "init[{}]: Expr[{}] {}", k, e.expr.value,
-                        FormatProcExpr(p, e.expr)));
-              },
-          },
-          f.init[k]);
+      Line(
+          std::format(
+              "init[{}]: Expr[{}] {}", k, f.init[k].value,
+              FormatProcExpr(p, f.init[k])));
     }
     if (f.condition.has_value()) {
       Line(
@@ -2471,6 +2458,28 @@ class HirDumper {
               "step[{}]: Expr[{}] {}", k, f.step[k].value,
               FormatProcExpr(p, f.step[k])));
     }
+    Line("body:");
+    Indent();
+    DumpStmt(p, f.body);
+    Dedent();
+    Dedent();
+  }
+
+  void DumpForeachStmtNode(
+      const ProceduralBody& p, StmtId id, const ForeachStmt& f) {
+    std::string loop_vars;
+    for (const std::optional<ProceduralVarId>& var : f.loop_vars) {
+      if (!loop_vars.empty()) loop_vars += ", ";
+      loop_vars += var.has_value()
+                       ? std::format("ProceduralVar[{}]", var->value)
+                       : std::string{"-"};
+    }
+    Line(
+        std::format(
+            "Stmt[{}] ForeachStmt array=Expr[{}] loop_vars=[{}]", id.value,
+            f.array.value, loop_vars));
+    Indent();
+    Line(std::format("Expr[{}] {}", f.array.value, FormatProcExpr(p, f.array)));
     Line("body:");
     Indent();
     DumpStmt(p, f.body);
@@ -2587,17 +2596,13 @@ class HirDumper {
               DumpConcurrentCoverStmtNode(p, id, c);
             },
             [&](const ForStmt& f) { DumpForStmtNode(p, id, f); },
+            [&](const ForeachStmt& f) { DumpForeachStmtNode(p, id, f); },
             [&](const WhileStmt& w) { DumpWhileStmtNode(p, id, w); },
             [&](const RepeatStmt& r) { DumpRepeatStmtNode(p, id, r); },
             [&](const DoWhileStmt& d) { DumpDoWhileStmtNode(p, id, d); },
             [&](const ForeverStmt& f) { DumpForeverStmtNode(p, id, f); },
-            [&](const BreakStmt& b) {
-              Line(
-                  std::format(
-                      "Stmt[{}] BreakStmt{}", id.value,
-                      b.target.has_value()
-                          ? std::format(" -> label {}", b.target->value)
-                          : ""));
+            [&](const BreakStmt&) {
+              Line(std::format("Stmt[{}] BreakStmt", id.value));
             },
             [&](const ContinueStmt&) {
               Line(std::format("Stmt[{}] ContinueStmt", id.value));

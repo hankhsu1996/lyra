@@ -107,14 +107,16 @@ auto BuildFilesCallExpr(const UnitLowerer& unit_lowerer, mir::Block& block)
 }
 
 auto BuildDiagnosticCallExpr(
-    const mir::CompilationUnit& unit, mir::ExprId runtime_id) -> mir::Expr {
+    const mir::CompilationUnit& unit, mir::Block& block) -> mir::Expr {
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee =
                   mir::Direct{
                       .target = support::BuiltinFn::kDiagnostic,
-                      .receiver = runtime_id},
+                      .receiver = block.exprs.Add(
+                          mir::MakeCurrentRuntimeCallExpr(
+                              unit.builtins.effects))},
               .arguments = {}},
       .type = unit.builtins.diagnostic};
 }
@@ -136,10 +138,8 @@ void AppendToolReportStmt(
     const UnitLowerer& unit_lowerer, mir::Block& block,
     support::BuiltinFn severity, std::string text, diag::SourceSpan span) {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const mir::ExprId diagnostic_id =
-      block.exprs.Add(BuildDiagnosticCallExpr(unit, runtime_id));
+      block.exprs.Add(BuildDiagnosticCallExpr(unit, block));
   const mir::ExprId origin_id = BuildStringValueExpr(
       unit, block,
       FormatRuntimeOriginString(span, unit_lowerer.SourceManager()));
@@ -152,7 +152,7 @@ void AppendToolReportStmt(
 }
 
 auto BuildFormatCallExpr(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId runtime_id,
+    const mir::CompilationUnit& unit, mir::Block& block,
     mir::ExprId items_array) -> mir::Expr {
   const auto& builtins = unit.builtins;
   const mir::ExprId time_format_id = block.exprs.Add(
@@ -162,7 +162,9 @@ auto BuildFormatCallExpr(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kTimeFormat,
-                          .receiver = runtime_id},
+                          .receiver = block.exprs.Add(
+                              mir::MakeCurrentRuntimeCallExpr(
+                                  builtins.effects))},
                   .arguments = {}},
           .type = builtins.time_format});
   return mir::Expr{

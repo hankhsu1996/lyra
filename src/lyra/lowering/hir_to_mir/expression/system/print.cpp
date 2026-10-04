@@ -56,10 +56,8 @@ auto EmitFormatThenWrite(
     ProcessLowerer& process, mir::Block& block, mir::ExprId items_array,
     mir::ExprId fd, bool append_newline) -> mir::ExprId {
   auto& unit = process.Owner().Unit();
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId text = block.exprs.Add(
-      BuildFormatCallExpr(unit, block, runtime_id, items_array));
+  const mir::ExprId text =
+      block.exprs.Add(BuildFormatCallExpr(unit, block, items_array));
   const mir::ExprId files =
       block.exprs.Add(BuildFilesCallExpr(process.Owner(), block));
   return block.exprs.Add(
@@ -94,7 +92,10 @@ auto LowerStrobeCall(
   if (is_file_sink) {
     auto desc_or = LowerDescriptor(process, frame, call);
     if (!desc_or) return std::unexpected(std::move(desc_or.error()));
-    outer_user_descriptor = block.exprs.Add(*std::move(desc_or));
+    // The descriptor names the file to ask for a cancellation token and is
+    // then carried into the deferred body, and the source evaluates it once.
+    outer_user_descriptor =
+        EvaluatedOnce(frame, block.exprs.Add(*std::move(desc_or)));
     const mir::ExprId outer_files =
         block.exprs.Add(BuildFilesCallExpr(process.Owner(), block));
     outer_cancellation = block.exprs.Add(

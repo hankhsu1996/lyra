@@ -227,10 +227,14 @@ auto LowerExprImpl(
             "tolerance-range form of a value range is not yet supported "
             "(LRM 11.4.13)");
       }
-      auto lo_or = lowerer.LowerExpr(vr.left(), frame);
+      // LRM 11.4.13: `$` as a bound of a value range is the lowest or highest
+      // value of the type, never a queue's last index, whatever select the
+      // range stands under.
+      const WalkFrame bound_frame = frame.OutsideQueueSelect();
+      auto lo_or = lowerer.LowerExpr(vr.left(), bound_frame);
       if (!lo_or) return std::unexpected(std::move(lo_or.error()));
       const hir::ExprId lo_id = frame.Exprs().Add(*std::move(lo_or));
-      auto hi_or = lowerer.LowerExpr(vr.right(), frame);
+      auto hi_or = lowerer.LowerExpr(vr.right(), bound_frame);
       if (!hi_or) return std::unexpected(std::move(hi_or.error()));
       const hir::ExprId hi_id = frame.Exprs().Add(*std::move(hi_or));
       auto type_id = unit_lowerer.InternType(*expr.type, span);

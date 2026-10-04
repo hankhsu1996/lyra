@@ -205,9 +205,9 @@ step states the type it projects, so the chain types by construction.
 
 The forms that would be ill-formed are rejected where they would be consumed rather than silently
 accepted: a designator under an address-of names no place, and an address-of requires an addressable
-place ([address-of-primitive](address-of-primitive.md)). There is no MIR verifier today -- LIR has
-one and MIR does not -- so these are the checks that exist; when a MIR verifier exists, they are the
-rules it states.
+place ([address-of-primitive](address-of-primitive.md)). The check MIR runs over a unit as it is
+produced does not state these rules, so these are the checks that exist; they are rules that check
+would state.
 
 ## Decisions this reverses
 

@@ -8,6 +8,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/verify.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -32,6 +33,17 @@ auto SnapshotExprToLocal(
   wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
   return snap_var;
+}
+
+auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value) -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  if (mir::EvaluatesNothing(block, value)) {
+    return value;
+  }
+  const mir::TypeId type = block.exprs.Get(value).type;
+  const mir::LocalId held = frame.bindings->DeclareAnonymous(type);
+  block.AppendStmt(mir::LocalDeclStmt{.target = held, .init = value});
+  return block.exprs.Add(mir::MakeLocalRefExpr(held, type));
 }
 
 auto SnapshotIntoClosure(

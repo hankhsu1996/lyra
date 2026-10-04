@@ -236,14 +236,13 @@ auto LowerFileReadCall(
   const mir::TypeId dest_type = unit_lowerer.TranslateType(dest_hir.type);
   auto dest_or = process.LowerLhsExpr(dest_hir, step_frame);
   if (!dest_or) return std::unexpected(std::move(dest_or.error()));
-  AccessPath dest_place = *std::move(dest_or);
+  ReadThenWritten dest =
+      ReadThenWrite(unit_lowerer, step_frame, *std::move(dest_or));
   const CompletionLayout layout = BuildCompletionLayout(
       {CalleeFormal{
           .direction = hir::ParamDirection::kInOut, .type = dest_type}},
       unit.builtins.int_type);
-  auto incoming_or = LowerOperand(process, step_frame, head[0]);
-  if (!incoming_or) return std::unexpected(std::move(incoming_or.error()));
-  std::vector<mir::ExprId> operands{body.exprs.Add(*std::move(incoming_or))};
+  std::vector<mir::ExprId> operands{dest.incoming};
 
   auto fd_or = LowerOperand(process, step_frame, head[1]);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
@@ -280,7 +279,7 @@ auto LowerFileReadCall(
 
   const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
   const std::array writebacks{CompletionWriteback{
-      .place = std::move(dest_place),
+      .place = std::move(dest.place),
       .component = *layout.formals.front().component,
       .type = dest_type}};
   const mir::LocalId completion = BindCompletion(

@@ -161,7 +161,10 @@ same boundary, met while designing a different construct.
   available here, because hoisting one subexpression reorders it against its siblings, so the
   transformation is only correct applied to every subexpression at once -- which is normalizing MIR
   into three-address form, and MIR's identity is a structured program that still reads as software.
-  The flattening happens one layer down, where it is that layer's whole purpose.
+  A hoisted step also runs wherever the enclosing statement does, including where the expression it
+  came from stands in an operand the run skips, and LRM 11.3.5 says the side effects of a
+  short-circuited operand shall not occur. The flattening happens one layer down, where it is that
+  layer's whole purpose.
 
 - **A `return` among the steps, read as leaving the enclosing callable.** Rejected by D3 above.
 

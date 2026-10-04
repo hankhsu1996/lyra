@@ -424,30 +424,40 @@ auto LowerHirAssignmentPatternReplicationExpr(
     const hir::AssignmentPatternReplicationExpr& a, hir::TypeId hir_result_type,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
-  std::vector<mir::ExprId> item_ids;
-  item_ids.reserve(a.items.size());
-  for (const auto& id : a.items) {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const auto lower_item = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
     auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(id), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    item_ids.push_back(block.exprs.Add(*std::move(lowered)));
-  }
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+    return block.exprs.Add(*std::move(lowered));
+  };
 
   // A structure's members differ in type, so there is no repeat for the target
   // to carry out: the items land in member positions here, and how many
   // positions there are is what the structure's own type says (LRM 10.9). The
-  // multiplier states the same number the type does, so nothing reads it.
+  // multiplier states the same number the type does, so nothing reads it. An
+  // item is stated at each position it lands in, which evaluates it once per
+  // position; LRM 10.9.1 leaves that count undefined.
   if (const std::optional<std::span<const mir::TypeId>> parts =
           mir::ProductElements(unit, result_type)) {
     const std::size_t position_count = parts->size();
     std::vector<mir::ExprId> components;
     components.reserve(position_count);
     for (std::size_t i = 0; i < position_count; ++i) {
-      components.push_back(item_ids[i % item_ids.size()]);
+      auto item = lower_item(a.items[i % a.items.size()]);
+      if (!item) return std::unexpected(std::move(item.error()));
+      components.push_back(*item);
     }
     return mir::Expr{
         .data = mir::CompositeExpr{.parts = std::move(components)},
         .type = result_type};
+  }
+
+  std::vector<mir::ExprId> item_ids;
+  item_ids.reserve(a.items.size());
+  for (const auto& id : a.items) {
+    auto item = lower_item(id);
+    if (!item) return std::unexpected(std::move(item.error()));
+    item_ids.push_back(*item);
   }
 
   auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.count), frame);
@@ -525,8 +535,8 @@ auto LowerHirDynamicArrayNewExpr(
 
 // LRM 7.9.11 associative literal. Each (key, value) entry is lowered into a
 // pair of MIR ExprIds and handed to the shared construction helper, which wraps
-// them as tuples and threads the optional persistent default through the
-// associative constructor.
+// them as tuples and hands the associative constructor what a read of an
+// absent key answers with.
 template <ExprLowerer Lowerer>
 auto LowerHirAssociativeAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame,
@@ -545,17 +555,22 @@ auto LowerHirAssociativeAssignmentPatternExpr(
     const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
     entries.emplace_back(key_id, value_id);
   }
-  std::optional<mir::ExprId> user_default;
+  // LRM 7.8.6: a literal that writes no `default:` clause answers a read of an
+  // absent key with the element type's own default.
+  mir::ExprId absent_key_answer{};
   if (a.default_value.has_value()) {
     auto default_or =
         lowerer.LowerExpr(lowerer.HirExprs().Get(*a.default_value), frame);
     if (!default_or) return std::unexpected(std::move(default_or.error()));
-    user_default = block.exprs.Add(*std::move(default_or));
+    absent_key_answer = block.exprs.Add(*std::move(default_or));
+  } else {
+    absent_key_answer =
+        BuildElementDefault(lowerer.Owner(), block, hir_result_type);
   }
   return BuildAssociativeConstructionCall(
       lowerer.Owner().Unit(), block, result_type,
       BuildElementDefault(lowerer.Owner(), block, hir_result_type),
-      std::move(entries), user_default);
+      std::move(entries), absent_key_answer);
 }
 
 // One concrete instantiation per pass class. The handler templates are defined

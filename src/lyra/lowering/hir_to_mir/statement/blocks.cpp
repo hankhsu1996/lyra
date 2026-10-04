@@ -31,22 +31,14 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-namespace {
-
-// LRM 6.21: a block declaring automatic locals a detached fork branch borrows
-// and can outlive lifts each borrowed local into a cell of its own, held by a
-// shared pointer made at block entry, and records the pointer so the local's
-// declaration and references reach the cell through it. A branch keeps each
-// cell it names alive by holding a by-value copy of its pointer.
 void OpenActivationScope(
     ProcessLowerer& process, const WalkFrame& frame,
-    std::span<const hir::StmtId> statements) {
+    std::span<const hir::ProceduralVarId> declared) {
   const hir::ProceduralBody& body = process.HirBody();
   std::vector<hir::ProceduralVarId> promoted;
-  for (const hir::StmtId sid : statements) {
-    const auto* vd = std::get_if<hir::VarDeclStmt>(&body.stmts.Get(sid).data);
-    if (vd != nullptr && body.procedural_vars.Get(vd->var).lifetime_extended) {
-      promoted.push_back(vd->var);
+  for (const hir::ProceduralVarId var : declared) {
+    if (body.procedural_vars.Get(var).lifetime_extended) {
+      promoted.push_back(var);
     }
   }
   if (promoted.empty()) {
@@ -92,6 +84,8 @@ void OpenActivationScope(
             .handle_origin = handle_origin, .cell_type = cell_type});
   }
 }
+
+namespace {
 
 auto CancellationTargetType(mir::CompilationUnit& unit) -> mir::TypeId {
   return unit.types.Intern(
@@ -217,7 +211,15 @@ auto LowerBlockStmt(
       frame.WithBlock(&child_block)
           .WithScopeNameBorrowedHandle(
               process.Scopes().Get(b.scope).NameBorrowedHandle());
-  OpenActivationScope(process, child_frame, b.statements);
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  std::vector<hir::ProceduralVarId> declared;
+  for (const hir::StmtId statement : b.statements) {
+    if (const auto* declaration = std::get_if<hir::VarDeclStmt>(
+            &hir_proc.stmts.Get(statement).data)) {
+      declared.push_back(declaration->var);
+    }
+  }
+  OpenActivationScope(process, child_frame, declared);
 
   // A named block (LRM 9.6.2) is a region that consumes the effect naming it:
   // an execution anywhere inside it -- including inside a callable it invoked
@@ -227,7 +229,6 @@ auto LowerBlockStmt(
   const std::optional<StaticStorageHome>& disable_target =
       process.Scopes().Get(b.scope).disable_target;
 
-  const hir::ProceduralBody& hir_proc = process.HirBody();
   for (const hir::StmtId child_hir_id : b.statements) {
     auto child_or =
         process.LowerStmt(hir_proc.stmts.Get(child_hir_id), child_frame);

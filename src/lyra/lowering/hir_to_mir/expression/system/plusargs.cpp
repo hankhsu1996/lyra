@@ -82,15 +82,13 @@ auto LowerValuePlusargs(
   // The destination is an `inout`: a miss leaves the variable it names as it
   // was, and its size decides whether a match is zero-padded or truncated, so
   // its value crosses in as well as riding the completion back (LRM 13.5,
-  // 21.6). Its place is bound here, which is the once it is evaluated.
+  // 21.6).
   const hir::Expr& target_hir = hir_exprs.Get(operands[1]);
   const mir::TypeId target_type = unit_lowerer.TranslateType(target_hir.type);
   auto place_or = lowerer.LowerLhsExpr(target_hir, step_frame);
   if (!place_or) return std::unexpected(std::move(place_or.error()));
-  AccessPath target_place = *std::move(place_or);
-  auto incoming_or = lowerer.LowerExpr(target_hir, step_frame);
-  if (!incoming_or) return std::unexpected(std::move(incoming_or.error()));
-  const mir::ExprId incoming_id = body.exprs.Add(*std::move(incoming_or));
+  ReadThenWritten target =
+      ReadThenWrite(unit_lowerer, step_frame, *std::move(place_or));
 
   const CompletionLayout layout = BuildCompletionLayout(
       {CalleeFormal{
@@ -100,7 +98,7 @@ auto LowerValuePlusargs(
   const mir::ExprId runtime_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const std::array writebacks{CompletionWriteback{
-      .place = std::move(target_place),
+      .place = std::move(target.place),
       .component = *layout.formals.front().component,
       .type = target_type}};
   const mir::LocalId completion = BindCompletion(
@@ -110,7 +108,7 @@ auto LowerValuePlusargs(
               mir::CallExpr{
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kValuePlusargs},
-                  .arguments = {runtime_id, user_id, incoming_id}},
+                  .arguments = {runtime_id, user_id, target.incoming}},
           .type = payload},
       payload, writebacks);
   return steps.Build(ProjectCompletionComponent(

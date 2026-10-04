@@ -80,11 +80,11 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
    uniform with every other value family, rather than letting a queue's assignment operator silently
    keep the destination's shape.
 
-5. **`$` resolves to `size - 1` at the indexing site.** Slang models `$` as an unbounded literal
-   with no value of its own; it means "the last index" of the queue being indexed. The AST-to-HIR
-   walk threads that queue base through the walk frame, and `$` lowers to `size(base) - 1` against
-   it -- so `$`, `$-1`, and the `q[1:$]` / `q[0:$-1]` pop idioms (LRM 7.10.4) all become ordinary
-   index or bound arguments to the access method calls above.
+5. **`$` is a leaf, and the select it stands in holds the queue.** Slang models `$` as an unbounded
+   literal with no value of its own; it means "the last index" of the queue being indexed. HIR keeps
+   it as a leaf that names no queue. HIR-to-MIR evaluates the queue once per select and `$` reads
+   `size - 1` of that -- so `$`, `$-1`, and the `q[1:$]` / `q[0:$-1]` pop idioms (LRM 7.10.4) all
+   become ordinary index or bound arguments to the access method calls above.
 
 ## Consequences
 

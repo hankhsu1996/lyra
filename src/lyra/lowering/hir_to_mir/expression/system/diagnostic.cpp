@@ -62,12 +62,10 @@ auto LowerDiagnosticSystemSubroutineCall(
   const mir::ExprId items_array = block.exprs.Add(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId text_id = block.exprs.Add(
-      BuildFormatCallExpr(unit, block, runtime_id, items_array));
+  const mir::ExprId text_id =
+      block.exprs.Add(BuildFormatCallExpr(unit, block, items_array));
   const mir::ExprId diagnostic_id =
-      block.exprs.Add(BuildDiagnosticCallExpr(unit, runtime_id));
+      block.exprs.Add(BuildDiagnosticCallExpr(unit, block));
   const mir::ExprId origin_id = BuildStringValueExpr(
       unit, block,
       FormatRuntimeOriginString(span, process.Owner().SourceManager()));

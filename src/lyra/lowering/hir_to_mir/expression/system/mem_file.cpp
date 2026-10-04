@@ -220,20 +220,26 @@ auto LowerMemFileSystemSubroutineCallStmt(
 
   // A load's memory is an `inout`: it crosses in because a word the file does
   // not address keeps what it held, and it rides the completion back out (LRM
-  // 13.5, 21.4). A dump only reads it. Either way its place is bound here,
-  // which is the once it is evaluated.
+  // 13.5, 21.4). A dump only reads it.
+  const mir::TypeId mem_type = unit_lowerer.TranslateType(mem_hir.type);
   std::optional<AccessPath> mem_place;
-  if (!is_store) {
+  mir::ExprId mem_value{};
+  if (is_store) {
+    auto mem_or = process.LowerExpr(mem_hir, step_frame);
+    if (!mem_or) return std::unexpected(std::move(mem_or.error()));
+    mem_value = body.exprs.Add(*std::move(mem_or));
+  } else {
     auto place_or = process.LowerLhsExpr(mem_hir, step_frame);
     if (!place_or) return std::unexpected(std::move(place_or.error()));
-    mem_place = *std::move(place_or);
+    ReadThenWritten memory =
+        ReadThenWrite(unit_lowerer, step_frame, *std::move(place_or));
+    mem_place = std::move(memory.place);
+    mem_value = memory.incoming;
   }
-  auto mem_or = process.LowerExpr(mem_hir, step_frame);
-  if (!mem_or) return std::unexpected(std::move(mem_or.error()));
 
   std::vector<mir::ExprId> operands;
   operands.push_back(body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
-  operands.push_back(body.exprs.Add(*std::move(mem_or)));
+  operands.push_back(mem_value);
   operands.push_back(name_id);
   for (const mir::ExprId operand : addressing->operands) {
     operands.push_back(operand);
@@ -282,7 +288,6 @@ auto LowerMemFileSystemSubroutineCallStmt(
                             .arguments = std::move(operands)},
                     .type = unit.builtins.void_type})});
   } else {
-    const mir::TypeId mem_type = unit_lowerer.TranslateType(mem_hir.type);
     const CompletionLayout layout = BuildCompletionLayout(
         {CalleeFormal{
             .direction = hir::ParamDirection::kInOut, .type = mem_type}},

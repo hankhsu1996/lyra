@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -551,39 +552,32 @@ auto BuildReceiverPointer(
                              .mutability = mir::Mutability::kMutable}})));
 }
 
-// The handle a call on a class no signature names runs on, bound to a local. It
-// is bound rather than emitted in place because such a call reads it twice --
-// for the class it names and for the object every body runs on -- while the
-// source wrote the expression once.
+// The handle a call on a class no signature names runs on. Such a call reads it
+// twice -- for the class it names and for the object every body runs on --
+// while the source wrote the expression once, so it is evaluated once.
 //
 // There is no class to form a pointer to, having none being what puts the call
 // in this form; a call that names one carries a pointer to the object instead.
-struct BoundHandle {
-  mir::LocalId local;
-  mir::TypeId type;
-};
-
 template <ExprLowerer Lowerer>
-auto BindReceiverHandle(
+auto EvaluateReceiverHandle(
     Lowerer& lowerer, const WalkFrame& frame,
-    const hir::MethodReceiver& receiver) -> diag::Result<BoundHandle> {
-  const auto* handle = std::get_if<hir::HandleReceiver>(&receiver);
-  if (handle == nullptr) {
+    const hir::MethodReceiver& receiver) -> diag::Result<mir::ExprId> {
+  const auto own_object = []() -> hir::ExprId {
     throw InternalError(
         "a call on a class no signature names reaches the object through a "
         "handle, and this call names the body's own object -- please report "
         "this as a bug");
-  }
-  auto handle_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(handle->expr), frame);
+  };
+  const hir::ExprId handle = std::visit(
+      Overloaded{
+          [](const hir::HandleReceiver& r) { return r.expr; },
+          [&](const hir::SelfReceiver&) { return own_object(); },
+          [&](const hir::SuperReceiver&) { return own_object(); }},
+      receiver);
+  auto handle_or = lowerer.LowerExpr(lowerer.HirExprs().Get(handle), frame);
   if (!handle_or) return std::unexpected(std::move(handle_or.error()));
-  mir::Block& block = *frame.current_block;
-  const mir::TypeId handle_type = handle_or->type;
-  const mir::LocalId bound = frame.bindings->DeclareAnonymous(handle_type);
-  block.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = bound, .init = block.exprs.Add(*std::move(handle_or))});
-  return BoundHandle{.local = bound, .type = handle_type};
+  return EvaluatedOnce(
+      frame, frame.current_block->exprs.Add(*std::move(handle_or)));
 }
 
 // The prototype a body reached through an erased address was generated with,
@@ -728,14 +722,11 @@ auto ResolveCallee(
           // body runs on whatever class it turns out to be of.
           [&](const SettledCallee& settled) -> diag::Result<ResolvedCallee> {
             auto handle_or =
-                BindReceiverHandle(lowerer, frame, settled.receiver);
+                EvaluateReceiverHandle(lowerer, frame, settled.receiver);
             if (!handle_or) {
               return std::unexpected(std::move(handle_or.error()));
             }
-            const auto read_handle = [&] {
-              return block.exprs.Add(
-                  mir::MakeLocalRefExpr(handle_or->local, handle_or->type));
-            };
+            const mir::ExprId handle = *handle_or;
             const mir::ExprId erased = std::visit(
                 Overloaded{
                     // The coordinate says which behavior, and the object's own
@@ -752,7 +743,7 @@ auto ResolveCallee(
                                           mir::Direct{
                                               .target = support::BuiltinFn::
                                                   kBehaviorAt},
-                                      .arguments = {read_handle(), at}},
+                                      .arguments = {handle, at}},
                               .type = mir::ErasedFunction(unit.types)});
                     },
                     // Nothing was left for the object to answer, so the route
@@ -773,7 +764,7 @@ auto ResolveCallee(
                             .callee =
                                 mir::Direct{
                                     .target = support::BuiltinFn::kObjectOf},
-                            .arguments = {read_handle()}},
+                            .arguments = {handle}},
                     .type = object_type});
             return ResolvedCallee{
                 .callee =
@@ -845,19 +836,28 @@ auto EmitSubroutineCall(
     // Exhaustive over the directions, so one added to the language is bound
     // here rather than silently passed as a value.
     switch (formal.direction) {
-      // An `output` passes no argument; an `inout` passes its incoming value.
-      // Both bind the actual place for a post-completion writeback.
-      case hir::ParamDirection::kOutput:
+      // An `output` passes no argument, and binds the actual's place for the
+      // writeback once the call completes.
+      case hir::ParamDirection::kOutput: {
+        auto place_or = lowerer.LowerLhsExpr(hir_arg, frame);
+        if (!place_or) return std::unexpected(std::move(place_or.error()));
+        writebacks.push_back(
+            {.place = *std::move(place_or),
+             .component = *formal.component,
+             .type = formal.type});
+        break;
+      }
+
+      // An `inout` passes its incoming value and is written back the same way,
+      // and the source writes the actual once (LRM 13.5).
       case hir::ParamDirection::kInOut: {
         auto place_or = lowerer.LowerLhsExpr(hir_arg, frame);
         if (!place_or) return std::unexpected(std::move(place_or.error()));
-        if (formal.direction == hir::ParamDirection::kInOut) {
-          auto value_or = lowerer.LowerExpr(hir_arg, frame);
-          if (!value_or) return std::unexpected(std::move(value_or.error()));
-          call_args.push_back(block.exprs.Add(*std::move(value_or)));
-        }
+        ReadThenWritten actual =
+            ReadThenWrite(lowerer.Owner(), frame, *std::move(place_or));
+        call_args.push_back(actual.incoming);
         writebacks.push_back(
-            {.place = *std::move(place_or),
+            {.place = std::move(actual.place),
              .component = *formal.component,
              .type = formal.type});
         break;

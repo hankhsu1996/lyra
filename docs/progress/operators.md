@@ -24,7 +24,8 @@ The numeric IDs (W1..W15) imply execution order; where a cut is independent the 
 
 - [x] W1 -- `inside` set-membership (LRM 11.4.13). Singular and range items; ranges use
       `(>= lo) && (<= hi)`. The LRM 11.4.13 four-state corner ("no match but some compare yields
-      `1'bx`") is preserved through the existing logical-OR truth table.
+      `1'bx`") is preserved through the existing logical-OR truth table. The left operand is
+      evaluated once however many members the set has.
   - [ ] The tolerance-range item form (`inside {[a:b]}` with a `+/-` tolerance, LRM 11.4.13) is
         rejected; only singular and plain `[lo:hi]` range items are accepted.
 - [x] W2 -- Wildcard equality `==?` / `!=?` (LRM 11.4.6). Asymmetric: X / Z in the right operand are
@@ -124,11 +125,13 @@ merged node.
         object rather than over a value: a class object is reached through a managed reference and
         has no value-layer representation, so the product traversal every other aggregate shares
         does not reach it.
-  - [ ] A streaming target on a continuous assignment. The concatenation target at that position
-        does lower, because a packed concatenation of lvalues is itself one place; a stream is not,
-        so it needs the distribution into several targets that the procedural form performs. What it
-        waits on is that distribution becoming one component the destructuring assignment, the
-        streaming unpack, and the continuous assignment all reach.
+  - [ ] A streaming target on a continuous assignment, and a concatenation target anywhere but a
+        procedural assignment statement: a continuous assignment (`assign {a, b} = x;`), an `output`
+        or `inout` actual, a destination a system task stores into, a concatenation nested in
+        another. Each is rejected with a diagnostic naming the target. A join of destinations is not
+        one place, so it needs the distribution into several targets that the procedural form
+        performs. What it waits on is that distribution becoming one component the destructuring
+        assignment, the streaming unpack, and every other write all reach.
   - [ ] An unpacked union anywhere in a stream. LRM 11.4.14.1 streams its first-declared member
         whatever member is live, and the front end already resolves that much. What blocks it is the
         union's own storage: this pipeline keeps only the active member and reports a read of any

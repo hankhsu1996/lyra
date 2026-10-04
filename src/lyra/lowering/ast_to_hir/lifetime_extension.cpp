@@ -9,6 +9,7 @@
 #include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Statement.h>
 #include <slang/ast/expressions/MiscExpressions.h>
+#include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
@@ -42,6 +43,17 @@ struct LifetimeExtendedCollector
     // initialized when the branch starts running, so an enclosing automatic it
     // names has to outlive the scope that declared it.
     s.symbol.visit(*this);
+    visitDefault(s);
+  }
+
+  // LRM 12.7.3: a foreach declares its loop variables itself, automatic, with
+  // no declaration statement, so the loop is where each one is declared.
+  void handle(const slang::ast::ForeachLoopStatement& s) {
+    for (const auto& dim : s.loopDims) {
+      if (dim.loopVar != nullptr) {
+        declared_index.emplace(dim.loopVar, declared_count++);
+      }
+    }
     visitDefault(s);
   }
 

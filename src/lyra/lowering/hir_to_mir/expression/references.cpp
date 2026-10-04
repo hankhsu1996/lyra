@@ -8,11 +8,14 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
+#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/real_literal.hpp"
@@ -27,6 +30,7 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -102,6 +106,36 @@ auto LowerHirThisHandle(const WalkFrame& frame, mir::TypeId type) -> mir::Expr {
       .type = type};
 }
 
+// LRM 7.10.1 `$`: the index of the last element of the queue the enclosing
+// select is taken from, which is one less than how many elements it holds. The
+// select evaluated the queue once, and this reads that.
+auto LowerHirQueueLastIndex(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::TypeId type)
+    -> mir::Expr {
+  if (frame.selected_queue == nullptr) {
+    throw InternalError(
+        "LowerHirQueueLastIndex: `$` stands under no select taken from a "
+        "queue");
+  }
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId size = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = support::BuiltinFn::kSize,
+                          .receiver = PathValue(
+                              unit, block,
+                              NamedIn(*frame.selected_queue, block))},
+                  .arguments = {}},
+          .type = type});
+  return BuildMirBinaryExpr(
+      unit, block, hir::BinaryOp::kSub, size, BuildIntLiteral(unit, block, 1),
+      type);
+}
+
 auto LowerHirRealLiteral(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const hir::RealLiteral& r, mir::TypeId type) -> mir::Expr {
@@ -139,9 +173,29 @@ auto LowerPatternVarRefExpr(WalkFrame frame, const hir::PatternVarRef& r)
   return frame.bindings->MakeReadExpr(ref, *frame.current_block);
 }
 
+// LRM 7.12.4: a with-clause iteration reference reads the named clause's
+// element or index closure parameter. The parameter is found by clause
+// identity, then resolved by the same rule as any body-local: read directly
+// when the reference is in the clause's own closure, captured when it is inside
+// a deeper clause's closure (the parameter's declaration sits above that
+// closure's boundary).
+auto LowerIterationBindingRefExpr(
+    const hir::IterationBindingRef& ref, WalkFrame frame) -> mir::Expr {
+  // The parameter's identity across bodies is its clause and role, and a
+  // capture forwards it one closure boundary at a time. The read's type is the
+  // resolved binding's own, so the caller supplies none.
+  return frame.bindings->MakeReadExpr(
+      frame.bindings->EnsureCarrier(
+          BindingOriginId::Iterator(
+              ref.clause.value, static_cast<std::uint32_t>(ref.role))),
+      *frame.current_block);
+}
+
+}  // namespace
+
 auto LowerProceduralVarRefExpr(
-    ProcessLowerer& process, const WalkFrame& frame,
-    const hir::ProceduralVarRef& l) -> mir::Expr {
+    ProcessLowerer& process, const WalkFrame& frame, hir::ProceduralVarId var)
+    -> mir::Expr {
   return std::visit(
       Overloaded{
           // Storage that outlives every activation (LRM 6.21) sits wherever the
@@ -165,35 +219,12 @@ auto LowerProceduralVarRefExpr(
           // materialized binding's type, which the dispatcher dereferences when
           // it is a cell.
           [&](const AutomaticVarBinding&) {
-            const BodyBindingRef ref = frame.bindings->EnsureCarrier(
-                BindingOriginId::Procedural(l.var));
+            const BodyBindingRef ref =
+                frame.bindings->EnsureCarrier(BindingOriginId::Procedural(var));
             return frame.bindings->MakeReadExpr(ref, *frame.current_block);
           }},
-      process.LookupProceduralVar(l.var));
+      process.LookupProceduralVar(var));
 }
-
-// LRM 7.12.4: a with-clause iteration reference reads the named clause's
-// element or index closure parameter. The parameter is found by clause
-// identity, then resolved by the same rule as any body-local: read directly
-// when the reference is in the clause's own closure, captured when it is inside
-// a deeper clause's closure (the parameter's declaration sits above that
-// closure's boundary).
-auto LowerIterationBindingRefExpr(
-    const hir::IterationBindingRef& ref, WalkFrame frame) -> mir::Expr {
-  // The with-clause parameter's cross-body identity is its clause id and role;
-  // `EnsureCarrier` reads it directly in the clause's own closure or captures
-  // it
-  // -- forwarding one boundary at a time -- when the reference sits inside a
-  // deeper clause's closure (LRM 7.12.4). The result type comes from the
-  // resolved binding's arena, so no caller-supplied type is needed.
-  return frame.bindings->MakeReadExpr(
-      frame.bindings->EnsureCarrier(
-          BindingOriginId::Iterator(
-              ref.clause.value, static_cast<std::uint32_t>(ref.role))),
-      *frame.current_block);
-}
-
-}  // namespace
 
 // A variable of a unit's namespace (LRM 26.2) is reached without a `self`-based
 // route: a namespace has no instance for a receiver to arrive through. The
@@ -301,8 +332,11 @@ auto LowerHirPrimaryExprProc(
           [&](const hir::ThisHandle&) -> mir::Expr {
             return LowerHirThisHandle(frame, result_type);
           },
+          [&](const hir::QueueLastIndex&) -> mir::Expr {
+            return LowerHirQueueLastIndex(process.Owner(), frame, result_type);
+          },
           [&](const hir::ProceduralVarRef& l) -> mir::Expr {
-            return LowerProceduralVarRefExpr(process, frame, l);
+            return LowerProceduralVarRefExpr(process, frame, l.var);
           },
           [&](const hir::PatternVarRef& r) -> mir::Expr {
             return LowerPatternVarRefExpr(frame, r);
@@ -359,6 +393,9 @@ auto LowerHirPrimaryExprStructural(
             throw InternalError(
                 "LowerHirPrimaryExprStructural: HIR ThisHandle does not appear "
                 "in structural expressions");
+          },
+          [&](const hir::QueueLastIndex&) -> mir::Expr {
+            return LowerHirQueueLastIndex(lowerer.Owner(), frame, result_type);
           },
           [](const hir::ProceduralVarRef&) -> mir::Expr {
             throw InternalError(

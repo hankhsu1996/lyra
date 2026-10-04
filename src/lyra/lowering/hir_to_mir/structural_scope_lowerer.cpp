@@ -44,6 +44,7 @@
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/struct_methods.hpp"
@@ -1243,67 +1244,159 @@ void InstallInterfacePortConnection(
                   .type = member_type})});
 }
 
-// One side of a join: the net whole, and where the joined run starts in it.
-struct JoinedNet {
-  mir::ExprId net;
-  mir::ExprId start;
+// One run of a join's side: the part of a net the source wrote, as a path that
+// evaluates nothing, and where among that part's positions the run starts and
+// how many it covers. A run that meets several runs of the side beside it, or
+// that stands between two sides, is named at each place it meets one, which a
+// path that evaluates nothing may be.
+struct JoinedRun {
+  AccessPath part;
+  std::uint32_t offset = 0;
+  std::uint32_t width = 0;
 };
 
-// The side of a join `part` names: the net it is part of, and the position
-// `offset` into that part lies at within the net.
-auto JoinedSide(
+// The runs one side of a join names, each with what reaching its part computes
+// evaluated in the frame's block, once.
+auto JoinedSideOf(
     const StructuralScopeLowerer& lowerer, WalkFrame resolve_frame,
-    hir::ExprId part, std::uint32_t offset) -> diag::Result<JoinedNet> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *resolve_frame.current_block;
-  auto named = lowerer.LowerAccessPath(
-      lowerer.HirScope().exprs.Get(part), resolve_frame);
-  if (!named) return std::unexpected(std::move(named.error()));
-  const PathRun run = RunWithinOwner(unit, block, *named);
-  return JoinedNet{
-      .net = named->owner,
-      .start = ConvertToType(
-          unit, block,
-          BuildPositionSum(
-              unit, block, run.first,
-              BuildConstantPosition(
-                  unit, block, static_cast<std::int64_t>(offset))),
-          unit.builtins.int_type)};
+    const hir::NetSide& side) -> diag::Result<std::vector<JoinedRun>> {
+  std::vector<JoinedRun> runs;
+  runs.reserve(side.size());
+  for (const hir::NetRun& run : side) {
+    auto named = lowerer.LowerAccessPath(
+        lowerer.HirScope().exprs.Get(run.part), resolve_frame);
+    if (!named) return std::unexpected(std::move(named.error()));
+    runs.push_back(
+        JoinedRun{
+            .part = Settled(lowerer.Owner(), resolve_frame, *std::move(named)),
+            .offset = run.offset,
+            .width = run.width});
+  }
+  return runs;
+}
+
+// The position within its net that lies `offset` positions into the part `run`
+// names.
+auto PositionWithinNet(
+    mir::CompilationUnit& unit, mir::Block& block, const JoinedRun& run,
+    std::uint32_t offset) -> mir::ExprId {
+  const PathRun within = RunWithinOwner(unit, block, run.part);
+  return ConvertToType(
+      unit, block,
+      BuildPositionSum(
+          unit, block, within.first,
+          BuildConstantPosition(
+              unit, block, static_cast<std::int64_t>(offset))),
+      unit.builtins.int_type);
+}
+
+// Equally many positions of two runs that one construct places in the same
+// resolution: where the shared positions start in the part each run names, and
+// how many there are.
+struct Coupling {
+  const JoinedRun* here = nullptr;
+  std::uint32_t here_offset = 0;
+  const JoinedRun* there = nullptr;
+  std::uint32_t there_offset = 0;
+  std::uint32_t width = 0;
+};
+
+// What two sides of one construct say about each other. LRM 10.11 gives an
+// overlay the bit overlay rules of a packed union with the same member types,
+// so correspondence runs position-wise from the most significant end. The two
+// sides' runs need not fall at the same boundaries, so each coupling is as
+// wide as the shorter of the two runs it stands between, and whichever side it
+// exhausts advances.
+auto CoupleSides(
+    std::span<const JoinedRun> left, std::span<const JoinedRun> right)
+    -> std::vector<Coupling> {
+  std::vector<Coupling> couplings;
+  std::size_t at_left = 0;
+  std::size_t at_right = 0;
+  std::uint32_t taken_left = 0;
+  std::uint32_t taken_right = 0;
+  while (at_left < left.size() && at_right < right.size()) {
+    const JoinedRun& here = left[at_left];
+    const JoinedRun& there = right[at_right];
+    const std::uint32_t width =
+        std::min(here.width - taken_left, there.width - taken_right);
+    couplings.push_back(
+        Coupling{
+            .here = &here,
+            .here_offset = here.offset + here.width - taken_left - width,
+            .there = &there,
+            .there_offset = there.offset + there.width - taken_right - width,
+            .width = width});
+    taken_left += width;
+    taken_right += width;
+    if (taken_left == here.width) {
+      ++at_left;
+      taken_left = 0;
+    }
+    if (taken_right == there.width) {
+      ++at_right;
+      taken_right = 0;
+    }
+  }
+  if (at_left != left.size() || at_right != right.size()) {
+    throw InternalError(
+        "CoupleSides: the sides of one join cover the same number of "
+        "positions, which the front end requires of every construct that "
+        "forms an overlay");
+  }
+  return couplings;
+}
+
+// The statement of one coupling. Both nets are named whole and the positions
+// say which of them the coupling reached, so what a backend meets is one call
+// with every operand stated.
+auto BuildNetJoinStmt(
+    mir::CompilationUnit& unit, mir::Block& block, const Coupling& coupling)
+    -> mir::Stmt {
+  const mir::ExprId other = coupling.there->part.owner;
+  const mir::TypeId net_ptr_type = unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = block.exprs.Get(other).type,
+          .ownership = mir::PointerOwnership::kBorrowed}});
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data = mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::MakeNetJoinCallExpr(
+                  coupling.here->part.owner,
+                  block.exprs.Add(mir::MakeAddressOfExpr(other, net_ptr_type)),
+                  PositionWithinNet(
+                      unit, block, *coupling.here, coupling.here_offset),
+                  PositionWithinNet(
+                      unit, block, *coupling.there, coupling.there_offset),
+                  BuildIntLiteral(unit, block, coupling.width),
+                  unit.builtins.void_type))}};
 }
 
 // Realizes the runs of nets this scope's constructs place in one resolution
-// (LRM 23.3.3.7, 10.11). Each is one statement in the resolve body, beside the
-// `ref` port's bind: no driver is attached and no process is registered,
-// because what a join states is which contributions resolve together and not an
-// edge anything travels along. Both nets are named whole and the run says which
-// of their positions the connection reached, so what a backend meets is one
-// call with every operand stated.
+// (LRM 23.3.3.7, 10.11), as statements in the resolve body, beside the `ref`
+// port's bind: no driver is attached and no process is registered, because
+// what a join states is which contributions resolve together and not an edge
+// anything travels along. Being the same physical net is transitive, so
+// stating it between each side and the next states it among all of them.
 auto InstallNetJoins(StructuralScopeLowerer& lowerer, WalkFrame resolve_frame)
     -> diag::Result<void> {
-  UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Block& block = *resolve_frame.current_block;
-  const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  for (const hir::NetJoin& join : hir_scope.net_joins) {
-    auto here = JoinedSide(lowerer, resolve_frame, join.here, join.here_offset);
-    if (!here) return std::unexpected(std::move(here.error()));
-    auto there =
-        JoinedSide(lowerer, resolve_frame, join.there, join.there_offset);
-    if (!there) return std::unexpected(std::move(there.error()));
-    const mir::TypeId net_ptr_type = unit.types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = block.exprs.Get(there->net).type,
-            .ownership = mir::PointerOwnership::kBorrowed}});
-    block.AppendStmt(
-        mir::ExprStmt{
-            .expr = block.exprs.Add(
-                mir::MakeNetJoinCallExpr(
-                    here->net,
-                    block.exprs.Add(
-                        mir::MakeAddressOfExpr(there->net, net_ptr_type)),
-                    here->start, there->start,
-                    BuildIntLiteral(unit, block, join.width),
-                    unit.builtins.void_type))});
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  for (const hir::NetJoin& join : lowerer.HirScope().net_joins) {
+    std::vector<std::vector<JoinedRun>> sides;
+    sides.reserve(join.sides.size());
+    for (const hir::NetSide& side : join.sides) {
+      auto runs = JoinedSideOf(lowerer, resolve_frame, side);
+      if (!runs) return std::unexpected(std::move(runs.error()));
+      sides.push_back(*std::move(runs));
+    }
+    for (std::size_t next = 1; next < sides.size(); ++next) {
+      for (const Coupling& coupling :
+           CoupleSides(sides[next - 1], sides[next])) {
+        block.AppendStmt(BuildNetJoinStmt(unit, block, coupling));
+      }
+    }
   }
   return {};
 }
@@ -1751,7 +1844,8 @@ auto LowerSelectionBranchInto(
 // One alternative of a `case` is reached where the selector matches one of its
 // own labels. LRM 12.5 fixes that comparison: it succeeds only where every bit
 // matches exactly, `x` and `z` included, so the selector is read against each
-// label rather than reduced to a value first.
+// label rather than reduced to a value first. `selector` stands under every
+// one of those comparisons, so it is a read that evaluates nothing.
 auto MatchesAnyLabel(
     StructuralScopeLowerer& lowerer, WalkFrame frame, mir::ExprId selector,
     const std::vector<hir::ExprId>& labels) -> diag::Result<mir::ExprId> {
@@ -1784,6 +1878,15 @@ auto LowerLabelledChoiceInto(
   mir::Block& block = *frame.current_block;
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
 
+  // The source wrote the selector once and every item is read against it, so
+  // it is evaluated once, ahead of the search, and each item names the result.
+  auto selector = lowerer.LowerExpr(hir_scope.exprs.Get(on.selector), frame);
+  if (!selector) return std::unexpected(std::move(selector.error()));
+  const mir::TypeId selector_type = selector->type;
+  const mir::LocalId held = SnapshotExprToLocal(
+      lowerer.Owner(), frame, block, selector_type,
+      block.exprs.Add(*std::move(selector)));
+
   mir::Block tail;
   auto otherwise = LowerSelectionBranchInto(
       lowerer, frame.WithBlock(&tail), chosen, on.otherwise, gen_bindings);
@@ -1797,12 +1900,10 @@ auto LowerLabelledChoiceInto(
     if (!body) return std::unexpected(std::move(body.error()));
 
     mir::Block step;
-    const WalkFrame step_frame = frame.WithBlock(&step);
-    auto selector =
-        lowerer.LowerExpr(hir_scope.exprs.Get(on.selector), step_frame);
-    if (!selector) return std::unexpected(std::move(selector.error()));
     auto test = MatchesAnyLabel(
-        lowerer, step_frame, step.exprs.Add(*std::move(selector)), item.labels);
+        lowerer, frame.WithBlock(&step),
+        step.exprs.Add(mir::MakeLocalRefExpr(held, selector_type)),
+        item.labels);
     if (!test) return std::unexpected(std::move(test.error()));
     step.AppendStmt(
         mir::IfStmt{

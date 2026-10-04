@@ -32,6 +32,7 @@
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/verify.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
@@ -159,6 +160,7 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
     unit_.root_scope.published_members.push_back(*decl);
   }
   unit_.root_scope.published_callables = std::move(published_callables_);
+  hir::Verify(unit_);
   return std::move(unit_);
 }
 

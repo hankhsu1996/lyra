@@ -154,10 +154,9 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
    template per kind rather than a procedural/structural pair (invariant 13). Statements, locals,
    and members stay behind the owning write target (the procedural body or the structural scope)
    because their writes are compound, not bare arena appends: declaring a local also registers a
-   symbol binding on the pass class, a loop label bumps a counter on the body, a member append feeds
-   scope-specific arenas. The asymmetry is intended -- the expression sink is shared because the
-   write is context-free; the statement and member targets stay context-bound because the writes are
-   not.
+   symbol binding on the pass class, and a member append feeds scope-specific arenas. The asymmetry
+   is intended -- the expression sink is shared because the write is context-free; the statement and
+   member targets stay context-bound because the writes are not.
 
 7. Adding a new fact is a class-member addition and a constructor-parameter addition. It does not
    change dispatcher or per-kind-handler signatures. Adding a new traversal-time concept is a
