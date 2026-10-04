@@ -365,8 +365,7 @@ using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
     ConstructTarget, LibraryConstructorTarget, SymbolTarget, ForeignTarget,
     ValueCellTarget, OpenWriteTarget, EndValueTarget, CopyValueTarget,
-    ControlEffectTarget,
-    CoroutineTarget>;
+    ControlEffectTarget, CoroutineTarget>;
 
 // How a call to `target` ends, which is a property of the callee and never of
 // what it happens to do. The design's own code can depart, wherever it stands
