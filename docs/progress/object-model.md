@@ -104,7 +104,9 @@ each stage establishes, not how.
       distinct from its single concrete base and carrying no second instance storage. Each
       conformance is a pure-virtual method contract the class must satisfy; a shared behaviour among
       unrelated concrete hierarchies is expressed as conformance to one interface class, not as a
-      shared base.
+      shared base. `$cast` to an interface class type is a dynamic cast through the class's type
+      descriptor on both backends, and a call through an interface class handle dispatches through
+      that interface's own table.
 
 - [x] Parameterized-class specialization (LRM 8.25): a generic class plus, per distinct set of
       parameter bindings, a materialized class record. Matching specializations of one generic
@@ -244,28 +246,18 @@ each stage establishes, not how.
 The managed-object lifetime sub-step above states the terminal semantic target (precise tracing with
 cyclic reclamation). Current backend coverage:
 
-Both backends reclaim by shared ownership today, and both leak an unreachable cycle. What differs is
-what a handle is made of, and the difference is worth stating because it is the shape the terminal
-model has to reach on both.
-
-- C++ backend: the handle is parameterized by the class it refers to, so a reference carries the
-  static class in its representation and one is unspellable where that class has no name. Acyclic
-  garbage is reclaimed as the last handle drops. Sufficient to unblock class surface work whose
-  semantics do not depend on cyclic reclamation, which covers every SV class feature planned in this
-  workstream.
-- LLVM backend: the handle is one representation for every object a handle can name, with the
-  object's own type erased and its class carried by the object rather than by the reference. This is
-  sound because SystemVerilog classes are singly inherited (LRM 8.13), so a handle to a base and a
-  handle to the derived object are the same address. Constructing an object, reaching a property,
-  and dispatching a behavior all work; what refuses is the operation that recovers a handle from the
-  object a body runs on (LRM 8.11 `this`), which a shared-owner realization needs and a traced one
-  does not.
+Both backends reclaim by shared ownership, and both leak an unreachable cycle. A handle has one
+shape on both, the object's identity, which shares its ownership, plus the view a static type
+reaches it through -- a class view is the object's start and an interface view is that interface's
+part. Acyclic garbage is reclaimed as the last handle drops, which is sufficient for every SV class
+feature planned in this workstream, since none depends on cyclic reclamation.
 
 Nothing above is visible to any IR: no rule in HIR, MIR, LIR, or lowering states a reference count,
-a shared owner, or a control block. The one exception is that recovery operation, which exists at
-MIR level only because a body holds a borrowed pointer to its object and has to get a handle back
-from it; under tracing the handle is what the body already holds, so the operation goes away with
-the interim rather than being ported to it.
+a shared owner, or a control block. The one exception is the operation recovering a handle from the
+object a body runs on (LRM 8.11 `this`), which exists at MIR level only because a body holds a
+borrowed pointer to its object and has to get a handle back from it; under tracing the handle is
+what the body already holds, so the operation goes away with the interim rather than being ported to
+it.
 
 Precise-tracing storage discipline and collector are deferred until a driver appears (a workload
 that hits cycle leaks in practice, or LLVM-backend SV-class execution becoming a priority). The
@@ -360,14 +352,8 @@ this list is what remembers.
       the construct with no hierarchical name anywhere in sight and is settled in
       `../decisions/a-handle-is-a-value.md`.
 
-- [ ] An instance is still a backend-private shell rather than a generic object over its definition.
-      The runtime no longer reaches generated behavior through a C++ base class, so a scope's
-      lifecycle and identity already arrive as data; what remains is member storage, which each
-      backend still lays out its own way behind its own allocator. Until that unifies through the
-      place model, the C++ backend emits a subclass per scope and the execution backend allocates a
-      generic instance, which is two representations of one concept and the last thing keeping the
-      allocator boundary. The target shape and why it was split from the dispatch work are settled
-      in `../decisions/generated-behavior-boundary.md`.
+- [x] An instance is built as a value of its own class on both backends, its storage laid out at
+      compile time, and the runtime only begins the part every scope shares.
 - Nullability stays a value-level fact, not a type axis, until an analysis that reads it (e.g.
   static null-safety) exists.
 - The reference-representation axis gains a managed kind whose name no longer reads as pure

@@ -11,35 +11,15 @@
 #include <vector>
 
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/runtime/member_slots.hpp"
-#include "lyra/support/member_layout.hpp"
+#include "lyra/runtime/class_definition.hpp"
 
 namespace lyra::runtime {
 
-static_assert(
-    MemberSlots::At(sizeof(Scope)) ==
-    support::MembersAt(support::ValueHolder::kScope));
-
-// The default scope-program entry: a scope with no work for a lifecycle phase
-// keeps this no-op, which ignores the scope it is handed.
-// NOLINTNEXTLINE(readability-named-parameter)
-void ScopeNoOp(Scope*) {
-}
-
-// The same for construction, which a definition nothing builds a scope through
-// keeps.
-// NOLINTBEGIN(readability-named-parameter)
-void ScopeConstructNoOp(
-    Scope*, Scope*, HierarchySegment*, ScopeConstructArguments) {
-}
-// NOLINTEND(readability-named-parameter)
-
 Scope::Scope(
-    Scope* parent, HierarchySegment segment, const ScopeDefinition* definition)
-    : ClassValue(definition, sizeof(Scope)),
-      parent_(parent),
+    Scope* parent, HierarchySegment segment, const ObjectDefinition* definition)
+    : parent_(parent),
       segment_(std::move(segment)),
-      program_(&definition->program) {
+      definition_(RequireScopeClass(definition)) {
 }
 
 Scope::~Scope() = default;
@@ -90,9 +70,8 @@ auto Scope::FindChild(
   throw SimulationError(NoSuchName("scope", name));
 }
 
-auto Scope::FindSubroutine(std::string_view name) -> ErasedScopeCallable {
-  if (ErasedScopeCallable entry =
-          FindInCallableTable(program_->subroutines, name)) {
+auto Scope::FindSubroutine(std::string_view name) -> ErasedEntry {
+  if (ErasedEntry entry = FindInCallableTable(Info().subroutines, name)) {
     return entry;
   }
   throw SimulationError(NoSuchName("subroutine", name));
@@ -100,7 +79,7 @@ auto Scope::FindSubroutine(std::string_view name) -> ErasedScopeCallable {
 
 auto Scope::FindClass(std::string_view name) -> const ObjectDefinition* {
   if (const ObjectDefinition* definition =
-          FindInClassTable(program_->classes, name)) {
+          FindInClassTable(Info().classes, name)) {
     return definition;
   }
   throw SimulationError(NoSuchName("class", name));
@@ -195,15 +174,24 @@ auto Scope::HierarchicalPath() const -> lyra::value::String {
 }
 
 void Scope::Resolve() {
-  program_->resolve_state(this);
+  sv_resolve();
 }
 
 void Scope::Initialize() {
-  program_->initialize_state(this);
+  sv_initialize();
 }
 
 void Scope::CreateProcesses() {
-  program_->create_processes(this);
+  sv_create_processes();
+}
+
+void Scope::sv_resolve() {
+}
+
+void Scope::sv_initialize() {
+}
+
+void Scope::sv_create_processes() {
 }
 
 auto Scope::ResolveVisibleChild(

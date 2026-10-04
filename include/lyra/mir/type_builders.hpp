@@ -54,6 +54,12 @@ auto IsErasedFunction(const TypePool& types, TypeId id) -> bool;
 // that says what was assumed.
 auto ErasedPointer(const TypePool& types) -> TypeId;
 
+// The definition every object of one class carries, which the unit declaring
+// the class emits as a constant, whichever class it is of, and the address of
+// one, through which it is only read.
+auto ClassDefinitionType(const TypePool& types) -> TypeId;
+auto ClassDefinitionPointer(const TypePool& types) -> TypeId;
+
 // The observable-cell type for a variable of `value_type`: a SystemVerilog
 // value-storage data object (LRM 6.5) is an observable cell, so its writes fire
 // subscribers and its value is reached through the cell; any other type -- a

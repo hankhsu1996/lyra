@@ -2,12 +2,14 @@
 
 #include <optional>
 #include <string>
-#include <string_view>
 #include <variant>
 
 #include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/type.hpp"
+#include "lyra/mir/type_id.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::mir {
 
@@ -32,26 +34,15 @@ struct CrossUnitClassRef {
   auto operator==(const CrossUnitClassRef&) const -> bool = default;
 };
 
-// What the runtime library calls the class an object of the design hierarchy
-// extends. Every party that names that class -- a reference to it as a base, a
-// type standing for one of its values, a promise recording that another unit's
-// object stands in the tree -- spells it from here, so the one library name in
-// MIR's vocabulary is written once.
-inline constexpr std::string_view kObjectTreeClassSymbol =
-    "lyra::runtime::Scope";
-
-// A reference to a class the runtime library defines, named by the library
-// symbol itself. No compilation unit declares it, so there is no unit to name
-// it through and nothing to resolve: the symbol is all a target needs to reach
-// it. Extending it is what roots an object in the runtime's tree.
+// The root every object of the design hierarchy extends: extending it is what
+// roots an object in the runtime's tree (LRM 23.3). No compilation unit
+// declares it, and each target realizes it in its own terms.
 //
 // A reference names a class and nothing else. How the runtime drives an object
 // is a property of whichever class supplies the bodies it drives one through,
 // so it is stated by that class rather than by any reference to a base.
-struct RuntimeClassRef {
-  std::string symbol;
-
-  auto operator==(const RuntimeClassRef&) const -> bool = default;
+struct ObjectTreeRootRef {
+  auto operator==(const ObjectTreeRootRef&) const -> bool = default;
 };
 
 // The root every object the program builds extends where its class extends
@@ -64,23 +55,40 @@ struct ManagedObjectRootRef {
 };
 
 // A reference to the class an object extends: one this unit declares, one
-// another unit declares, one the runtime library provides, or the root of every
+// another unit declares, the root of the design hierarchy, or the root of every
 // object the program builds. They are reached differently -- a registry lookup,
-// a name resolved against a consumed signature, a library symbol, a target's
-// own realization -- so each is its own arm.
+// a name resolved against a consumed signature, a target's own realization of
+// either root -- so each is its own arm.
 using ClassRef = std::variant<
-    IntraUnitClassRef, CrossUnitClassRef, RuntimeClassRef,
+    IntraUnitClassRef, CrossUnitClassRef, ObjectTreeRootRef,
     ManagedObjectRootRef>;
+
+// A reference to a class some compilation unit declares: this one or another.
+// Only such a class has a declaration a unit states -- a definition the
+// declaring unit emits, a constructor an object is built through -- because the
+// two roots are the library's and there before any unit is. So whatever needs
+// one of those names a class this way.
+using DeclaredClassRef = std::variant<IntraUnitClassRef, CrossUnitClassRef>;
+
+[[nodiscard]] inline auto AsClassRef(const DeclaredClassRef& declared)
+    -> ClassRef {
+  return std::visit([](const auto& ref) -> ClassRef { return ref; }, declared);
+}
+
+// The class a value of type `object` is an object of -- which is how a
+// construction of that value names what it builds. Only a class some unit
+// declares is ever built, so a type naming any other object, or no object, is a
+// producer's defect.
+[[nodiscard]] auto ClassOfObject(const TypePool& types, TypeId object)
+    -> DeclaredClassRef;
 
 // A method that introduces a new virtual dispatch slot on the class it
 // declares -- LRM 8.20 `virtual function` first appearance in an inheritance
 // chain. The slot's canonical identity is this method's own declaration
-// identity: as long as a dispatch slot carries no state beyond what the
-// introducer's declaration already holds (a name, a signature, participation
-// in dispatch), aliasing "slot identity" to "introducer's (class, method)"
-// is a chosen simplification, not a natural fact. When a slot gains
-// independent metadata -- a pure/abstract requirement, a final marker,
-// interface conformance -- it needs an identity of its own.
+// identity, because a slot carries nothing beyond what the introducer's
+// declaration holds -- a name, a signature, participation in dispatch. Which
+// behavior answers an interface class's slot is stated by the class answering
+// it, not by the slot.
 struct IntroducesVirtualSlot {
   auto operator==(const IntroducesVirtualSlot&) const -> bool = default;
 };
@@ -103,7 +111,7 @@ struct OverridesIntraUnitSlot {
 // canonical identity carries no unit-local ids: it names the declaring unit and
 // the introducing class's canonical name, together with which of that class's
 // introductions it is, counted out of what that class published. That is the
-// same coordinate an intra-unit takeover carries, with the class named by its
+// same coordinate an intra-unit override carries, with the class named by its
 // parts rather than by an id.
 struct OverridesExternalSlot {
   std::string unit_name;
@@ -113,19 +121,30 @@ struct OverridesExternalSlot {
   auto operator==(const OverridesExternalSlot&) const -> bool = default;
 };
 
+// A method that overrides a virtual function a class of the runtime library
+// declares for the classes extending it: what a scope does in one of the
+// phases the library drives it through.
+struct OverridesLibraryVirtual {
+  support::LibraryVirtual function;
+
+  auto operator==(const OverridesLibraryVirtual&) const -> bool = default;
+};
+
 // A method's participation in the class-object dispatch table (LRM 8.20). A
 // non-participating method (a regular direct-only callable) carries no value
 // of this optional; a participating method carries the arm whose payload
 // names the slot's canonical identity: an introducer names itself, an
 // intra-unit override names the introducing (class, method) pair, a
 // cross-unit override names the introducing (unit, class, method) name
-// triple. A consumer reads the slot's identity in one step.
+// triple, and an override of the library's names the library's function. A
+// consumer reads the slot's identity in one step.
 using VirtualDispatchRole = std::variant<
-    IntroducesVirtualSlot, OverridesIntraUnitSlot, OverridesExternalSlot>;
+    IntroducesVirtualSlot, OverridesIntraUnitSlot, OverridesExternalSlot,
+    OverridesLibraryVirtual>;
 
 // Whether this participation is the appearance that introduces the slot (LRM
-// 8.20), as against taking over one an ancestor already declared. A callable in
-// no dispatch introduces nothing, so a caller needing to tell taking one over
+// 8.20), as against overriding one an ancestor already declared. A callable in
+// no dispatch introduces nothing, so a caller needing to tell overriding one
 // from joining no dispatch at all asks whether the role is there before asking
 // this.
 [[nodiscard]] auto IntroducesSlot(

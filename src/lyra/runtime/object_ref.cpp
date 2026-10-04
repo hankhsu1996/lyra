@@ -10,10 +10,10 @@ namespace lyra::runtime {
 GcObject::GcObject() = default;
 GcObject::~GcObject() = default;
 
+// A copy is a different object, so it starts with no event source of its own:
+// what waits on the one it was copied from waits on that one.
 GcObject::GcObject(const GcObject& other)
-    : std::enable_shared_from_this<GcObject>(other),
-      identity_(other.identity_),
-      class_(other.class_) {
+    : std::enable_shared_from_this<GcObject>(other) {
 }
 
 auto GcObject::operator=(const GcObject& other) -> GcObject& {
@@ -21,25 +21,7 @@ auto GcObject::operator=(const GcObject& other) -> GcObject& {
     return *this;
   }
   std::enable_shared_from_this<GcObject>::operator=(other);
-  identity_ = other.identity_;
-  class_ = other.class_;
   return *this;
-}
-
-void GcObject::AdoptIdentity(void* address) {
-  identity_ = address;
-}
-
-auto GcObject::IdentityAddress() const -> void* {
-  return identity_;
-}
-
-void GcObject::AdoptClass(const ObjectDefinition* of) {
-  class_ = of;
-}
-
-auto GcObject::Class() const -> const ObjectDefinition* {
-  return class_;
 }
 
 auto GcObject::EventSource() -> Observable& {

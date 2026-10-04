@@ -36,10 +36,12 @@ class FunctionLowerer {
       UnitLowerer& unit, const mir::CallableCode& code, std::string name);
   // Lowers a class's constructor. The base is constructed before the body runs
   // (LRM 8.7), and what base that is belongs to the class rather than to the
-  // body, so the class comes with the constructor it builds from.
+  // body, so the class comes with the constructor it builds from. Between the
+  // two the constructor enters `prologue`, the class's constructor prologue.
   FunctionLowerer(
       UnitLowerer& unit, const mir::Class& cls,
-      const mir::ConstructorDecl& constructor, std::string name);
+      const mir::ConstructorDecl& constructor, std::string prologue,
+      std::string name);
   // Lowers a closure's invoke. Its signature leads with the receiver naming the
   // storage the captures live in, and the body reads each of them as a member
   // of it.
@@ -142,21 +144,23 @@ class FunctionLowerer {
     lir::TypeId object_type;
     lir::CallTarget callee;
   };
-  // How the constructor of the class `cls` names is entered, or nothing where
-  // there is no body to enter -- a base the runtime library defines comes into
-  // existence with the object and is entered by whatever builds it.
-  auto ConstructorOf(const mir::ClassRef& cls)
-      -> std::optional<EnteredConstructor>;
+  auto ConstructorOf(const mir::DeclaredClassRef& cls) -> EnteredConstructor;
 
-  // The type an object of the class `cls` names is opened as, which is how
-  // every consumer below names a class: a member's declarer, a dispatch
-  // position's introducer, and the record a class's objects carry.
-  auto ObjectTypeOf(const mir::ClassRef& cls) -> diag::Result<lir::TypeId>;
+  // Enters the constructor of `cls` on the storage `object` names, with
+  // `arguments` after the object -- which is how a value the program builds
+  // and an instance of the design hierarchy alike are constructed once their
+  // storage exists.
+  auto EnterConstructor(
+      const mir::DeclaredClassRef& cls, const lir::Operand& object,
+      std::vector<lir::Operand> arguments) -> diag::Result<void>;
 
   // Enters the base's constructor on this same object, ahead of the body (LRM
-  // 8.7). The base's members sit ahead of this class's in one shared
-  // numbering, so the base initializes its own through the receiver it is
-  // handed.
+  // 8.7). The base's part starts where the object does, so the base
+  // initializes its own members through the receiver it is handed. The part
+  // every scope shares is the library's, entered through the library's own
+  // constructor of it; the part every object starts with records the
+  // allocation, so it comes into existence with the storage and nothing enters
+  // it here.
   auto ConstructBase() -> diag::Result<void>;
 
   // A block is an extent: what its declarations bind ends where it does. Its
@@ -435,6 +439,13 @@ class FunctionLowerer {
   auto LowerObjectConstruction(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
+  // Brings an instance of the design hierarchy into existence and enters its
+  // class's constructor on it, the same two operations: the part every scope
+  // shares is the runtime's, built from what the instance is built against,
+  // and the rest is this program's own constructor.
+  auto LowerScopeConstruction(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
   // A reference is the address of the storage its referent lives in, carrying
   // which of the two kinds that storage is. One built over a reference denotes
   // the storage at the end of the chain rather than binding afresh, so it
@@ -584,10 +595,12 @@ class FunctionLowerer {
   void BindCaptureReceiver(mir::LocalId receiver);
 
   // A class's constructor and the class it builds, held together because the
-  // base the one names is entered with what the other states.
+  // base the one names is entered with what the other states, and the symbol
+  // of the body building the class's own part once its base is built.
   struct Construction {
     const mir::Class* cls;
     const mir::ConstructorDecl* constructor;
+    std::string prologue;
   };
 
   UnitLowerer* unit_;

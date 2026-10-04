@@ -195,9 +195,10 @@ reference -- destroys a distinction a consumer has to read.
     classification -- the type still carries every fact about how a member is stored -- but the
     access-control axis every generic object model has, and it is what a compilation unit's
     signature projects. A published member's position is fixed ahead of every unpublished one, so
-    what a unit keeps to itself cannot move what it promised. _Object-model consequence: an object's
-    promise and its storage are one declaration read two ways, never two declarations that can
-    disagree._
+    what a unit keeps to itself cannot move what it promised; an unpublished member's type is still
+    promised, unnamed, because a class extending this one is placed after all of it. _Object-model
+    consequence: an object's promise and its storage are one declaration read two ways, never two
+    declarations that can disagree._
 
 ## Boundary to Adjacent Layers
 
@@ -287,7 +288,7 @@ The post-construction lifecycle bodies are the class's own, stated by whichever 
 rather than carried on a reference to a base: what roots a value in the tree says nothing about how
 one runs, and a class rooted there supplying none is what a unit promises of its object. What the
 override relation does serve here is everything a unit published, which a promise states and its
-realization takes over -- one override machinery, with a user-defined virtual method as the other
+realization overrides -- one override machinery, with a user-defined virtual method as the other
 user, and a backend realizing both the same way.
 
 A static method is an associated function under the type, invoked without an instance. A static

@@ -1,8 +1,8 @@
 #include "lyra/backend/cpp/render_decl.hpp"
 
 #include <span>
-#include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -17,6 +17,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
@@ -26,6 +27,8 @@
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/value_build.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -60,14 +63,15 @@ void WriteReceiverBinding(
 // runs against a copy, so it cannot change the object it is called on.
 auto ReceivesAValue(
     const mir::CompilationUnit& unit, const mir::CallableCode& code) -> bool {
-  return code.receiver.has_value() &&
+  return code.TakesReceiver() &&
          !unit.types.Get(code.locals.Get(*code.receiver).type)
               .Is<mir::PointerType>();
 }
 
-// `static ` for a member function entered on no object (LRM 8.10).
+// `static ` for a member function entered on no object (LRM 8.10), or handed
+// one it narrows itself.
 auto StaticPrefix(const mir::CallableCode& code) -> std::string_view {
-  return code.receiver.has_value() ? "" : "static ";
+  return code.TakesReceiver() ? "" : "static ";
 }
 
 // What a member function's declaration and its definition share after its
@@ -84,7 +88,8 @@ void WriteMemberSignatureTail(
 }
 
 // The definition of a member function -- a class's method (LRM 8.6), static
-// method (LRM 8.10), process or lifecycle body, or a struct's method -- written
+// method (LRM 8.10), process or lifecycle body, the entry a scope answers a
+// foreign caller with (LRM 35.5.3), or a struct's method -- written
 // outside its type so the body can use any type of the unit as a complete one.
 // The body starts by binding its receiver, because MIR reaches the object
 // through a parameter like any other: `C* self = this;` for an object reached
@@ -98,7 +103,7 @@ void RenderMemberFunctionDef(
   WriteMemberSignatureTail(unit, code, out);
   out += " ";
   WriteBody(out, [&] {
-    if (code.receiver.has_value()) {
+    if (code.TakesReceiver()) {
       WriteReceiverBinding(
           unit, code, out, ReceivesAValue(unit, code) ? "*this" : "this");
     }
@@ -116,13 +121,11 @@ void RenderFieldList(
     const base::Arena<mir::FieldDecl, mir::FieldId>& fields, TargetText& out) {
   for (const mir::FieldId slot : fields.Ids()) {
     WriteDeclaration(
-        out, DeclaredCell{
-                 .owner = CellOwner::kObject,
-                 .text = CellText::kDefined,
-                 .immutable = false,
+        out, VariableDeclaration{
+                 .form = VariableForm::kNonStaticDataMember,
+                 .is_const = false,
                  .type = CppType(unit, fields.Get(slot).type),
-                 .name = CppFieldName(named_fields, slot),
-                 .qualifier = {}});
+                 .name = CppFieldName(named_fields, slot)});
   }
 }
 
@@ -133,13 +136,12 @@ void RenderClassStaticProperties(
     const mir::CompilationUnit& unit, const mir::Class& s, TargetText& out) {
   for (const mir::StaticPropertyId slot : s.static_properties.Ids()) {
     WriteDeclaration(
-        out, DeclaredCell{
-                 .owner = CellOwner::kType,
-                 .text = CellText::kDefined,
-                 .immutable = false,
-                 .type = CppType(unit, s.static_properties.Get(slot).type),
-                 .name = CppStaticPropertyName(s.named_static_properties, slot),
-                 .qualifier = {}});
+        out,
+        VariableDeclaration{
+            .form = VariableForm::kInlineStaticDataMember,
+            .is_const = false,
+            .type = CppType(unit, s.static_properties.Get(slot).type),
+            .name = CppStaticPropertyName(s.named_static_properties, slot)});
   }
 }
 
@@ -190,32 +192,6 @@ void RenderClassCallableDef(
       CppClassCallableName(unit, s, id), m.code, out);
 }
 
-// A runtime callback, declared `static` so `&C::sv_adapter_0` is a plain
-// function pointer the runtime's tables can hold. Its receiver is an ordinary
-// first parameter.
-void RenderAbiAdapterDecl(
-    const mir::CompilationUnit& unit, mir::AbiAdapterId id,
-    const mir::AbiAdapter& a, TargetText& out) {
-  out.OpenLine();
-  Write(out, "static auto ", CppAbiAdapterName(id), "(");
-  WriteParameters(unit, a.code, a.code.params, out);
-  Write(out, ") -> ", CppType(unit, a.code.result_type), ";\n");
-}
-
-void RenderAbiAdapterDef(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
-    mir::ClassId cls_id, const mir::Class& s, mir::AbiAdapterId id,
-    const mir::AbiAdapter& a, TargetText& out) {
-  Write(
-      out, "auto ", CppClassName(s, cls_id), "::", CppAbiAdapterName(id), "(");
-  WriteParameters(unit, a.code, a.code.params, out);
-  Write(out, ") -> ", CppType(unit, a.code.result_type), " ");
-  WriteBody(out, [&] {
-    RenderBlockStatements(ScopeView::ForCode(unit, a.code, refusals), out);
-  });
-  out += "\n";
-}
-
 // The constructor, declared in the class and defined in the code file, outside
 // the class so the body can build a child whose own body uses this class:
 //
@@ -260,38 +236,31 @@ void RenderConstructor(
   code += "\n";
 }
 
-// A class's static constant: declared `static const T name;` in the class and
-// defined `const T C::name = value;` in the code file. Another unit only ever
-// needs its address, which the declaration is enough for, so the value stays
-// in this unit. A constant built from another one only takes that one's
-// address, so their order of initialization does not matter. The caller passes
-// the name, since the object record's name is fixed and the others are
-// positions.
-void RenderStaticConstant(
+// A constant class `s` holds, announced in the class as `static const T name;`
+// and defined in the code file as `const T Class::name = value;`. Another unit
+// only ever needs its address, which the announcement is enough for, so the
+// value stays in this unit. The caller passes the name, since the definition's
+// is fixed and the others are positions.
+void RenderClassConstant(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
-    mir::ClassId cls_id, const mir::Class& s, const CppName& name,
-    const mir::StaticConstantDecl& c, TargetText& signature, TargetText& code) {
-  const ScopeView view = ScopeView::ForConstant(unit, c.body, refusals);
-  const CppType type(unit, c.type);
-  const CppName owner = CppClassName(s, cls_id);
+    mir::ClassId id, const mir::Class& s, mir::TypeId type, const CppName& name,
+    const mir::ValueBuild& build, TargetText& announced, TargetText& defined) {
   WriteDeclaration(
-      signature, DeclaredCell{
-                     .owner = CellOwner::kType,
-                     .text = CellText::kAnnounced,
-                     .immutable = true,
-                     .type = type,
-                     .name = name,
-                     .qualifier = {}});
+      announced, VariableDeclaration{
+                     .form = VariableForm::kStaticDataMemberDeclaration,
+                     .is_const = true,
+                     .type = CppType(unit, type),
+                     .name = name});
+  const ScopeView view = ScopeView::ForConstant(unit, build.body, refusals);
   WriteDeclaration(
-      code,
-      DeclaredCell{
-          .owner = CellOwner::kType,
-          .text = CellText::kDefined,
-          .immutable = true,
-          .type = type,
+      defined,
+      VariableDeclaration{
+          .form = VariableForm::kStaticDataMemberDefinition,
+          .is_const = true,
+          .type = CppType(unit, type),
           .name = name,
-          .qualifier = owner},
-      [&](TargetText& value) { Write(view, value, c.value); });
+          .qualifier = CppClassName(s, id)},
+      [&](TargetText& value) { Write(view, value, build.value); });
 }
 
 void RenderClass(
@@ -310,11 +279,18 @@ void AppendClassInDependencyOrder(
   if (emitted[id.value]) return;
   emitted[id.value] = true;
   const mir::Class& cls = unit.GetClass(id);
-  for (const mir::ClassRef& rests_on : mir::RestsOnDeclaredClasses(cls)) {
-    if (const auto* intra = std::get_if<mir::IntraUnitClassRef>(&rests_on)) {
-      AppendClassInDependencyOrder(
-          unit, refusals, intra->class_id, emitted, text);
-    }
+  for (const mir::DeclaredClassRef& rests_on :
+       mir::RestsOnDeclaredClasses(cls)) {
+    std::visit(
+        Overloaded{
+            [&](const mir::IntraUnitClassRef& intra) {
+              AppendClassInDependencyOrder(
+                  unit, refusals, intra.class_id, emitted, text);
+            },
+            // Another unit's class is declared in that unit's own header,
+            // which the file declaring this one includes.
+            [](const mir::CrossUnitClassRef&) {}},
+        rests_on);
   }
   const TargetText::Section defined(text.definitions);
   if (mir::IsPromised(unit, id)) {
@@ -337,17 +313,27 @@ void RenderClass(
     out += " final";
   }
   // The base class first (LRM 8.13), then each interface class (LRM 8.26), all
-  // as C++ bases. An interface class holds no storage, so this multiple
-  // inheritance never duplicates a base's fields.
-  std::vector<mir::ClassRef> bases;
+  // as C++ bases. An interface class is a virtual base, because one reached
+  // along several paths is one type the object is, not several (LRM 8.26.6.3):
+  // there is one copy of it to view the object as.
+  struct Base {
+    mir::ClassRef of;
+    bool is_interface_class;
+  };
+  std::vector<Base> bases;
   if (s.base.has_value()) {
-    bases.push_back(*s.base);
+    bases.push_back(Base{.of = *s.base, .is_interface_class = false});
   }
-  bases.insert(bases.end(), s.implements.begin(), s.implements.end());
+  for (const mir::DeclaredClassRef& implemented : s.implements) {
+    bases.push_back(
+        Base{.of = mir::AsClassRef(implemented), .is_interface_class = true});
+  }
   if (!bases.empty()) {
-    out += " : public ";
-    WriteSeparated(out, bases, ", public ", [&](const mir::ClassRef& base) {
-      Write(out, CppClassRef(unit, base));
+    out += " : ";
+    WriteSeparated(out, bases, ", ", [&](const Base& base) {
+      Write(
+          out, base.is_interface_class ? "public virtual " : "public ",
+          CppClassRef(unit, base.of));
     });
   }
   out += " {\n";
@@ -358,6 +344,26 @@ void RenderClass(
     const TargetText::Section declared(out);
     const TargetText::Section defined(code);
     RenderConstructor(unit, refusals, id, s, *s.constructor, out, code);
+  }
+
+  // The destructor is virtual, because whoever ends a value holds it as the
+  // class every value extends, or as an interface class. It is defined in the
+  // code file so it is the class's key function, and the class's table and
+  // type description are emitted there once rather than in every file that
+  // casts to it.
+  {
+    const TargetText::Section ended(out);
+    out.OpenLine();
+    if (s.base.has_value()) {
+      Write(out, "~", CppClassName(s, id), "() override;\n");
+    } else {
+      Write(out, "virtual ~", CppClassName(s, id), "();\n");
+    }
+    const TargetText::Section defined(code);
+    code.OpenLine();
+    Write(
+        code, CppClassName(s, id), "::~", CppClassName(s, id),
+        "() = default;\n");
   }
 
   // Members are public so cross-unit references can reach them directly.
@@ -384,39 +390,20 @@ void RenderClass(
     }
   }
 
+  // The constants the class holds and then its definition, which names them:
+  // each defined in the code file beside the bodies it names.
   {
-    const TargetText::Section declared(out);
-    for (const mir::AbiAdapterId adapter_id : s.abi_adapters.Ids()) {
-      const mir::AbiAdapter& a = s.abi_adapters.Get(adapter_id);
-      RenderAbiAdapterDecl(unit, adapter_id, a, out);
-      const TargetText::Section defined(code);
-      RenderAbiAdapterDef(unit, refusals, id, s, adapter_id, a, code);
+    const TargetText::Section constants(out);
+    const TargetText::Section defined(code);
+    for (const mir::ClassConstantId constant : s.constants.Ids()) {
+      const mir::ClassConstantDecl& decl = s.constants.Get(constant);
+      RenderClassConstant(
+          unit, refusals, id, s, decl.type, CppClassConstantName(constant),
+          decl.initializer, out, code);
     }
-  }
-
-  // Static constants, in the class's order: C++ initializes the constants of
-  // one file in the order they are written, and a constant built from another
-  // comes after it in that order.
-  for (const mir::StaticConstantId constant_id : s.static_constants.Ids()) {
-    const TargetText::Section declared(out);
-    const TargetText::Section defined(code);
-    RenderStaticConstant(
-        unit, refusals, id, s, CppStaticConstantName(constant_id),
-        s.static_constants.Get(constant_id), out, code);
-  }
-
-  // The object record, and the static member the runtime's allocation reads
-  // to find it.
-  if (s.object_record.has_value()) {
-    const TargetText::Section declared(out);
-    const TargetText::Section defined(code);
-    RenderStaticConstant(
-        unit, refusals, id, s, CppObjectRecordName(), *s.object_record, out,
-        code);
-    out.OpenLine();
-    Write(
-        out, "static constexpr const ", CppType(unit, s.object_record->type),
-        "* ", CppClassRecordHookName(), " = &", CppObjectRecordName(), ";\n");
+    RenderClassConstant(
+        unit, refusals, id, s, mir::ClassDefinitionType(unit.types),
+        CppDefinitionName(), s.object_definition_initializer, out, code);
   }
 
   out.Outdent();
@@ -564,13 +551,11 @@ auto RenderUnitClosures(
       out.Indent();
       for (const mir::FieldId field : decl.field_order) {
         WriteDeclaration(
-            out, DeclaredCell{
-                     .owner = CellOwner::kObject,
-                     .text = CellText::kDefined,
-                     .immutable = false,
+            out, VariableDeclaration{
+                     .form = VariableForm::kNonStaticDataMember,
+                     .is_const = false,
                      .type = CppType(unit, decl.fields.Get(field).type),
-                     .name = CppClosureCaptureName(field),
-                     .qualifier = {}});
+                     .name = CppClosureCaptureName(field)});
       }
       out.OpenLine();
       out += started ? "static auto " : "auto ";
@@ -654,21 +639,17 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText {
     const CppType type(unit, unit.static_variables.Get(id).type);
     const CppName name = CppStaticVariableName(unit.named_static_variables, id);
     WriteDeclaration(
-        text.signature, DeclaredCell{
-                            .owner = CellOwner::kNamespace,
-                            .text = CellText::kAnnounced,
-                            .immutable = false,
+        text.signature, VariableDeclaration{
+                            .form = VariableForm::kExternDeclaration,
+                            .is_const = false,
                             .type = type,
-                            .name = name,
-                            .qualifier = {}});
+                            .name = name});
     WriteDeclaration(
-        text.code, DeclaredCell{
-                       .owner = CellOwner::kNamespace,
-                       .text = CellText::kDefined,
-                       .immutable = false,
+        text.code, VariableDeclaration{
+                       .form = VariableForm::kNamespaceScopeDefinition,
+                       .is_const = false,
                        .type = type,
-                       .name = name,
-                       .qualifier = {}});
+                       .name = name});
   }
   return text;
 }

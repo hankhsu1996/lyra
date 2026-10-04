@@ -1,6 +1,9 @@
 # Allocation is the runtime's, construction is the asking code's
 
-Date: 2026-09-09 Status: accepted
+Date: 2026-09-09 Status: accepted, with who allocates and when the handle opens superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D7. The storage
+comes from the host's `operator new`, and the handle owns the object only once its constructor has
+run. That the definition carries no constructor and that the asking code enters it stand.
 
 ## Context
 

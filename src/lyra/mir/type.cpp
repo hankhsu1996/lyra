@@ -155,7 +155,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             HashField(seed, t.class_name);
           },
           [](const OpaqueObjectType&) {},
-          [&](const RuntimeClassType& t) { HashField(seed, t.symbol); },
+          [&](const RuntimeClassType& t) { HashEnum(seed, t.which); },
           [](const RuntimeEffectsType&) {},
           [](const FilesType&) {},
           [](const DiagnosticType&) {},

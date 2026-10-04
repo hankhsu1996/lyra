@@ -4,8 +4,11 @@ Date: 2026-09-11 Status: accepted; D2 realized by
 [a-member-is-reached-at-a-derived-offset](a-member-is-reached-at-a-derived-offset.md), which puts an
 object's and a scope's slots in the value's own allocation rather than in a block beside it; D3
 lifted by [construct-in-final-home](construct-in-final-home.md) as realized, which stops a closure
-moving and puts its captures in its own allocation the same way. The separately allocated block now
-serves only a body's variables.
+moving and puts its captures in its own allocation the same way. Both are superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md): the execution
+backend lays every value out itself, a closure's captures lie in the closure value after what the
+library keeps there, and a body's variables are a record in its own frame, so no storage block is
+left.
 
 ## Context
 

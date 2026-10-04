@@ -340,9 +340,9 @@ cross-check predicts. This file owns only which instances are known and what is 
       backend had realized a closure as a lambda, where a capture is a plain name and the receiver
       has nowhere to be written. It now realizes one as a type whose members are the captures and
       whose one body names its receiver, so the capture arm is the same access every other member
-      is. Resolving it took one more fact to be stated rather than recovered: a static constant's
-      reference names the class that owns it, so no body has to know which class it sits in to spell
-      one, and a closure's body can be written apart from the class it was built in.
+      is. Resolving it took one more fact to be stated rather than recovered. A reference to what a
+      class owns names that class, so no body has to know which class it sits in to spell one, and a
+      closure's body can be written apart from the class it was built in.
 
 ## Callable and assignment identity
 
@@ -558,9 +558,9 @@ cross-check predicts. This file owns only which instances are known and what is 
       reaches its object through, and names none where it is entered on no object. The binding is
       recorded where it is made, so every body that declares a receiver says so without a site
       remembering to; the parameters a caller supplies beyond it are one answer the source backend,
-      the forwarding entry and a promised behavior all read, where each had skipped a position of
-      its own. The closure invoke's receiver, which is no parameter, is read off the same statement
-      on both backends rather than off a position both assumed.
+      a reference to the body as an entry and a promised behavior all read, where each had skipped a
+      position of its own. The closure invoke's receiver, which is no parameter, is read off the
+      same statement on both backends rather than off a position both assumed.
 
 - [x] T32 -- A constructor is written as the one body it is. The source backend had invented a
       second callable per class -- a static entry taking the receiver, and the forwarding call into
@@ -580,13 +580,13 @@ cross-check predicts. This file owns only which instances are known and what is 
       instructions at all. Neither the list of owners nor the node had to change -- the owner's own
       remit had been written narrower than the questions it answers.
 
-- [ ] T40 -- A class of the source language states its own record under a name the allocation reads
-      to hand a new object its class. That name is the runtime's, and the emitter takes it from the
-      source backend's own naming header -- a place beside the three owners, not one of them. It
-      passes the check that reads the emitters for library names, because the check reads emitters
-      and this sits one file over. No owner fits it: it is not a question about a type, not an
-      access protocol, and not an operation, but a name two sides agree on by both reading one
-      spelling.
+- [x] T40 -- A new object is handed its class by the class itself, not by a name the runtime and the
+      emitter both spell. The allocation had read a record the class stated under a name the runtime
+      chose, taken from the source backend's own naming header, which no owner fitted. Now every
+      class has one definition, a constant its unit emits from what MIR states about the class, and
+      a construction of a value of a class reaches it through the class its type names. The record
+      the name led to is gone with it: what the runtime is told about a class is stated once, in
+      MIR, and both backends translate it.
 
 - [x] T39 -- Which of two operations a suspension is, is stated rather than worked out by each
       consumer from what is being awaited. Awaiting an execution hands control to that body and

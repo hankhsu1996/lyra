@@ -3,11 +3,9 @@
 #include <compare>
 #include <cstdint>
 #include <string>
-#include <vector>
 
 #include "lyra/base/pool_id.hpp"
 #include "lyra/hir/external_callee.hpp"
-#include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/type_id.hpp"
 
 namespace lyra::hir {
@@ -22,16 +20,14 @@ struct PublishedCallableId {
       -> std::strong_ordering = default;
 };
 
-// One subroutine an instance of a unit exposes to another unit by name (LRM
-// 25.7). What a caller needs beyond the name is the call protocol -- a task
-// enable suspends the caller until completion (LRM 13.3) -- the result the
-// completion yields, and per formal a direction and a type, which is what
-// shapes the arguments the call passes and the writeback it performs.
+// One subroutine a unit exposes to another by name: one an instance of it
+// offers (LRM 25.7), one its namespace declares (LRM 26.3), or a method of a
+// class it publishes (LRM 8.6). What a caller needs beyond the name is the
+// interface a call to it is made through and the result its completion yields.
 struct PublishedCallable {
   std::string name;
-  SubroutineKind kind;
+  ExternalCalleeInterface interface;
   TypeId result_type;
-  std::vector<ExternalCalleeParam> params;
 
   auto operator==(const PublishedCallable&) const -> bool = default;
 };

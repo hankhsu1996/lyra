@@ -16,6 +16,7 @@
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::mir {
 
@@ -311,12 +312,12 @@ struct OpaqueObjectType {
   auto operator==(const OpaqueObjectType&) const -> bool = default;
 };
 
-// The type of an instance of a class the runtime library defines, named by the
-// library symbol. MIR does not know its members either; unlike a class of
-// another unit it belongs to no compilation unit, so the symbol is the whole
-// identity and no unit dependency follows from naming it.
+// The type of an instance of a class the runtime library defines. MIR does not
+// know its members either; unlike a class of another unit it belongs to no
+// compilation unit, so which class it is is the whole identity and no unit
+// dependency follows from naming it.
 struct RuntimeClassType {
-  std::string symbol;
+  support::RuntimeClass which;
 
   auto operator==(const RuntimeClassType&) const -> bool = default;
 };
@@ -412,27 +413,6 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // The owner of a child threads this into the child's constructor as a
   // single packaged value.
   kHierarchySegment,
-  // The runtime records a scope's generated behavior is stated in: a scope
-  // class's `lyra::runtime::ScopeProgram` (constant metadata plus lifecycle
-  // entries), its `lyra::runtime::ScopeDefinition` (that program plus the
-  // construct entry), the `lyra::runtime::ScopeMetadata` inside a program, its
-  // `lyra::runtime::AbiStringRef` def-name, and the `lyra::runtime::ScopeEntry`
-  // function-pointer an entry field holds. HIR-to-MIR builds each scope class's
-  // definition as an ordinary constructed value of these types.
-  kScopeProgram,
-  kScopeDefinition,
-  kScopeMetadata,
-  kAbiStringRef,
-  // The callables a scope answers for by name: one
-  // `lyra::runtime::ScopeCallable` per name, pointing at the entry that adapts
-  // a call to this scope's own subroutine, gathered in a
-  // `lyra::runtime::ScopeCallableTable` the scope's program holds. A scope
-  // holds one such table per namespace it answers in -- the program-global
-  // names of its DPI-C exports (LRM 35.4), and the SV names a hierarchical
-  // enable spells (LRM 23.6). The entry's own type is a machine function, not
-  // one of these.
-  kScopeCallable,
-  kScopeCallableTable,
   // The canonical buffer a packed vector crosses the DPI-C boundary in (LRM
   // 35.5.6, Annex H.10.1.2): `lyra::value::DpiBitBuffer` holds `svBitVecVal`
   // chunks, `lyra::value::DpiLogicBuffer` holds `svLogicVecVal` chunks. The
@@ -468,60 +448,28 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // scope, which the region naming that scope binds and consumes.
   kCancellationTarget,
   kControlEffect,
-  // Where a name lands on a class no signature publishes:
+  // Where a property name lands on a class no signature publishes:
   // `lyra::runtime::PropertyCoordinate` pairs the class declaring a property
-  // with the position it gave it, and `lyra::runtime::BehaviorCoordinate` pairs
-  // the class introducing a behavior with its ordinal there. A class answers a
-  // name with one while a reference to it resolves, and the access applies it
-  // to
-  // whichever object it runs on, so nothing looks a name up on the simulation
-  // path.
+  // with the position it gave it. A class answers a name with one while a
+  // reference to it resolves, and the access applies it to whichever object it
+  // runs on, so nothing looks a property name up on the simulation path.
   kPropertyCoordinate,
-  kBehaviorCoordinate,
-  // What every object of one source-language class carries, so the object
-  // answers where its own properties live and which body answers a behavior:
-  // `lyra::runtime::ObjectDefinition`, holding what the class extends, what it
-  // declares itself, and the entries by which an object of it is reached. Like
-  // the scope records above it is a second reading of what the class already
-  // states, for a target that cannot reach a member except by writing its name;
-  // a target whose objects the runtime lays out composes none of it.
+  // What every object of one class carries, so the object answers where its
+  // own properties live and which body a name reaches:
+  // `lyra::runtime::ObjectDefinition`. The class's unit emits it as a constant,
+  // which every unit naming the class reaches by its symbol.
   kObjectDefinition,
-  // The entries a class supplies about reaching its own properties: one per
-  // property it declares, gathered in a `lyra::runtime::PropertySlotTable`.
-  // Each entry's own type is a machine function, not one of these.
-  kPropertySlotTable,
-  // One behavior a class takes over from its lineage (LRM 8.20):
-  // `lyra::runtime::DispatchTakeover` names the position and the body this
-  // class answers it with, and a `lyra::runtime::TakeoverTable` gathers them.
-  kDispatchTakeover,
-  kTakeoverTable,
-  // The bodies a class introduces, in the order it introduces them:
-  // `lyra::runtime::MethodDispatchTable`.
-  kMethodDispatchTable,
-  // One name a class answers while a reference to it resolves, paired with
-  // where that name lands: `lyra::runtime::ResolvedProperty` and
-  // `lyra::runtime::ResolvedBehavior`, gathered in the two tables beside them.
-  // A class carries only the names it declares itself, because what its lineage
-  // declares is found by asking what it extends.
+  // The parts a definition is made of, each a structure of the library a unit
+  // states as a constant: `lyra::runtime::ResolvedProperty` is a property's
+  // name with where it lands, `DeclaredBody` a method's name with the body it
+  // runs, `ScopeInfo` what a class of the design hierarchy states of its
+  // instances, `ScopeCallable` a subroutine's name with its body, and
+  // `ScopeClass` a declared class's name with its definition.
   kResolvedProperty,
-  kResolvedPropertyTable,
-  kResolvedBehavior,
-  kResolvedBehaviorTable,
-  // One name a class answers with a body outright, for a call the object gets
-  // no say in (LRM 8.14): `lyra::runtime::DeclaredBody` pairs the name with the
-  // body, and a `lyra::runtime::DeclaredBodyTable` gathers them. It is the
-  // third of the answers above and not a fourth kind of question -- a class
-  // that publishes nothing answers by name in all three.
   kDeclaredBody,
-  kDeclaredBodyTable,
-  // The classes one scope answers a name with (LRM 23.9):
-  // `lyra::runtime::ScopeClass` pairs the name the source declared with that
-  // class's record, and a `lyra::runtime::ScopeClassTable` gathers them. A
-  // referrer outside reaches such a class by walking to the scope and asking,
-  // because a class a design element declares is a type of that element's
-  // instance (LRM 6.22) and no signature carries it.
+  kScopeInfo,
+  kScopeCallable,
   kScopeClass,
-  kScopeClassTable,
 };
 
 struct RuntimeLibraryType {

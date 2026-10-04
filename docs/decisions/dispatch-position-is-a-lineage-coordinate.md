@@ -1,11 +1,15 @@
 # A dispatch position is a coordinate in a lineage, not a number in a table
 
-Date: 2026-09-09 Status: accepted
+Date: 2026-09-09 Status: accepted; D3 superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D1. Which body a
+position holds is a table laid out at compile time, and a dispatch is a load of the table, a load of
+the slot, and a call, with no library call in between. D1 and D2 stand, so a behavior is still named
+by its introducing class and an ordinal, and the layout step is where that becomes a slot.
 
 ## Context
 
 A call may name a behavior instead of a body, and which body runs is then decided by the value the
-call is made on (LRM 8.20). The semantic layer already states this: a method introduces, takes over,
+call is made on (LRM 8.20). The semantic layer already states this: a method introduces, overrides,
 or finalizes a slot, and a dynamic call names a receiver together with the slot's canonical
 identity, which is the declaration that introduced it. What no layer stated is where that identity
 lands in something a machine can index.
@@ -17,8 +21,8 @@ is the first consumer that has to turn the identity into a coordinate.
 ## Decision
 
 **D1. A class states what it adds to its lineage and nothing about the lineage itself.** A class
-carries the behaviors it introduces, in the order it introduces them, and the ones it takes over,
-each naming the behavior taken over. It restates nothing its bases already state -- exactly as it
+carries the behaviors it introduces, in the order it introduces them, and the ones it overrides,
+each naming the behavior overridden. It restates nothing its bases already state -- exactly as it
 carries its own members and not its base's. What a value holds and what a value answers are both
 read from the lineage, which is what keeps one declaration's meaning independent of what extends it.
 
@@ -69,7 +73,7 @@ layout component asked at code generation, never from a field carried in the mid
   the neighboring code does not have, and states in the IR what a layout query answers. The
   machinery it requires is the evidence against it.
 - **A record listing every body a class declares, indexed by a call.** Cannot be indexed: it lacks
-  the behaviors an ancestor introduced and the class does not take over, and it holds bodies that
+  the behaviors an ancestor introduced and the class does not override, and it holds bodies that
   answer no behavior at all.
 - **Generated code reading the class record itself.** Makes the record's layout a fact every code
   generator must reproduce, which is the object-ABI boundary

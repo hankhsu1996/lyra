@@ -1,13 +1,10 @@
-#include <format>
 #include <span>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
@@ -206,7 +203,7 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 .object = external_unit_object_identities_.Get(eu.object)}};
           },
           [](const mir::RuntimeClassType& e) -> lir::Type {
-            return lir::Type{lir::RuntimeClassType{.symbol = e.symbol}};
+            return lir::Type{lir::RuntimeClassType{.which = e.which}};
           },
           [](const mir::CrossUnitClassType& e) -> lir::Type {
             return lir::Type{lir::CrossUnitClassType{
@@ -373,43 +370,20 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kControlEffect);
     case mir::RuntimeLibraryKind::kPropertyCoordinate:
       return mirror(lir::RuntimeLibraryKind::kPropertyCoordinate);
-    case mir::RuntimeLibraryKind::kBehaviorCoordinate:
-      return mirror(lir::RuntimeLibraryKind::kBehaviorCoordinate);
     case mir::RuntimeLibraryKind::kObjectDefinition:
       return mirror(lir::RuntimeLibraryKind::kObjectDefinition);
-    case mir::RuntimeLibraryKind::kScopeProgram:
-    case mir::RuntimeLibraryKind::kScopeDefinition:
-    case mir::RuntimeLibraryKind::kScopeMetadata:
-    case mir::RuntimeLibraryKind::kAbiStringRef:
-    case mir::RuntimeLibraryKind::kScopeCallable:
-    case mir::RuntimeLibraryKind::kScopeCallableTable:
-    case mir::RuntimeLibraryKind::kScopeClass:
-    case mir::RuntimeLibraryKind::kScopeClassTable:
-    case mir::RuntimeLibraryKind::kPropertySlotTable:
-    case mir::RuntimeLibraryKind::kDispatchTakeover:
-    case mir::RuntimeLibraryKind::kTakeoverTable:
-    case mir::RuntimeLibraryKind::kMethodDispatchTable:
     case mir::RuntimeLibraryKind::kResolvedProperty:
-    case mir::RuntimeLibraryKind::kResolvedPropertyTable:
-    case mir::RuntimeLibraryKind::kResolvedBehavior:
-    case mir::RuntimeLibraryKind::kResolvedBehaviorTable:
+      return mirror(lir::RuntimeLibraryKind::kResolvedProperty);
     case mir::RuntimeLibraryKind::kDeclaredBody:
-    case mir::RuntimeLibraryKind::kDeclaredBodyTable:
-      throw InternalError(
-          "TranslateRuntimeLibrary: a unit-definition record type is a "
-          "compile-time constant consumed by the backend directly and does not "
-          "flow through MIR-to-LIR");
+      return mirror(lir::RuntimeLibraryKind::kDeclaredBody);
+    case mir::RuntimeLibraryKind::kScopeInfo:
+      return mirror(lir::RuntimeLibraryKind::kScopeInfo);
+    case mir::RuntimeLibraryKind::kScopeCallable:
+      return mirror(lir::RuntimeLibraryKind::kScopeCallable);
+    case mir::RuntimeLibraryKind::kScopeClass:
+      return mirror(lir::RuntimeLibraryKind::kScopeClass);
   }
   throw InternalError("TranslateRuntimeLibrary: unknown RuntimeLibraryKind");
-}
-
-auto UnitLowerer::RecordUnsupportedType(std::string_view what) -> lir::Type {
-  if (!type_error_.has_value()) {
-    type_error_ = diag::Make(
-        diag::DiagCode::kUnsupportedTypeKind,
-        std::format("mir_to_lir: {} is not yet lowerable to LIR", what));
-  }
-  return lir::Type{lir::VoidType{}};
 }
 
 }  // namespace lyra::lowering::mir_to_lir

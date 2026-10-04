@@ -1,14 +1,16 @@
 #pragma once
 
+#include <compare>
+#include <cstdint>
 #include <string>
 #include <variant>
 
+#include "lyra/base/pool_id.hpp"
 #include "lyra/hir/class_coordinate_id.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
-#include "lyra/hir/published_behavior.hpp"
-#include "lyra/hir/published_member.hpp"
+#include "lyra/hir/published_method.hpp"
 #include "lyra/hir/static_property_id.hpp"
 
 namespace lyra::hir {
@@ -55,18 +57,25 @@ struct LocalClassPropertyTarget {
   auto operator==(const LocalClassPropertyTarget&) const -> bool = default;
 };
 
+// Which of the properties a class declares one is, counted in the order the
+// class declares them (LRM 8.5). The class and every unit reading its signature
+// count it out of the same list, so neither states a position to the other.
+struct PublishedPropertyId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const PublishedPropertyId&) const
+      -> std::strong_ordering = default;
+};
+
 // A reference to a class property (LRM 8.4) declared by another compilation
-// unit: the declaring unit, the class's canonical name, and which of the
-// properties that class published this is. It names the class that declares the
-// property, which is often an ancestor of the one the source wrote, found by
-// walking what each promised about the class it extends. The position is
-// counted out of that promise, by the class that declares it and by this unit
-// alike, so neither states one to the other and neither can count past what the
-// class kept to itself.
+// unit: the declaring unit, the class's canonical name, and which of that
+// class's properties this is. It names the class that declares the property,
+// which is often an ancestor of the one the source wrote and is the one the
+// front end resolved the name to.
 struct ExternalClassPropertyTarget {
   std::string unit_name;
   std::string class_name;
-  PublishedMemberId property;
+  PublishedPropertyId property;
 
   auto operator==(const ExternalClassPropertyTarget&) const -> bool = default;
 };
@@ -155,22 +164,11 @@ struct ExternalDispatchSlot {
   auto operator==(const ExternalDispatchSlot&) const -> bool = default;
 };
 
-// A dispatch position on a class a design element declares. Which class
-// introduced the behavior is found by walking what each class promised about
-// the one it extends, and such a class promises nothing, so this unit states
-// the name the source wrote and nothing more: the walk runs where the design
-// elaborates and this names the scope slot holding what it landed on.
-struct UnpublishedBehaviorSlot {
-  BehaviorCoordinateId coordinate;
-
-  auto operator==(const UnpublishedBehaviorSlot&) const -> bool = default;
-};
-
-// The body a call reaches on a class a design element declares, where the
-// method answers no dispatch position (LRM 8.20). What the class the access
-// names declares is what runs, whatever the object turns out to be (LRM 8.14),
-// so nothing about it is left for the object to answer and the body is settled
-// where the design elaborates. This names the scope slot holding what it landed
+// The body a call reaches on a class a design element declares. Such a class
+// promises nothing, so this unit can count no position; the scope declaring the
+// class answers which body the method's name reaches, once, where the design
+// elaborates, and a method the object decides (LRM 8.20) answers with one that
+// dispatches on the object. This names the scope slot holding what it landed
 // on -- a code address, not a position, because there is no position to count
 // and nothing to count it against.
 struct UnpublishedBehaviorBody {
@@ -179,7 +177,7 @@ struct UnpublishedBehaviorBody {
   auto operator==(const UnpublishedBehaviorBody&) const -> bool = default;
 };
 
-// Which behavior a method takes over (LRM 8.20). One this unit's own class
+// Which behavior a method overrides (LRM 8.20). One this unit's own class
 // introduced is named by that class and the method introducing it; one a class
 // of another unit introduced is named by the coordinate that class published,
 // since no identity of this unit reaches it.

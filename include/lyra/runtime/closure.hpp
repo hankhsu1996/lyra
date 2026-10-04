@@ -1,91 +1,84 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
-#include <span>
-#include <variant>
 
-#include "lyra/runtime/member_slots.hpp"
-#include "lyra/runtime/scope_program.hpp"
 #include "lyra/support/tuple_operations.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/runtime_value.hpp"
 
 namespace lyra::runtime {
 
-// A closure's body, entered on the closure value its captures live in. The
-// alternatives are the call protocols a signature states: an ordinary body runs
-// to completion and answers nothing, a coroutine body yields the handle whoever
-// entered it drives from there, a per-element body is run once for each entry
-// of a container it was handed and results in a value, and a value body takes
-// nothing and results in a value each time it is run.
+// The immutable definition of one closure: the body a call runs, and how the
+// storage its captures live in is laid out. Held once and shared by every value
+// built from it, the way a class's definition is shared by its values, and like
+// one emitted by the unit declaring it as a constant laid out as C lays a
+// structure out.
+//
+// The body is entered on the closure value its captures live in, under the one
+// call protocol its signature states, so exactly one of the entries below is
+// set: an ordinary body runs to completion and answers nothing, a coroutine
+// body yields the handle whoever entered it drives from there, a per-element
+// body is run once for each entry of a container it was handed and results in a
+// value, and a value body takes nothing and results in a value each time it is
+// run. Whoever runs a closure asks for the protocol it runs it under.
 //
 // A body that answers a value builds it in storage its caller gives, and states
 // which representation it comes back in, because a handle carries no type: it
 // is a fact only whoever compiled the body holds. A tuple answer also names its
 // type, which is what says how much storage it needs.
-struct SynchronousBody {
-  void (*run)(void* self) = nullptr;
-};
-struct CoroutineBody {
-  void* (*start)(void* self) = nullptr;
-};
-struct PerElementBody {
-  void* (*run)(void* self, const void* item, const void* index, void* out) =
-      nullptr;
-  support::ValueDomain result_domain{};
-  const support::TupleOperations* result_tuple = nullptr;
-};
-struct ValueBody {
-  void* (*run)(void* self, void* out) = nullptr;
-  support::ValueDomain result_domain{};
-  const support::TupleOperations* result_tuple = nullptr;
-};
-using ClosureBody =
-    std::variant<SynchronousBody, CoroutineBody, PerElementBody, ValueBody>;
-
-// The immutable definition of one closure: the body a call runs, and the
-// storage schema its captures need. Held once and shared by every value built
-// from it, the way a scope class's definition is shared by its instances.
+//
+// The captures lie in the value itself, after what this library keeps there,
+// where the code building the closure placed them and fills them. So of the
+// value this states only how large it is in all and the body ending what that
+// code filled, as a class's definition states the size of its objects and its
+// destructor.
 struct ClosureDefinition {
-  ClosureBody body;
-  MemberStorageSchema captures;
+  void (*run)(void* self) = nullptr;
+  void* (*start)(void* self) = nullptr;
+  void* (*run_per_element)(
+      void* self, const void* item, const void* index, void* out) = nullptr;
+  void* (*run_value)(void* self, void* out) = nullptr;
+  support::ValueDomain result_domain{};
+  const support::TupleOperations* result_tuple = nullptr;
+  std::uint64_t size = 0;
+  void (*end_captures)(void* self) = nullptr;
 };
 
 class ClosureValue;
 
+// Ends a closure value and gives back the storage it and its captures share.
+struct EndClosure {
+  void operator()(ClosureValue* closure) const noexcept;
+};
+
 // A closure value as whoever holds it carries it: the one owner of the closure,
 // which stays where it was made while the owner is handed on.
-using OwnedClosure = std::unique_ptr<ClosureValue>;
+using OwnedClosure = std::unique_ptr<ClosureValue, EndClosure>;
 
 // A callable the runtime runs on the program's behalf -- a non-blocking
 // assignment, a postponed print, a deferred assertion's action, the branch a
 // `fork` spawns, the `with` expression an array method evaluates per entry, the
 // expression an event control is watching for a change in the value of. It
-// owns one storage object per capture, so a captured value is a copy taken
-// where the closure was built and released with the closure, never a handle
-// into the body that built it, which may be gone by the time this one runs.
+// holds its captures in itself, so a captured value is a copy taken where the
+// closure was built and released with the closure, never a handle into the
+// body that built it, which may be gone by the time this one runs. What fills
+// them is the code building the closure, which laid them out.
 //
-// The captures follow the value in its own allocation, so a body reaches one at
-// a fixed distance from the value it was entered on. The value never moves: a
-// coroutine body's frame reads the captures through that address for as long
-// as it runs, and whatever keeps the closure is handed its owner instead.
+// The value never moves: a coroutine body's frame reads the captures through
+// the value it was entered on for as long as it runs, and whatever keeps the
+// closure is handed its owner instead.
 class ClosureValue {
  public:
-  // `captures` supplies one handle per capture, in declaration order. Each is
-  // taken as the schema says: a pointer is held, a value is copied.
-  [[nodiscard]] static auto Make(
-      const ClosureDefinition* definition, std::span<void* const> captures)
+  // A value of the size the definition states, with nothing captured yet.
+  [[nodiscard]] static auto Make(const ClosureDefinition* definition)
       -> OwnedClosure;
 
   ClosureValue(const ClosureValue&) = delete;
   auto operator=(const ClosureValue&) -> ClosureValue& = delete;
   ClosureValue(ClosureValue&&) = delete;
   auto operator=(ClosureValue&&) -> ClosureValue& = delete;
-  ~ClosureValue() = default;
-
-  // Ending a closure returns the whole allocation it was made in, whose size is
-  // not the value's own, so the release takes the address alone.
-  static void operator delete(void* address);
+  ~ClosureValue();
 
   // Runs an ordinary body to completion.
   void Invoke();
@@ -104,11 +97,9 @@ class ClosureValue {
   [[nodiscard]] auto RunValue() -> value::RuntimeValue;
 
  private:
-  ClosureValue(
-      const ClosureDefinition* definition, std::span<void* const> captures);
+  explicit ClosureValue(const ClosureDefinition* definition);
 
   const ClosureDefinition* definition_;
-  MemberSlots captures_;
 };
 
 }  // namespace lyra::runtime

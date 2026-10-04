@@ -47,12 +47,24 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'p';
     case SymbolCategory::kClosureInvoke:
       return 'i';
-    case SymbolCategory::kScopeEntry:
-      return 'x';
     case SymbolCategory::kTypeDescription:
       return 't';
     case SymbolCategory::kIntegralConstant:
       return 'l';
+    case SymbolCategory::kConstructorPrologue:
+      return 's';
+    case SymbolCategory::kBaseObjectDestructor:
+      return 'x';
+    case SymbolCategory::kCompleteObjectDestructor:
+      return 'z';
+    case SymbolCategory::kDeletingDestructor:
+      return 'k';
+    case SymbolCategory::kClassConstant:
+      return 'c';
+    case SymbolCategory::kDispatchTable:
+      return 'w';
+    case SymbolCategory::kTypeInfo:
+      return 'y';
   }
   throw InternalError("SymbolName: unknown symbol category");
 }
@@ -87,20 +99,6 @@ auto SymbolName(
     out += part.encoded;
   }
   return out;
-}
-
-auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)
-    -> std::string {
-  return SymbolName(
-      SymbolCategory::kClassDefinition,
-      {SymbolPart::Name(unit_name), std::move(cls)});
-}
-
-auto ClosureDefinitionSymbol(std::string_view unit_name, SymbolPart closure)
-    -> std::string {
-  return SymbolName(
-      SymbolCategory::kClosureDefinition,
-      {SymbolPart::Name(unit_name), std::move(closure)});
 }
 
 auto ConstructorSymbol(std::string_view unit_name, SymbolPart cls)
@@ -187,14 +185,16 @@ auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
       {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
 }
 
-auto ScopeEntrySymbol(
-    std::string_view unit_name, SymbolPart cls, std::uint32_t ordinal)
+auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)
     -> std::string {
   return SymbolName(
-      SymbolCategory::kScopeEntry, {SymbolPart::Name(unit_name), std::move(cls),
-                                    SymbolPart::Ordinal(ordinal)});
+      SymbolCategory::kClassDefinition,
+      {SymbolPart::Name(unit_name), std::move(cls)});
 }
 
+// A declaration this unit compiles carries the names it was emitted under; one
+// another unit declares carries the names its signature gave, so both sides
+// reach the same parts.
 auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
     -> std::optional<std::string> {
   const std::optional<TypeDeclaration> declaration =
@@ -205,10 +205,7 @@ auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
   return std::visit(
       Overloaded{
           [&](const ObjectType& o) {
-            return ClassDefinitionSymbol(
-                unit.name,
-                SymbolPartOf(
-                    unit.classes.Get(o.class_id).name, o.class_id.value));
+            return DefinitionSymbol(unit, o.class_id);
           },
           [&](const ExternalUnitObjectType& e) {
             const ExternalUnitObject& object =
@@ -220,13 +217,61 @@ auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
             return ClassDefinitionSymbol(
                 c.unit_name, SymbolPart::Name(c.class_name));
           },
-          // A closure has no declaration of the source to take a name from, so
-          // what identifies it is the position its unit counted it at.
           [&](const ClosureType& c) {
-            return ClosureDefinitionSymbol(
-                unit.name, SymbolPart::Ordinal(c.closure_id.value));
+            return DefinitionSymbol(unit, c.closure_id);
           }},
       *declaration);
+}
+
+auto DefinitionSymbol(const CompilationUnit& unit, ClassId id) -> std::string {
+  return ClassDefinitionSymbol(
+      unit.name, SymbolPartOf(unit.classes.Get(id).name, id.value));
+}
+
+// A closure has no declaration of the source to take a name from, so what
+// identifies it is the position its unit counted it at.
+auto DefinitionSymbol(const CompilationUnit& unit, ClosureId id)
+    -> std::string {
+  return SymbolName(
+      SymbolCategory::kClosureDefinition,
+      {SymbolPart::Name(unit.name), SymbolPart::Ordinal(id.value)});
+}
+
+auto ConstructorPrologueSymbol(std::string_view definition) -> std::string {
+  return SymbolName(
+      SymbolCategory::kConstructorPrologue, {SymbolPart::Name(definition)});
+}
+
+auto DestructorSymbol(std::string_view definition, Destructor which)
+    -> std::string {
+  const SymbolCategory category = [&] {
+    switch (which) {
+      case Destructor::kBaseObject:
+        return SymbolCategory::kBaseObjectDestructor;
+      case Destructor::kCompleteObject:
+        return SymbolCategory::kCompleteObjectDestructor;
+      case Destructor::kDeleting:
+        return SymbolCategory::kDeletingDestructor;
+    }
+    throw InternalError("DestructorSymbol: unknown destructor");
+  }();
+  return SymbolName(category, {SymbolPart::Name(definition)});
+}
+
+auto ClassConstantSymbol(std::string_view definition, std::uint32_t ordinal)
+    -> std::string {
+  return SymbolName(
+      SymbolCategory::kClassConstant,
+      {SymbolPart::Name(definition), SymbolPart::Ordinal(ordinal)});
+}
+
+auto DispatchTableSymbol(std::string_view definition) -> std::string {
+  return SymbolName(
+      SymbolCategory::kDispatchTable, {SymbolPart::Name(definition)});
+}
+
+auto TypeInfoSymbol(std::string_view definition) -> std::string {
+  return SymbolName(SymbolCategory::kTypeInfo, {SymbolPart::Name(definition)});
 }
 
 }  // namespace lyra::lir

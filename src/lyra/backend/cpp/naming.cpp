@@ -6,6 +6,7 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/backend/cpp/string_literal.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/overloaded.hpp"
 
@@ -57,6 +58,10 @@ void WriteOne(TargetText& out, MintedWord name) {
 
 void WriteOne(TargetText& out, VerbatimName name) {
   out += name.text;
+}
+
+void WriteOne(TargetText& out, NameLiteral literal) {
+  WriteCStringLiteral(literal.name, out);
 }
 
 void WriteOne(TargetText& out, const CppName& name) {

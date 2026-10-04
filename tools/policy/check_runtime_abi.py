@@ -47,16 +47,6 @@ Rules:
 
         Scoped like R004, and to entries the ABI declares by their own name.
 
-  R006  How much of a scope's construction is the same for every class is
-        stated once. The entry type says it: the parameters before the run of
-        values a class is parameterized by. The generated side composes that
-        prototype from a count of its own, because it describes this boundary
-        in its own terms rather than including the host's declaration of it --
-        which is the whole reason a value crosses here as an opaque pointer.
-        So the two sides cannot be held together by the compiler, and a
-        disagreement emits a call whose arguments the runtime reads shifted,
-        which links and runs.
-
   R007  An entry takes a span only while two integer argument registers are
         still free for it. The generated module hands a span over as its two
         words and places each on its own, while the host's C ABI places a
@@ -88,8 +78,6 @@ HEADER = "include/lyra/runtime/runtime_abi.hpp"
 SOURCE = "src/lyra/runtime/runtime_abi.cpp"
 BINDINGS = "src/lyra/program/program_sink.cpp"
 ENTRIES = "src/lyra/support/builtin_fn.cpp"
-CONSTRUCT_ENTRY = "include/lyra/runtime/scope_program.hpp"
-CONSTRUCT_PROTOTYPE = "include/lyra/backend/llvm/runtime_entry.hpp"
 
 # An entry opens a line, so a prototype and a definition are the same shape and
 # are read the same way. An indented match is a continuation line or a nested
@@ -110,13 +98,6 @@ RE_ANSWER = re.compile(r"\s*->\s*([^;{]+)")
 # properties it states.
 RE_ROW = re.compile(r"case BuiltinFn::\w+:\s*return\s*\{(.*?)\};", re.S)
 RE_ROW_NAME = re.compile(r'\.name = "(\w+)"')
-# The construct entry's own parameter list, and the count the generated side
-# composes its prototype from. The list ends at the first `)` because every
-# parameter here is a pointer or the plain-data run, never a function type.
-RE_CONSTRUCT_ENTRY = re.compile(
-    r"using\s+ScopeConstructEntry\s*=\s*\w+\s*\(\s*\*\s*\)\s*\(([^)]*)\)")
-RE_CONSTRUCT_SHARED = re.compile(
-    r"kScopeConstructSharedParams\s*=\s*(\d+)")
 
 # How many integer argument registers the host's calling convention has
 # (System V AMD64), what a span is spelled as, and the parameter types that go
@@ -168,10 +149,6 @@ class Abi(NamedTuple):
     handle_rows: dict[str, bool] = {}
     park_rows: dict[str, bool] = {}
     return_rows: dict[str, bool] = {}
-    # Absent where the side it is read from declares nothing of the kind, which
-    # R006 reports rather than passing over.
-    construct_shared: int | None = None
-    construct_stated: int | None = None
     spilled_spans: list[Entry] = []
 
 
@@ -374,44 +351,6 @@ def check_agreement(
     return errors
 
 
-def construct_shared_of(text: str) -> int | None:
-    """How many parameters the entry type shares, from the type itself.
-
-    Every parameter but the last is one every construction takes; the last is
-    the run of values a class is parameterized by, which is what makes one
-    prototype serve them all.
-    """
-    match = RE_CONSTRUCT_ENTRY.search(text)
-    if match is None:
-        return None
-    return len(match.group(1).split(",")) - 1
-
-
-def construct_stated_of(text: str) -> int | None:
-    match = RE_CONSTRUCT_SHARED.search(text)
-    return None if match is None else int(match.group(1))
-
-
-def check_r006(abi: Abi) -> list[str]:
-    if abi.construct_shared is None:
-        return [
-            f"  {CONSTRUCT_ENTRY}: R006 declares no construction entry type, "
-            f"so nothing states how much of a construction every class shares"
-        ]
-    if abi.construct_stated is None:
-        return [
-            f"  {CONSTRUCT_PROTOTYPE}: R006 composes the construction "
-            f"prototype without saying how much of it is shared"
-        ]
-    if abi.construct_shared == abi.construct_stated:
-        return []
-    return [
-        f"  {CONSTRUCT_PROTOTYPE}: R006 the generated side composes "
-        f"{abi.construct_stated} shared parameters and the entry type takes "
-        f"{abi.construct_shared}"
-    ]
-
-
 def check_r007(abi: Abi) -> list[str]:
     return [
         f"  {HEADER}:{entry.line}: R007 '{entry.name}' takes a span after the "
@@ -452,10 +391,6 @@ def load(root: Path) -> Abi:
         handle_rows=rows_of(entries, HANDLE_PROPERTY),
         park_rows=rows_of(entries, PARK_PROPERTY),
         return_rows=rows_of(entries, RETURN_PROPERTY),
-        construct_shared=construct_shared_of(
-            (root / CONSTRUCT_ENTRY).read_text()),
-        construct_stated=construct_stated_of(
-            (root / CONSTRUCT_PROTOTYPE).read_text()),
         spilled_spans=spilled_spans_of(header))
 
 
@@ -597,31 +532,6 @@ def run_self_tests() -> bool:
         not check_r008(abi(header=raises_none, entries=says_returns)),
         "R008 is silent when the two sides agree")
 
-    entry_type = (
-        "using ScopeConstructEntry = void (*)(\n"
-        "    Scope* self, Scope* parent, HierarchySegment* segment,\n"
-        "    ScopeConstructArguments arguments);")
-    ok &= expect(
-        construct_shared_of(entry_type) == 3,
-        "the shared parameters are the entry type's own, less the run")
-    ok &= expect(
-        construct_stated_of(
-            "inline constexpr std::size_t kScopeConstructSharedParams = 3;")
-        == 3,
-        "the generated side's count is read")
-    agree = Abi([], [], [], construct_shared=3, construct_stated=3)
-    disagree = Abi([], [], [], construct_shared=4, construct_stated=3)
-    ok &= expect(not check_r006(agree), "R006 is silent when the two agree")
-    ok &= expect(
-        len(check_r006(disagree)) == 1,
-        "R006 reports a count the entry type does not take")
-    ok &= expect(
-        len(check_r006(Abi([], [], [], construct_stated=3))) == 1,
-        "R006 reports an entry type it could not read")
-    ok &= expect(
-        len(check_r006(Abi([], [], [], construct_shared=3))) == 1,
-        "R006 reports a generated side that states no count")
-
     ok &= expect(
         not spilled_spans_of(
             "auto lyra_rt_a(const void* p, LyraSpan a, LyraSpan b) -> void*;"),
@@ -670,8 +580,7 @@ def main() -> int:
     abi = load(Path(__file__).resolve().parents[2])
     failures = (
         check_r001(abi) + check_r002(abi) + check_r003(abi) + check_r004(abi)
-        + check_r005(abi) + check_r006(abi) + check_r007(abi)
-        + check_r008(abi))
+        + check_r005(abi) + check_r007(abi) + check_r008(abi))
 
     if failures:
         print("Runtime ABI check failed:")

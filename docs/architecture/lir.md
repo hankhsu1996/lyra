@@ -32,7 +32,8 @@ the time the program is MIR it is already a generic programming language, with e
 construct -- an out-of-bounds guard, an event control, a non-blocking assignment, a generate region
 -- already expressed as generic control flow, generic expressions, or runtime-library calls.
 MIR-to-LIR therefore introduces execution-model facts -- a control-flow graph, logical storage
-topology, scheduling edges -- without interpreting any source-language semantics.
+topology, scheduling edges -- without interpreting any source-language semantics. A name or a time
+unit a class's constant holds for the library is data LIR carries and never reads.
 
 LIR is target-neutral. It carries the logical shape of storage -- which local, which member, which
 element a place names -- but not its physical realization. Byte sizes, alignments, field offsets,
@@ -66,6 +67,12 @@ below LIR, at LIR-to-LLVM.
   unit compiles or a class another unit published, both member-bearing objects of this unit's own
   graph, and only what the artifact emits distinguishes them. Nothing of another unit's object is
   reached this way: what that unit promised of it is behaviors, and a behavior is a call.
+- Each class's relations as MIR stated them -- what it extends, what it introduces into dispatch and
+  overrides, the interface classes it names and which behavior answers each behavior of every
+  interface class a value of it is also a value of -- and the contents of the constant the library
+  reads for it, which are bodies, names, and plain data such as a scope's time unit and precision.
+  The layout step below LIR reads these and decides every position; LIR carries them as data and
+  decides nothing about them.
 - Effect ordering within a block.
 - Low-level operations: arithmetic, comparisons, machine conversions, loads, stores, calls.
 - Symbols a call reaches by name: a body of this program that another artifact holds, and a foreign
@@ -180,8 +187,10 @@ shape is "what identity property does this break".
 - Byte offsets, addresses, alignment, padding, or LLVM-facing types on a LIR node or place. A place
   that names `base + N` instead of a logical projection is this shape; physical layout is derived
   below LIR, not encoded in the place.
-- Object or member semantics carried into LIR nodes. Object model belongs at MIR. (LIR's vocabulary
-  is machine-execution, not high-level programming language.)
+- Object or member semantics decided at LIR -- which override a call runs, which interface behavior
+  a method answers, where a member sits. Those are MIR's statements or the layout step's answers,
+  and LIR only carries them. (LIR's vocabulary is machine-execution, not high-level programming
+  language.)
 - Hierarchy navigation logic expressed at LIR. Hierarchy is resolved by MIR and consumed as logical
   storage topology at LIR.
 - Language-level constructs reintroduced at LIR (a "foreach" node instead of a loop CFG). (LIR is
@@ -239,11 +248,11 @@ argument into that place. Recovering a register where the address is never truly
 target-side derivation, not a property LIR must establish: LIR states the storage topology, it does
 not minimize it.
 
-A closure lowers to a code reference plus an environment value; invocation is an indirect call
-passing the environment and the call arguments. `self` is the first argument, supplied like any
-other; LIR has no implicit receiver. A direct call to a statically known callable passes the
-environment and arguments to a named function. LIR knows only "call target" and "arguments"; the
-capture policy that built the environment was MIR's.
+A closure lowers to a value of its declaration, built from its captures by an instruction of its
+own; its one body is entered with that value as `self`. `self` is the first argument, supplied like
+any other; LIR has no implicit receiver. A direct call to a statically known callable passes its
+receiver and arguments to a named function. LIR knows only "call target" and "arguments"; which
+values a closure captures was decided in MIR.
 
 A place is the logical path -- `self.counter`, `*p`, `(*p).flag` -- the way Rust's MIR names a field
 projection rather than `base + N`. The same place is valid on every target; only the derivation

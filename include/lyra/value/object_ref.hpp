@@ -20,12 +20,11 @@ namespace lyra::value {
       "(LRM 8.4)");
 }
 
-// A reference to an object the simulator owns (LRM 8.3), on a target that
-// reaches a member through a pointer of the class the program point assumes.
-// Its value is the handle -- which object it names -- and the pointer is only
-// how this target gets from that to a member, so every operator LRM Table 11-1
-// gives a handle is the handle's own answer. Where members are reached by a
-// coordinate the object answers for, the handle alone is the whole reference.
+// A reference to an object the simulator owns (LRM 8.3), with the pointer of
+// the class the program point assumes, through which a member is reached. Its
+// value is the handle -- which object it names -- and the pointer is only how
+// a target gets from that to a member, so every operator LRM Table 11-1 gives
+// a handle is the handle's own answer.
 //
 // One shape serves every static view. A program point's static view says what
 // may be done through a reference, never what the reference is: two units hold

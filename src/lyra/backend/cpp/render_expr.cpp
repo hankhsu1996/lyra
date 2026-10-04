@@ -156,17 +156,17 @@ void RenderConditionalExpr(
 }
 
 void RenderCastExpr(
-    const ScopeView& view, const mir::Expr& expr, const mir::CastExpr& cast,
+    const ScopeView& view, const mir::Expr& expr, mir::ExprId operand,
     Precedence at_least, TargetText& out) {
   auto conversion =
-      ConversionAsCpp(view.Unit(), view.Expr(cast.operand).type, expr.type);
+      ConversionAsCpp(view.Unit(), view.Expr(operand).type, expr.type);
   if (!conversion) {
     view.Refuse(std::move(conversion.error()));
     return;
   }
   WriteConversion(
       out, view.Unit(), *conversion, at_least, [&](Precedence needed) {
-        Write(view, out, Operand{.expr = cast.operand, .at_least = needed});
+        Write(view, out, Operand{.expr = operand, .at_least = needed});
       });
 }
 
@@ -217,30 +217,16 @@ void RenderFieldAccessExpr(
 }
 
 // A reference is a name, or a scope and a name, `C::x`; the kinds differ only
-// in which table the name comes from. A function is its address, `&C::f`,
-// which is the only one here that is a prefix form and may need parentheses.
+// in which table the name comes from.
 void RenderReferenceExpr(
     const ScopeView& view, const mir::ReferenceExpr& reference,
-    Precedence at_least, TargetText& out) {
+    TargetText& out) {
   std::visit(
       Overloaded{
           [&](const mir::LocalRef& l) { Write(out, LookupLocalName(view, l)); },
-          [&](const mir::FunctionRef& fr) {
-            const Enclosure enclosure(out, Precedence::kPrefix, at_least);
+          [&](const mir::DefinitionRef& r) {
             Write(
-                out, "&",
-                CppClassName(view.Unit().GetClass(fr.owner), fr.owner),
-                "::", CppAbiAdapterName(fr.adapter));
-          },
-          [&](const mir::StaticConstantRef& r) {
-            Write(
-                out, CppClassName(view.Unit().GetClass(r.owner), r.owner),
-                "::", CppStaticConstantName(r.constant));
-          },
-          [&](const mir::ObjectRecordRef& r) {
-            Write(
-                out, CppClassRef(view.Unit(), r.of),
-                "::", CppObjectRecordName());
+                out, CppClassRef(view.Unit(), r.of), "::", CppDefinitionName());
           },
           [&](const mir::TypeDescriptorRef& r) {
             Write(out, CppTypeDescriptorName(r.descriptor));
@@ -272,6 +258,17 @@ void RenderReferenceExpr(
             Write(
                 out, CppUnitScope(r.unit_name), "::", ToCppName(r.class_name),
                 "::", ToCppName(r.property_name));
+          },
+          [&](const mir::ClassConstantRef& r) {
+            Write(
+                out, CppClassName(view.Unit().GetClass(r.owner), r.owner),
+                "::", CppClassConstantName(r.constant));
+          },
+          [&](const mir::FunctionRef& r) {
+            const mir::Class& owner = view.Unit().GetClass(r.body.owner);
+            Write(
+                out, CppClassName(owner, r.body.owner),
+                "::", CppClassCallableName(view.Unit(), owner, r.body.slot));
           }},
       reference.target);
 }
@@ -494,7 +491,7 @@ void RenderExpr(
             out += "LL";
           },
           [&](const mir::ReferenceExpr& r) {
-            RenderReferenceExpr(view, r, at_least, out);
+            RenderReferenceExpr(view, r, out);
           },
           [&](const mir::UnaryExpr& u) {
             RenderUnaryExpr(view, u, at_least, out);
@@ -503,7 +500,13 @@ void RenderExpr(
             RenderBinaryExpr(view, b, at_least, out);
           },
           [&](const mir::CastExpr& c) {
-            RenderCastExpr(view, expr, c, at_least, out);
+            RenderCastExpr(view, expr, c.operand, at_least, out);
+          },
+          // C++'s conversion of a pointer to a class toward another class is
+          // the checked one wherever it has to be, so a handle is converted
+          // the same way whether the types settle it or the object does.
+          [&](const mir::DynamicCastExpr& c) {
+            RenderCastExpr(view, expr, c.operand, at_least, out);
           },
           [&](const mir::ConditionalExpr& c) {
             RenderConditionalExpr(view, c, at_least, out);
@@ -519,12 +522,6 @@ void RenderExpr(
             RenderCallExpr(view, call, expr.type, out);
           },
           [&](const mir::DerefExpr& d) { RenderDerefExpr(view, d, out); },
-          [&](const mir::MachineArrayDataExpr& d) {
-            Write(
-                view, out,
-                Operand{.expr = d.array, .at_least = Precedence::kPostfix},
-                ".data()");
-          },
           [&](const mir::AddressOfExpr& a) {
             const Enclosure enclosure(out, Precedence::kPrefix, at_least);
             Write(

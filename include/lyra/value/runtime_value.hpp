@@ -7,8 +7,8 @@
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/empty.hpp"
-#include "lyra/value/managed_ref.hpp"
 #include "lyra/value/net_resolution.hpp"
+#include "lyra/value/object_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
@@ -31,7 +31,7 @@ struct RuntimeValue {
   std::variant<
       PackedArray, String, Real, ShortReal, Chandle, Empty, RuntimeTuple,
       RuntimeUnion, RuntimeTaggedUnion, RuntimeDynamicArray,
-      RuntimeUnpackedArray, RuntimeQueue, RuntimeAssociativeArray, ManagedRef>
+      RuntimeUnpackedArray, RuntimeQueue, RuntimeAssociativeArray, ObjectRef>
       value;
 };
 

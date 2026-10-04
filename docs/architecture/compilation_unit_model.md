@@ -46,11 +46,14 @@ Define what a compilation unit is, what it owns, and the rules that make it self
    enumeration.
 8. A unit's only cross-boundary surface is its signature: the set of declarations it publishes,
    whose content follows the unit's kind -- a module publishes its ports, a package its
-   declarations, an interface its ports and its members. The unit produces its signature from its
-   own contents, so nothing it publishes can contradict what it is. A unit that instantiates or
-   references another depends only on that signature, identified by name, never on the other unit's
-   body or internal ids. Units compile independently and in any order and are combined by matching
-   names; they share no identifier space and exchange no internal state.
+   declarations, an interface its ports and its members. A class a package publishes is promised
+   with its declaration whole -- the type of each property it keeps to itself included and unnamed,
+   and every method with its prototype -- so a class of another unit extending it is laid out at
+   compile time and a call to one of its methods reads the callee there. The unit produces its
+   signature from its own contents, so nothing it publishes can contradict what it is. A unit that
+   instantiates or references another depends only on that signature, identified by name, never on
+   the other unit's body or internal ids. Units compile independently and in any order and are
+   combined by matching names; they share no identifier space and exchange no internal state.
 9. A signature names each class it publishes, and names which of them a referrer instantiates. A
    unit's name, the name of a class it declares, and where a backend places the emitted code are
    three separate facts; none substitutes for another, and a published class is never identified by

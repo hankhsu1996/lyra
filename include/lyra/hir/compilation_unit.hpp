@@ -55,10 +55,10 @@ struct CompilationUnit {
   // One entry per unit this one reaches an object of, recorded where that
   // unit's signature was consumed.
   base::Arena<ExternalUnitObject, ExternalUnitObjectId> external_unit_objects;
-  // One entry per class of another unit this one reaches a property or a
-  // behavior on, recorded where that class's promise was consumed. Found by the
-  // pair that names the class, which is the same pair every reference to one
-  // carries, so a reference and its record cannot come apart.
+  // One entry per class of another unit this one names, and per class above
+  // one in its lineage, recorded where that class's promise was read. Found by
+  // the pair that names the class, which is the same pair every reference to
+  // one carries, so a reference and its record cannot come apart.
   std::vector<ExternalClass> external_classes;
   // Every DPI-C import this unit takes part in (LRM 35.4), whether declared
   // inside it or declared elsewhere and called from it. The unit owns them

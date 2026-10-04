@@ -15,6 +15,7 @@
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -323,7 +324,7 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             // every scope is: the runtime's own, with no member of it reachable
             // by position.
             return mir::Type{
-                mir::RuntimeClassType{.symbol = "lyra::runtime::Scope"}};
+                mir::RuntimeClassType{.which = support::RuntimeClass::kScope}};
           },
           [](const hir::NullType&) -> mir::Type {
             // The `null` literal names no object, so it carries no class of its

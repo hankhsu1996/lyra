@@ -7,7 +7,7 @@ Date: 2026-07-08 Status: accepted
 DPI-C (LRM 35) is the SystemVerilog / C foreign-language boundary: `import "DPI-C"` (SV calls a
 foreign C function) and `export "DPI-C"` (foreign C calls an SV subroutine). It needs a home in an
 architecture whose pipeline is HIR -> MIR -> LIR -> LLVM and whose two backends consume MIR: the C++
-backend (transitional) and the LLVM/JIT backend.
+backend and the LLVM backend.
 
 An earlier DPI implementation informed this entry. It modeled DPI as its own parallel IR subsystem:
 a dedicated MIR call family (`DpiCall`, `DpiImportRef`) separate from ordinary calls, and marshaling

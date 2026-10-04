@@ -203,6 +203,18 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "runtime_class_definition_test",
+    srcs = ["runtime/class_definition_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "//:runtime",
+        "//:support",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # Two files rather than one selected by name, because a selection by name fails
 # open: a filter matching nothing runs no tests and exits zero, so a suite
 # renamed on one side and not the other reports a green that measured nothing.

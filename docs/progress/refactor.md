@@ -799,19 +799,13 @@ enough to warrant its own focused review.
       backend to synthesize a different test per type with nothing telling it to. Each value type's
       predicate semantics is settled against LRM Table 11-1.
 
-- [ ] R58 -- A design unit's definition reference has two realizations. Semantic modeling already
-      states it once: a unit's definition is a class-level constant, and the constructor hands the
-      base its address, so a unit installs its own definition. The C++ backend renders exactly that.
-      The execution backend does not read it: it drops the constructor's base initialization, and
-      the code generator instead re-derives a definition symbol from the child's type at every
-      construction site, so a child unit's definition is supplied by its caller rather than by the
-      unit itself. The two backends therefore disagree on who owns a definition reference, and the
-      same concept is realized once in semantic modeling and once, independently, in the code
-      generator. **Target shape**: one realization -- the unit installs its own definition, both
-      backends render that, and cross-unit construction names a unit rather than its definition.
-      **Blocker**: none identified, but it moves the definition out of the construction ABI, which
-      touches how a unit definition is published and filled; it warrants its own review rather than
-      riding along with a value-domain or storage cut.
+- [x] R58 -- A design unit's definition reference had two realizations. Semantic modeling states it
+      once: the constructor hands the base the class's definition, so a unit installs its own. The
+      execution backend dropped that base initialization and built the part every scope shares where
+      it allocated, from a definition re-derived off the type and arguments split off the
+      construction by position. Now both backends render the base initialization, the allocation
+      reads only the storage's shape off the type as `new` does, and another unit's instance is
+      built through that unit's object entry.
 
 - [ ] R59 -- An enum is a nominal type, the way a struct or a class is. Every other named type
       carries its name on a nominal declaration reached from the type by id -- a struct's name is
@@ -851,8 +845,6 @@ enough to warrant its own focused review.
       is stated in one central mapping (the peer of the type-mapping dispatch, extended to value
       forms), and every prologue statement the wrapper needs sits in the MIR body as an ordinary
       statement the render walks. Concrete sites today:
-  - Class construction of a managed reference renders as inline `lyra::runtime::GcNew<...>` from a
-    Construct call whose result type is `ManagedRefType`.
   - A coroutine closure's captures reach its body as an argument list the render site composes,
     because a capturing coroutine lambda would dangle once a spawned branch outlives the
     construction site. The MIR node states those captures as fields, so the render site converts one
@@ -1749,11 +1741,9 @@ enough to warrant its own focused review.
       where it is accepted. Not blocked. Found while probing where a lifted local's storage belongs
       when the body holding it cannot suspend.
 
-- [x] R109 -- The runtime type holding a block of storage over a definition was named for one of the
-      two lifetimes that used it: class objects, which end by reachability, and blocks promoted out
-      of their frame, which end with the last hold. Resolved by holding each lifted local as its own
-      cell behind a counted pointer, so the type now serves class objects alone and its name states
-      what it is.
+- [x] R109 -- The runtime type holding a block of storage over a definition is gone, and its name
+      with it. A class object's properties are laid out at compile time in the object's own bytes,
+      and each lifted local is its own cell behind a counted pointer.
 
 - [ ] R110 -- A closed set of alternatives read by a chain of type tests is the one spelling of that
       shape nothing checks. The project settles that such a set is consumed so that gaining a member
@@ -1839,31 +1829,10 @@ enough to warrant its own focused review.
       consumes one states the type it is read at and the shape stops being forgettable. Not blocked.
       Found by a legal four-line program dying in a comparison entry.
 
-- [ ] R116 -- A scope's construction is entered through one prototype every class shares, and the
-      execution backend works out which of a unit's functions that applies to by reading the class
-      table the other way round. Three sites ask -- where the function is declared, and twice where
-      its parameters are bound -- so the prototype is decided by a consumer rather than stated by
-      what it consumes.
-
-      Target: the lowering states the signature it means. A construction's parameters past the ones
-      every construction shares arrive as one run of values, and reading them apart is then an
-      ordinary body doing what its own parameter list says, with nothing anywhere asking what kind
-      of function this is.
-
-      Blocked on the execution IR having no way to read one element of a run of plain values. It
-      can build one -- that is how every entry taking a span is called -- but the read side exists
-      only for values a runtime domain owns and for a sequence of object handles, so a body handed
-      a run cannot take it apart. That read is the prerequisite, and it is worth having on its own:
-      a form that can only be written is one generated code can hand on and never use.
-
-      Two of the parameters that prototype carries are dead, and this is where they go. A
-      construction is handed the parent the scope hangs under and the identity it is reached by,
-      which the object it is handed already holds -- the runtime installed both before entering it.
-      Nothing reads them: the only thing that would is the base construction, and a scope's base is
-      the runtime's own object tree, which the lowering enters no constructor for. So the entry
-      takes the scope and the values its class is parameterized by, and the two dead parameters go
-      with the rest of this. Not blocked on the read above, but not worth doing apart from it
-      either, because both change the same prototype.
+- [x] R116 -- A scope's construction is entered typed, as a constructor after `new`. The library
+      begins the storage and the part every scope shares, and the class's own constructor is then
+      called with its own arguments. The shared prototype, its erased arguments and the two dead
+      parameters are gone, and no consumer asks what kind of function it is looking at.
 
 - [ ] R117 -- The semantic layer states the elaborated blocks of a loop generate wherever they are
       not one body, rather than stating the loop the source wrote. That layer exists so that what
@@ -2034,18 +2003,13 @@ enough to warrant its own focused review.
       to the callee is an address. Not blocked. Found by reading the two targets' answers side by
       side and noticing they disagreed.
 
-- [ ] R123 -- The record fixing how generated behavior reaches the runtime
-      (`../decisions/generated-behavior-boundary.md`) sketches that boundary with a shape the
-      runtime no longer has: a per-unit definition record held apart from a scope's, an instance
-      kind distinct from a scope, and user dispatch as a table still to come. All three moved when a
-      unit's object became a promise and a realization -- one definition record, carrying the
-      dispatch table, read off whatever kind of value holds the class. The record's principle is
-      intact and only its shape sketch is stale, which is the worst combination: it reads as
-      current, and someone building against it builds against a boundary that is not there.
-
-      Target: the sketch says what the runtime holds, or the record says outright that it fixes the
-      principle and not the shape. Not blocked. Found while sweeping what a unit promises, which is
-      what merged the two definition records.
+- [x] R123 -- The record fixing how generated behavior reaches the runtime
+      (`../decisions/generated-behavior-boundary.md`) sketched that boundary with a shape the
+      runtime no longer had, with a per-unit definition record held apart from a scope's, an
+      instance kind distinct from a scope, user dispatch as a table still to come, and an allocator
+      every backend supplied. The record now marks which parts the compile-time object model
+      superseded, which leaves no dispatch table and no construction entry, and a definition each
+      unit emits as a constant.
 
 - [x] R124 -- A value of a class is one shape, and nothing above the runtime asks which kind of
       value it is. That shape holds the class's record and the storage that class asks a value of it
@@ -2085,20 +2049,10 @@ enough to warrant its own focused review.
       already reached through a promise, because that is the set each class would announce, and
       nothing enumerates it today.
 
-- [ ] R126 -- A class answers where a property lives and which body fills a dispatch position in one
-      of two ways: by walking what it extends and asking the target that laid the value out, or by
-      reading the flat schema a runtime-owned realization built for it. Which one a class uses is
-      installed when that realization runs. A class whose values stand in the design hierarchy is
-      not realized that way -- the declaring unit states its definition outright -- so it keeps the
-      walking answers while its values hold runtime-owned storage the walk cannot reach.
-
-      Nothing asks it that way today, because a value standing in the hierarchy is reached as its
-      own address and the entry for that reads the flat schema without consulting the class at all.
-      So there are two statements of one answer that agree everywhere anyone currently looks, which
-      is the shape that stays wrong until someone looks somewhere else. Target: a class states one
-      answer whoever built it, and every entry asks the class rather than reading past it -- which
-      also settles whether the indirection belongs on the member-access path at all, since today it
-      is avoided by not asking. Not blocked. Found while merging the two into one value of a class.
+- [x] R126 -- A class answers where a property lives one way, with the body its definition names for
+      that property, which the declaring unit compiled against the layout it gave the class. The
+      flat schema a runtime-owned realization built is gone, and which body fills a dispatch
+      position is read from tables laid out at compile time rather than asked of the class at all.
 
 - [ ] R127 -- A design element's signature lists the classes it declares, under a field whose own
       definition is the classes another unit may name. Another unit may name none of them: a class a
@@ -2433,34 +2387,17 @@ enough to warrant its own focused review.
       Target: a run builds what it measures, a case that fails names why, and each result is kept as
       it arrives. Not blocked.
 
-- [ ] R141 -- A unit-definition record is stated in MIR for the one backend that may not realize it.
-      A scope's runtime definition reaches the C++ backend as a constant MIR holds, built at
-      HIR-to-MIR out of runtime-library record types; it reaches the execution backend as something
-      composed from the declarations a LIR class carries, because MIR-to-LIR refuses those types
-      outright. Every fact the record holds -- the timescale, the entries, the callables and classes
-      a scope answers for -- is already a declaration at every layer; what the record adds is only
-      the runtime struct's shape they are bundled into, and bundling into a runtime struct is
-      realization rather than language.
+- [x] R141 -- What the runtime is told about a class is stated once, in MIR. A scope's definition
+      used to reach the C++ backend as a constant MIR held, built out of runtime-library record
+      types, and to reach the execution backend as something that backend composed a second time
+      from its own layer. Two derivations of one statement drifted, as the two came to disagree
+      about whose timescale a scope carries, and nothing failed, because a declaration one side
+      misses leaves the field at its default.
 
-      So the record is the C++ backend's realization, living in MIR, and the test that shows it is
-      whether the shape would still be right with the other backend alone: with only the execution
-      backend, nothing reads it. It is there because that backend sits at MIR, where the backend
-      contract forbids a render entry to compose what it emits, so what it emits has to be stated
-      upstream -- a concession the architecture makes to the transitional backend on purpose.
-
-      Target: not routing the record through MIR-to-LIR. That would put a runtime struct's shape
-      into the target-neutral layer, which is the violation rather than the cure. The record leaves
-      MIR together with the backend it exists for: when the C++ backend retires, HIR-to-MIR stops
-      building it and the record types go with it, and every backend realizes the definition from
-      the declarations the way the execution backend already does.
-
-      What costs meanwhile is drift. A field added to the runtime's definition has two derivations
-      to reach, and they fail differently when one is missed: the C++ side changes a constructor's
-      arity, which no emitted program then compiles past; the execution side gains a declaration
-      entry, and a missing one leaves the field at its default without any failure at all.
-
-      Not blocked. Found while reading which layer each piece of this record lives at, and what
-      each layer is for.
+      Now what the runtime is told about each class is stated once in MIR, from the finished class,
+      and each backend emits it as one constant per class laid out as the runtime's own structure.
+      A unit names another unit's class by the symbol of that constant, and nothing is declared to
+      the runtime while the program runs.
 
 - [ ] R142 -- A prepared header is prepared only for clang, so a build under any other compiler pays
       the runtime headers in full in every unit. That was a cost on a developer's machine and is now
@@ -2759,6 +2696,250 @@ enough to warrant its own focused review.
       something a lowering has to say it means -- a construct evaluated once per position the source
       gives it, a body built again for another run -- so an unstated second lowering is refused
       where it is made. Not blocked.
+
+- [x] R165 -- MIR named the runtime library's classes by their C++ spelling. A reference to the
+      design hierarchy's root as a base, and a type standing for a value of the scope or of a
+      process, each carried the library's C++ name as a string that the C++ backend wrote out as it
+      stood. The string also let "does this class stand in the design hierarchy" be answered as
+      "does its lineage reach any class the library defines". Now the root is a marker beside the
+      managed-object root, the library's classes are one closed set both layers name, and the C++
+      spelling of each is type mapping's alone.
+
+- [ ] R166 -- The set of runtime-library types MIR names and the set LIR names are one list written
+      twice. Every member of one has a member of the same name in the other, and the lowering
+      between them maps each to itself. A type the library gains is added in both places and in the
+      map, and nothing but the build keeps the three in step. The target is the set stated once,
+      below both layers, where the library's own vocabulary lives, and both layers name it. Not
+      blocked.
+
+- [x] R167 -- MIR had two ways to name a body of a class as a code address, one for a callable of
+      the class and one for the entry a scope answers a foreign caller with, which sat in a pool of
+      its own with its own reference form, its own rendering and its own symbol category. The pool
+      existed because such an entry takes the scope as a plain first argument rather than as a
+      receiver, but a callable without a receiver is already a static one. Now the entry is a
+      receiver-less callable of its scope, the names a scope answers foreign callers with are a name
+      table beside the one for its subroutines, and one reference form names any body. Reached by
+      the same fix that stopped a static method's entry from gaining an object parameter it does not
+      take.
+
+- [x] R168 -- The execution backend laid nothing out at compile time that held runtime storage. Five
+      kinds of value hold members -- an instance of the design hierarchy, an object built with
+      `new`, a struct, a closure's captures, and a body's variables -- and each held one separately
+      built runtime storage object per member, found through the declaration's schema at run time
+      and reached by a runtime call on every access. An instance of the design hierarchy was also
+      built by the runtime, which allocated a generic scope and entered a construction entry taking
+      every argument erased in one array. Given the C++ backend's rendering, clang does none of
+      this. It lays each declaration out at compile time, builds a value with one allocation of
+      known size and a direct typed constructor call, and reaches a member at a constant offset.
+
+      It is a gap rather than the difference a runtime compiled once is allowed to cause. A member
+      is mostly an object the runtime library defines -- an observable cell, a resolved net -- but
+      the runtime is built and checked with the compiler, so the size of each kind is known when
+      compiling. Systems that compute offsets at run time (Swift for a layout that depends on a
+      generic parameter, Objective-C for a separately shipped framework) do so only where the
+      compiler cannot know them, and every declaration here is concrete, with a scope class's
+      whole lineage in one unit.
+
+      The target was what clang does. The runtime states each storage kind's size, alignment,
+      construction and destruction; the backend lays every such declaration out, a scope class
+      after the runtime's scope header; building one is an allocation of known size and a direct
+      typed call that constructs each member in place; a member is a constant offset; and a
+      definition states the destructor the runtime ends a value with. The separately built storage
+      objects, the schemas describing them, the per-access and per-call storage entries, the scope
+      construction entry and the LIR field naming its function all go, and the unit states each
+      class's layout in its definition constant. A body's variables were the part the performance
+      queue already measured, at about half of call-chain's run.
+
+      - [x] The runtime states each storage kind's size and alignment over each value domain it is
+            realized for, held to its own types, and a construct and destroy entry for each.
+      - [x] A body's variables are one record in the body's own frame, each variable built in
+            place where the body opens and ended on every way out, at a constant offset in between.
+            At `--release`, call-chain went from about 344,000 to about 600,000 iterations a second.
+      - [x] Closure captures are laid out where the closure is built, filled by the code building
+            it, and ended by a body the closure's definition names.
+      - [x] The storage a lifetime-extended block keeps (LRM 6.21) is a value of a generated record,
+            and a unit's shared cell is a symbol that is the storage itself, built before the
+            program starts and ended as a namespace-scope C++ object is.
+      - [x] Objects built with `new`, and instances of the design hierarchy, with each class's whole
+            record stated in the signature of a unit other units extend it from. The runtime
+            allocates a value of the size its class states and each class begins and ends its own
+            storage; the separately built storage objects and their schemas are gone. At
+            `--release`, call-chain went from about 247,000 to about 484,000 iterations a second against
+            `a6da3d17`, clock-pipeline about 36,500 to about 45,000 cycles a second, nba-heavy and
+            compute-block unchanged.
+      - [x] For an instance of the design hierarchy, the runtime begins storage of the shape its
+            class states, and the class's own constructor is then entered directly with its typed
+            arguments, as clang enters one after `new`. Its chain builds the part every scope
+            shares from the arguments the class states for its base, on both backends. The design
+            root is built through its unit's object entry, as an instance
+            of another unit is. The erased construction entry and the one prototype every class's
+            construction shared are gone.
+
+- [x] R169 -- The C++ backend handed the runtime an adapter around each body the runtime holds,
+      where the execution backend handed over the body itself, and a virtual call went through the
+      C++ vtable on one backend and through the runtime's table on the other. The fix was for
+      virtual dispatch to go one way on both backends, and it now does. Both dispatch through
+      Itanium tables laid out at compile time, the C++ backend's by the host compiler and the
+      execution backend's by its own layout step, and the runtime holds no dispatch table at all.
+
+      What remains on the C++ backend is a captureless function written where the runtime holds a
+      method by name or a property's address, entering the method on the object it is handed. It is
+      C++'s spelling of a member function entered object first. Its prototype is the one MIR states
+      for the entry, and the conversion it applies is the one that pair of types takes. Rendering
+      every method as an object-first function instead would put a forwarding member on every
+      virtual method, for the host compiler's table, which moves the function rather than removing
+      it.
+
+- [ ] R170 -- Every runtime operation that is not per type is written twice, once as a C++ method
+      the C++ backend calls, and once as one of about nine hundred C entries the execution backend
+      calls, each of which unpacks its arguments and calls the method. Both backends stay, the
+      execution backend as the primary product. So this is two faces for good, and the primary
+      product's face is the one that wraps.
+
+      The field's answer to exactly this condition is Halide's, with an LLVM backend as the
+      product and a C/C++ source backend beside it, one runtime written in C++, and one set of
+      `extern "C"` entries that both backends call (Halide's own runtime header; `CodeGen_C` emits calls to
+      `halide_malloc`, `halide_error` and the rest). Swift's runtime and HotSpot's generated-code
+      entries are C-shaped for the same reason, because the surface is written for the generated code
+      that calls it. So each such operation is defined once, as the entry, and the C++ backend calls
+      that entry too, through inline C++ spellings in the headers it includes where the emitted
+      text wants method syntax. Clang inlines the spelling, so both backends make the same call.
+      What stays per backend is only what is per type, which is the allowed difference. The C++
+      backend instantiates the runtime's templates, and the execution backend generates that code
+      itself.
+
+      The execution backend reading the C++ face through clang's libraries does not fit.
+      `CodeGenABITypes` can arrange a call, but an inline or template function in a header has no
+      symbol to call, so it would need a curated list of out-of-line functions, which is the entry
+      list again. It would also bind the product to the calling convention of a surface written
+      for the other backend. Swift links those libraries and uses them only for user C++, never
+      for its own runtime. Not blocked; needs a design pass of its own.
+
+- [ ] R171 -- On the execution backend a run-time error raised inside a constructor leaves the
+      storage being constructed behind. An instance of the design hierarchy and an object built with
+      `new` are each allocated by their class's allocation and then constructed, and nothing between
+      the two gives the storage back if the constructor raises. The C++ backend's construction does,
+      as clang does for every `new`, by entering the constructor with a cleanup that frees the
+      storage and continues the unwind. It is one case of a call that can raise not being stated as
+      one that can leave its caller, so it closes with that rather than on its own. Not blocked.
+
+- [ ] R172 -- A declaration another unit makes is named differently from one this unit makes, at
+      every reference to it. Each semantic layer spells a class, a property of a class, a method, a
+      virtual method, a property of a class itself, a namespace subroutine, a namespace variable and
+      a unit's object twice, once holding an identity of this unit and once holding names. Every
+      consumer of such a reference takes two arms, and each layer keeps what it read of another
+      unit's class in a list apart from its own classes. Types already do not work this way. A type
+      read off a signature is taken into the reader's own storage and answers with the reader's own
+      identity, and nothing afterwards tells it from one the unit wrote.
+
+      The target is the same for declarations. One read off a signature is entered among the unit's
+      own as a declaration without bodies, takes an identity the reading unit assigns, and states
+      which unit emits it. A reference then names that identity whichever unit made the declaration,
+      and the one thing still asked separately is whether this unit holds the body. That is what the
+      field does. Clang parses a header into the same declaration objects a class written in the
+      file gets. Rustc names every definition by one identifier whose crate component is the only
+      difference, and its queries answer a local one from source and a foreign one from metadata
+      with the caller not knowing which.
+
+      The identity rules require a cross-unit reference to be a distinct kind. They name that
+      mechanism and not what it is for. What it is for holds under the target too. No identity is
+      shared between units, because the reading unit assigns its own. Every cross-unit dependency is
+      recorded, because reading the entry is what records it. Not blocked. It is the widest entry in
+      this file and needs a design pass of its own.
+
+- [ ] R173 -- How a class satisfies a method of an interface class (LRM 8.26.2) is stated per class
+      in a list beside its methods, at three layers, by every class for every method of every
+      interface class its values are also values of. It is a list of its own because a method states
+      at most one method it overrides. A class that declares nothing still restates it, since what
+      the class it extends stated is not on that class's signature.
+
+      The target is that a method states every virtual method it overrides, of the classes it
+      extends and of interface classes alike, once, where the method is declared and on the
+      signature. Which function each interface class's table holds for a value is then worked out in
+      the layout step from those statements, the way the table of the class itself already is. This
+      is clang's shape. A member function that overrides one function from each of two bases lists
+      both as overridden, and the table builder computes the final overrider for each base. The one
+      rule SystemVerilog adds, that an inherited virtual method satisfies an interface class's
+      method, is already met by synthesizing the forwarding method C++ would make the user write,
+      after which the case is the C++ one. Not blocked, and cheaper after R172, which changes how
+      each overridden method is named.
+
+- [ ] R174 -- The object model's code and records use words of their own where the field has settled
+      ones. A virtual method is a behavior, the chain of classes a class extends is a lineage,
+      overriding and implementing are answering, a base subobject is a part, a virtual table is a
+      table, type information is a description, and what a signature states of a class is a promise.
+      A reader who knows C++ or Rust has to learn each before reading a comment.
+
+      The target is the field's words, each layer in its own terms. HIR uses the standard's, since it
+      records what the user wrote. MIR uses what object-oriented languages share. LIR and below use
+      the platform ABI's. Not blocked. It follows R172 and R173, which remove many of the names.
+
+      The same holds below the object model. A control-flow edge taken when a call leaves its caller
+      is a departure where clang and rustc say unwind, the end of a value is an end where rustc says
+      drop, a body's variables are opened and closed where rustc marks storage live and dead, a
+      suspension's two successors are a resume and an abandonment where rustc's yield has a resume
+      and a drop, and a composed value is a product where rustc's is an aggregate. On the execution
+      backend what a constructor does once its base is built is a storage begin where clang calls it
+      the constructor prologue, and what only the most-derived constructor does is a whole begin.
+      Every symbol is spelled in a scheme of this compiler's own, so a debugger, a profiler and a
+      demangler show it raw; the Itanium scheme, whose shape rustc's legacy symbols borrow, would let
+      every one of them read it.
+
+- [ ] R175 -- An integral value whose width its specialization fixes is a runtime object, and every
+      operation on one is a call into the runtime. A 32-bit two-state integer is 48 bytes, a product
+      of two of them is a call that builds a third, every temporary is ended by another call, and a
+      literal is built at run time the first time it is reached. The same program written by hand
+      holds a 32-bit integer in four bytes and multiplies it in one instruction, and so does what
+      clang and rustc make of it. A four-state value or a wide one is a fixed number of words with
+      the operations written inline, which is how Verilator holds them. Nothing in the standard asks
+      for more: the width, the signedness and the state domain are all fixed where the
+      specialization is.
+
+      The record on integral representation chose one class for every integral so that the C++
+      backend's text has one shape and no bridges between shapes, which still holds. Its rule that
+      the class is not a template over the width carries no reason of its own, and its own findings
+      expect the execution backend to lower an integral to an integer of its width. One class
+      template over width, signedness and state domain keeps the one shape and lets the compiler see
+      every operation.
+
+      The one reason to keep a width at run time is to compile one unit for several widths, which
+      the specialization-sharing goal in the performance file would need. That is rustc's choice
+      between monomorphizing and erasing, and rustc makes it per use rather than for the whole
+      language. Here it is per type: a width no parameter reaches, such as an `int`'s, is fixed
+      whatever is shared, and only a width a shared parameter reaches would need the run-time form.
+      Not blocked; needs a design pass of its own, and it is the largest distance between a
+      compiled design and the same design written by hand.
+
+- [ ] R176 -- The description of a packed type that formatting and conversion read is built by
+      generated code the first time it is reached, through runtime calls, and every reach first
+      checks whether it exists yet. Clang emits type information as read-only data, and rustc
+      evaluates such data while compiling. Every fact in the description is fixed where the type is
+      declared. The target is a constant in the unit that declares the type. Not blocked.
+
+- [ ] R177 -- Every block inside a method of a class owns a disable target, built when the program
+      starts and destroyed at exit, whether or not anything disables it. No hierarchical name
+      reaches a block inside a method, so only a `disable` written in that method names one, and
+      which blocks need a target is known when the class is compiled. A labeled break in C++ or Rust
+      costs nothing until it is taken. The target is a disable target only for a block something
+      names. Not blocked.
+
+- [ ] R178 -- A name that reaches a declaration inside another unit's module (LRM 23.6) is looked up
+      by its text while the design is built, and then used through an untyped address: a misspelt or
+      mistyped name is reported at elaboration and not where the referrer compiles, and each call is
+      indirect. rustc, clang and Verilator all give the referrer the declaration whole and compile
+      the access to an offset or a symbol; none looks a member up by name while the program runs.
+      The target is a module publishing its declarations the way a C++ header does, a referrer
+      resolving against that where it compiles, and a unit re-emitting only when a declaration it
+      read changed. A body edit then re-emits nobody. What the design has to answer first is a name
+      whose target depends on where the unit is instantiated (LRM 23.8). Ranked first on the
+      maintainer's word. Not blocked. What exists only to serve the lookup, and goes with it: the
+      record each class hands the library and the name tables it points at, the bodies the library
+      enters on a name's behalf, the constants a class holds for them at every layer, and the
+      execution backend's emission of those constants as data. What the library still needs of a
+      scope afterwards is its timescale and its DPI-C exports (LRM 35.5.3), both of which
+      construction can state. The same change removes the promise a module publishes beside the
+      class that realizes it, the entry a referrer builds an instance through, and the coordinate
+      formed at elaboration for a class a design element declares.
 
 ## Out of Scope
 

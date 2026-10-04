@@ -6,7 +6,12 @@
 
 ## Status
 
-Accepted
+Accepted; D3 superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D2. Its trigger --
+a backend dispatching through an interface handle -- arrived. The execution backend gives each
+interface class a view of the object with a table of its own, so MIR states, for each behavior of
+each interface class a class reaches, which behavior of the class's lineage answers it. D1 and D2
+stand.
 
 ## Why this decision matters
 

@@ -193,7 +193,7 @@ auto lyra_rt_claim_namespace_initialize(void* runtime, const char* name)
 // the call site restores to the one it was compiled against.
 auto lyra_rt_current_export_scope() -> void*;
 auto lyra_rt_find_export_entry(void* scope, const void* subroutine)
-    -> void (*)();
+    -> LyraMethodEntry;
 
 // The two directions of a DPI-C task across the boundary. Going out, the call
 // is carried on a stack of the runtime's own so an exported task it reaches can
@@ -237,30 +237,22 @@ void lyra_rt_process_suspend(const void* self, void* runtime);
 void lyra_rt_process_resume(const void* self, void* runtime);
 
 // Builds a callable the runtime runs later: `definition` is an opaque
-// cross-artifact reference naming both the body and the storage its captures
-// need, and `captures` supplies one handle per capture in declaration order,
-// each taken into that storage as the schema says -- a pointer held, a value
-// copied. The closure is made once, with its captures in its own allocation,
-// and never moves; what the caller's storage receives is its owner, which is
-// what something outliving the caller's statement takes from there: a region a
-// deferred effect is submitted to, the coroutine a spawned branch is entered
-// as, or an observation of the value it answers. An array method running a
-// per-element body borrows it for the call.
-auto lyra_rt_closure_make(const void* definition, LyraSpan captures, void* out)
-    -> void*;
+// cross-artifact reference naming both the body and how the storage its
+// captures live in is laid out. The closure is made once and never moves; what
+// the caller's storage receives is its owner, which is what something
+// outliving the caller's statement takes from there: a region a deferred
+// effect is submitted to, the coroutine a spawned branch is entered as, or an
+// observation of the value it answers. An array method running a per-element
+// body borrows it for the call. It answers the closure itself, whose captures
+// the code building it fills where it laid them out in it.
+auto lyra_rt_closure_make(const void* definition, void* out) -> void*;
 
-// Brings an object into existence on the managed heap (LRM 8.3):
-// `definition` is an opaque cross-artifact reference naming the storage its
-// properties need. The object's properties hold their storage's default until
-// the construction the program asked for runs on it, which is the asking
-// code's own to enter. The handle answered is a reference to the object, built
-// in storage the caller gives like every value the boundary hands back.
-auto lyra_rt_object_make(const void* definition, void* out) -> void*;
-
-// The object a class handle refers to (LRM 8.3). Which object that is, is a
-// fact the handle holds rather than is, so reaching it is an operation; a
-// handle referring to no object fails the run here rather than further in.
-auto lyra_rt_object_deref(void* handle) -> void*;
+// The handle the program's `new` answers (LRM 8.3), owning `object`: a whole
+// value of a class extending the part every object starts with, allocated and
+// constructed by the caller and held by nothing yet. The handle ends the value
+// through its virtual destructor when the last reference to it goes, and is
+// built in storage the caller gives like every value the boundary hands back.
+auto lyra_rt_object_adopt(void* object, void* out) -> void*;
 
 // A counted hold on a new, empty cell of the named domain -- what a block's
 // local lives in when a branch the block spawns can outlive it (LRM 6.21). The
@@ -285,46 +277,44 @@ auto lyra_rt_assocarray_shared_cell_make(void* out) -> void*;
 // behind one is an operation.
 auto lyra_rt_shared_pointer_deref(void* handle) -> void*;
 
-// The body a value's class answers one behavior with (LRM 8.20), named by the
-// class that introduced the behavior and which of that class's introductions it
-// is. What class a value is, is a fact only this side holds, while entering a
-// body with the right arguments is only the asking code's to do -- so this
-// answers with the address and calls nothing.
-//
-// It takes the value and nothing about what kind of value it is. An instance
-// standing in the design hierarchy and an object the program built with `new`
-// carry the class the same way, so the question is asked of the class either
-// way and one entry answers it.
-auto lyra_rt_method(
-    void* value, const void* introduced_by, std::uint32_t ordinal)
-    -> LyraMethodEntry;
+// The part of the object a class handle refers to that the class it was formed
+// as reaches, or null for a handle referring to no object. Forming the handle
+// of another class is generated code's own, since where each part of an object
+// sits is fixed where the object's class is compiled.
+auto lyra_rt_handle_view(const void* handle) -> void*;
+
+// A handle referring to the object `handle` refers to, through the part at
+// `view`; one referring to no object where `view` is null, which is how a
+// conversion that found no such part answers.
+auto lyra_rt_handle_with_view(const void* handle, void* view, void* out)
+    -> void*;
 
 // What a name reaches on a class, for a referrer with no name for that class
-// and so no way to count a position out of it. All three run while a reference
-// to such a class resolves and none is reached from the simulation path. A
-// property and a behavior answer with a coordinate the object then applies,
-// because what an access reaches still depends on the object; a call the object
-// gets no say in (LRM 8.14) answers with the body itself.
+// and so no way to count a position out of it. Both run while a reference to
+// such a class resolves and neither is reached from the simulation path. A
+// property answers with a coordinate the object then applies, because what an
+// access reaches still depends on the object; a method answers with the body
+// itself (LRM 8.14), which for a virtual one makes the call the object decides
+// (LRM 8.20).
 auto lyra_rt_class_find_property(const void* definition, const void* name)
-    -> const void*;
-auto lyra_rt_class_find_behavior(const void* definition, const void* name)
     -> const void*;
 auto lyra_rt_class_find_behavior_body(const void* definition, const void* name)
     -> LyraMethodEntry;
 
-// Applying one of those coordinates to the object a handle names. What the
-// access states is the only difference from the by-parts pair above: one reads
-// the coordinate off a declaration it can name, this one reads it out of a
-// value.
+// Applying a property coordinate to the object a handle names.
 auto lyra_rt_property_at(const void* handle, const void* coordinate) -> void*;
-auto lyra_rt_behavior_at(const void* handle, const void* coordinate)
-    -> LyraMethodEntry;
 
-// The object a handle names, which is what a body settled against a class this
-// artifact cannot name is entered with. A handle refers to an object and is not
-// one, so recovering it is the runtime's answer rather than an address the
-// asking side already holds.
-auto lyra_rt_object_of(const void* handle) -> void*;
+// The part of the object a class handle reaches it through (LRM 8.3), which is
+// what a member access is applied to and what a body settled against a class
+// this artifact cannot name is entered with. Which object that is, is a fact
+// the handle holds rather than is, so reaching it is an operation; a handle
+// referring to no object fails the run here rather than further in.
+auto lyra_rt_view_of(const void* handle) -> void*;
+
+// The handle referring to the object a body runs on (LRM 8.11), given the
+// object's start, which is also the part a handle of any class of its lineage
+// reaches it through.
+auto lyra_rt_self_handle(void* self, void* out) -> void*;
 
 // What reports a change to an object's properties (LRM 9.4.2), each taking the
 // object as the root every object shares: that root of the object a handle
@@ -337,17 +327,9 @@ auto lyra_rt_open_object_write(void* object, const void* place, void* out)
     -> void*;
 auto lyra_rt_object_write_through(const void* write) -> const void*;
 
-// Whether a handle refers to an object a variable of the named class may hold.
-// The set of classes extending one is open across compilation units, so the
-// object's own class is what answers and nothing the asking side holds could.
-// The answer crosses as the machine integer every computed answer crosses as; a
-// host `bool` here would say the call parks its caller.
-auto lyra_rt_object_is_of_class(const void* handle, const void* definition)
-    -> std::int64_t;
-
 // What an enumeration's member list answers about a value (LRM 6.19.5,
-// 6.24.2). Whether it is a member crosses as a machine integer for the same
-// reason the class check above does.
+// 6.24.2). Whether it is a member crosses as the machine integer every computed
+// answer crosses as; a host `bool` here would say the call parks its caller.
 auto lyra_rt_enumeration_has(const void* enumeration, const void* value)
     -> std::int64_t;
 auto lyra_rt_enumeration_name(
@@ -620,15 +602,6 @@ auto lyra_rt_dist_erlang(
 // caller gives.
 auto lyra_rt_make_segment(void* label, LyraSpan indices, void* out) -> void*;
 
-// Allocates a generic instance of `definition`, runs its construct entry over
-// the values the site builds this class with -- empty for a class that takes
-// none -- to build its subtree, and returns the owning handle to the caller,
-// which hands it on to be attached. `definition` is an opaque cross-unit
-// reference the generated code never inspects.
-auto lyra_rt_make_scope(
-    const void* definition, void* parent, void* segment, LyraSpan arguments)
-    -> void*;
-
 // The scope's hierarchical name (LRM 21.2.1.5; the `%m` source), as a string
 // built in storage the caller gives.
 auto lyra_rt_hierarchical_path(void* self, void* out) -> void*;
@@ -680,7 +653,7 @@ auto lyra_rt_find_signal(void* self, const void* name) -> void*;
 // guarantee to be interconvertible, so the two lookups cannot share a return
 // type. What a caller does with the answer is restore it to the prototype its
 // own call site was compiled against.
-auto lyra_rt_find_subroutine(void* self, const void* name) -> void (*)();
+auto lyra_rt_find_subroutine(void* self, const void* name) -> LyraMethodEntry;
 auto lyra_rt_find_class(void* self, const void* name) -> const void*;
 
 // Publishes what a `disable` naming this scope terminates, and reads it back
@@ -688,118 +661,14 @@ auto lyra_rt_find_class(void* self, const void* name) -> const void*;
 void lyra_rt_register_disable_target(void* self, void* target);
 auto lyra_rt_find_disable_target(void* self) -> void*;
 
-// Observable storage cell operations, reached through the cell's address. The
-// entry names the cell's value domain; the runtime never inspects a type tag.
-// A read yields a value of its own rather than a view of the cell's contents,
-// so it stays valid across a later write to that cell -- generated code holds
-// what it loaded, and nothing tells it when a store invalidates a view.
-//
-// `arm_sampling` and `sampled_load` are the same access to the same storage,
-// differing only in which of the two values a cell holds answers: the current
-// one, or the one the current time slot found there before anything in it ran
-// (LRM 4.4.2.1, 16.5.1). Only an armed cell keeps the second, so a cell nothing
-// samples carries neither the storage nor the work of maintaining it.
-
-// The storage one body's declared variables live in. Opening it builds one
-// piece per variable the body described; a variable is reached by the position
-// that description gave it; closing it ends the whole of it, and with it every
-// variable, which is the only thing that ends them. Every way out of the body
-// closes it, the one no statement spells included.
-auto lyra_rt_variables_open(const void* schema) noexcept -> void*;
-auto lyra_rt_variable_addr(void* variables, std::uint32_t index) noexcept
-    -> void*;
-void lyra_rt_variables_close(void* variables) noexcept;
-
-// The description opening that storage reads, built from what one body's own
-// artifact states: a pair of bytes per variable, naming the storage kind its
-// declaration asks for and the value domain that kind holds. What a body needs
-// is settled before anything runs, so an artifact states it once where it is
-// composed rather than where control first reaches the body, and the address
-// this answers with is what every later entry into the body opens against.
-auto lyra_rt_variable_schema_declare(const void* described, std::uint64_t count)
-    -> const void*;
-
-// The storage a unit shares program-wide, built from the same pair of bytes and
-// kept the same way. What it answers with is the storage itself rather than a
-// description of it, because every reference to shared storage names where it
-// is rather than what it needs.
-auto lyra_rt_shared_storage_declare(std::uint8_t kind, std::uint8_t domain)
-    -> void*;
-
-// One closure a unit declares, in the call protocol its body answers to: a body
-// that runs to completion, one that yields the handle whoever entered it drives
-// from there, one run once per entry of a container, and one taking nothing and
-// answering with a value. The two that answer a value build it in storage their
-// caller gives, and state which representation it comes back in, because a
-// handle carries no type -- and, for a tuple, which tuple, by its type's
-// operation table, absent for every other value. `captures` describes what the
-// closure's captures need, exactly as a body's variables are described.
-auto lyra_rt_closure_declare_synchronous(
-    const void* captures, std::uint64_t count, void (*body)(void* self))
-    -> const void*;
-auto lyra_rt_closure_declare_coroutine(
-    const void* captures, std::uint64_t count, void* (*body)(void* self))
-    -> const void*;
-auto lyra_rt_closure_declare_per_element(
-    const void* captures, std::uint64_t count,
-    void* (*body)(void* self, const void* item, const void* index, void* out),
-    std::uint8_t result_domain, const void* result_tuple) -> const void*;
-auto lyra_rt_closure_declare_value(
-    const void* captures, std::uint64_t count,
-    void* (*body)(void* self, void* out), std::uint8_t result_domain,
-    const void* result_tuple) -> const void*;
-
-// One class a unit declares, and one whose values stand in the design
-// hierarchy. Each answers with the definition every value of it carries, which
-// is what the declaring unit leaves in the cell every reference to the class
-// loads.
-//
-// What the class adds to its lineage is stated by the entries below, in
-// whatever order its artifact states them. A class this one reaches is named by
-// the **cell** holding its definition rather than by the definition, because
-// the artifacts are stated in whatever order the program was composed in and a
-// class of another may not have spoken yet; a cell has an address from the
-// moment the program is composed.
-auto lyra_rt_class_declare() -> void*;
-auto lyra_rt_scope_class_declare(
-    std::int8_t time_unit_power, std::int8_t time_precision_power) -> void*;
-void lyra_rt_class_declare_base(void* cls, const void* base);
-void lyra_rt_class_declare_members(
-    void* cls, const void* described, std::uint64_t count);
-void lyra_rt_class_declare_introduction(void* cls, LyraMethodEntry body);
-void lyra_rt_class_declare_takeover(
-    void* cls, const void* introduced_by, std::uint32_t ordinal,
-    LyraMethodEntry body);
-void lyra_rt_class_declare_property_name(
-    void* cls, const void* name, std::uint32_t length, std::uint32_t position);
-void lyra_rt_class_declare_behavior_name(
-    void* cls, const void* name, std::uint32_t length, std::uint32_t position);
-void lyra_rt_class_declare_body_name(
-    void* cls, const void* name, std::uint32_t length, LyraMethodEntry body);
-
-// What a scope class states beyond that: the entries the runtime drives an
-// instance through and the one that builds it, and the names it answers from.
-// Each entry crosses erased and is restored to the type its definition was
-// generated with, exactly as a body the runtime looks up by name does.
-void lyra_rt_scope_declare_program(
-    void* scope, LyraMethodEntry resolve_state,
-    LyraMethodEntry initialize_state, LyraMethodEntry create_processes,
-    LyraMethodEntry construct);
-void lyra_rt_scope_declare_subroutine(
-    void* scope, const void* name, std::uint32_t length, LyraMethodEntry entry);
-void lyra_rt_scope_declare_export(
-    void* scope, const void* name, std::uint32_t length, LyraMethodEntry entry);
-void lyra_rt_scope_declare_class(
-    void* scope, const void* name, std::uint32_t length, const void* declared);
-
 // Where a program starts, answering its exit status: the arguments it was
-// started with, the cell its design root's unit leaves that root's definition
-// in, and the label the root carries. Whoever composed the program has run
-// every declaration body by now, so this is where what they all declared is
-// read at once.
+// started with, the entry its design root's unit builds its object through --
+// given the scope it is built under and the identity it is reached by, an
+// instance built with `new` that this library then owns -- and the label the
+// root carries as the artifact's own NUL-terminated constant.
 auto lyra_rt_run_program(
-    std::int32_t argc, char** argv, const void* root, const void* name,
-    std::uint32_t length) -> std::int32_t;
+    std::int32_t argc, char** argv, void* (*make)(void*, const void*),
+    const void* name) -> std::int32_t;
 
 // A reference, built in the storage the caller gives: where a value lies, and
 // what holds that storage, if anyone is told about it. A body holding a
@@ -848,8 +717,16 @@ auto lyra_rt_assocarray_refer_element(
 auto lyra_rt_tuple_refer_component(
     const void* reference, std::int64_t index, void* out) -> void*;
 
+// Observable storage cell operations, reached through the cell's address. The
+// entry names the cell's value domain; the runtime never inspects a type tag.
 // A read of what a cell, a net, a driver or a reference holds answers with the
 // value where it lies; a reader copies it only to keep it.
+//
+// `arm_sampling` and `sampled_load` are the same access to the same storage,
+// differing only in which of the two values a cell holds answers: the current
+// one, or the one the current time slot found there before anything in it ran
+// (LRM 4.4.2.1, 16.5.1). Only an armed cell keeps the second, so a cell nothing
+// samples carries neither the storage nor the work of maintaining it.
 auto lyra_rt_packed_cell_get(void* cell) -> const void*;
 void lyra_rt_packed_cell_initialize(void* cell, const void* prototype) noexcept;
 void lyra_rt_packed_cell_set(void* cell, const void* value);
@@ -1408,11 +1285,6 @@ auto lyra_rt_dynarray_value_box(const void* value, void* out) -> void*;
 // comparing two and every other operation of the type are the program's own,
 // compiled for the type. What remains here is what a storage wrapper does with
 // a tuple it holds.
-//
-// `held` answers the bytes of a tuple the runtime keeps in storage of its own,
-// which is that tuple's handle: the storage is the runtime's object, and the
-// bytes lie elsewhere.
-auto lyra_rt_tuple_held(void* tuple) -> void*;
 auto lyra_rt_tuple_cell_get(void* cell) -> const void*;
 void lyra_rt_tuple_cell_initialize(void* cell, const void* prototype) noexcept;
 void lyra_rt_tuple_cell_set(void* cell, const void* value);
@@ -2458,4 +2330,103 @@ auto lyra_rt_dpi_open_array_move(void* value, void* out) -> void*;
 auto lyra_rt_channel_cancellation_move(void* value, void* out) -> void*;
 auto lyra_rt_erased_value_move(void* value, void* out) -> void*;
 auto lyra_rt_reference_move(void* value, void* out) -> void*;
+
+// One member's storage, built in place where its owner was laid out and ended
+// there: `lyra_rt_<domain>_<kind>_construct` / `_destroy` for storage over a
+// value domain, `lyra_rt_<kind>_construct` / `_destroy` for storage of a kind
+// naming no domain. A value held inline is built by copying the value in, so
+// it has no entry here; a counted hold on a cell and a channel's cancellation
+// view end through their own entries, and a borrowed handle and a reference
+// have nothing to end.
+void lyra_rt_borrowed_handle_construct(void* storage);
+void lyra_rt_reference_construct(void* storage);
+void lyra_rt_packed_cell_construct(void* storage);
+void lyra_rt_string_cell_construct(void* storage);
+void lyra_rt_real_cell_construct(void* storage);
+void lyra_rt_shortreal_cell_construct(void* storage);
+void lyra_rt_chandle_cell_construct(void* storage);
+void lyra_rt_tuple_cell_construct(void* storage);
+void lyra_rt_union_cell_construct(void* storage);
+void lyra_rt_tagged_union_cell_construct(void* storage);
+void lyra_rt_dynarray_cell_construct(void* storage);
+void lyra_rt_unpackedarray_cell_construct(void* storage);
+void lyra_rt_queue_cell_construct(void* storage);
+void lyra_rt_assocarray_cell_construct(void* storage);
+void lyra_rt_managedref_cell_construct(void* storage);
+void lyra_rt_packed_value_cell_construct(void* storage);
+void lyra_rt_string_value_cell_construct(void* storage);
+void lyra_rt_real_value_cell_construct(void* storage);
+void lyra_rt_shortreal_value_cell_construct(void* storage);
+void lyra_rt_chandle_value_cell_construct(void* storage);
+void lyra_rt_tuple_value_cell_construct(void* storage);
+void lyra_rt_union_value_cell_construct(void* storage);
+void lyra_rt_tagged_union_value_cell_construct(void* storage);
+void lyra_rt_dynarray_value_cell_construct(void* storage);
+void lyra_rt_unpackedarray_value_cell_construct(void* storage);
+void lyra_rt_queue_value_cell_construct(void* storage);
+void lyra_rt_assocarray_value_cell_construct(void* storage);
+void lyra_rt_managedref_value_cell_construct(void* storage);
+void lyra_rt_packed_net_construct(void* storage);
+void lyra_rt_tuple_net_construct(void* storage);
+void lyra_rt_union_net_construct(void* storage);
+void lyra_rt_unpackedarray_net_construct(void* storage);
+void lyra_rt_packed_sampled_history_construct(void* storage);
+void lyra_rt_string_sampled_history_construct(void* storage);
+void lyra_rt_real_sampled_history_construct(void* storage);
+void lyra_rt_shortreal_sampled_history_construct(void* storage);
+void lyra_rt_tuple_sampled_history_construct(void* storage);
+void lyra_rt_union_sampled_history_construct(void* storage);
+void lyra_rt_tagged_union_sampled_history_construct(void* storage);
+void lyra_rt_dynarray_sampled_history_construct(void* storage);
+void lyra_rt_unpackedarray_sampled_history_construct(void* storage);
+void lyra_rt_queue_sampled_history_construct(void* storage);
+void lyra_rt_assocarray_sampled_history_construct(void* storage);
+void lyra_rt_managedref_sampled_history_construct(void* storage);
+void lyra_rt_named_event_construct(void* storage);
+void lyra_rt_cancellation_target_construct(void* storage);
+void lyra_rt_evaluation_attempts_construct(void* storage);
+void lyra_rt_channel_cancellation_construct(void* storage);
+void lyra_rt_shared_pointer_construct(void* storage);
+void lyra_rt_packed_cell_destroy(void* storage);
+void lyra_rt_string_cell_destroy(void* storage);
+void lyra_rt_real_cell_destroy(void* storage);
+void lyra_rt_shortreal_cell_destroy(void* storage);
+void lyra_rt_chandle_cell_destroy(void* storage);
+void lyra_rt_tuple_cell_destroy(void* storage);
+void lyra_rt_union_cell_destroy(void* storage);
+void lyra_rt_tagged_union_cell_destroy(void* storage);
+void lyra_rt_dynarray_cell_destroy(void* storage);
+void lyra_rt_unpackedarray_cell_destroy(void* storage);
+void lyra_rt_queue_cell_destroy(void* storage);
+void lyra_rt_assocarray_cell_destroy(void* storage);
+void lyra_rt_managedref_cell_destroy(void* storage);
+void lyra_rt_packed_value_cell_destroy(void* storage);
+void lyra_rt_string_value_cell_destroy(void* storage);
+void lyra_rt_tuple_value_cell_destroy(void* storage);
+void lyra_rt_union_value_cell_destroy(void* storage);
+void lyra_rt_tagged_union_value_cell_destroy(void* storage);
+void lyra_rt_dynarray_value_cell_destroy(void* storage);
+void lyra_rt_unpackedarray_value_cell_destroy(void* storage);
+void lyra_rt_queue_value_cell_destroy(void* storage);
+void lyra_rt_assocarray_value_cell_destroy(void* storage);
+void lyra_rt_managedref_value_cell_destroy(void* storage);
+void lyra_rt_packed_net_destroy(void* storage);
+void lyra_rt_tuple_net_destroy(void* storage);
+void lyra_rt_union_net_destroy(void* storage);
+void lyra_rt_unpackedarray_net_destroy(void* storage);
+void lyra_rt_packed_sampled_history_destroy(void* storage);
+void lyra_rt_string_sampled_history_destroy(void* storage);
+void lyra_rt_real_sampled_history_destroy(void* storage);
+void lyra_rt_shortreal_sampled_history_destroy(void* storage);
+void lyra_rt_tuple_sampled_history_destroy(void* storage);
+void lyra_rt_union_sampled_history_destroy(void* storage);
+void lyra_rt_tagged_union_sampled_history_destroy(void* storage);
+void lyra_rt_dynarray_sampled_history_destroy(void* storage);
+void lyra_rt_unpackedarray_sampled_history_destroy(void* storage);
+void lyra_rt_queue_sampled_history_destroy(void* storage);
+void lyra_rt_assocarray_sampled_history_destroy(void* storage);
+void lyra_rt_managedref_sampled_history_destroy(void* storage);
+void lyra_rt_named_event_destroy(void* storage);
+void lyra_rt_cancellation_target_destroy(void* storage);
+void lyra_rt_evaluation_attempts_destroy(void* storage);
 }

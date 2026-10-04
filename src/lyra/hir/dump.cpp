@@ -248,20 +248,6 @@ auto FormatExternalDispatchSlot(const ExternalDispatchSlot& slot)
       slot.behavior.value);
 }
 
-auto FormatCrossUnitDispatchSlot(const CrossUnitDispatchSlot& slot)
-    -> std::string {
-  return std::visit(
-      Overloaded{
-          [](const ExternalDispatchSlot& s) {
-            return FormatExternalDispatchSlot(s);
-          },
-          [](const UnpublishedBehaviorSlot& s) {
-            return std::format(
-                "Class[unpublished]#coordinate={}", s.coordinate.value);
-          }},
-      slot);
-}
-
 auto FormatOverriddenBehavior(const OverriddenBehavior& taken) -> std::string {
   return std::visit(
       Overloaded{
@@ -286,7 +272,7 @@ auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
                 c.interface.kind == SubroutineKind::kTask ? "task" : "function",
                 c.slot.has_value()
                     ? std::format(
-                          " virtual={}", FormatCrossUnitDispatchSlot(*c.slot))
+                          " virtual={}", FormatExternalDispatchSlot(*c.slot))
                     : "");
           },
           [](const SettledMethodCallee& c) {
@@ -1064,7 +1050,8 @@ class HirDumper {
                   e.receiver);
               return std::format(
                   "ExternalUnitMethod {} \"{}::{}\" recv={}",
-                  callable.kind == SubroutineKind::kTask ? "task" : "function",
+                  callable.interface.kind == SubroutineKind::kTask ? "task"
+                                                                   : "function",
                   promised.class_name, callable.name, receiver);
             },
             [](const OpaqueUnitMethodRef& e) -> std::string {
@@ -1517,6 +1504,15 @@ class HirDumper {
     for (const auto& impl : c.implements) {
       Line(std::format("Implements: {}", FormatClassRef(impl)));
     }
+    for (const ConformingBehavior& answered : c.conforming) {
+      Line(
+          std::format(
+              "Conforms: {} <- {}",
+              FormatOverriddenBehavior(answered.interface_behavior),
+              answered.answered_by.has_value()
+                  ? FormatOverriddenBehavior(*answered.answered_by)
+                  : std::string{"nothing"}));
+    }
     for (const auto& field : c.fields) {
       Line(std::format("{}:Type[{}]", field.name, field.type.value));
     }
@@ -1709,10 +1705,6 @@ class HirDumper {
     return FormatMember(leaf.member, "property coordinate");
   }
 
-  static auto FormatLeaf(const BehaviorCoordinateLeaf& leaf) -> std::string {
-    return FormatMember(leaf.member, "behavior coordinate");
-  }
-
   static auto FormatLeaf(const BehaviorBodyLeaf& leaf) -> std::string {
     return FormatMember(leaf.member, "behavior body");
   }
@@ -1822,7 +1814,6 @@ class HirDumper {
     DumpTable("RoutedCallableRef", s.routes.callables);
     DumpTable("RoutedDisableTargetRef", s.routes.disable_targets);
     DumpTable("PropertyCoordinate", s.routes.property_coordinates);
-    DumpTable("BehaviorCoordinate", s.routes.behavior_coordinates);
     DumpTable("BehaviorBody", s.routes.behavior_bodies);
     for (const PortConnectionId id : s.port_connections.Ids()) {
       const auto& pc = s.port_connections.Get(id);

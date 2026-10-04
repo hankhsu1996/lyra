@@ -11,71 +11,92 @@
 
 namespace lyra::backend::cpp {
 
-// Who owns a declared variable: each object of a class, the class itself (a
-// static property, LRM 8.9), or the unit's namespace (a package variable, LRM
-// 26.2).
-enum class CellOwner : std::uint8_t { kObject, kType, kNamespace };
-
-// Whether this text is the variable's definition or only declares one defined
-// elsewhere. A variable another unit may name is declared in the header and
-// defined in the code file.
-enum class CellText : std::uint8_t { kAnnounced, kDefined };
-
-// A variable declaration, described by what the caller knows: owner,
-// definition or not, const or not, type and name. The keywords and punctuation
-// those imply are chosen in one place, below, so no two sites write the same
-// declaration differently.
-struct DeclaredCell {
-  CellOwner owner = CellOwner::kObject;
-  CellText text = CellText::kDefined;
-  bool immutable = false;
-  CppType type;
-  CppName name;
-  // The class the name is qualified with, `C::name`, for a definition written
-  // outside its class.
-  std::optional<CppName> qualifier;
+// Which C++ declaration a variable is written as. Each is one of the forms the
+// language has, named as the language names it:
+//
+//   kNonStaticDataMember           T name{};                 in a class
+//   kInlineStaticDataMember        inline static T name{};   in a class
+//   kStaticDataMemberDeclaration   static T name;            in a class
+//   kStaticDataMemberDefinition    T Class::name = value;    at namespace scope
+//   kExternDeclaration             extern T name;            at namespace scope
+//   kNamespaceScopeDefinition      T name = value;           at namespace scope
+//
+// An inline static data member is defined where the class is, however many
+// files include it. One that is not inline is declared in the class and defined
+// once outside it, which is what a member whose value names something only the
+// code file declares has to be. A variable of the namespace another unit may
+// name is declared `extern` in the header and defined in the code file.
+enum class VariableForm : std::uint8_t {
+  kNonStaticDataMember,
+  kInlineStaticDataMember,
+  kStaticDataMemberDeclaration,
+  kStaticDataMemberDefinition,
+  kExternDeclaration,
+  kNamespaceScopeDefinition,
 };
 
-// The keywords before the type. A definition outside its class takes none:
-// `static` and `extern` go only where the variable is declared.
-[[nodiscard]] inline auto CellKeywords(const DeclaredCell& cell)
+// A variable declaration, described by what the caller knows: which form it
+// takes, whether it is const, its type and name, and for a definition written
+// outside its class the class that qualifies the name. The specifiers and
+// punctuation those imply are chosen in one place, below, so no two sites
+// write the same declaration differently.
+struct VariableDeclaration {
+  VariableForm form = VariableForm::kNonStaticDataMember;
+  bool is_const = false;
+  CppType type;
+  CppName name;
+  std::optional<CppName> qualifier = std::nullopt;
+};
+
+[[nodiscard]] inline auto StorageSpecifiers(VariableForm form)
     -> std::string_view {
-  if (cell.qualifier.has_value()) {
-    return "";
-  }
-  switch (cell.owner) {
-    case CellOwner::kObject:
+  switch (form) {
+    case VariableForm::kNonStaticDataMember:
       return "";
-    case CellOwner::kType:
-      // `inline static` defines one cell for the whole program, however many
-      // files include the class.
-      return cell.text == CellText::kAnnounced ? "static " : "inline static ";
-    case CellOwner::kNamespace:
-      return cell.text == CellText::kAnnounced ? "extern " : "";
+    case VariableForm::kInlineStaticDataMember:
+      return "inline static ";
+    case VariableForm::kStaticDataMemberDeclaration:
+      return "static ";
+    case VariableForm::kStaticDataMemberDefinition:
+      return "";
+    case VariableForm::kExternDeclaration:
+      return "extern ";
+    case VariableForm::kNamespaceScopeDefinition:
+      return "";
   }
-  throw InternalError("backend::cpp: a declared cell belongs to no owner");
+  throw InternalError("backend::cpp: unknown variable form");
 }
 
 inline void WriteDeclarationUpToTheValue(
-    TargetText& out, const DeclaredCell& cell) {
+    TargetText& out, const VariableDeclaration& variable) {
   out.OpenLine();
-  out += CellKeywords(cell);
-  if (cell.immutable) {
+  out += StorageSpecifiers(variable.form);
+  if (variable.is_const) {
     out += "const ";
   }
-  Write(out, cell.type, " ");
-  if (cell.qualifier.has_value()) {
-    Write(out, *cell.qualifier, "::");
+  Write(out, variable.type, " ");
+  if (variable.qualifier.has_value()) {
+    Write(out, *variable.qualifier, "::");
   }
-  Write(out, cell.name);
+  Write(out, variable.name);
 }
 
-// A declaration with no value: `T name;`, or `T name{};` for a definition, so
-// a scalar starts at zero rather than at whatever the memory held.
-inline void WriteDeclaration(TargetText& out, const DeclaredCell& cell) {
-  WriteDeclarationUpToTheValue(out, cell);
-  if (cell.text == CellText::kDefined) {
-    out += "{}";
+// A declaration with no value: `T name;` where it is only a declaration, and
+// `T name{};` where it is a definition, so a scalar starts at zero rather than
+// at whatever the memory held.
+inline void WriteDeclaration(
+    TargetText& out, const VariableDeclaration& variable) {
+  WriteDeclarationUpToTheValue(out, variable);
+  switch (variable.form) {
+    case VariableForm::kStaticDataMemberDeclaration:
+    case VariableForm::kExternDeclaration:
+      break;
+    case VariableForm::kNonStaticDataMember:
+    case VariableForm::kInlineStaticDataMember:
+    case VariableForm::kStaticDataMemberDefinition:
+    case VariableForm::kNamespaceScopeDefinition:
+      out += "{}";
+      break;
   }
   out += ";\n";
 }
@@ -84,8 +105,9 @@ inline void WriteDeclaration(TargetText& out, const DeclaredCell& cell) {
 // value.
 template <typename WriteValue>
 void WriteDeclaration(
-    TargetText& out, const DeclaredCell& cell, WriteValue write_value) {
-  WriteDeclarationUpToTheValue(out, cell);
+    TargetText& out, const VariableDeclaration& variable,
+    WriteValue write_value) {
+  WriteDeclarationUpToTheValue(out, variable);
   out += " = ";
   write_value(out);
   out += ";\n";

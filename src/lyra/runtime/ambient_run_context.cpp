@@ -56,11 +56,9 @@ auto CurrentExportScope() -> Scope* {
   return scope;
 }
 
-auto FindExportEntry(Scope* scope, const char* subroutine)
-    -> ErasedScopeCallable {
+auto FindExportEntry(Scope* scope, const char* subroutine) -> ErasedEntry {
   const std::string_view wanted{subroutine};
-  if (ErasedScopeCallable entry =
-          FindInCallableTable(scope->Program().exports, wanted)) {
+  if (ErasedEntry entry = FindInCallableTable(scope->Info().exports, wanted)) {
     return entry;
   }
   const char* entered =

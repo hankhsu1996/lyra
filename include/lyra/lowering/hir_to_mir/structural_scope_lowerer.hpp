@@ -78,7 +78,7 @@ struct PromisedSubroutine {
 };
 
 // One behavior a promise states, paired with the storage of the realizing class
-// that answers it. The pair is what the realization takes over: which behavior
+// that answers it. The pair is what the realization overrides: which behavior
 // it fills is the promise's, and what it answers with is its own.
 struct PromisedAccessor {
   mir::CallableId behavior;
@@ -311,10 +311,6 @@ class StructuralScopeLowerer {
       -> const RouteReach& {
     return property_coordinate_reaches_.Get(hir_id);
   }
-  [[nodiscard]] auto ReachOf(hir::BehaviorCoordinateId hir_id) const
-      -> const RouteReach& {
-    return behavior_coordinate_reaches_.Get(hir_id);
-  }
   [[nodiscard]] auto ReachOf(hir::BehaviorBodyId hir_id) const
       -> const RouteReach& {
     return behavior_body_reaches_.Get(hir_id);
@@ -334,9 +330,6 @@ class StructuralScopeLowerer {
       -> mir::ExprId;
   [[nodiscard]] auto RouteEnd(
       const WalkFrame& frame, hir::PropertyCoordinateId id) const
-      -> mir::ExprId;
-  [[nodiscard]] auto RouteEnd(
-      const WalkFrame& frame, hir::BehaviorCoordinateId id) const
       -> mir::ExprId;
   [[nodiscard]] auto RouteEnd(
       const WalkFrame& frame, hir::BehaviorBodyId id) const -> mir::ExprId;
@@ -551,8 +544,6 @@ class StructuralScopeLowerer {
       disable_target_reaches_;
   base::Translation<hir::PropertyCoordinateId, RouteReach>
       property_coordinate_reaches_;
-  base::Translation<hir::BehaviorCoordinateId, RouteReach>
-      behavior_coordinate_reaches_;
   base::Translation<hir::BehaviorBodyId, RouteReach> behavior_body_reaches_;
   base::Translation<hir::GenerateId, GenerateBindings> generate_bindings_;
   base::Translation<hir::InstanceMemberId, mir::FieldId>

@@ -48,8 +48,10 @@ EMITTERS = [
 ]
 
 # The functions that answer what a declaration, or the file one is emitted
-# into, is spelled as in C++. A name inside a call to one of these has been
-# mapped by definition; the rest of this script is about names that are not.
+# into, is spelled as in C++ -- as an identifier, or as the string the library
+# matches a referrer's name against. A name inside a call to one of these has
+# been mapped by definition; the rest of this script is about names that are
+# not.
 MAPPERS = [
     "ToCppName",
     "UnitNamespaceOf",
@@ -63,11 +65,10 @@ MAPPERS = [
     "CppClassCallableName",
     "CppExternalBehaviorName",
     "CppFieldNameOf",
-    "CppAbiAdapterName",
-    "CppStaticConstantName",
     "CppMintedEntryName",
     "CppUnitCallableName",
     "CppForeignSymbolName",
+    "CppNameLiteral",
 ]
 
 # An expression an emitter writes without mapping, and why that is right. Each
@@ -85,11 +86,6 @@ ADMITTED: dict[str, str] = {
     "f.qualified_name": (
         "a runtime library entry is declared in C++ and named by the library, "
         "so what spells it is the entry declaration rather than this map"
-    ),
-    "root.name": (
-        "the design root's own name is formatted into a quoted slot, so it "
-        "leaves as a string the simulation reports itself by rather than as an "
-        "identifier"
     ),
 }
 

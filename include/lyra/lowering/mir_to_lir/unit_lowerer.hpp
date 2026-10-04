@@ -15,6 +15,7 @@
 #include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
@@ -54,8 +55,7 @@ class UnitLowerer {
 
   // Translates a MIR type to its LIR-owned identity, minting it on first use.
   // Mirrors the MIR type universe: a generic type maps mechanically to its LIR
-  // counterpart. A type with no LIR mirror yet records an unsupported-type
-  // error read at `Run`; it never silently mistranslates.
+  // counterpart.
   auto TranslateType(mir::TypeId id) -> lir::TypeId;
   auto TranslateTypes(std::span<const mir::TypeId> source)
       -> std::vector<lir::TypeId>;
@@ -111,14 +111,6 @@ class UnitLowerer {
       const std::string& unit_name, const std::string& class_name) const
       -> lir::TypeId;
 
-  // What another unit promised about the class it declares under this pair.
-  // Every reference that reached one consumed its promise where the reference
-  // was lowered, so a pair naming no record is a producer that emitted a
-  // reference it had nothing to compile against.
-  [[nodiscard]] auto PromisedClass(
-      const std::string& unit_name, const std::string& class_name) const
-      -> const mir::ExternalClass&;
-
   // The LIR function a class's callable lowers to. Throws if `callable` has no
   // body in `owner` -- a DPI-C import is reached as a foreign symbol and a pure
   // virtual has no implementation here, so neither is a function of this unit.
@@ -131,6 +123,10 @@ class UnitLowerer {
   // that one class and nothing else -- where the behavior lands in a whole
   // value is a layout question, answered from the lineage below this pass.
   [[nodiscard]] auto MethodRef(mir::ClassId owner, mir::CallableId callable)
+      -> lir::StatedDispatchRef;
+
+  // The behavior a MIR slot names, whichever unit introduced it.
+  [[nodiscard]] auto SlotRef(const mir::VirtualSlot& slot)
       -> lir::StatedDispatchRef;
 
   // The LIR function a class's constructor lowers to. Every class an object is
@@ -148,7 +144,22 @@ class UnitLowerer {
   [[nodiscard]] auto UnitCallableSymbol(mir::CallableId id) const
       -> std::string;
 
+  // The type of the values a class some unit declares builds, however the
+  // reference names that class.
+  [[nodiscard]] auto ClassRefValueType(const mir::DeclaredClassRef& of)
+      -> lir::TypeId;
+
  private:
+  // The behavior a class of another unit introduced, named by that class and
+  // which of its introductions the behavior is.
+  [[nodiscard]] auto ExternalMethodRef(
+      const std::string& unit_name, const std::string& class_name,
+      mir::BehaviorOrdinal ordinal) const -> lir::StatedDispatchRef;
+
+  // The type of what a class extends: a class some unit declares, or the
+  // library class either root is.
+  [[nodiscard]] auto BaseType(const mir::ClassRef& base) -> lir::TypeId;
+
   // The declaration a closure's captures are members of, and the function its
   // invoke lowers to.
   [[nodiscard]] auto ClosureDeclaration(mir::ClosureId closure) const
@@ -163,20 +174,17 @@ class UnitLowerer {
 
   // What is settled about one MIR class before any body of it is lowered: its
   // own LIR identity, its constructor's function where it has a constructor,
-  // one function identity per callable that has a body, the behaviors it
-  // introduces in the order it
-  // introduces them, and which of those each callable is. A callable with no
-  // body is no function of this unit and holds none; one that introduces no
-  // behavior holds no ordinal, and the two are independent. An ordinal is read
-  // off `introduces` as an entry is appended to it, so the position and the
-  // list it indexes are one act.
+  // one function identity per callable that has a body, and which of the
+  // class's introductions each callable is, counted in the order it introduces
+  // them. A callable with no body is no function of this unit and holds none;
+  // one that introduces no behavior holds no ordinal, and the two are
+  // independent.
   struct ClassIdentities {
     lir::ClassId lir_class{};
     std::optional<lir::FunctionId> constructor;
     base::Translation<mir::CallableId, std::optional<lir::FunctionId>> methods;
     base::Translation<mir::CallableId, std::optional<lir::DispatchOrdinal>>
         ordinals;
-    std::vector<lir::Introduction> introduces;
   };
 
   // The LIR identities taken on behalf of one MIR closure: the declaration its
@@ -195,14 +203,6 @@ class UnitLowerer {
   [[nodiscard]] auto TakeClassIdentities(const mir::Class& cls)
       -> ClassIdentities;
 
-  // The behavior `callable` takes over from its lineage, if it takes one over
-  // and answers it with a body. Absent otherwise, which covers introducing a
-  // behavior, answering none, and taking one over with no body of its own.
-  [[nodiscard]] auto TakenOver(
-      const mir::CallableDecl& callable,
-      const std::optional<lir::FunctionId>& body)
-      -> std::optional<lir::DispatchTakeover>;
-
   // The symbol one body of `cls` is emitted and linked under. Which body it is
   // decides that: a body the source declared is reached by its name, and one
   // the compiler synthesized by which body it is.
@@ -211,19 +211,23 @@ class UnitLowerer {
       -> std::string;
 
   auto TranslateType(const mir::Type& ty) -> lir::Type;
-  // The LIR mirror of a runtime-library record type. MIR is written once for
-  // every backend, so a record only the C++ backend realizes reaches here
-  // whenever a program uses the construct behind it, and is recorded as an
-  // unsupported type rather than read as a broken invariant.
   static auto TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       -> lir::Type;
-  // Records `what` (a human phrase like "a closure") as the unit's first
-  // unmirrored-type error and returns a benign placeholder type; the unit fails
-  // at `Run` before the placeholder is observed.
-  auto RecordUnsupportedType(std::string_view what) -> lir::Type;
   auto LowerClass(mir::ClassId owner, const mir::Class& cls)
       -> diag::Result<lir::Class>;
-  auto LowerBase(const mir::ClassRef& base) const -> lir::Base;
+  // What `cls` adds to the dispatch its lineage carries, each body named by the
+  // symbol it is emitted under.
+  auto LowerDispatch(mir::ClassId owner, const mir::Class& cls)
+      -> lir::ClassDispatch;
+  // The value `id` of `build` states, as the data it is. A constant is built
+  // from literals, addresses and structures and arrays of them, so anything
+  // else here is a producer that stated one out of something that runs.
+  auto LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
+      -> lir::Constant;
+  // The symbol the definition of the class `of` names is linked under,
+  // whichever unit declares it.
+  [[nodiscard]] auto DefinitionSymbolOf(const mir::DeclaredClassRef& of) const
+      -> std::string;
 
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;
@@ -233,11 +237,6 @@ class UnitLowerer {
       external_unit_object_identities_;
   base::Translation<mir::ClosureId, ClosureIdentities> closure_identities_;
   base::Translation<mir::StructId, lir::StructId> struct_identities_;
-  // Set the first time a MIR type with no LIR mirror is reached; surfaced as
-  // the unit's failure at `Run`, so translation stays non-throwing and
-  // total-shaped while an unmirrored type is still a clean diagnostic, not a
-  // mistranslation.
-  std::optional<diag::Diagnostic> type_error_;
 };
 
 }  // namespace lyra::lowering::mir_to_lir

@@ -11,7 +11,6 @@ class PackedArray;
 class String;
 class Chandle;
 class ObjectRef;
-class ManagedRef;
 template <typename Host>
 class RealValue;
 
@@ -150,7 +149,6 @@ struct FormatArg {
   explicit FormatArg(const String& value);
   explicit FormatArg(const Chandle& value);
   explicit FormatArg(const ObjectRef& value);
-  explicit FormatArg(const ManagedRef& value);
   template <typename Host>
   explicit FormatArg(const RealValue<Host>& value);
 
@@ -202,9 +200,6 @@ inline FormatArg::FormatArg(const Chandle& value)
     : FormatArg(MakeFormatArg(value)) {
 }
 inline FormatArg::FormatArg(const ObjectRef& value)
-    : FormatArg(MakeFormatArg(value)) {
-}
-inline FormatArg::FormatArg(const ManagedRef& value)
     : FormatArg(MakeFormatArg(value)) {
 }
 inline FormatArg::FormatArg(const PackedArray& value, const String& pattern)
@@ -264,12 +259,6 @@ struct Formatter<ObjectRef> {
 };
 
 template <>
-struct Formatter<ManagedRef> {
-  static auto Format(const FormatSpec& spec, const ManagedRef& value)
-      -> std::string;
-};
-
-template <>
 struct Formatter<double> {
   static auto Format(
       const FormatSpec& spec, double value, const FormatContext& ctx)
@@ -319,9 +308,6 @@ struct PrintValueItem {
       : spec(spec), arg(MakeFormatArg(value)) {
   }
   PrintValueItem(const ObjectRef& value, FormatSpec spec)
-      : spec(spec), arg(MakeFormatArg(value)) {
-  }
-  PrintValueItem(const ManagedRef& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
   }
   template <typename Host>

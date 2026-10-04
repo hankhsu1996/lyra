@@ -14,13 +14,6 @@ struct PropertyCoordinateId {
       -> std::strong_ordering = default;
 };
 
-struct BehaviorCoordinateId {
-  std::uint32_t value = base::kUnassignedId;
-
-  auto operator<=>(const BehaviorCoordinateId&) const
-      -> std::strong_ordering = default;
-};
-
 struct BehaviorBodyId {
   std::uint32_t value = base::kUnassignedId;
 

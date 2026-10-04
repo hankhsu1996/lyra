@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <expected>
+#include <format>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -27,7 +28,9 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/external_callee.hpp"
+#include "lyra/hir/external_class.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/published_target.hpp"
@@ -208,24 +211,26 @@ auto UnitLowerer::PublishClassSignatures() -> void {
         hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
         signature_.types, published);
     const hir::ClassSignature& promise = it->second;
-    hir::ClassSignature entry{
-        .class_name = promise.class_name,
-        .base = promise.base,
-        .is_interface_class = promise.is_interface_class,
-        .members = {},
-        .behaviors = {}};
-    // The order is the promise: a property's slot and a behavior's ordinal are
-    // counted out of these two lists by the class that declares them and by
-    // every unit that reaches one, and neither states a position to the other.
-    for (const hir::PublishedMemberId id : promise.members.Ids()) {
-      hir::PublishedMember member = promise.members.Get(id);
-      member.type = importer.Import(member.type);
-      entry.members.Add(std::move(member));
-    }
-    for (const hir::PublishedBehaviorId id : promise.behaviors.Ids()) {
-      entry.behaviors.Add(promise.behaviors.Get(id));
-    }
-    signature_.classes.push_back(std::move(entry));
+    // The order is part of what is published: a property's slot and a virtual
+    // method's ordinal are counted out of these lists by the class that
+    // declares them and by every unit that reaches one, and neither states a
+    // position to the other.
+    signature_.classes.push_back(
+        hir::ClassSignature{
+            .class_name = promise.class_name,
+            .base = promise.base,
+            .is_interface_class = promise.is_interface_class,
+            .implements = promise.implements,
+            .properties = hir::ImportProperties(importer, promise.properties),
+            .local_property_types =
+                hir::ImportTypes(importer, promise.local_property_types),
+            .static_properties = hir::ImportStaticProperties(
+                importer, promise.static_properties),
+            .constructor = promise.constructor.transform(
+                [&](const hir::ExternalCalleeInterface& stated) {
+                  return hir::ImportCalleeInterface(importer, stated);
+                }),
+            .methods = hir::ImportMethods(importer, promise.methods)});
   };
   for (const auto& member : scope_->members()) {
     if (member.kind == slang::ast::SymbolKind::ClassType) {
@@ -239,13 +244,41 @@ auto UnitLowerer::PublishClassSignatures() -> void {
   }
 }
 
+auto UnitLowerer::PublishNamespaceSubroutines() -> diag::Result<void> {
+  hir::TypeImportMemo published;
+  hir::TypeImporter importer(
+      unit_.types,
+      hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
+      signature_.types, published);
+  for (const auto& member : scope_->members()) {
+    const auto* sym = member.as_if<slang::ast::SubroutineSymbol>();
+    // A DPI-C import's foreign symbol is program-global, so a caller reaches it
+    // by that name and through no unit (LRM 35.4).
+    if (sym == nullptr || sym->flags.has(slang::ast::MethodFlags::DPIImport)) {
+      continue;
+    }
+    const auto span = SourceMapper().PointSpanOf(sym->location);
+    auto interface = MakeExternalCalleeInterface(*sym, span);
+    if (!interface) return std::unexpected(std::move(interface.error()));
+    auto result_type = InternType(sym->getReturnType(), span);
+    if (!result_type) return std::unexpected(std::move(result_type.error()));
+    signature_.subroutines.push_back(
+        hir::ImportCallable(
+            importer, hir::PublishedCallable{
+                          .name = std::string{sym->name},
+                          .interface = *std::move(interface),
+                          .result_type = *result_type}));
+  }
+  return {};
+}
+
 auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   PublishClassSignatures();
   // Only a design element instantiated into the hierarchy has ports and an
   // object; a namespace unit publishes its declarations by name and roots
   // neither.
   const auto* body = scope_->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
-  if (body == nullptr) return {};
+  if (body == nullptr) return PublishNamespaceSubroutines();
 
   auto& instance_class = signature_.instance_class.emplace(
       hir::InstanceClassSignature{
@@ -316,9 +349,11 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     return instance_class.callables.Add(
         hir::PublishedCallable{
             .name = std::string{sym.name},
-            .kind = ToHirSubroutineKind(sym.subroutineKind),
-            .result_type = publish_type(*result_type),
-            .params = std::move(params)});
+            .interface =
+                hir::ExternalCalleeInterface{
+                    .kind = ToHirSubroutineKind(sym.subroutineKind),
+                    .params = std::move(params)},
+            .result_type = publish_type(*result_type)});
   };
 
   // An interface port names an instance of another unit that this one neither
@@ -543,9 +578,10 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     return instance_class.callables.Add(
         hir::PublishedCallable{
             .name = PortDefaultName(port.name),
-            .kind = hir::SubroutineKind::kFunction,
-            .result_type = publish_type(*interned),
-            .params = {}});
+            .interface =
+                hir::ExternalCalleeInterface{
+                    .kind = hir::SubroutineKind::kFunction, .params = {}},
+            .result_type = publish_type(*interned)});
   };
 
   for (const auto* member : body->getPortList()) {
@@ -707,9 +743,10 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       const hir::PublishedCallableId evaluate = instance_class.callables.Add(
           hir::PublishedCallable{
               .name = ModportReadName(modport_name, port.name),
-              .kind = hir::SubroutineKind::kFunction,
-              .result_type = publish_type(*interned),
-              .params = {}});
+              .interface =
+                  hir::ExternalCalleeInterface{
+                      .kind = hir::SubroutineKind::kFunction, .params = {}},
+              .result_type = publish_type(*interned)});
       // What the expression reads, which is what a process waiting on the name
       // observes. LRM 25.5 confines those names to this interface's own
       // declarations, so each is already a member it publishes.
@@ -807,10 +844,8 @@ auto UnitLowerer::ExternalClassOf(
           unit_.external_classes, unit_name, class_name)) {
     return held;
   }
-  // A unit whose promise this one never read has nothing to compile against.
-  // What puts a promise within reach is naming the unit while this one's own
-  // declarations are read; a name first reached from inside a body arrives
-  // after that, so its class is not described here.
+  // Nothing to compile against where the design compiles no such unit, or the
+  // unit publishes no such class.
   const hir::UnitSignature* signature = Signatures().Find(unit_name);
   if (signature == nullptr) {
     return nullptr;
@@ -819,15 +854,67 @@ auto UnitLowerer::ExternalClassOf(
   if (published == nullptr) {
     return nullptr;
   }
-  unit_.external_classes.push_back(
-      hir::ImportExternalClass(*signature, *published, unit_.types));
+  // A value of the class is laid out after the whole of what it extends, and
+  // is also a value of each interface class it names and of what those extend,
+  // so reading its signature reads the signature of every class it names, and
+  // so on up: each states only what its own declaration says.
+  hir::ExternalClass record =
+      hir::ImportExternalClass(*signature, *published, unit_.types);
+  for (const hir::ExternalClassRef& iface : record.implements) {
+    ExternalClassOf(iface.unit_name, iface.class_name);
+  }
+  if (record.base.has_value()) {
+    ExternalClassOf(record.base->unit_name, record.base->class_name);
+    // The method an override replaces is named the way a call names it, by the
+    // class that introduced it, found along the classes just read. Every class
+    // a published one extends is itself published, so a name that resolves to
+    // no introducer is a signature its own unit could not have made. A pure
+    // override gives the method no body, so it replaces nothing.
+    for (const hir::PublishedMethod& method : record.methods) {
+      const auto* overriding =
+          std::get_if<hir::OverridesVirtual>(&method.dispatch);
+      if (overriding == nullptr || overriding->is_pure) {
+        continue;
+      }
+      std::optional<hir::ExternalDispatchSlot> overridden =
+          IntroducerOf(*record.base, method.prototype.name);
+      if (!overridden.has_value()) {
+        throw InternalError(
+            std::format(
+                "UnitLowerer::ExternalClassOf: '{}::{}' publishes '{}' as an "
+                "override, which no class it extends introduces",
+                unit_name, class_name, method.prototype.name));
+      }
+      record.overrides.push_back(
+          hir::PromisedOverride{
+              .method = method.prototype.name,
+              .behavior = *std::move(overridden)});
+    }
+  }
+  unit_.external_classes.push_back(std::move(record));
   return &unit_.external_classes.back();
 }
 
-void UnitLowerer::ConsumePromiseOf(const hir::ClassRef& ref) {
-  if (const auto* ext = std::get_if<hir::ExternalClassRef>(&ref)) {
-    ExternalClassOf(ext->unit_name, ext->class_name);
+auto UnitLowerer::NamespaceCalleeInterface(
+    const std::string& unit_name, const slang::ast::SubroutineSymbol& sym,
+    diag::SourceSpan span) -> diag::Result<hir::ExternalCalleeInterface> {
+  if (unit_name == unit_.name) {
+    return MakeExternalCalleeInterface(sym, span);
   }
+  const hir::UnitSignature* signature = Signatures().Find(unit_name);
+  const hir::PublishedCallable* published =
+      signature == nullptr ? nullptr : signature->FindSubroutine(sym.name);
+  if (published == nullptr) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::NamespaceCalleeInterface: '{}' declares '{}' and "
+            "published no such subroutine",
+            unit_name, sym.name));
+  }
+  hir::TypeImporter importer(
+      signature->types, std::nullopt, unit_.types,
+      signature_type_memos_[signature]);
+  return hir::ImportCallable(importer, *published).interface;
 }
 
 auto UnitLowerer::DeclaredByADesignElement(

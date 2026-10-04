@@ -126,53 +126,6 @@ struct NamedCallable {
   return std::nullopt;
 }
 
-// The lifecycle entries the runtime drives are reached through the definition
-// itself and answer to no name.
-struct UnpublishedEntry {
-  auto operator==(const UnpublishedEntry&) const -> bool = default;
-};
-
-// The entry answers to the SV identifier its subroutine was declared under, so
-// a hierarchical name that reaches it is resolved against the scope while the
-// design elaborates (LRM 23.6, 23.8.1). Every subroutine a scope declares
-// answers this way, because what reaches one is a name the declaring unit never
-// promised and so never knew to expect. `subroutine` is the body the name
-// reaches.
-struct SubroutineEntry {
-  std::string name;
-  CallableId subroutine;
-
-  auto operator==(const SubroutineEntry&) const -> bool = default;
-};
-
-// Which name, if any, the runtime holds this entry under beside the scope's own
-// lifecycle. A DPI-C export's name is one program-global symbol (LRM 35.4)
-// while its subroutine is compiled once per specialization of the declaring
-// scope; an SV subroutine's is the identifier a hierarchical name spells. The
-// two are separate namespaces and one declaration may answer in both.
-using AbiAdapterPublication =
-    std::variant<UnpublishedEntry, ForeignLinkage, SubroutineEntry>;
-
-// A class-owned callable whose identity is a plain function pointer the runtime
-// library holds and calls back through -- the shape a lifecycle hook taking the
-// scope it runs on requires, and the shape a name answered at elaboration hands
-// back. Structurally a distinct callable species from `CallableDecl`: its
-// receiver is an explicit parameter (never bound implicitly), it participates
-// in no dispatch table, and it is never named as a callee, only reached as a
-// code address. A backend renders it in the target language's
-// function-pointer-compatible form, which is not the form an instance method
-// takes.
-//
-// Its position in the class's own arena is the whole of its identity; what it
-// is spelled as in a target language is that target's to mint. The name it
-// answers to elsewhere -- a hierarchical name, or the DPI-C name space -- is
-// `published`, which says which name space holds it rather than what it is
-// called here.
-struct AbiAdapter {
-  CallableCode code;
-  AbiAdapterPublication published;
-};
-
 // What a unit states about one foreign name whose entries sit on scopes (LRM
 // 35.5.3): the prototype the name publishes, and the definition this unit
 // writes for the program-global symbol.

@@ -97,13 +97,12 @@ locate-divergence feedback loop; this one owns the readability of what the loop 
       behavior, shared by every backend, not a hand-fabricated harness. Today the C++ backend
       composes it as bespoke target text that names the runtime driver surface directly -- the one
       place a backend invents structure instead of translating it (a render-contract gap; see
-      `../architecture/backend_contract.md`). The LLVM backend's entry already hands the root's
-      definition to the runtime and lets it construct and bind. The pinned model is
-      `../decisions/root-unit-elaboration.md`: elaboration is the synthetic `$root` unit's construct
-      entry, lowered like any other and rendered by both backends through the same path; only the
-      thin runner shell, a compiled program's entry point, stays target-specific, creating the
-      engine and calling the root construct, then bind / run. A self-contained follow-up, not part
-      of the current change set.
+      `../architecture/backend_contract.md`). The LLVM backend's entry already hands the runtime the
+      root unit's object entry. The pinned model is `../decisions/root-unit-elaboration.md`:
+      elaboration is the synthetic `$root` unit's construct entry, lowered like any other and
+      rendered by both backends through the same path; only the thin runner shell, a compiled
+      program's entry point, stays target-specific, creating the engine and calling the root
+      construct, then bind / run. A self-contained follow-up, not part of the current change set.
 
       **Where the shell has to stay, and it is a language rule rather than a shortage of work.** A
       compiled program's entry cannot itself be an ordinary body of the root unit: the target

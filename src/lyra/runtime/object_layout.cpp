@@ -1,0 +1,412 @@
+#include "lyra/runtime/object_layout.hpp"
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <typeinfo>
+#include <variant>
+
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/activation_value_cell.hpp"
+#include "lyra/runtime/cancellation.hpp"
+#include "lyra/runtime/closure.hpp"
+#include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/evaluation_attempts.hpp"
+#include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/hierarchy_segment.hpp"
+#include "lyra/runtime/named_event.hpp"
+#include "lyra/runtime/net.hpp"
+#include "lyra/runtime/object_change.hpp"
+#include "lyra/runtime/object_ref.hpp"
+#include "lyra/runtime/observation.hpp"
+#include "lyra/runtime/open_write.hpp"
+#include "lyra/runtime/read_report.hpp"
+#include "lyra/runtime/runtime_process.hpp"
+#include "lyra/runtime/sampled_history.hpp"
+#include "lyra/runtime/scope.hpp"
+#include "lyra/runtime/shared_pointer.hpp"
+#include "lyra/runtime/trigger.hpp"
+#include "lyra/runtime/var.hpp"
+#include "lyra/value/chandle.hpp"
+#include "lyra/value/dpi_canonical.hpp"
+#include "lyra/value/dpi_open_array.hpp"
+#include "lyra/value/empty.hpp"
+#include "lyra/value/format.hpp"
+#include "lyra/value/object_ref.hpp"
+#include "lyra/value/packed_array.hpp"
+#include "lyra/value/real.hpp"
+#include "lyra/value/runtime_associative_array.hpp"
+#include "lyra/value/runtime_dynamic_array.hpp"
+#include "lyra/value/runtime_queue.hpp"
+#include "lyra/value/runtime_tagged_union.hpp"
+#include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/runtime_union.hpp"
+#include "lyra/value/runtime_unpacked_array.hpp"
+#include "lyra/value/runtime_value.hpp"
+#include "lyra/value/string.hpp"
+
+namespace lyra::runtime {
+
+namespace {
+
+using support::MemberStorageKind;
+using support::ObjectLayout;
+using support::ValueDomain;
+
+template <typename T>
+constexpr auto Of() -> ObjectLayout {
+  return ObjectLayout{
+      .size = static_cast<std::uint32_t>(sizeof(T)),
+      .align = static_cast<std::uint32_t>(alignof(T)),
+      .ends_with_nothing_to_do = std::is_trivially_destructible_v<T>};
+}
+
+[[noreturn]] auto NotRealized() -> ObjectLayout {
+  throw InternalError(
+      "object layout: this member storage is not realized over this value "
+      "domain -- please report this as a bug");
+}
+
+// Storage over the values of one domain. Each wrapper is one template over the
+// value type, so which domains it is realized for is which of them its switch
+// reaches: a value cell holds a variable of any domain but the empty one,
+// which is only ever a tagged union's payload (LRM 7.3.2).
+auto ValueCellOver(ValueDomain domain) -> ObjectLayout {
+  switch (domain) {
+    case ValueDomain::kPacked:
+      return Of<ActivationValueCell<value::PackedArray>>();
+    case ValueDomain::kString:
+      return Of<ActivationValueCell<value::String>>();
+    case ValueDomain::kReal:
+      return Of<ActivationValueCell<value::Real>>();
+    case ValueDomain::kShortReal:
+      return Of<ActivationValueCell<value::ShortReal>>();
+    case ValueDomain::kChandle:
+      return Of<ActivationValueCell<value::Chandle>>();
+    case ValueDomain::kTuple:
+      return Of<ActivationValueCell<value::RuntimeTuple>>();
+    case ValueDomain::kUnion:
+      return Of<ActivationValueCell<value::RuntimeUnion>>();
+    case ValueDomain::kTaggedUnion:
+      return Of<ActivationValueCell<value::RuntimeTaggedUnion>>();
+    case ValueDomain::kDynArray:
+      return Of<ActivationValueCell<value::RuntimeDynamicArray>>();
+    case ValueDomain::kUnpackedArray:
+      return Of<ActivationValueCell<value::RuntimeUnpackedArray>>();
+    case ValueDomain::kQueue:
+      return Of<ActivationValueCell<value::RuntimeQueue>>();
+    case ValueDomain::kAssocArray:
+      return Of<ActivationValueCell<value::RuntimeAssociativeArray>>();
+    case ValueDomain::kManagedRef:
+      return Of<ActivationValueCell<value::ObjectRef>>();
+    case ValueDomain::kEmpty:
+      return NotRealized();
+  }
+  throw InternalError("object layout: unknown value domain");
+}
+
+// A subscribable variable is kept over every domain a value cell is: one
+// naming an object or holding a pointer is waited on for what it holds
+// changing (LRM 9.4.2).
+auto CellOver(ValueDomain domain) -> ObjectLayout {
+  switch (domain) {
+    case ValueDomain::kPacked:
+      return Of<Var<value::PackedArray>>();
+    case ValueDomain::kString:
+      return Of<Var<value::String>>();
+    case ValueDomain::kReal:
+      return Of<Var<value::Real>>();
+    case ValueDomain::kShortReal:
+      return Of<Var<value::ShortReal>>();
+    case ValueDomain::kChandle:
+      return Of<Var<value::Chandle>>();
+    case ValueDomain::kTuple:
+      return Of<Var<value::RuntimeTuple>>();
+    case ValueDomain::kUnion:
+      return Of<Var<value::RuntimeUnion>>();
+    case ValueDomain::kTaggedUnion:
+      return Of<Var<value::RuntimeTaggedUnion>>();
+    case ValueDomain::kDynArray:
+      return Of<Var<value::RuntimeDynamicArray>>();
+    case ValueDomain::kUnpackedArray:
+      return Of<Var<value::RuntimeUnpackedArray>>();
+    case ValueDomain::kQueue:
+      return Of<Var<value::RuntimeQueue>>();
+    case ValueDomain::kAssocArray:
+      return Of<Var<value::RuntimeAssociativeArray>>();
+    case ValueDomain::kManagedRef:
+      return Of<Var<value::ObjectRef>>();
+    case ValueDomain::kEmpty:
+      return NotRealized();
+  }
+  throw InternalError("object layout: unknown value domain");
+}
+
+// A history is kept over every domain a value cell is but the chandle, whose
+// value is the pointer it carries (LRM 6.14), which no sampled read can answer
+// across.
+auto HistoryOver(ValueDomain domain) -> ObjectLayout {
+  switch (domain) {
+    case ValueDomain::kPacked:
+      return Of<SampledHistory<value::PackedArray>>();
+    case ValueDomain::kString:
+      return Of<SampledHistory<value::String>>();
+    case ValueDomain::kReal:
+      return Of<SampledHistory<value::Real>>();
+    case ValueDomain::kShortReal:
+      return Of<SampledHistory<value::ShortReal>>();
+    case ValueDomain::kTuple:
+      return Of<SampledHistory<value::RuntimeTuple>>();
+    case ValueDomain::kUnion:
+      return Of<SampledHistory<value::RuntimeUnion>>();
+    case ValueDomain::kTaggedUnion:
+      return Of<SampledHistory<value::RuntimeTaggedUnion>>();
+    case ValueDomain::kDynArray:
+      return Of<SampledHistory<value::RuntimeDynamicArray>>();
+    case ValueDomain::kUnpackedArray:
+      return Of<SampledHistory<value::RuntimeUnpackedArray>>();
+    case ValueDomain::kQueue:
+      return Of<SampledHistory<value::RuntimeQueue>>();
+    case ValueDomain::kAssocArray:
+      return Of<SampledHistory<value::RuntimeAssociativeArray>>();
+    case ValueDomain::kManagedRef:
+      return Of<SampledHistory<value::ObjectRef>>();
+    case ValueDomain::kChandle:
+    case ValueDomain::kEmpty:
+      return NotRealized();
+  }
+  throw InternalError("object layout: unknown value domain");
+}
+
+// A net resolves only what LRM 6.7.1 admits as a net's data type.
+auto NetOver(ValueDomain domain) -> ObjectLayout {
+  switch (domain) {
+    case ValueDomain::kPacked:
+      return Of<ResolvedNet<value::PackedArray>>();
+    case ValueDomain::kTuple:
+      return Of<ResolvedNet<value::RuntimeTuple>>();
+    case ValueDomain::kUnion:
+      return Of<ResolvedNet<value::RuntimeUnion>>();
+    case ValueDomain::kUnpackedArray:
+      return Of<ResolvedNet<value::RuntimeUnpackedArray>>();
+    case ValueDomain::kString:
+    case ValueDomain::kReal:
+    case ValueDomain::kShortReal:
+    case ValueDomain::kChandle:
+    case ValueDomain::kEmpty:
+    case ValueDomain::kTaggedUnion:
+    case ValueDomain::kDynArray:
+    case ValueDomain::kQueue:
+    case ValueDomain::kAssocArray:
+    case ValueDomain::kManagedRef:
+      return NotRealized();
+  }
+  throw InternalError("object layout: unknown value domain");
+}
+
+}  // namespace
+
+auto LayoutOf(ValueDomain domain) -> ObjectLayout {
+  switch (domain) {
+    case ValueDomain::kPacked:
+      return Of<value::PackedArray>();
+    case ValueDomain::kString:
+      return Of<value::String>();
+    case ValueDomain::kReal:
+      return Of<value::Real>();
+    case ValueDomain::kShortReal:
+      return Of<value::ShortReal>();
+    case ValueDomain::kChandle:
+      return Of<value::Chandle>();
+    case ValueDomain::kEmpty:
+      return Of<value::Empty>();
+    case ValueDomain::kTuple:
+      return Of<value::RuntimeTuple>();
+    case ValueDomain::kUnion:
+      return Of<value::RuntimeUnion>();
+    case ValueDomain::kTaggedUnion:
+      return Of<value::RuntimeTaggedUnion>();
+    case ValueDomain::kDynArray:
+      return Of<value::RuntimeDynamicArray>();
+    case ValueDomain::kUnpackedArray:
+      return Of<value::RuntimeUnpackedArray>();
+    case ValueDomain::kQueue:
+      return Of<value::RuntimeQueue>();
+    case ValueDomain::kAssocArray:
+      return Of<value::RuntimeAssociativeArray>();
+    case ValueDomain::kManagedRef:
+      return Of<value::ObjectRef>();
+  }
+  throw InternalError("object layout: unknown value domain");
+}
+
+auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
+  switch (object) {
+    case support::LibraryObject::kClosure:
+      return Of<OwnedClosure>();
+    case support::LibraryObject::kPrintItem:
+      return Of<value::PrintItem>();
+    case support::LibraryObject::kFormatSpec:
+      return Of<value::FormatSpec>();
+    case support::LibraryObject::kFormatArg:
+      return Of<value::FormatArg>();
+    case support::LibraryObject::kHierarchySegment:
+      return Of<HierarchySegment>();
+    case support::LibraryObject::kTrigger:
+      return Of<Trigger>();
+    case support::LibraryObject::kObservation:
+      return Of<Observation>();
+    case support::LibraryObject::kReadReport:
+      return Of<ReadReport>();
+    case support::LibraryObject::kDpiBitBuffer:
+      return Of<value::DpiBitBuffer>();
+    case support::LibraryObject::kDpiLogicBuffer:
+      return Of<value::DpiLogicBuffer>();
+    case support::LibraryObject::kDpiOpenArray:
+      return Of<value::DpiOpenArray>();
+    case support::LibraryObject::kChannelCancellation:
+      return Of<ChannelCancellation>();
+    case support::LibraryObject::kErasedValue:
+      return Of<value::RuntimeValue>();
+    case support::LibraryObject::kExecution:
+      return Of<Coroutine<void>>();
+    case support::LibraryObject::kSharedPointer:
+      return Of<SharedPointer>();
+    case support::LibraryObject::kOpenWrite:
+      return Of<OpenWrite>();
+    case support::LibraryObject::kDesignation:
+      return Of<ErasedDesignation>();
+    case support::LibraryObject::kObjectWrite:
+      return Of<ObjectWrite>();
+    case support::LibraryObject::kReference:
+      return Of<ErasedReference>();
+  }
+  throw InternalError("object layout: unknown library object");
+}
+
+auto LayoutOf(const support::RuntimeObject& object) -> ObjectLayout {
+  return std::visit(
+      Overloaded{
+          [](ValueDomain domain) { return LayoutOf(domain); },
+          [](support::LibraryObject library) { return LayoutOf(library); }},
+      object);
+}
+
+auto LayoutOf(support::DeclaredMemberStorage storage) -> ObjectLayout {
+  switch (storage.kind) {
+    case MemberStorageKind::kInlineValue:
+      return storage.domain == ValueDomain::kEmpty ? NotRealized()
+                                                   : LayoutOf(storage.domain);
+    case MemberStorageKind::kValueCell:
+      return ValueCellOver(storage.domain);
+    case MemberStorageKind::kObservableCell:
+      return CellOver(storage.domain);
+    case MemberStorageKind::kSampledHistory:
+      return HistoryOver(storage.domain);
+    case MemberStorageKind::kResolvedNet:
+      return NetOver(storage.domain);
+    case MemberStorageKind::kBorrowedHandle:
+      return Of<void*>();
+    case MemberStorageKind::kReference:
+      return Of<ErasedReference>();
+    case MemberStorageKind::kSharedPointer:
+      return Of<SharedPointer>();
+    case MemberStorageKind::kChannelCancellation:
+      return Of<ChannelCancellation>();
+    case MemberStorageKind::kNamedEvent:
+      return Of<NamedEvent>();
+    case MemberStorageKind::kCancellationTarget:
+      return Of<CancellationTarget>();
+    case MemberStorageKind::kEvaluationAttempts:
+      return Of<EvaluationAttempts>();
+  }
+  throw InternalError("object layout: unknown member storage kind");
+}
+
+auto LayoutOf(support::RuntimeClass klass) -> ObjectLayout {
+  switch (klass) {
+    case support::RuntimeClass::kScope:
+      return Of<Scope>();
+    case support::RuntimeClass::kObject:
+      return Of<GcObject>();
+    case support::RuntimeClass::kProcess:
+      return Of<RuntimeProcess>();
+  }
+  throw InternalError("object layout: unknown runtime class");
+}
+
+auto ClosureCapturesAt() -> std::uint64_t {
+  return sizeof(ClosureValue);
+}
+
+// The Itanium ABI names a class's type information `_ZTI` followed by the
+// class's mangled name, which is what its `type_info` reports as its name.
+auto TypeInfoSymbolOf(support::RuntimeClass klass) -> std::string {
+  switch (klass) {
+    case support::RuntimeClass::kScope:
+      return std::string("_ZTI") + typeid(Scope).name();
+    case support::RuntimeClass::kObject:
+      return std::string("_ZTI") + typeid(GcObject).name();
+    case support::RuntimeClass::kProcess:
+      throw InternalError(
+          "object layout: a process is read as a class a value extends -- "
+          "please report this as a bug");
+  }
+  throw InternalError("object layout: unknown runtime class");
+}
+
+// The Itanium mangling of the constructors and destructors below is written
+// out, since neither has an address the language lets a program take. A wrong
+// one fails every program's link, since every class a design declares extends
+// one of these and calls both.
+auto BaseObjectConstructorSymbolOf(support::RuntimeClass klass)
+    -> std::string_view {
+  switch (klass) {
+    case support::RuntimeClass::kScope:
+      return "_ZN4lyra7runtime5ScopeC2EPS1_NS0_16HierarchySegmentEPKNS0_"
+             "16ObjectDefinitionE";
+    case support::RuntimeClass::kObject:
+      return "_ZN4lyra7runtime8GcObjectC2Ev";
+    case support::RuntimeClass::kProcess:
+      break;
+  }
+  throw InternalError(
+      "object layout: a process is read as a class a value extends -- please "
+      "report this as a bug");
+}
+
+auto BaseObjectDestructorSymbolOf(support::RuntimeClass klass)
+    -> std::string_view {
+  switch (klass) {
+    case support::RuntimeClass::kScope:
+      return "_ZN4lyra7runtime5ScopeD2Ev";
+    case support::RuntimeClass::kObject:
+      return "_ZN4lyra7runtime8GcObjectD2Ev";
+    case support::RuntimeClass::kProcess:
+      break;
+  }
+  throw InternalError(
+      "object layout: a process is read as a class a value extends -- please "
+      "report this as a bug");
+}
+
+// The Itanium mangling of each member function of `lyra::runtime::Scope`. A
+// pointer to a member function names no symbol, so these are written out; a
+// wrong one fails every program's link, since every class extending the scope
+// that does not override one names it.
+auto VirtualFunctionSymbolOf(support::LibraryVirtual function)
+    -> std::string_view {
+  switch (function) {
+    case support::LibraryVirtual::kScopeResolve:
+      return "_ZN4lyra7runtime5Scope10sv_resolveEv";
+    case support::LibraryVirtual::kScopeInitialize:
+      return "_ZN4lyra7runtime5Scope13sv_initializeEv";
+    case support::LibraryVirtual::kScopeCreateProcesses:
+      return "_ZN4lyra7runtime5Scope19sv_create_processesEv";
+  }
+  throw InternalError("object layout: unknown library virtual");
+}
+
+}  // namespace lyra::runtime

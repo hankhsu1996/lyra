@@ -4,23 +4,23 @@
 
 Define the mechanical-translation contract a backend must satisfy when consuming per-unit MIR.
 
-The architectural target of the compiler is HIR -> MIR -> LIR -> LLVM IR. The C++ backend is a
-transitional realization: it consumes the same MIR but renders to C++ source instead of descending
-through LIR and LLVM IR. The C++ backend's emitted output is **how MIR is observed** -- a developer
-reads the emitted C++ to validate that MIR's shape faithfully represents the source SystemVerilog
-through MIR's semantic model (`compiler_overview.md`).
+The primary backend is HIR -> MIR -> LIR -> LLVM IR. The C++ backend is a secondary realization,
+which consumes the same MIR but renders to C++ source instead of descending through LIR and LLVM IR.
+The C++ backend's emitted output is **how MIR is observed** -- a developer reads the emitted C++ to
+validate that MIR's shape faithfully represents the source SystemVerilog through MIR's semantic
+model (`compiler_overview.md`).
 
-The transitional status does **not** loosen the mechanical-translation discipline. The contract in
-this doc is exactly the discipline an eventual LLVM IR backend will need: every render rule is a
-fixed function of one MIR node. If the C++ backend's render has to work out which operation a node
-names -- inferring a construction shape from a payload, matching on what an operand happens to be,
-reading past the node for something the node did not say -- the LLVM IR backend has to work it out
-too, and the two answers are held in step by nothing. Both backends pay the cost; the cost is a MIR
-design failure visible from the backend side.
+Being secondary does **not** loosen the mechanical-translation discipline. The contract in this doc
+is exactly the discipline the LLVM IR backend needs, in which every render rule is a fixed function
+of one MIR node. If the C++ backend's render has to work out which operation a node names --
+inferring a construction shape from a payload, matching on what an operand happens to be, reading
+past the node for something the node did not say -- the LLVM IR backend has to work it out too, and
+the two answers are held in step by nothing. Both backends pay the cost; the cost is a MIR design
+failure visible from the backend side.
 
-The C++ backend's render therefore serves as the cross-check on MIR shape today: any place where its
-render is not a mechanical single-node translation is a place where the next stage (LIR / LLVM IR)
-will hit the same obstruction. The bug is in MIR, not in render.
+The C++ backend's render therefore serves as the cross-check on MIR shape. Any place where its
+render is not a mechanical single-node translation is a place where the MIR-to-LIR lowering hits the
+same obstruction. The bug is in MIR, not in render.
 
 **The finished shape, which the work toward this contract is measured against.** A value-emission
 entry is punctuation around the renders of its own children and nothing else: a piece of the
@@ -160,9 +160,8 @@ two ways.
 
 6. **The LLVM IR backend is the canonical cross-check.** When invariant 2 leaves a branch in doubt,
    ask: could a mechanical LLVM IR backend translate the same MIR node without working out what the
-   node means? If not, the MIR shape is wrong. The C++ backend's transitional status does not relax
-   this check; it sharpens it, because the C++ backend's output is how MIR's correctness is
-   currently observed.
+   node means? If not, the MIR shape is wrong. The C++ backend being secondary does not relax this
+   check; it sharpens it, because the C++ backend's output is how MIR's correctness is observed.
 
    What the check predicts is the failure a fact MIR declines to state always produces: each
    consumer works it out alone, from whatever is nearest to hand, and the answers agree until the
@@ -187,8 +186,8 @@ two ways.
 
 ## Boundary to Adjacent Layers
 
-- `compiler_overview.md` defines the pipeline (HIR -> MIR -> LIR -> LLVM IR) and the transitional
-  status of the C++ backend within it.
+- `compiler_overview.md` defines the pipeline (HIR -> MIR -> LIR -> LLVM IR) and the position of
+  each backend within it.
 - `mir.md` defines the primitive set this contract realizes. A render entry that needs anything
   beyond the node's structural fields is one of two failures: a missing MIR primitive (extend MIR)
   or a missed HIR-to-MIR lowering (extend HIR-to-MIR). Render absorbs neither.
@@ -300,9 +299,10 @@ call, because MIR states rebinding and writing-through as different nodes.
 A wrapper-typed member's construction follows the same shape. Construction state arrives as ordinary
 MIR primitives in the constructor body (a `CallExpr` to an initialize method on the wrapper, with
 primitive arguments -- string literals, array literals, member references); the field declaration
-itself is uniform `<type> <name>{};` (C++) or its LLVM IR equivalent (an alloca sized by the
-type-mapping result, plus a `call` to the initialize method). Render never composes the wrapper's
-name or constructor arguments from type payload.
+itself is uniform `<type> <name>{};` (C++) or its LLVM IR equivalent (a field at the offset its
+class's layout gives it, begun by the library entry for its storage kind, plus a `call` to the
+initialize method). Render never composes the wrapper's name or constructor arguments from type
+payload.
 
 When render needs to name a runtime library type to fabricate construction arguments, MIR is missing
 the right primitive -- usually a way to express the per-member initialization as a call against the

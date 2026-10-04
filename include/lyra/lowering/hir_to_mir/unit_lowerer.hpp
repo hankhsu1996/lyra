@@ -177,7 +177,8 @@ class UnitLowerer {
   auto MakeExternalClassPointee(const hir::ExternalClassRef& ref)
       -> mir::TypeId;
 
-  auto MakeExternalClassRef(const hir::ExternalClassRef& ref) -> mir::ClassRef;
+  auto MakeExternalClassRef(const hir::ExternalClassRef& ref)
+      -> mir::DeclaredClassRef;
 
   // Convenience that dispatches a HIR class reference to its MIR peer: an
   // intra-unit reference translates through the class registry, and a
@@ -185,7 +186,7 @@ class UnitLowerer {
   // caller that needs to name a class in any position (base, interface
   // contract, receiver type) reads one entry point instead of visiting the
   // variant itself.
-  auto TranslateClassRef(const hir::ClassRef& ref) -> mir::ClassRef;
+  auto TranslateClassRef(const hir::ClassRef& ref) -> mir::DeclaredClassRef;
 
   auto MakeCrossUnitClassFieldTarget(
       const hir::ExternalClassPropertyTarget& target)
@@ -234,6 +235,14 @@ class UnitLowerer {
   // reaches into.
   auto MakeExternalVirtualSlot(const hir::ExternalDispatchSlot& slot)
       -> mir::ExternalVirtualSlot;
+
+  // The behavior a method of this unit's class answers, named by the class
+  // that introduced it, or nothing where the method is in no dispatch. A call
+  // that dispatches and a method answering an interface class's behavior name
+  // the behavior the same way, through here.
+  [[nodiscard]] auto LocalVirtualSlotOf(
+      const hir::LocalClassMethodTarget& method) const
+      -> std::optional<mir::VirtualSlot>;
 
   // Receiver-less callable of a unit's namespace (LRM 26.3 package function or
   // task). A body of that same unit names the position its declaration sits at,

@@ -679,27 +679,24 @@ enum class BuiltinFn : std::uint16_t {
   kFindClass,
   // What a name reaches on a class, asked of the class rather than of a scope:
   // the storage a property occupies among what its declaring class declares,
-  // the dispatch position a behavior holds among what its introducing class
-  // introduces, or the body a call the object gets no say in enters (LRM 8.14,
-  // 8.20). All three are asked once while a reference resolves, and what they
-  // answer is used at each access with no name in hand. The first two answer
-  // with a position because what the access reaches still depends on the
-  // object; the third answers with the body, there being nothing left to
-  // decide.
+  // or the body a call enters (LRM 8.14), which for a virtual method makes the
+  // call the object decides (LRM 8.20). Both are asked once while a reference
+  // resolves, and what they answer is used at each access with no name in
+  // hand. The first answers with a position because what the access reaches
+  // still depends on the object; the second answers with the body, there being
+  // nothing left to decide at the call.
   kClassFindProperty,
-  kClassFindBehavior,
   kClassFindBehaviorBody,
-  // Applying one of those positions to whichever object a handle holds: the
-  // object answers with its own class, and the class answers where the storage
-  // is or which body runs. Which object it is, is not decided until the access
-  // runs, so the position alone reaches nothing and this is the step that
-  // spends it.
+  // Applying that position to whichever object a handle holds: the class the
+  // position names answers where the storage is on that object. Which object
+  // it is, is not decided until the access runs, so the position alone reaches
+  // nothing and this is the step that spends it.
   kPropertyAt,
-  kBehaviorAt,
-  // The object a handle names. A body runs on the object rather than on a
-  // reference to it, and a handle refers to one without being one, so a call
-  // entering a body of a class it cannot name asks for the object here.
-  kObjectOf,
+  // The part of the object a handle reaches it through. A body runs on that
+  // part rather than on a reference to it, and a handle refers to one without
+  // being one, so a call entering a body of a class it cannot name asks for
+  // the part here.
+  kViewOf,
   // What reports a change to an object's properties (LRM 9.4.2), each taking
   // the object as the root every object shares: that root of the object a
   // handle names; the event source a wait reaching the object subscribes to; a
@@ -710,12 +707,6 @@ enum class BuiltinFn : std::uint16_t {
   kObjectEventSource,
   kOpenObjectWrite,
   kObjectWriteThrough,
-  // Whether a handle refers to an object a variable of the named class may hold
-  // (LRM 8.16). The classes extending one are open across compilation units, so
-  // the set no unit can hold is the object's own class to answer -- which is
-  // what separates this from the questions above, where the class an access
-  // names is what decides and the object only applies it.
-  kObjectIsOfClass,
   // Fork-join branch dispatch. Each entry spawns every branch as its own
   // coroutine and yields the parent's wait shape per LRM 9.3.2: `kForkWaitAll`
   // for `join` (resume after the last branch), `kForkWaitFirst` for

@@ -1,7 +1,9 @@
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 
 #include <cstddef>
+#include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -19,12 +21,17 @@
 #include "lyra/lowering/mir_to_lir/function_lowerer.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_decl.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_descriptor_id.hpp"
+#include "lyra/mir/value_build.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -55,20 +62,47 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
 
   // What each class of another unit promised, taken whole: a property step on
-  // one names a slot counted out of that whole list.
+  // one names a slot counted out of the published list, and a class extending
+  // one is placed after all of its storage and fills its table from all of its
+  // bodies. A body of it is reached by the symbol its unit emits it under,
+  // composed from the names that unit composed it from.
   for (const mir::ExternalClass& cls : mir_->external_classes) {
     lir::ExternalClass record{
         .unit_name = cls.unit_name,
         .class_name = cls.class_name,
-        .base = {},
-        .members = {}};
-    if (cls.base.has_value()) {
-      record.base = LowerBase(*cls.base);
+        .base = cls.base.transform(
+            [&](const mir::ClassRef& base) { return BaseType(base); }),
+        .members = {},
+        .dispatch = {},
+        .implements = {}};
+    for (const mir::CrossUnitClassRef& iface : cls.implements) {
+      record.implements.push_back(
+          ExternalClassValueType(iface.unit_name, iface.class_name));
     }
-    record.members.reserve(cls.fields.size());
+    record.members.reserve(cls.fields.size() + cls.private_field_types.size());
     for (const mir::FieldId id : cls.fields.Ids()) {
       record.members.push_back(
           lir::Member{.type = TranslateType(cls.fields.Get(id).type)});
+    }
+    for (const mir::TypeId type : cls.private_field_types) {
+      record.members.push_back(lir::Member{.type = TranslateType(type)});
+    }
+    const auto body = [&](std::string_view method) {
+      return lir::ClassCallableSymbol(
+          cls.unit_name, lir::SymbolPart::Name(cls.class_name),
+          lir::SymbolPart::Name(method));
+    };
+    for (const mir::PromisedBehavior& behavior : cls.behaviors) {
+      record.dispatch.introduces.push_back(
+          behavior.is_pure ? std::nullopt : std::optional{body(behavior.name)});
+    }
+    for (const mir::PromisedOverride& overriding : cls.overrides) {
+      record.dispatch.overrides.push_back(
+          lir::Override{
+              .behavior = ExternalMethodRef(
+                  overriding.behavior.unit_name, overriding.behavior.class_name,
+                  overriding.behavior.ordinal),
+              .body = body(overriding.method)});
     }
     out_.external_classes.push_back(std::move(record));
   }
@@ -262,12 +296,6 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     descriptors.Append(out_.functions.Add(*std::move(fn)));
   }
   out_.type_descriptor_initializers = std::move(descriptors);
-
-  // A type reached during lowering had no LIR mirror; surface it now, once the
-  // whole unit has been walked, rather than from the non-failing translator.
-  if (type_error_.has_value()) {
-    return std::unexpected(std::move(*type_error_));
-  }
   return std::move(out_);
 }
 
@@ -305,6 +333,40 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
       mir::NamespaceReachOf(*mir_, id));
 }
 
+auto UnitLowerer::ClassRefValueType(const mir::DeclaredClassRef& of)
+    -> lir::TypeId {
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntraUnitClassRef& intra) {
+            return ClassValueType(intra.class_id);
+          },
+          [&](const mir::CrossUnitClassRef& cross) {
+            return ExternalClassValueType(cross.unit_name, cross.class_name);
+          }},
+      of);
+}
+
+auto UnitLowerer::BaseType(const mir::ClassRef& base) -> lir::TypeId {
+  const auto library_class = [&](support::RuntimeClass which) {
+    return out_.types.Intern(lir::Type{lir::RuntimeClassType{.which = which}});
+  };
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntraUnitClassRef& intra) {
+            return ClassRefValueType(intra);
+          },
+          [&](const mir::CrossUnitClassRef& cross) {
+            return ClassRefValueType(cross);
+          },
+          [&](const mir::ObjectTreeRootRef&) {
+            return library_class(support::RuntimeClass::kScope);
+          },
+          [&](const mir::ManagedObjectRootRef&) {
+            return library_class(support::RuntimeClass::kObject);
+          }},
+      base);
+}
+
 auto UnitLowerer::ClassBodySymbol(
     mir::ClassId owner, const mir::Class& cls, mir::CallableId id) const
     -> std::string {
@@ -324,95 +386,39 @@ auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
   std::vector<std::optional<lir::DispatchOrdinal>> ordinals;
   methods.reserve(cls.callables.size());
   ordinals.reserve(cls.callables.size());
-  ClassIdentities identities{
+  for (const mir::CallableId callable : cls.callables.Ids()) {
+    methods.push_back(
+        std::holds_alternative<mir::DefinedHere>(
+            mir::FormOf(cls.callables.Get(callable)))
+            ? std::optional{out_.functions.Declare()}
+            : std::nullopt);
+    ordinals.push_back(cls.IntroductionOrdinal(callable).transform(
+        [](mir::BehaviorOrdinal ordinal) {
+          return lir::DispatchOrdinal{.value = ordinal.value};
+        }));
+  }
+  return ClassIdentities{
       .lir_class = out_.classes.Declare(),
       .constructor = cls.constructor.has_value()
                          ? std::optional{out_.functions.Declare()}
                          : std::nullopt,
-      .methods = {},
-      .ordinals = {},
-      .introduces = {}};
-  for (const mir::CallableId callable : cls.callables.Ids()) {
-    const mir::CallableDecl& decl = cls.callables.Get(callable);
-    const std::optional<lir::FunctionId> body =
-        std::holds_alternative<mir::DefinedHere>(mir::FormOf(decl))
-            ? std::optional{out_.functions.Declare()}
-            : std::nullopt;
-    std::optional<lir::DispatchOrdinal> ordinal;
-    if (mir::IntroducesSlot(decl.virtual_dispatch)) {
-      ordinal = lir::DispatchOrdinal{
-          .value = static_cast<std::uint32_t>(identities.introduces.size())};
-      // A referrer that cannot name the class asks for the behavior by the
-      // identifier the source wrote, so the introduction carries it. A callable
-      // the source never named introduces nothing, so there is always one.
-      const std::optional<std::string_view> name =
-          mir::NameOf(cls.named_callables, callable);
-      identities.introduces.push_back(
-          lir::Introduction{
-              .name = std::string{name.value_or(std::string_view{})},
-              .body = body});
-    }
-    methods.push_back(body);
-    ordinals.push_back(ordinal);
-  }
-  identities.methods = {cls.callables.size(), std::move(methods)};
-  identities.ordinals = {cls.callables.size(), std::move(ordinals)};
-  return identities;
+      .methods = {cls.callables.size(), std::move(methods)},
+      .ordinals = {cls.callables.size(), std::move(ordinals)}};
 }
 
 auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     -> diag::Result<lir::Class> {
   lir::Class out;
   out.name = cls.name;
-  if (cls.base.has_value()) {
-    out.base = LowerBase(*cls.base);
-  }
-  // The three bodies are callables of the class that supplies them, so each is
-  // the function that callable lowers to.
-  if (cls.tree_program.has_value()) {
-    out.tree_program = lir::ObjectTreeProgram{
-        .resolve_state = MethodFunction(owner, cls.tree_program->resolve_state),
-        .initialize_state =
-            MethodFunction(owner, cls.tree_program->initialize_state),
-        .create_processes =
-            MethodFunction(owner, cls.tree_program->create_processes)};
-  }
+  out.base = cls.base.transform(
+      [&](const mir::ClassRef& base) { return BaseType(base); });
 
   for (const mir::FieldId id : cls.fields.Ids()) {
     out.members.push_back(
         lir::Member{.type = TranslateType(cls.fields.Get(id).type)});
   }
 
-  // The identifiers this class answers for its storage, carried down so a
-  // referrer that cannot name the class can still ask for one by name. The
-  // simulation path reaches a member by its position and never through this.
-  out.named_members.reserve(cls.named_fields.size());
-  for (const mir::NamedField& named : cls.named_fields) {
-    out.named_members.push_back(
-        lir::NamedMember{.name = named.name, .position = named.slot.value});
-  }
-
-  // The behaviors the class introduces were settled with the ordinals naming
-  // them, so what is left is to hand the list over.
   const ClassIdentities& identities = class_identities_.Get(owner);
-  out.introduces = identities.introduces;
-
-  // A scope answers for the classes it declares, by the identifier each carries
-  // through compilation -- which is the one the referrer composes too, from the
-  // same declaration.
-  out.declares.reserve(cls.declares.size());
-  for (const mir::ClassId declared : cls.declares) {
-    const std::optional<std::string>& name = mir_->classes.Get(declared).name;
-    if (!name.has_value()) {
-      throw InternalError(
-          "mir_to_lir: a scope answers for a class the source never named, so "
-          "no referrer could ask for it -- please report this as a bug");
-    }
-    out.declares.push_back(
-        lir::DeclaredClass{
-            .name = *name,
-            .declaration = class_identities_.Get(declared).lir_class});
-  }
 
   // A class's bodies become functions of the program, and a body's own name is
   // unique only within its class -- so the class qualifies it, being itself
@@ -422,6 +428,9 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     auto constructor =
         FunctionLowerer(
             *this, cls, *cls.constructor,
+            lir::ConstructorPrologueSymbol(
+                lir::ClassDefinitionSymbol(
+                    mir_->name, lir::SymbolPartOf(cls.name, owner.value))),
             lir::ConstructorSymbol(
                 mir_->name, lir::SymbolPartOf(cls.name, owner.value)))
             .Run();
@@ -429,119 +438,307 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
       return std::unexpected(std::move(constructor.error()));
     }
     out_.functions.Define(function, *std::move(constructor));
-    out.constructor = function;
   }
 
   // Only a callable this program defines becomes a function: a DPI-C import is
   // reached as a foreign symbol and a pure virtual has no implementation here
-  // (LRM 8.21). Which behavior a callable takes over is the other question, and
-  // the two do not gate each other: a body may take over nothing, and only a
-  // body can take one over.
+  // (LRM 8.21).
   for (const mir::CallableId cid : cls.callables.Ids()) {
-    const mir::CallableDecl& callable = cls.callables.Get(cid);
     const std::optional<lir::FunctionId>& body = identities.methods.Get(cid);
-    if (body.has_value()) {
-      auto fn = FunctionLowerer(
-                    *this, callable.code, ClassBodySymbol(owner, cls, cid))
-                    .Run();
-      if (!fn) {
-        return std::unexpected(std::move(fn.error()));
-      }
-      out_.functions.Define(*body, *std::move(fn));
-      const std::optional<std::string_view> name =
-          mir::NameOf(cls.named_callables, cid);
-      // A callable answering no dispatch position leaves the value it is made
-      // on nothing to decide (LRM 8.14), so what a referrer with no name for
-      // the class needs is the body rather than a position to find one at.
-      if (name.has_value() && !callable.virtual_dispatch.has_value()) {
-        out.bodies.push_back(
-            lir::DeclaredBody{.name = std::string{*name}, .body = *body});
-      }
+    if (!body.has_value()) {
+      continue;
     }
-    if (const std::optional<lir::DispatchTakeover> taken =
-            TakenOver(callable, body)) {
-      out.takeovers.push_back(*taken);
+    auto fn = FunctionLowerer(
+                  *this, cls.callables.Get(cid).code,
+                  ClassBodySymbol(owner, cls, cid))
+                  .Run();
+    if (!fn) {
+      return std::unexpected(std::move(fn.error()));
     }
+    out_.functions.Define(*body, *std::move(fn));
   }
-
-  for (const mir::AbiAdapterId aid : cls.abi_adapters.Ids()) {
-    const mir::AbiAdapter& adapter = cls.abi_adapters.Get(aid);
-    auto published = std::visit(
-        Overloaded{
-            [](const mir::UnpublishedEntry&) -> diag::Result<void> {
-              return {};
-            },
-            // A hierarchical name ends at the subroutine itself (LRM 23.8):
-            // this target enters a body through the prototype it was declared
-            // with, so the entry's erased receiver buys it nothing.
-            [&](const mir::SubroutineEntry& entry) -> diag::Result<void> {
-              out.subroutines.push_back(
-                  lir::PublishedCallable{
-                      .name = entry.name,
-                      .entry = MethodFunction(owner, entry.subroutine)});
-              return {};
-            },
-            // A foreign caller reaches a subroutine under a C identifier and
-            // hands it arguments in their boundary carriers (LRM 35.4,
-            // 35.5.6), so what the name reaches is the body that converts
-            // between the two and calls the subroutine -- a body of its own,
-            // with its own signature, rather than the subroutine.
-            [&](const mir::ForeignLinkage& linkage) -> diag::Result<void> {
-              auto fn =
-                  FunctionLowerer(
-                      *this, adapter.code,
-                      lir::ScopeEntrySymbol(
-                          mir_->name, lir::SymbolPartOf(cls.name, owner.value),
-                          aid.value))
-                      .Run();
-              if (!fn) {
-                return std::unexpected(std::move(fn.error()));
-              }
-              out.exports.push_back(
-                  lir::PublishedCallable{
-                      .name = linkage.foreign_name,
-                      .entry = out_.functions.Add(*std::move(fn))});
-              return {};
-            }},
-        adapter.published);
-    if (!published) {
-      return std::unexpected(std::move(published.error()));
-    }
+  out.dispatch = LowerDispatch(owner, cls);
+  for (const mir::DeclaredClassRef& iface : cls.implements) {
+    out.implements.push_back(ClassRefValueType(iface));
   }
+  for (const mir::ConformingBehavior& answered : cls.conforming) {
+    out.conforming.push_back(
+        lir::ConformingBehavior{
+            .interface_behavior = SlotRef(answered.interface_behavior),
+            .answered_by = answered.answered_by.transform(
+                [&](const mir::VirtualSlot& slot) { return SlotRef(slot); })});
+  }
+  const std::string definition =
+      DefinitionSymbolOf(mir::IntraUnitClassRef{.class_id = owner});
+  for (const mir::ClassConstantId constant : cls.constants.Ids()) {
+    const mir::ValueBuild& initializer =
+        cls.constants.Get(constant).initializer;
+    out_.constants.push_back(
+        lir::GlobalConstant{
+            .symbol = lir::ClassConstantSymbol(definition, constant.value),
+            .linkage = lir::Linkage::kInternal,
+            .initializer = LowerConstant(initializer, initializer.value)});
+  }
+  out_.constants.push_back(
+      lir::GlobalConstant{
+          .symbol = definition,
+          .linkage = lir::Linkage::kExternal,
+          .initializer = LowerConstant(
+              cls.object_definition_initializer,
+              cls.object_definition_initializer.value)});
   return out;
 }
 
-auto UnitLowerer::TakenOver(
-    const mir::CallableDecl& callable,
-    const std::optional<lir::FunctionId>& body)
-    -> std::optional<lir::DispatchTakeover> {
-  // Taking a behavior over without a body would leave it exactly as the
-  // lineage already had it (LRM 8.21 again, one abstract class extending
-  // another), so it states nothing.
-  if (!callable.virtual_dispatch.has_value() || !body.has_value()) {
-    return std::nullopt;
-  }
+auto UnitLowerer::DefinitionSymbolOf(const mir::DeclaredClassRef& of) const
+    -> std::string {
   return std::visit(
       Overloaded{
-          [](const mir::IntroducesVirtualSlot&)
-              -> std::optional<lir::DispatchTakeover> { return std::nullopt; },
-          [&](const mir::OverridesIntraUnitSlot& taken)
-              -> std::optional<lir::DispatchTakeover> {
-            return lir::DispatchTakeover{
-                .method = MethodRef(taken.slot_owner, taken.slot_id),
-                .body = *body};
+          [&](const mir::IntraUnitClassRef& intra) {
+            return lir::ClassDefinitionSymbol(
+                mir_->name,
+                lir::SymbolPartOf(
+                    mir_->GetClass(intra.class_id).name, intra.class_id.value));
           },
-          [&](const mir::OverridesExternalSlot& taken)
-              -> std::optional<lir::DispatchTakeover> {
-            return lir::DispatchTakeover{
-                .method =
-                    lir::StatedDispatchRef{
-                        .introduced_by = ExternalClassValueType(
-                            taken.unit_name, taken.class_name),
-                        .ordinal = lir::DispatchOrdinal{taken.ordinal.value}},
-                .body = *body};
+          [](const mir::CrossUnitClassRef& cross) {
+            return lir::ClassDefinitionSymbol(
+                cross.unit_name, lir::SymbolPart::Name(cross.class_name));
           }},
-      *callable.virtual_dispatch);
+      of);
+}
+
+auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
+    -> lir::Constant {
+  const mir::Expr& expr = build.body.exprs.Get(id);
+  const auto not_data = [](std::string_view what) -> lir::Constant {
+    throw InternalError(
+        std::format(
+            "mir_to_lir: a constant is built of {}, which is no data -- please "
+            "report this as a bug",
+            what));
+  };
+  const auto constant_symbol = [&](const mir::ClassConstantRef& ref) {
+    return lir::ClassConstantSymbol(
+        DefinitionSymbolOf(mir::IntraUnitClassRef{.class_id = ref.owner}),
+        ref.constant.value);
+  };
+  const auto parts_of = [&](std::span<const mir::ExprId> parts) {
+    std::vector<lir::Constant> out;
+    out.reserve(parts.size());
+    for (const mir::ExprId part : parts) {
+      out.push_back(LowerConstant(build, part));
+    }
+    return out;
+  };
+  return std::visit(
+      Overloaded{
+          [](const mir::StringLiteral& s) -> lir::Constant {
+            return {lir::ConstantString{.text = s.value}};
+          },
+          [](const mir::NullLiteral&) -> lir::Constant {
+            return {lir::ConstantNull{}};
+          },
+          [](const mir::MachineIntLiteral& i) -> lir::Constant {
+            return {lir::ConstantInt{.value = i.value}};
+          },
+          // Read as a value, a body is its address; nothing else a reference
+          // names is data until its address is taken.
+          [&](const mir::ReferenceExpr& r) -> lir::Constant {
+            return std::visit(
+                Overloaded{
+                    [&](const mir::FunctionRef& f) -> lir::Constant {
+                      return {lir::ConstantFunction{
+                          .function =
+                              MethodFunction(f.body.owner, f.body.slot)}};
+                    },
+                    [&](const mir::ClassConstantRef&) {
+                      return not_data("a constant read whole");
+                    },
+                    [&](const mir::LocalRef&) { return not_data("a local"); },
+                    [&](const mir::DefinitionRef&) {
+                      return not_data("a definition read whole");
+                    },
+                    [&](const mir::TypeDescriptorRef&) {
+                      return not_data("a type's description");
+                    },
+                    [&](const mir::IntegralConstantRef&) {
+                      return not_data("an integral constant");
+                    },
+                    [&](const mir::StaticPropertyRef&) {
+                      return not_data("a static property");
+                    },
+                    [&](const mir::StaticVariableRef&) {
+                      return not_data("a static variable");
+                    },
+                    [&](const mir::ExternalUnitVariableRef&) {
+                      return not_data("another unit's variable");
+                    },
+                    [&](const mir::ExternalStaticPropertyRef&) {
+                      return not_data("another unit's static property");
+                    }},
+                r.target);
+          },
+          // Retyping an address changes nothing about which address it is.
+          [&](const mir::CastExpr& c) -> lir::Constant {
+            return LowerConstant(build, c.operand);
+          },
+          [&](const mir::AddressOfExpr& a) -> lir::Constant {
+            const auto* named = std::get_if<mir::ReferenceExpr>(
+                &build.body.exprs.Get(a.operand).data);
+            if (named == nullptr) {
+              return not_data("the address of something no name reaches");
+            }
+            return std::visit(
+                Overloaded{
+                    [&](const mir::DefinitionRef& d) -> lir::Constant {
+                      return {lir::ConstantAddress{
+                          .symbol = DefinitionSymbolOf(d.of)}};
+                    },
+                    [&](const mir::ClassConstantRef& c) -> lir::Constant {
+                      return {
+                          lir::ConstantAddress{.symbol = constant_symbol(c)}};
+                    },
+                    [&](const mir::FunctionRef&) {
+                      return not_data("the address of a body's address");
+                    },
+                    [&](const mir::LocalRef&) {
+                      return not_data("the address of a local");
+                    },
+                    [&](const mir::TypeDescriptorRef&) {
+                      return not_data("the address of a type's description");
+                    },
+                    [&](const mir::IntegralConstantRef&) {
+                      return not_data("the address of an integral constant");
+                    },
+                    [&](const mir::StaticPropertyRef&) {
+                      return not_data("the address of a static property");
+                    },
+                    [&](const mir::StaticVariableRef&) {
+                      return not_data("the address of a static variable");
+                    },
+                    [&](const mir::ExternalUnitVariableRef&) {
+                      return not_data("the address of another unit's variable");
+                    },
+                    [&](const mir::ExternalStaticPropertyRef&) {
+                      return not_data(
+                          "the address of another unit's static property");
+                    }},
+                named->target);
+          },
+          // What is composed is what the type says: a structure of the library
+          // from its members, or an array from its elements.
+          [&](const mir::CompositeExpr& c) -> lir::Constant {
+            const mir::Type& type = mir_->types.Get(expr.type);
+            if (const auto* record = type.As<mir::RuntimeLibraryType>()) {
+              return {lir::ConstantRecord{
+                  .kind = TranslateRuntimeLibrary(record->kind)
+                              .Get<lir::RuntimeLibraryType>()
+                              .kind,
+                  .parts = parts_of(c.parts)}};
+            }
+            if (type.Is<mir::MachineArrayType>()) {
+              return {lir::ConstantArray{.elements = parts_of(c.parts)}};
+            }
+            return not_data("a composite of some other type");
+          },
+          [&](const mir::MachineBoolLiteral&) {
+            return not_data("a machine boolean");
+          },
+          [&](const mir::MachineFloatLiteral&) {
+            return not_data("a machine float");
+          },
+          [&](const mir::UnaryExpr&) { return not_data("a unary operation"); },
+          [&](const mir::BinaryExpr&) {
+            return not_data("a binary operation");
+          },
+          [&](const mir::DynamicCastExpr&) {
+            return not_data("a checked conversion");
+          },
+          [&](const mir::ConditionalExpr&) {
+            return not_data("a conditional");
+          },
+          [&](const mir::BlockExpr&) { return not_data("a block"); },
+          [&](const mir::AssignExpr&) { return not_data("an assignment"); },
+          [&](const mir::IncDecExpr&) { return not_data("an increment"); },
+          [&](const mir::CallExpr&) { return not_data("a call"); },
+          [&](const mir::DerefExpr&) { return not_data("a dereference"); },
+          [&](const mir::MoveExpr&) { return not_data("a move"); },
+          [&](const mir::FieldAccessExpr&) {
+            return not_data("a field access");
+          },
+          [&](const mir::ClosureExpr&) { return not_data("a closure"); },
+          [&](const mir::AwaitExpr&) { return not_data("an await"); },
+          [&](const mir::WaitExpr&) { return not_data("a wait"); },
+          [&](const mir::VectorGetExpr&) {
+            return not_data("a vector element");
+          }},
+      expr.data);
+}
+
+auto UnitLowerer::SlotRef(const mir::VirtualSlot& slot)
+    -> lir::StatedDispatchRef {
+  return std::visit(
+      Overloaded{
+          [&](const mir::LocalVirtualSlot& local) {
+            return MethodRef(local.owner_class, local.slot);
+          },
+          [&](const mir::ExternalVirtualSlot& external) {
+            return ExternalMethodRef(
+                external.unit_name, external.class_name, external.ordinal);
+          }},
+      slot);
+}
+
+auto UnitLowerer::LowerDispatch(mir::ClassId owner, const mir::Class& cls)
+    -> lir::ClassDispatch {
+  lir::ClassDispatch dispatch;
+  for (const mir::CallableId cid : cls.callables.Ids()) {
+    const mir::CallableDecl& callable = cls.callables.Get(cid);
+    if (!callable.virtual_dispatch.has_value()) {
+      continue;
+    }
+    // Every body of the class is emitted under the symbol it composes here, so
+    // naming one by it is naming the function.
+    const std::optional<std::string> body =
+        class_identities_.Get(owner).methods.Get(cid).has_value()
+            ? std::optional{ClassBodySymbol(owner, cls, cid)}
+            : std::nullopt;
+    const auto override_with_body = [&](lir::StatedDispatchRef behavior) {
+      // Overriding a behavior without a body leaves it as the lineage already
+      // had it (LRM 8.21, one abstract class extending another).
+      if (body.has_value()) {
+        dispatch.overrides.push_back(
+            lir::Override{.behavior = behavior, .body = *body});
+      }
+    };
+    std::visit(
+        Overloaded{
+            [&](const mir::IntroducesVirtualSlot&) {
+              dispatch.introduces.push_back(body);
+            },
+            [&](const mir::OverridesIntraUnitSlot& overridden) {
+              override_with_body(
+                  MethodRef(overridden.slot_owner, overridden.slot_id));
+            },
+            [&](const mir::OverridesExternalSlot& overridden) {
+              override_with_body(ExternalMethodRef(
+                  overridden.unit_name, overridden.class_name,
+                  overridden.ordinal));
+            },
+            // The library's class introduced it, at the position its class
+            // declares it among its own.
+            [&](const mir::OverridesLibraryVirtual& overridden) {
+              override_with_body(
+                  lir::StatedDispatchRef{
+                      .introduced_by = out_.types.Intern(
+                          lir::Type{lir::RuntimeClassType{
+                              .which = support::DeclaringClassOf(
+                                  overridden.function)}}),
+                      .ordinal = lir::DispatchOrdinal{
+                          support::OrdinalOf(overridden.function)}});
+            }},
+        *callable.virtual_dispatch);
+  }
+  return dispatch;
 }
 
 auto UnitLowerer::MethodFunction(
@@ -568,6 +765,14 @@ auto UnitLowerer::MethodRef(mir::ClassId owner, mir::CallableId callable)
   }
   return lir::StatedDispatchRef{
       .introduced_by = ClassValueType(owner), .ordinal = *ordinal};
+}
+
+auto UnitLowerer::ExternalMethodRef(
+    const std::string& unit_name, const std::string& class_name,
+    mir::BehaviorOrdinal ordinal) const -> lir::StatedDispatchRef {
+  return lir::StatedDispatchRef{
+      .introduced_by = ExternalClassValueType(unit_name, class_name),
+      .ordinal = lir::DispatchOrdinal{ordinal.value}};
 }
 
 auto UnitLowerer::ConstructorFunction(mir::ClassId cls) const
@@ -618,42 +823,6 @@ auto UnitLowerer::ExternalClassValueType(
   return out_.types.Intern(
       lir::Type{lir::CrossUnitClassType{
           .unit_name = unit_name, .class_name = class_name}});
-}
-
-auto UnitLowerer::PromisedClass(
-    const std::string& unit_name, const std::string& class_name) const
-    -> const mir::ExternalClass& {
-  const mir::ExternalClass* promised =
-      mir::FindExternalClass(Mir().external_classes, unit_name, class_name);
-  if (promised == nullptr) {
-    throw InternalError(
-        "mir_to_lir: a reference names a class of another unit that no "
-        "consumed promise describes");
-  }
-  return *promised;
-}
-
-auto UnitLowerer::LowerBase(const mir::ClassRef& base) const -> lir::Base {
-  return std::visit(
-      Overloaded{
-          [this](const mir::IntraUnitClassRef& i) -> lir::Base {
-            return lir::Base{lir::IntraUnitBase{
-                .class_id = class_identities_.Get(i.class_id).lir_class}};
-          },
-          [](const mir::CrossUnitClassRef& e) -> lir::Base {
-            return lir::Base{lir::CrossUnitBase{
-                .unit_name = e.unit_name, .class_name = e.class_name}};
-          },
-          // What the runtime library calls the class it provides is one
-          // target's spelling and stops here, so what crosses is that the base
-          // is the runtime's and nothing else.
-          [](const mir::RuntimeClassRef&) -> lir::Base {
-            return lir::Base{lir::ObjectTreeBase{}};
-          },
-          [](const mir::ManagedObjectRootRef&) -> lir::Base {
-            return lir::Base{lir::ManagedObjectBase{}};
-          }},
-      base);
 }
 
 }  // namespace lyra::lowering::mir_to_lir

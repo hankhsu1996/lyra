@@ -11,9 +11,11 @@
 #include <variant>
 #include <vector>
 
+#include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/Type.h>
 
 #include "lyra/backend/llvm/codegen_function.hpp"
@@ -25,9 +27,10 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/place_query.hpp"
+#include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/member_layout.hpp"
 #include "lyra/support/runtime_object.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -39,16 +42,6 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
 }
 
-// Where the members a declaration gives its values sit, as far as this unit can
-// say: which kind of value holds them, and how many members the lineage carries
-// ahead of the ones the declaration states itself. The count is a sum over the
-// lineage, and a lineage passing through another unit's class includes storage
-// that unit keeps to itself, so there the count is not this unit's to know.
-struct MemberPlacement {
-  support::ValueHolder holder{};
-  std::optional<std::uint32_t> ahead;
-};
-
 // The declaration a member step names as the one that gave the member.
 auto DeclarationOf(const lir::CompilationUnit& unit, lir::TypeId declared_by)
     -> lir::TypeDeclaration {
@@ -59,75 +52,6 @@ auto DeclarationOf(const lir::CompilationUnit& unit, lir::TypeId declared_by)
         "llvm codegen: a member step names a type that declares nothing");
   }
   return *std::move(declaration);
-}
-
-auto HolderOf(
-    const lir::CompilationUnit& unit, const std::optional<lir::Base>& extends)
-    -> support::ValueHolder {
-  return lir::StandsInObjectTree(unit, extends) ? support::ValueHolder::kScope
-                                                : support::ValueHolder::kObject;
-}
-
-auto MembersAhead(
-    const lir::CompilationUnit& unit, const std::optional<lir::Base>& extends)
-    -> std::optional<std::uint32_t> {
-  if (!extends.has_value()) {
-    return 0;
-  }
-  return std::visit(
-      Overloaded{
-          [&](const lir::IntraUnitBase& intra) -> std::optional<std::uint32_t> {
-            const lir::Class& base = unit.classes.Get(intra.class_id);
-            const std::optional<std::uint32_t> before =
-                MembersAhead(unit, base.base);
-            if (!before.has_value()) {
-              return std::nullopt;
-            }
-            return *before + static_cast<std::uint32_t>(base.members.size());
-          },
-          [](const lir::CrossUnitBase&) -> std::optional<std::uint32_t> {
-            return std::nullopt;
-          },
-          [](const lir::ObjectTreeBase&) -> std::optional<std::uint32_t> {
-            return 0;
-          },
-          [](const lir::ManagedObjectBase&) -> std::optional<std::uint32_t> {
-            return 0;
-          }},
-      *extends);
-}
-
-auto PlacementOf(const lir::CompilationUnit& unit, lir::TypeId declared_by)
-    -> MemberPlacement {
-  return std::visit(
-      Overloaded{
-          [&](const lir::ObjectType& object) -> MemberPlacement {
-            const lir::Class& cls = unit.classes.Get(object.class_id);
-            return {
-                .holder = HolderOf(unit, cls.base),
-                .ahead = MembersAhead(unit, cls.base)};
-          },
-          [&](const lir::CrossUnitClassType& cls) -> MemberPlacement {
-            const lir::ExternalClass* record =
-                lir::FindExternalClass(unit, cls.unit_name, cls.class_name);
-            if (record == nullptr) {
-              throw InternalError(
-                  "llvm codegen: a member step names another unit's class this "
-                  "unit consumed no promise about");
-            }
-            return {.holder = HolderOf(unit, record->base), .ahead = {}};
-          },
-          // A closure extends nothing, so a capture's place is its position
-          // among the captures.
-          [](const lir::ClosureType&) -> MemberPlacement {
-            return {.holder = support::ValueHolder::kClosure, .ahead = 0};
-          },
-          [](const lir::ExternalUnitObjectType&) -> MemberPlacement {
-            throw InternalError(
-                "llvm codegen: another unit's object is reached through what "
-                "it promised, never by a member step");
-          }},
-      DeclarationOf(unit, declared_by));
 }
 
 // The signature a call is made under: the result the instruction defines, over
@@ -190,6 +114,11 @@ auto ValuesHeldBy(const lir::Type& type) -> std::optional<lir::TypeId> {
   return std::nullopt;
 }
 
+// What a dynamic cast is told of where the wanted class sits relative to the
+// part it starts from (C++ ABI 2.9.7 `src2dst_offset`): nothing, so the cast
+// works it out from the descriptions.
+constexpr std::int64_t kNoCastHint = -1;
+
 }  // namespace
 
 auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
@@ -207,6 +136,9 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           },
           [&](const lir::TupleInstr& tuple) -> diag::Result<llvm::Value*> {
             return LowerTuple(tuple, result_type, out);
+          },
+          [&](const lir::ClosureInstr& built) -> diag::Result<llvm::Value*> {
+            return LowerClosure(built, result_type, out);
           },
           [&](const lir::ArrayInstr& array) -> diag::Result<llvm::Value*> {
             return LowerArray(array, result_type);
@@ -242,6 +174,23 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           },
           [&](const lir::CastInstr& cast) -> diag::Result<llvm::Value*> {
             return LowerCast(cast, result_type);
+          },
+          [&](const lir::HandleCastInstr& cast) -> diag::Result<llvm::Value*> {
+            return LowerHandleCast(cast, result_type, out);
+          },
+          [&](const lir::DynamicCastInstr& cast) -> diag::Result<llvm::Value*> {
+            return LowerDynamicCast(cast, result_type, out);
+          },
+          [&](const lir::OpenVariablesInstr&) -> diag::Result<llvm::Value*> {
+            return LowerOpenVariables();
+          },
+          [&](const lir::VariableAddressInstr& reached)
+              -> diag::Result<llvm::Value*> {
+            return LowerVariableAddress(reached);
+          },
+          [&](const lir::CloseVariablesInstr& closed)
+              -> diag::Result<llvm::Value*> {
+            return LowerCloseVariables(closed);
           }},
       instr.data);
 }
@@ -368,11 +317,11 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
 // any other base is a reference value, whose referent the opening dereference
 // names. Each further dereference reads the reference held in the storage
 // reached so far -- or, where that storage is a wrapper, reaches its contents
-// for a read -- a member step asks the instance for that member's storage, or
-// for the bytes of a product that storage holds inline, a value cell a later
-// step continues into is opened through its own access, an
-// element step asks the value reached so far for the one it names, the way the
-// access needs it, and a component step lies at an offset in the product.
+// for a read -- a member step reaches the storage where the declaration
+// declaring that member placed it, a value cell a later step continues into is
+// opened through its own access, an element step asks the value reached so far
+// for the one it names, the way the access needs it, and a component step lies
+// at an offset in the product.
 auto CodeGenFunction::ResolvePlaceAddress(
     const lir::Place& place, Access access) -> diag::Result<llvm::Value*> {
   auto step = place.chain.begin();
@@ -439,15 +388,7 @@ auto CodeGenFunction::ResolvePlaceAddress(
             },
             [&](const lir::MemberProjection& projection)
                 -> diag::Result<llvm::Value*> {
-              auto slot = MemberStorage(address, projection.member);
-              if (!slot) {
-                return std::unexpected(std::move(slot.error()));
-              }
-              return InlineValueHandle(
-                  projection.member,
-                  ReachedType(
-                      place, std::distance(place.chain.begin(), step) + 1),
-                  *slot);
+              return MemberStorage(address, projection.member);
             },
             [&](const lir::ElementProjection& element)
                 -> diag::Result<llvm::Value*> {
@@ -512,64 +453,17 @@ auto CodeGenFunction::StepEntry(
   throw InternalError("llvm codegen: unknown access");
 }
 
-auto CodeGenFunction::DefinitionOf(lir::TypeId type)
-    -> diag::Result<llvm::Value*> {
-  auto cell = module_->DefinitionRef(type);
-  if (!cell) {
-    return std::unexpected(std::move(cell.error()));
-  }
-  return builder_.CreateLoad(module_->Types().Ptr(), *cell);
-}
-
+// A member sits where the declaration declaring it placed it, which is the
+// same in every value of a declaration extending that one.
 auto CodeGenFunction::MemberStorage(
     llvm::Value* owner, const lir::StatedMemberRef& member)
     -> diag::Result<llvm::Value*> {
-  const MemberPlacement placement =
-      PlacementOf(module_->Unit(), member.declared_by);
-  auto* offset_ty = llvm::Type::getInt64Ty(module_->Context());
-  llvm::Value* ahead = nullptr;
-  if (placement.ahead.has_value()) {
-    ahead = llvm::ConstantInt::get(offset_ty, *placement.ahead);
-  } else {
-    auto declared_by = DefinitionOf(member.declared_by);
-    if (!declared_by) {
-      return std::unexpected(std::move(declared_by.error()));
-    }
-    llvm::Value* count = builder_.CreateLoad(
-        llvm::Type::getInt32Ty(module_->Context()),
-        builder_.CreateConstInBoundsGEP1_64(
-            llvm::Type::getInt8Ty(module_->Context()), *declared_by,
-            support::kFirstMemberAt));
-    ahead = builder_.CreateZExt(count, offset_ty);
+  auto record = module_->RecordOf(member.declared_by);
+  if (!record) {
+    return std::unexpected(std::move(record.error()));
   }
-  llvm::Value* position = builder_.CreateAdd(
-      ahead, llvm::ConstantInt::get(offset_ty, member.slot.value));
-  llvm::Value* offset = builder_.CreateAdd(
-      llvm::ConstantInt::get(offset_ty, support::MembersAt(placement.holder)),
-      builder_.CreateMul(
-          position,
-          llvm::ConstantInt::get(offset_ty, support::kMemberSlotSize)));
-  return builder_.CreateInBoundsGEP(
-      llvm::Type::getInt8Ty(module_->Context()), owner, offset);
-}
-
-auto CodeGenFunction::InlineValueHandle(
-    const lir::StatedMemberRef& member, lir::TypeId value, llvm::Value* slot)
-    -> llvm::Value* {
-  const lir::CompilationUnit& unit = module_->Unit();
-  if (!unit.types.Get(value).IsProduct() ||
-      MemberStorageKindOf(
-          unit, value,
-          MemberSlotRoleOf(DeclarationOf(unit, member.declared_by))) !=
-          support::MemberStorageKind::kInlineValue) {
-    return slot;
-  }
-  const std::array<llvm::Value*, 1> args{slot};
-  return builder_.CreateCall(
-      Entry(
-          RuntimeSymbol(support::ValueDomain::kTuple, RuntimeOp::kHeld),
-          module_->Types().Ptr(), args),
-      args);
+  return builder_.CreateConstInBoundsGEP1_64(
+      builder_.getInt8Ty(), owner, (*record)->offsets.at(member.slot.value));
 }
 
 // The type of the storage the chain has arrived at where step `index` applies,
@@ -592,25 +486,25 @@ auto CodeGenFunction::ReachedType(
 auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
     -> llvm::Value* {
   const lir::Type& referring = module_->Unit().types.Get(type);
-  std::optional<RuntimeOp> op;
+  std::optional<std::string> opening;
   if (referring.Is<lir::ManagedRefType>()) {
-    op = RuntimeOp::kObjectDeref;
+    opening = RuntimeSymbol(support::BuiltinFn::kViewOf);
   } else if (const auto* pointer = referring.As<lir::PointerType>()) {
     switch (pointer->ownership) {
       case lir::PointerOwnership::kUnique:
       case lir::PointerOwnership::kBorrowed:
         break;
       case lir::PointerOwnership::kShared:
-        op = RuntimeOp::kSharedPointerDeref;
+        opening = RuntimeSymbol(RuntimeOp::kSharedPointerDeref);
         break;
     }
   }
-  if (!op) {
+  if (!opening) {
     return reference;
   }
   const std::array<llvm::Value*, 1> args{reference};
   return builder_.CreateCall(
-      Entry(RuntimeSymbol(*op), module_->Types().Ptr(), args), args);
+      Entry(*opening, module_->Types().Ptr(), args), args);
 }
 
 // Taking the address of a place. What that address is, is the place's own
@@ -810,11 +704,19 @@ auto CodeGenFunction::LowerCast(
   if (!operand) {
     return std::unexpected(std::move(operand.error()));
   }
+  const lir::TypeId operand_type = OperandType(cast.operand);
+  // A pointer to one part of an object read as a pointer to another is the
+  // address of that part, which is the same address except where it is an
+  // interface class's.
+  const std::optional<lir::TypeId> from = ClassBehind(operand_type);
+  const std::optional<lir::TypeId> to = ClassBehind(result_type);
+  if (from.has_value() && to.has_value()) {
+    return ConvertView(*operand, *from, *to);
+  }
   llvm::Type* target = module_->Types().Map(result_type);
   if ((*operand)->getType() == target) {
     return *operand;
   }
-  const lir::TypeId operand_type = OperandType(cast.operand);
   if (module_->Unit().types.Get(result_type).Is<lir::MachineBoolType>()) {
     // A machine integer is a native value rather than a value-domain handle,
     // so reducing one to a predicate is a machine comparison against zero and
@@ -843,6 +745,153 @@ auto CodeGenFunction::LowerCast(
   }
   return builder_.CreateIntCast(
       *operand, target, *signedness == lir::Signedness::kSigned);
+}
+
+auto CodeGenFunction::ClassBehind(lir::TypeId reference) const
+    -> std::optional<lir::TypeId> {
+  const lir::TypePool& types = module_->Unit().types;
+  const lir::Type& referring = types.Get(reference);
+  std::optional<lir::TypeId> pointee;
+  if (const auto* pointer = referring.As<lir::PointerType>()) {
+    pointee = pointer->pointee;
+  } else if (const auto* handle = referring.As<lir::ManagedRefType>()) {
+    pointee = handle->pointee;
+  }
+  if (!pointee.has_value() ||
+      !(types.Get(*pointee).Is<lir::ObjectType>() ||
+        types.Get(*pointee).Is<lir::CrossUnitClassType>())) {
+    return std::nullopt;
+  }
+  return pointee;
+}
+
+// Every class part of an object starts where the object does, so reaching one
+// from another is the same address. An interface class's part is wherever the
+// object's own class placed it, so the table the part the conversion starts
+// from holds at its start holds the offset to it (C++ ABI 2.5.2 virtual base
+// offsets).
+auto CodeGenFunction::ConvertView(
+    llvm::Value* view, lir::TypeId from, lir::TypeId to)
+    -> diag::Result<llvm::Value*> {
+  if (from == to || !module_->IsInterfaceClass(to)) {
+    return view;
+  }
+  llvm::Type* ptr_ty = module_->Types().Ptr();
+  llvm::Type* byte_ty = builder_.getInt8Ty();
+  llvm::Value* table = builder_.CreateLoad(ptr_ty, view);
+  llvm::Value* offset = builder_.CreateLoad(
+      builder_.getInt64Ty(),
+      builder_.CreateGEP(
+          ptr_ty, table,
+          llvm::ConstantInt::getSigned(
+              builder_.getInt64Ty(),
+              -static_cast<std::int64_t>(
+                  module_->InterfacePartOffset(from, to)))));
+  return builder_.CreateGEP(byte_ty, view, offset);
+}
+
+auto CodeGenFunction::IfNotNull(
+    llvm::Value* view,
+    llvm::function_ref<diag::Result<llvm::Value*>(llvm::Value*)> reach)
+    -> diag::Result<llvm::Value*> {
+  llvm::BasicBlock* asked = builder_.GetInsertBlock();
+  llvm::BasicBlock* present =
+      llvm::BasicBlock::Create(module_->Context(), "", value_);
+  llvm::BasicBlock* joined =
+      llvm::BasicBlock::Create(module_->Context(), "", value_);
+  builder_.CreateCondBr(builder_.CreateIsNull(view), joined, present);
+  builder_.SetInsertPoint(present);
+  auto reached = reach(view);
+  if (!reached) {
+    return reached;
+  }
+  llvm::BasicBlock* reached_from = builder_.GetInsertBlock();
+  builder_.CreateBr(joined);
+  builder_.SetInsertPoint(joined);
+  llvm::PHINode* result = builder_.CreatePHI(module_->Types().Ptr(), 2);
+  result->addIncoming(
+      llvm::ConstantPointerNull::get(module_->Types().Ptr()), asked);
+  result->addIncoming(*reached, reached_from);
+  return result;
+}
+
+// The handle a conversion forms refers to the object its operand does, so only
+// the part it reaches through is worked out here, and a handle referring to no
+// object stays one.
+auto CodeGenFunction::LowerHandleCast(
+    const lir::HandleCastInstr& cast, lir::TypeId result_type, llvm::Value* out)
+    -> diag::Result<llvm::Value*> {
+  auto handle = LowerOperand(cast.operand);
+  if (!handle) {
+    return std::unexpected(std::move(handle.error()));
+  }
+  llvm::Value* view = HandleView(*handle);
+  const std::optional<lir::TypeId> from =
+      ClassBehind(OperandType(cast.operand));
+  const std::optional<lir::TypeId> to = ClassBehind(result_type);
+  if (from.has_value() && to.has_value()) {
+    auto converted = IfNotNull(view, [&](llvm::Value* present) {
+      return ConvertView(present, *from, *to);
+    });
+    if (!converted) {
+      return converted;
+    }
+    view = *converted;
+  }
+  return HandleWithView(*handle, view, out);
+}
+
+// The host's own dynamic cast answers it (C++ ABI 2.9.7), reading the
+// descriptions each class's unit emits: handed a part, which holds its table's
+// address at its start, and the descriptions of the part's class and the wanted
+// one, it answers the wanted class's part, or null.
+auto CodeGenFunction::LowerDynamicCast(
+    const lir::DynamicCastInstr& cast, lir::TypeId result_type,
+    llvm::Value* out) -> diag::Result<llvm::Value*> {
+  auto handle = LowerOperand(cast.operand);
+  if (!handle) {
+    return std::unexpected(std::move(handle.error()));
+  }
+  const std::optional<lir::TypeId> from =
+      ClassBehind(OperandType(cast.operand));
+  const std::optional<lir::TypeId> to = ClassBehind(result_type);
+  if (!from.has_value() || !to.has_value()) {
+    throw InternalError(
+        "llvm codegen: a dynamic cast between handles not both of classes -- "
+        "please report this as a bug");
+  }
+  llvm::Type* ptr_ty = module_->Types().Ptr();
+  auto found = IfNotNull(
+      HandleView(*handle),
+      [&](llvm::Value* view) -> diag::Result<llvm::Value*> {
+        const std::array<llvm::Value*, 4> args{
+            view, module_->TypeInfoOf(*from), module_->TypeInfoOf(*to),
+            llvm::ConstantInt::getSigned(builder_.getInt64Ty(), kNoCastHint)};
+        return builder_.CreateCall(Entry("__dynamic_cast", ptr_ty, args), args);
+      });
+  if (!found) {
+    return found;
+  }
+  return HandleWithView(*handle, *found, out);
+}
+
+auto CodeGenFunction::HandleView(llvm::Value* handle) -> llvm::Value* {
+  const std::array<llvm::Value*, 1> args{handle};
+  return builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(RuntimeOp::kHandleView), module_->Types().Ptr(), args),
+      args);
+}
+
+auto CodeGenFunction::HandleWithView(
+    llvm::Value* handle, llvm::Value* view, llvm::Value* out) -> llvm::Value* {
+  const std::array<llvm::Value*, 3> args{handle, view, out};
+  builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(RuntimeOp::kHandleWithView), module_->Types().Ptr(),
+          args),
+      args);
+  return out;
 }
 
 auto CodeGenFunction::LowerReceiveDeparture() -> diag::Result<llvm::Value*> {
@@ -1002,45 +1051,13 @@ auto CodeGenFunction::ArgsInForm(
       Overloaded{
           [&](const OperandsAsStated&)
               -> diag::Result<std::vector<llvm::Value*>> { return operands; },
-          [&](const OperandsAfterDefinition& f)
+          [&](const OperandsAfterSize& f)
               -> diag::Result<std::vector<llvm::Value*>> {
-            auto definition = DefinitionOf(f.defined);
-            if (!definition) {
-              return std::unexpected(std::move(definition.error()));
+            auto size = module_->CompleteObjectSize(f.of);
+            if (!size) {
+              return std::unexpected(std::move(size.error()));
             }
-            std::vector<llvm::Value*> args{*definition};
-            args.insert(args.end(), operands.begin(), operands.end());
-            return args;
-          },
-          [&](const OperandsAsSpanAfterDefinition& f)
-              -> diag::Result<std::vector<llvm::Value*>> {
-            auto definition = DefinitionOf(f.defined);
-            if (!definition) {
-              return std::unexpected(std::move(definition.error()));
-            }
-            return std::vector<llvm::Value*>{
-                *definition, SpanOver(operands, module_->Types().Ptr())};
-          },
-          [&](const ScopeOperandsAfterDefinition& f)
-              -> diag::Result<std::vector<llvm::Value*>> {
-            auto definition = DefinitionOf(f.defined);
-            if (!definition) {
-              return std::unexpected(std::move(definition.error()));
-            }
-            const std::span<llvm::Value* const> stated{operands};
-            std::vector<llvm::Value*> args{*definition};
-            args.insert(
-                args.end(), stated.begin(),
-                stated.begin() + kScopeStructuralOperands);
-            args.push_back(SpanOver(
-                stated.subspan(kScopeStructuralOperands),
-                module_->Types().Ptr()));
-            return args;
-          },
-          [&](const OperandsAfterVariableSchema&)
-              -> diag::Result<std::vector<llvm::Value*>> {
-            std::vector<llvm::Value*> args{builder_.CreateLoad(
-                module_->Types().Ptr(), module_->VariableSchemaCell(id_))};
+            std::vector<llvm::Value*> args{builder_.getInt64(*size)};
             args.insert(args.end(), operands.begin(), operands.end());
             return args;
           }},
@@ -1051,7 +1068,7 @@ auto CodeGenFunction::ArgsInForm(
 // in how the symbol is resolved.
 auto CodeGenFunction::ResolveCallee(
     const lir::CallInstr& call, lir::TypeId result_type,
-    std::span<llvm::Value* const> args) -> diag::Result<llvm::FunctionCallee> {
+    std::span<llvm::Value*> args) -> diag::Result<llvm::FunctionCallee> {
   return std::visit(
       Overloaded{
           [&](const lir::BuiltinTarget& t)
@@ -1072,11 +1089,9 @@ auto CodeGenFunction::ResolveCallee(
                 CallSignature(module_->Types().Map(result_type), args),
                 *callee);
           },
-          // A dispatched call is two operations over one boundary. What class a
-          // value is, is the only half this side cannot know, so that is the
-          // only half that crosses: the runtime answers with the address of the
-          // body that class holds for this behavior, and entering it with the
-          // arguments already in hand is this side's own.
+          // The value holds where its class's table is, and the table holds
+          // the body answering the behavior where the class introducing it put
+          // it, as a C++ virtual call reads one.
           [&](const lir::DispatchTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
             if (args.empty()) {
@@ -1084,20 +1099,39 @@ auto CodeGenFunction::ResolveCallee(
                   "llvm codegen: a dispatched call states no value to dispatch "
                   "on");
             }
-            auto introduced_by = DefinitionOf(t.method.introduced_by);
-            if (!introduced_by) {
-              return std::unexpected(std::move(introduced_by.error()));
+            auto at = module_->DispatchSlotOf(t.method);
+            if (!at) {
+              return std::unexpected(std::move(at.error()));
             }
-            const std::array<llvm::Value*, 3> lookup{
-                args[0], *introduced_by,
-                llvm::ConstantInt::get(
-                    llvm::Type::getInt32Ty(module_->Context()),
-                    t.method.ordinal.value)};
-            llvm::Value* body = builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(RuntimeOp::kMethod), module_->Types().Ptr(),
-                    lookup),
-                lookup);
+            llvm::Type* ptr_ty = module_->Types().Ptr();
+            llvm::Type* byte_ty = builder_.getInt8Ty();
+            const auto body_at = [&](llvm::Value* table, std::uint64_t slot) {
+              return builder_.CreateLoad(
+                  ptr_ty,
+                  builder_.CreateConstInBoundsGEP1_64(ptr_ty, table, slot));
+            };
+            llvm::Value* body = std::visit(
+                Overloaded{
+                    [&](const LineageSlot& lineage) -> llvm::Value* {
+                      return body_at(
+                          builder_.CreateLoad(ptr_ty, args[0]), lineage.slot);
+                    },
+                    // The part's table holds how far back the value's start
+                    // is.
+                    [&](const InterfaceSlot& part) -> llvm::Value* {
+                      llvm::Value* table = builder_.CreateLoad(ptr_ty, args[0]);
+                      llvm::Value* to_top = builder_.CreateLoad(
+                          builder_.getInt64Ty(),
+                          builder_.CreateGEP(
+                              ptr_ty, table,
+                              llvm::ConstantInt::getSigned(
+                                  builder_.getInt64Ty(),
+                                  -static_cast<std::int64_t>(
+                                      kOffsetToTopEntry))));
+                      args[0] = builder_.CreateGEP(byte_ty, args[0], to_top);
+                      return body_at(table, part.slot);
+                    }},
+                *at);
             return llvm::FunctionCallee(
                 CallSignature(module_->Types().Map(result_type), args), body);
           },
@@ -1108,6 +1142,12 @@ auto CodeGenFunction::ResolveCallee(
               return std::unexpected(std::move(construction.error()));
             }
             return Entry(construction->symbol, result_type, args);
+          },
+          [&](const lir::LibraryConstructorTarget& t)
+              -> diag::Result<llvm::FunctionCallee> {
+            return Entry(
+                runtime::BaseObjectConstructorSymbolOf(t.cls), result_type,
+                args);
           },
           // A body another artifact defines is declared here and resolved by
           // the host, and its operands are this program's own values.
@@ -1138,21 +1178,6 @@ auto CodeGenFunction::ResolveCallee(
               return std::unexpected(std::move(domain.error()));
             }
             return Entry(RuntimeSymbol(*domain, t.op), result_type, args);
-          },
-          [&](const lir::OpenVariablesTarget&)
-              -> diag::Result<llvm::FunctionCallee> {
-            return Entry(
-                RuntimeSymbol(RuntimeOp::kVariablesOpen), result_type, args);
-          },
-          [&](const lir::VariableAddressTarget&)
-              -> diag::Result<llvm::FunctionCallee> {
-            return Entry(
-                RuntimeSymbol(RuntimeOp::kVariableAddress), result_type, args);
-          },
-          [&](const lir::CloseVariablesTarget&)
-              -> diag::Result<llvm::FunctionCallee> {
-            return Entry(
-                RuntimeSymbol(RuntimeOp::kVariablesClose), result_type, args);
           },
           [&](const lir::EndValueTarget&)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1514,24 +1539,20 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
           [&](const lir::IntegralConstantRef& c) -> diag::Result<llvm::Value*> {
             return LowerIntegralConstantRef(c);
           },
-          [&](const lir::FuncRef& f) -> diag::Result<llvm::Value*> {
-            return module_->UnitFunction(f.function);
-          },
-          // The storage behind the symbol is opaque to generated code, which
-          // only forwards its address. The unit that declares the storage is
-          // the one that builds it, where it states everything else it
-          // declares, and the symbol is the cell holding where it landed -- so
-          // a reference of any unit loads the same address.
+          // The symbol is the storage itself, which the unit declaring it
+          // defines and builds before the program starts, so a reference of
+          // any unit names the same address.
           [&](const lir::StaticRef& s) -> diag::Result<llvm::Value*> {
-            return builder_.CreateLoad(
-                module_->Types().Ptr(), module_->DeclaredCell(s.symbol));
+            return module_->SharedStorage(s.symbol);
           },
-          // The record a class's objects carry, named by the class rather than
-          // by a symbol, because what this target calls one is this target's
-          // own to know -- the same answer a member projection and a dispatch
-          // target already read off a class.
-          [&](const lir::ObjectRecordRef& r) -> diag::Result<llvm::Value*> {
-            return DefinitionOf(r.object);
+          // The definition is the global itself, so its address is the
+          // operand.
+          [&](const lir::DefinitionRef& c) -> diag::Result<llvm::Value*> {
+            auto definition = module_->DefinitionOf(c.defined);
+            if (!definition) {
+              return std::unexpected(std::move(definition.error()));
+            }
+            return *definition;
           }},
       operand);
 }
@@ -1755,6 +1776,42 @@ auto CodeGenFunction::WrapperPlaceOf(const lir::Place& place) const
       .domain = *domain, .kind = reached->first, .wrapper = std::move(wrapper)};
 }
 
+// A capture is a member of the closure value, so each operand is taken into it
+// as a value is into any storage it initializes: an owned value as a copy, and
+// anything else as itself.
+auto CodeGenFunction::LowerClosure(
+    const lir::ClosureInstr& built, lir::TypeId result_type, llvm::Value* out)
+    -> diag::Result<llvm::Value*> {
+  auto definition = module_->DefinitionOf(result_type);
+  if (!definition) {
+    return std::unexpected(std::move(definition.error()));
+  }
+  auto record = module_->RecordOf(result_type);
+  if (!record) {
+    return std::unexpected(std::move(record.error()));
+  }
+  const std::array<llvm::Value*, 2> made{*definition, out};
+  llvm::Value* closure = builder_.CreateCall(
+      Entry(
+          RuntimeSymbol(RuntimeOp::kClosureMake), module_->Types().Ptr(), made),
+      made);
+  for (std::size_t i = 0; i < built.captures.size(); ++i) {
+    auto value = LowerOperand(built.captures[i]);
+    if (!value) {
+      return std::unexpected(std::move(value.error()));
+    }
+    const lir::TypeId type = (*record)->types.at(i);
+    llvm::Value* slot = builder_.CreateConstInBoundsGEP1_64(
+        builder_.getInt8Ty(), closure, (*record)->offsets.at(i));
+    if (module_->Unit().types.Get(type).IsOwnedValue()) {
+      CopyValue(type, *value, slot);
+    } else {
+      builder_.CreateStore(*value, slot);
+    }
+  }
+  return out;
+}
+
 auto CodeGenFunction::StorageReached(lir::TypeId operand) const
     -> const lir::Type& {
   const lir::TypePool& types = module_->Unit().types;
@@ -1890,10 +1947,10 @@ auto CodeGenFunction::ConstructionOf(
                 support::ValueDomain::kChandle, RuntimeOp::kMake));
           },
           [&](const lir::ClosureType&) -> diag::Result<Construction> {
-            return Construction{
-                .symbol = RuntimeSymbol(RuntimeOp::kClosureMake),
-                .operand_form =
-                    OperandsAsSpanAfterDefinition{.defined = result}};
+            throw InternalError(
+                "llvm codegen: a closure is built by an instruction of its "
+                "own, "
+                "never by a construction -- please report this as a bug");
           },
           // A container is built over an element list laid down a stated number
           // of times.
@@ -1992,10 +2049,15 @@ auto CodeGenFunction::ConstructionOf(
               // address; and a write into an object is opened by the entry
               // that opens it.
               case lir::RuntimeLibraryKind::kPropertyCoordinate:
-              case lir::RuntimeLibraryKind::kBehaviorCoordinate:
-              // A class's record is assembled where the class is emitted, so a
-              // body names one and never builds one.
+              // A class's definition is a constant the declaring unit emits,
+              // so a body names one and never builds one.
               case lir::RuntimeLibraryKind::kObjectDefinition:
+              // The same for what a definition is made of.
+              case lir::RuntimeLibraryKind::kResolvedProperty:
+              case lir::RuntimeLibraryKind::kDeclaredBody:
+              case lir::RuntimeLibraryKind::kScopeInfo:
+              case lir::RuntimeLibraryKind::kScopeCallable:
+              case lir::RuntimeLibraryKind::kScopeClass:
               case lir::RuntimeLibraryKind::kPrintItem:
               case lir::RuntimeLibraryKind::kTimeFormat:
               case lir::RuntimeLibraryKind::kDpiBitChunk:
@@ -2012,27 +2074,21 @@ auto CodeGenFunction::ConstructionOf(
             throw InternalError("llvm codegen: unknown runtime library kind");
           },
           // A wrapper that owns storage brings that storage into existence with
-          // itself, and which entry does that is what the ownership says. The
-          // runtime owns the object tree, so it is the runtime that builds a
-          // node of it. A shared owner instead answers with a hold, because
+          // itself, and which entry does that is what the ownership says. A
+          // sole owner is storage `operator new` allocates for a complete
+          // object of the class, which the class's constructor then runs on, as
+          // a `new` does. A shared owner instead answers with a hold, because
           // what it brings into existence outlives the scope that asked for it
           // and ends with the last holder rather than at any one exit (LRM
-          // 6.21). A borrowed pointer is bound to storage that already exists,
-          // so nothing constructs one.
-          //
-          // The two that do construct take their operands differently, and the
-          // difference is what each one is making. Building a node takes what a
-          // node is built from -- where it hangs, what it is reached by, and
-          // the values its own class is parameterized by. A hold makes an empty
-          // variable's cell, so it takes nothing and is named by the domain
-          // the cell holds.
+          // 6.21); a hold makes an empty variable's cell, so it takes nothing
+          // and is named by the domain the cell holds. A borrowed pointer is
+          // bound to storage that already exists, so nothing constructs one.
           [&](const lir::PointerType& p) -> diag::Result<Construction> {
             switch (p.ownership) {
               case lir::PointerOwnership::kUnique:
                 return Construction{
-                    .symbol = RuntimeSymbol(RuntimeOp::kMakeScope),
-                    .operand_form =
-                        ScopeOperandsAfterDefinition{.defined = p.pointee}};
+                    .symbol = std::string(kOperatorNew),
+                    .operand_form = OperandsAfterSize{.of = p.pointee}};
               case lir::PointerOwnership::kShared: {
                 const auto* cell = module_->Unit()
                                        .types.Get(p.pointee)
@@ -2054,14 +2110,10 @@ auto CodeGenFunction::ConstructionOf(
             }
             throw InternalError("llvm codegen: unknown pointer ownership");
           },
-          // An object the program owns rather than the object tree, brought
-          // into existence together with the handle that refers to it (LRM
-          // 8.3). The definition its class carries says what storage its
-          // properties need, so the entry takes that and nothing else.
-          [&](const lir::ManagedRefType& m) -> diag::Result<Construction> {
-            return Construction{
-                .symbol = RuntimeSymbol(RuntimeOp::kObjectMake),
-                .operand_form = OperandsAfterDefinition{.defined = m.pointee}};
+          // A handle owning an object the program built (LRM 8.3), handed that
+          // object once its construction has run.
+          [&](const lir::ManagedRefType&) -> diag::Result<Construction> {
+            return entry(RuntimeSymbol(RuntimeOp::kObjectAdopt));
           },
           // Landing a machine integer in a real and reshaping across precisions
           // are named conversions, so what reaches the real family here is a
@@ -2263,12 +2315,12 @@ auto CodeGenFunction::EncodingOf(
     const lir::CallInstr& call, lir::TypeId result_type) const
     -> diag::Result<CallEncoding> {
   using Encoded = diag::Result<CallEncoding>;
-  // Only a target named by something other than a signature encodes anything: a
-  // library entry is named by its identity and says on its declaration which
-  // operand states a representation, and a construction is named by the type it
-  // builds, which says both that and the form its entry takes the rest in.
-  // Every other target names code whose parameters are already typed, so what
-  // the call states is what crosses.
+  // A target encodes something where its entry takes more than the call
+  // states. A library entry says on its declaration which operand states a
+  // representation, and a construction is named by the type it builds, which
+  // says both that and the form its entry takes the rest in. Every other target
+  // names code whose parameters are already typed, so what the call states is
+  // what crosses.
   return std::visit(
       Overloaded{
           [&](const lir::BuiltinTarget& t) -> Encoded {
@@ -2296,19 +2348,13 @@ auto CodeGenFunction::EncodingOf(
           [](const lir::FunctionTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::DispatchTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::IndirectTarget&) -> Encoded { return CallEncoding{}; },
+          [](const lir::LibraryConstructorTarget&) -> Encoded {
+            return CallEncoding{};
+          },
           [](const lir::SymbolTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ForeignTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ValueCellTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::OpenWriteTarget&) -> Encoded { return CallEncoding{}; },
-          [](const lir::OpenVariablesTarget&) -> Encoded {
-            return CallEncoding{.operand_form = OperandsAfterVariableSchema{}};
-          },
-          [](const lir::VariableAddressTarget&) -> Encoded {
-            return CallEncoding{};
-          },
-          [](const lir::CloseVariablesTarget&) -> Encoded {
-            return CallEncoding{};
-          },
           [](const lir::EndValueTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::CopyValueTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::ControlEffectTarget&) -> Encoded {

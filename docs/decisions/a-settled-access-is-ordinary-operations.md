@@ -12,6 +12,19 @@ coordinate kind, which that entry named and left without a sealed value, and **r
 whose concern this entry keeps and whose mechanism it replaces. The last section records the shape
 this project had already built and what implementing the third kind proved about it.
 
+Superseded in part by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md). The second row of
+the table below is gone, because a virtual behavior is answered by name with a body too, one the
+declaring unit synthesizes to make the virtual call on the object it is handed, so every settled
+call is answered with a body and no dispatch position is asked for by name. The library holds no
+dispatch table, and the by-name tables are constants the declaring unit emits rather than records
+the library builds. D4's "the entry is handed the most-derived object" is superseded too. It is
+handed the part of the object the handle reaches it through, and the class asked is the one the
+handle is of, which closes the case D4 left open -- an interface class answers by name every
+behavior it reaches, each with a body that converts its own part to the introducer's. That an erased
+entry takes the object rather than the handle, and that each target spells the entry its own way,
+stand.
+
 ## Why this decision matters
 
 A class a module or an interface declares is a type of that element's instance (LRM 6.22), so no
@@ -190,7 +203,7 @@ existed.
 ## Rejected alternatives
 
 **Give every method a dispatch position, so a non-overridable call is a dispatch nothing
-overrides.** It would be correct -- the lineage walk would find no takeover and land on the
+overrides.** It would be correct -- the lineage walk would find no override and land on the
 declaring class's own entry. Rejected on two counts. It encodes a constant as a lookup, paying a
 walk at every call to learn what elaboration already knew. And it makes "introduces a dispatch
 position" mean something other than what LRM 8.20 means by it, which every reader of that table

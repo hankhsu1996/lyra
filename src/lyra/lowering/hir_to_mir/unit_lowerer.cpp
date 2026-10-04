@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "lyra/base/id_allocator.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -38,6 +39,7 @@
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -406,6 +408,22 @@ auto PublishObjectEntry(
           .code = std::move(code),
           .foreign = std::nullopt,
           .virtual_dispatch = std::nullopt});
+}
+
+// What a promise names of another unit's class or behavior, in MIR's terms.
+// Reading a promise records no dependency, so neither does this; a reference
+// that names the class records it where it takes the name.
+auto PromisedClass(const hir::ExternalClassRef& ref) -> mir::CrossUnitClassRef {
+  return mir::CrossUnitClassRef{
+      .unit_name = ref.unit_name, .class_name = ref.class_name};
+}
+
+auto PromisedSlot(const hir::ExternalDispatchSlot& slot)
+    -> mir::OverridesExternalSlot {
+  return mir::OverridesExternalSlot{
+      .unit_name = slot.unit_name,
+      .class_name = slot.class_name,
+      .ordinal = mir::BehaviorOrdinal{slot.behavior.value}};
 }
 
 }  // namespace
@@ -806,18 +824,24 @@ auto UnitLowerer::MakeExternalClassPointee(const hir::ExternalClassRef& ref)
 }
 
 auto UnitLowerer::MakeExternalClassRef(const hir::ExternalClassRef& ref)
-    -> mir::ClassRef {
+    -> mir::DeclaredClassRef {
   unit_.ConsumeClassOf(ref.unit_name, ref.class_name);
-  return mir::ClassRef{mir::CrossUnitClassRef{
-      .unit_name = ref.unit_name, .class_name = ref.class_name}};
+  return mir::CrossUnitClassRef{
+      .unit_name = ref.unit_name, .class_name = ref.class_name};
 }
 
-auto UnitLowerer::TranslateClassRef(const hir::ClassRef& ref) -> mir::ClassRef {
-  if (const auto* local = std::get_if<hir::LocalClassRef>(&ref)) {
-    return mir::ClassRef{
-        mir::IntraUnitClassRef{.class_id = TranslateClass(local->class_id)}};
-  }
-  return MakeExternalClassRef(std::get<hir::ExternalClassRef>(ref));
+auto UnitLowerer::TranslateClassRef(const hir::ClassRef& ref)
+    -> mir::DeclaredClassRef {
+  return std::visit(
+      Overloaded{
+          [&](const hir::LocalClassRef& local) -> mir::DeclaredClassRef {
+            return mir::IntraUnitClassRef{
+                .class_id = TranslateClass(local.class_id)};
+          },
+          [&](const hir::ExternalClassRef& external) -> mir::DeclaredClassRef {
+            return MakeExternalClassRef(external);
+          }},
+      ref);
 }
 
 auto UnitLowerer::MakeCrossUnitClassFieldTarget(
@@ -825,7 +849,7 @@ auto UnitLowerer::MakeCrossUnitClassFieldTarget(
     -> mir::CrossUnitClassFieldTarget {
   unit_.ConsumeClassOf(target.unit_name, target.class_name);
   // The properties a class publishes are a prefix of its own storage, so the
-  // position counted out of the promise is the slot that class gave.
+  // position counted out of the signature is the slot that class gave.
   return mir::CrossUnitClassFieldTarget{
       .unit_name = target.unit_name,
       .class_name = target.class_name,
@@ -834,31 +858,53 @@ auto UnitLowerer::MakeCrossUnitClassFieldTarget(
 
 auto UnitLowerer::TakeClassPromise(const hir::ExternalClass& published)
     -> void {
+  // A class extending nothing the source wrote extends the root every built
+  // object does, as a class of this unit would. An interface class holds no
+  // storage and no value is built of one, so nothing is placed after it (LRM
+  // 8.26).
+  std::optional<mir::ClassRef> base;
+  if (!published.is_interface_class) {
+    base = published.base.has_value()
+               ? mir::ClassRef{PromisedClass(*published.base)}
+               : mir::ClassRef{mir::ManagedObjectRootRef{}};
+  }
   mir::ExternalClass record{
       .unit_name = published.unit_name,
       .class_name = published.class_name,
-      .base = {},
+      .base = std::move(base),
       .is_interface_class = published.is_interface_class,
+      .implements = {},
       .fields = {},
-      .behaviors = {}};
-  // What the declaring unit's class extends, stated the way that unit states
-  // it: the root every object extends where the source named no base, and
-  // nothing for an interface class (LRM 8.26).
-  if (published.base.has_value()) {
-    record.base = mir::ClassRef{mir::CrossUnitClassRef{
-        .unit_name = published.base->unit_name,
-        .class_name = published.base->class_name}};
-  } else if (!published.is_interface_class) {
-    record.base = mir::ClassRef{mir::ManagedObjectRootRef{}};
-  }
-  for (const hir::PublishedMemberId id : published.members.Ids()) {
-    const hir::PublishedMember& member = published.members.Get(id);
+      .private_field_types = {},
+      .behaviors = {},
+      .overrides = {}};
+  for (const hir::PublishedPropertyId id : published.properties.Ids()) {
+    const hir::PublishedProperty& property = published.properties.Get(id);
     record.fields.Add(
         mir::PromisedField{
-            .name = member.name, .type = TranslateType(member.type)});
+            .name = property.name, .type = TranslateType(property.type)});
   }
-  for (const hir::PublishedBehaviorId id : published.behaviors.Ids()) {
-    record.behaviors.push_back(published.behaviors.Get(id).name);
+  for (const hir::TypeId type : published.local_property_types) {
+    record.private_field_types.push_back(TranslateType(type));
+  }
+  for (const hir::ExternalClassRef& iface : published.implements) {
+    record.implements.push_back(PromisedClass(iface));
+  }
+  // What a class extending this one lays its table out from is the virtual
+  // methods this one introduces, in the order it declares them.
+  for (const hir::PublishedMethod& method : published.methods) {
+    if (const auto* introduced =
+            std::get_if<hir::IntroducesVirtual>(&method.dispatch)) {
+      record.behaviors.push_back(
+          mir::PromisedBehavior{
+              .name = method.prototype.name, .is_pure = introduced->is_pure});
+    }
+  }
+  for (const hir::PromisedOverride& overriding : published.overrides) {
+    record.overrides.push_back(
+        mir::PromisedOverride{
+            .method = overriding.method,
+            .behavior = PromisedSlot(overriding.behavior)});
   }
   unit_.external_classes.push_back(std::move(record));
 }
@@ -873,28 +919,31 @@ auto UnitLowerer::RecordPromisedClass(const hir::ExternalUnitObject& promised)
   }
   // What a unit promised of its object is a class of that unit, reached the way
   // any other is: one behavior per member it published and then one per
-  // subroutine, counted in the order it published them. None of that object's
-  // storage is reachable, so the record lists no properties -- reaching a
+  // subroutine, counted in the order it published them. It is a scope of the
+  // design hierarchy, so it extends the library's root of that tree. None of
+  // its storage is reachable, so the record lists no properties -- reaching a
   // published member is one of these behaviors rather than a position in the
-  // object.
-  //
-  // It extends the runtime's own class, which is what puts its values in the
-  // design hierarchy. That is not read from the promise: a unit's object stands
-  // in the tree by being one, so the class built for it says so here.
+  // object -- and a referrer holds no body of it, so each is pure.
   mir::ExternalClass record{
       .unit_name = promised.unit_name,
       .class_name = promised.class_name,
-      .base = mir::ClassRef{mir::RuntimeClassRef{
-          .symbol = std::string{mir::kObjectTreeClassSymbol}}},
+      .base = mir::ClassRef{mir::ObjectTreeRootRef{}},
       .is_interface_class = false,
+      .implements = {},
       .fields = {},
-      .behaviors = {}};
+      .private_field_types = {},
+      .behaviors = {},
+      .overrides = {}};
   record.behaviors.reserve(promised.members.size() + promised.callables.size());
   for (const hir::PublishedMemberId id : promised.members.Ids()) {
-    record.behaviors.push_back(promised.members.Get(id).name);
+    record.behaviors.push_back(
+        mir::PromisedBehavior{
+            .name = promised.members.Get(id).name, .is_pure = true});
   }
   for (const hir::PublishedCallableId id : promised.callables.Ids()) {
-    record.behaviors.push_back(promised.callables.Get(id).name);
+    record.behaviors.push_back(
+        mir::PromisedBehavior{
+            .name = promised.callables.Get(id).name, .is_pure = true});
   }
   unit_.external_classes.push_back(std::move(record));
 }
@@ -948,10 +997,7 @@ auto UnitLowerer::MakeExternalMethodTarget(
 auto UnitLowerer::MakeExternalMethodOverride(
     const hir::ExternalDispatchSlot& slot) -> mir::OverridesExternalSlot {
   unit_.ConsumeClassOf(slot.unit_name, slot.class_name);
-  return mir::OverridesExternalSlot{
-      .unit_name = slot.unit_name,
-      .class_name = slot.class_name,
-      .ordinal = mir::BehaviorOrdinal{slot.behavior.value}};
+  return PromisedSlot(slot);
 }
 
 auto UnitLowerer::MakeExternalVirtualSlot(const hir::ExternalDispatchSlot& slot)
@@ -961,6 +1007,19 @@ auto UnitLowerer::MakeExternalVirtualSlot(const hir::ExternalDispatchSlot& slot)
       .unit_name = slot.unit_name,
       .class_name = slot.class_name,
       .ordinal = mir::BehaviorOrdinal{slot.behavior.value}};
+}
+
+auto UnitLowerer::LocalVirtualSlotOf(const hir::LocalClassMethodTarget& method)
+    const -> std::optional<mir::VirtualSlot> {
+  const mir::ClassId owner = TranslateClass(method.owner);
+  const mir::CallableId callable = TranslateMethod(method.owner, method.method);
+  // A method's dispatch role is read from the class's declaration rather than
+  // its body: a peer body may name the method before the class is lowered.
+  return GetClassShape(owner)
+      .callable_signatures.Get(callable)
+      .virtual_dispatch.transform([&](const mir::VirtualDispatchRole& role) {
+        return CanonicalVirtualSlot(owner, callable, role);
+      });
 }
 
 auto UnitLowerer::MakeNamespaceCallableTarget(

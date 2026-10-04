@@ -2,6 +2,7 @@
 
 #include <span>
 #include <string_view>
+#include <utility>
 #include <variant>
 
 #include "lyra/backend/cpp/precedence.hpp"
@@ -27,11 +28,6 @@ namespace lyra::backend::cpp {
 // `co_await Suspension{call(...)}`. The call returns whether it parked, and C++
 // can only suspend by awaiting something.
 [[nodiscard]] auto SuspensionCppType() -> std::string_view;
-
-// The root every object the program builds extends. Objects are held by shared
-// ownership, and an object that hands out a handle to itself (LRM 8.11) has to
-// know its owner, which this root records.
-[[nodiscard]] auto ManagedObjectRootCppType() -> std::string_view;
 
 // A MIR type, written into the output as its C++ type. An enum is written as
 // its base type, a packed array; there is no C++ enum. It holds a view of the
@@ -80,19 +76,23 @@ void WriteOne(TargetText& out, const CppTupleComponents& components);
 // class.
 class CppClassRef {
  public:
-  CppClassRef(const mir::CompilationUnit& unit, const mir::ClassRef& ref)
-      : unit_(&unit), ref_(&ref) {
+  CppClassRef(const mir::CompilationUnit& unit, mir::ClassRef ref)
+      : unit_(&unit), ref_(std::move(ref)) {
+  }
+  CppClassRef(
+      const mir::CompilationUnit& unit, const mir::DeclaredClassRef& ref)
+      : CppClassRef(unit, mir::AsClassRef(ref)) {
   }
   [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
     return *unit_;
   }
   [[nodiscard]] auto Ref() const -> const mir::ClassRef& {
-    return *ref_;
+    return ref_;
   }
 
  private:
   const mir::CompilationUnit* unit_;
-  const mir::ClassRef* ref_;
+  mir::ClassRef ref_;
 };
 
 void WriteOne(TargetText& out, const CppClassRef& ref);
@@ -136,6 +136,21 @@ void WriteDereferenced(TargetText& out, WritePlace write_place) {
   out += "(*";
   write_place(Precedence::kPrefix);
   out += ")";
+}
+
+// The object a call is entered on, followed by the `.` its member takes.
+// `write_receiver` writes the receiver and is told the precedence its position
+// needs.
+template <typename WriteReceiver>
+void WriteReceiverObject(
+    TargetText& out, const ReceiverAccess& access,
+    WriteReceiver write_receiver) {
+  std::visit(
+      Overloaded{
+          [&](ReceiverIsTheObject) { write_receiver(Precedence::kPostfix); },
+          [&](OpenedByDereference) { WriteDereferenced(out, write_receiver); }},
+      access);
+  out += ".";
 }
 
 // The storage behind a place, written as a postfix form so the caller can put a

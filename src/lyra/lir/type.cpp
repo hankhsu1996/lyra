@@ -109,10 +109,18 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "control effect";
     case RuntimeLibraryKind::kPropertyCoordinate:
       return "property coordinate";
-    case RuntimeLibraryKind::kBehaviorCoordinate:
-      return "behavior coordinate";
     case RuntimeLibraryKind::kObjectDefinition:
       return "object definition";
+    case RuntimeLibraryKind::kResolvedProperty:
+      return "resolved property";
+    case RuntimeLibraryKind::kDeclaredBody:
+      return "declared body";
+    case RuntimeLibraryKind::kScopeInfo:
+      return "scope info";
+    case RuntimeLibraryKind::kScopeCallable:
+      return "scope callable";
+    case RuntimeLibraryKind::kScopeClass:
+      return "scope class";
   }
   throw InternalError("lir::RuntimeLibraryKindName: unknown kind");
 }
@@ -186,7 +194,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             Combine(seed, t.class_name);
           },
           [](const OpaqueObjectType&) {},
-          [&](const RuntimeClassType& t) { Combine(seed, t.symbol); },
+          [&](const RuntimeClassType& t) { Combine(seed, t.which); },
           [&](const ClosureType& t) { Combine(seed, t.closure_id.value); },
           [](const RuntimeEffectsType&) {},
           [](const FilesType&) {},
@@ -593,8 +601,12 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
               case RuntimeLibraryKind::kCancellationTarget:
               case RuntimeLibraryKind::kControlEffect:
               case RuntimeLibraryKind::kPropertyCoordinate:
-              case RuntimeLibraryKind::kBehaviorCoordinate:
               case RuntimeLibraryKind::kObjectDefinition:
+              case RuntimeLibraryKind::kResolvedProperty:
+              case RuntimeLibraryKind::kDeclaredBody:
+              case RuntimeLibraryKind::kScopeInfo:
+              case RuntimeLibraryKind::kScopeCallable:
+              case RuntimeLibraryKind::kScopeClass:
                 return std::nullopt;
             }
             throw InternalError("lir: unknown runtime library kind");

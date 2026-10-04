@@ -6,12 +6,23 @@
 // constructed. It also succeeds when the destination is the same class or a
 // superclass of the source, and for the literal null; a source that refers to
 // no object at all satisfies no run-time check. An interface class handle is a
-// legal source for the same check. An invalid assignment leaves the destination
-// unchanged and the function form answers 0 without issuing an error
-// (LRM 8.16, 6.24.2, 8.26).
+// legal source for the same check, and an interface class a legal destination:
+// the object's class implements it when it or a class it extends names it, or
+// an interface it names extends it. An interface the class reaches along two
+// paths is still one type the object is (LRM 8.26.6.3). An invalid assignment
+// leaves the destination unchanged and the function form answers 0 without
+// issuing an error (LRM 8.16, 6.24.2, 8.26.2, 8.26.5).
 module Top;
-  interface class Drivable;
+  interface class Titled;
+    pure virtual function int title();
+  endclass
+
+  interface class Drivable extends Titled;
     pure virtual function int wheels();
+  endclass
+
+  interface class Insured extends Titled;
+    pure virtual function int premium();
   endclass
 
   class Vehicle;
@@ -22,7 +33,7 @@ module Top;
     endfunction
   endclass
 
-  class Car extends Vehicle implements Drivable;
+  class Car extends Vehicle implements Drivable, Insured;
     int doors;
 
     function new(int weight, int doors);
@@ -32,6 +43,14 @@ module Top;
 
     virtual function int wheels();
       return 4;
+    endfunction
+
+    virtual function int title();
+      return 7;
+    endfunction
+
+    virtual function int premium();
+      return 9;
     endfunction
   endclass
 
@@ -59,6 +78,15 @@ module Top;
   int doors_from_interface_source;
   int answer_from_task_spelling;
   int doors_from_task_spelling;
+  int answer_class_to_interface;
+  int same_object_after_class_to_interface;
+  int answer_inherited_interface;
+  int answer_interface_to_interface;
+  int answer_extended_interface;
+  int same_object_through_both_paths;
+  int same_object_assigned_through_both_paths;
+  int answer_unimplemented_interface;
+  int kept_after_unimplemented_interface;
 
   initial begin
     Vehicle v;
@@ -66,6 +94,8 @@ module Top;
     Car held;
     RaceCar r;
     Drivable d;
+    Insured i;
+    Titled t;
 
     // The destination is a superclass of the source: legal whatever the object.
     c = new(1200, 4);
@@ -85,6 +115,7 @@ module Top;
     // destination keeps what it held.
     v = new(900);
     c = held;
+    answer_for_wrong_class = -1;
     answer_for_wrong_class = $cast(c, v);
     doors_after_wrong_class = c.doors;
 
@@ -99,6 +130,7 @@ module Top;
     // A source that refers to no object satisfies no run-time check.
     v = null;
     c = held;
+    answer_for_null_source = -1;
     answer_for_null_source = $cast(c, v);
     doors_after_null_source = c.doors;
 
@@ -120,6 +152,47 @@ module Top;
     $cast(c, v);
     doors_from_task_spelling = c.doors;
     answer_from_task_spelling = (c == held) ? 1 : 0;
+
+    // An interface class as the destination, the class naming it directly.
+    // Casting the result back finds the same object.
+    v = held;
+    d = null;
+    answer_class_to_interface = $cast(d, v);
+    c = null;
+    void'($cast(c, d));
+    same_object_after_class_to_interface = (c == held) ? 1 : 0;
+
+    // The class it extends names the interface.
+    r = new(1000, 2, 250);
+    v = r;
+    d = null;
+    answer_inherited_interface = $cast(d, v);
+
+    // From one interface's handle to another the object's class names.
+    d = held;
+    i = null;
+    answer_interface_to_interface = $cast(i, d);
+
+    // To an interface that both interfaces the class names extend.
+    t = null;
+    answer_extended_interface = $cast(t, d);
+    c = null;
+    void'($cast(c, t));
+    same_object_through_both_paths = (c == held) ? 1 : 0;
+    t = held;
+    c = null;
+    void'($cast(c, t));
+    same_object_assigned_through_both_paths = (c == held) ? 1 : 0;
+
+    // The object's class implements nothing: the destination keeps what it
+    // held.
+    v = new(800);
+    d = held;
+    answer_unimplemented_interface = -1;
+    answer_unimplemented_interface = $cast(d, v);
+    c = null;
+    void'($cast(c, d));
+    kept_after_unimplemented_interface = (c == held) ? 1 : 0;
   end
 
   final begin
@@ -166,6 +239,33 @@ module Top;
     if (answer_from_task_spelling !== 1)
       $fatal(1, "answer_from_task_spelling was %0d, expected 1",
              answer_from_task_spelling);
+    if (answer_class_to_interface !== 1)
+      $fatal(1, "answer_class_to_interface was %0d, expected 1",
+             answer_class_to_interface);
+    if (same_object_after_class_to_interface !== 1)
+      $fatal(1, "same_object_after_class_to_interface was %0d, expected 1",
+             same_object_after_class_to_interface);
+    if (answer_inherited_interface !== 1)
+      $fatal(1, "answer_inherited_interface was %0d, expected 1",
+             answer_inherited_interface);
+    if (answer_interface_to_interface !== 1)
+      $fatal(1, "answer_interface_to_interface was %0d, expected 1",
+             answer_interface_to_interface);
+    if (answer_extended_interface !== 1)
+      $fatal(1, "answer_extended_interface was %0d, expected 1",
+             answer_extended_interface);
+    if (same_object_through_both_paths !== 1)
+      $fatal(1, "same_object_through_both_paths was %0d, expected 1",
+             same_object_through_both_paths);
+    if (same_object_assigned_through_both_paths !== 1)
+      $fatal(1, "same_object_assigned_through_both_paths was %0d, expected 1",
+             same_object_assigned_through_both_paths);
+    if (answer_unimplemented_interface !== 0)
+      $fatal(1, "answer_unimplemented_interface was %0d, expected 0",
+             answer_unimplemented_interface);
+    if (kept_after_unimplemented_interface !== 1)
+      $fatal(1, "kept_after_unimplemented_interface was %0d, expected 1",
+             kept_after_unimplemented_interface);
     $display("All checks passed");
   end
 endmodule

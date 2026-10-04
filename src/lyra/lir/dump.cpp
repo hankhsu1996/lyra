@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -49,6 +51,12 @@ class LirDumper {
       Line(
           std::format(
               "static \"{}\" : {}", storage.symbol, FormatType(storage.type)));
+    }
+    for (const GlobalConstant& constant : unit_->constants) {
+      Line(
+          std::format(
+              "{} constant \"{}\" = {}", LinkageName(constant.linkage),
+              constant.symbol, FormatConstant(constant.initializer)));
     }
     for (const ClassId id : unit_->classes.Ids()) {
       DumpClass(id);
@@ -111,8 +119,15 @@ class LirDumper {
   void DumpExternalClass(const ExternalClass& cls) {
     Line(std::format("ExternalClass \"{}.{}\"", cls.unit_name, cls.class_name));
     Indent();
+    if (cls.base.has_value()) {
+      Line(std::format("base: {}", FormatType(*cls.base)));
+    }
     for (std::size_t i = 0; i < cls.members.size(); ++i) {
       Line(std::format("member[{}] : {}", i, FormatType(cls.members[i].type)));
+    }
+    DumpDispatch(cls.dispatch);
+    for (const TypeId iface : cls.implements) {
+      Line(std::format("implements: {}", FormatType(iface)));
     }
     Dedent();
   }
@@ -127,44 +142,87 @@ class LirDumper {
             id.value));
     Indent();
     if (cls.base.has_value()) {
-      Line(std::format("Base: {}", FormatBase(*cls.base)));
-    }
-    if (cls.tree_program.has_value()) {
-      Line(
-          std::format(
-              "TreeProgram: resolve=Fn[{}], initialize=Fn[{}], create=Fn[{}]",
-              cls.tree_program->resolve_state.value,
-              cls.tree_program->initialize_state.value,
-              cls.tree_program->create_processes.value));
+      Line(std::format("base: {}", FormatType(*cls.base)));
     }
     for (std::size_t i = 0; i < cls.members.size(); ++i) {
       Line(std::format("member[{}] : {}", i, FormatType(cls.members[i].type)));
     }
-    if (cls.constructor.has_value()) {
-      Line(
-          std::format(
-              "constructor: {}", unit_->functions.Get(*cls.constructor).name));
+    DumpDispatch(cls.dispatch);
+    for (const TypeId iface : cls.implements) {
+      Line(std::format("implements: {}", FormatType(iface)));
     }
-    for (std::size_t i = 0; i < cls.introduces.size(); ++i) {
-      const Introduction& introduced = cls.introduces[i];
+    for (const ConformingBehavior& answered : cls.conforming) {
       Line(
           std::format(
-              "introduces[{}] \"{}\": {}", i, introduced.name,
-              FormatBody(introduced.body)));
-    }
-    for (const DeclaredClass& declared : cls.declares) {
-      Line(
-          std::format(
-              "declares \"{}\": Class[{}]", declared.name,
-              declared.declaration.value));
-    }
-    for (const DispatchTakeover& taken : cls.takeovers) {
-      Line(
-          std::format(
-              "overrides {}: {}", FormatStatedDispatchRef(taken.method),
-              unit_->functions.Get(taken.body).name));
+              "conforms: {} <- {}",
+              FormatStatedDispatchRef(answered.interface_behavior),
+              answered.answered_by.has_value()
+                  ? FormatStatedDispatchRef(*answered.answered_by)
+                  : std::string{"nothing"}));
     }
     Dedent();
+  }
+
+  [[nodiscard]] static auto LinkageName(Linkage linkage) -> std::string_view {
+    switch (linkage) {
+      case Linkage::kInternal:
+        return "internal";
+      case Linkage::kExternal:
+        return "external";
+    }
+    throw InternalError("lir dump: unknown linkage");
+  }
+
+  void DumpDispatch(const ClassDispatch& dispatch) {
+    for (std::size_t i = 0; i < dispatch.introduces.size(); ++i) {
+      Line(
+          std::format(
+              "introduces[{}]: {}", i,
+              dispatch.introduces[i].value_or("nothing")));
+    }
+    for (const Override& overriding : dispatch.overrides) {
+      Line(
+          std::format(
+              "overrides {}: {}", FormatStatedDispatchRef(overriding.behavior),
+              overriding.body));
+    }
+  }
+
+  [[nodiscard]] auto FormatConstant(const Constant& constant) const
+      -> std::string {
+    const auto list = [&](std::span<const Constant> parts) {
+      std::string out;
+      for (const Constant& part : parts) {
+        if (!out.empty()) {
+          out += ", ";
+        }
+        out += FormatConstant(part);
+      }
+      return out;
+    };
+    return std::visit(
+        Overloaded{
+            [](const ConstantInt& c) { return std::format("{}", c.value); },
+            [](const ConstantNull&) { return std::string{"null"}; },
+            [](const ConstantString& c) {
+              return std::format("\"{}\"", c.text);
+            },
+            [&](const ConstantFunction& c) {
+              return std::format("&{}", unit_->functions.Get(c.function).name);
+            },
+            [](const ConstantAddress& c) {
+              return std::format("&{}", c.symbol);
+            },
+            [&](const ConstantRecord& c) {
+              return std::format(
+                  "{} {{{}}}",
+                  Type{RuntimeLibraryType{.kind = c.kind}}.KindName(),
+                  list(c.parts));
+            },
+            [&](const ConstantArray& c) {
+              return std::format("[{}]", list(c.elements));
+            }},
+        constant.value);
   }
 
   void DumpClosure(ClosureId id) {
@@ -176,7 +234,7 @@ class LirDumper {
           std::format(
               "capture[{}] : {}", i, FormatType(closure.captures[i].type)));
     }
-    DumpFunction(unit_->functions.Get(closure.invoke));
+    Line(std::format("invoke: {}", unit_->functions.Get(closure.invoke).name));
     Dedent();
   }
 
@@ -227,6 +285,21 @@ class LirDumper {
             [&](const TupleInstr& tuple) -> std::string {
               return std::format("tuple({})", FormatOperands(tuple.components));
             },
+            [](const OpenVariablesInstr&) -> std::string {
+              return "open variables";
+            },
+            [&](const VariableAddressInstr& reached) -> std::string {
+              return std::format(
+                  "variable {}[{}]", FormatOperand(reached.variables),
+                  reached.position.value);
+            },
+            [&](const CloseVariablesInstr& closed) -> std::string {
+              return std::format(
+                  "close variables {}", FormatOperand(closed.variables));
+            },
+            [&](const ClosureInstr& built) -> std::string {
+              return std::format("closure({})", FormatOperands(built.captures));
+            },
             [&](const ArrayInstr& array) -> std::string {
               return std::format("array({})", FormatOperands(array.elements));
             },
@@ -236,6 +309,13 @@ class LirDumper {
             },
             [&](const CastInstr& cast) -> std::string {
               return std::format("cast {}", FormatOperand(cast.operand));
+            },
+            [&](const HandleCastInstr& cast) -> std::string {
+              return std::format("handle_cast {}", FormatOperand(cast.operand));
+            },
+            [&](const DynamicCastInstr& cast) -> std::string {
+              return std::format(
+                  "dynamic_cast {}", FormatOperand(cast.operand));
             },
             [&](const AggregateExtractInstr& extract) -> std::string {
               return std::format(
@@ -314,33 +394,10 @@ class LirDumper {
         term.data);
   }
 
-  [[nodiscard]] auto FormatBody(const std::optional<FunctionId>& body) const
-      -> std::string {
-    return body.has_value() ? unit_->functions.Get(*body).name
-                            : std::string{"(unanswered)"};
-  }
-
   [[nodiscard]] static auto FormatStatedDispatchRef(StatedDispatchRef method)
       -> std::string {
     return std::format(
         "{}#{}", FormatType(method.introduced_by), method.ordinal.value);
-  }
-
-  [[nodiscard]] static auto FormatBase(const Base& base) -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const IntraUnitBase& i) -> std::string {
-              return std::format("Class[{}]", i.class_id.value);
-            },
-            [](const CrossUnitBase& e) -> std::string {
-              return std::format(
-                  "CrossUnit(\"{}::{}\")", e.unit_name, e.class_name);
-            },
-            [](const ObjectTreeBase&) -> std::string { return "ObjectTree"; },
-            [](const ManagedObjectBase&) -> std::string {
-              return "ManagedObject";
-            }},
-        base);
   }
 
   [[nodiscard]] auto FormatCallTarget(const CallTarget& target) const
@@ -361,6 +418,10 @@ class LirDumper {
               return std::format("through {}", FormatOperand(i.callee));
             },
             [](const ConstructTarget&) -> std::string { return "Construct"; },
+            [](const LibraryConstructorTarget& c) -> std::string {
+              return std::format(
+                  "construct {}", support::RuntimeClassName(c.cls));
+            },
             [](const SymbolTarget& s) -> std::string {
               return std::format("extern {}", s.symbol);
             },
@@ -373,15 +434,6 @@ class LirDumper {
             [](const OpenWriteTarget& w) -> std::string {
               return std::string{OpenWriteOpName(w.op)};
             },
-            [](const OpenVariablesTarget&) -> std::string {
-              return "variables_open";
-            },
-            [](const VariableAddressTarget&) -> std::string {
-              return "variable_addr";
-            },
-            [](const CloseVariablesTarget&) -> std::string {
-              return "variables_close";
-            },
             [](const EndValueTarget&) -> std::string { return "end"; },
             [](const CopyValueTarget&) -> std::string { return "copy"; },
             [](const ControlEffectTarget& c) -> std::string {
@@ -393,7 +445,7 @@ class LirDumper {
         target);
   }
 
-  [[nodiscard]] auto FormatOperands(const std::vector<Operand>& ops) const
+  [[nodiscard]] static auto FormatOperands(const std::vector<Operand>& ops)
       -> std::string {
     std::string out;
     for (std::size_t i = 0; i < ops.size(); ++i) {
@@ -405,7 +457,7 @@ class LirDumper {
     return out;
   }
 
-  [[nodiscard]] auto FormatPlace(const Place& place) const -> std::string {
+  [[nodiscard]] static auto FormatPlace(const Place& place) -> std::string {
     std::string out = FormatOperand(place.base);
     for (const Projection& step : place.chain) {
       std::visit(
@@ -428,7 +480,7 @@ class LirDumper {
     return out;
   }
 
-  [[nodiscard]] auto FormatSelector(const AggregateSelector& selector) const
+  [[nodiscard]] static auto FormatSelector(const AggregateSelector& selector)
       -> std::string {
     return std::visit(
         Overloaded{
@@ -444,7 +496,7 @@ class LirDumper {
         selector);
   }
 
-  [[nodiscard]] auto FormatOperand(const Operand& op) const -> std::string {
+  [[nodiscard]] static auto FormatOperand(const Operand& op) -> std::string {
     return std::visit(
         Overloaded{
             [](const Use& use) -> std::string {
@@ -477,15 +529,11 @@ class LirDumper {
             [](const IntegralConstantRef& c) -> std::string {
               return std::format("const:{}", c.constant.value);
             },
-            [&](const FuncRef& f) -> std::string {
-              return std::format(
-                  "funcref {}", unit_->functions.Get(f.function).name);
-            },
             [](const StaticRef& s) -> std::string {
               return std::format("staticref {}", s.symbol);
             },
-            [](const ObjectRecordRef& r) -> std::string {
-              return std::format("objectrecord:t{}", r.object.value);
+            [](const DefinitionRef& c) -> std::string {
+              return std::format("definition {}", FormatType(c.defined));
             }},
         op);
   }

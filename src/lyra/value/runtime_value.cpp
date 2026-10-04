@@ -127,9 +127,10 @@ auto RuntimeValueOrderBefore(const RuntimeValue& a, const RuntimeValue& b)
         using T = std::decay_t<decltype(lhs)>;
         if constexpr (std::is_same_v<T, Chandle>) {
           return std::less<>{}(lhs.Ptr(), std::get<T>(b.value).Ptr());
-        } else if constexpr (std::is_same_v<T, ManagedRef>) {
+        } else if constexpr (std::is_same_v<T, ObjectRef>) {
           return std::less<>{}(
-              lhs.Share().get(), std::get<T>(b.value).Share().get());
+              lhs.Handle().Share().get(),
+              std::get<T>(b.value).Handle().Share().get());
         } else if constexpr (requires { lhs < std::get<T>(b.value); }) {
           return static_cast<bool>(lhs < std::get<T>(b.value));
         } else {
@@ -177,7 +178,7 @@ auto RuntimeValueBitstreamWidth(const RuntimeValue& value) -> PackedArray {
           throw SimulationError(
               "$bits of a union is not yet supported on this backend; please "
               "open an issue asking for support");
-        } else if constexpr (std::is_same_v<T, ManagedRef>) {
+        } else if constexpr (std::is_same_v<T, ObjectRef>) {
           throw SimulationError(
               "$bits of a class object is not yet supported on this backend; "
               "please open an issue asking for support");
@@ -205,7 +206,7 @@ auto RuntimeValueCountBits(
           throw SimulationError(
               "$countbits of a union is not yet supported on this backend; "
               "please open an issue asking for support");
-        } else if constexpr (std::is_same_v<T, ManagedRef>) {
+        } else if constexpr (std::is_same_v<T, ObjectRef>) {
           throw SimulationError(
               "$countbits of a class object is not yet supported on this "
               "backend; please open an issue asking for support");

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -11,13 +12,14 @@
 #include "lyra/hir/external_class.hpp"
 #include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/port_direction.hpp"
-#include "lyra/hir/published_behavior.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
+#include "lyra/hir/published_method.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/published_target.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/hir/type_import.hpp"
 
 namespace lyra::hir {
 
@@ -93,53 +95,50 @@ struct InstanceClassSignature {
 
 // One class of the source language a unit publishes (LRM 26.2 puts a package's
 // declarations on its signature), named by the canonical name a referrer
-// reaches it under. Two of the fields below are ordered lists rather than sets:
-// a property's slot and a behavior's ordinal are counted out of them, so their
-// order is as much a part of the promise as their contents.
+// reaches it under. It is the class's own declaration as the front end
+// elaborated it, so everything another unit's compiled output depends on about
+// the class is here and a change to any of it is a change to the signature.
+// The lists are ordered rather than sets: a property's slot and a virtual
+// method's ordinal are counted out of them, so their order is as much a part of
+// the signature as their contents.
 //
-// A class states what it adds and nothing about the lineage it extends, so a
-// referrer counts a position out of the class that declares it and never
-// through a lineage it cannot see. What a class keeps to itself (LRM 8.18
-// `local`) is absent, and the class places what it publishes ahead of it, so
-// adding one moves nothing a referrer counted.
+// A class states what it declares and nothing that follows from another class's
+// declaration -- no property or method of a class it extends, and no interface
+// class it is only by way of one it names -- so a referrer reads each of those
+// off the class that declares it.
 struct ClassSignature {
   std::string class_name;
   // The class this one extends, named the way every class named on a signature
   // is -- by declaring unit and canonical name -- and absent where it extends
-  // nothing. A referrer resolves an inherited property or behavior by walking
-  // this chain, which is why nothing inherited is restated below: stating it
-  // would mean reading the base's promise while deriving this one, and a
-  // signature is a function of its own unit's declarations alone.
+  // nothing. A referrer reaches an inherited property or method by walking
+  // this chain, reading each class's own signature.
   std::optional<ExternalClassRef> base;
-  // Whether this is an interface class (LRM 8.26). A class commits to one
-  // rather than extending it, so a behavior an interface class states sits on
-  // no lineage; a referrer that could not tell would name a coordinate no value
-  // carries.
+  // Whether this is an interface class (LRM 8.26), which holds no storage and
+  // whose methods a class implementing it answers through a part of their own.
   bool is_interface_class = false;
-  base::Arena<PublishedMember, PublishedMemberId> members;
-  base::Arena<PublishedBehavior, PublishedBehaviorId> behaviors;
-
-  // The property published under `name`, or nothing where the class published
-  // no such name -- which is what leaves a reference to it with nothing to
-  // compile against.
-  [[nodiscard]] auto FindMember(std::string_view name) const
-      -> std::optional<PublishedMemberId> {
-    for (const PublishedMemberId id : members.Ids()) {
-      if (members.Get(id).name == name) return id;
-    }
-    return std::nullopt;
-  }
-
-  // The behavior published under `name`, or nothing where this class
-  // introduces none such -- a class that answers a behavior it did not
-  // introduce is not where a dispatch names it.
-  [[nodiscard]] auto FindBehavior(std::string_view name) const
-      -> std::optional<PublishedBehaviorId> {
-    for (const PublishedBehaviorId id : behaviors.Ids()) {
-      if (behaviors.Get(id).name == name) return id;
-    }
-    return std::nullopt;
-  }
+  // The interface classes its declaration names, in the order written (LRM
+  // 8.26.2): what a class implements, or what an interface class extends.
+  std::vector<ExternalClassRef> implements;
+  // The properties another unit may name, in the order the class declares them,
+  // which the class places at the start of its own storage -- so adding a
+  // `local` property moves no slot a referrer counted.
+  PublishedProperties properties;
+  // The type of every `local` property (LRM 8.18), in the order the class
+  // places them after those. None is named, so no referrer reaches one; a class
+  // of another unit extending this one still has to know how much storage they
+  // take, because its own properties are placed after them.
+  std::vector<TypeId> local_property_types;
+  // The properties of the class itself rather than of an object of it (LRM
+  // 8.9) that another unit may name. Each is one cell the declaring unit holds
+  // and a referrer reaches by name, so no position is counted out of this
+  // list.
+  std::vector<PublishedProperty> static_properties;
+  // What a construction of the class is entered with (LRM 8.7): each formal's
+  // direction and type, as a method's prototype states them. Absent for an
+  // interface class, of which no object is constructed (LRM 8.26.5).
+  std::optional<ExternalCalleeInterface> constructor;
+  // Every method the class declares, in the order it declares them.
+  std::vector<PublishedMethod> methods;
 };
 
 // What a unit publishes: the declarations another unit may name. Derived by the
@@ -168,6 +167,11 @@ struct UnitSignature {
   // name (LRM 26.2), each reached by its own name rather than through any
   // instance.
   std::vector<ClassSignature> classes;
+  // The subroutines this unit declares in its namespace, which another unit
+  // calls by name on no object (LRM 26.3): what a call to each passes and
+  // awaits. Empty on a design element, whose subroutines are enabled on an
+  // instance of it and so are stated on the object that instance is.
+  std::vector<PublishedCallable> subroutines;
 
   // Whether this unit is a design element (LRM 23.2.1), which exists to be
   // instantiated and wired and so publishes its ports and nothing it declares
@@ -183,6 +187,15 @@ struct UnitSignature {
       -> const ClassSignature* {
     for (const ClassSignature& published : classes) {
       if (published.class_name == name) return &published;
+    }
+    return nullptr;
+  }
+
+  // The namespace subroutine published under `name`, on the same terms.
+  [[nodiscard]] auto FindSubroutine(std::string_view name) const
+      -> const PublishedCallable* {
+    for (const PublishedCallable& published : subroutines) {
+      if (published.name == name) return &published;
     }
     return nullptr;
   }
@@ -225,5 +238,28 @@ struct UnitSignature {
 [[nodiscard]] auto ImportExternalClass(
     const UnitSignature& signature, const ClassSignature& published,
     TypePool& into) -> ExternalClass;
+
+// `interface` and `callable` with every type they name taken into the pool
+// `importer` writes, which is the part of each that cannot cross from one pool
+// to another as it stands.
+[[nodiscard]] auto ImportCalleeInterface(
+    TypeImporter& importer, ExternalCalleeInterface interface)
+    -> ExternalCalleeInterface;
+[[nodiscard]] auto ImportCallable(
+    TypeImporter& importer, PublishedCallable callable) -> PublishedCallable;
+
+// A class's properties and methods taken the same way, in the order given.
+[[nodiscard]] auto ImportTypes(
+    TypeImporter& importer, std::span<const TypeId> types)
+    -> std::vector<TypeId>;
+[[nodiscard]] auto ImportProperties(
+    TypeImporter& importer, const PublishedProperties& properties)
+    -> PublishedProperties;
+[[nodiscard]] auto ImportStaticProperties(
+    TypeImporter& importer, std::span<const PublishedProperty> properties)
+    -> std::vector<PublishedProperty>;
+[[nodiscard]] auto ImportMethods(
+    TypeImporter& importer, std::span<const PublishedMethod> methods)
+    -> std::vector<PublishedMethod>;
 
 }  // namespace lyra::hir

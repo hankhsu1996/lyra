@@ -33,8 +33,12 @@ auto ErasedFunction(const TypePool& types) -> TypeId {
           .params = {}, .result = types.Intern(Type{VoidType{}})}});
 }
 
+// Asked while a type is being read, so it reads the type and interns nothing: a
+// pool that grows may move the type the asker is holding.
 auto IsErasedFunction(const TypePool& types, TypeId id) -> bool {
-  return id == ErasedFunction(types);
+  const auto* function = types.Get(id).As<MachineFunctionType>();
+  return function != nullptr && function->params.empty() &&
+         types.Get(function->result).Is<VoidType>();
 }
 
 auto ErasedPointer(const TypePool& types) -> TypeId {
@@ -42,6 +46,19 @@ auto ErasedPointer(const TypePool& types) -> TypeId {
       Type{PointerType{
           .pointee = types.Intern(Type{VoidType{}}),
           .ownership = PointerOwnership::kBorrowed}});
+}
+
+auto ClassDefinitionType(const TypePool& types) -> TypeId {
+  return types.Intern(
+      Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kObjectDefinition}});
+}
+
+auto ClassDefinitionPointer(const TypePool& types) -> TypeId {
+  return types.Intern(
+      Type{PointerType{
+          .pointee = ClassDefinitionType(types),
+          .ownership = PointerOwnership::kBorrowed,
+          .mutability = Mutability::kReadOnly}});
 }
 
 auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {

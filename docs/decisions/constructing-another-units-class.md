@@ -9,6 +9,18 @@ this unit did not declare, and leaves the promise
 [reaching-past-a-published-class](reaching-past-a-published-class.md) D1 enumerates as it stands;
 reverses neither.
 
+D2's claim that a construction reads nothing about the constructor it enters, D4, and the rejection
+of putting the constructor on the promise are superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D6, where a
+class's signature states its constructor the way it states a method. D2 held of the promise and not
+of the unit: the arguments the front end bound are already a reading of the constructor's
+declaration, since their count, the conversion each one takes and the defaults filled in all follow
+from its formals (LRM 8.7, 13.5). It also held only while every formal is an input, which LRM 8.7
+does not require. The count and the flag that were built and withdrawn were fragments of that
+declaration, each answering one question; the formal list answers them all and is what every other
+method already states. D4 was overtaken when a named class's signature came to be read wherever a
+value of it is laid out. D1 and D3 stand.
+
 ## Context
 
 Bringing an object into existence and initializing it are two operations, and the second is a call

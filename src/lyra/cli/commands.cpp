@@ -33,7 +33,6 @@
 #include "lyra/cli/design_manifest.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
-#include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
@@ -44,7 +43,9 @@
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/hir/dump.hpp"
+#include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/dump.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/dump.hpp"
 #include "lyra/program/program_sink.hpp"
 #include "lyra/support/subprocess.hpp"
@@ -173,7 +174,7 @@ auto WriteCppSources(
   driver::CppProjectSink sources(dir, ctx.args->formatting, *ctx.sink);
   auto lowered = compiler::LowerToSemantic(
       *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
-      [&](compiler::SemanticUnit unit) { return sources.Write(unit.mir); },
+      [&](mir::CompilationUnit unit) { return sources.Write(unit); },
       [&](driver::EmittedUnit unit) { sources.Collect(std::move(unit)); });
   if (!lowered) {
     return std::nullopt;
@@ -211,8 +212,8 @@ auto RunDumpMir(const CommandContext& ctx) -> int {
   }
   auto lowered = compiler::LowerToSemantic(
       *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
-      [](compiler::SemanticUnit unit) -> diag::Result<std::string> {
-        return mir::DumpMir(unit.mir);
+      [](mir::CompilationUnit unit) -> diag::Result<std::string> {
+        return mir::DumpMir(unit);
       },
       [](const std::string& text) { fmt::print("{}", text); });
   if (!lowered) {
@@ -229,22 +230,21 @@ auto RunDumpLir(const CommandContext& ctx) -> int {
   }
   auto lowered = compiler::LowerToExecutable(
       *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
-      [](compiler::ExecutableUnit unit) -> diag::Result<std::string> {
-        return lir::DumpLir(unit.body);
+      [](const lir::CompilationUnit& unit) -> diag::Result<std::string> {
+        return lir::DumpLir(unit);
       },
       [](const std::string& text) { fmt::print("{}", text); });
   if (!lowered) {
     return 1;
   }
-  fmt::print("{}", lir::DumpLir(lowered->root.body));
+  fmt::print("{}", lir::DumpLir(lowered->root));
   return 0;
 }
 
 auto RunDumpLlvm(const CommandContext& ctx) -> int {
   const auto text =
-      [](const compiler::ExecutableUnit& unit) -> diag::Result<std::string> {
-    auto emitted = backend::llvm_backend::EmitModule(
-        unit.body, unit.definition.time_resolution);
+      [](const lir::CompilationUnit& unit) -> diag::Result<std::string> {
+    auto emitted = backend::llvm_backend::EmitModule(unit);
     if (!emitted) {
       return std::unexpected(std::move(emitted.error()));
     }
@@ -270,8 +270,7 @@ auto RunDumpLlvm(const CommandContext& ctx) -> int {
   }
   print(*root);
   fmt::print(
-      "{}",
-      backend::llvm_backend::EmitProgramEntry(lowered->root.body).Print());
+      "{}", backend::llvm_backend::EmitProgramEntry(lowered->root).Print());
   return 0;
 }
 
@@ -428,8 +427,8 @@ auto LlvmProgramRecipe(
   program::ProgramSink sink;
   auto lowered = compiler::LowerToSemantic(
       *design, ctx.elaborated->diag_sources, *ctx.sink, host.compile_width,
-      [&objects](compiler::SemanticUnit unit) {
-        return program::BuildUnit(unit.mir, objects);
+      [&objects](mir::CompilationUnit unit) {
+        return program::BuildUnit(unit, objects);
       },
       [&sink](program::BuiltUnit unit) { sink.Collect(std::move(unit)); });
   if (!lowered) {

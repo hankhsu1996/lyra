@@ -26,6 +26,7 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/tuple_operations.hpp"
@@ -300,7 +301,7 @@ auto CodeGenTuples::Emit(
     }
     const ValueDomain domain = *ValueDomainOf(*unit_, type);
     if (step == TupleLifecycle::kDestroy &&
-        support::LayoutOf(domain).ends_with_nothing_to_do) {
+        runtime::LayoutOf(domain).ends_with_nothing_to_do) {
       return;
     }
     const bool builds =

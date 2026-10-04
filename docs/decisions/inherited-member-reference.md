@@ -1,6 +1,11 @@
 # A member is named by the declaration that declares it
 
-Date: 2026-09-02 Status: accepted
+Date: 2026-09-02 Status: accepted; where the execution backend resolves the pair is superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D1. Its layout
+step resolves it at compile time, across units too, rather than against a schema the runtime builds.
+A member is still named by its declaring class and its slot. The rejection of a flattened list as
+the fragile base class problem rests on binary distribution, which Lyra does not have, and is
+answered there (D6).
 
 ## Context
 

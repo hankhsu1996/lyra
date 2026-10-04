@@ -14,6 +14,7 @@
 #include "lyra/lir/external_unit_object_id.hpp"
 #include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/runtime_object.hpp"
 
 namespace lyra::lir {
@@ -74,11 +75,16 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kCancellationTarget,
   kControlEffect,
   kPropertyCoordinate,
-  kBehaviorCoordinate,
-  // The record every object of one class carries. A body names it to ask the
-  // class a question, and forwards its address without reading it, so what
-  // reaches here is the kind and never the runtime struct's layout.
+  // The definition every object of one class carries. A body names it to ask
+  // the class a question, and forwards its address without reading inside it,
+  // so what reaches here is the kind and never the runtime struct's layout.
   kObjectDefinition,
+  // The structures a definition is made of, which only a constant names.
+  kResolvedProperty,
+  kDeclaredBody,
+  kScopeInfo,
+  kScopeCallable,
+  kScopeClass,
 };
 
 struct PackedRange {
@@ -254,10 +260,10 @@ struct OpaqueObjectType {
   auto operator==(const OpaqueObjectType&) const -> bool = default;
 };
 
-// A class the runtime library defines, named by the library symbol. It belongs
-// to no compilation unit, so the symbol is the whole identity.
+// A class the runtime library defines. It belongs to no compilation unit, so
+// which class it is is the whole identity.
 struct RuntimeClassType {
-  std::string symbol;
+  support::RuntimeClass which;
 
   auto operator==(const RuntimeClassType&) const -> bool = default;
 };

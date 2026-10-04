@@ -8,6 +8,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -43,7 +44,8 @@ auto ObjectRootOf(
   // The class a handle names may be one this unit cannot spell, so the object
   // is taken as the root every object shares, which the entries taking it read.
   const mir::TypeId root = unit.types.Intern(
-      mir::Type{mir::RuntimeClassType{.symbol = "lyra::runtime::GcObject"}});
+      mir::Type{
+          mir::RuntimeClassType{.which = support::RuntimeClass::kObject}});
   return block.exprs.Add(
       mir::Expr{
           .data =

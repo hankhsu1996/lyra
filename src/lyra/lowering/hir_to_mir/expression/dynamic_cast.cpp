@@ -2,7 +2,6 @@
 
 #include <expected>
 #include <optional>
-#include <string>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
@@ -19,66 +18,10 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/runtime_record.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
-
-namespace {
-
-// The class a destination was declared with, which is the one the check is made
-// against. A destination whose class this unit cannot name reaches no dynamic
-// cast: the front end accepts the construct only where the two declared types
-// stand in a relation it can read, and it has no name for the relation either.
-auto DeclaredClassOf(const hir::CompilationUnit& hir, hir::TypeId type)
-    -> hir::ClassRef {
-  const auto* handle = hir.types.Get(type).As<hir::ClassHandleType>();
-  if (handle == nullptr) {
-    throw InternalError(
-        "a dynamic cast asks which object a handle refers to of a destination "
-        "that is not a class handle -- please report this as a bug");
-  }
-  return handle->class_ref;
-}
-
-// Whether the object a handle refers to is one a variable of `of` may hold (LRM
-// 8.16). Which classes those are is open across compilation units, so the class
-// is named rather than enumerated and the object is what answers.
-auto BuildObjectIsOfClassCall(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId handle,
-    hir::ClassRef of) -> mir::Expr {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::RuntimeRecordBuilder records(unit, block.exprs);
-  const mir::TypeId definition =
-      records.Type(mir::RuntimeLibraryKind::kObjectDefinition);
-  const mir::ExprId record = records.Add(
-      mir::Expr{
-          .data =
-              mir::ReferenceExpr{
-                  .target =
-                      mir::ObjectRecordRef{
-                          .of = unit_lowerer.TranslateClassRef(of)}},
-          .type = definition});
-  const mir::TypeId definition_ptr = unit.types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = definition,
-          .ownership = mir::PointerOwnership::kBorrowed,
-          .mutability = mir::Mutability::kReadOnly}});
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{.target = support::BuiltinFn::kObjectIsOfClass},
-              .arguments =
-                  {handle,
-                   block.exprs.Add(
-                       mir::MakeAddressOfExpr(record, definition_ptr))}},
-      .type = unit.builtins.machine_int64};
-}
-
-}  // namespace
 
 template <ExprLowerer Lowerer>
 auto LowerHirDynamicCastExpr(
@@ -126,12 +69,13 @@ auto LowerHirDynamicCastExpr(
 
   // What the destination would take is settled once and then both asked about
   // and stored, so the question and the assignment cannot be about different
-  // values.
-  const mir::ExprId converted =
-      ConvertToType(unit, body, source, destination_type);
+  // values. Toward a class the object may not be one of, forming the handle is
+  // itself the question, and it refers to nothing where the answer is no.
   const mir::LocalId value_var =
       steps.Bindings().DeclareAnonymous(destination_type);
-  body.AppendStmt(mir::LocalDeclStmt{.target = value_var, .init = converted});
+  const auto bind_value = [&](mir::ExprId converted) {
+    body.AppendStmt(mir::LocalDeclStmt{.target = value_var, .init = converted});
+  };
   // The value is read in two scopes -- where the check is made and where the
   // store happens -- and an expression belongs to the scope it is interned
   // into, so which one a read lands in is said at every read.
@@ -142,14 +86,18 @@ auto LowerHirDynamicCastExpr(
   const mir::ExprId answer = [&] {
     switch (check) {
       case hir::RunTimeCheck::kNone:
+        bind_value(ConvertToType(unit, body, source, destination_type));
         return BuildIntLiteral(unit, body, 1);
       case hir::RunTimeCheck::kValueIsAMemberOfTheEnumeration:
+        bind_value(ConvertToType(unit, body, source, destination_type));
         return body.exprs.Add(BuildEnumMembershipCallExpr(
             owner, body, read_value(body), declared));
       case hir::RunTimeCheck::kObjectIsOfTheDestinationClass:
-        return body.exprs.Add(BuildObjectIsOfClassCall(
-            owner, body, read_value(body),
-            DeclaredClassOf(owner.Hir(), declared)));
+        bind_value(body.exprs.Add(
+            mir::Expr{
+                .data = mir::DynamicCastExpr{.operand = source},
+                .type = destination_type}));
+        return read_value(body);
     }
     throw InternalError("LowerHirDynamicCastExpr: unknown run-time check");
   }();

@@ -332,7 +332,10 @@ the detail lives in the entry itself.
   an object's properties, a scope's members, and a closure's captures alike. Only where a lineage
   passes through another unit's class is the count ahead of a class's own read from what the runtime
   realized, because publishing `local` storage in a signature would make a private change recompile
-  other units -- which the C++ backend's headers do.
+  other units -- which the C++ backend's headers do. Superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), whose layout
+  step places each member by its own storage and lays a lineage through another unit's class out
+  from its promise.
 - [construct-in-final-home](construct-in-final-home.md) -- a long-lived runtime object whose
   execution state binds to its own address is constructed where it will live and never moved. As
   realized, every closure lives in an allocation of its own with its captures inline, and whatever
@@ -462,17 +465,21 @@ the detail lives in the entry itself.
   nesting are separate relations; the lexical-tree-only storage and a second identity are rejected.
 - [entering-a-class-construction](entering-a-class-construction.md) -- a class's runtime definition
   carries no constructor, because the allocation site's static type chooses one and nothing a caller
-  chooses belongs on a record every object shares: the runtime allocates, and the code that wrote
-  the `new` enters the constructor, so its arguments cross as themselves. A registered entry taking
-  a span of arguments, a per-arity signature on the definition, and splitting in the backend are
-  rejected.
+  chooses belongs on a record every object shares: the code that wrote the `new` enters the
+  constructor, so its arguments cross as themselves. Who allocates is superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md). A registered
+  entry taking a span of arguments, a per-arity signature on the definition, and splitting in the
+  backend are rejected.
 - [constructing-another-units-class](constructing-another-units-class.md) -- a construction reaches
   its constructor by the identity it reaches the class's declaration by, so the declaring unit
   decides where each answer is read and nothing after it; the constructor is named the way every
   other cross-unit method is, a construction reads nothing about it, and a class states the complete
   argument list its base construction carries where its own declaration is read. Putting what a base
   construction needs on the promise, letting an empty list mean two things, filling a default from
-  the declaring scope, and a call target of LIR's own are rejected.
+  the declaring scope, and a call target of LIR's own are rejected. That a construction reads
+  nothing about its constructor, and the first of those rejections, are superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where a class's
+  signature states its constructor as it states a method.
 - [type-associated-storage-is-the-declarers](type-associated-storage-is-the-declarers.md) -- storage
   a type owns rather than an object of it is brought up by whatever brings up the thing that
   replicates its declaration, never by a mechanism of its own; a cell a name can reach outside every
@@ -481,12 +488,14 @@ the detail lives in the entry itself.
   the class left. A per-class startup body, a program-startup trigger, deciding what the storage is
   from the shape of the access, and a per-class cell list at LIR are rejected.
 - [dispatch-position-is-a-lineage-coordinate](dispatch-position-is-a-lineage-coordinate.md) -- a
-  class states the behaviors it introduces and the ones it takes over, never its lineage's; a
+  class states the behaviors it introduces and the ones it overrides, never its lineage's; a
   behavior is named by the declaration that introduced it plus an ordinal within it, and flattening
   a lineage into positions is a layout question answered where the whole lineage is in hand rather
-  than where a call is written. The runtime answers which body a value holds and the asking code
-  enters it. An absolute position assigned while lowering, a record listing every body a class
-  declares, and generated code reading the class record are rejected.
+  than where a call is written. An absolute position assigned while lowering, a record listing every
+  body a class declares, and generated code reading the class record are rejected. Its runtime
+  answering which body a value holds is superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where the
+  tables are laid out at compile time.
 - [instance-array-multiplicity](instance-array-multiplicity.md) -- an array of children is one
   member whose type is a sequence of the child pointer, carrying multiplicity but no length, so
   which element a reference names is an operand of a projection rather than part of a member's
@@ -559,9 +568,11 @@ the detail lives in the entry itself.
   reaching a property or a behavior through a reference whose class belongs to the instance resolves
   where the instance is known, and what crosses into the body compiled once per specialization is
   the same coordinate a referrer that could name the class would have formed, applied to whichever
-  object the reference holds; resolving a virtual behavior's name names its dispatch position and
-  never its body. A witness record, a lookup at each access, a specialization per endpoint class,
-  and relying on the two sides' representations agreeing are rejected.
+  object the reference holds. A witness record, a lookup at each access, a specialization per
+  endpoint class, and relying on the two sides' representations agreeing are rejected. Its virtual
+  behavior coordinate is superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where a
+  behavior reached this way settles to a body that makes the virtual call.
 - [a-settled-access-is-ordinary-operations](a-settled-access-is-ordinary-operations.md) -- a class
   answers a name it declares no dispatch position for with the body itself, and every access whose
   class no signature publishes is written out of the operations it is -- a runtime call, a
@@ -571,35 +582,53 @@ the detail lives in the entry itself.
   [structural-access-on-an-opaque-object](structural-access-on-an-opaque-object.md) D5, keeping its
   concern. Giving every method a dispatch position, letting each backend recover the object its own
   way, putting the handle in every entry's first parameter, and resolving the name at each access
-  are rejected.
+  are rejected. Superseded in part by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where a virtual
+  behavior is answered by name with a body that makes the virtual call, and a body is entered on the
+  part of the object the handle reaches rather than on the most-derived object.
 - [a-dynamic-cast-asks-the-type-or-the-object](a-dynamic-cast-asks-the-type-or-the-object.md) --
   whether an assignment the two declared types would not otherwise allow is valid for a particular
   value is answered by whoever fixes the values the destination accepts: the type where its
   declaration fixes them, and the object where the classes extending one are open across compilation
-  units. The construct is a run of steps ending in the answer, the reporting spelling is those steps
-  plus a report, and no semantic layer gains an alternative for it. One checked-cast node dispatched
-  on the type pair, a per-class table of the subclasses a destination accepts, binding the
-  destination as an output argument, and refusing a statically impossible pair are rejected.
+  units. The construct is a run of steps ending in the answer, and the reporting spelling is those
+  steps plus a report. Its object half is superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where the cast
+  forms the view through the class's type descriptor and its presence is the answer. One
+  checked-cast node dispatched on the type pair, a per-class table of the subclasses a destination
+  accepts, binding the destination as an output argument, and refusing a statically impossible pair
+  are rejected.
 - [unit-scope-naming](unit-scope-naming.md) -- the anonymous `$unit` scope (LRM 3.12.1) is a
   namespace unit named by its compilation-unit input identity, recomputed table-free by producer and
   consumer; a design-wide unit id, a fixed name, a collection ordinal, and a content digest are all
   rejected.
 - [interface-conformance-realization](interface-conformance-realization.md) -- inherited interface
   satisfaction (LRM 8.26.2) is resolved at AST-to-HIR and realized as a synthesized forwarding
-  method (backend renders, never fabricates); the full method-to-slots dispatch representation is
-  deferred until a physical-vtable backend reads it.
-- [generated-behavior-boundary](generated-behavior-boundary.md) -- generated behavior reaches the
-  runtime through an explicit, backend-neutral per-specialization unit definition (native lifecycle
-  entries + a method dispatch table + constant metadata), not a backend-language object ABI; the C++
-  subclass / vtable and a per-backend adapter are rejected as the boundary. Lifecycle and SV-virtual
-  dispatch share a representation but are separate concepts; the definition holds the schema, never
-  instance values.
-- [a-unit-states-what-it-declares](a-unit-states-what-it-declares.md) -- a unit says what it
-  declares in a body its own artifact carries, run before the program starts by whoever composed it,
-  so a compiled unit is a whole program rather than one whose other half lives in the process that
-  compiled it. A class of another artifact is named by the cell holding its definition, which is
-  what replaces a whole-program join by name with the composer resolving a symbol. The program
-  starts at one entry emitted from the design root.
+  method (backend renders, never fabricates). Its deferral of the full method-to-slots dispatch
+  representation is superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), which states in
+  MIR which behavior answers each behavior of every interface class a class reaches.
+- [generated-behavior-boundary](generated-behavior-boundary.md) -- the library drives a scope
+  through an explicit, backend-neutral per-specialization program (native lifecycle entries and
+  constant metadata), not a backend-language object ABI; the C++ subclass / vtable of the library
+  and a per-backend adapter are rejected as the boundary. Lifecycle and SV-virtual dispatch are
+  separate concepts; the definition holds the schema, never instance values. Superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), whose scope is
+  driven and ended through the C++ virtual functions of its class.
+- [a-unit-states-what-it-declares](a-unit-states-what-it-declares.md) -- a compiled unit is a whole
+  program rather than one whose other half lives in the process that compiled it, and what a unit
+  says about its classes is stated once in MIR and translated by every backend. Its body run before
+  `main`, its cells and its layout step at startup are superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md).
+- [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) -- where each
+  part of an object sits and which body each view dispatches to are fixed when the program is
+  compiled, on both backends, following the Itanium C++ ABI; an interface class is a virtual base,
+  `$cast` asks the object's type descriptor, and a class's signature states its declaration whole,
+  every method's prototype included, which is where a call in another unit reads it. Every object is
+  of a class derived from the library's root and is ended through its virtual destructor; a scope's
+  phases are virtual functions its class overrides; what the library reads by name is one C-layout
+  constant per class, emitted by the declaring unit; and an instance of the design hierarchy is
+  built by its class's own constructor, entered typed. A name reaching a method of a class the
+  referrer cannot name is settled to a body while the design elaborates, a virtual one included.
 - [jit-value-realization](jit-value-realization.md) -- the JIT represents every runtime value as an
   opaque handle into the runtime library (the baseline realization), and a `GeneratedCallScope` owns
   the transient values one generated entry creates -- the JIT counterpart of C++ stack/RAII.
@@ -685,25 +714,33 @@ the detail lives in the entry itself.
   unit's `construct` entry, which builds the top-level modules as its owned children; there is no
   design-level free function. Engine / bind / run stay host runner policy and never enter MIR; both
   backends' host shells collapse to creating the engine, calling the root construct, then bind /
-  run.
+  run. How the host builds the root is superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), which builds it
+  through the root unit's object entry, as any instance is.
 - [member-slot-storage](member-slot-storage.md) -- a member is a logical place (a base plus a
   projection chain, named by load, store, and address-of); a unit definition declares a member
   storage schema and a generic instance owns one storage object per member. The C++ backend realizes
   a member as a native field, the execution backend as runtime-owned storage; a cell is only ever
-  addressed, never read as a value. Physical in-frame layout is a later optimization, the
-  member-storage counterpart of the opaque-handle value baseline.
+  addressed, never read as a value. Its execution-backend realization is superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where that
+  backend lays every class out at compile time and a member sits at a constant offset.
 - [inherited-member-reference](inherited-member-reference.md) -- a member projection names the
   declaration that declares the member and the slot it gave it, so which storage a shadowed name
   reaches is stated rather than re-derived from the type the chain arrived at; an inherited member
   keeps its slot, so a base's unpublished addition moves nothing. Every kind of declaration that
   declares fields is named this way, not only the class. Flattening during lowering, a base
-  subobject as a place step, and a per-access base offset are rejected.
+  subobject as a place step, and a per-access base offset are rejected. Where the execution backend
+  resolves the pair is superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), which resolves
+  it at compile time.
 - [closure-value-realization](closure-value-realization.md) -- on the execution backend a closure
   declaration publishes a definition (its body and its capture storage schema) and a closure value
   is an instance of it, so a capture is member storage, a capture read is a member place, and
   building the value is where a captured value is copied out of the stretch that made it. The invoke
   takes its receiver uniformly; a code-address-plus-product environment and an erased callable type
-  are rejected.
+  are rejected. How the value is built is superseded by
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where the
+  building code fills captures it laid out, and a body the definition names ends them.
 
 ### Foreign-language boundary
 
@@ -787,7 +824,10 @@ the detail lives in the entry itself.
   one produces its own class and a call. Measured: a unit adding one scope class to the shipped
   surface produced a 1,600,704 byte object with 1,503 bytes of code, and 24,016 after. Building
   optimized by default, including less of the surface, suppressing the instantiations rather than
-  moving them, and reshaping what a published class holds are rejected.
+  moving them, and reshaping what a published class holds are rejected. The garbage-collected base
+  and the scope leave its list under
+  [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), which makes
+  them non-virtual.
 - [a-published-operation-is-compiled-once](a-published-operation-is-compiled-once.md) -- a function
   the runtime publishes is compiled in the runtime's own artifact and a unit emits a call, and a
   family the library parameterizes over the value domains is stated once there; constructing and
@@ -821,7 +861,9 @@ the detail lives in the entry itself.
   each promise is what records the dependency, so reaching past a class makes the introducer's unit
   a real dependency, and nothing bounds in advance which promises it may read. Flattening the
   promise at publish, resolving the chain at elaboration, a pre-computed consumed set, and
-  publishing what a class keeps to itself are rejected.
+  publishing what a class keeps to itself are rejected. That last rejection and D1's are superseded
+  by [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where a
+  promise states the type of every property, unnamed where `local`, and every method's prototype.
 - [published-member-placement](published-member-placement.md) -- a published member's position is
   its position in the signature, computed by producer and consumer and carried by neither; the
   referrer records the object it compiled against in its own IR, in a registry separate from the

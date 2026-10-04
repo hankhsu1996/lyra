@@ -11,9 +11,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -25,11 +27,19 @@ auto SuspensionCppType() -> std::string_view {
   return "lyra::runtime::Suspension";
 }
 
-auto ManagedObjectRootCppType() -> std::string_view {
-  return "lyra::runtime::GcObject";
-}
-
 namespace {
+
+auto RuntimeClassCppType(support::RuntimeClass klass) -> std::string_view {
+  switch (klass) {
+    case support::RuntimeClass::kScope:
+      return "lyra::runtime::Scope";
+    case support::RuntimeClass::kObject:
+      return "lyra::runtime::GcObject";
+    case support::RuntimeClass::kProcess:
+      return "lyra::runtime::RuntimeProcess";
+  }
+  throw InternalError("backend::cpp: unknown runtime class");
+}
 
 void WriteTypeList(
     TargetText& out, const mir::CompilationUnit& unit,
@@ -77,44 +87,18 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::runtime::ReadReport";
     case mir::RuntimeLibraryKind::kObjectWrite:
       return "lyra::runtime::ObjectWrite";
-    case mir::RuntimeLibraryKind::kScopeProgram:
-      return "lyra::runtime::ScopeProgram";
-    case mir::RuntimeLibraryKind::kScopeCallable:
-      return "lyra::runtime::ScopeCallable";
-    case mir::RuntimeLibraryKind::kScopeCallableTable:
-      return "lyra::runtime::ScopeCallableTable";
-    case mir::RuntimeLibraryKind::kScopeDefinition:
-      return "lyra::runtime::ScopeDefinition";
-    case mir::RuntimeLibraryKind::kScopeClass:
-      return "lyra::runtime::ScopeClass";
-    case mir::RuntimeLibraryKind::kScopeClassTable:
-      return "lyra::runtime::ScopeClassTable";
     case mir::RuntimeLibraryKind::kObjectDefinition:
       return "lyra::runtime::ObjectDefinition";
-    case mir::RuntimeLibraryKind::kPropertySlotTable:
-      return "lyra::runtime::PropertySlotTable";
-    case mir::RuntimeLibraryKind::kDispatchTakeover:
-      return "lyra::runtime::DispatchTakeover";
-    case mir::RuntimeLibraryKind::kTakeoverTable:
-      return "lyra::runtime::TakeoverTable";
-    case mir::RuntimeLibraryKind::kMethodDispatchTable:
-      return "lyra::runtime::MethodDispatchTable";
     case mir::RuntimeLibraryKind::kResolvedProperty:
       return "lyra::runtime::ResolvedProperty";
-    case mir::RuntimeLibraryKind::kResolvedPropertyTable:
-      return "lyra::runtime::ResolvedPropertyTable";
-    case mir::RuntimeLibraryKind::kResolvedBehavior:
-      return "lyra::runtime::ResolvedBehavior";
-    case mir::RuntimeLibraryKind::kResolvedBehaviorTable:
-      return "lyra::runtime::ResolvedBehaviorTable";
     case mir::RuntimeLibraryKind::kDeclaredBody:
       return "lyra::runtime::DeclaredBody";
-    case mir::RuntimeLibraryKind::kDeclaredBodyTable:
-      return "lyra::runtime::DeclaredBodyTable";
-    case mir::RuntimeLibraryKind::kScopeMetadata:
-      return "lyra::runtime::ScopeMetadata";
-    case mir::RuntimeLibraryKind::kAbiStringRef:
-      return "lyra::runtime::AbiStringRef";
+    case mir::RuntimeLibraryKind::kScopeInfo:
+      return "lyra::runtime::ScopeInfo";
+    case mir::RuntimeLibraryKind::kScopeCallable:
+      return "lyra::runtime::ScopeCallable";
+    case mir::RuntimeLibraryKind::kScopeClass:
+      return "lyra::runtime::ScopeClass";
     case mir::RuntimeLibraryKind::kDpiBitBuffer:
       return "lyra::value::DpiBitBuffer";
     case mir::RuntimeLibraryKind::kDpiLogicBuffer:
@@ -129,8 +113,6 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "const svOpenArrayHandle";
     case mir::RuntimeLibraryKind::kPropertyCoordinate:
       return "lyra::runtime::PropertyCoordinate";
-    case mir::RuntimeLibraryKind::kBehaviorCoordinate:
-      return "lyra::runtime::BehaviorCoordinate";
   }
   throw InternalError("backend::cpp: unknown RuntimeLibraryKind");
 }
@@ -190,7 +172,7 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             // restored prototype is only ever used that way; the erased
             // function type does get declared, so it uses the runtime's alias.
             if (mir::IsErasedFunction(unit.types, type_id)) {
-              out += "lyra::runtime::ErasedScopeCallable";
+              out += "lyra::runtime::ErasedEntry";
               return;
             }
             Write(out, type(m.result), " (*)(");
@@ -264,7 +246,9 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                 "backend::cpp: an object with no class to name has no "
                 "target-language spelling");
           },
-          [&](const mir::RuntimeClassType& e) { out += e.symbol; },
+          [&](const mir::RuntimeClassType& e) {
+            out += RuntimeClassCppType(e.which);
+          },
           [&](const mir::RuntimeEffectsType&) {
             out += "lyra::runtime::RuntimeEffects&";
           },
@@ -564,7 +548,10 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
             throw InternalError("backend::cpp: unknown PointerOwnership");
           },
           [&](const mir::ManagedRefType& m) {
-            Write(out, "lyra::runtime::GcNew<", CppType(unit, m.pointee), ">");
+            Write(
+                out, "lyra::runtime::GcNew<",
+                CppClassRef(unit, mir::ClassOfObject(unit.types, m.pointee)),
+                ">");
           },
           // A sequence is built by the library function that takes its
           // elements, since the container type takes no element list.
@@ -642,9 +629,13 @@ void WriteOne(TargetText& out, const CppClassRef& ref) {
             Write(
                 out, CppUnitScope(e.unit_name), "::", ToCppName(e.class_name));
           },
-          [&](const mir::RuntimeClassRef& e) { out += e.symbol; },
+          // The tree's root is the library's scope class, spelled as a value
+          // of that class's type is.
+          [&](const mir::ObjectTreeRootRef&) {
+            out += RuntimeClassCppType(support::RuntimeClass::kScope);
+          },
           [&](const mir::ManagedObjectRootRef&) {
-            out += ManagedObjectRootCppType();
+            out += RuntimeClassCppType(support::RuntimeClass::kObject);
           }},
       ref.Ref());
 }

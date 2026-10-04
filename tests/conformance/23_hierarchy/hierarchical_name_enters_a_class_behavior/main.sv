@@ -10,7 +10,16 @@
 // A method that takes an argument and one that changes the object are the same
 // mechanism, and they are here because an entry reached this way has to carry
 // what the source wrote and land its effect on the object the handle holds.
+//
+// A handle of an interface class the declaring scope also declares reaches the
+// behavior it states the same way, and runs what the object's class answers
+// with (LRM 8.26). The class implementing it holds storage of its own, so the
+// object's interface part is not where the object starts.
 module Child;
+  interface class Voiced;
+    pure virtual function int Voice(int loudness);
+  endclass
+
   class Animal;
     int legs = 4;
     function int Count();
@@ -27,7 +36,7 @@ module Child;
     endfunction
   endclass
 
-  class Bird extends Animal;
+  class Bird extends Animal implements Voiced;
     function int Count();
       return 2;
     endfunction
@@ -37,18 +46,24 @@ module Child;
     virtual function void Lose();
       legs = legs - 2;
     endfunction
+    virtual function int Voice(int loudness);
+      return legs * 10 + loudness;
+    endfunction
   endclass
 
   Animal pet;
+  Voiced voice;
 
   int up_count = 0;
   int up_speak = 0;
   int up_plus = 0;
+  int up_sides = 0;
   int up_legs_after = 0;
 
   initial begin
     Bird b = new();
     pet = b;
+    voice = b;
   end
 
   initial begin
@@ -56,12 +71,17 @@ module Child;
     up_count = Top.pet.Count();
     up_speak = Top.pet.Speak();
     up_plus = Top.pet.Plus(10);
+    up_sides = Top.sided.Sides(1);
     Top.pet.Lose();
     up_legs_after = Top.pet.Count();
   end
 endmodule
 
 module Top;
+  interface class Sided;
+    pure virtual function int Sides(int extra);
+  endclass
+
   class Shape;
     int sides = 4;
     function int Count();
@@ -78,7 +98,7 @@ module Top;
     endfunction
   endclass
 
-  class Triangle extends Shape;
+  class Triangle extends Shape implements Sided;
     function int Count();
       return 2;
     endfunction
@@ -88,20 +108,26 @@ module Top;
     virtual function void Lose();
       sides = sides - 2;
     endfunction
+    virtual function int Sides(int extra);
+      return sides * 10 + extra;
+    endfunction
   endclass
 
   Shape pet;
+  Sided sided;
 
   Child kid ();
 
   int down_count = 0;
   int down_speak = 0;
   int down_plus = 0;
+  int down_voice = 0;
   int down_legs_after = 0;
 
   initial begin
     Triangle t = new();
     pet = t;
+    sided = t;
   end
 
   initial begin
@@ -109,6 +135,7 @@ module Top;
     down_count = kid.pet.Count();
     down_speak = kid.pet.Speak();
     down_plus = kid.pet.Plus(10);
+    down_voice = kid.voice.Voice(3);
     kid.pet.Lose();
     down_legs_after = kid.pet.Count();
   end
@@ -120,6 +147,8 @@ module Top;
       $fatal(1, "a downward virtual call answered %0d, expected 2", down_speak);
     if (down_plus !== 14)
       $fatal(1, "a downward call with an argument answered %0d, expected 14", down_plus);
+    if (down_voice !== 43)
+      $fatal(1, "a downward interface call answered %0d, expected 43", down_voice);
     if (down_legs_after !== 2)
       $fatal(1, "a downward call left the object at %0d, expected 2", down_legs_after);
     if (kid.up_count !== 4)
@@ -128,6 +157,8 @@ module Top;
       $fatal(1, "an upward virtual call answered %0d, expected 2", kid.up_speak);
     if (kid.up_plus !== 14)
       $fatal(1, "an upward call with an argument answered %0d, expected 14", kid.up_plus);
+    if (kid.up_sides !== 41)
+      $fatal(1, "an upward interface call answered %0d, expected 41", kid.up_sides);
     if (kid.up_legs_after !== 2)
       $fatal(1, "an upward call left the object at %0d, expected 2", kid.up_legs_after);
     $display("All checks passed");

@@ -135,13 +135,6 @@ auto UnitLowerer::MapOrGetPropertyCoordinate(
       RoutesOf(owner_frame).property_coordinates, std::move(route));
 }
 
-auto UnitLowerer::MapOrGetBehaviorCoordinate(
-    ScopeFrameId owner_frame, hir::BehaviorCoordinateRoute route)
-    -> hir::BehaviorCoordinateId {
-  return MapOrGetRoute(
-      RoutesOf(owner_frame).behavior_coordinates, std::move(route));
-}
-
 auto UnitLowerer::MapOrGetBehaviorBody(
     ScopeFrameId owner_frame, hir::BehaviorBodyRoute route)
     -> hir::BehaviorBodyId {
@@ -838,12 +831,31 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
   if (!declaring_hops) {
     return std::unexpected(std::move(declaring_hops.error()));
   }
-  auto value_type = InternType(prop.getType(), span);
-  if (!value_type) return std::unexpected(std::move(value_type.error()));
+  // What the cell holds is read where the class states it: off its signature
+  // where another unit published the class, and off the declaration where this
+  // unit declares it or no signature carries it.
+  std::optional<hir::TypeId> promised_type;
+  if (const auto* ext = std::get_if<hir::ExternalClassRef>(&*owner_ref)) {
+    if (const hir::ExternalClass* published =
+            ExternalClassOf(ext->unit_name, ext->class_name)) {
+      for (const hir::PublishedProperty& property :
+           published->static_properties) {
+        if (property.name == prop.name) {
+          promised_type = property.type;
+        }
+      }
+    }
+  }
+  if (!promised_type.has_value()) {
+    auto declared_type = InternType(prop.getType(), span);
+    if (!declared_type)
+      return std::unexpected(std::move(declared_type.error()));
+    promised_type = *declared_type;
+  }
   return hir::StaticPropertyRef{
       .target = MakeStaticPropertyTarget(*owner_ref, prop),
       .declaring_scope_hops = *declaring_hops,
-      .value_type = *value_type};
+      .value_type = *promised_type};
 }
 
 auto UnitLowerer::ObservedThroughModport(

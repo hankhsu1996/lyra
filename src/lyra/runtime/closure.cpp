@@ -1,18 +1,12 @@
 #include "lyra/runtime/closure.hpp"
 
-#include <cstdint>
+#include <format>
+#include <memory>
 #include <new>
-#include <span>
-#include <variant>
+#include <string_view>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/erased_value.hpp"
-#include "lyra/runtime/member_slots.hpp"
-#include "lyra/runtime/scope_program.hpp"
-#include "lyra/support/member_layout.hpp"
-#include "lyra/support/tuple_operations.hpp"
-#include "lyra/support/value_domain.hpp"
 #include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/runtime_value.hpp"
 
@@ -20,118 +14,89 @@ namespace lyra::runtime {
 
 namespace {
 
-auto HasBody(const ClosureBody& body) -> bool {
-  return std::visit(
-      Overloaded{
-          [](const SynchronousBody& b) { return b.run != nullptr; },
-          [](const CoroutineBody& b) { return b.start != nullptr; },
-          [](const PerElementBody& b) { return b.run != nullptr; },
-          [](const ValueBody& b) { return b.run != nullptr; }},
-      body);
+// The definition, checked before any storage is allocated to its shape,
+// because a closure with no definition is a linkage failure rather than a value
+// that could run.
+auto Checked(const ClosureDefinition* definition) -> const ClosureDefinition* {
+  if (definition == nullptr) {
+    throw InternalError("ClosureValue: the closure has no definition");
+  }
+  return definition;
+}
+
+// The entry a closure is run through under one protocol, where its body
+// answers to that one.
+template <typename Entry>
+auto Entered(Entry entry, std::string_view protocol) -> Entry {
+  if (entry == nullptr) {
+    throw InternalError(
+        std::format(
+            "ClosureValue: this body is not one {} -- please report this as a "
+            "bug",
+            protocol));
+  }
+  return entry;
 }
 
 // What a body answering a value built in storage given here, taken out of it.
 // A tuple is built in storage its own type sizes, which the runtime then holds
 // it in; every other value fits storage laid out for any value.
 template <typename Run>
-auto Answered(
-    support::ValueDomain domain, const support::TupleOperations* tuple, Run run)
+auto Answered(const ClosureDefinition& definition, Run run)
     -> value::RuntimeValue {
-  if (tuple != nullptr) {
-    return value::RuntimeValue{
-        value::RuntimeTuple::Built(*tuple, [&](void* out) { run(out); })};
+  if (definition.result_tuple != nullptr) {
+    return value::RuntimeValue{value::RuntimeTuple::Built(
+        *definition.result_tuple, [&](void* out) { run(out); })};
   }
   AnswerStorage answer{};
-  return TakeValue(domain, run(answer.bytes.data()));
-}
-
-// The capture schema, checked before any storage is built from it, because a
-// closure with no body is a linkage failure rather than a value that could run.
-auto CaptureSchemaOf(const ClosureDefinition* definition)
-    -> MemberStorageSchema {
-  if (definition == nullptr || !HasBody(definition->body)) {
-    throw InternalError("ClosureValue: the closure has no body to run");
-  }
-  return definition->captures;
+  return TakeValue(definition.result_domain, run(answer.bytes.data()));
 }
 
 }  // namespace
 
-static_assert(
-    MemberSlots::At(sizeof(ClosureValue)) ==
-    support::MembersAt(support::ValueHolder::kClosure));
-
-void ClosureValue::operator delete(void* address) {
-  MemberSlots::Release(address);
+void EndClosure::operator()(ClosureValue* closure) const noexcept {
+  std::destroy_at(closure);
+  ::operator delete(closure);
 }
 
-auto ClosureValue::Make(
-    const ClosureDefinition* definition, std::span<void* const> captures)
-    -> OwnedClosure {
-  void* storage =
-      MemberSlots::Allocate(sizeof(ClosureValue), CaptureSchemaOf(definition));
-  return OwnedClosure(::new (storage) ClosureValue(definition, captures));
+// Every capture is an object of this library, so the alignment the captures ask
+// for is at most what every allocation already gives.
+auto ClosureValue::Make(const ClosureDefinition* definition) -> OwnedClosure {
+  void* storage = ::operator new(Checked(definition)->size);
+  return OwnedClosure(::new (storage) ClosureValue(definition));
 }
 
-ClosureValue::ClosureValue(
-    const ClosureDefinition* definition, std::span<void* const> captures)
-    : definition_(definition),
-      captures_(this, sizeof(ClosureValue), definition->captures) {
-  if (captures.size() != captures_.Size()) {
-    throw InternalError(
-        "ClosureValue: the construction does not initialize every capture");
-  }
-  for (std::uint32_t i = 0; i < captures_.Size(); ++i) {
-    captures_[i].AdoptFrom(captures[i]);
-  }
+ClosureValue::ClosureValue(const ClosureDefinition* definition)
+    : definition_(definition) {
+}
+
+ClosureValue::~ClosureValue() {
+  definition_->end_captures(this);
 }
 
 void ClosureValue::Invoke() {
-  const auto* body = std::get_if<SynchronousBody>(&definition_->body);
-  if (body == nullptr) {
-    throw InternalError(
-        "ClosureValue: this body is not one run to completion -- please "
-        "report this as a bug");
-  }
-  body->run(this);
+  Entered(definition_->run, "run to completion")(this);
 }
 
 auto ClosureValue::Start() -> void* {
-  const auto* body = std::get_if<CoroutineBody>(&definition_->body);
-  if (body == nullptr) {
-    throw InternalError(
-        "ClosureValue: this body is not one entered as a coroutine -- please "
-        "report this as a bug");
-  }
-  return body->start(this);
+  return Entered(definition_->start, "entered as a coroutine")(this);
 }
 
 auto ClosureValue::RunPerElement(
     const value::RuntimeValue& item, const value::RuntimeValue& index)
     -> value::RuntimeValue {
-  const auto* body = std::get_if<PerElementBody>(&definition_->body);
-  if (body == nullptr) {
-    throw InternalError(
-        "ClosureValue: this body is not one run per entry -- please report "
-        "this as a bug");
-  }
+  const auto run = Entered(definition_->run_per_element, "run per entry");
   // The element and the index are borrowed for the call: the container holds
   // them and the body only reads them.
-  return Answered(body->result_domain, body->result_tuple, [&](void* out) {
-    return body->run(this, HandleOf(item), HandleOf(index), out);
+  return Answered(*definition_, [&](void* out) {
+    return run(this, HandleOf(item), HandleOf(index), out);
   });
 }
 
 auto ClosureValue::RunValue() -> value::RuntimeValue {
-  const auto* body = std::get_if<ValueBody>(&definition_->body);
-  if (body == nullptr) {
-    throw InternalError(
-        "ClosureValue: this body is not one that answers a value on its own "
-        "-- please report this as a bug");
-  }
-  return Answered(body->result_domain, body->result_tuple, [&](void* out) {
-    return body->run(this, out);
-  });
+  const auto run =
+      Entered(definition_->run_value, "that answers a value on its own");
+  return Answered(*definition_, [&](void* out) { return run(this, out); });
 }
 
 }  // namespace lyra::runtime

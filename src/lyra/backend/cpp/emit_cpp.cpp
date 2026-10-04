@@ -39,19 +39,17 @@ void RenderNamespaceValue(
   const ScopeView view = ScopeView::ForConstant(unit, build.body, refusals);
   WriteDeclaration(
       out,
-      DeclaredCell{
-          .owner = CellOwner::kNamespace,
-          .text = CellText::kDefined,
-          .immutable = true,
+      VariableDeclaration{
+          .form = VariableForm::kNamespaceScopeDefinition,
+          .is_const = true,
           .type = CppType(unit, type),
-          .name = name,
-          .qualifier = {}},
+          .name = name},
       [&](TargetText& value) { Write(view, value, build.value); });
 }
 
-// The run-time type descriptions, defined in the code file ahead of every
-// class. A class's constant may use one, and C++ initializes the constants of
-// one file in the order they are written, but gives no order across files.
+// The run-time type descriptions, defined in the code file. C++ initializes the
+// variables of one file in the order they are written, but gives no order
+// across files, so whatever reads one is written after it in the same file.
 void RenderTypeDescriptions(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
     TargetText& out) {
@@ -87,13 +85,18 @@ auto FileDeclaring(const mir::CompilationUnit& unit, mir::ClassId id)
 // The header of a base class, which may belong to another unit; that unit's
 // name and the class name are all it takes to compute.
 auto FileDeclaring(
-    const mir::CompilationUnit& unit, const mir::ClassRef& rests_on)
+    const mir::CompilationUnit& unit, const mir::DeclaredClassRef& rests_on)
     -> std::string {
-  if (const auto* intra = std::get_if<mir::IntraUnitClassRef>(&rests_on)) {
-    return FileDeclaring(unit, intra->class_id);
-  }
-  const auto& cross = std::get<mir::CrossUnitClassRef>(rests_on);
-  return UnitClassFileOf(cross.unit_name, ToCppName(cross.class_name));
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntraUnitClassRef& intra) {
+            return FileDeclaring(unit, intra.class_id);
+          },
+          [](const mir::CrossUnitClassRef& cross) {
+            return UnitClassFileOf(
+                cross.unit_name, ToCppName(cross.class_name));
+          }},
+      rests_on);
 }
 
 // The header for one thing this unit uses from another: the opening header for
@@ -187,7 +190,8 @@ auto RenderUnitFiles(
     TargetText file;
     file += "#pragma once\n";
     WriteInclude(file, UnitOpeningFileOf(unit.name));
-    for (const mir::ClassRef& rests_on : mir::RestsOnDeclaredClasses(cls)) {
+    for (const mir::DeclaredClassRef& rests_on :
+         mir::RestsOnDeclaredClasses(cls)) {
       WriteInclude(file, FileDeclaring(unit, rests_on));
     }
     file += "\n";
@@ -262,8 +266,8 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
   out += "\n";
   out += "auto main(int argc, char** argv) -> int {\n";
   Write(
-      out, "  return lyra::runtime::RunDesignRoot(argc, argv, \"", root.name,
-      "\", ", CppUnitScope(root.name),
+      out, "  return lyra::runtime::RunDesignRoot(argc, argv, ",
+      CppNameLiteral(root.name), ", ", CppUnitScope(root.name),
       "::", CppMintedEntryName(mir::MintedEntry::kMakeObject), ");\n");
   out += "}\n";
   return std::move(out).Take();

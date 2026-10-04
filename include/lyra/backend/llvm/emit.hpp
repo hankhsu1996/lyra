@@ -4,7 +4,6 @@
 #include <string>
 #include <string_view>
 
-#include "lyra/base/time.hpp"
 #include "lyra/diag/diagnostic.hpp"
 
 namespace llvm {
@@ -57,12 +56,7 @@ class EmittedModule {
 // a coroutine is a process step body, and a coroutine value is an opaque handle
 // the runtime builds from a step entry and its environment. A construct this
 // backend has no entry for is refused, naming what was met.
-//
-// A unit is its executable body and the facts that body carries none of, so the
-// artifact takes both: what every scope of the unit runs at (LRM Table 20-2) is
-// a constant the runtime is told rather than something the code computes, and
-// the body it belongs beside states no source-language concept.
-auto EmitModule(const lir::CompilationUnit& unit, TimeResolution time)
+auto EmitModule(const lir::CompilationUnit& unit)
     -> diag::Result<EmittedModule>;
 
 // The symbol a program starts at, which the host platform names rather than
