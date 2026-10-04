@@ -330,11 +330,19 @@ auto FieldInitValue(
 // C++ has no block expression, so one is a lambda called where it is written:
 // `[&] { steps; return value; }()`. Capturing by reference is safe because it
 // runs immediately. MIR allows no `return` among the steps, so the only
-// `return` inside is the one that yields the value.
+// `return` inside is the one that yields the value. A block with no steps is
+// its value written in place: the lambda would return it by value, copying an
+// aggregate on every evaluation, and every arm of a chain of selections stands
+// in such a block, so wrapping each would nest the text a lambda per link.
 void RenderBlockExpr(
-    const ScopeView& view, const mir::BlockExpr& block, TargetText& out) {
+    const ScopeView& view, const mir::BlockExpr& block, Precedence at_least,
+    TargetText& out) {
   const ScopeView body_view =
       view.WithBlock(view.Block().child_scopes.Get(block.scope));
+  if (body_view.Block().root_stmts.empty()) {
+    Write(body_view, out, Operand{.expr = block.value, .at_least = at_least});
+    return;
+  }
   out += "[&] ";
   WriteBody(out, [&] {
     RenderBlockStatements(body_view, out);
@@ -511,7 +519,9 @@ void RenderExpr(
           [&](const mir::ConditionalExpr& c) {
             RenderConditionalExpr(view, c, at_least, out);
           },
-          [&](const mir::BlockExpr& b) { RenderBlockExpr(view, b, out); },
+          [&](const mir::BlockExpr& b) {
+            RenderBlockExpr(view, b, at_least, out);
+          },
           [&](const mir::AssignExpr& a) {
             RenderAssignExpr(view, a, at_least, out);
           },

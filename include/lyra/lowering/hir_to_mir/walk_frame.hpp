@@ -106,10 +106,14 @@ struct WalkFrame {
   // lexical binding axis carried by `bindings`.
   const ScopeChainNode* outer_classes = nullptr;
 
-  // The current block write target. Set when a walker opens a new block
-  // (process body, nested block body, fork branch body, closure body) and
-  // entered via `WithBlock`. Null outside a block. A block places statements
-  // and exprs; it does not resolve a reference to its binding.
+  // The block whatever is being lowered goes into, its nodes and any step it
+  // takes. It runs exactly when the code lowered into it runs, so a construct
+  // that evaluates an operand only on some runs lowers that operand into a
+  // block of its own (LRM 11.3.5). Set when a walker opens a
+  // new block (process body, nested block body, fork branch body, closure body,
+  // a block expression) and entered via `WithBlock`. Null outside a block. A
+  // block places statements and exprs; it does not resolve a reference to its
+  // binding.
   mir::Block* current_block = nullptr;
 
   // Which value a read of an observable cell answers with while this subtree is

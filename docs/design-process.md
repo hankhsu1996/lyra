@@ -153,6 +153,26 @@ That is the failure worth naming, because nothing downstream reports it: a surve
 first question lets you build the conventional structure in the wrong component. The tests pass, the
 shape looks like the textbook, and the layer that should have owned the decision never sees it.
 
+**Read their source rather than recalling it.** A recalled survey and a read one produce the same
+paragraph, and the recalled one is wrong exactly where it matters: what a compiler does is
+memorable, where it does it is not.
+
+## Take the established compilers' names and shapes
+
+Clang and rustc have already named and shaped most of what a compiler meets. **Where either has the
+concept, Lyra uses its name and its shape.** A reader who knows either compiler then reads Lyra
+without a glossary, and a design that matches theirs inherits the cases they have already found.
+
+A difference is admissible only as a condition Lyra has and they do not, written as one sentence --
+MIR is a tree rather than a control-flow graph, say. "Ours looks different, but it carries the same
+information as theirs" is not such a sentence. It describes the same concept under a second name,
+and every reader then pays for the translation -- including the next designer, who argues from the
+second name and never finds the first compiler's answer.
+
+A contract of our own that neither compiler follows is the case to suspect first, because nothing
+conflicts with it: it is read as a premise, and the defect it allows sits exactly where their shape
+and ours differ.
+
 ## The one question: read the consumers
 
 Before arguing about a shape, find everything that reads it and look at what each one does in the

@@ -2149,20 +2149,6 @@ enough to warrant its own focused review.
       the same trade that path already had, and whoever could cause it is already told to run that
       schedule before committing.
 
-- [ ] R131 -- Which run-time checks belong inside the expression that carries them. A guard the
-      language requires to run as part of evaluating an access rather than ahead of it (LRM 11.3.5)
-      is stated once, as an operation over any value that yields what it was handed, so the access
-      composes onto it instead of naming its subject twice. Exactly one construct is built on it:
-      reading a tagged union's member against a tag it does not hold (LRM 11.9).
-
-      What is unasked is whether that is the only one. The clause is about short-circuiting, so it
-      reaches every check a short-circuited operand must not raise -- and the other run-time checks
-      a design can fail are today written wherever each one happened to be needed rather than
-      against that question. The answer may be that this construct really is alone, and that is
-      worth establishing rather than assuming: a check hoisted out of the expression it belongs to
-      is wrong in a way no case that passes can show, because the program that would see it is one
-      that must not run the operand at all.
-
 - [ ] R132 -- The list of what the runtime library publishes, which every generated module is
       checked against before it is linked. Every entry is named there, one line apiece, split only
       into what the engine publishes and what a value does: a thousand lines whose structure inside
@@ -2675,18 +2661,6 @@ enough to warrant its own focused review.
       either has a body -- which is what the alternatives of a conditional already do. A loop with
       no body is a shape the lowering to MIR does not take yet. Not blocked.
 
-- [ ] R163 -- What a write target computes on the way to its place is bound by a statement placed in
-      the block the write's lowering was handed. A position evaluated other than once in sequence
-      has to hand it steps of its own, or the binding runs at the wrong time. A loop's condition and
-      step do: each is lowered through its own steps, so a write there binds once per iteration. An
-      arm of `?:` and an operand a logical operator may skip do not yet, so an increment or a call
-      with a write-back actual written there binds ahead of the statement, whether or not the run
-      takes that operand. A property write's handle, a tagged member's owner and index, and a queue
-      slice's base on the write side are what is bound. Target: every operand that may be skipped is
-      lowered through steps of its own, as a loop's condition is. Not blocked: a logical operator is
-      now the conditional over its first operand, so a skipped operand is an arm, and the arms are
-      the one position to change.
-
 - [ ] R164 -- A source operand lowered twice is evaluated twice. Two of the three ways that happens
       are refused: a body that reaches one computing node at two places a run both takes, and a
       source expression stated under two parents before lowering. An operand a construct reads and
@@ -2940,6 +2914,13 @@ enough to warrant its own focused review.
       construction can state. The same change removes the promise a module publishes beside the
       class that realizes it, the entry a referrer builds an instance through, and the coordinate
       formed at elaboration for a class a design element declares.
+
+- [ ] R179 -- What the lowering to MIR does with an operand it names at more than one place carries
+      a name of its own, where rustc's MIR building names the same contract an operand: a place or a
+      constant is used as it stands, and anything else is evaluated once into a fresh temporary. The
+      test MIR's own check asks of a node -- whether it evaluates nothing -- is that same question.
+      Target: the field's word for the concept, at the lowering and at MIR's check alike, once it is
+      settled whether MIR takes "operand" into its vocabulary. Not blocked.
 
 ## Out of Scope
 

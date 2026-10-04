@@ -4,8 +4,20 @@
 // other operator evaluates all of its operands. So a function called in the
 // operand that is not needed does not run, and the same function called where
 // its value is needed runs once.
+//
+// That covers everything evaluating the operand takes, not only what it
+// calls: a write to a property reaches the object through a handle the
+// operand computes (LRM 8.4), and that handle is not computed in an operand
+// that is not needed. The same holds in an arm of a conditional inside a
+// `with` clause, which is evaluated once per item (LRM 7.12).
 module Top;
+  class Holder;
+    int count;
+  endclass
+
   int calls;
+  Holder kept;
+  int items [3];
 
   function automatic bit counted();
     calls = calls + 1;
@@ -17,10 +29,24 @@ module Top;
     return 7;
   endfunction
 
+  function automatic Holder counted_holder();
+    calls = calls + 1;
+    return kept;
+  endfunction
+
   bit low;
   bit high;
   bit taken;
   int chosen;
+  int written;
+  int summed;
+
+  int conditional_write_skipped = -1;
+  int conditional_write_needed = -1;
+  int and_write_skipped = -1;
+  int or_write_skipped = -1;
+  int implication_write_skipped = -1;
+  int with_write_skipped = -1;
 
   int and_skipped = -1;
   int and_needed = -1;
@@ -63,6 +89,29 @@ module Top;
     calls = 0;
     taken = low & counted();
     bitwise_and = calls;
+
+    kept = new;
+    calls = 0;
+    written = low ? counted_holder().count++ : 3;
+    conditional_write_skipped = calls;
+    calls = 0;
+    written = high ? (counted_holder().count += 5) : 3;
+    conditional_write_needed = calls;
+
+    calls = 0;
+    taken = low && ((counted_holder().count = 9) > 0);
+    and_write_skipped = calls;
+    calls = 0;
+    taken = high || ((counted_holder().count = 9) > 0);
+    or_write_skipped = calls;
+    calls = 0;
+    taken = low -> ((counted_holder().count = 9) > 0);
+    implication_write_skipped = calls;
+
+    items = '{1, 2, 3};
+    calls = 0;
+    summed = items.sum() with (low ? counted_holder().count++ : item);
+    with_write_skipped = calls;
   end
 
   final begin
@@ -92,6 +141,28 @@ module Top;
     if (bitwise_and !== 1)
       $fatal(1, "the right operand of & ran %0d times, expected 1",
              bitwise_and);
+    if (conditional_write_skipped !== 0)
+      $fatal(1, "a property write in the arm ?: did not take reached its handle %0d times, expected 0",
+             conditional_write_skipped);
+    if (conditional_write_needed !== 1)
+      $fatal(1, "a property write in the arm ?: took reached its handle %0d times, expected 1",
+             conditional_write_needed);
+    if (and_write_skipped !== 0)
+      $fatal(1, "a property write behind && reached its handle %0d times, expected 0",
+             and_write_skipped);
+    if (or_write_skipped !== 0)
+      $fatal(1, "a property write behind || reached its handle %0d times, expected 0",
+             or_write_skipped);
+    if (implication_write_skipped !== 0)
+      $fatal(1, "a property write behind -> reached its handle %0d times, expected 0",
+             implication_write_skipped);
+    if (kept.count !== 5)
+      $fatal(1, "the property was left at %0d, expected 5", kept.count);
+    if (with_write_skipped !== 0)
+      $fatal(1, "a property write in an arm a with clause did not take reached its handle %0d times, expected 0",
+             with_write_skipped);
+    if (summed !== 6)
+      $fatal(1, "the with clause summed to %0d, expected 6", summed);
     $display("All checks passed");
   end
 endmodule
