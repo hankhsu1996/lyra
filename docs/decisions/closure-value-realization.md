@@ -1,6 +1,12 @@
 # A closure value is an instance of its declaration, and its captures are member storage
 
-Date: 2026-08-28. Status: accepted.
+Date: 2026-08-28. Status: accepted; D2 and D4 superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D1 and D4. The
+execution backend lays a closure's captures out itself, so a closure value is built by an
+instruction of its own -- the library allocates the captures' storage and the building code fills
+each capture the way its storage holds one -- rather than through the generic constructor protocol
+with promotion driven by a schema. The closure's definition is a constant its unit emits, stating
+its body, the captures' size, and the body ending them. D1, D3, D5 and D6 stand.
 
 ## Why this decision matters
 

@@ -9,8 +9,8 @@ it are objects, and every legality question about it was answered by the front e
 whose view is chosen at run time; what varies per instance is which class the target has, not what
 the referrer may assume. Not an untyped pointer: it carries object identity and the reachability
 semantics of the reference kind it is, and nothing may reinterpret it as data. Not an object without
-a class -- the object carries its class, which is what lets a virtual behavior dispatch and a
-checked downcast work through such a reference.
+a class -- the object holds its class's table and type descriptor, which is what lets a virtual
+behavior dispatch and a checked downcast work through such a reference.
 
 **Usage notes.** The distinction that makes the term worth an entry is between _naming_ a class and
 _knowing_ one. The compiler knows the class; the referrer has no name for it, because a type
@@ -19,8 +19,9 @@ declared inside a design element is a distinct type per instance of that element
 change -- declare the class in a package -- not a compiler capability.
 
 Every operation that reads nothing the class holds works unchanged: testing against null, comparing
-identity, copying, assigning, and being retained. An operation that reaches a property or a behavior
-needs a [coordinate](coordinate.md), formed where the instance is known.
+identity, copying, assigning, and being retained. An operation that reaches a property needs a
+[coordinate](coordinate.md), and one that reaches a behavior needs the body the name settles to,
+both formed where the instance is known.
 
 A reference that does name a class is the same reference abstraction with a different static view
 (see `architecture/object_model.md`); the two are not separate kinds, and converting toward the

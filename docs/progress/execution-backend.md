@@ -8,8 +8,8 @@ coverage.
 
 What this backend produces is a program: each unit's module compiled to an object and linked with
 the runtime library, which `build` hands back and `run` executes. Design elaboration runs here as it
-does on the C++ backend: the backend lowers cross-unit construction and realizes members as
-runtime-owned storage, so it elaborates a hierarchy of modules through the design root.
+does on the C++ backend: the backend lowers cross-unit construction and lays every scope class out
+at compile time, so it elaborates a hierarchy of modules through the design root.
 
 Done when a design compiles and runs through this backend end to end, matching the C++ backend's
 answers wherever both accept the source.
@@ -275,9 +275,9 @@ ownership, or native in-frame layout) for every value.
 
 The value layer is realized two ways, and the breadth work above runs against this split:
 
-- The transitional C++ backend realizes each value type as a monomorphized target type -- the host
-  C++ compiler expands one concrete type per element type, and an aggregate interior is written in
-  place because that type owns real storage.
+- The C++ backend realizes each value type as a monomorphized target type -- the host C++ compiler
+  expands one concrete type per element type, and an aggregate interior is written in place because
+  that type owns real storage.
 - The execution backend realizes each value as a runtime object in its own frame
   (`../decisions/a-value-lives-in-its-makers-frame.md`), one type per domain, since it emits
   generated code with no host compiler to expand a template. A product -- an unpacked struct, a
@@ -293,20 +293,19 @@ Both are correct and agree per source (the backend-agreement tests check this), 
 implementations of the same value semantics. Every value domain added to the execution backend is a
 second implementation beside the C++ one, so the two-track maintenance grows as the breadth fills.
 This is deliberate, not overlooked: erasure is the uniform, correct baseline chosen so the
-value-domain breadth can be filled first, and the C++ backend is transitional.
+value-domain breadth can be filled first.
 
 - [ ] **One native value model (physical value monomorphization).** The convergence that ends the
       two-track split: the execution backend generates specialized native code per concrete type --
       doing the type expansion itself, the way the host C++ compiler does it for the C++ backend --
       so a value's bytes live inline and its operations are native, reproducing the value layer's
       physical layout in generated code (`../decisions/jit-aggregate-realization.md` physical value
-      monomorphization; `../decisions/jit-value-realization.md` native in-frame layout, member
-      storage included). It is a deferred, value-model-wide endpoint gated behind the value-domain
-      breadth being broad, never a per-domain step; once it lands the value model is native on both
-      sides and the second implementation is no longer a separate track. A run-time-sized container
-      keeps runtime-owned storage regardless -- its element count is a runtime quantity -- so this
-      makes the fixed-arity aggregates and the element bytes native, not the container's own
-      storage.
+      monomorphization; `../decisions/jit-value-realization.md` native in-frame layout). It is a
+      deferred, value-model-wide endpoint gated behind the value-domain breadth being broad, never a
+      per-domain step; once it lands the value model is native on both sides and the second
+      implementation is no longer a separate track. A run-time-sized container keeps runtime-owned
+      storage regardless -- its element count is a runtime quantity -- so this makes the fixed-arity
+      aggregates and the element bytes native, not the container's own storage.
 
 ## Deferred effects and concurrency
 
@@ -389,12 +388,12 @@ each meets the same lifetime question above.
       answers is what its type says; the alternative a body is, is read off what its own invoke
       answers rather than recorded beside it. What no type carries is what C says nothing about --
       how the captured state is laid out, and which representation a result comes back in -- and
-      those ride with the body as the record it was registered under.
+      those ride with the body in the definition its unit emits.
 
       What a body captures is independent of what it is called with, so the captured state is one
-      block whatever the body is, described by the same schema an object's properties and a scope's
-      members are. A captured value is a copy taken where the body was built, so nothing a body
-      reads points into storage that may already be gone. A `fork` branch differs in what becomes
+      block whatever the body is, laid out where the closure is built, filled by that code, and
+      ended by a body its definition names. A captured value is a copy taken where the body was
+      built, so nothing a body reads points into storage that may already be gone. A `fork` branch differs in what becomes
       of that storage: entering the branch takes the captures rather than borrowing them, since the
       execution outlives the stretch that built them and nothing else owns them.
 
@@ -478,59 +477,50 @@ each meets the same lifetime question above.
       brings an object into existence; which body then initializes it is settled where the object is
       asked for, and the generated code enters that constructor the way it enters a base's.
 - [x] **Which body a call reaches, decided by the object rather than by the call site** (LRM 8.20,
-      8.21, 8.22). A value carries the bodies its class answers each behavior with, and a call names
-      a behavior instead of a body: the runtime answers what class the value is, and the generated
-      code enters the body that answer names. The split is the same one construction takes -- what
-      only the runtime knows is the only thing that crosses to it -- so nothing generated depends on
-      how an object or its class record is laid out. A class states what it adds to its lineage and
-      nothing about the lineage itself: the behaviors it introduces, and the ones it takes over,
-      each named by the declaration that introduced it, so a behavior keeps one position in that
-      declaration and in every class extending it. A behavior introduced without a body (LRM 8.21)
-      is a position nothing answers, which no value reaches because such a class is never
-      constructed. An abstract class and its pure-virtual contract, a method defined out of block, a
-      `super` call reaching past an override, and a virtual task all run here. A behavior a class of
-      another compilation unit introduced runs here too: the introducer is found by walking what
-      each class promised about the class it extends, so a call names it however many classes it was
-      reached through. What is refused is a behavior an interface class states, which sits on no
-      lineage and so has no position counted through one -- a class commits to several interfaces
-      whose declarations are unrelated to each other and to its base, and two classes committing to
-      one need not order them alike (LRM 8.26). Settled in
-      `../decisions/dispatch-position-is-a-lineage-coordinate.md`.
+      8.21, 8.22). A call names a behavior instead of a body, and loads the value's table and the
+      slot the behavior's introducer and ordinal fix, as clang's output does. A class states what it
+      adds to its lineage and nothing about the lineage itself: the behaviors it introduces, and the
+      ones it overrides, each named by the declaration that introduced it, so a behavior keeps one
+      position in that declaration and in every class extending it. A behavior introduced without a
+      body (LRM 8.21) is a position nothing answers, which no value reaches because such a class is
+      never constructed. An abstract class and its pure-virtual contract, a method defined out of
+      block, a `super` call reaching past an override, and a virtual task all run here. A behavior a
+      class of another compilation unit introduced runs here too: the introducer is found by walking
+      what each class promised about the class it extends, so a call names it however many classes
+      it was reached through. A behavior an interface class states dispatches through that
+      interface's own table, reached through the interface's view of the object (LRM 8.26). Settled
+      in `../decisions/dispatch-position-is-a-lineage-coordinate.md` and
+      `../decisions/an-object-model-fixed-at-compile-time.md`.
 - [x] **A class another compilation unit declares.** Reaching a property or a behavior on one is an
       ordinary access at every layer below the one that read the promise: the class is on that
       unit's signature, and the slot or ordinal is counted out of what it published. What a class
       promises is what it declares plus the class it extends, never what it inherited, so an
       inherited property or behavior is found by walking that chain -- and reading each promise on
       the way is what makes its unit a dependency. What a class keeps to itself (LRM 8.18 `local`)
-      is on no promise and sits behind everything it published, so adding one moves nothing a
-      referrer counted. Settled in `../decisions/reaching-past-a-published-class.md`. Constructing
-      one is the same construction as any other: the allocation reaches the class's definition by
-      the name its unit links it under and the constructor by that name and one more segment, so
+      is on its promise by type only, unnamed, and sits behind everything it published, so no
+      referrer reaches one and adding one moves no published slot. Settled in
+      `../decisions/reaching-past-a-published-class.md`. Constructing one is the same construction
+      as any other. The allocation asks for the size the class's promise lays out, and the
+      constructor is reached by the name its unit links the class under and one more segment, so
       which unit declares the class decides where each answer is read and nothing after it
       (`../decisions/constructing-another-units-class.md`). Until that landed the construction fell
       out of the lowering entirely and the object came back with no property initialized, which is
-      the one shape here that answered rather than refused. Holding a handle to such a class asks
-      for no promise at all -- a handle refers to an object without reading anything its class holds
-      -- so a hierarchical name that lands on such a variable resolves in either direction of the
-      hierarchy, including on a class a design element declares, which no signature carries and none
-      could. Reaching a property or a behavior through such a handle works as well: the name
-      resolves at elaboration against the class the instance fixes, and what that answers -- a
-      storage position, a dispatch position, or a body outright -- is what each access then uses
-      (LRM 23.6, 8.14, 8.20). What still refuses is the type-associated storage of a class a unit
-      declares, which no symbol names yet.
-- [ ] `this` as a value in its own right (LRM 8.11), so an object can be returned, passed, and
-      compared from inside its own method. A body holds a borrowed pointer to the object it runs on,
-      which serves every member access; answering with a handle instead is what a shared-owner
-      realization needs and a traced one does not, since there the handle is that pointer. So this
-      waits on the reclamation model rather than on an entry: what it costs to add now is the record
-      the tracing would make unnecessary.
-- [x] **A compiled unit carries what it declares.** The definition a scope is driven through, the
-      one every value of a class carries, a closure's, the description one body's variables need,
-      and the storage a unit shares program-wide are all stated by the unit's own module, in a body
-      whoever composes the program runs before the program starts. Nothing builds them from a
-      lowered unit after compiling, and a class another unit declares is named by the cell holding
-      its definition rather than matched to it by comparing linkage names across the program.
-      Settled in `../decisions/a-unit-states-what-it-declares.md`.
+      the one shape here that answered rather than refused. A hierarchical name that lands on a
+      variable holding a handle resolves in either direction of the hierarchy, including on a class
+      a design element declares, which no signature carries and none could. Reaching a property or a
+      behavior through such a handle works as well. The name resolves at elaboration against the
+      class the handle is of, and answers a storage position for a property and a body for a
+      behavior, which for a virtual one makes the virtual call (LRM 23.6, 8.14, 8.20). What still
+      refuses is the type-associated storage of a class a unit declares, which no symbol names yet.
+- [x] `this` as a value in its own right (LRM 8.11). A body answers it as the handle to the object
+      it runs on, so an object can be returned, passed, and compared from inside its own method.
+- [x] **A compiled unit carries what it declares.** The definition of each class and of each
+      closure, and the storage a unit shares program-wide, are all stated by the unit's own module,
+      the definitions as constants. Nothing builds them from a lowered unit after compiling, and a
+      class another unit declares is named by the symbol of its definition rather than matched to it
+      by comparing linkage names across the program. Settled in
+      `../decisions/a-unit-states-what-it-declares.md` and
+      `../decisions/an-object-model-fixed-at-compile-time.md`.
 
 - [x] **An artifact this path produces, rather than only a session it runs in.** `build` on this
       backend links the design into an executable that runs after the compiler has exited and
@@ -594,10 +584,9 @@ each meets the same lifetime question above.
 - [x] **What a loaded design knows about a scope.** The record a scope is built from carries every
       name space it answers a call in and its whole timescale, so a hierarchical name, a foreign
       name and a time query each read what that scope states rather than what the last consumer
-      happened to need. It is assembled from the executable body plus the unit's source-level
-      metadata, which is why a fact absent from either was reported as the runtime's default -- a
-      scope with no unit of its own answered the DPI-C time queries with the simulation's precision
-      (LRM 3.14.2.3, Annex H.13).
+      happened to need. It is stated in the definition of the scope's class, timescale included, so
+      a scope with no unit of its own answers the DPI-C time queries with its own precision rather
+      than the simulation's (LRM 3.14.2.3, Annex H.13).
 - [x] **Foreign code calling in.** An exported subroutine is reachable under the C name the standard
       fixes (LRM 35.4, 35.7), and a DPI task crosses in either direction. What this needed is that a
       program have one linker: the design's foreign sources are linked into the program rather than

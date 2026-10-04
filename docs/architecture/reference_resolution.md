@@ -97,13 +97,13 @@ its changes.
    one the reached storage was **declared** with, never the one an object turns out to be: a
    reference commonly names no object at all when its route seals, and which property an access
    reaches is fixed by the class the access names rather than by what it runs on.
-9. Resolving a name against a class is not resolving it to a body. A coordinate for a property or a
-   non-virtual behavior is complete at sealing. A coordinate for a virtual behavior names the
-   dispatch position the source name means; which body fills that position is the object's own
-   answer at the moment of the call, and no route commits it. _Consequence: a reference without a
-   class view is not a reference whose view is chosen at run time -- every legality question is
-   settled before lowering, and what the referrer lacks is a name for the class rather than
-   knowledge of it._
+9. Resolving a name against a class is not choosing which override runs. A coordinate for a property
+   is complete at sealing, and a behavior resolves to a body. For a virtual behavior that body is
+   one the declaring unit synthesizes to make the virtual call on the object it is handed, so which
+   override finally runs is still the object's own answer at the moment of the call, and no route
+   commits it. _Consequence: a reference without a class view is not a reference whose view is
+   chosen at run time -- every legality question is settled before lowering, and what the referrer
+   lacks is a name for the class rather than knowledge of it._
 
 ## Boundary to Adjacent Layers
 
@@ -156,8 +156,8 @@ its changes.
   assignment and silently wrong afterwards.
 - A source name carried into a body to be resolved against an object there. The name is resolved
   where the instance is known; what crosses into the body is the coordinate.
-- Elaboration committing which body a virtual behavior enters. It resolves the name to a dispatch
-  position; the object answers the position.
+- Elaboration choosing which override a virtual behavior runs. It settles the name to a body that
+  makes the virtual call, and the object answers which override that call reaches.
 - A coordinate formed against a class the referrer assumed rather than the class the bound instance
   has. A position read off the wrong class addresses whatever sits at that position in another
   class's layout, with nothing to catch it.
@@ -226,11 +226,11 @@ reaching `h` is opaque, like any name past a signature. What follows is not anot
 same kind: `tag` is a property of an object, and which object is a value `holder` overwrites
 whenever it likes. So the route seals two things -- the reference, and `tag` resolved against the
 class that instance declared `h` with. The body dereferences whichever object the reference holds
-and applies the coordinate. Replacing `tag` with a virtual behavior changes only what the coordinate
-names: a dispatch position instead of a storage position, with the object still answering which body
-fills it. `holder.q[0].tag` is the same picture with a collection in the middle -- what decides the
-shape is that a structural operation follows a value with no class view, never the syntax that
-produced the value.
+and applies the coordinate. Replacing `tag` with a virtual behavior changes only what the name
+settles to, which is then a body making the virtual call instead of a storage position, with the
+object still answering which override that call reaches. `holder.q[0].tag` is the same picture with
+a collection in the middle -- what decides the shape is that a structural operation follows a value
+with no class view, never the syntax that produced the value.
 
 **Port connections share the routing.** An input or output port is a continuous-assignment edge
 between the two objects' own storage (LRM 23.3.3); the cross-unit side reaches the partner cell

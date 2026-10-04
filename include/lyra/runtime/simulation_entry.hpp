@@ -3,6 +3,7 @@
 #include <functional>
 #include <memory>
 #include <string_view>
+#include <utility>
 
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/scope.hpp"
@@ -10,7 +11,6 @@
 namespace lyra::runtime {
 
 class Runtime;
-struct ScopeDefinition;
 
 // The entry a design's root unit publishes for making its object, as a host
 // reaches it: the owner every object takes -- none, for this one -- and the
@@ -24,13 +24,13 @@ using RootFactory =
     std::function<std::unique_ptr<Scope>(Scope*, HierarchySegment)>;
 
 // The host program's design-simulation entry. Collects the LRM 21.6
-// command-line plusarg tokens off `argv`, constructs the Runtime seeded
-// with those tokens, asks `make` for the design's `$root` under `root_name`
-// (whose generated constructor elaborates the design), binds the built
-// tree, and drives the scheduler to completion. Returns the simulation's
-// exit code. Elaboration precedes the simulation (LRM 3.12), so a failure
-// while the design is built or resolved is reported here and the run never
-// starts; everything from time-zero initialization onward is the run's own.
+// command-line plusarg tokens off `argv`, constructs the Runtime seeded with
+// those tokens, asks `make` for the design's `$root` under `root_name` (whose
+// generated constructor elaborates the design), binds the built tree, and
+// drives the scheduler to completion. Returns the simulation's exit code.
+// Elaboration precedes the simulation (LRM 3.12), so a failure while the
+// design is built or resolved is reported here and the run never starts;
+// everything from time-zero initialization onward is the run's own.
 //
 // This is the entry the emitted `main` calls, and every host-boundary concern
 // is behind it -- argv parsing, engine construction, the root's structural
@@ -42,15 +42,18 @@ auto RunDesignRoot(
     int argc, char** argv, std::string_view root_name, const RootFactory& make)
     -> int;
 
-// The entry for a program whose units state what they declare, called once
-// every unit's declaration body has run -- which is what composing such a
-// program means, whether a linker or an execution session composed it. What
-// those bodies declared is laid out here, and the design then runs exactly as
-// the entry above runs it, its `$root` built through the definition the root's
-// own unit declared.
-auto RunDeclaredProgram(
+// The same for a root a target builds as its own class `T`, which is how the
+// entry an emitted program names answers.
+template <typename T>
+auto RunDesignRoot(
     int argc, char** argv, std::string_view root_name,
-    const ScopeDefinition& root) -> int;
+    std::unique_ptr<T> (*make)(Scope*, HierarchySegment)) -> int {
+  return RunDesignRoot(
+      argc, argv, root_name,
+      RootFactory([make](Scope* parent, HierarchySegment segment) {
+        return std::unique_ptr<Scope>(make(parent, std::move(segment)));
+      }));
+}
 
 // Boundary between a host program and the simulation Runtime. Drives a bound
 // Runtime to completion and reports whatever the run could not itself account

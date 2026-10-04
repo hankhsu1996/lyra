@@ -1,6 +1,5 @@
 #include "lyra/lir/function.hpp"
 
-#include <optional>
 #include <string_view>
 #include <variant>
 
@@ -71,6 +70,9 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
             return support::RuntimeEntryOf(builtin.fn).ending;
           },
           [](const ConstructTarget&) { return CallEnding::kReturnsOrDeparts; },
+          [](const LibraryConstructorTarget&) {
+            return CallEnding::kReturnsOrDeparts;
+          },
           [](const ValueCellTarget&) { return CallEnding::kReturns; },
           // Keeping a part's value only moves memory; writing a slice is the
           // slice write any storage takes, which can raise.
@@ -83,9 +85,6 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
             }
             throw InternalError("lir: unknown open-write operation");
           },
-          [](const OpenVariablesTarget&) { return CallEnding::kReturns; },
-          [](const VariableAddressTarget&) { return CallEnding::kReturns; },
-          [](const CloseVariablesTarget&) { return CallEnding::kReturns; },
           [](const EndValueTarget&) { return CallEnding::kReturns; },
           [](const CopyValueTarget&) { return CallEnding::kReturns; },
           [](const ControlEffectTarget& effect) {
@@ -116,29 +115,19 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
       target);
 }
 
-auto OperandType(const Function& fn, const Operand& operand)
-    -> std::optional<TypeId> {
+auto OperandType(const Function& fn, const Operand& operand) -> TypeId {
   return std::visit(
       Overloaded{
-          [&](const Use& use) -> std::optional<TypeId> {
-            return fn.values.Get(use.value).type;
-          },
-          [](const IntConst& c) -> std::optional<TypeId> { return c.type; },
-          [](const StrConst& c) -> std::optional<TypeId> { return c.type; },
-          [](const RealConst& c) -> std::optional<TypeId> { return c.type; },
-          [](const NullConst& c) -> std::optional<TypeId> { return c.type; },
-          [](const BoolConst& c) -> std::optional<TypeId> { return c.type; },
-          [](const TypeDescriptorRef& c) -> std::optional<TypeId> {
-            return c.type;
-          },
-          [](const IntegralConstantRef& c) -> std::optional<TypeId> {
-            return c.type;
-          },
-          [](const FuncRef&) -> std::optional<TypeId> { return std::nullopt; },
-          [](const StaticRef& s) -> std::optional<TypeId> { return s.type; },
-          [](const ObjectRecordRef& r) -> std::optional<TypeId> {
-            return r.type;
-          }},
+          [&](const Use& use) { return fn.values.Get(use.value).type; },
+          [](const IntConst& c) { return c.type; },
+          [](const StrConst& c) { return c.type; },
+          [](const RealConst& c) { return c.type; },
+          [](const NullConst& c) { return c.type; },
+          [](const BoolConst& c) { return c.type; },
+          [](const TypeDescriptorRef& c) { return c.type; },
+          [](const IntegralConstantRef& c) { return c.type; },
+          [](const StaticRef& s) { return s.type; },
+          [](const DefinitionRef& c) { return c.type; }},
       operand);
 }
 

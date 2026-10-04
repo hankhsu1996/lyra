@@ -8,7 +8,6 @@
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
-#include "lyra/value/managed_ref.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
@@ -56,7 +55,6 @@ extern template class ValueStorageCore<value::RuntimeDynamicArray>;
 extern template class ValueStorageCore<value::RuntimeUnpackedArray>;
 extern template class ValueStorageCore<value::RuntimeQueue>;
 extern template class ValueStorageCore<value::RuntimeAssociativeArray>;
-extern template class ValueStorageCore<value::ManagedRef>;
 extern template class ValueStorageCore<value::ObjectRef>;
 
 extern template class Var<value::PackedArray>;
@@ -71,7 +69,6 @@ extern template class Var<value::RuntimeDynamicArray>;
 extern template class Var<value::RuntimeUnpackedArray>;
 extern template class Var<value::RuntimeQueue>;
 extern template class Var<value::RuntimeAssociativeArray>;
-extern template class Var<value::ManagedRef>;
 extern template class Var<value::ObjectRef>;
 
 extern template class CellRareState<value::PackedArray>;
@@ -85,7 +82,6 @@ extern template class CellRareState<value::RuntimeDynamicArray>;
 extern template class CellRareState<value::RuntimeUnpackedArray>;
 extern template class CellRareState<value::RuntimeQueue>;
 extern template class CellRareState<value::RuntimeAssociativeArray>;
-extern template class CellRareState<value::ManagedRef>;
 extern template class CellRareState<value::ObjectRef>;
 
 extern template class Ref<value::PackedArray>;
@@ -100,7 +96,6 @@ extern template class Ref<value::RuntimeDynamicArray>;
 extern template class Ref<value::RuntimeUnpackedArray>;
 extern template class Ref<value::RuntimeQueue>;
 extern template class Ref<value::RuntimeAssociativeArray>;
-extern template class Ref<value::ManagedRef>;
 extern template class Ref<value::ObjectRef>;
 
 extern template class ScopedMutation<Ref<value::PackedArray>>;
@@ -115,7 +110,6 @@ extern template class ScopedMutation<Ref<value::RuntimeDynamicArray>>;
 extern template class ScopedMutation<Ref<value::RuntimeUnpackedArray>>;
 extern template class ScopedMutation<Ref<value::RuntimeQueue>>;
 extern template class ScopedMutation<Ref<value::RuntimeAssociativeArray>>;
-extern template class ScopedMutation<Ref<value::ManagedRef>>;
 extern template class ScopedMutation<Ref<value::ObjectRef>>;
 
 extern template class Takeovers<value::PackedArray>;
@@ -130,7 +124,6 @@ extern template class Takeovers<value::RuntimeDynamicArray>;
 extern template class Takeovers<value::RuntimeUnpackedArray>;
 extern template class Takeovers<value::RuntimeQueue>;
 extern template class Takeovers<value::RuntimeAssociativeArray>;
-extern template class Takeovers<value::ManagedRef>;
 extern template class Takeovers<value::ObjectRef>;
 
 extern template class ActivationValueCell<value::PackedArray>;
@@ -145,7 +138,7 @@ extern template class ActivationValueCell<value::RuntimeDynamicArray>;
 extern template class ActivationValueCell<value::RuntimeUnpackedArray>;
 extern template class ActivationValueCell<value::RuntimeQueue>;
 extern template class ActivationValueCell<value::RuntimeAssociativeArray>;
-extern template class ActivationValueCell<value::ManagedRef>;
+extern template class ActivationValueCell<value::ObjectRef>;
 
 extern template class SampledHistory<value::PackedArray>;
 extern template class SampledHistory<value::String>;
@@ -158,7 +151,6 @@ extern template class SampledHistory<value::RuntimeDynamicArray>;
 extern template class SampledHistory<value::RuntimeUnpackedArray>;
 extern template class SampledHistory<value::RuntimeQueue>;
 extern template class SampledHistory<value::RuntimeAssociativeArray>;
-extern template class SampledHistory<value::ManagedRef>;
 extern template class SampledHistory<value::ObjectRef>;
 
 extern template class ResolvedNet<value::PackedArray>;
@@ -187,7 +179,6 @@ extern template class CompletionSlot<value::RuntimeDynamicArray>;
 extern template class CompletionSlot<value::RuntimeUnpackedArray>;
 extern template class CompletionSlot<value::RuntimeQueue>;
 extern template class CompletionSlot<value::RuntimeAssociativeArray>;
-extern template class CompletionSlot<value::ManagedRef>;
 extern template class CompletionSlot<value::ObjectRef>;
 extern template class CompletionSlot<value::Tuple<>>;
 
@@ -204,7 +195,6 @@ extern template class Coroutine<value::RuntimeDynamicArray>;
 extern template class Coroutine<value::RuntimeUnpackedArray>;
 extern template class Coroutine<value::RuntimeQueue>;
 extern template class Coroutine<value::RuntimeAssociativeArray>;
-extern template class Coroutine<value::ManagedRef>;
 extern template class Coroutine<value::ObjectRef>;
 extern template class Coroutine<value::Tuple<>>;
 

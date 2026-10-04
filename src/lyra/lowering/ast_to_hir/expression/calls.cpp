@@ -1085,14 +1085,19 @@ auto LowerSubroutineCall(
   // The declaring class comes from slang's resolved callee, so an inherited
   // static call reaches the base's arena the same way an instance-method
   // call does under LRM 8.13.
-  if (sym->flags.has(slang::ast::MethodFlags::Static) &&
-      sym->getParentScope() != nullptr &&
+  bool is_type_associated = false;
+  if (sym->getParentScope() != nullptr &&
       sym->getParentScope()->asSymbol().kind ==
           slang::ast::SymbolKind::ClassType) {
+    auto answered = unit_lowerer.IsTypeAssociatedMethod(*sym, span);
+    if (!answered) return std::unexpected(std::move(answered.error()));
+    is_type_associated = *answered;
+  }
+  if (is_type_associated) {
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto callee =
-        unit_lowerer.MakeMethodCallee(frame, declaring_class, *sym, span);
+    auto callee = unit_lowerer.MakeMethodCallee(
+        frame, declaring_class, declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
     auto static_result_type = unit_lowerer.InternType(*call.type, span);
     if (!static_result_type) {
@@ -1139,8 +1144,13 @@ auto LowerSubroutineCall(
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto callee =
-        unit_lowerer.MakeMethodCallee(frame, declaring_class, *sym, span);
+    const slang::ast::Expression* receiver = call.thisClass();
+    auto callee = unit_lowerer.MakeMethodCallee(
+        frame, declaring_class,
+        receiver != nullptr
+            ? receiver->type->getCanonicalType().as<slang::ast::ClassType>()
+            : declaring_class,
+        *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
     auto method_result_type = unit_lowerer.InternType(*call.type, span);
     if (!method_result_type) {
@@ -1199,14 +1209,16 @@ auto LowerSubroutineCall(
 
   // A subroutine declared in a package or the `$unit` scope belongs to another
   // compilation unit (LRM 26.3 / 3.12.1). It is reached by name across the unit
-  // boundary rather than through an enclosing-scope binding of this unit. The
-  // call site recomputes each formal's direction and type -- the callee's
-  // argument-marshalling interface -- from the same declaration the callee
-  // lowers from, so an output / inout / ref actual is marshalled at the
-  // boundary exactly as an intra-unit one. The call's result type is the
-  // enclosing expression's own type and is not recorded again here.
+  // boundary rather than through an enclosing-scope binding of this unit. Each
+  // formal's direction and type is what marshals an output / inout / ref
+  // actual at that boundary (LRM 13.5), and the declaring unit's signature is
+  // where it is stated. The call's result type is the enclosing expression's
+  // own type and is not recorded again here.
   if (const auto* unit = DeclaringUnitOfSubroutine(*sym)) {
-    auto interface = unit_lowerer.MakeExternalCalleeInterface(*sym, span);
+    std::string unit_name =
+        CompilationUnitName(*unit, unit_lowerer.Specialization());
+    auto interface =
+        unit_lowerer.NamespaceCalleeInterface(unit_name, *sym, span);
     if (!interface) return std::unexpected(std::move(interface.error()));
     auto result_type = unit_lowerer.InternType(*call.type, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
@@ -1216,8 +1228,7 @@ auto LowerSubroutineCall(
             hir::CallExpr{
                 .callee =
                     hir::ExternalUnitSubroutineRef{
-                        .unit_name = CompilationUnitName(
-                            *unit, unit_lowerer.Specialization()),
+                        .unit_name = std::move(unit_name),
                         .subroutine_name = std::string{sym->name},
                         .interface = *std::move(interface)},
                 .arguments = std::move(arg_ids)},

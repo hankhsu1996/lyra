@@ -25,210 +25,169 @@
 
 namespace lyra::lir {
 
-// A base class defined in this compilation unit, named by its LIR class
-// identity. The layout of the base is visible to the artifact this class
-// emits into.
-struct IntraUnitBase {
-  ClassId class_id;
-};
-
-// A base class another compilation unit declares, named by that unit and the
-// class's canonical name.
-struct CrossUnitBase {
-  std::string unit_name;
-  std::string class_name;
-};
-
-// The runtime's object tree as a base: what a class extends to be rooted in
-// that tree.
-//
-// A base form names a class and nothing else. How the runtime drives an object
-// is a property of whichever class supplies the functions it drives one
-// through, so that class states it.
-//
-// What the runtime calls the class it provides is a spelling of whichever
-// target emits against that library, so this states that the base is the
-// runtime's and nothing more.
-struct ObjectTreeBase {
-  auto operator==(const ObjectTreeBase&) const -> bool = default;
-};
-
-// The root every managed object extends: what a class the source wrote without
-// an `extends` clause extends. It too is the runtime's, and the lineage of the
-// source language ends at it.
-struct ManagedObjectBase {
-  auto operator==(const ManagedObjectBase&) const -> bool = default;
-};
-
-// The functions the runtime enters on an object of a class it drives. The
-// runtime enters all three or none, so they are read as a group: every route
-// and alias is bound while the tree is complete and nothing has run, then every
-// cell takes the value its declaration gives it (LRM 10.5), then every process
-// is created (LRM 9.2). Each is entered on one instance and returns before the
-// next begins, which is why they are three functions rather than one with
-// phases inside it.
-struct ObjectTreeProgram {
-  FunctionId resolve_state;
-  FunctionId initialize_state;
-  FunctionId create_processes;
-};
-
-using Base = std::variant<
-    IntraUnitBase, CrossUnitBase, ObjectTreeBase, ManagedObjectBase>;
-
 // A typed member of whatever declares it -- the storage a member place reaches
 // by a member projection. Its position in the declaring list is its member
 // identity there, and it carries no other, because nothing below here reaches a
-// member by a name: this layer's consumers index. The C++ backend realizes a
-// member as a native field; a generic runtime value realizes it as
-// runtime-owned storage.
+// member by a name. Where it sits in the value is decided below this layer,
+// when the declaration is laid out.
 struct Member {
   TypeId type;
 };
 
-// One member a class answers a name with, and where it sits. A referrer that
-// cannot name the class counts no position for itself and asks by name instead;
-// nothing on the simulation path reads this. Only what the source declared
-// takes part, since a name is all such a referrer has to ask with and the
-// compiler minted none for the rest.
-struct NamedMember {
-  std::string name;
-  std::uint32_t position;
+// One virtual method a class overrides (LRM 8.20): which virtual method it is,
+// named by the class that first declared it and its position among that
+// class's virtual methods, and the symbol of the function this class supplies
+// for it.
+struct Override {
+  StatedDispatchRef behavior;
+  std::string body;
 };
 
-// One behavior a class takes over from its lineage (LRM 8.20): which behavior,
-// and the body this class answers it with. Taking one over without a body would
-// leave it exactly as it was, so nothing states that.
-struct DispatchTakeover {
-  StatedDispatchRef method;
-  FunctionId body;
-};
-
-// One name a scope answers a call under, and the entry that call reaches. A
-// scope answers in more than one name space -- a hierarchical name spells the
-// SystemVerilog identifier a subroutine was declared under (LRM 23.8.1), a
-// foreign caller spells the program-global C identifier an export publishes
-// (LRM 35.4) -- and one declaration may answer in both under different
-// spellings, so the name space is which list holds the entry rather than
-// anything the entry carries.
+// What one class contributes to its virtual table (LRM 8.20). `introduces` is
+// the virtual methods this class is the first to declare, in declaration order,
+// each with the symbol of its function -- or nothing for a pure virtual method
+// (LRM 8.21), which has none. `overrides` is the virtual methods of a base
+// class this one replaces.
 //
-// A body no name reaches is absent rather than listed with nothing to say. The
-// table is what is asked -- what does this name reach here -- and an entry's
-// presence in it is a relation the name space holds, never a property of the
-// body.
-struct PublishedCallable {
-  std::string name;
-  FunctionId entry;
+// A class states only its own contribution. A target builds the class's whole
+// table by taking the base class's table, putting each override in the slot it
+// replaces, and appending what this class introduces.
+struct ClassDispatch {
+  std::vector<std::optional<std::string>> introduces;
+  std::vector<Override> overrides;
 };
 
-// One behavior a class introduces (LRM 8.20): the identifier a referrer spells,
-// and the body answering it -- absent where the class declares the behavior
-// without one (LRM 8.21 pure virtual). The name is here because a referrer that
-// cannot name the class counts no position for itself and asks by name instead;
-// nothing on the simulation path reads it.
-struct Introduction {
-  std::string name;
-  std::optional<FunctionId> body;
+// How a class satisfies one method of an interface class it implements (LRM
+// 8.26.2). `interface_behavior` is the interface class's method; `answered_by`
+// is the virtual method in the class's own virtual table that implements it.
+// A call through an interface class handle runs whatever function the object's
+// class has in that slot, so a class overriding the method further down
+// answers the interface with its own function too. Absent where an abstract
+// class leaves the method for a class extending it to implement.
+struct ConformingBehavior {
+  StatedDispatchRef interface_behavior;
+  std::optional<StatedDispatchRef> answered_by;
 };
 
-// One body a class answers a name with, where the class the access names is
-// what decides which body runs whatever the value turns out to be (LRM 8.14).
-// The name is here for the same reason it is on an introduction: a referrer
-// that cannot name the class asks by name. A behavior answering a dispatch
-// position is not here, because for one of those the value decides and what
-// such a referrer needs is the position rather than the body.
-struct DeclaredBody {
-  std::string name;
-  FunctionId body;
+struct Constant;
+
+// A machine integer, at the width of whatever it is placed in.
+struct ConstantInt {
+  std::int64_t value = 0;
 };
 
-// One class a scope answers a name with (LRM 23.9). A class declared inside a
-// design element is nameable only inside the scope declaring it, so a referrer
-// outside reaches it by walking to that scope and asking -- the same way it
-// reaches a cell or a subroutine the scope's unit never published.
-struct DeclaredClass {
-  std::string name;
-  ClassId declaration;
+// An address naming nothing.
+struct ConstantNull {};
+
+// The address of a NUL-terminated string.
+struct ConstantString {
+  std::string text;
 };
 
-// One compiled class: its name, the base it extends, the members it declares,
-// its constructor, the behaviors it introduces, the bodies it answers a name
-// with outright, the behaviors it takes over, and the entries it answers a name
-// with in each name space a caller spells one in. A class lists a function
-// rather than holding it because the function is the same kind of thing
-// wherever it is listed.
+// The address of a function of this unit.
+struct ConstantFunction {
+  FunctionId function;
+};
+
+// The address of data linked under `symbol`: a constant of this unit, or a
+// class's definition, which another unit may emit.
+struct ConstantAddress {
+  std::string symbol;
+};
+
+// A structure of the runtime library, its members given in the order the
+// library declares them, a nested structure's members standing where it does.
+struct ConstantRecord {
+  RuntimeLibraryKind kind;
+  std::vector<Constant> parts;
+};
+
+// Values of one type, one after another.
+struct ConstantArray {
+  std::vector<Constant> elements;
+};
+
+// A value fixed where the unit is compiled and built from nothing that runs --
+// literals, addresses, and structures and arrays of them -- so a target emits
+// it as data.
+struct Constant {
+  std::variant<
+      ConstantInt, ConstantNull, ConstantString, ConstantFunction,
+      ConstantAddress, ConstantRecord, ConstantArray>
+      value;
+};
+
+// Who may name a symbol of data: only the unit defining it, or any unit of the
+// program.
+enum class Linkage : std::uint8_t { kInternal, kExternal };
+
+// Read-only data this unit defines, linked under `symbol` and holding
+// `initializer` from before the program starts. Everything naming it -- another
+// constant, or under external linkage another unit -- does so by that symbol,
+// which is stated here and composed nowhere below.
+struct GlobalConstant {
+  std::string symbol;
+  Linkage linkage = Linkage::kInternal;
+  Constant initializer;
+};
+
+// One compiled class: its name, the members it declares, what it adds to
+// dispatch, and the interface classes it names -- what a target needs to hold a
+// value of it and lay one out.
 //
-// A class states what it adds to its lineage and nothing about the lineage
-// itself -- the same way it states its own members and not its base's. What a
-// value of it holds and what a value of it answers are read from the lineage,
-// which is what keeps one declaration's meaning independent of what extends it.
-//
-// An introduction's position in the list is the behavior's identity here, the
-// way a member's position is its identity above, and a body is absent where the
-// behavior is declared without an implementation (LRM 8.21); no value answers
-// such a behavior, because a class leaving one unanswered is never constructed.
-// What the class links under, what its constructor links under, and what the
-// record describing it links under are three different symbols over the same
-// parts, so none of them is derivable from another and each is composed where
-// it is used.
+// A class states its own members and not its base's. What a value of it holds
+// is read from the lineage, which is what keeps one declaration's meaning
+// independent of what extends it. What its constructor links under and what its
+// definition links under are two different symbols over the same parts, each
+// composed by the one function that owns its category.
 struct Class {
   // The identifier the source declared this class under, absent for a scope of
   // the design hierarchy, which the lowering built. Every symbol qualified by
   // this class is composed from it where it is present and from the class's own
   // position where it is not, so the two ranges never meet.
   std::optional<std::string> name;
-  std::optional<Base> base;
-  // How the runtime drives values of this class, for a class it drives at all.
-  // A class rooted in the tree that supplies none is one nothing constructs --
-  // what a unit promises of its object, which states what may be reached and
-  // never how it runs.
-  std::optional<ObjectTreeProgram> tree_program;
+  // The type of what this class's members are placed after -- the class it
+  // extends, of this unit or another, or a class of the runtime library -- and
+  // absent for an interface class, which holds no storage and of which no value
+  // is built.
+  std::optional<TypeId> base;
   std::vector<Member> members;
-  std::vector<NamedMember> named_members;
-  // How an object of this class is built, absent for an interface class (LRM
-  // 8.26), of which none ever is.
-  std::optional<FunctionId> constructor;
-  std::vector<Introduction> introduces;
-  std::vector<DeclaredBody> bodies;
-  std::vector<DispatchTakeover> takeovers;
-  std::vector<PublishedCallable> subroutines;
-  std::vector<PublishedCallable> exports;
-  std::vector<DeclaredClass> declares;
+  ClassDispatch dispatch;
+  // The interface classes this one names: what it implements, or for an
+  // interface class what it extends (LRM 8.26.2) -- the bases its description
+  // lists beside the class it extends. A value of the class is also a value of
+  // what those extend and of what its base is, and holds a part for each; which
+  // parts and in what order is the target's to place.
+  std::vector<TypeId> implements;
+  // What answers each behavior of every interface class a value of this class
+  // is also a value of, for a class that is not an interface class.
+  std::vector<ConformingBehavior> conforming;
 };
 
-// How the runtime drives values of this class, or nothing where it drives none.
-// A class supplies these functions or it does not, and the class itself is the
-// only thing that can say so, because they are its own bodies.
-[[nodiscard]] inline auto TreeProgramOf(const Class& cls)
-    -> const ObjectTreeProgram* {
-  return cls.tree_program.has_value() ? &*cls.tree_program : nullptr;
-}
-
-// A class of another unit this one reaches into, as far as that unit published
-// it: which unit declares it and its canonical name, both resolved at link
-// time, what it extends, and the properties it published at the slots that
-// class gave them. Those properties are a prefix of the class's own storage, so
-// a slot counted here is the slot the declaring unit gave.
+// A class of another unit this one reaches into, as that unit promised it:
+// which unit declares it and its canonical name, both resolved at link time,
+// what it extends, and its members at the slots that class gave them -- the
+// ones another unit may name first, then its `local` ones, which this unit
+// never names but a class of it extending this one is placed after -- and what
+// it adds to dispatch, which a class of this unit extending it builds its table
+// from. What it inherited is not among them: a member of an ancestor is reached
+// through the class that declares it.
 //
-// What a unit promised of its own object is such a class too, and lists no
-// properties, because what it published is reached by performing a behavior
-// rather than by a slot. Nothing about the name tells the two apart and nothing
-// needs to: what differs is what each extends, which is where the question of
-// whether its values stand in a tree is asked of either.
+// What a unit promised of its own object is such a class too. It lists no
+// members, because what it published is reached by performing a behavior
+// rather than by a slot, and names no body, because nothing extends it.
 //
 // This unit compiles none of it, which is why it sits apart from the classes
 // above.
 struct ExternalClass {
   std::string unit_name;
   std::string class_name;
-  // The class it extends, as its own unit promised. What it inherited is not
-  // among the members below, so a value of it carries a member of an ancestor
-  // by way of this chain, and so does the question of whether values of it
-  // stand in the declaring unit's object tree. A class one unit declares is
-  // never the base of a class another declares, so the intra-unit form this
-  // shares with a compiled class's base never arrives here.
-  std::optional<Base> base;
+  // What its members are placed after, as for a class of this unit.
+  std::optional<TypeId> base;
   std::vector<Member> members;
+  ClassDispatch dispatch;
+  // The interface classes it names, as for a class of this unit.
+  std::vector<TypeId> implements;
 };
 
 // The object of a unit this one references, as far as that unit published it:
@@ -317,19 +276,21 @@ struct CompilationUnit {
   // Every struct of another unit this one holds a value of, found by the
   // declaration that names it.
   std::vector<ExternalStruct> external_structs;
-  // One record per unit this one compiled against, under the same
-  // declare-then-define lifecycle a class has: a member of one record may name
-  // another of them -- an interface port's does (LRM 25.3) -- so a record's
-  // identity exists before its members are filled in.
+  // One record per unit this one compiled against.
   base::Registry<ExternalUnitObject, ExternalUnitObjectId>
       external_unit_objects;
-  // One entry per class of another unit this one reaches a property on, found
-  // by the pair that names the class -- the pair every reference to one
+  // One entry per class of another unit this one names, found by the pair that
+  // names the class -- the pair every reference to one
   // carries, so a reference and the record its slot is counted out of cannot
   // come apart.
   std::vector<ExternalClass> external_classes;
   base::Registry<Function, FunctionId> functions;
   std::vector<StaticStorage> static_storage;
+  // The read-only data the unit defines. What the runtime library reads of each
+  // class -- its record of the class, under external linkage and the class's
+  // definition symbol, and the tables that record points at, under internal
+  // linkage -- is here, a class holding none of it.
+  std::vector<GlobalConstant> constants;
   // The nullary function building each value the unit holds, one answer per
   // entry of the pool that holds it. Building a value is an instruction
   // sequence like any other, so a description and a constant are both code
@@ -340,36 +301,9 @@ struct CompilationUnit {
   std::optional<ClassId> root;
 };
 
-// The type naming the class `base` extends, in this unit's own pool, or nothing
-// where the lineage ends there. A base the runtime library defines ends one --
-// the object tree and the managed object root alike: it declares nothing of the
-// source language, so there is no class of the program past it.
-[[nodiscard]] inline auto BaseType(
-    const CompilationUnit& unit, const Base& base) -> std::optional<TypeId> {
-  return std::visit(
-      Overloaded{
-          [&](const IntraUnitBase& intra) -> std::optional<TypeId> {
-            return unit.types.Intern(
-                Type{ObjectType{.class_id = intra.class_id}});
-          },
-          [&](const CrossUnitBase& cross) -> std::optional<TypeId> {
-            return unit.types.Intern(
-                Type{CrossUnitClassType{
-                    .unit_name = cross.unit_name,
-                    .class_name = cross.class_name}});
-          },
-          [](const ObjectTreeBase&) -> std::optional<TypeId> {
-            return std::nullopt;
-          },
-          [](const ManagedObjectBase&) -> std::optional<TypeId> {
-            return std::nullopt;
-          }},
-      base);
-}
-
 // The record kept of the class `class_name` of unit `unit_name`, or nothing
-// where this unit consumed no promise about it -- which is the state of every
-// class it merely names.
+// where this unit holds no promise about it -- a class no signature the design
+// compiles carries.
 [[nodiscard]] inline auto FindExternalClass(
     const CompilationUnit& unit, std::string_view unit_name,
     std::string_view class_name) -> const ExternalClass* {
@@ -379,41 +313,6 @@ struct CompilationUnit {
     }
   }
   return nullptr;
-}
-
-// Whether values of a class stand in the runtime's object tree, which is a
-// different question from what drives them and is answered by what the class
-// extends. It is the lineage rather than one base that answers: a unit's object
-// is a promise standing in the tree and a class realizing it, so a class one
-// step from the tree and a class two steps from it are equally in it, and only
-// the realizing one supplies the bodies. A class of the source language
-// reaches the managed object root instead, and an interface class extends
-// nothing, so every lineage ends on an answer.
-//
-// The walk crosses the unit boundary, because a class this unit compiles and
-// one another unit promised are the same kind of thing asked the same question,
-// and taking what a class extends rather than the class lets one walk serve
-// both. A step into a promise this unit never consumed ends it: what goes
-// unrecorded there is a class of the source language, since a promise standing
-// in the tree reaches it in one step and is recorded wherever it is named.
-[[nodiscard]] inline auto StandsInObjectTree(
-    const CompilationUnit& unit, const std::optional<Base>& extends) -> bool {
-  return extends.has_value() &&
-         std::visit(
-             Overloaded{
-                 [](const ObjectTreeBase&) -> bool { return true; },
-                 [](const ManagedObjectBase&) -> bool { return false; },
-                 [&](const IntraUnitBase& intra) -> bool {
-                   return StandsInObjectTree(
-                       unit, unit.classes.Get(intra.class_id).base);
-                 },
-                 [&](const CrossUnitBase& cross) -> bool {
-                   const ExternalClass* promised = FindExternalClass(
-                       unit, cross.unit_name, cross.class_name);
-                   return promised != nullptr &&
-                          StandsInObjectTree(unit, promised->base);
-                 }},
-             *extends);
 }
 
 // What this unit read of the struct another unit declares as `declaration`.

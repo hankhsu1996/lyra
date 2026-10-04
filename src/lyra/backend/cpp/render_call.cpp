@@ -46,18 +46,11 @@ auto ResolveReceiver(const ScopeView& view, const mir::Callee& callee)
       .access = ReceiverAccessAsCpp(view.Unit(), view.Expr(*receiver).type)};
 }
 
-// The object a call is entered on, followed by the `.` its member takes.
-void WriteReceiverObject(
+void WriteCallReceiver(
     const ScopeView& view, const CallReceiver& receiver, TargetText& out) {
-  const auto write_receiver = [&](Precedence at_least) {
+  WriteReceiverObject(out, receiver.access, [&](Precedence at_least) {
     Write(view, out, Operand{.expr = receiver.expr, .at_least = at_least});
-  };
-  std::visit(
-      Overloaded{
-          [&](ReceiverIsTheObject) { write_receiver(Precedence::kPostfix); },
-          [&](OpenedByDereference) { WriteDereferenced(out, write_receiver); }},
-      receiver.access);
-  out += ".";
+  });
 }
 
 // Whether a templated method name follows a value or a type. After a value,
@@ -109,7 +102,7 @@ class CallWriter {
     if (HasReceiver()) {
       switch (placement) {
         case ReceiverPlacement::kIntoCalleeName:
-          WriteReceiverObject(*view_, **receiver_, *out_);
+          WriteCallReceiver(*view_, **receiver_, *out_);
           break;
         case ReceiverPlacement::kIntoArgumentList:
           receiver_leads_arguments_ = true;

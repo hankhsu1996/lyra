@@ -184,9 +184,6 @@ auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
           [&](const mir::AddressOfExpr& e) -> mir::ExprData {
             return mir::AddressOfExpr{.operand = again(e.operand)};
           },
-          [&](const mir::MachineArrayDataExpr& e) -> mir::ExprData {
-            return mir::MachineArrayDataExpr{.array = again(e.array)};
-          },
           [&](const mir::FieldAccessExpr& e) -> mir::ExprData {
             return mir::FieldAccessExpr{
                 .receiver = again(e.receiver), .field = e.field};
@@ -194,6 +191,7 @@ auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
           [&](const mir::UnaryExpr&) { return computes(); },
           [&](const mir::BinaryExpr&) { return computes(); },
           [&](const mir::CastExpr&) { return computes(); },
+          [&](const mir::DynamicCastExpr&) { return computes(); },
           [&](const mir::ConditionalExpr&) { return computes(); },
           [&](const mir::BlockExpr&) { return computes(); },
           [&](const mir::AssignExpr&) { return computes(); },
@@ -481,10 +479,10 @@ auto SettledPlace(
           [&](const mir::MachineFloatLiteral&) { return computed(); },
           [&](const mir::ReferenceExpr&) { return computed(); },
           [&](const mir::AddressOfExpr&) { return computed(); },
-          [&](const mir::MachineArrayDataExpr&) { return computed(); },
           [&](const mir::UnaryExpr&) { return computed(); },
           [&](const mir::BinaryExpr&) { return computed(); },
           [&](const mir::CastExpr&) { return computed(); },
+          [&](const mir::DynamicCastExpr&) { return computed(); },
           [&](const mir::ConditionalExpr&) { return computed(); },
           [&](const mir::BlockExpr&) { return computed(); },
           [&](const mir::AssignExpr&) { return computed(); },

@@ -1,6 +1,11 @@
 # Design elaboration is the synthetic `$root` unit's construct
 
-Date: 2026-07-08 Status: accepted
+Date: 2026-07-08 Status: accepted; how the host builds `$root` is superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D7. The program
+entry hands the library the `$root` unit's object entry, and the root is built through it the way an
+instance of any other unit is, so both backends' entries hand over the same thing. That `$root` is a
+synthetic unit whose construction elaborates the design, and that engine, bind and run are runner
+policy outside MIR, stand.
 
 ## Context
 

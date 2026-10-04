@@ -12,6 +12,11 @@ Accepted. Spends the per-unit artifacts
 `../architecture/emission_model.md` invariant 8 -- the position arithmetic they settle exists so a
 referrer can locate a published member, and nothing locates one after this.
 
+D4a was revised under
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), whose D4 makes
+the definition a promise passes on a constant its unit emits, and whose dispatch tables are laid out
+at compile time rather than held by the definition.
+
 ## Why this decision matters
 
 A unit publishes a promise, and a referrer is supposed to depend on that promise and nothing else.
@@ -156,17 +161,18 @@ by both sides exactly as D3's is. Which subroutine sits at which of those positi
 signature's own list, read by the declaring unit rather than re-walked -- two walks agreeing is not
 the same as one order, and an identifier a signature minted for a view is published like any other.
 
-### D4a. What the runtime is entered through belongs to the class standing in its tree
+### D4a. What the runtime drives an object through belongs to the class the object is of
 
-A target whose runtime reaches an object through function pointers needs a per-class record of them.
-That record belongs to the promise, because the promise is what extends the runtime's tree class and
-so what enters it. Putting it on the realization instead forces the realization to hand it upward
-through the promise's own construction signature, which puts a record only one target reads into a
-signature every target lowers.
+The object is of the realizing class, so that class's definition, with the program of the three
+bodies it enters, is what the runtime drives it through. The promise is what extends the runtime's
+tree class, so the definition reaches the tree's class through the promise's construction -- the
+realization hands it in, and the promise passes it on.
 
-The record names the realization's bodies, which is why it is a declaration in the artifact a
-referrer compiles against and a definition in the one it does not: what it is built from is complete
-only where the bodies are.
+This revises the first form of this decision, which kept the record on the promise because handing
+it upward "puts a record only one target reads into a signature every target lowers". That premise
+no longer holds. Every target emits each class's definition as a constant
+(`an-object-model-fixed-at-compile-time.md`), and every target's tree class is entered with the
+definition, so the parameter is one every target reads.
 
 ### D5. An instance comes into existence through the declaring unit's entry
 
@@ -266,7 +272,7 @@ tree and still leave the three bodies on the wrong class.
   is what it named before.
 - The published prefix, the lowering's permutation, and the arithmetic over the object's storage on
   both sides are removed. A unit's members sit where their own declarations put them.
-- A class holds its storage beside the behaviors it takes over, and on a target where both live in
+- A class holds its storage beside the behaviors it overrides, and on a target where both live in
   one name space the identifiers collide: the behavior answering for a cell carries that cell's own
   identifier, because that is what a referrer spells. So a cell's emitted identifier leads with its
   position and keeps the source identifier after it, the same rule a body local already takes, which

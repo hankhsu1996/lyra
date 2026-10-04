@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+#include "lyra/lir/class_id.hpp"
+#include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -29,9 +31,15 @@ enum class SymbolCategory : std::uint8_t {
   kNamespaceVariable,
   kStaticProperty,
   kClosureInvoke,
-  kScopeEntry,
   kTypeDescription,
   kIntegralConstant,
+  kConstructorPrologue,
+  kBaseObjectDestructor,
+  kCompleteObjectDestructor,
+  kDeletingDestructor,
+  kClassConstant,
+  kDispatchTable,
+  kTypeInfo,
 };
 
 // One component of a symbol: a name the source wrote, or an ordinal the
@@ -75,6 +83,8 @@ auto SymbolName(
 // site that could spell it.
 auto ConstructorSymbol(std::string_view unit_name, SymbolPart cls)
     -> std::string;
+auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)
+    -> std::string;
 auto ClassCallableSymbol(
     std::string_view unit_name, SymbolPart cls, SymbolPart callable)
     -> std::string;
@@ -88,14 +98,6 @@ auto StructMethodSymbol(
 // never declared.
 auto StaticPropertySymbol(
     std::string_view unit_name, SymbolPart cls, SymbolPart property)
-    -> std::string;
-
-// The symbol the runtime record describing one declaration is linked under.
-// The record is the compiler's own and stands beside the declaration rather
-// than inside it, so it is a category over the same parts.
-auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)
-    -> std::string;
-auto ClosureDefinitionSymbol(std::string_view unit_name, SymbolPart closure)
     -> std::string;
 
 // The symbols of what a unit's namespace owns directly. A body the source
@@ -122,15 +124,6 @@ auto ObjectEntrySymbol(std::string_view unit_name) -> std::string;
 auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)
     -> std::string;
 
-// One entry a scope is reached through from outside the design, taking the
-// scope it runs against ahead of the call's own arguments. The source declares
-// no such body -- it is the adaptation between a call under a published name
-// and the subroutine behind it -- so it takes its position in the class rather
-// than a name, and the class qualifies that.
-auto ScopeEntrySymbol(
-    std::string_view unit_name, SymbolPart cls, std::uint32_t ordinal)
-    -> std::string;
-
 // The run-time description of one of a unit's types. The source declares no
 // such thing, so the position the description sits at in its unit's pool is the
 // whole of what identifies it.
@@ -142,19 +135,57 @@ auto TypeDescriptionSymbol(std::string_view unit_name, std::uint32_t ordinal)
 auto IntegralConstantSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
-// A closure's body. A closure is counted rather than named, having no
-// declaration of the source to take a name from.
+// A closure is counted rather than named, having no declaration of the source
+// to take a name from, so its body's symbol is composed from its ordinal.
 auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
-// The symbol the runtime record describing `type`'s declaration is linked
-// under, or nothing where the type names no declaration a value is built from.
-// The record is the compiler's own, so it is a category of its own rather than
-// a word appended to the declaration's symbol. A declaration this unit compiles
-// carries the name it was emitted under; one another unit declares is composed
-// from the unit and the name a signature gave, the same way that unit composed
-// it -- which is what lets the two agree with no shared table.
+// The symbol `type`'s definition is linked under, or nothing where the type
+// names no declaration a value is built from. The definition is the compiler's
+// own and stands beside the declaration rather than inside it, so it is a
+// category over the declaration's parts. A declaration of this unit and one
+// another unit declares are composed from the same parts the same way, which is
+// what lets every unit naming a class reach the constant its own unit emits
+// with no shared table.
 auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
     -> std::optional<std::string>;
+
+// The same for a declaration of this unit, which always has one.
+auto DefinitionSymbol(const CompilationUnit& unit, ClassId id) -> std::string;
+auto DefinitionSymbol(const CompilationUnit& unit, ClosureId id) -> std::string;
+
+// The symbol of a declaration's constructor prologue, given the symbol its
+// definition is linked under: what a constructor does once its base is built
+// and before its body runs -- the value takes the declaration's tables, and its
+// own members come into existence. It stands beside the definition, so it is
+// composed over that symbol.
+auto ConstructorPrologueSymbol(std::string_view definition) -> std::string;
+
+// The destructors the Itanium C++ ABI gives a class with a virtual destructor:
+// the base object destructor (D2) ends what the declaration declares and then
+// what it extends; the complete object destructor (D1) ends a whole value; the
+// deleting destructor (D0) also gives the value's storage back. A declaration
+// extending one of another unit names its base's base object destructor this
+// way.
+enum class Destructor : std::uint8_t {
+  kBaseObject,
+  kCompleteObject,
+  kDeleting
+};
+
+auto DestructorSymbol(std::string_view definition, Destructor which)
+    -> std::string;
+
+// The symbol of one constant a declaration holds, by the position it sits at
+// among them.
+auto ClassConstantSymbol(std::string_view definition, std::uint32_t ordinal)
+    -> std::string;
+
+// The symbols of the table a value of a class dispatches through and of the
+// description of the class a cast reads, composed over the symbol its
+// definition is linked under the same way. A class extending one of another
+// unit names its base's description this way.
+auto DispatchTableSymbol(std::string_view definition) -> std::string;
+auto TypeInfoSymbol(std::string_view definition) -> std::string;
 
 }  // namespace lyra::lir

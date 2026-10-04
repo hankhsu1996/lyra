@@ -14,7 +14,10 @@ invariant 7 with what a route seals when its leaf is an object reference. Revers
 [a-settled-access-is-ordinary-operations](a-settled-access-is-ordinary-operations.md)**, which keeps
 its concern and replaces its mechanism: a coordinate is a value the operations take and is a target
 form nowhere, because a body with no name for the record has no member to refer to. D1 to D4 and D6
-stand.
+stand, except that D2's virtual behavior coordinate is superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D8. A behavior
+reached this way settles to a body, and for a virtual one that body makes the virtual call, so the
+object still answers which override runs.
 
 ## Why this decision matters
 

@@ -254,11 +254,6 @@ auto Formatter<ObjectRef>::Format(
   return FormatHandleIdentity(spec, value.Handle().Share().get());
 }
 
-auto Formatter<ManagedRef>::Format(
-    const FormatSpec& spec, const ManagedRef& value) -> std::string {
-  return FormatHandleIdentity(spec, value.Share().get());
-}
-
 auto Formatter<double>::Format(
     const FormatSpec& spec, double value, const FormatContext& ctx)
     -> std::string {

@@ -17,6 +17,7 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -33,6 +34,7 @@
 #include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
 #include "lyra/value/format.hpp"
 
@@ -128,16 +130,14 @@ class MirDumper {
     Dedent();
     // A unit owns callables directly in its namespace: a package's own
     // subroutines, the program-global symbol of every DPI-C export it defines,
-    // and -- on the design root -- the factory that builds the root object.
-    if (!unit.callables.empty()) {
-      Line("Callables:");
-      Indent();
-      for (const CallableId id : unit.callables.Ids()) {
-        DumpCallable(
-            unit.named_callables, id, unit.callables.Get(id), id.value);
-      }
-      Dedent();
+    // and, on a unit whose instances are a tree, the body that makes its
+    // object.
+    Line("Callables:");
+    Indent();
+    for (const CallableId id : unit.callables.Ids()) {
+      DumpCallable(unit.named_callables, id, unit.callables.Get(id), id.value);
     }
+    Dedent();
     // The foreign names this unit declares on a scope: a prototype no callable
     // of the unit carries, and the symbol the unit writes for it, which belongs
     // to no unit and so sits outside the pool above.
@@ -254,13 +254,18 @@ class MirDumper {
               return std::format(
                   "CrossUnit(\"{}::{}\")", e.unit_name, e.class_name);
             },
-            [](const RuntimeClassRef& e) -> std::string {
-              return std::format(R"(Runtime("{}"))", e.symbol);
+            [](const ObjectTreeRootRef&) -> std::string {
+              return "ObjectTreeRoot";
             },
             [](const ManagedObjectRootRef&) -> std::string {
               return "ManagedObjectRoot";
             }},
         ref);
+  }
+
+  [[nodiscard]] auto FormatClassRef(const DeclaredClassRef& ref) const
+      -> std::string {
+    return FormatClassRef(AsClassRef(ref));
   }
 
   [[nodiscard]] auto FormatVirtualSlot(const VirtualSlot& s) const
@@ -377,7 +382,8 @@ class MirDumper {
               return "OpaqueObject";
             },
             [](const RuntimeClassType& e) -> std::string {
-              return std::format("RuntimeClass(\"{}\")", e.symbol);
+              return std::format(
+                  "RuntimeClass({})", support::RuntimeClassName(e.which));
             },
             [](const RuntimeEffectsType&) -> std::string {
               return "RuntimeEffects";
@@ -422,44 +428,8 @@ class MirDumper {
                   return "RuntimeLibrary(ReadReport)";
                 case RuntimeLibraryKind::kObjectWrite:
                   return "RuntimeLibrary(ObjectWrite)";
-                case RuntimeLibraryKind::kScopeProgram:
-                  return "RuntimeLibrary(ScopeProgram)";
-                case RuntimeLibraryKind::kScopeDefinition:
-                  return "RuntimeLibrary(ScopeDefinition)";
-                case RuntimeLibraryKind::kScopeMetadata:
-                  return "RuntimeLibrary(ScopeMetadata)";
-                case RuntimeLibraryKind::kAbiStringRef:
-                  return "RuntimeLibrary(AbiStringRef)";
-                case RuntimeLibraryKind::kScopeCallable:
-                  return "RuntimeLibrary(ScopeCallable)";
-                case RuntimeLibraryKind::kScopeCallableTable:
-                  return "RuntimeLibrary(ScopeCallableTable)";
-                case RuntimeLibraryKind::kScopeClass:
-                  return "RuntimeLibrary(ScopeClass)";
-                case RuntimeLibraryKind::kScopeClassTable:
-                  return "RuntimeLibrary(ScopeClassTable)";
                 case RuntimeLibraryKind::kObjectDefinition:
                   return "RuntimeLibrary(ObjectDefinition)";
-                case RuntimeLibraryKind::kPropertySlotTable:
-                  return "RuntimeLibrary(PropertySlotTable)";
-                case RuntimeLibraryKind::kDispatchTakeover:
-                  return "RuntimeLibrary(DispatchTakeover)";
-                case RuntimeLibraryKind::kTakeoverTable:
-                  return "RuntimeLibrary(TakeoverTable)";
-                case RuntimeLibraryKind::kMethodDispatchTable:
-                  return "RuntimeLibrary(MethodDispatchTable)";
-                case RuntimeLibraryKind::kResolvedProperty:
-                  return "RuntimeLibrary(ResolvedProperty)";
-                case RuntimeLibraryKind::kResolvedPropertyTable:
-                  return "RuntimeLibrary(ResolvedPropertyTable)";
-                case RuntimeLibraryKind::kResolvedBehavior:
-                  return "RuntimeLibrary(ResolvedBehavior)";
-                case RuntimeLibraryKind::kResolvedBehaviorTable:
-                  return "RuntimeLibrary(ResolvedBehaviorTable)";
-                case RuntimeLibraryKind::kDeclaredBody:
-                  return "RuntimeLibrary(DeclaredBody)";
-                case RuntimeLibraryKind::kDeclaredBodyTable:
-                  return "RuntimeLibrary(DeclaredBodyTable)";
                 case RuntimeLibraryKind::kDpiBitBuffer:
                   return "RuntimeLibrary(DpiBitBuffer)";
                 case RuntimeLibraryKind::kDpiLogicBuffer:
@@ -474,8 +444,16 @@ class MirDumper {
                   return "RuntimeLibrary(DpiLogicChunk)";
                 case RuntimeLibraryKind::kPropertyCoordinate:
                   return "RuntimeLibrary(PropertyCoordinate)";
-                case RuntimeLibraryKind::kBehaviorCoordinate:
-                  return "RuntimeLibrary(BehaviorCoordinate)";
+                case RuntimeLibraryKind::kResolvedProperty:
+                  return "RuntimeLibrary(ResolvedProperty)";
+                case RuntimeLibraryKind::kDeclaredBody:
+                  return "RuntimeLibrary(DeclaredBody)";
+                case RuntimeLibraryKind::kScopeInfo:
+                  return "RuntimeLibrary(ScopeInfo)";
+                case RuntimeLibraryKind::kScopeCallable:
+                  return "RuntimeLibrary(ScopeCallable)";
+                case RuntimeLibraryKind::kScopeClass:
+                  return "RuntimeLibrary(ScopeClass)";
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },
@@ -639,6 +617,11 @@ class MirDumper {
               return std::format(
                   "OverridesExternalSlot[{}::{}#{}]", e.unit_name, e.class_name,
                   e.ordinal.value);
+            },
+            [](const OverridesLibraryVirtual& l) -> std::string {
+              return std::format(
+                  "OverridesLibraryVirtual[{}]",
+                  support::LibraryVirtualName(l.function));
             }},
         role);
   }
@@ -738,19 +721,8 @@ class MirDumper {
                   "LocalRef[var={}]{}", r.var.value,
                   FormatName(NameOf(code_->named_locals, r.var)));
             },
-            [](const FunctionRef& fr) -> std::string {
-              return std::format(
-                  "FunctionRef Class[{}]::AbiAdapter[{}]", fr.owner.value,
-                  fr.adapter.value);
-            },
-            [](const StaticConstantRef& r) -> std::string {
-              return std::format(
-                  "StaticConstantRef owner=Class[{}] "
-                  "constant=StaticConstant[{}]",
-                  r.owner.value, r.constant.value);
-            },
-            [this](const ObjectRecordRef& r) -> std::string {
-              return std::format("ObjectRecordRef of={}", FormatClassRef(r.of));
+            [this](const DefinitionRef& r) -> std::string {
+              return std::format("DefinitionRef of={}", FormatClassRef(r.of));
             },
             [](const TypeDescriptorRef& r) -> std::string {
               return std::format(
@@ -779,6 +751,16 @@ class MirDumper {
               return std::format(
                   "ExternalStaticPropertyRef external={}::{}::{}", r.unit_name,
                   r.class_name, r.property_name);
+            },
+            [](const ClassConstantRef& r) -> std::string {
+              return std::format(
+                  "ClassConstantRef owner=Class[{}] constant=Constant[{}]",
+                  r.owner.value, r.constant.value);
+            },
+            [](const FunctionRef& r) -> std::string {
+              return std::format(
+                  "FunctionRef owner=Class[{}] body=Callable[{}]",
+                  r.body.owner.value, r.body.slot.value);
             }},
         target);
   }
@@ -813,9 +795,9 @@ class MirDumper {
             [](const CastExpr& c) -> std::string {
               return std::format("CastExpr operand=Expr[{}]", c.operand.value);
             },
-            [](const MachineArrayDataExpr& d) -> std::string {
+            [](const DynamicCastExpr& c) -> std::string {
               return std::format(
-                  "MachineArrayDataExpr array=Expr[{}]", d.array.value);
+                  "DynamicCastExpr operand=Expr[{}]", c.operand.value);
             },
             [](const AddressOfExpr& a) -> std::string {
               return std::format(
@@ -950,6 +932,15 @@ class MirDumper {
     return name.has_value() ? std::format(" \"{}\"", *name) : std::string{};
   }
 
+  // A constant is an expression tree with no statements, so what is dumped
+  // under each is its expressions and which of them is the constant.
+  void DumpValueBuild(std::string_view what, const ValueBuild& build) {
+    Line(std::format("{} = Expr[{}]", what, build.value.value));
+    Indent();
+    DumpBlock(build.body);
+    Dedent();
+  }
+
   void DumpClass(ClassId id, const Class& s) {
     dumped_.insert(id.value);
     scope_stack_.push_back(&s);
@@ -961,19 +952,24 @@ class MirDumper {
       Line(std::format("Base: {}", FormatClassRef(*s.base)));
     }
 
-    if (s.tree_program.has_value()) {
-      Line(
-          std::format(
-              "TreeProgram: resolve=Callable[{}], initialize=Callable[{}], "
-              "create=Callable[{}]",
-              s.tree_program->resolve_state.value,
-              s.tree_program->initialize_state.value,
-              s.tree_program->create_processes.value));
-    }
-
     for (const auto& impl : s.implements) {
       Line(std::format("Implements: {}", FormatClassRef(impl)));
     }
+    for (const ConformingBehavior& answered : s.conforming) {
+      Line(
+          std::format(
+              "Conforms: {} <- {}",
+              FormatVirtualSlot(answered.interface_behavior),
+              answered.answered_by.has_value()
+                  ? FormatVirtualSlot(*answered.answered_by)
+                  : std::string{"nothing"}));
+    }
+    for (const ClassConstantId constant : s.constants.Ids()) {
+      DumpValueBuild(
+          std::format("Constant[{}]", constant.value),
+          s.constants.Get(constant).initializer);
+    }
+    DumpValueBuild("ObjectDefinition", s.object_definition_initializer);
 
     Line("Contained:");
     Indent();
@@ -1015,31 +1011,6 @@ class MirDumper {
       DumpCallable(s.named_callables, id, s.callables.Get(id), id.value);
     }
     Dedent();
-
-    if (!s.static_constants.empty()) {
-      Line("StaticConstants:");
-      Indent();
-      for (const StaticConstantId id : s.static_constants.Ids()) {
-        const StaticConstantDecl& c = s.static_constants.Get(id);
-        Line(
-            std::format(
-                "[{}] : Type[{}] = Expr[{}]", id.value, c.type.value,
-                c.value.value));
-        Indent();
-        DumpBlock(c.body);
-        Dedent();
-      }
-      Dedent();
-    }
-
-    if (!s.abi_adapters.empty()) {
-      Line("AbiAdapters:");
-      Indent();
-      for (const AbiAdapterId id : s.abi_adapters.Ids()) {
-        DumpAbiAdapter(s.abi_adapters.Get(id), id.value);
-      }
-      Dedent();
-    }
 
     if (s.constructor.has_value()) {
       const ConstructorDecl& ctor = *s.constructor;
@@ -1170,14 +1141,6 @@ class MirDumper {
     DumpForeignLinkage(e.linkage);
     DumpParams(e.definition);
     DumpCallableBody(e.definition);
-    Dedent();
-  }
-
-  void DumpAbiAdapter(const AbiAdapter& a, std::size_t index) {
-    Line(std::format("[{}] : Type[{}]", index, a.code.result_type.value));
-    Indent();
-    DumpParams(a.code);
-    DumpCallableBody(a.code);
     Dedent();
   }
 

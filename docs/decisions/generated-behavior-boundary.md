@@ -1,6 +1,22 @@
 # Generated behavior through a backend-neutral definition
 
-Date: 2026-07-01 Status: accepted
+Date: 2026-07-01 Status: superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md). Its boundary is
+superseded too (2026-10-02): the library drives a scope through the C++ virtual functions of its
+class, one per phase, and ends it through its virtual destructor, which is the program this record
+describes under its C++ names; the execution backend fills those tables by the Itanium rules. What
+stands is the per-specialization identity, metadata as data, the call scope and runtime-owned
+sequencing. Before that, the rest was superseded too. The definition is one constant per class that
+the unit declaring it emits, rather than a unit definition a backend fills or the runtime builds.
+SV-virtual dispatch goes through tables laid out at compile time, so no definition carries a
+dispatch table. There is no `construct` entry and no allocator handed to the runtime. The C++
+backend builds its own class as `new` does, and so does the execution backend: the class's own
+allocation takes the storage, and the class's constructor is entered typed on it. The metadata is
+the time unit and precision alone. A phase with no work is a body with no statements rather than a
+library no-op, and a class no instance is built of states no program at all. The rejection of a
+generated Itanium vtable is answered there, and the generic-instance end state of Phase 2 is
+withdrawn, since each backend builds a scope as an instance of its own class, laid out at compile
+time, as clang does.
 
 ## Context
 

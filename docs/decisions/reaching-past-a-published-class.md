@@ -11,6 +11,23 @@ brings the consumed-signature set into line with `../architecture/incremental_bu
 11; reverses neither. D3 here supersedes `publishing-an-owned-instance.md` D3, which bounded what a
 lowering may read: that bound is removed rather than widened a second time.
 
+D1's list of what a promise states, and its consequences for unpublished properties and interface
+classes, are widened by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D2 and D6. A
+promise also states the type of every property the class keeps to itself, every method the class
+declares with its prototype and whether it introduces or overrides a behavior, and the interface
+classes its declaration names. So a class of another unit extending it is laid out at compile time,
+a call to one of its methods reads what it passes off the promise, and a behavior an interface class
+states is dispatched through that class's own table. The Consequences line saying a change to what a
+class keeps to itself re-emits nobody no longer holds: it re-emits the units extending the class,
+and still no unit that only reaches its other properties.
+
+D1's rule itself stands, for interface classes as for everything else: nothing that follows from
+another class's declaration is restated. A property or a method an ancestor declares is not, and
+neither is an interface class a value is only by way of the class it extends or of an interface
+class it names. A referrer reads each of those off the class that states it, by the walk D2
+describes. D2 and D3 stand.
+
 ## Why this decision matters
 
 A referrer must be able to name anything a legal program can reach on another unit's class, and most
@@ -153,7 +170,9 @@ class, and the position is fixed when that class is realized.
   no ordering rule is needed and both sides count the same list. Rejected because a `local` property
   (LRM 8.18) declared ahead of a public one would move it, so adding one re-emits every referrer and
   a stale one reads the wrong storage -- the fragile base class problem, inside a single class. What
-  a class publishes sits in a fixed prefix of its own storage instead.
+  a class publishes sits in a fixed prefix of its own storage instead. The requirement this serves
+  is iteration time: with storage laid out at compile time a `local` property still re-emits the
+  units extending the class, and the prefix is what keeps it from re-emitting every other referrer.
 
 ## Consequences
 

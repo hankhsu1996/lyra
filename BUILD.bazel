@@ -261,6 +261,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":lir",
+        ":runtime",
         ":support",
         "@llvm-project//llvm:CodeGen",
         "@llvm-project//llvm:Core",
@@ -287,23 +288,9 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "unit_metadata",
-    srcs = ["src/lyra/compiler/unit_metadata.cpp"],
-    hdrs = ["include/lyra/compiler/unit_metadata.hpp"],
-    copts = LYRA_COPTS,
-    includes = ["include"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":lir",
-        ":mir",
-    ],
-)
-
 # The LLVM backend's program for one design: each unit's module, checked
-# against the runtime library a program links, and the objects linked from
-# them. It links that library in to read what it publishes, which is why it is
-# apart from the backend itself.
+# against the entries the runtime library a program links publishes, and the
+# objects linked from them.
 cc_library(
     name = "program",
     srcs = glob(["src/lyra/program/*.cpp"]),
@@ -317,9 +304,9 @@ cc_library(
         ":diag",
         ":dpi",
         ":driver",
+        ":lir",
         ":mir",
         ":runtime",
-        ":unit_metadata",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Passes",
     ],
@@ -327,14 +314,8 @@ cc_library(
 
 cc_library(
     name = "compiler",
-    srcs = glob(
-        ["src/lyra/compiler/*.cpp"],
-        exclude = ["src/lyra/compiler/unit_metadata.cpp"],
-    ),
-    hdrs = glob(
-        ["include/lyra/compiler/*.hpp"],
-        exclude = ["include/lyra/compiler/unit_metadata.hpp"],
-    ),
+    srcs = glob(["src/lyra/compiler/*.cpp"]),
+    hdrs = glob(["include/lyra/compiler/*.hpp"]),
     copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
@@ -348,7 +329,6 @@ cc_library(
         ":mir",
         ":mir_to_lir",
         ":support",
-        ":unit_metadata",
     ],
 )
 

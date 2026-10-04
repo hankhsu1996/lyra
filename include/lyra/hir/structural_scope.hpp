@@ -291,17 +291,9 @@ struct PropertyCoordinateLeaf {
   auto operator==(const PropertyCoordinateLeaf&) const -> bool = default;
 };
 
-// The route ends at where a virtual method's name lands: an ordinal among the
-// introducing class's own behaviors, which the object answers at the call.
-struct BehaviorCoordinateLeaf {
-  ClassMemberName member;
-
-  auto operator==(const BehaviorCoordinateLeaf&) const -> bool = default;
-};
-
-// The route ends at the body a non-virtual method's name reaches: what such a
-// call runs is fixed by the class the access names (LRM 8.14), so the body
-// itself is the answer rather than a position something else answers.
+// The route ends at the body a method's name reaches on the class the access
+// names (LRM 8.14). For a virtual method (LRM 8.20) that body makes the call
+// the object decides, so the body is the answer either way.
 struct BehaviorBodyLeaf {
   ClassMemberName member;
 
@@ -309,7 +301,6 @@ struct BehaviorBodyLeaf {
 };
 
 using PropertyCoordinateRoute = Route<PropertyCoordinateLeaf>;
-using BehaviorCoordinateRoute = Route<BehaviorCoordinateLeaf>;
 using BehaviorBodyRoute = Route<BehaviorBodyLeaf>;
 
 // Every walk one scope's names take, gathered while its bodies are lowered and
@@ -321,8 +312,6 @@ struct ScopeRoutes {
   base::Arena<DisableTargetRoute, RoutedDisableTargetRefId> disable_targets;
   base::Arena<PropertyCoordinateRoute, PropertyCoordinateId>
       property_coordinates;
-  base::Arena<BehaviorCoordinateRoute, BehaviorCoordinateId>
-      behavior_coordinates;
   base::Arena<BehaviorBodyRoute, BehaviorBodyId> behavior_bodies;
 
   auto operator==(const ScopeRoutes&) const -> bool = default;

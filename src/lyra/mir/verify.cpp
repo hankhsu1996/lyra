@@ -96,6 +96,7 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
             reach(e.rhs);
           },
           [&](const CastExpr& e) { reach(e.operand); },
+          [&](const DynamicCastExpr& e) { reach(e.operand); },
           [&](const ConditionalExpr& e) {
             reach(e.condition);
             reach(e.then_value);
@@ -125,7 +126,6 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
           },
           [&](const DerefExpr& e) { reach(e.pointer); },
           [&](const AddressOfExpr& e) { reach(e.operand); },
-          [&](const MachineArrayDataExpr& e) { reach(e.array); },
           [&](const MoveExpr& e) { reach(e.operand); },
           [&](const FieldAccessExpr& e) { reach(e.receiver); },
           [&](const ClosureExpr& e) {
@@ -200,11 +200,11 @@ auto ComputesNothingItself(const ExprData& data) -> bool {
           [](const ReferenceExpr&) { return true; },
           [](const DerefExpr&) { return true; },
           [](const AddressOfExpr&) { return true; },
-          [](const MachineArrayDataExpr&) { return true; },
           [](const FieldAccessExpr&) { return true; },
           [](const UnaryExpr&) { return false; },
           [](const BinaryExpr&) { return false; },
           [](const CastExpr&) { return false; },
+          [](const DynamicCastExpr&) { return false; },
           [](const ConditionalExpr&) { return false; },
           [](const BlockExpr&) { return false; },
           [](const AssignExpr&) { return false; },
@@ -241,6 +241,9 @@ auto Describe(const ExprData& data) -> std::string {
           [](const UnaryExpr&) -> std::string { return "a unary operation"; },
           [](const BinaryExpr&) -> std::string { return "a binary operation"; },
           [](const CastExpr&) -> std::string { return "a cast"; },
+          [](const DynamicCastExpr&) -> std::string {
+            return "a dynamic cast";
+          },
           [](const ConditionalExpr&) -> std::string { return "a conditional"; },
           [](const BlockExpr&) -> std::string { return "a block expression"; },
           [](const AssignExpr&) -> std::string { return "an assignment"; },
@@ -256,9 +259,6 @@ auto Describe(const ExprData& data) -> std::string {
           },
           [](const DerefExpr&) -> std::string { return "a dereference"; },
           [](const AddressOfExpr&) -> std::string { return "an address-of"; },
-          [](const MachineArrayDataExpr&) -> std::string {
-            return "an array's element pointer";
-          },
           [](const MoveExpr&) -> std::string { return "a move"; },
           [](const FieldAccessExpr&) -> std::string {
             return "a field access";
@@ -437,11 +437,6 @@ void VerifyClass(const CompilationUnit& unit, const Class& cls) {
       return std::format(
           "{} of {}", BodyLabel(NameOf(cls.named_callables, id), id.value),
           owner());
-    });
-  }
-  for (const AbiAdapterId id : cls.abi_adapters.Ids()) {
-    VerifyCode(unit, cls.abi_adapters.Get(id).code, [&] {
-      return std::format("runtime entry {} of {}", id.value, owner());
     });
   }
 }

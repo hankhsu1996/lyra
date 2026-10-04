@@ -1,6 +1,12 @@
 # A dynamic cast asks the type or the object
 
-Date: 2026-09-17 Status: accepted
+Date: 2026-09-17 Status: the object half is superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D3. The cast forms
+the view to the destination class, as clang's dynamic cast does, through the type descriptor every
+class carries, and the answer is whether that view refers to an object. So the object question is
+one node beside the ordinary conversion rather than a runtime entry asked about a class's record,
+and no body names a record to ask it. The type half, and the run of steps the construct lowers to,
+stand.
 
 ## Why this decision matters
 

@@ -15,9 +15,13 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/param.hpp"
 #include "lyra/mir/static_property_id.hpp"
+#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -31,6 +35,25 @@ namespace lyra::lowering::hir_to_mir {
 struct CallableSignature {
   std::optional<mir::VirtualDispatchRole> virtual_dispatch;
 };
+
+// The behavior a method of `self_owner` at `self_slot` answers, read off its
+// stated dispatch role and named the way a call names one: an introducer names
+// itself, an intra-unit override the canonical intra-unit identity it was
+// given at class lowering, and a cross-unit override the coordinate the
+// introducing class published. A one-arm dispatch, never a chain walk.
+[[nodiscard]] auto CanonicalVirtualSlot(
+    mir::ClassId self_owner, mir::CallableId self_slot,
+    const mir::VirtualDispatchRole& role) -> mir::VirtualSlot;
+
+// The object a dispatch on `slot` is made on, as the class that introduced the
+// behavior: a behavior an interface class states is reached through that
+// class's part of the object, which is not where a class extending it or
+// implementing it starts, so a receiver of any other class is converted to it
+// first -- the conversion C++ writes on the object of a member call naming a
+// member of a base. A receiver already of that class is left as it is.
+[[nodiscard]] auto AsIntroducer(
+    const mir::TypePool& types, mir::Block& block, mir::ExprId receiver,
+    const mir::VirtualSlot& slot) -> mir::ExprId;
 
 // Which kind of callable of a class a body is, as far as what it takes ahead of
 // the formals the source wrote depends on it: an instance member runs on an
@@ -70,7 +93,7 @@ struct ClassShape {
   // method contracts. Multiple entries are legal; the concrete-base
   // single-value rule stays on `base`, and interface conformance introduces no
   // instance storage.
-  std::vector<mir::ClassRef> implements;
+  std::vector<mir::DeclaredClassRef> implements;
   mir::TypeId self_pointer_type;
   // The instance this class belongs to, present exactly where a structural
   // scope declares the class (LRM 6.22), and the one place that is stated: what
@@ -129,7 +152,8 @@ struct ClassShape {
   // The class this declaration becomes: everything settled here carried over
   // verbatim, and one reserved callable identity per signature. What is left
   // absent is exactly what the body stage produces -- each reserved callable's
-  // body, the constructor, the adapters, the static init.
+  // body, the constructor, the static init, what the class conforms to, and
+  // what it tells the library about itself.
   //
   // The reservation is what lets a call resolve before the callee's body exists
   // (LRM 13.7): the declaration hands out the identity, the body stage fills

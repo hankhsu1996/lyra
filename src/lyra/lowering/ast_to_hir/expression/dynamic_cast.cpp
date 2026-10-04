@@ -7,6 +7,7 @@
 #include <slang/ast/SystemSubroutine.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/types/AllTypes.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr_id.hpp"
@@ -37,6 +38,11 @@ auto DestinationOf(const slang::ast::Expression* actual)
       "names -- please report this as a bug");
 }
 
+auto IsInterfaceClass(const slang::ast::Type& type) -> bool {
+  return type.isClass() &&
+         type.getCanonicalType().as<slang::ast::ClassType>().isInterface;
+}
+
 // What the two declared types settle, and where they settle nothing, which
 // run-time check is left. The order is the standard's own: a class destination
 // is governed by LRM 8.16, an enumeration by the exception LRM 6.24.2's example
@@ -61,9 +67,12 @@ auto ClassifyValidity(
       return allowed(hir::RunTimeCheck::kNone);
     }
     // LRM 8.16 case 2: the destination extends the source's class, or the
-    // source's class is an interface the destination's may conform to. Which
-    // object is in hand is what is left.
-    if (source.isAssignmentCompatible(destination)) {
+    // source's class is an interface the destination's may conform to. And LRM
+    // 8.26.5: where either side is an interface class, some class extending the
+    // source's may implement it whatever the two declared classes are to each
+    // other. Which object is in hand is what is left.
+    if (source.isAssignmentCompatible(destination) ||
+        IsInterfaceClass(destination) || IsInterfaceClass(source)) {
       return allowed(hir::RunTimeCheck::kObjectIsOfTheDestinationClass);
     }
     return none;

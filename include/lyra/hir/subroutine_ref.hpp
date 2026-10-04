@@ -100,32 +100,25 @@ using MethodReceiver =
 // Beside naming the callee it carries the facts this unit cannot look up about
 // one: the behavior the method answers, absent for a method that answers none
 // (LRM 8.20), and its interface, which shapes the arguments the call passes and
-// the completion it consumes. Both are read from the frontend's view of the
-// callee where this callee is minted. A method that answers a behavior can be
-// dispatched on; whether a given call is, is that call's own question, since
-// naming the base's implementation demands it whatever the callee answers
-// (LRM 8.15). Whether the method is type-associated (LRM 8.10) is not among
-// them: a call to one is a different reference, which is where that shows.
-// Which dispatch position a call on another unit's class names (LRM 8.20): the
-// coordinate the introducing class published, or the one the design settles
-// while it elaborates, for a class that publishes on no signature and so left
-// nothing to count a position out of.
-using CrossUnitDispatchSlot =
-    std::variant<ExternalDispatchSlot, UnpublishedBehaviorSlot>;
-
+// the completion it consumes. Both are read off the signature of the class
+// declaring the method where this callee is minted. A method that answers a
+// behavior can be dispatched on; whether a given call is, is that call's own
+// question, since naming the base's implementation demands it whatever the
+// callee answers (LRM 8.15). Whether the method is type-associated (LRM 8.10)
+// is not among them: a call to one is a different reference, which is where
+// that shows.
 struct ExternalMethodCallee {
   ExternalClassMethodTarget target;
-  std::optional<CrossUnitDispatchSlot> slot;
+  std::optional<ExternalDispatchSlot> slot;
   ExternalCalleeInterface interface;
 
   auto operator==(const ExternalMethodCallee&) const -> bool = default;
 };
 
-// A method reached through the body the design settled, which is how a call on
-// a class a design element declares reaches one that answers no dispatch
-// position. It names no class and no method: having neither to name is what put
-// the call in this form, so what it carries is where the body was landed on and
-// the shape the call was made in.
+// A method reached through the body the design settled, which is how a call
+// reaches a method through a handle of a class a design element declares. It
+// names no class and no method, since the referrer can name neither, so what it
+// carries is where the body was landed on and the shape the call was made in.
 struct SettledMethodCallee {
   UnpublishedBehaviorBody body;
   ExternalCalleeInterface interface;
@@ -219,7 +212,8 @@ struct ValueChangeRef {
 // unit, so it carries no unit-local id: the referring unit names the package
 // and the subroutine by name and resolves against that interface at link time,
 // the way an instantiated child names its unit, and never through an
-// enclosing-scope hop within this unit.
+// enclosing-scope hop within this unit. `interface` is what the call passes
+// and awaits, read off the declaring unit's signature where this is minted.
 struct ExternalUnitSubroutineRef {
   std::string unit_name;
   std::string subroutine_name;

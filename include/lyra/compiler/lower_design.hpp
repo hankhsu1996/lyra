@@ -15,6 +15,7 @@
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/support/parallel.hpp"
 
@@ -30,7 +31,7 @@ struct SemanticDesign {
 
 // The same, for a design taken all the way to the form something runs.
 struct ExecutableDesign {
-  ExecutableUnit root;
+  lir::CompilationUnit root;
 };
 
 // Lowers every declared unit's bodies to HIR and hands each unit on. A unit's
@@ -95,7 +96,7 @@ auto LowerToSemantic(
     ElaboratedDesign& design, const diag::SourceManager& sources,
     diag::DiagnosticSink& sink, std::size_t width, Produce produce,
     Consume consume) -> std::optional<SemanticDesign> {
-  using Produced = std::invoke_result_t<Produce, SemanticUnit>;
+  using Produced = std::invoke_result_t<Produce, mir::CompilationUnit>;
   LowerToHir(
       design, sink, width,
       [&](const hir::CompilationUnit& hir_unit) -> Produced {
@@ -121,18 +122,18 @@ auto LowerToSemantic(
 }
 
 // The same design, taken one layer further: every unit reaches `produce` as
-// the body something runs plus the metadata defining it, and the semantic model
-// it came from is released on the way.
+// the form something runs, and the semantic model it came from is released on
+// the way.
 template <typename Produce, typename Consume>
 auto LowerToExecutable(
     ElaboratedDesign& design, const diag::SourceManager& sources,
     diag::DiagnosticSink& sink, std::size_t width, Produce produce,
     Consume consume) -> std::optional<ExecutableDesign> {
-  using Produced = std::invoke_result_t<Produce, ExecutableUnit>;
+  using Produced = std::invoke_result_t<Produce, lir::CompilationUnit>;
   auto semantic = LowerToSemantic(
       design, sources, sink, width,
-      [&](SemanticUnit unit) -> Produced {
-        auto executable = LowerUnitToExecutable(unit.mir);
+      [&](mir::CompilationUnit unit) -> Produced {
+        auto executable = LowerUnitToExecutable(unit);
         if (!executable) {
           return std::unexpected(std::move(executable.error()));
         }

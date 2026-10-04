@@ -12,14 +12,17 @@
 #include <variant>
 #include <vector>
 
+#include <llvm/ADT/STLFunctionalExtras.h>
 #include <llvm/IR/IRBuilder.h>
 
+#include "lyra/backend/llvm/codegen_module.hpp"
 #include "lyra/backend/llvm/codegen_tuple.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
@@ -55,16 +58,8 @@ class CodeGenFunction {
     std::vector<llvm::Value*> args;
   };
 
-  // The LLVM argument each of the body's parameters reads. They correspond one
-  // for one, except where the body is how a scope is built: that answers to one
-  // prototype for every class, so only what the construction shares with every
-  // other arrives positionally.
+  // The LLVM argument each of the body's parameters reads, one for one.
   auto BindParameters() -> void;
-  // The rest of such a body's parameters: what its own class is parameterized
-  // by, which arrives in the span that prototype ends in. Reading them apart
-  // takes instructions, so it happens where the body's own storage is opened
-  // rather than where the arguments are named.
-  auto BindConstructionArguments() -> void;
   auto LowerInstr(const lir::Instr& instr) -> diag::Result<llvm::Value*>;
 
   // Storage in the body's own frame, allocated where the body opens: every
@@ -131,9 +126,13 @@ class CodeGenFunction {
   // Opens a landing: the pad the platform transfers to, and the target the
   // departure names, which is what the body's own test reads.
   auto LowerReceiveDeparture() -> diag::Result<llvm::Value*>;
+  // What a call enters, given what it hands over. A dispatch through an
+  // interface class's part enters a body with the value's start instead of the
+  // part, as C++ adjusts `this` for a virtual base, so the receiver in `args`
+  // is rewritten there.
   auto ResolveCallee(
       const lir::CallInstr& call, lir::TypeId result_type,
-      std::span<llvm::Value* const> args) -> diag::Result<llvm::FunctionCallee>;
+      std::span<llvm::Value*> args) -> diag::Result<llvm::FunctionCallee>;
   // An entry the runtime publishes, declared with the types of the values
   // crossing to it: the call is where an entry's signature comes from, so the
   // two cannot disagree about what is passed.
@@ -184,6 +183,46 @@ class CodeGenFunction {
   auto LowerMachineUnary(const lir::UnaryInstr& unary)
       -> diag::Result<llvm::Value*>;
   auto LowerCast(const lir::CastInstr& cast, lir::TypeId result_type)
+      -> diag::Result<llvm::Value*>;
+  // A handle read as a handle of another class, through that class's part of
+  // the object: the part the declared types say is there, or the part a cast
+  // finds, or none.
+  auto LowerHandleCast(
+      const lir::HandleCastInstr& cast, lir::TypeId result_type,
+      llvm::Value* out) -> diag::Result<llvm::Value*>;
+  auto LowerDynamicCast(
+      const lir::DynamicCastInstr& cast, lir::TypeId result_type,
+      llvm::Value* out) -> diag::Result<llvm::Value*>;
+  // The part of class `to` of the object whose part of class `from` is at the
+  // non-null `view`, where the declared types say it has one.
+  auto ConvertView(llvm::Value* view, lir::TypeId from, lir::TypeId to)
+      -> diag::Result<llvm::Value*>;
+  // The class a handle or a pointer to an object is of, where it is of one of
+  // the source's classes.
+  [[nodiscard]] auto ClassBehind(lir::TypeId reference) const
+      -> std::optional<lir::TypeId>;
+  // `reach` applied to `view` where it is not null, and null where it is: a
+  // handle referring to no object has no part to reach anything from.
+  auto IfNotNull(
+      llvm::Value* view,
+      llvm::function_ref<diag::Result<llvm::Value*>(llvm::Value*)> reach)
+      -> diag::Result<llvm::Value*>;
+  // The part a handle reaches its object through, null where it refers to
+  // none; and a handle referring to the same object through `view`, built in
+  // `out`.
+  auto HandleView(llvm::Value* handle) -> llvm::Value*;
+  auto HandleWithView(llvm::Value* handle, llvm::Value* view, llvm::Value* out)
+      -> llvm::Value*;
+
+  // The body's variables, laid out as one record in its own frame the way a C++
+  // compiler lays out locals: each variable's storage at its own offset, sized
+  // and aligned as the library states that storage. Opening builds each in
+  // place, a variable is its offset, and closing ends each, last first.
+  auto Variables() -> diag::Result<const RecordLayout*>;
+  auto LowerOpenVariables() -> diag::Result<llvm::Value*>;
+  auto LowerVariableAddress(const lir::VariableAddressInstr& reached)
+      -> diag::Result<llvm::Value*>;
+  auto LowerCloseVariables(const lir::CloseVariablesInstr& closed)
       -> diag::Result<llvm::Value*>;
   auto LowerOperand(const lir::Operand& operand) -> diag::Result<llvm::Value*>;
 
@@ -246,39 +285,13 @@ class CodeGenFunction {
       const lir::BuiltinTarget& target, const lir::CallInstr& call,
       lir::TypeId result_type, std::span<llvm::Value* const> args)
       -> diag::Result<llvm::FunctionCallee>;
-  // What form an entry takes a call's operands in. A value the runtime builds
-  // from a compile-time description of it leads with a reference to that
-  // description, since the entry is one function over every value so described
-  // and the description is what tells them apart; and a value built over a run
-  // of others takes them as one span, because no entry has an operand per
-  // element.
+  // What form an entry takes a call's operands in. The host's `operator new` is
+  // asked for the size of a complete object of the type it allocates.
   struct OperandsAsStated {};
-  struct OperandsAfterDefinition {
-    lir::TypeId defined;
+  struct OperandsAfterSize {
+    lir::TypeId of;
   };
-  struct OperandsAsSpanAfterDefinition {
-    lir::TypeId defined;
-  };
-  // A scope is built against what every scope is built against -- the parent it
-  // hangs under and the identity it is reached by -- and then with the values
-  // this class in particular is parameterized by. Those trail as one span,
-  // because the entry is one function over classes that take different numbers
-  // of them and the class's own construction is what reads them back.
-  struct ScopeOperandsAfterDefinition {
-    lir::TypeId defined;
-  };
-  // How many of those the construction states: what the construction shares
-  // with every other, less the scope itself, which the entry is what brings
-  // into existence.
-  static constexpr std::size_t kScopeStructuralOperands =
-      kScopeConstructSharedParams - 1;
-  // What a body's variables are is stated by the body, so an entry that builds
-  // that storage leads with the description this body carries rather than with
-  // anything the call site spells.
-  struct OperandsAfterVariableSchema {};
-  using OperandForm = std::variant<
-      OperandsAsStated, OperandsAfterDefinition, OperandsAsSpanAfterDefinition,
-      ScopeOperandsAfterDefinition, OperandsAfterVariableSchema>;
+  using OperandForm = std::variant<OperandsAsStated, OperandsAfterSize>;
 
   // The entry that brings a value of one type into existence, which of its
   // operands carries the shape that value is seeded from, and what form it
@@ -403,31 +416,26 @@ class CodeGenFunction {
   // cell's own address for every domain.
   auto ValueCellContents(support::ValueDomain domain, llvm::Value* cell)
       -> llvm::Value*;
+  // Building a closure: the runtime makes the value, sized as its definition
+  // states, and each operand is taken into the capture it initializes. A
+  // closure's captures are laid out on this side, so it is this side that
+  // fills them.
+  auto LowerClosure(
+      const lir::ClosureInstr& built, lir::TypeId result_type, llvm::Value* out)
+      -> diag::Result<llvm::Value*>;
+
   // Whether a type is the sequence of handles a declaration standing for
   // several objects builds. It belongs to no value domain -- what it holds are
   // objects, not values -- so an operation over one is answered by the entry
   // that knows sequences rather than through the value model.
   [[nodiscard]] auto IsHandleSequence(lir::TypeId type) const -> bool;
 
-  // The runtime definition a reference names, loaded from the cell the unit
-  // that declares it filled. A body forwards the address without inspecting it.
-  auto DefinitionOf(lir::TypeId type) -> diag::Result<llvm::Value*>;
-
-  // The address of the storage a member step reaches: a fixed distance from
-  // the value, past the kind of value it is and the members its lineage carries
-  // ahead of the declaring class's own. Where that lineage passes through
-  // another unit's class, how many members it carries is read from the
-  // declaring class's definition, which the runtime completed when it realized
-  // the class.
+  // The address of the storage a member step reaches. A class's storage extends
+  // its base's, so the step names the class that declares the member beside the
+  // slot that class gave it, and the member sits at the offset that class's
+  // layout gave the slot.
   auto MemberStorage(llvm::Value* owner, const lir::StatedMemberRef& member)
       -> diag::Result<llvm::Value*>;
-  // What a member place names, given the slot its step reached and the type of
-  // the value it holds: the slot, except where the slot holds a value whose
-  // handle is not the object holding it -- a product kept inline, whose value
-  // is the bytes that object keeps.
-  auto InlineValueHandle(
-      const lir::StatedMemberRef& member, lir::TypeId value, llvm::Value* slot)
-      -> llvm::Value*;
 
   [[nodiscard]] auto ReachedType(
       const lir::Place& place, std::ptrdiff_t index) const -> lir::TypeId;
@@ -444,6 +452,8 @@ class CodeGenFunction {
   // Where frame storage is allocated: the end of the code the body opens with,
   // ahead of its first statement.
   llvm::Instruction* frame_storage_point_ = nullptr;
+  // Where the body's variables sit, laid out once for the whole body.
+  std::optional<RecordLayout> variables_;
   // The boxes made for the call being emitted, and the boxes a call a
   // departure can leave owes each of its successors as it opens.
   std::vector<llvm::Value*> boxes_;

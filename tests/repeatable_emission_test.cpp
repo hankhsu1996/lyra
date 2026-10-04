@@ -30,6 +30,7 @@
 #include "lyra/compiler/lower_design.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/driver/cpp_build.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "tests/compiled_twice.hpp"
 #include "tests/framework/conformance_case.hpp"
 
@@ -83,8 +84,8 @@ auto Emit(
       dir, lyra::driver::SourceFormatting::kOff, sink);
   auto semantic = lyra::compiler::LowerToSemantic(
       *design, compilation.front.elaborated->diag_sources, sink, width,
-      [&project](lyra::compiler::SemanticUnit unit) {
-        return project.Write(unit.mir);
+      [&project](lyra::mir::CompilationUnit unit) {
+        return project.Write(unit);
       },
       [&project](lyra::driver::EmittedUnit unit) {
         project.Collect(std::move(unit));

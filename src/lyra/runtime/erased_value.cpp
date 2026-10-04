@@ -66,7 +66,7 @@ auto TakeValue(support::ValueDomain domain, void* storage)
     case support::ValueDomain::kAssocArray:
       return Take<value::RuntimeAssociativeArray>(storage);
     case support::ValueDomain::kManagedRef:
-      return Take<value::ManagedRef>(storage);
+      return Take<value::ObjectRef>(storage);
   }
   throw InternalError("erased value: unknown value domain");
 }

@@ -4,15 +4,10 @@
 #include <utility>
 
 #include "lyra/support/event_edge.hpp"
-#include "lyra/value/object_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_value.hpp"
 
 namespace lyra::runtime {
-
-auto Settled(const value::ObjectRef& reference) -> value::RuntimeValue {
-  return value::RuntimeValue{reference.Handle()};
-}
 
 template auto Settled<value::PackedArray>(value::PackedArray)
     -> value::RuntimeValue;

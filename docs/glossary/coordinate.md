@@ -20,10 +20,11 @@ turns out to be -- which object a reference names is not settled when a coordina
 would be the wrong answer if it were (IEEE 1800-2023 8.14).
 
 What the position means depends on what is named, and the three cases are not interchangeable (see
-`architecture/reference_resolution.md`). A property coordinate and a non-virtual behavior coordinate
-are complete once formed. A virtual behavior coordinate names the dispatch position the source name
-means; which body fills that position is answered by the object at the moment of the call, so
-forming the coordinate is never choosing the body.
+`architecture/reference_resolution.md`). A property coordinate is complete once formed. Where the
+referrer can name the class, a virtual behavior coordinate names the dispatch position the source
+name means and the object answers which body fills it at the moment of the call. Where it cannot, a
+behavior settles to a body instead, and for a virtual behavior that body makes the virtual call --
+so forming either is never choosing the override.
 
 A coordinate naming the wrong class is not caught by anything downstream -- it addresses whatever
 occupies that position in some other class's layout -- which is why which class it names is stated

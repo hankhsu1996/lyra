@@ -8,10 +8,11 @@
 #include <string_view>
 #include <vector>
 
-#include "lyra/runtime/class_value.hpp"
+#include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
+#include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/rng.hpp"
-#include "lyra/runtime/scope_program.hpp"
+#include "lyra/runtime/scope_info.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
@@ -23,21 +24,23 @@ class CancellationTarget;
 // SystemVerilog scope -- a module instance, a generate block, the
 // implicit `$root` -- is a Scope.
 //
-// It is a value of a class like any other, which is where what it is of and the
-// storage that brings come from; what this kind adds is its place in the tree
-// (parent plus HierarchySegment, its child scopes, its registered signals) and
-// the program the runtime drives it through. The runtime walks this same tree;
-// there is no parallel topology. Every dynamic scheduler concern -- queues,
-// process registry, deferred-effect attribution, ambient identity -- lives on
-// the Runtime, so beyond being a value of its class a scope contributes
-// structural identity and nothing else.
-class Scope : public ClassValue {
+// It is a value of a class like any other, which is where what it is of comes
+// from; what this kind adds is its place in the tree (parent plus
+// HierarchySegment, its child scopes, its registered signals) and the phases
+// the runtime drives it through. The members its class declares are the
+// class's own, placed after this part by whatever laid the class out. The
+// runtime walks this same tree; there is no parallel topology. Every dynamic
+// scheduler concern -- queues, process registry, deferred-effect attribution,
+// ambient identity -- lives on the Runtime, so beyond being a value of its
+// class a scope contributes structural identity and nothing else.
+class Scope : public GcObject {
  public:
   using ChildVisitor = std::function<void(Scope&)>;
 
-  // Defined in this class's own source file, because a class whose virtual
-  // functions are all written in a header is emitted into every translation
-  // unit that builds one.
+  // `definition` has to be of a scope class.
+  Scope(
+      Scope* parent, HierarchySegment segment,
+      const ObjectDefinition* definition);
   ~Scope() override;
   Scope(const Scope&) = delete;
   auto operator=(const Scope&) -> Scope& = delete;
@@ -70,11 +73,15 @@ class Scope : public ClassValue {
   // Activate.
   [[nodiscard]] auto HierarchicalPath() const -> lyra::value::String;
 
-  // The generated behavior this scope was built with. The runtime drives the
-  // lifecycle entries itself, so this is how a caller reaches a behavior the
-  // scope publishes for someone outside the lifecycle to call.
-  [[nodiscard]] auto Program() const -> const ScopeProgram& {
-    return *program_;
+  // What this scope's class states of its instances beyond its type
+  // information: its timescale, and the names an instance answers.
+  [[nodiscard]] auto Info() const -> const ScopeInfo& {
+    return *definition_->scope;
+  }
+
+  // The class this scope is a value of.
+  [[nodiscard]] auto Definition() const -> const ObjectDefinition* {
+    return definition_;
   }
 
   // Records, during construction, the address of a signal this scope owns
@@ -125,8 +132,7 @@ class Scope : public ClassValue {
   [[nodiscard]] auto FindChild(
       std::string_view name, std::span<const lyra::value::PackedArray> indices)
       -> Scope*;
-  [[nodiscard]] auto FindSubroutine(std::string_view name)
-      -> ErasedScopeCallable;
+  [[nodiscard]] auto FindSubroutine(std::string_view name) -> ErasedEntry;
   [[nodiscard]] auto FindDisableTarget() -> CancellationTarget*;
 
   // The definition of a class this scope's unit declares. Such a class is a
@@ -164,7 +170,7 @@ class Scope : public ClassValue {
   // unspecified sentinel. The engine takes the minimum across the tree to fix
   // the design-global precision (LRM 3.14.3).
   [[nodiscard]] auto TimePrecisionPower() const -> std::int8_t {
-    return program_->metadata.time_precision_power;
+    return Info().metadata.time_precision_power;
   }
 
   // The scope's time unit as a power of ten (LRM Table 20-2), read from its
@@ -173,15 +179,15 @@ class Scope : public ClassValue {
   // `svGetTimeUnit` query and to scale `svGetTime` to the scope (LRM 35.5.3,
   // Annex H).
   [[nodiscard]] auto TimeUnitPower() const -> std::int8_t {
-    return program_->metadata.time_unit_power;
+    return Info().metadata.time_unit_power;
   }
 
-  // Per-scope lifecycle entries. Each runs this scope's generated body
-  // for one elaboration phase and does no tree recursion of its own --
-  // the Runtime drives the top-down walk. The boundary between phases is
-  // a design-wide barrier maintained by the Runtime: no scope's
-  // initialize observes any resolve mid-flight, and no activate runs
-  // before every scope has initialized.
+  // Per-scope lifecycle entries. Each runs what this scope's class does in one
+  // elaboration phase, and does no tree recursion of its own -- the Runtime
+  // drives the top-down walk.
+  // The boundary between phases is a design-wide barrier maintained by the
+  // Runtime: no scope's initialize observes any resolve mid-flight, and no
+  // activate runs before every scope has initialized.
   //
   // `Resolve` executes every cross-instance route the scope
   // owns, filling each borrowed-pointer slot with the target's sealed
@@ -204,16 +210,14 @@ class Scope : public ClassValue {
 
   void ForEachChild(const ChildVisitor& fn);
 
- protected:
-  // A scope the runtime lays out is made with room for its members after it,
-  // so only the allocation that makes that room builds one; a target that lays
-  // its own scopes out builds one as the base of its own class.
-  Scope(
-      Scope* parent, HierarchySegment segment,
-      const ScopeDefinition* definition);
-
  private:
-  friend class ClassValue;
+  // What a class extending this one does in each phase, which the entries
+  // above call. The class a generated scope is of overrides all three; here
+  // each does nothing. They are declared in the order the phases run, which is
+  // the order they take in this class's table.
+  virtual void sv_resolve();
+  virtual void sv_initialize();
+  virtual void sv_create_processes();
 
   struct SignalEntry {
     std::string_view name;
@@ -233,11 +237,9 @@ class Scope : public ClassValue {
 
   Scope* parent_ = nullptr;
   HierarchySegment segment_;
-  // Borrowed. How the runtime drives an instance of the class this scope is,
-  // taken from that class at construction. What class it is, is what every
-  // value of one carries; this is the half that exists because the runtime
-  // enters this kind of value rather than only dispatching on it.
-  const ScopeProgram* program_ = nullptr;
+  // Borrowed. The class this scope is a value of, which a scope holds because
+  // its class states the names an instance answers.
+  const ObjectDefinition* definition_ = nullptr;
   // Physical containment: every runtime child scope this object owns
   // appears here once, in attach order. Includes anonymous scopes
   // (unnamed begin/ends). A by-name reach scans this and recurses into

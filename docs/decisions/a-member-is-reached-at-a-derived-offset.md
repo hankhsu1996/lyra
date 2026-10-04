@@ -1,6 +1,10 @@
 # A member is reached at an offset derived below the execution IR
 
-Date: 2026-09-25 Status: accepted
+Date: 2026-09-25 Status: superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D1 and D6. The
+offset is still derived below the execution IR, but from a layout that places each member by its own
+storage, after the class's table address, and a lineage through another unit's class is laid out
+from what its promise states rather than from a count read at run time.
 
 ## Context
 

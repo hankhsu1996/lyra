@@ -1,4 +1,3 @@
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -19,7 +18,6 @@
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/lir/class_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/symbol_name.hpp"
 
@@ -51,9 +49,9 @@ auto EmittedModule::Release() && -> Owned {
   return Owned{.context = std::move(context_), .module = std::move(module_)};
 }
 
-auto EmitModule(const lir::CompilationUnit& unit, TimeResolution time)
+auto EmitModule(const lir::CompilationUnit& unit)
     -> diag::Result<EmittedModule> {
-  return CodeGenModule(unit, time).Run();
+  return CodeGenModule(unit).Run();
 }
 
 auto EmitProgramEntry(const lir::CompilationUnit& design_root)
@@ -66,16 +64,16 @@ auto EmitProgramEntry(const lir::CompilationUnit& design_root)
   llvm::PointerType* const ptr_ty = llvm::PointerType::getUnqual(*context);
   llvm::IntegerType* const int_ty = llvm::Type::getInt32Ty(*context);
 
-  // The root's definition is read from the cell every reference to its class
-  // loads, which the root's own unit fills where it states its declarations.
-  const lir::ClassId root = *design_root.root;
-  llvm::Constant* const root_cell = module->getOrInsertGlobal(
-      lir::ClassDefinitionSymbol(
-          design_root.name,
-          lir::SymbolPartOf(design_root.classes.Get(root).name, root.value)),
-      ptr_ty);
+  // The root is built through the entry its own unit builds its object
+  // through, as an instance of another unit is.
+  auto* const make_root = llvm::cast<llvm::Constant>(
+      module
+          ->getOrInsertFunction(
+              lir::ObjectEntrySymbol(design_root.name),
+              llvm::FunctionType::get(ptr_ty, {ptr_ty, ptr_ty}, false))
+          .getCallee());
   llvm::Constant* const label_bytes =
-      llvm::ConstantDataArray::getString(*context, design_root.name, false);
+      llvm::ConstantDataArray::getString(*context, design_root.name, true);
   auto* const label = llvm::cast<llvm::GlobalVariable>(
       module->getOrInsertGlobal("root_label", label_bytes->getType()));
   label->setLinkage(llvm::GlobalValue::PrivateLinkage);
@@ -88,12 +86,9 @@ auto EmitProgramEntry(const lir::CompilationUnit& design_root)
   llvm::IRBuilder<> builder(llvm::BasicBlock::Create(*context, "", entry));
   const llvm::FunctionCallee run = module->getOrInsertFunction(
       RuntimeSymbol(RuntimeOp::kRunProgram),
-      llvm::FunctionType::get(
-          int_ty, {int_ty, ptr_ty, ptr_ty, ptr_ty, int_ty}, false));
+      llvm::FunctionType::get(int_ty, {int_ty, ptr_ty, ptr_ty, ptr_ty}, false));
   builder.CreateRet(builder.CreateCall(
-      run,
-      {entry->getArg(0), entry->getArg(1), root_cell, label,
-       builder.getInt32(static_cast<std::uint32_t>(design_root.name.size()))}));
+      run, {entry->getArg(0), entry->getArg(1), make_root, label}));
   return EmittedModule{std::move(context), std::move(module)};
 }
 

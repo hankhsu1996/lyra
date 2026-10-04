@@ -1,6 +1,8 @@
 # A class the runtime publishes is emitted once, where the library is
 
-Date: 2026-09-23 Status: accepted
+Date: 2026-09-23 Status: accepted, with its list of classes narrowed by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), under which the
+class for a value of a class is gone. The other six stand.
 
 ## Context
 

@@ -9,34 +9,21 @@
 namespace lyra::runtime {
 
 class Observable;
-struct ObjectDefinition;
 
-// The base an object carries so a body running on it can name the reference
-// that refers to it. A body reaches its own object through a borrowed pointer,
-// which serves every member access; LRM 8.11 `this` asks for a reference
-// instead, and the borrowed pointer does not answer which object it belongs to
-// -- it names a subobject, which for a class implementing an interface is not
-// the object's own address. So the object records the identity it was created
-// with, and `this` reads it.
+// The root every object the runtime holds is derived from. Whoever holds an
+// object holds it as this class, without knowing which class it is of, so the
+// destructor is virtual. A body running on an object reaches it through a
+// borrowed pointer, which serves every member access; LRM 8.11 `this` asks for
+// a reference instead, which this part recovers from the share it holds.
 //
 // Recovering a reference from an object is what a shared-owner realization
 // needs; where reachability retains an object a body already holds its receiver
-// as a root, and this record goes with the realization rather than into it.
+// as a root, and this part goes with the realization rather than into it.
 //
-// The destructor is virtual here and nowhere below. A value of a class is
-// released through a pointer to this base -- a scope by the tree that owns it,
-// an object by the share that holds it -- so the kind has to be recovered at
-// that pointer. Declaring it here rather than at whichever kind first needs it
-// is what keeps this base at the address every entry is handed: a kind
-// introducing the table pointer itself would take offset zero for it and push
-// this off the front, and an entry taking an untyped address to be one of these
-// would then read that table pointer as the first field.
-//
-// Every member is defined in this class's own source file. The destructor has
-// to be, because a class whose virtual functions are all written in a header is
-// emitted into every translation unit that builds one; the rest are, because a
-// unit building an object of a source-language class reaches each of them, and
-// a definition written here would be compiled again by every such unit.
+// Every member is defined in this class's own source file, because a unit
+// building an object of a source-language class reaches each of them, and a
+// definition written here would be compiled again by every such unit. The
+// destructor defined there is also what emits this class's table once.
 class GcObject : public std::enable_shared_from_this<GcObject> {
  public:
   GcObject();
@@ -45,26 +32,6 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
   auto operator=(const GcObject&) -> GcObject&;
   GcObject(GcObject&&) = delete;
   auto operator=(GcObject&&) -> GcObject& = delete;
-
-  // Called once, by the allocation, with the address the allocation produced.
-  void AdoptIdentity(void* address);
-
-  [[nodiscard]] auto IdentityAddress() const -> void*;
-
-  // What a class of the source language states about its own objects, which a
-  // generated class redeclares with its own record. It is how an object answers
-  // where its own properties live and which body answers a behavior -- the
-  // questions a referrer with no name for the class cannot answer for itself.
-  // A class whose objects the runtime lays out states none here and takes its
-  // record where it is built, because there the record is what the object was
-  // built from rather than something the class alone knows.
-  static constexpr const ObjectDefinition* kClassRecord = nullptr;
-
-  // Called once, as the object comes into existence, with what every object of
-  // its class shares.
-  void AdoptClass(const ObjectDefinition* of);
-
-  [[nodiscard]] auto Class() const -> const ObjectDefinition*;
 
   // The one event source every property of this object shares (LRM 9.4.2): a
   // write to any of them reevaluates every expression that reached the object,
@@ -81,8 +48,6 @@ class GcObject : public std::enable_shared_from_this<GcObject> {
   void PublishChange();
 
  private:
-  void* identity_ = nullptr;
-  const ObjectDefinition* class_ = nullptr;
   std::unique_ptr<Observable> event_source_;
 };
 
@@ -111,30 +76,26 @@ auto RefToObject(std::shared_ptr<T> owned) -> value::ObjectRef {
   }
 }
 
-// Brings an object into existence and fixes its identity as the address the
-// allocation produced. An object no reference is recovered from records
-// nothing, which is why the record is written here rather than by a base every
-// such object would have to gain.
 template <typename T, typename... Args>
 auto GcNew(Args&&... args) -> value::ObjectRef {
-  std::shared_ptr<T> owned = std::make_shared<T>(std::forward<Args>(args)...);
-  if constexpr (std::derived_from<T, GcObject>) {
-    owned->AdoptIdentity(owned.get());
-    if constexpr (T::kClassRecord != nullptr) {
-      owned->AdoptClass(T::kClassRecord);
-    }
-  }
-  return RefToObject(std::move(owned));
+  return RefToObject(std::make_shared<T>(std::forward<Args>(args)...));
 }
 
 // The same object seen as `To`, where the program point holding it saw it as
 // `From` (LRM 8.14, 8.26.5). The identity passes through untouched; only the
 // view is formed, and it is formed by the target language's conversion rules
-// because forming a pointer is what those rules are for. Whether the conversion
-// is permitted was settled before lowering and is not asked here.
+// because forming a pointer is what those rules are for.
+//
+// The conversion is the checked one because a `$cast` forms the view to ask
+// whether the object is one (LRM 8.16): toward a subclass or an interface class
+// the object may not be, and then the answer refers to no object, which is
+// what the cast reads. Toward a class `From` extends the conversion is known to
+// hold and costs nothing to check.
 template <typename From, typename To>
 auto ViewAs(const value::ObjectRef& ref) -> value::ObjectRef {
-  return value::ObjectRef(ref.Handle(), static_cast<To*>(ref.View<From>()));
+  To* view = dynamic_cast<To*>(ref.View<From>());
+  return view == nullptr ? value::ObjectRef{}
+                         : value::ObjectRef(ref.Handle(), view);
 }
 
 // The reference referring to the object the running subroutine was invoked on

@@ -8,7 +8,7 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
-#include "lyra/runtime/scope_program.hpp"
+#include "lyra/runtime/scope_info.hpp"
 #include "lyra/runtime/sim_time.hpp"
 
 namespace lyra::runtime {

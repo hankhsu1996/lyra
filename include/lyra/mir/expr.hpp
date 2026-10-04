@@ -9,11 +9,11 @@
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
-#include "lyra/mir/abi_adapter_id.hpp"
 #include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable_id.hpp"
+#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
@@ -22,7 +22,6 @@
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/minted_entry.hpp"
-#include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
@@ -44,8 +43,8 @@ struct StringLiteral {
 struct NullLiteral {};
 
 // A machine-boolean literal: a plain scalar, not a simulation value. It is what
-// a runtime entry's signature or record layout takes where it wants a plain
-// two-valued flag rather than an SV-typed value.
+// a runtime entry's signature takes where it wants a plain two-valued flag
+// rather than an SV-typed value.
 struct MachineBoolLiteral {
   bool value;
 };
@@ -87,6 +86,16 @@ struct UnaryExpr {
 // definition was generated with, and an enumeration read as the vector it
 // shares a representation with.
 struct CastExpr {
+  ExprId operand;
+};
+
+// A handle read as a handle of another class, answering a handle referring to
+// no object where the object it refers to is not one a variable of that class
+// may hold (LRM 8.16, 8.26.5): what `$cast` asks of a class handle. Which
+// classes may hold an object is open across compilation units, so the object
+// answers, and the conversion is the question -- the answer is whether it
+// refers to anything. A conversion the declared types settle is a cast above.
+struct DynamicCastExpr {
   ExprId operand;
 };
 
@@ -401,16 +410,6 @@ struct AddressOfExpr {
   ExprId operand;
 };
 
-// The borrowed pointer to a machine array's first element
-// (`std::array::data()`, Rust `as_ptr()`). Distinct from taking the array's own
-// address: this names the contiguous element storage, which is the form a
-// plain-data runtime record holds a table in. `array` is a place of
-// `MachineArrayType` whose storage outlives the pointer; `Expr::type` is
-// `PointerType{ ownership = kBorrowed, pointee = element }`.
-struct MachineArrayDataExpr {
-  ExprId array;
-};
-
 // A consuming (transfer) read of the operand: the operand's contents flow
 // into the enclosing expression as the last use of that operand's storage,
 // and no subsequent read of the same storage is valid. `Expr::type` is the
@@ -543,40 +542,13 @@ struct VectorGetExpr {
   ExprId index;
 };
 
-// Used where a runtime callback surface takes a bare function value with no
-// wrapper object (a lifecycle hook slot in a per-class definition constant).
-// The referent is an `AbiAdapter`, never an instance method: instance
-// methods have no function-pointer-compatible identity.
-//
-// The class that owns the adapter is named here rather than left to whichever
-// declaration the reference sits inside, because the two are not always the
-// same one: the record a runtime is entered through belongs to the class
-// standing in its tree, and the bodies it names belong to the class supplying
-// them.
-struct FunctionRef {
-  ClassId owner;
-  AbiAdapterId adapter;
-};
-
-// A place naming one of a class's static constants (`Class::name`), the data
-// dual of `FunctionRef`, and like it naming the class that owns the constant.
-// `Expr::type` is the constant's type; as a place it is read in an rvalue
-// context or has its address taken via `AddressOfExpr` (how the constructor
-// passes its generated-behavior constant to the runtime base).
-struct StaticConstantRef {
-  ClassId owner;
-  StaticConstantId constant;
-};
-
-// A place naming the record every object of one class carries. The class is
-// named the way every reference to a class is, because naming a class and
-// naming what its objects answer through are one vocabulary -- so a class
-// reaching its base's record and one reaching a record past its own unit are
-// the same node with the same arms. It is the one constant a class owns that
-// another unit spells, which is why it is named off the class rather than off
-// the position it sits at.
-struct ObjectRecordRef {
-  ClassRef of;
+// The definition every object of one class carries, which the unit declaring
+// the class emits as a constant. Only a class some unit declares has one, and
+// whichever unit that is, it is reached the same way -- so a class of this unit
+// and one past it are one node. `Expr::type` is the runtime class definition
+// itself, so a use wanting its address takes it.
+struct DefinitionRef {
+  DeclaredClassRef of;
 };
 
 // A runtime description, named by the entry holding it: what an operation on a
@@ -602,17 +574,16 @@ struct IntegralConstantRef {
   IntegralConstantId constant;
 };
 
-// A place naming a class's static property (`Class::name`, LRM 8.9): the
-// mutable type-associated storage cell counterpart to `StaticConstantRef`.
-// `owner` is the class whose static-property arena declares the cell (a
-// derived source access like `Derived::inherited_prop` still names the base
-// class here, mirroring the owner-qualification rule for inherited instance
-// access). `Expr::type` is the property's observable-cell type, so a read
-// wraps it in `Get` and a write in `Set`: the property needs no object, so a
-// name outside every body of the class reaches it and a continuous assignment
-// may take it as an operand (LRM 10.3.2) -- which is what a plain value cannot
-// answer for and an instance property, reachable only through a receiver, never
-// has to.
+// A place naming a class's static property (`Class::name`, LRM 8.9): a mutable
+// type-associated storage cell. `owner` is the class whose static-property
+// arena declares the cell (a derived source access like
+// `Derived::inherited_prop` still names the base class here, mirroring the
+// owner-qualification rule for inherited instance access). `Expr::type` is the
+// property's observable-cell type, so a read wraps it in `Get` and a write in
+// `Set`: the property needs no object, so a name outside every body of the
+// class reaches it and a continuous assignment may take it as an operand
+// (LRM 10.3.2) -- which is what a plain value cannot answer for and an instance
+// property, reachable only through a receiver, never has to.
 struct StaticPropertyRef {
   ClassId owner;
   StaticPropertyId prop;
@@ -651,15 +622,30 @@ struct ExternalStaticPropertyRef {
   std::string property_name;
 };
 
+// A constant a class of this unit holds, by the position it sits at in that
+// class's arena. `Expr::type` is the constant's own type.
+struct ClassConstantRef {
+  ClassId owner;
+  ClassConstantId constant;
+};
+
+// A body of a class of this unit, named as the code it is rather than called.
+// `Expr::type` is the machine function type the body has: every parameter it
+// takes, the receiver among them, and what it results in. Read as a value it is
+// the body's address, the way a function's name is in C.
+struct FunctionRef {
+  CallableTarget body;
+};
+
 // Which declared thing a reference names. The alternatives differ in the table
 // that resolves the name -- a body's own bindings, a class's arena, another
 // unit's signature, the descriptors this unit generates -- and that is the
-// referent's business: every one of them reaches storage or code that exists
-// whether or not this expression names it.
+// referent's business: every one of them reaches storage, a constant or code
+// that exists whether or not this expression names it.
 using ReferenceTarget = std::variant<
-    LocalRef, FunctionRef, StaticConstantRef, ObjectRecordRef,
-    TypeDescriptorRef, IntegralConstantRef, StaticPropertyRef,
-    StaticVariableRef, ExternalUnitVariableRef, ExternalStaticPropertyRef>;
+    LocalRef, DefinitionRef, TypeDescriptorRef, IntegralConstantRef,
+    StaticPropertyRef, StaticVariableRef, ExternalUnitVariableRef,
+    ExternalStaticPropertyRef, ClassConstantRef, FunctionRef>;
 
 // Names a declared thing. Reading it loads what the name reaches, assigning to
 // it stores there, and taking its address yields a pointer to it -- one node
@@ -672,8 +658,8 @@ struct ReferenceExpr {
 using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
     MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
-    ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr, CallExpr, DerefExpr,
-    AddressOfExpr, MachineArrayDataExpr, MoveExpr, FieldAccessExpr, ClosureExpr,
+    DynamicCastExpr, ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr,
+    CallExpr, DerefExpr, AddressOfExpr, MoveExpr, FieldAccessExpr, ClosureExpr,
     CompositeExpr, AwaitExpr, WaitExpr, VectorGetExpr>;
 
 struct Expr {

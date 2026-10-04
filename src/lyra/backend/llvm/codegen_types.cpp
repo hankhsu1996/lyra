@@ -11,6 +11,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/tuple_operations.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -141,7 +142,7 @@ auto CodeGenTypes::StorageOf(lir::TypeId type) -> support::ObjectLayout {
         "llvm codegen: storage asked of a type whose values are not owned -- "
         "please report this as a bug");
   }
-  return support::LayoutOf(*object);
+  return runtime::LayoutOf(*object);
 }
 
 auto CodeGenTypes::LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout& {

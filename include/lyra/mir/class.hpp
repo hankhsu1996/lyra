@@ -1,57 +1,50 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/time.hpp"
-#include "lyra/mir/abi_adapter_id.hpp"
+#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
+#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/static_property_id.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/value_build.hpp"
 
 namespace lyra::mir {
 
-// A class-level static constant: a named immutable value the class owns with
-// static storage, built once at compile time from `value` (the root of the
-// expression tree `body` owns; its `stmts` are empty, only `exprs` is used).
-// The data dual of a static method. A runtime scope's generated-behavior
-// record is one such constant; the constructor hands its address to the
-// runtime base.
-// It carries no name: nothing in the source declares one, so its position in
-// the class's own arena is the whole of its identity, and what it is spelled as
-// in a target language is that target's to mint.
-struct StaticConstantDecl {
+// A constant a class holds: plain machine data of type `type`, whose value is
+// `initializer` -- an expression over nothing that runs, only names, addresses
+// and literals -- so a target states it as data. The runtime library reads such
+// a constant as one of its own structures or as a run of them.
+struct ClassConstantDecl {
   TypeId type;
-  Block body;
-  ExprId value;
+  ValueBuild initializer;
 };
 
 // A class static property (LRM 8.9): a named, mutable type-associated storage
-// cell the class owns, shared by every instance. Peer of `FieldDecl` on the
-// instance-member axis and of `StaticConstantDecl` on the type-associated
-// axis, but a class of its own: unlike `FieldDecl` a static property has no
-// per-instance replication, and unlike `StaticConstantDecl` its value is a
-// run-time cell writable through ordinary assignment.
+// cell the class owns, shared by every instance.
 // What the cell starts out holding is a design-init fact (LRM 10.5) and is not
 // on this declaration: the assignment lands in whatever brings the cell's owner
 // up, which is the declaring instance's construction where a structural scope
 // replicates the class and the declaring unit's namespace bring-up where
 // nothing does. Initializer timing and per-cell identity are separate concerns,
 // and a statement list is the one home a backend reads for either.
-// It carries no name, for the reason `FieldDecl` carries none: the pool also
-// takes what a class's bodies keep for the whole class, and those cells the
-// source never declared.
+// It carries no name, for the reason a field carries none: the pool also takes
+// what a class's bodies keep for the whole class, and those cells the source
+// never declared.
 struct StaticPropertyDecl {
   TypeId type;
 };
@@ -98,16 +91,14 @@ struct ConstructorDecl {
   std::vector<ExprId> base_args;
 };
 
-// The bodies the runtime enters on an object of a class it drives. Held
-// together because the runtime enters all three or none: a class that supplies
-// one supplies every one, so a consumer reads the group rather than asking
-// three times whether the next is there.
-struct ObjectTreeProgram {
-  CallableId resolve_state;
-  CallableId initialize_state;
-  CallableId create_processes;
-
-  auto operator==(const ObjectTreeProgram&) const -> bool = default;
+// One behavior of an interface class a class answers (LRM 8.26.2), and the
+// behavior of the class's lineage answering it, each named the way a call
+// names one. A class extending this one that takes the answering behavior over
+// answers the interface's with its own body too. Nothing answers it where an
+// abstract class leaves the implementation to a class extending it.
+struct ConformingBehavior {
+  VirtualSlot interface_behavior;
+  std::optional<VirtualSlot> answered_by;
 };
 
 struct Class {
@@ -120,13 +111,20 @@ struct Class {
   // it.
   std::optional<std::string> name;
   std::optional<ClassRef> base;
-  std::vector<ClassRef> implements;
+  // The interfaces the class's declaration names, in the order written. A
+  // value of the class is also a value of each, of every interface those
+  // extend, and of whatever its base is; none of that is restated here.
+  std::vector<DeclaredClassRef> implements;
+  // For each behavior of each interface a value of this class is also a value
+  // of, what answers it. Empty for an interface class, which answers nothing.
+  std::vector<ConformingBehavior> conforming;
   bool is_final = false;
   bool is_interface_class = false;
   TypeId self_pointer_type;
-  // The class's resolved time unit and precision (LRM 3.14.2). The emitted
-  // class exposes the precision so the engine can take the design-global
-  // minimum (LRM 3.14.3) and so delays scale to it.
+  // The class's resolved time unit and precision (LRM 3.14.2). The runtime is
+  // told both where a class standing in the design hierarchy is declared, so
+  // the engine can take the design-global minimum (LRM 3.14.3) and delays
+  // scale to it.
   TimeResolution time_resolution;
   base::Arena<FieldDecl, FieldId> fields;
   // The identifiers the source wrote for storage this class holds, each paired
@@ -135,20 +133,6 @@ struct Class {
   // does not, which is what makes "did the source write this" a question the
   // class answers rather than one a consumer reads out of a spelling.
   std::vector<NamedField> named_fields;
-  // How the runtime drives objects of this class, for a class it drives at
-  // all. The three bodies run in the order they stand here: every route and
-  // alias is bound while the tree is complete and nothing has run, then every
-  // cell takes the value its declaration gives it (LRM 10.5), then every
-  // process is created (LRM 9.2). Each is entered on one instance and returns
-  // before the next begins, which is why they are three bodies rather than one
-  // with phases inside it.
-  //
-  // They are this class's own bodies, so this class states them; what roots an
-  // object in the tree is what it extends, and that says nothing about how one
-  // runs. A class rooted there supplying none is one nothing constructs -- what
-  // a unit promises of its object, which states what may be reached and never
-  // how it runs.
-  std::optional<ObjectTreeProgram> tree_program;
   // How an object of this class is built, absent for a class no object is ever
   // built of: an interface class (LRM 8.26) holds no storage and is never
   // constructed, so it has no construction to state.
@@ -177,26 +161,6 @@ struct Class {
   // method -- takes identity and body together where it is built. Both kinds
   // share this pool, which is why the pool admits the gap.
   base::Registry<CallableDecl, CallableId> callables;
-  // The runtime-callback adapters this class owns -- callables whose identity
-  // is a plain function pointer the runtime holds, semantically distinct from
-  // the instance callables above. Referenced from the class's
-  // generated-behavior constant by `FunctionRef`; never called through a MIR
-  // `CallExpr`. Empty for a class that has no runtime callback surface.
-  base::Arena<AbiAdapter, AbiAdapterId> abi_adapters;
-  // The class-level static constants this class owns, emitted as static
-  // members. A runtime scope's generated-behavior record is one such constant;
-  // the constructor forwards its address to the runtime base through the
-  // construction protocol.
-  base::Arena<StaticConstantDecl, StaticConstantId> static_constants;
-  // The record every object of this class carries, so the object answers where
-  // its own properties live and which body a behavior or a declared name
-  // reaches -- the questions a referrer that cannot name the class has no other
-  // way to ask. It sits apart from the constants above because it is the one a
-  // class outside this unit spells, so it is named off the class rather than
-  // off a position only this unit can count. A class of the design hierarchy
-  // has none: its objects answer through the program a scope carries, and
-  // nothing reaches one this way.
-  std::optional<StaticConstantDecl> object_record;
   // The class's static properties (LRM 8.9): mutable type-associated storage
   // cells shared by every instance. Peer to `fields` on the instance-versus-
   // type-associated axis: a static property is one cell owned by the type,
@@ -217,6 +181,45 @@ struct Class {
   // what makes the list a relation the scope holds rather than a property of
   // any class in it. Empty for a class, which declares none.
   std::vector<ClassId> declares;
+  // The read-only tables the class's record below points at -- each a list of
+  // names with the member or body a name reaches. Nothing outside the class
+  // names one.
+  base::Arena<ClassConstantDecl, ClassConstantId> constants;
+  // The value of the class's record: the one constant every object of the class
+  // points at, which the runtime library reads to answer what cannot be asked
+  // where the asker is compiled -- what the class extends, and which member or
+  // body a name reaches. Other units name it by the class, which is why it is
+  // not among `constants`, and its type is the same for every class, which is
+  // why only its value is here.
+  //
+  // What it lists follows from who has to ask by name. A class every referrer
+  // can name lists nothing. A class a referrer reaches only by name (LRM 6.22,
+  // 23.9) lists where each property is and which body each method name runs. A
+  // class an instance of the design hierarchy is built of lists the
+  // subroutines a hierarchical name spells (LRM 23.6), its DPI-C exports (LRM
+  // 35.4), and the classes it declares.
+  ValueBuild object_definition_initializer;
+
+  // Which of the dispatch positions this class introduces (LRM 8.20)
+  // `callable` is, or nothing where it introduces none. The positions are
+  // counted in the order the class declares its callables, which is the one
+  // numbering a dispatch, an override and a class's table all have to agree on.
+  [[nodiscard]] auto IntroductionOrdinal(CallableId callable) const
+      -> std::optional<BehaviorOrdinal> {
+    if (!IntroducesSlot(callables.Get(callable).virtual_dispatch)) {
+      return std::nullopt;
+    }
+    BehaviorOrdinal ordinal{.value = 0};
+    for (const CallableId here : callables.Ids()) {
+      if (here == callable) {
+        break;
+      }
+      if (IntroducesSlot(callables.Get(here).virtual_dispatch)) {
+        ++ordinal.value;
+      }
+    }
+    return ordinal;
+  }
 };
 
 }  // namespace lyra::mir

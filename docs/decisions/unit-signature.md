@@ -192,8 +192,8 @@ published members are ordered, and that order is what fixes their placement.
 ```text
 UnitSignature   { unit name; published classes; namespace-level callables and variables }
 ClassSignature  { its own name; the class it extends; whether it is an interface class;
-                  published members in declaration order; behaviors it introduces in order;
-                  static storage }
+                  the interface classes it names; published members in declaration order;
+                  behaviors it introduces in order; static storage }
 ```
 
 The content of each entry is settled by D3 rather than by enumeration: it is what a referring unit's
@@ -234,12 +234,14 @@ already forms, that yields more per entry than a reader would name unaided.
   same way, so a referrer reaches an inherited property or behavior by walking that chain rather
   than by reading a list this class would have to build out of another unit's promise; whether it is
   an interface class, since a behavior an interface class states sits on no lineage and a referrer
-  that could not tell would name a coordinate no value carries; per method a name, a result type,
-  its formals, and whether it is virtual (LRM 8.20), which decides whether a call site dispatches
-  statically, with the ones it introduces in the order that fixes their ordinals; per property and
-  per type-associated cell a name and a type. **What it inherited is never restated.** Computing
-  that would mean reading the base's promise while deriving this one, and a signature is a function
-  of its own unit's declarations alone -- the property that leaves the signature stage unordered.
+  that could not tell would name a coordinate no value carries; the interface classes its
+  declaration names (LRM 8.26.2), which a referrer walks the same way; per method a name, a result
+  type, its formals, and whether it is virtual (LRM 8.20), which decides whether a call site
+  dispatches statically, with the ones it introduces in the order that fixes their ordinals; per
+  property and per type-associated cell a name and a type. **What it inherited is never restated.**
+  Computing that would mean reading the base's promise while deriving this one, and a signature is a
+  function of its own unit's declarations alone -- the property that leaves the signature stage
+  unordered.
 
 Nothing here places a member. **A published member is reached by performing the behavior the promise
 states for it, in the order the signature published them**, so neither side computes a position and

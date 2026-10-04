@@ -21,6 +21,7 @@
 #include "lyra/lir/type_descriptor_id.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::lir {
 
@@ -120,44 +121,32 @@ struct IntegralConstantRef {
   TypeId type;
 };
 
-// The code address of a function, as a value. A closure is built from a code
-// reference plus its environment, so a function's address is an operand, not a
-// call target.
-struct FuncRef {
-  FunctionId function;
-};
-
 // The address of storage the whole program shares, named by its linkage
 // symbol: a variable of a package (LRM 26.2) or of a compilation-unit scope
-// (LRM 3.12.1), which a referrer reaches by a fully resolved name. The data
-// counterpart of a code reference -- no local slot and no receiver chain
-// arrives at such storage, so a place over one opens at the symbol and
-// dereferences it. `type` is a pointer to what the symbol names; how the name
-// is resolved -- a link line, an execution session -- is below LIR.
+// (LRM 3.12.1), which a referrer reaches by a fully resolved name. No local
+// slot and no receiver chain arrives at such storage, so a place over one opens
+// at the symbol and dereferences it. `type` is a pointer to what the symbol
+// names; how the name is resolved -- a link line, an execution session -- is
+// below LIR.
 struct StaticRef {
   std::string symbol;
   TypeId type;
 };
 
-// The record every object of one class carries, named by the object type it
-// describes. Its contents are a compile-time record the target assembles, and
-// an operand is a leaf, so what the operand carries is which class is described
-// rather than how the record is built -- the same shape as the descriptor
-// above, for the same reason. A member projection and a dispatch target name a
-// class the same way, by the object type; this is that name standing where a
-// value is wanted, which is what a call asking a question about a class takes.
-struct ObjectRecordRef {
-  TypeId object;
+// The address of the definition every value of `defined` carries, a constant
+// the unit declaring that type emits. `type` is a pointer to the definition.
+struct DefinitionRef {
+  TypeId defined;
   TypeId type;
 };
 
 // An instruction input: a prior value, an inline constant, or a reference to
-// code or to shared storage. A constant or a reference is an operand rather
-// than a value of its own because it has no dataflow origin to name -- it is
-// materialized at the use site.
+// a constant or to shared storage. A constant or a reference is an operand
+// rather than a value of its own because it has no dataflow origin to name --
+// it is materialized at the use site.
 using Operand = std::variant<
     Use, IntConst, StrConst, RealConst, NullConst, BoolConst, TypeDescriptorRef,
-    IntegralConstantRef, FuncRef, StaticRef, ObjectRecordRef>;
+    IntegralConstantRef, StaticRef, DefinitionRef>;
 
 // A runtime-library entry. `position` names the part the entry acts on where
 // the call itself fixes it, carried on the callee rather than among the
@@ -223,10 +212,17 @@ struct IndirectTarget {
 
 // The one way the value's type comes into existence, which is the whole
 // identity -- and that type is what the call answers with, so the target names
-// nothing further. A wrapper that owns what it points at brings the pointee
-// into existence along with itself, which is that same one way seen from the
-// owner.
+// nothing further. A wrapper that owns what it points at begins the storage it
+// owns along with itself, which is that same one way seen from the owner.
 struct ConstructTarget {};
+
+// The constructor of a class of the runtime library, entered by the constructor
+// of a class extending it on the storage of the value being built, with the
+// arguments that class states for its base -- as a C++ constructor enters its
+// base's. The library may refuse what it is handed, so the call can depart.
+struct LibraryConstructorTarget {
+  support::RuntimeClass cls;
+};
 
 // A body of this program reached by the symbol it is emitted under rather than
 // as a function of this unit: one another compilation unit emits, or one of
@@ -279,25 +275,6 @@ struct OpenWriteTarget {
   Op op;
   TypeId value;
 };
-
-// The storage a body's declared variables live in: opened whole from what the
-// body states its variables are, each of them reached by the position that
-// statement gave it, and ended on every way out -- which is what ends every
-// variable in it, since none of them is storage the body owns on its own.
-//
-// A declaration is what gives a variable storage, so none of these reads
-// anything about what the body does with one. What each piece of storage is
-// follows from the type the body stated beside the position, the same way a
-// declaration's storage follows its type everywhere else.
-//
-// LIR-only targets with no MIR twin. Where a variable's storage sits is a
-// realization below the semantic layer, so a target whose own language gives a
-// declaration storage states no variables and emits none of this.
-struct OpenVariablesTarget {};
-
-struct VariableAddressTarget {};
-
-struct CloseVariablesTarget {};
 
 // The end of an owned value, and a second owned value equal to one the body
 // only reads. A value the body made ends where the lowering that made it says
@@ -380,16 +357,15 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 
 // The target of a call: a runtime builtin, a function of this unit, a dispatch
 // slot the receiving value's own class fills, a code address the program
-// computed, a value constructor named by the call's result type, a body of this
-// program or a foreign symbol the host resolves, a value-cell operation, the
-// storage a body's variables live in, the end or copy of an owned value, a
-// control-effect operation, or an operation of the coroutine protocol.
+// computed, a value constructor named by the call's result type, the
+// constructor of a library class, a body of this program or a foreign symbol
+// the host resolves, a value-cell operation, the end or copy of an owned value,
+// a control-effect operation, or an operation of the coroutine protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
-    ConstructTarget, SymbolTarget, ForeignTarget, ValueCellTarget,
-    OpenWriteTarget, OpenVariablesTarget, VariableAddressTarget,
-    CloseVariablesTarget, EndValueTarget, CopyValueTarget, ControlEffectTarget,
-    CoroutineTarget>;
+    ConstructTarget, LibraryConstructorTarget, SymbolTarget, ForeignTarget,
+    ValueCellTarget, OpenWriteTarget, EndValueTarget, CopyValueTarget,
+    ControlEffectTarget, CoroutineTarget>;
 
 // How a call to `target` ends, which is a property of the callee and never of
 // what it happens to do. The design's own code can depart, wherever it stands
@@ -412,6 +388,14 @@ struct CallInstr {
 // own types.
 struct TupleInstr {
   std::vector<Operand> components;
+};
+
+// Builds a callable value from its captures, in the order its declaration lists
+// them. Its result is that value, whose type names the declaration. Each
+// capture is taken the way its storage holds one -- a copy, or the pointer it
+// was handed -- and none of the design's code runs, so the build only returns.
+struct ClosureInstr {
+  std::vector<Operand> captures;
 };
 
 // Collects `elements` into contiguous storage and names it by a
@@ -615,6 +599,22 @@ struct CastInstr {
   Operand operand;
 };
 
+// A handle read as a handle of a class the declared types say the object is
+// one of: the class it extends, or an interface class it implements (LRM 8.14,
+// 8.26.5). The result refers to the same object through that class's part of
+// it, so it is a value of its own rather than the operand read again. Both
+// classes are the types already carried.
+struct HandleCastInstr {
+  Operand operand;
+};
+
+// A handle read as a handle of another class, answering one referring to no
+// object where the object the operand refers to is not one of that class: the
+// question the object answers (LRM 8.16), asked by forming the handle.
+struct DynamicCastInstr {
+  Operand operand;
+};
+
 // Receives the departure that transferred here, answering the target it names
 // (LRM 9.6.2) -- null where no region may claim it, which is what a run-time
 // error is received as. A block beginning with this
@@ -623,10 +623,44 @@ struct CastInstr {
 // passed.
 struct ReceiveDepartureInstr {};
 
+// Which of a body's declared variables: the position the body's statement of
+// its variables gave it. Meaningless outside that body.
+struct VariablePosition {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const VariablePosition&) const
+      -> std::strong_ordering = default;
+};
+
+// The storage a body's declared variables live in: opened whole where the body
+// begins, each variable reached by its position, and closed on every way out,
+// which is what ends every variable in it. The result of opening is the
+// storage, which the other two name; reaching a variable yields a borrowed
+// pointer to its storage, and closing yields nothing.
+//
+// A declaration is what gives a variable storage, so none of these reads
+// anything about what the body does with one. What each piece of storage is
+// follows from the type the body stated at the position, the same way a
+// declaration's storage follows its type everywhere else. Where the storage
+// sits is the target's to choose; a target whose own language gives a
+// declaration storage is handed none of this.
+struct OpenVariablesInstr {};
+
+struct VariableAddressInstr {
+  Operand variables;
+  VariablePosition position;
+};
+
+struct CloseVariablesInstr {
+  Operand variables;
+};
+
 using InstrData = std::variant<
-    CallInstr, TupleInstr, ArrayInstr, UnionInstr, AggregateExtractInstr,
-    AggregateUpdateInstr, TagTestInstr, LoadInstr, StoreInstr, AddrOfInstr,
-    BinaryInstr, UnaryInstr, CastInstr, ReceiveDepartureInstr>;
+    CallInstr, TupleInstr, ClosureInstr, ArrayInstr, UnionInstr,
+    AggregateExtractInstr, AggregateUpdateInstr, TagTestInstr, LoadInstr,
+    StoreInstr, AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr,
+    HandleCastInstr, DynamicCastInstr, ReceiveDepartureInstr,
+    OpenVariablesInstr, VariableAddressInstr, CloseVariablesInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.
@@ -727,6 +761,14 @@ struct BasicBlock {
   Terminator terminator;
 };
 
+// Whether this artifact is the only one that writes the function's definition.
+// A name no unit owns is defined by every unit that declares it, from the name
+// and the prototype alone, so each writes the same text and whatever resolves
+// names across artifacts keeps one of them (LRM 35.4). Everything else is
+// written once, and a second definition of it would be a program that does not
+// link.
+enum class Definition : std::uint8_t { kOwned, kShared };
+
 // A callable lowered to a CFG. `name` is unique across the unit, so it is the
 // symbol the function is emitted and linked under; a consumer never composes
 // one from where the function is listed. `values` holds every value of the
@@ -737,14 +779,6 @@ struct BasicBlock {
 // that fact in its `result_type` (a `CoroutineType`): it may hold
 // `SuspendTerm`s and its completion is a coroutine completion, which a backend
 // realizes through the scheduling protocol rather than a single call.
-// Whether this artifact is the only one that writes the function's definition.
-// A name no unit owns is defined by every unit that declares it, from the name
-// and the prototype alone, so each writes the same text and whatever resolves
-// names across artifacts keeps one of them (LRM 35.4). Everything else is
-// written once, and a second definition of it would be a program that does not
-// link.
-enum class Definition : std::uint8_t { kOwned, kShared };
-
 struct Function {
   std::string name;
   base::Arena<Local, ValueId> values;
@@ -755,10 +789,9 @@ struct Function {
   Definition definition = Definition::kOwned;
 };
 
-// The type of a value operand: the type of the value a use names, or of a
-// constant. A code reference names a callable, not a value, so it has none.
-auto OperandType(const Function& fn, const Operand& operand)
-    -> std::optional<TypeId>;
+// The type of an operand: the type of the value a use names, of a constant, or
+// of the reference itself, which is an address.
+auto OperandType(const Function& fn, const Operand& operand) -> TypeId;
 
 }  // namespace lyra::lir
 

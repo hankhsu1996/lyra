@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 
+#include <algorithm>
 #include <expected>
 #include <optional>
 #include <span>
@@ -11,17 +12,19 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/class_decl.hpp"
+#include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/external_class.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/object_record.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -61,7 +64,7 @@ auto CanonicalizeVirtualDispatch(
     if (const auto* ext =
             std::get_if<hir::ExternalDispatchSlot>(&*method.overrides)) {
       // A behavior introduced in another unit is canonically owned there, so
-      // this unit records the takeover by the coordinate that unit published
+      // this unit records the override by the coordinate that unit published
       // and states nothing about where it lands.
       return mir::VirtualDispatchRole{
           unit_lowerer.MakeExternalMethodOverride(*ext)};
@@ -91,13 +94,152 @@ auto CanonicalizeVirtualDispatch(
             [](const mir::OverridesIntraUnitSlot& s)
                 -> mir::VirtualDispatchRole { return s; },
             [](const mir::OverridesExternalSlot& e)
-                -> mir::VirtualDispatchRole { return e; }},
+                -> mir::VirtualDispatchRole { return e; },
+            [](const mir::OverridesLibraryVirtual& l)
+                -> mir::VirtualDispatchRole { return l; }},
         *base_role);
   }
   if (method.is_virtual) {
     return mir::VirtualDispatchRole{mir::IntroducesVirtualSlot{}};
   }
   return std::nullopt;
+}
+
+// The behavior a method named by `behavior` answers, the way a call names it.
+// Every such method is in dispatch: the front end requires a method answering
+// an interface class's behavior to be virtual.
+auto BehaviorSlot(
+    UnitLowerer& unit_lowerer, const hir::OverriddenBehavior& behavior)
+    -> mir::VirtualSlot {
+  return std::visit(
+      Overloaded{
+          [&](const hir::LocalClassMethodTarget& local) -> mir::VirtualSlot {
+            std::optional<mir::VirtualSlot> slot =
+                unit_lowerer.LocalVirtualSlotOf(local);
+            if (!slot.has_value()) {
+              throw InternalError(
+                  "BehaviorSlot: a behavior is answered by a method in no "
+                  "dispatch -- please report this as a bug");
+            }
+            return *std::move(slot);
+          },
+          [&](const hir::ExternalDispatchSlot& external) -> mir::VirtualSlot {
+            return unit_lowerer.MakeExternalVirtualSlot(external);
+          }},
+      behavior);
+}
+
+// Appends the interface class `iface`, then every interface class it extends
+// (LRM 8.26.2), skipping one already in `reached`, since an interface class is
+// one however many ways it is arrived at (LRM 8.26.6.3). What each extends is
+// read where that class states it.
+void ReachInterface(
+    const UnitLowerer& unit_lowerer, const hir::ClassRef& iface,
+    std::vector<hir::ClassRef>& reached) {
+  if (std::ranges::find(reached, iface) != reached.end()) {
+    return;
+  }
+  reached.push_back(iface);
+  std::visit(
+      Overloaded{
+          [&](const hir::LocalClassRef& local) {
+            for (const hir::ClassRef& extended :
+                 unit_lowerer.Hir().classes.Get(local.class_id).implements) {
+              ReachInterface(unit_lowerer, extended, reached);
+            }
+          },
+          [&](const hir::ExternalClassRef& external) {
+            const hir::ExternalClass* published = hir::FindExternalClass(
+                unit_lowerer.Hir().external_classes, external.unit_name,
+                external.class_name);
+            if (published == nullptr) {
+              throw InternalError(
+                  "ReachInterface: an interface class was named without its "
+                  "signature being read -- please report this as a bug");
+            }
+            for (const hir::ExternalClassRef& extended :
+                 published->implements) {
+              ReachInterface(unit_lowerer, hir::ClassRef{extended}, reached);
+            }
+          }},
+      iface);
+}
+
+// Every behavior an interface class `cls` extends introduced (LRM 8.26.2),
+// with what a body answering it takes and completes with: read off the
+// declaration where this unit declares the introducer, and off the promise its
+// unit made where another does. A class reaches none, since implementing an
+// interface class inherits nothing of it and a class states every behavior of
+// one it implements itself (LRM 8.26.7).
+auto InheritedBehaviorsOf(UnitLowerer& unit_lowerer, const hir::ClassDecl& cls)
+    -> std::vector<InheritedBehavior> {
+  std::vector<InheritedBehavior> inherited;
+  if (!cls.is_interface_class) {
+    return inherited;
+  }
+  std::vector<hir::ClassRef> extended;
+  for (const hir::ClassRef& named : cls.implements) {
+    ReachInterface(unit_lowerer, named, extended);
+  }
+  for (const hir::ClassRef& reached : extended) {
+    std::visit(
+        Overloaded{
+            [&](const hir::LocalClassRef& local) {
+              const hir::ClassDecl& introducer =
+                  unit_lowerer.Hir().classes.Get(local.class_id);
+              for (const hir::MethodId id : introducer.methods.Ids()) {
+                const hir::SubroutineDecl& method = introducer.methods.Get(id);
+                if (!method.is_virtual || method.overrides.has_value()) {
+                  continue;
+                }
+                inherited.push_back(
+                    InheritedBehavior{
+                        .name = method.name,
+                        .slot = BehaviorSlot(
+                            unit_lowerer,
+                            hir::LocalClassMethodTarget{
+                                .owner = local.class_id, .method = id}),
+                        .params = ParamTypesOf(unit_lowerer, method),
+                        .result = SubroutineCallTypeOf(unit_lowerer, method)});
+              }
+            },
+            [&](const hir::ExternalClassRef& external) {
+              const hir::ExternalClass* introducer = hir::FindExternalClass(
+                  unit_lowerer.Hir().external_classes, external.unit_name,
+                  external.class_name);
+              if (introducer == nullptr) {
+                throw InternalError(
+                    "InheritedBehaviorsOf: an interface class this one "
+                    "extends was named without its promise being read -- "
+                    "please report this as a bug");
+              }
+              hir::PublishedBehaviorId ordinal{0};
+              for (const hir::PublishedMethod& method : introducer->methods) {
+                if (!std::holds_alternative<hir::IntroducesVirtual>(
+                        method.dispatch)) {
+                  continue;
+                }
+                const hir::PublishedCallable& prototype = method.prototype;
+                inherited.push_back(
+                    InheritedBehavior{
+                        .name = prototype.name,
+                        .slot = BehaviorSlot(
+                            unit_lowerer,
+                            hir::ExternalDispatchSlot{
+                                .unit_name = external.unit_name,
+                                .class_name = external.class_name,
+                                .behavior = ordinal}),
+                        .params =
+                            ParamTypesOf(unit_lowerer, prototype.interface),
+                        .result = SubroutineCallTypeOf(
+                            unit_lowerer, prototype.interface,
+                            prototype.result_type)});
+                ++ordinal.value;
+              }
+            }},
+        reached);
+  }
+  return inherited;
 }
 
 // One body of the class and the static-lifetime locals it declared, paired so
@@ -217,11 +359,11 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   // (LRM 8.26).
   std::optional<mir::ClassRef> base_ref;
   if (hir_class.base.has_value()) {
-    base_ref = unit_lowerer.TranslateClassRef(*hir_class.base);
+    base_ref = mir::AsClassRef(unit_lowerer.TranslateClassRef(*hir_class.base));
   } else if (!hir_class.is_interface_class) {
     base_ref = mir::ClassRef{mir::ManagedObjectRootRef{}};
   }
-  std::vector<mir::ClassRef> implements;
+  std::vector<mir::DeclaredClassRef> implements;
   implements.reserve(hir_class.implements.size());
   for (const hir::ClassRef& iface : hir_class.implements) {
     implements.push_back(unit_lowerer.TranslateClassRef(iface));
@@ -251,8 +393,9 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   // every source property so a property's position never moves with it. It is
   // a borrow: the instance is built during elaboration and outlives every
   // object of the class, so nothing here owns it. Construction is where it
-  // arrives, which is why the constructor takes it as a parameter.
-  if (declaring_shape != nullptr) {
+  // arrives, which is why the constructor takes it as a parameter. An interface
+  // class holds no storage and runs no body (LRM 8.26), so it records none.
+  if (declaring_shape != nullptr && !hir_class.is_interface_class) {
     const mir::TypeId instance_type = declaring_shape->self_pointer_type;
     shape.declaring_instance = DeclaringInstance{
         .type = instance_type, .member = shape.AddField(instance_type)};
@@ -262,11 +405,11 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   // lands is a fact only this loop knows. It is recorded as the loop goes;
   // nothing downstream recomputes it.
   //
-  // A property another unit may name sits in a fixed prefix, ahead of every one
-  // the class keeps to itself (LRM 8.18), so a unit reading the promise counts
-  // the same slot out of it and a property the class never promised can move
-  // none of them. The source order is what the promise states and what a
-  // declaration initializer runs in, so it is kept within each group.
+  // A property another unit may name sits in a fixed prefix, ahead of every
+  // `local` one (LRM 8.18), so a unit reading the signature counts the same
+  // slot out of it and adding a `local` property moves none a referrer reaches.
+  // The source order is what the signature states and what a declaration
+  // initializer runs in, so it is kept within each group.
   shape.field_translation =
       base::Translation<hir::FieldId, mir::FieldId>{hir_class.fields.size()};
   std::vector<mir::FieldId> placed(hir_class.fields.size());
@@ -408,6 +551,16 @@ auto ClassDeclLowerer::PopulateBodies(
   const ClassShape& shape = unit_lowerer.GetClassShape(class_id_);
 
   mir::Class mir_class = shape.OpenClass();
+  for (const hir::ConformingBehavior& answered : hir_class.conforming) {
+    mir_class.conforming.push_back(
+        mir::ConformingBehavior{
+            .interface_behavior =
+                BehaviorSlot(unit_lowerer, answered.interface_behavior),
+            .answered_by = answered.answered_by.transform(
+                [&](const hir::OverriddenBehavior& behavior) {
+                  return BehaviorSlot(unit_lowerer, behavior);
+                })});
+  }
 
   mir::CallableCode ctor_code = mir::CallableCode::Defined();
   CallableBindings ctor_bindings(unit_lowerer.Unit(), ctor_code);
@@ -634,11 +787,15 @@ auto ClassDeclLowerer::PopulateBodies(
     return std::unexpected(std::move(r.error()));
   }
 
-  // Every class of the source language states how an object of it is reached,
-  // because a name landing on one whose class a referrer cannot name is
-  // answered by the object and by nothing else (LRM 6.22, 23.9).
-  InstallObjectRecord(unit_lowerer, class_id_, mir_class);
-
+  // Only a class a design element declares is reached by name, since any other
+  // class is named by every referrer.
+  if (declaring_scope_ != nullptr) {
+    StateNameReachedDefinition(
+        unit_lowerer.Unit(), class_id_, mir_class,
+        InheritedBehaviorsOf(unit_lowerer, hir_class));
+  } else {
+    StateNamedClassDefinition(unit_lowerer.Unit(), class_id_, mir_class);
+  }
   unit_lowerer.Unit().DefineClass(class_id_, std::move(mir_class));
   return {};
 }

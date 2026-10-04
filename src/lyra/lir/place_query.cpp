@@ -136,7 +136,10 @@ auto MakesValue(const InstrData& instr) -> bool {
           // keeping it is a step of its own.
           [](const LoadInstr&) { return false; },
           [](const CastInstr&) { return false; },
+          [](const HandleCastInstr&) { return true; },
+          [](const DynamicCastInstr&) { return true; },
           [](const TupleInstr&) { return true; },
+          [](const ClosureInstr&) { return true; },
           [](const UnionInstr&) { return true; },
           [](const AggregateExtractInstr&) { return true; },
           [](const AggregateUpdateInstr&) { return true; },
@@ -146,17 +149,16 @@ auto MakesValue(const InstrData& instr) -> bool {
           [](const TagTestInstr&) { return true; },
           [](const AddrOfInstr&) { return true; },
           [](const StoreInstr&) { return false; },
-          [](const ReceiveDepartureInstr&) { return true; }},
+          [](const ReceiveDepartureInstr&) { return true; },
+          [](const OpenVariablesInstr&) { return true; },
+          [](const VariableAddressInstr&) { return true; },
+          [](const CloseVariablesInstr&) { return false; }},
       instr);
 }
 
 auto PlaceType(
     const CompilationUnit& unit, const Function& fn, const Place& place)
     -> TypeId {
-  const std::optional<TypeId> base = OperandType(fn, place.base);
-  if (!base) {
-    throw InternalError("lir: place base has no type");
-  }
   const bool opens_with_deref =
       !place.chain.empty() &&
       std::holds_alternative<DerefProjection>(place.chain.front());
@@ -165,7 +167,7 @@ auto PlaceType(
         "lir: a place over a value base must open with a dereference");
   }
 
-  TypeId current = *base;
+  TypeId current = OperandType(fn, place.base);
   for (const Projection& step : place.chain) {
     std::visit(
         Overloaded{

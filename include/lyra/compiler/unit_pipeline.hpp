@@ -1,17 +1,12 @@
 #pragma once
 
-#include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::compiler {
-
-// One compilation unit modelled semantically.
-struct SemanticUnit {
-  mir::CompilationUnit mir;
-};
 
 // Models one HIR unit semantically. It reads only this unit and the shared
 // frontend, never another unit's lowered artifacts, so units may be lowered in
@@ -20,12 +15,12 @@ struct SemanticUnit {
 // names only declarations composes a namespace of callables.
 auto LowerUnitToSemantic(
     const hir::CompilationUnit& unit, const diag::SourceManager& source_manager)
-    -> diag::Result<SemanticUnit>;
+    -> diag::Result<mir::CompilationUnit>;
 
 // Takes one unit from its semantic model into the form a session loads or a
 // target compiles. Every unit has one, a namespace included: a package's
 // variable initializers and its subroutines are code like any other.
 auto LowerUnitToExecutable(const mir::CompilationUnit& unit)
-    -> diag::Result<ExecutableUnit>;
+    -> diag::Result<lir::CompilationUnit>;
 
 }  // namespace lyra::compiler

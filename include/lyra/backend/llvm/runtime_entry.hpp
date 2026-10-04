@@ -29,19 +29,6 @@ namespace lyra::backend::llvm_backend {
 // answerable for.
 inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
 
-// How a scope of the design hierarchy is built: one prototype for every class,
-// because what reaches a construction holds the class's definition and not its
-// name. It opens with what every construction shares -- the scope itself, the
-// parent it hangs under, and the identity it is reached by -- and ends in one
-// span holding whatever values that class alone is parameterized by.
-//
-// The count is restated here rather than read off the entry type, because what
-// this target emits describes the boundary in its own terms: a value crosses it
-// as an opaque pointer precisely so that generated code depends on no host
-// declaration's layout. So the two sides are held together by the policy check
-// over this boundary instead of by the compiler.
-inline constexpr std::size_t kScopeConstructSharedParams = 3;
-
 // The domain a LIR type is realized in, absent for a type whose values are not
 // values of the design. It is the type's held object where that object is a
 // domain's, so the entry a call names and the storage a cell owns read one
@@ -74,43 +61,18 @@ enum class RuntimeOp : std::uint8_t {
   // the value's own address and so names nothing.
   kCellRefer,
   kReferStorage,
-  kVariablesOpen,
-  kVariableAddress,
-  kVariablesClose,
-  kVariableSchemaDeclare,
-  kSharedStorageDeclare,
-  kClosureDeclareSynchronous,
-  kClosureDeclareCoroutine,
-  kClosureDeclarePerElement,
-  kClosureDeclareValue,
-  kClassDeclare,
-  kScopeClassDeclare,
-  kClassDeclareBase,
-  kClassDeclareMembers,
-  kClassDeclareIntroduction,
-  kClassDeclareTakeover,
-  kClassDeclarePropertyName,
-  kClassDeclareBehaviorName,
-  kClassDeclareBodyName,
-  kScopeDeclareProgram,
-  kScopeDeclareSubroutine,
-  kScopeDeclareExport,
-  kScopeDeclareClass,
   kRunProgram,
   kSequenceMake,
   kSequenceElement,
   kClosureMake,
-  kObjectMake,
-  kObjectDeref,
+  kObjectAdopt,
   kSharedCellMake,
   kSharedPointerDeref,
-  kMethod,
+  kHandleView,
+  kHandleWithView,
   kConst,
   kToBool,
   kValueBox,
-  // Where the value a held object carries lies, for a domain whose value is not
-  // the object itself: what a reference or a further step addresses.
-  kHeld,
   kMake,
   kTagMatches,
   kWithComponent,
@@ -121,7 +83,6 @@ enum class RuntimeOp : std::uint8_t {
   kFromLiteralBounded,
   kFromEntriesDefault,
   kFromEntriesDefaultWildcard,
-  kMakeScope,
   kMakeSegment,
   kMakeTrigger,
   kMakePackedRange,
@@ -142,7 +103,9 @@ enum class RuntimeOp : std::uint8_t {
   // further storage, moving one into storage that takes it over -- a slot, or
   // what a caller gave for a body's answer -- and writing one into an object
   // already there, which goes on being that object. Each is named by the object
-  // it acts on.
+  // it acts on. Building one member's storage empty where its owner was laid
+  // out is named by that storage, and so is ending it.
+  kConstruct,
   kDestroy,
   kCopy,
   kMove,
@@ -258,6 +221,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming;
 auto RuntimeSymbol(RuntimeOp op) -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, RuntimeOp op) -> std::string;
 auto RuntimeSymbol(support::RuntimeObject object, RuntimeOp op) -> std::string;
+// A member's storage leads with the domain it holds values of, where its kind
+// holds any, and then the kind.
+auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
+    -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::BinaryOp op)
     -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::UnaryOp op) -> std::string;

@@ -1,6 +1,6 @@
 # A value lives in the frame of whoever made it, and ends where clang would end it
 
-Date: 2026-09-24 Status: accepted. Supersedes the lifetime half of
+Date: 2026-09-24 (revised 2026-09-30) Status: accepted. Supersedes the lifetime half of
 [jit-value-realization](jit-value-realization.md) and the transient half of
 [activation-frame-and-transient-scope](activation-frame-and-transient-scope.md).
 
@@ -30,8 +30,8 @@ out the way clang carries it out.**
   a call to a body of this program and a call to the library are one shape.
 - **The caller's storage is a slot in its own frame, sized from the runtime object the value is.**
   Every value domain realizes one runtime type whatever source type it stands for, so a value's size
-  and alignment are known per domain, stated once beside the domains, and asserted against the
-  runtime's own types. A tuple's are its type's
+  and alignment are known per domain, read off the runtime's own type for it by the compiler, which
+  is built with that runtime. A tuple's are its type's
   ([a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md)). The slot is allocated
   where the body opens, so a loop reuses it.
 - **A value's end is stated below MIR, at the end of the full-expression that made it** -- an

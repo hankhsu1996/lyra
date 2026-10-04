@@ -1027,13 +1027,11 @@ TEMPLATE_ARM_PATTERN = re.compile(
 
 
 # Rule A022
-# A compiled unit wears more than one spelling -- one layer's compilation unit,
-# or the body plus the metadata defining it -- and the rule is about holding a
-# sequence of whole units, so every spelling of one is matched. A wrapper the
-# element type gains must not be what switches the rule off.
+# A compiled unit is one layer's compilation unit, and the rule is about
+# holding a sequence of whole units, so each layer's spelling is matched.
 A022_PATTERN = re.compile(
     r"\b(?:std::)?(?:span\s*<\s*const\s+|vector\s*<\s*)"
-    r"(?:(?:hir|mir|lir)::CompilationUnit|compiler::ExecutableUnit)\s*>")
+    r"(?:hir|mir|lir)::CompilationUnit\s*>")
 
 A022_ADMITTED: dict[str, str] = {}
 

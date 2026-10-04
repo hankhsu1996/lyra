@@ -107,8 +107,9 @@ TEST_F(ObjectRefTest, SelfReferentialAcyclicChainReclaims) {
 
 // The two axes a target language is free to lay out differently: whether the
 // class conforms to a contract with its own dispatch, and whether the lineage
-// declares a virtual method. Every combination must agree on which object a
-// reference names, and on what `this` answers.
+// declares a virtual method beside the destructor every class of the source
+// declares virtual. Every combination must agree on which object a reference
+// names, and on what `this` answers.
 class Contract {
  public:
   Contract() = default;
@@ -122,6 +123,12 @@ class Contract {
 
 class PlainRoot : public GcObject {
  public:
+  PlainRoot() = default;
+  PlainRoot(const PlainRoot&) = delete;
+  auto operator=(const PlainRoot&) -> PlainRoot& = delete;
+  PlainRoot(PlainRoot&&) = delete;
+  auto operator=(PlainRoot&&) -> PlainRoot& = delete;
+  virtual ~PlainRoot() = default;
   int tag = 0;
   [[nodiscard]] auto Myself() -> ObjectRef {
     return SelfHandle(this);
@@ -186,6 +193,31 @@ TEST_F(ObjectRefTest, AContractViewStillReachesTheContract) {
   EXPECT_EQ(plain_contract.Deref<Contract>().Level(), 9);
 }
 
+// A view toward a class the static types do not prove the object is -- a
+// subclass, or an interface its class may or may not implement -- is the
+// object's to answer, and an object that is no such thing answers with a
+// reference to no object. A `$cast` asks by forming the view, so this is
+// reached with objects of either answer, and the answer is whether the result
+// refers to anything.
+TEST_F(ObjectRefTest, AViewTheTypesDoNotProveIsTheObjectsToAnswer) {
+  auto root = GcNew<PlainRoot>();
+  const ObjectRef as_heir = ViewAs<PlainRoot, PlainHeir>(root);
+  EXPECT_EQ(as_heir.View<PlainHeir>(), nullptr);
+  EXPECT_FALSE(static_cast<bool>(as_heir));
+  EXPECT_TRUE(static_cast<bool>(root));
+
+  auto plain = GcNew<PlainConforming>();
+  const ObjectRef as_root = ViewAs<PlainConforming, PlainRoot>(plain);
+  const ObjectRef as_heir_of_conforming = ViewAs<PlainRoot, PlainHeir>(as_root);
+  EXPECT_EQ(as_heir_of_conforming.View<PlainHeir>(), nullptr);
+
+  const ObjectRef as_contract = ViewAs<PlainRoot, Contract>(as_root);
+  EXPECT_EQ(as_contract.Deref<Contract>().Level(), 9);
+  EXPECT_EQ(as_contract, plain);
+  const ObjectRef back = ViewAs<Contract, PlainConforming>(as_contract);
+  EXPECT_EQ(&back.Deref<PlainConforming>(), &plain.Deref<PlainConforming>());
+}
+
 TEST_F(ObjectRefTest, SelfHandleNamesTheObjectItsBodyRunsOn) {
   auto heir = GcNew<PlainHeir>();
   EXPECT_EQ(heir.Deref<PlainHeir>().Myself(), heir);
@@ -204,6 +236,38 @@ TEST_F(ObjectRefTest, SelfHandleAgreesWithAViewOfTheSameObject) {
   auto plain = GcNew<PlainConforming>();
   const ObjectRef as_contract = ViewAs<PlainConforming, Contract>(plain);
   EXPECT_EQ(plain.Deref<PlainConforming>().Myself(), as_contract);
+}
+
+// An interface class is a virtual base, so one reached along two paths is one
+// part of the object (LRM 8.26.6.3): a view of it formed along either path is
+// the same part, and either names the same object.
+class Refined : public virtual Contract {
+ public:
+  [[nodiscard]] virtual auto Depth() const -> int = 0;
+};
+
+class Diamond : public VirtualRoot,
+                public virtual Contract,
+                public virtual Refined {
+ public:
+  [[nodiscard]] auto Level() const -> int override {
+    return 11;
+  }
+  [[nodiscard]] auto Depth() const -> int override {
+    return 2;
+  }
+};
+
+TEST_F(ObjectRefTest, AnInterfaceReachedAlongTwoPathsIsOnePart) {
+  auto diamond = GcNew<Diamond>();
+  const ObjectRef direct = ViewAs<Diamond, Contract>(diamond);
+  const ObjectRef as_refined = ViewAs<Diamond, Refined>(diamond);
+  const ObjectRef through = ViewAs<Refined, Contract>(as_refined);
+  EXPECT_EQ(direct.View<Contract>(), through.View<Contract>());
+  EXPECT_EQ(through, diamond);
+  EXPECT_EQ(through.Deref<Contract>().Level(), 11);
+  EXPECT_EQ(as_refined.Deref<Refined>().Depth(), 2);
+  EXPECT_EQ(diamond.Deref<Diamond>().Myself(), through);
 }
 
 }  // namespace

@@ -1,6 +1,7 @@
 #include "lyra/backend/llvm/codegen_function.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <optional>
@@ -26,6 +27,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/place_query.hpp"
+#include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
@@ -44,28 +46,8 @@ auto CodeGenFunction::IsCoroutine() const -> bool {
 }
 
 auto CodeGenFunction::BindParameters() -> void {
-  const std::size_t positional = module_->IsScopeConstruction(id_)
-                                     ? kScopeConstructSharedParams
-                                     : fn_->params.size();
-  for (std::size_t i = 0; i < positional; ++i) {
+  for (std::size_t i = 0; i < fn_->params.size(); ++i) {
     values_.emplace(fn_->params[i], value_->getArg(i));
-  }
-}
-
-auto CodeGenFunction::BindConstructionArguments() -> void {
-  if (!module_->IsScopeConstruction(id_)) {
-    return;
-  }
-  llvm::Value* arguments =
-      builder_.CreateExtractValue(value_->getArg(value_->arg_size() - 1), {0});
-  for (std::size_t i = kScopeConstructSharedParams; i < fn_->params.size();
-       ++i) {
-    const lir::ValueId param = fn_->params[i];
-    llvm::Type* type = module_->Types().Map(fn_->values.Get(param).type);
-    llvm::Value* slot = builder_.CreateConstInBoundsGEP1_64(
-        module_->Types().Ptr(), arguments,
-        static_cast<std::uint64_t>(i - kScopeConstructSharedParams));
-    values_.emplace(param, builder_.CreateLoad(type, slot));
   }
 }
 
@@ -96,7 +78,6 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
   // block, so every path that reaches it names the same address. A slot of an
   // owned type holds the value itself, as a C++ local of class type does.
   builder_.SetInsertPoint(entry);
-  BindConstructionArguments();
   frame_storage_point_ =
       builder_.CreateAlloca(builder_.getInt8Ty(), nullptr, "frame.storage");
   for (const lir::ValueId id : fn_->values.Ids()) {
@@ -174,7 +155,7 @@ auto CodeGenFunction::LaidOutStorage(support::ObjectLayout layout)
 
 auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
     -> llvm::Value* {
-  return LaidOutStorage(support::LayoutOf(object));
+  return LaidOutStorage(runtime::LayoutOf(object));
 }
 
 auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
@@ -194,7 +175,7 @@ auto CodeGenFunction::BuildInto(
 
 void CodeGenFunction::EndObject(
     support::RuntimeObject object, llvm::Value* value) {
-  if (support::LayoutOf(object).ends_with_nothing_to_do) {
+  if (runtime::LayoutOf(object).ends_with_nothing_to_do) {
     return;
   }
   const std::array<llvm::Value*, 1> args{value};
@@ -301,6 +282,61 @@ auto CodeGenFunction::ObjectOf(lir::TypeId type) const
         "runtime object -- please report this as a bug");
   }
   return *object;
+}
+
+auto CodeGenFunction::Variables() -> diag::Result<const RecordLayout*> {
+  if (variables_.has_value()) {
+    return &*variables_;
+  }
+  auto record = module_->PlaceMembers(
+      fn_->variables, MemberSlotRole::kVariable, RecordLayout{}, "a variable");
+  if (!record) {
+    return std::unexpected(std::move(record.error()));
+  }
+  return &variables_.emplace(*std::move(record));
+}
+
+auto CodeGenFunction::LowerOpenVariables() -> diag::Result<llvm::Value*> {
+  auto record = Variables();
+  if (!record) {
+    return std::unexpected(std::move(record.error()));
+  }
+  llvm::IRBuilder<> at(frame_storage_point_);
+  llvm::AllocaInst* storage = at.CreateAlloca(
+      llvm::ArrayType::get(at.getInt8Ty(), (*record)->size), nullptr,
+      "variables");
+  storage->setAlignment(llvm::Align((*record)->align));
+  module_->BeginMembers(builder_, storage, **record);
+  return storage;
+}
+
+auto CodeGenFunction::LowerVariableAddress(
+    const lir::VariableAddressInstr& reached) -> diag::Result<llvm::Value*> {
+  auto record = Variables();
+  if (!record) {
+    return std::unexpected(std::move(record.error()));
+  }
+  auto storage = LowerOperand(reached.variables);
+  if (!storage) {
+    return std::unexpected(std::move(storage.error()));
+  }
+  return builder_.CreateConstInBoundsGEP1_64(
+      builder_.getInt8Ty(), *storage,
+      (*record)->offsets.at(reached.position.value));
+}
+
+auto CodeGenFunction::LowerCloseVariables(
+    const lir::CloseVariablesInstr& closed) -> diag::Result<llvm::Value*> {
+  auto record = Variables();
+  if (!record) {
+    return std::unexpected(std::move(record.error()));
+  }
+  auto storage = LowerOperand(closed.variables);
+  if (!storage) {
+    return std::unexpected(std::move(storage.error()));
+  }
+  module_->EndMembers(builder_, *storage, **record);
+  return nullptr;
 }
 
 void CodeGenFunction::OpenCoroutine() {
@@ -489,11 +525,7 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
 
 auto CodeGenFunction::OperandType(const lir::Operand& operand) const
     -> lir::TypeId {
-  const std::optional<lir::TypeId> type = lir::OperandType(*fn_, operand);
-  if (!type) {
-    throw InternalError("llvm codegen: a code reference has no type");
-  }
-  return *type;
+  return lir::OperandType(*fn_, operand);
 }
 
 auto CodeGenFunction::DomainOf(lir::TypeId type) const

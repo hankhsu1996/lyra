@@ -1,9 +1,11 @@
 # Member storage as runtime-owned typed storage
 
-Date: 2026-07-09 Status: accepted; its later step taken by
-[a-member-is-reached-at-a-derived-offset](a-member-is-reached-at-a-derived-offset.md), which derives
-native member offsets on the execution backend. A member place no longer resolves through the
-runtime, and physical layout is no longer future work.
+Date: 2026-07-09 Status: accepted; the execution backend's realization is superseded by
+[an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md) D1. That backend
+lays every class out itself, so a member's storage sits in the value's own bytes at an offset fixed
+at compile time, and no definition carries a storage schema the runtime builds from. A member is
+still a logical place realized per backend, and the storage each kind of member needs is still the
+library's to build and end.
 
 ## Context
 

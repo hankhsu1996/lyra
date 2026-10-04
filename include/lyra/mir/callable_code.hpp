@@ -77,12 +77,18 @@ struct CallableCode {
     return locals.Add(LocalDecl{.type = type});
   }
 
+  // Whether a caller enters the body with its object as the first argument.
+  // Having a receiver is not enough: a closure reaches its own through a local,
+  // and a body handed a scope narrows it into its receiver itself.
+  [[nodiscard]] auto TakesReceiver() const -> bool {
+    return !params.empty() && receiver.has_value() &&
+           params.front() == *receiver;
+  }
+
   // The parameters a caller supplies beyond the object the body is entered on:
   // every parameter, less a receiver the signature takes.
   [[nodiscard]] auto ParamsAfterReceiver() const -> std::span<const LocalId> {
-    const bool leads =
-        !params.empty() && receiver.has_value() && params.front() == *receiver;
-    return std::span(params).subspan(leads ? 1 : 0);
+    return std::span(params).subspan(TakesReceiver() ? 1 : 0);
   }
 
   // The body of a callable this program defines. A builder that is filling a

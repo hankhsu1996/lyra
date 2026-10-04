@@ -8,11 +8,10 @@
 
 namespace lyra::hir {
 
-// One formal of a callee in another compilation unit, as the referring unit
-// recomputes it from the callee's declaration. The direction classifies how the
-// actual is marshalled at the boundary (LRM 13.5); the type is the formal's
-// type interned in the referring unit, needed to shape the completion payload
-// an output / inout rides back in and the writeback assignment.
+// One formal of a callee in another compilation unit. The direction classifies
+// how the actual is marshalled at the boundary (LRM 13.5); the type is the
+// formal's type interned in the referring unit, needed to shape the completion
+// payload an output / inout rides back in and the writeback assignment.
 struct ExternalCalleeParam {
   ParamDirection direction = ParamDirection::kInput;
   TypeId type{};
@@ -21,9 +20,11 @@ struct ExternalCalleeParam {
 };
 
 // What a call needs to know about a callee in another compilation unit beyond
-// its name. It is recomputed from the same declaration the defining unit lowers
-// rather than read out of a table the two share, so neither side can state an
-// interface the other does not have.
+// its name. A callee its unit published states it on that unit's signature,
+// where the call reads it; one reached only by a name resolved while the design
+// elaborates has no signature, so the call takes it from the declaration the
+// front end resolved the name to, which is also what the callee is lowered
+// from.
 //
 // `kind` is the call protocol: a task enable suspends the caller until
 // completion (LRM 13.3), so the call site awaits it. `params` is the argument

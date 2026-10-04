@@ -11,10 +11,10 @@
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/mir/abi_adapter_id.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -22,10 +22,10 @@
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/minted_entry.hpp"
-#include "lyra/mir/static_constant_id.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::backend::cpp {
@@ -199,6 +199,20 @@ void WriteOne(TargetText& out, const CppName& name);
   return SourceName{.name = name};
 }
 
+// A source name as a string the library reads, `"a.b"`: one it compares with
+// the name a hierarchical or foreign reference spells, or the name a design
+// reports itself by. Either way it keeps the source's own spelling, as a C
+// string literal, rather than becoming an identifier.
+struct NameLiteral {
+  std::string_view name;
+};
+
+void WriteOne(TargetText& out, NameLiteral literal);
+
+[[nodiscard]] inline auto CppNameLiteral(std::string_view name) -> NameLiteral {
+  return NameLiteral{.name = name};
+}
+
 // The namespace a unit's declarations live in, named after the unit: unit `Top`
 // is `namespace Top`. Sites call this rather than spelling the unit name, so
 // the reader can tell a namespace from a class.
@@ -290,7 +304,7 @@ void WriteOne(TargetText& out, UnitScope scope);
     throw InternalError(
         "backend::cpp: a behavior is named that no consumed promise describes");
   }
-  return ToCppName(introducer->behaviors[ordinal.value]);
+  return ToCppName(introducer->behaviors[ordinal.value].name);
 }
 
 // The name of a function a class owns -- a method, a process, or a lifecycle
@@ -332,6 +346,10 @@ void WriteOne(TargetText& out, UnitScope scope);
           [&](const mir::OverridesExternalSlot& taken) -> CppName {
             return CppExternalBehaviorName(
                 unit, taken.unit_name, taken.class_name, taken.ordinal);
+          },
+          [](const mir::OverridesLibraryVirtual& taken) -> CppName {
+            return VerbatimName{
+                .text = support::LibraryVirtualName(taken.function)};
           }},
       *role);
 }
@@ -501,31 +519,18 @@ void WriteOne(TargetText& out, UnitScope scope);
       operation);
 }
 
-// The names of a class's runtime callbacks and its static constants,
-// `sv_adapter_<n>` and `sv_constant_<n>`: positions in the class, since the
-// source declares neither.
-[[nodiscard]] inline auto CppAbiAdapterName(mir::AbiAdapterId id)
+// The name of a class's definition, `sv_definition`. Another unit names it as
+// `Class::sv_definition` for a class it only knows by name, so it is a fixed
+// word rather than a position.
+[[nodiscard]] inline auto CppDefinitionName() -> MintedWord {
+  return MintedWord{.word = "definition"};
+}
+
+// The name of a constant a class holds, `sv_data_<n>`: a position in the
+// class's list of constants, since the source names none.
+[[nodiscard]] inline auto CppClassConstantName(mir::ClassConstantId constant)
     -> MintedName {
-  return MintedCppName("adapter", id.value);
-}
-
-[[nodiscard]] inline auto CppStaticConstantName(mir::StaticConstantId id)
-    -> MintedName {
-  return MintedCppName("constant", id.value);
-}
-
-// The name of a class's object record, `sv_object_record`. Another unit names
-// it as `Class::sv_object_record`, and that unit cannot know this class's
-// constant positions, so it gets a fixed word instead of a position.
-[[nodiscard]] inline auto CppObjectRecordName() -> MintedWord {
-  return MintedWord{.word = "object_record"};
-}
-
-// The static member through which the runtime's allocation finds a class's
-// object record. The runtime reads a member of this exact name, so the name
-// is the runtime's, and this is the one place the emitter spells it.
-[[nodiscard]] inline auto CppClassRecordHookName() -> std::string_view {
-  return "kClassRecord";
+  return MintedCppName("data", constant.value);
 }
 
 // A DPI-C linkage name, written exactly as given. It is a C identifier (LRM

@@ -15,20 +15,18 @@ compile-time and runtime.
 - The contract that separates semantic modeling (HIR, MIR) from execution modeling (LIR, LLVM IR).
 - The contract that separates compile-time artifacts (class-level) from runtime artifacts
   (object-level).
-- The positioning of the C++ backend: a transitional realization of the MIR consumer. The
-  architectural target is HIR -> MIR -> LIR -> LLVM IR, and that path runs; what keeps the C++
-  backend in place is breadth, since it is the only backend that accepts the whole language today.
-  It retires when the execution backend's claimed set covers the corpus. The C++ backend's output
-  serves two roles -- an executable artifact, and the human-readable surface against which MIR's
-  shape is validated from SystemVerilog source through MIR's semantic model. This transitional
-  status does **not** loosen the mechanical-translation discipline: the C++ backend's render must
-  remain mechanical at the LLVM-IR level (no decision logic in render, every entry a fixed function
-  of one MIR node), so the same MIR feeds an eventual LLVM IR backend without rework.
-  `backend_contract.md` owns this discipline; this doc owns its position in the pipeline. Debug
-  inspection of HIR and MIR is separate: a dumper produces a textual traversal for a reader, while
-  `backend::cpp` is the real emitter. A dumper's wording is free to change and no test asserts on it
-  (`testing_strategy.md`). Dumpers and backends are both pure over their input IR and must not
-  introduce or reinterpret semantics.
+- The positioning of the two backends. The primary product is the execution backend, HIR -> MIR ->
+  LIR -> LLVM IR, compiled ahead of time. The C++ backend is a secondary realization of the same
+  MIR, and it stays. Its output serves two roles, as an executable artifact that builds anywhere a
+  C++ compiler does, and the human-readable surface against which MIR's shape is validated from
+  SystemVerilog source through MIR's semantic model. Being secondary does **not** loosen the
+  mechanical-translation discipline: the C++ backend's render must remain mechanical at the LLVM-IR
+  level (no decision logic in render, every entry a fixed function of one MIR node), so the one MIR
+  feeds both backends without either deciding what it means. `backend_contract.md` owns this
+  discipline; this doc owns its position in the pipeline. Debug inspection of HIR and MIR is
+  separate: a dumper produces a textual traversal for a reader, while a backend is a real emitter. A
+  dumper's wording is free to change and no test asserts on it (`testing_strategy.md`). Dumpers and
+  backends are both pure over their input IR and must not introduce or reinterpret semantics.
 
 ## Does Not Own
 
@@ -51,8 +49,8 @@ flowchart TB
   D --> BAR{{"barrier: every unit's signature exists"}}
 
   BAR --> U["per unit, as wide as the build allows, with no edge to any other:<br/>AST to HIR to MIR, reading the AST one unit at a time"]
-  U -->|"architectural target"| LIR["MIR to LIR to LLVM IR to an object<br/>at the build's level, kept by what built it"]
-  U -->|"transitional"| CPP["MIR to C++ source to an object"]
+  U --> LIR["MIR to LIR to LLVM IR to an object<br/>at the build's level, kept by what built it"]
+  U --> CPP["MIR to C++ source to an object"]
   LIR --> COL["collected in the order the design lists its units"]
   CPP --> COL
   COL --> FGN["foreign sources, compiled against<br/>what the units state of the foreign name space"]
@@ -107,12 +105,12 @@ other units.
    among possibly several.
 8. HIR and MIR dumpers are debug-facing textual serialization. They are not compilation paths and
    are not consumed by any lowering step. They must remain semantically faithful to their input IR.
-9. Backend emitters (today: `backend::cpp`) consume MIR and produce executable artifacts. A backend
-   is a first-class compilation stage, not a debug view. Every backend render entry is a fixed
-   function of one MIR node; decision logic in render is a MIR design failure (see
-   `backend_contract.md`). The C++ backend's transitional status as the current observation surface
-   for MIR sharpens this discipline rather than relaxing it: a place where the C++ render would need
-   decision logic is a place where the eventual LLVM IR backend would too.
+9. Backend emitters consume MIR -- the C++ backend directly, the execution backend through LIR --
+   and produce executable artifacts. A backend is a first-class compilation stage, not a debug view.
+   Every backend render entry is a fixed function of one MIR node; decision logic in render is a MIR
+   design failure (see `backend_contract.md`). The C++ backend's role as the observation surface for
+   MIR sharpens this discipline rather than relaxing it: a place where the C++ render would need
+   decision logic is a place where the LLVM IR backend would too.
 
 ## Boundary to Adjacent Layers
 
@@ -137,10 +135,9 @@ other units.
   semantic correctness is validated; compile-time wins must come from the runtime library, build
   infrastructure (precompiled headers, parallel compilation), or backend-internal organization that
   does not change the emitted form.
-- Treating the C++ backend as a permanent realization that justifies non-mechanical render. The C++
-  backend is transitional; the MIR shape it consumes must be the same MIR an eventual LLVM IR
-  backend consumes. A render entry that would need extra logic in LLVM IR is a render entry that is
-  already wrong today; the MIR is the suspect, not the render.
+- Treating the C++ backend's render as a place to decide what MIR means. The MIR it consumes is the
+  same MIR the LLVM IR backend consumes. A render entry that would need extra logic in LLVM IR is a
+  render entry that is already wrong; the MIR is the suspect, not the render.
 
 ## Notes / Examples
 

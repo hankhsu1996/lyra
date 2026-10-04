@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
 #include "lyra/support/value_domain.hpp"
 
@@ -57,12 +58,12 @@ enum class MemberStorageKind : std::uint8_t {
   kEvaluationAttempts,
 };
 
-// What an artifact states about one member's storage: the kind its declaration
-// asks for, and the value domain that kind holds -- read only for the kinds
-// that name one. A backend states this in what it emits and the runtime builds
-// the storage from it, so the two agree on the bytes as well as the meaning;
-// both members are one byte and nothing can pad between them, which is the
-// whole of what that agreement rests on.
+// The spelling the entries building and ending one member's storage carry.
+auto MemberStorageKindName(MemberStorageKind kind) -> std::string_view;
+
+// What a declaration asks of one member's storage: the kind, and the value
+// domain it holds, read only for the kinds that name one. The library answers
+// the storage's layout and the entries building and ending it from this pair.
 struct DeclaredMemberStorage {
   MemberStorageKind kind = MemberStorageKind::kValueCell;
   ValueDomain domain = ValueDomain::kEmpty;

@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/symbols/BlockSymbols.h>
@@ -27,6 +28,7 @@
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/pattern_id.hpp"
+#include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type_import.hpp"
@@ -433,20 +435,12 @@ class UnitLowerer {
 
   // This unit's record of what `unit_name` promised about its class
   // `class_name`, taken from that unit's signature the first time this unit
-  // reaches that class -- by extending it, by naming a property or a behavior
-  // on it. Nothing where that unit published no such class, which is what
-  // leaves such a reference with nothing to compile against.
+  // asks and answered from the record every later time. Nothing where that
+  // unit published no such class, which is what leaves such a reference with
+  // nothing to compile against.
   auto ExternalClassOf(
       const std::string& unit_name, const std::string& class_name)
       -> const hir::ExternalClass*;
-
-  // Reads the promise `ref` names, where what it names is another unit's class,
-  // and does nothing where it is this unit's own. A class extending or
-  // implementing one of another unit crosses the boundary in the declaration
-  // itself rather than in a body, and the promise is read wherever the crossing
-  // happens, because reading it is what puts the class within this unit's
-  // reach.
-  void ConsumePromiseOf(const hir::ClassRef& ref);
 
   // Whether `cls` has no name in this unit. A class a design element declares
   // is a type of each instance of that element rather than one type of the unit
@@ -566,34 +560,131 @@ class UnitLowerer {
   // declaration it resolves to answers everything else about the callee;
   // cross-unit there is no such declaration to reach, so the callee also
   // carries its dispatch role (LRM 8.20) and the interface a call marshals
-  // against (LRM 13.5).
+  // against (LRM 13.5). `owner` declares the method; `through` is the class
+  // the call reaches it through -- the class of the reference it is made on,
+  // or `owner` where it is made on none.
   auto MakeMethodCallee(
       const WalkFrame& frame, const slang::ast::ClassType& owner,
+      const slang::ast::ClassType& through,
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
       -> diag::Result<hir::MethodCallee>;
 
-  // Which behavior a method overriding `overridden` takes over, with the
-  // introducing class named the way the boundary it sits on names one.
+  // A class as this unit reads it: one it declares, read off its own
+  // declaration, or one another unit declares, read off that unit's signature.
+  using LocalOrPromisedClass =
+      std::variant<const slang::ast::ClassType*, hir::ExternalClassRef>;
+
+  // Which of the two the class `type` names is.
+  auto ReadAsLocalOrPromised(
+      const slang::ast::Type& type, diag::SourceSpan span)
+      -> diag::Result<LocalOrPromisedClass>;
+
+  // What a class's declaration names beside itself: the class it extends, and
+  // the interface classes it implements or, for an interface class, extends
+  // (LRM 8.26.2), in the order written.
+  struct ClassParents {
+    std::optional<LocalOrPromisedClass> base;
+    std::vector<LocalOrPromisedClass> implements;
+  };
+  auto ParentsOf(const LocalOrPromisedClass& cls, diag::SourceSpan span)
+      -> diag::Result<ClassParents>;
+
+  // The declaring unit and canonical name of `cls`, which identify it whichever
+  // way it was read.
+  [[nodiscard]] auto NameOf(const LocalOrPromisedClass& cls) const
+      -> hir::ExternalClassRef;
+
+  // The names of the methods the interface class `iface` declares.
+  auto MethodNamesOf(const LocalOrPromisedClass& iface)
+      -> std::vector<std::string>;
+
+  // Appends the interface class `iface`, then every interface class it extends
+  // (LRM 8.26.2), skipping one already in `reached`: an interface class is one
+  // however many ways it is arrived at (LRM 8.26.6.3). What each extends is
+  // read where that class states it, so one of another unit is its signature
+  // consumed.
+  auto ReachInterface(
+      const LocalOrPromisedClass& iface, diag::SourceSpan span,
+      std::vector<LocalOrPromisedClass>& reached) -> diag::Result<void>;
+
+  // Every interface class a value of `cls` is also a value of (LRM 8.26.5):
+  // the ones the class it extends is (LRM 8.26), then the ones `cls` names and
+  // the ones those extend.
+  auto AllInterfacesOf(const LocalOrPromisedClass& cls, diag::SourceSpan span)
+      -> diag::Result<std::vector<LocalOrPromisedClass>>;
+
+  // What the unit declaring the class of `method` published about it, or
+  // nothing where the class is this unit's own or is on no signature -- one a
+  // name resolved while the design elaborates reaches -- which leaves the
+  // declaration as all there is to read.
+  auto PublishedMethodOf(
+      const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
+      -> diag::Result<std::optional<hir::PublishedMethod>>;
+
+  // Whether the class method `method` is one of the class rather than of an
+  // object of it (LRM 8.10), so a call hands it no object.
+  auto IsTypeAssociatedMethod(
+      const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
+      -> diag::Result<bool>;
+
+  // Whether the constructor of `cls` declares any formal: what the declaring
+  // unit published where another unit declares the class, and the class's own
+  // declaration otherwise. Asked where the front end resolved no base call,
+  // which it does exactly when every formal has a default value, so this is
+  // whether a construction of `cls` as a base owes any default.
+  auto ConstructorDeclaresFormals(
+      const slang::ast::ClassType& cls, diag::SourceSpan span)
+      -> diag::Result<bool>;
+
+  // What a call to the class method `method` passes and awaits and what it
+  // yields: what the declaring unit published where there is such a thing, and
+  // the method's own declaration otherwise.
+  auto ClassMethodPrototype(
+      const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
+      -> diag::Result<hir::PublishedCallable>;
+
+  // For a class that is not an interface class, states which behavior of its
+  // lineage answers each behavior of every interface class it is also a value
+  // of. The answer is found by looking the behavior's name up in the class,
+  // which is how the language finds it (LRM 8.26.2).
+  auto StateConformance(
+      const slang::ast::ClassType& cls, diag::SourceSpan span,
+      hir::ClassDecl& decl) -> diag::Result<void>;
+
+  // The behavior `method` states, with the class declaring it named the way
+  // the boundary it sits on names one: what a method overriding it overrides,
+  // and what an interface class's behavior is answered by.
   auto MakeOverriddenBehavior(
-      const hir::ClassRef& class_ref,
-      const slang::ast::SubroutineSymbol& overridden, diag::SourceSpan span)
+      const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
       -> diag::Result<hir::OverriddenBehavior>;
 
-  // Which of the behaviors `cls` published the one named `method_name` is.
-  // Refused where that class introduces no such behavior, since what a class
-  // publishes is what it adds and this unit cannot count through a lineage of
-  // another unit.
+  // The behavior named `method_name` that `cls` answers, named by the class of
+  // its lineage that introduced it. Refused where no promise up that lineage
+  // introduces one, which leaves nothing to name the behavior by.
   auto MakeExternalDispatchSlot(
       const hir::ExternalClassRef& cls, std::string_view method_name,
       diag::SourceSpan span) -> diag::Result<hir::ExternalDispatchSlot>;
 
-  // The interface a call recomputes for a callee in another compilation unit:
-  // its call protocol and each formal's direction and type (LRM 13.5). Both
-  // sides derive it from the callee's own declaration, so no table is shared
-  // and neither can state an interface the other does not have.
+  // The same walk, answering nothing where no promise up the lineage
+  // introduces the behavior.
+  auto IntroducerOf(
+      const hir::ExternalClassRef& cls, std::string_view method_name)
+      -> std::optional<hir::ExternalDispatchSlot>;
+
+  // The interface a subroutine's own declaration states: its call protocol and
+  // each formal's direction and type (LRM 13.5), in this unit's types. It is
+  // what a unit publishes about a subroutine it declares, and what a call takes
+  // where the callee is on no signature.
   auto MakeExternalCalleeInterface(
       const slang::ast::SubroutineSymbol& sym, diag::SourceSpan span)
       -> diag::Result<hir::ExternalCalleeInterface>;
+
+  // The interface a call to `sym` is made through, where `sym` is declared in
+  // the namespace of the unit named `unit_name` (LRM 26.3). Another unit's is
+  // read off that unit's signature; this unit's own is its own declaration.
+  auto NamespaceCalleeInterface(
+      const std::string& unit_name, const slang::ast::SubroutineSymbol& sym,
+      diag::SourceSpan span) -> diag::Result<hir::ExternalCalleeInterface>;
 
   // The instance-property peer of `MakeClassMethodTarget`. Local when the class
   // was interned by this unit; external when the class lives in another
@@ -822,9 +913,6 @@ class UnitLowerer {
   auto MapOrGetPropertyCoordinate(
       ScopeFrameId owner_frame, hir::PropertyCoordinateRoute route)
       -> hir::PropertyCoordinateId;
-  auto MapOrGetBehaviorCoordinate(
-      ScopeFrameId owner_frame, hir::BehaviorCoordinateRoute route)
-      -> hir::BehaviorCoordinateId;
   auto MapOrGetBehaviorBody(
       ScopeFrameId owner_frame, hir::BehaviorBodyRoute route)
       -> hir::BehaviorBodyId;
@@ -966,6 +1054,13 @@ class UnitLowerer {
   // Every class a unit declares is declared by one of its structural scopes,
   // and every such scope lowers what it declares, so nothing is left over.
   void RequireEveryClassBodyLowered() const;
+
+  // Reads the promise of every class of another unit this one named, once
+  // every body has lowered and so every name is in: a value of such a class is
+  // converted to the views it has wherever it is held, which takes its layout
+  // whether or not a member of it is ever reached -- as a C++ translation unit
+  // includes the header of every class it names.
+  void ReadPromisesOfNamedClasses();
 
   // Builds a HIR Expr referring to the data `route` navigates to.
   // `owner_frame` is the frame whose routes hold it.
@@ -1149,6 +1244,11 @@ class UnitLowerer {
   // fixes their ordinals. Every class is already minted when this runs, so this
   // reads the unit's own declarations rather than the frontend's tree.
   auto PublishClassSignatures() -> void;
+
+  // Derives what this unit promises about each subroutine its namespace
+  // declares (LRM 26.3). A design element declares none another unit calls by
+  // name alone, so it publishes none here.
+  auto PublishNamespaceSubroutines() -> diag::Result<void>;
 
   // How this reader reaches the interface an enclosing scope's `port` carries
   // (LRM 25.3). The port is the whole of this unit's reach to it: what stands

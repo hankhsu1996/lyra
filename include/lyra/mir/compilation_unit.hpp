@@ -34,14 +34,14 @@
 #include "lyra/mir/type_descriptor_pool.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/value_build.hpp"
+#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::mir {
 
 // A unit-level static variable: a mutable value the unit's namespace owns with
 // static storage -- one program-global cell, shared across the whole
 // simulation, not a member of any instance (LRM 26.2 package variables, LRM
-// 6.21 static lifetime). The mutable, observable counterpart of a
-// `StaticConstantDecl`: a backend emits it as a namespace-scope observable
+// 6.21 static lifetime). A backend emits it as a namespace-scope observable
 // cell, the storage dual of the unit's receiver-less callables. A body of the
 // declaring unit reaches the cell by its position; another unit has only the
 // identifier this one published, and spells `unit::name`. `type` is the
@@ -94,24 +94,6 @@ struct NamedStaticVariable {
   return std::nullopt;
 }
 
-// A unit whose instances are a tree of objects the runtime drives (LRM 23.3):
-// what the unit promised of one of those objects, the class at the root of the
-// tree that realizes it, and the one body that brings one into existence.
-//
-// The promise is the whole of what another unit may name here. A design element
-// exists to be instantiated and wired (LRM 23.2.1), so everything else it
-// declares -- the class realizing the promise, the scopes below it, and any
-// class of the source language it declares inside itself -- is its own, and no
-// referrer has a name for one.
-//
-// That body exists because a unit instantiating this one consumed what this one
-// promised, and a promise states what may be reached and never how much storage
-// an object takes -- so an instantiator cannot make one and asks for one
-// instead. The party that builds the design's tops asks the same way, having no
-// more than any other referrer. It answers to no name, which is why the unit
-// holds it as the body it is rather than among the bodies an identifier
-// reaches.
-
 // What one unit read of another's signature. A unit publishes its namespace --
 // the cells and bodies it declares outside any class of it (LRM 26.2) -- and
 // each class it promised, and a referrer reads one of those rather than the
@@ -139,6 +121,23 @@ using ConsumedSignature = std::variant<ConsumedNamespace, ConsumedClass>;
       consumed);
 }
 
+// A unit whose instances are a tree of objects the runtime drives (LRM 23.3):
+// what the unit promised of one of those objects, the class at the root of the
+// tree that realizes it, and the one body that brings one into existence.
+//
+// The promise is the whole of what another unit may name here. A design element
+// exists to be instantiated and wired (LRM 23.2.1), so everything else it
+// declares -- the class realizing the promise, the scopes below it, and any
+// class of the source language it declares inside itself -- is its own, and no
+// referrer has a name for one.
+//
+// That body exists because a unit instantiating this one consumed what this one
+// promised, and a promise states what may be reached and never how much storage
+// an object takes -- so an instantiator cannot make one and asks for one
+// instead. The party that builds the design's tops asks the same way, having no
+// more than any other referrer. It answers to no name, which is why the unit
+// holds it as the body it is rather than among the bodies an identifier
+// reaches.
 struct RootedTree {
   ClassId promise;
   ClassId root;
@@ -208,8 +207,8 @@ struct BuiltinMirTypes {
   TypeId effects;
   TypeId scope_ptr;
   // The object type an imported runtime-library class handle (LRM 9.7
-  // `process`) references. A fixed library class named by its qualified name,
-  // exactly as the scope class is.
+  // `process`) references, one of the classes the runtime library defines, as
+  // the scope class is.
   TypeId process_object;
   TypeId files;
   TypeId diagnostic;
@@ -272,10 +271,9 @@ struct CompilationUnit {
   // does -- so the identity exists before the members are filled in.
   base::Registry<ExternalUnitObject, ExternalUnitObjectId>
       external_unit_objects;
-  // One entry per class of another unit this one reaches a property or a
-  // behavior on. Found by the pair that names the class, which is the pair
-  // every reference to one carries, so a reference and its record cannot come
-  // apart.
+  // One entry per class of another unit this one names. Found by the pair that
+  // names the class, which is the pair every reference to one carries, so a
+  // reference and its record cannot come apart.
   std::vector<ExternalClass> external_classes;
   // Callables the unit's namespace owns directly rather than through one of its
   // classes -- a package's functions and tasks (LRM 26.3), both directions of
@@ -398,11 +396,11 @@ struct CompilationUnit {
                 Type{PointerType{
                     .pointee = types.Intern(
                         Type{RuntimeClassType{
-                            .symbol = "lyra::runtime::Scope"}}),
+                            .which = support::RuntimeClass::kScope}}),
                     .ownership = PointerOwnership::kBorrowed}}),
             .process_object = types.Intern(
                 Type{RuntimeClassType{
-                    .symbol = "lyra::runtime::RuntimeProcess"}}),
+                    .which = support::RuntimeClass::kProcess}}),
             .files = types.Intern(Type{FilesType{}}),
             .diagnostic = types.Intern(Type{DiagnosticType{}}),
             .packed_type = types.Intern(
@@ -566,33 +564,34 @@ struct CompilationUnit {
   return unit.GetClass(id).name.has_value();
 }
 
-// Whether some unit of the program declares the class `ref` names. A class the
-// runtime library defines does not, and neither does the root every object
-// extends: both are there before any unit is, declare no member of the source
-// language, and hold no record a class could step to.
-[[nodiscard]] inline auto DeclaredByAUnit(const ClassRef& ref) -> bool {
+// The class some unit declares that `cls` extends, where it extends one -- the
+// class an object of it is also an object of (LRM 8.13). Neither root is
+// declared by any unit -- the design hierarchy's, nor the one every object the
+// program builds extends: both are there before any unit is, declare no member
+// of the source language, and hold no definition a class could step to.
+[[nodiscard]] inline auto DeclaredBase(const Class& cls)
+    -> std::optional<DeclaredClassRef> {
+  if (!cls.base.has_value()) {
+    return std::nullopt;
+  }
   return std::visit(
       Overloaded{
-          [](const IntraUnitClassRef&) { return true; },
-          [](const CrossUnitClassRef&) { return true; },
-          [](const RuntimeClassRef&) { return false; },
-          [](const ManagedObjectRootRef&) { return false; }},
-      ref);
-}
-
-// The class some unit declares that `cls` extends, where it extends one -- the
-// class an object of it is also an object of (LRM 8.13).
-[[nodiscard]] inline auto DeclaredBase(const Class& cls)
-    -> std::optional<ClassRef> {
-  if (cls.base.has_value() && DeclaredByAUnit(*cls.base)) {
-    return cls.base;
-  }
-  return std::nullopt;
+          [](const IntraUnitClassRef& intra)
+              -> std::optional<DeclaredClassRef> { return intra; },
+          [](const CrossUnitClassRef& cross)
+              -> std::optional<DeclaredClassRef> { return cross; },
+          [](const ObjectTreeRootRef&) -> std::optional<DeclaredClassRef> {
+            return std::nullopt;
+          },
+          [](const ManagedObjectRootRef&) -> std::optional<DeclaredClassRef> {
+            return std::nullopt;
+          }},
+      *cls.base);
 }
 
 // The classes of the program this one's declaration rests on: the class it
-// extends (LRM 8.13) and each interface it commits to (LRM 8.26), counted only
-// where some unit declares it.
+// extends (LRM 8.13), where some unit declares it, and each interface it
+// commits to (LRM 8.26).
 //
 // This is the whole of what a declaration has to have behind it. Everything
 // else a class names -- the type of a property, of an argument, of a result --
@@ -600,16 +599,12 @@ struct CompilationUnit {
 // name when this one is written. A consumer that has to put declarations in an
 // order reads this and needs nothing else.
 [[nodiscard]] inline auto RestsOnDeclaredClasses(const Class& cls)
-    -> std::vector<ClassRef> {
-  std::vector<ClassRef> resting;
-  if (const std::optional<ClassRef> base = DeclaredBase(cls)) {
+    -> std::vector<DeclaredClassRef> {
+  std::vector<DeclaredClassRef> resting;
+  if (const std::optional<DeclaredClassRef> base = DeclaredBase(cls)) {
     resting.push_back(*base);
   }
-  for (const ClassRef& implemented : cls.implements) {
-    if (DeclaredByAUnit(implemented)) {
-      resting.push_back(implemented);
-    }
-  }
+  resting.insert(resting.end(), cls.implements.begin(), cls.implements.end());
   return resting;
 }
 

@@ -9,12 +9,8 @@ namespace lyra::mir {
 
 // Identity of a class static property (LRM 8.9) -- a named, mutable
 // type-associated storage cell the class owns, shared by every instance.
-// Scoped to the class that declares it (`Class::static_properties`), peer of
-// `FieldId` on the instance-member axis and of `StaticConstantId` on the
-// type-associated axis. Distinct from `StaticConstantId`: a static constant is
-// immutable and built once at compile time (the data dual of a static
-// method); a static property is a run-time cell writable through ordinary
-// assignment (LRM 8.9).
+// Scoped to the class that declares it; the type-associated counterpart of an
+// instance member's `FieldId`.
 struct StaticPropertyId {
   std::uint32_t value = base::kUnassignedId;
 

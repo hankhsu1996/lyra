@@ -10,14 +10,11 @@
 #include <vector>
 
 #include "lyra/runtime/ambient_run_context.hpp"
-#include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/plusargs.hpp"
-#include "lyra/runtime/program_declarations.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/scope.hpp"
 
 namespace lyra::runtime {
 
@@ -35,10 +32,9 @@ auto RunDesignRoot(
   options.plusargs = PlusargsFrom(arguments);
   Runtime runtime{std::move(options)};
 
-  // Building the design and resolving its references is elaboration, which
-  // precedes the simulation (LRM 3.12). An error here has no activation to
-  // leave and no final procedure to reach, so it is reported and the run never
-  // starts.
+  // Building the design and resolving its references precede the simulation
+  // (LRM 3.12). An error here has no activation to leave and no final procedure
+  // to reach, so it is reported and the run never starts.
   try {
     runtime.BindDesign(
         std::make_unique<Design>(
@@ -49,21 +45,6 @@ auto RunDesignRoot(
   }
 
   return RunSimulation(runtime);
-}
-
-auto RunDeclaredProgram(
-    int argc, char** argv, std::string_view root_name,
-    const ScopeDefinition& root) -> int {
-  RealizeDeclarations();
-  return RunDesignRoot(
-      argc, argv, root_name,
-      [&root](
-          Scope* parent, HierarchySegment segment) -> std::unique_ptr<Scope> {
-        std::unique_ptr<Scope> scope(
-            ClassValue::Make<Scope>(&root, parent, segment, &root));
-        root.construct(scope.get(), parent, &segment, {});
-        return scope;
-      });
 }
 
 auto RunSimulation(Runtime& runtime) -> int {

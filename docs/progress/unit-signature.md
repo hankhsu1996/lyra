@@ -160,6 +160,46 @@ why nothing a signature states may rest on it.
       what the artifact now shows: adding one to a child leaves everything a referrer of that child
       reads byte for byte the same, and moving a port does not.
 
+- [x] S12 -- A published class states every method it declares, each with its name, its protocol,
+      its formals' directions and types and its result, and how it takes part in dispatch (LRM 8.20,
+      8.21). A call to a method of a published class reads what it passes and awaits from there.
+      Before, only the virtual methods a class introduced were on its signature, by name, and every
+      call took the rest from the front end's view of the callee.
+
+- [x] S13 -- A package, and the compilation-unit scope, state every subroutine they declare the same
+      way (LRM 26.3, 3.12.1), and a call from another unit reads what it passes and awaits from
+      there. A DPI-C import is not among them, since its foreign symbol is reached through no unit
+      (LRM 35.4). A class a design element declares is on no signature and is reached by a name
+      resolved while the design elaborates, so its methods stay on the front end's view by design.
+
+- [x] S14 -- A published class states the interface classes its declaration names and no more (LRM
+      8.26.2). What a value of it is also a value of by way of the class it extends, or of an
+      interface class one of those extends, is read off the signature of the class that names it,
+      and so is which virtual methods an interface class of another unit introduces. Before, each
+      signature repeated the whole set, so it changed when only another unit's source did.
+
+- [x] S15 -- A published class states the properties of the class itself that another unit may name
+      (LRM 8.9), and for each method whether it is one of the class rather than of an object (LRM
+      8.10). A reference to such a property reads its type there, and a call reads there whether it
+      hands the callee an object. Before, neither was on a signature, so changing either changed a
+      referrer's output while no signature changed.
+
+- [x] S16 -- A published class of which objects are built states its constructor the way it states a
+      method: each formal's direction and type (LRM 8.7). What a base construction owes when the
+      source wrote no call is read there. Before, the constructor was on no signature, so a change
+      to its formals changed the arguments an entering unit emits while no signature changed.
+
+- [ ] S17 -- A default argument's value still reaches a caller from the front end and is on no
+      signature (LRM 13.5.3). The front end puts the default expression of a method, a package
+      subroutine or a constructor into the call, and the calling unit compiles it, so a change to a
+      default changes the caller's output with nothing recording why. A signature carries names and
+      types and no expression, so this waits on deciding which side evaluates a default.
+
+- [ ] S18 -- Whether one class type converts to another is taken from the front end's answer over
+      the two lineages (LRM 8.16, 8.26.5) and not worked out from the signatures. Every class it
+      walked is on a signature this unit read, so the dependency is recorded and nothing goes stale;
+      what is open is one fact with two sources.
+
 ## Out of scope
 
 - Caching compiled units across runs. A signature is the key such a cache would need, so this

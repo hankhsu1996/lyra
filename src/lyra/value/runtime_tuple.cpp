@@ -57,7 +57,7 @@ constexpr auto DomainOf() -> ValueDomain {
   } else if constexpr (std::same_as<T, RuntimeAssociativeArray>) {
     return ValueDomain::kAssocArray;
   } else {
-    static_assert(std::same_as<T, ManagedRef>);
+    static_assert(std::same_as<T, ObjectRef>);
     return ValueDomain::kManagedRef;
   }
 }
@@ -100,7 +100,7 @@ auto ValueAt(ValueDomain domain, const void* at) -> RuntimeValue {
     case ValueDomain::kAssocArray:
       return copy(std::type_identity<RuntimeAssociativeArray>{});
     case ValueDomain::kManagedRef:
-      return copy(std::type_identity<ManagedRef>{});
+      return copy(std::type_identity<ObjectRef>{});
   }
   throw InternalError("RuntimeTuple: unknown value domain");
 }

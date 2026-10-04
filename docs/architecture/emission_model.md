@@ -32,8 +32,9 @@ many of them it works on at a time.
 - The contract that a reference reaching past another unit's signature is realized at construction
   through the SDK / object graph, that a reference to a name on a signature the referrer consumes is
   a direct named access resolved where the referrer compiles, and that either way the referrer's
-  emitted artifact never embeds another unit's storage layout and never names a unit it does not
-  reference.
+  emitted artifact never embeds another unit's storage layout, except that of a class that unit
+  published, whose promise states its storage whole so a referrer reaching or extending it lays it
+  out at compile time, and never names a unit it does not reference.
 - The rule that what a change re-emits follows the signatures a referrer consumes, not the files it
   reads.
 - The role of the runtime SDK as the substrate that stands in for link-time symbol resolution and
@@ -106,17 +107,17 @@ many of them it works on at a time.
    regardless of how many segments of each kind the route contained.
 
 6. **A unit exposes what lies past its signature through the SDK.** So that any artifact's opaque
-   segments can reach a declaration a unit did not publish, each unit registers its hierarchically
-   reachable declarations by name into the object graph node during construction -- its signals, its
-   owned children, and its subroutines, each in its own namespace -- and the base SDK answers a
-   by-name query from those registrations. The unit never inspects who asks, and the dispatch is one
-   generic scan, not a per-unit synthesized branch. What such a query answers with follows from what
-   was named: a cell, a scope, or an entry to call. One thing a node answers for is not named at
-   all: a scope carries exactly one activity a `disable` can end, so reaching the node is the whole
-   of asking for it and no namespace arises. The referrer's emission consumes those registrations
-   through one route execution and stores the sealed endpoint; it never embeds another unit's
-   layout. A name on the signature needs none of this, because the referrer already compiles against
-   it.
+   segments can reach a declaration a unit did not publish, each unit answers by name what is
+   hierarchically reachable in it, each in its own namespace. Its signals and its owned children are
+   registered into the object graph node during construction, and its subroutines and the classes it
+   declares are in the constant its class's definition holds. The base SDK answers a by-name query
+   from those. The unit never inspects who asks, and the dispatch is one generic scan, not a
+   per-unit synthesized branch. What such a query answers with follows from what was named: a cell,
+   a scope, or an entry to call. One thing a node answers for is not named at all: a scope carries
+   exactly one activity a `disable` can end, so reaching the node is the whole of asking for it and
+   no namespace arises. The referrer's emission consumes those registrations through one route
+   execution and stores the sealed endpoint; it never embeds another unit's layout. A name on the
+   signature needs none of this, because the referrer already compiles against it.
 7. **A change re-emits exactly the referrers whose consumed signature changed.** A change confined
    to a unit's bodies changes no signature and re-emits no referrer. A change to a signature
    re-emits every unit that consumes it, which is the dependency being real rather than the
@@ -130,13 +131,14 @@ many of them it works on at a time.
    would make every referrer of a package depend on every class in it, which is the mechanism being
    coarse rather than the dependency being real.
 
-8. **What a unit published is reached by asking it, never by locating storage.** A member on a
-   signature is reached through a behavior the promise states, so a referrer counts no position and
-   its artifact carries nothing about where the member sits; the declaring unit answers with the
-   member's storage and every later access names what came back. A declaration a unit never
-   published therefore cannot move one that it did, and neither can the placement of one that it
-   did. A backend realizes this rule with whatever its target provides for dispatch; it never
-   re-decides it.
+8. **What a unit published of its own object is reached by asking it, never by locating storage.** A
+   published class is not that object. Its promise states its storage whole, and a referrer lays it
+   out at compile time. A member the object offers is reached through a behavior the promise states,
+   so a referrer counts no position and its artifact carries nothing about where the member sits;
+   the declaring unit answers with the member's storage and every later access names what came back.
+   A declaration a unit never published therefore cannot move one that it did, and neither can the
+   placement of one that it did. A backend realizes this rule with whatever its target provides for
+   dispatch; it never re-decides it.
 
 9. **The design's own link-level unit is a unit, and invariant 2 binds it.** A design needs one
    artifact nothing in the source declares -- the one whose construct elaborates the design by
@@ -185,9 +187,9 @@ many of them it works on at a time.
   field. Naming a referenced unit's own published declaration is not this shape: that declaration is
   the promise the referrer compiles against, and reaching it by name is what a declared dependency
   is for.
-- Embedding another unit's storage offset in the referrer's own emitted output. An opaque segment is
-  by-name through the SDK; a declared segment uses a stable member identity or a published name, not
-  an offset.
+- Embedding another unit's storage offset in the referrer's own emitted output for anything but a
+  class that unit published. An opaque segment is by-name through the SDK; a declared segment uses a
+  stable member identity or a published name, not an offset.
 - A run-time by-name lookup emitted for a name the target unit published. The referrer already
   consumes that signature, so the access is typed; the lookup buys no independence the declared
   dependency has not already spent, and it replaces a compile-time check with an unchecked cast.

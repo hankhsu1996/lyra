@@ -888,14 +888,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "property_at",
           .declaration = FreeFunction{"lyra::runtime::PropertyAt"}};
-    case BuiltinFn::kBehaviorAt:
+    case BuiltinFn::kViewOf:
       return {
-          .name = "behavior_at",
-          .declaration = FreeFunction{"lyra::runtime::BehaviorAt"}};
-    case BuiltinFn::kObjectOf:
-      return {
-          .name = "object_of",
-          .declaration = FreeFunction{"lyra::runtime::ObjectOf"}};
+          .name = "view_of",
+          .declaration = FreeFunction{"lyra::runtime::ViewOf"}};
     case BuiltinFn::kObjectRootOf:
       return {
           .name = "object_root_of",
@@ -910,18 +906,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = FreeFunction{"lyra::runtime::ObjectWrite"}};
     case BuiltinFn::kObjectWriteThrough:
       return {.name = "object_write_through", .declaration = Method{"Place"}};
-    case BuiltinFn::kObjectIsOfClass:
-      return {
-          .name = "object_is_of_class",
-          .declaration = FreeFunction{"lyra::runtime::ObjectIsOfClass"}};
     case BuiltinFn::kClassFindBehaviorBody:
       return {
           .name = "class_find_behavior_body",
           .declaration = FreeFunction{"lyra::runtime::FindBehaviorBody"}};
-    case BuiltinFn::kClassFindBehavior:
-      return {
-          .name = "class_find_behavior",
-          .declaration = FreeFunction{"lyra::runtime::FindBehavior"}};
     case BuiltinFn::kForkWaitAll:
       return {
           .name = "fork_wait_all",

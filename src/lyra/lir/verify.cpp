@@ -88,17 +88,13 @@ void VerifyInstr(
                   "lir verify: store into a place whose storage is only "
                   "addressable");
             }
-            const std::optional<TypeId> value_type =
-                OperandType(fn, store.value);
-            if (!value_type) {
-              throw InternalError("lir verify: store value has no type");
-            }
-            if (*value_type != place_type) {
+            const TypeId value_type = OperandType(fn, store.value);
+            if (value_type != place_type) {
               throw InternalError(
                   std::format(
                       "lir verify: store value type does not match its place "
                       "type (value Type[{}], place Type[{}])",
-                      value_type->value, place_type.value));
+                      value_type.value, place_type.value));
             }
             if (!IsVoid(unit, result_type)) {
               throw InternalError("lir verify: store must yield void");
@@ -146,13 +142,32 @@ void VerifyInstr(
           [&](const AggregateUpdateInstr& update) {
             RequireViewedPart(unit, fn, update.aggregate);
           },
+          [](const HandleCastInstr&) {}, [](const DynamicCastInstr&) {},
           [](const CallInstr&) {}, [](const TupleInstr&) {},
+          [&](const ClosureInstr& built) {
+            const auto* closure = unit.types.Get(result_type).As<ClosureType>();
+            if (closure == nullptr ||
+                built.captures.size() !=
+                    unit.closures.Get(closure->closure_id).captures.size()) {
+              throw InternalError(
+                  "lir verify: a closure is built of something other than "
+                  "every capture its declaration lists");
+            }
+          },
           [](const ArrayInstr&) {}, [](const UnionInstr&) {},
           [](const TagTestInstr&) {}, [](const BinaryInstr&) {},
           [](const UnaryInstr&) {},
           // Where it may stand is a property of the block rather than of the
           // instruction, so it is held where the blocks are walked.
-          [](const ReceiveDepartureInstr&) {}},
+          [](const ReceiveDepartureInstr&) {}, [](const OpenVariablesInstr&) {},
+          [&](const VariableAddressInstr& reached) {
+            if (reached.position.value >= fn.variables.size()) {
+              throw InternalError(
+                  "lir verify: a variable is reached at a position the body "
+                  "stated no variable at");
+            }
+          },
+          [](const CloseVariablesInstr&) {}},
       instr.data);
 }
 

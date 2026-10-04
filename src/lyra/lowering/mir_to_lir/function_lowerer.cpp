@@ -30,7 +30,6 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -107,90 +106,18 @@ auto BuildsObject(
          types.Get(result_type).Is<mir::ManagedRefType>();
 }
 
-// The class a managed reference refers to an object of, named the way that
-// class is named. Every other pointee is a producer that built a handle to
-// something no class declares.
-auto ObjectClassOf(const mir::TypePool& types, mir::TypeId handle)
-    -> mir::ClassRef {
-  const mir::TypeId object =
-      types.Get(handle).Get<mir::ManagedRefType>().pointee;
-  const auto refers_to_no_class = [](std::string_view what) -> mir::ClassRef {
-    throw InternalError(
-        std::format(
-            "mir_to_lir: a managed reference over {} names no class -- please "
-            "report this as a bug",
-            what));
-  };
-  const auto not_an_object = [&]() -> mir::ClassRef {
-    return refers_to_no_class("something that is not an object");
-  };
-  return types.Get(object).Visit(
-      Overloaded{
-          [](const mir::ObjectType& o) -> mir::ClassRef {
-            return mir::IntraUnitClassRef{.class_id = o.class_id};
-          },
-          [](const mir::CrossUnitClassType& c) -> mir::ClassRef {
-            return mir::CrossUnitClassRef{
-                .unit_name = c.unit_name, .class_name = c.class_name};
-          },
-          // An object this unit carries no class identity for: one reached
-          // past another unit's signature, one the runtime library defines,
-          // and one another unit's design element declares. A handle to any of
-          // them is built by a producer that had no class to name.
-          [&](const mir::OpaqueObjectType&) {
-            return refers_to_no_class("an object with no class to name");
-          },
-          [&](const mir::RuntimeClassType&) {
-            return refers_to_no_class("an object of a runtime class");
-          },
-          [&](const mir::ExternalUnitObjectType&) {
-            return refers_to_no_class("another unit's object");
-          },
-
-          // Not an object at all. A managed reference points at one, so a
-          // pointee of any other type means the handle was built over
-          // something no object model covers.
-          [&](const mir::PackedArrayType&) { return not_an_object(); },
-          [&](const mir::EnumType&) { return not_an_object(); },
-          [&](const mir::UnpackedArrayType&) { return not_an_object(); },
-          [&](const mir::DynamicArrayType&) { return not_an_object(); },
-          [&](const mir::QueueType&) { return not_an_object(); },
-          [&](const mir::AssociativeArrayType&) { return not_an_object(); },
-          [&](const mir::WildcardIndexType&) { return not_an_object(); },
-          [&](const mir::StringType&) { return not_an_object(); },
-          [&](const mir::MachineCStringType&) { return not_an_object(); },
-          [&](const mir::MachineBoolType&) { return not_an_object(); },
-          [&](const mir::MachineIntType&) { return not_an_object(); },
-          [&](const mir::MachineFloatType&) { return not_an_object(); },
-          [&](const mir::MachineArrayType&) { return not_an_object(); },
-          [&](const mir::MachineFunctionType&) { return not_an_object(); },
-          [&](const mir::EventType&) { return not_an_object(); },
-          [&](const mir::RealType&) { return not_an_object(); },
-          [&](const mir::ShortRealType&) { return not_an_object(); },
-          [&](const mir::ChandleType&) { return not_an_object(); },
-          [&](const mir::VoidType&) { return not_an_object(); },
-          [&](const mir::EmptyType&) { return not_an_object(); },
-          [&](const mir::RuntimeEffectsType&) { return not_an_object(); },
-          [&](const mir::FilesType&) { return not_an_object(); },
-          [&](const mir::DiagnosticType&) { return not_an_object(); },
-          [&](const mir::RuntimeLibraryType&) { return not_an_object(); },
-          [&](const mir::CoroutineType&) { return not_an_object(); },
-          [&](const mir::RefType&) { return not_an_object(); },
-          [&](const mir::PointerType&) { return not_an_object(); },
-          [&](const mir::ManagedRefType&) { return not_an_object(); },
-          [&](const mir::VectorType&) { return not_an_object(); },
-          [&](const mir::TupleType&) { return not_an_object(); },
-          [&](const mir::UnionType&) { return not_an_object(); },
-          [&](const mir::TaggedUnionType&) { return not_an_object(); },
-          [&](const mir::ObservableType&) { return not_an_object(); },
-          [&](const mir::ResolvedType&) { return not_an_object(); },
-          [&](const mir::DriverType&) { return not_an_object(); },
-          [&](const mir::OpenWriteType&) { return not_an_object(); },
-          [&](const mir::DesignationType&) { return not_an_object(); },
-          [&](const mir::SampledHistoryType&) { return not_an_object(); },
-          [&](const mir::EvaluationAttemptsType&) { return not_an_object(); },
-          [&](const mir::StructType&) { return not_an_object(); },
-          [&](const mir::ClosureType&) { return not_an_object(); }});
+// Whether this call builds an instance of the design hierarchy. The owning
+// pointer the object tree takes is built for nothing else, so a construction
+// answering one is the whole of the question.
+auto BuildsScope(
+    const mir::TypePool& types, const mir::CallExpr& call,
+    mir::TypeId result_type) -> bool {
+  if (!std::holds_alternative<mir::Construct>(call.callee)) {
+    return false;
+  }
+  const auto* pointer = types.Get(result_type).As<mir::PointerType>();
+  return pointer != nullptr &&
+         pointer->ownership == mir::PointerOwnership::kUnique;
 }
 
 // The operators the executable IR realizes directly, which is every operator a
@@ -377,52 +304,11 @@ auto FunctionLowerer::LowerCallTarget(
           // it is (LRM 8.20) -- and where that lands in a value is settled with
           // the whole lineage in hand, which is nowhere near this pass. The
           // receiver is already the call's first argument, as it is for a
-          // method named outright.
+          // method named outright, and is the introducing class's part of the
+          // object.
           [&](const mir::Virtual& v) -> diag::Result<lir::CallTarget> {
-            // A behavior an interface class states belongs to no lineage: a
-            // class commits to several interfaces whose declarations are
-            // unrelated to each other and to its base, and two classes
-            // committing to one need not order them alike (LRM 8.26). So it
-            // has no position counted through a lineage, which is the only
-            // coordinate this path carries -- and that holds wherever the
-            // class was declared.
-            const bool through_an_interface = std::visit(
-                Overloaded{
-                    [&](const mir::LocalVirtualSlot& slot) {
-                      return unit_->Mir()
-                          .GetClass(slot.owner_class)
-                          .is_interface_class;
-                    },
-                    [&](const mir::ExternalVirtualSlot& slot) {
-                      return unit_
-                          ->PromisedClass(slot.unit_name, slot.class_name)
-                          .is_interface_class;
-                    }},
-                v.slot);
-            if (through_an_interface) {
-              return Unsupported(
-                  "mir_to_lir: dispatching on a behavior an interface class "
-                  "states is not yet supported");
-            }
-            auto method = std::visit(
-                Overloaded{
-                    [&](const mir::LocalVirtualSlot& slot)
-                        -> diag::Result<lir::StatedDispatchRef> {
-                      return unit_->MethodRef(slot.owner_class, slot.slot);
-                    },
-                    [&](const mir::ExternalVirtualSlot& slot)
-                        -> diag::Result<lir::StatedDispatchRef> {
-                      return lir::StatedDispatchRef{
-                          .introduced_by = unit_->ExternalClassValueType(
-                              slot.unit_name, slot.class_name),
-                          .ordinal = lir::DispatchOrdinal{slot.ordinal.value}};
-                    }},
-                v.slot);
-            if (!method) {
-              return std::unexpected(std::move(method.error()));
-            }
             return lir::CallTarget{
-                lir::DispatchTarget{.method = *std::move(method)}};
+                lir::DispatchTarget{.method = unit_->SlotRef(v.slot)}};
           }},
       callee);
 }
@@ -441,10 +327,15 @@ FunctionLowerer::FunctionLowerer(
 
 FunctionLowerer::FunctionLowerer(
     UnitLowerer& unit, const mir::Class& cls,
-    const mir::ConstructorDecl& constructor, std::string name)
+    const mir::ConstructorDecl& constructor, std::string prologue,
+    std::string name)
     : unit_(&unit),
       code_(&constructor.code),
-      construction_(Construction{.cls = &cls, .constructor = &constructor}),
+      construction_(
+          Construction{
+              .cls = &cls,
+              .constructor = &constructor,
+              .prologue = std::move(prologue)}),
       closure_(nullptr),
       build_(nullptr),
       name_(std::move(name)),
@@ -665,19 +556,17 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   return std::move(fn_);
 }
 
-auto FunctionLowerer::ConstructorOf(const mir::ClassRef& cls)
-    -> std::optional<EnteredConstructor> {
+auto FunctionLowerer::ConstructorOf(const mir::DeclaredClassRef& cls)
+    -> EnteredConstructor {
   return std::visit(
       Overloaded{
-          [&](const mir::IntraUnitClassRef& intra)
-              -> std::optional<EnteredConstructor> {
+          [&](const mir::IntraUnitClassRef& intra) {
             return EnteredConstructor{
                 .object_type = unit_->ClassValueType(intra.class_id),
                 .callee = lir::CallTarget{lir::FunctionTarget{
                     .function = unit_->ConstructorFunction(intra.class_id)}}};
           },
-          [&](const mir::CrossUnitClassRef& ext)
-              -> std::optional<EnteredConstructor> {
+          [&](const mir::CrossUnitClassRef& ext) {
             return EnteredConstructor{
                 .object_type = unit_->ExternalClassValueType(
                     ext.unit_name, ext.class_name),
@@ -685,37 +574,6 @@ auto FunctionLowerer::ConstructorOf(const mir::ClassRef& cls)
                     .symbol = lir::ConstructorSymbol(
                         ext.unit_name,
                         lir::SymbolPart::Name(ext.class_name))}}};
-          },
-          [](const mir::RuntimeClassRef&) -> std::optional<EnteredConstructor> {
-            return std::nullopt;
-          },
-          [](const mir::ManagedObjectRootRef&)
-              -> std::optional<EnteredConstructor> { return std::nullopt; }},
-      cls);
-}
-
-auto FunctionLowerer::ObjectTypeOf(const mir::ClassRef& cls)
-    -> diag::Result<lir::TypeId> {
-  return std::visit(
-      Overloaded{
-          [&](const mir::IntraUnitClassRef& intra)
-              -> diag::Result<lir::TypeId> {
-            return unit_->ClassValueType(intra.class_id);
-          },
-          [&](const mir::CrossUnitClassRef& ext) -> diag::Result<lir::TypeId> {
-            return unit_->ExternalClassValueType(ext.unit_name, ext.class_name);
-          },
-          // A class of the runtime library is laid out by the library rather
-          // than by a unit, so it carries no record a unit could name.
-          [](const mir::RuntimeClassRef&) -> diag::Result<lir::TypeId> {
-            return Unsupported(
-                "mir_to_lir: a class the runtime library defines states no "
-                "record of its own");
-          },
-          [](const mir::ManagedObjectRootRef&) -> diag::Result<lir::TypeId> {
-            return Unsupported(
-                "mir_to_lir: the managed object root states no record of its "
-                "own");
           }},
       cls);
 }
@@ -724,11 +582,26 @@ auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
   if (!construction_.has_value() || !construction_->cls->base.has_value()) {
     return {};
   }
-  const std::optional<EnteredConstructor> base =
-      ConstructorOf(*construction_->cls->base);
-  if (!base.has_value()) {
-    return {};
-  }
+  lir::CallTarget callee = std::visit(
+      Overloaded{
+          [&](const mir::IntraUnitClassRef& intra) -> lir::CallTarget {
+            return ConstructorOf(intra).callee;
+          },
+          [&](const mir::CrossUnitClassRef& cross) -> lir::CallTarget {
+            return ConstructorOf(cross).callee;
+          },
+          [](const mir::ObjectTreeRootRef&) -> lir::CallTarget {
+            return lir::LibraryConstructorTarget{
+                .cls = support::RuntimeClass::kScope};
+          },
+          [](const mir::ManagedObjectRootRef&) -> lir::CallTarget {
+            return lir::LibraryConstructorTarget{
+                .cls = support::RuntimeClass::kObject};
+          }},
+      *construction_->cls->base);
+  const lir::Operand object{lir::Use{.value = fn_.params.front()}};
+  const lir::TypeId void_type =
+      unit_->TranslateType(unit_->Mir().builtins.void_type);
   // What the base construction carries was settled where the class was read:
   // the arguments are complete however the source arrived at them, so there is
   // nothing to establish about them here.
@@ -738,7 +611,7 @@ auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
   args.reserve(stated.size() + 1);
   // The base is entered on the object being constructed, which leads its
   // arguments the way a receiver leads any body's parameters.
-  args.emplace_back(lir::Use{.value = fn_.params.front()});
+  args.push_back(object);
   for (const mir::ExprId arg : stated) {
     auto lowered = LowerArgument(code_->Body(), arg);
     if (!lowered) {
@@ -746,11 +619,17 @@ auto FunctionLowerer::ConstructBase() -> diag::Result<void> {
     }
     args.push_back(*std::move(lowered));
   }
-  auto entered = EmitCallTo(
-      base->callee, std::move(args),
-      unit_->TranslateType(unit_->Mir().builtins.void_type));
+  auto entered = EmitCallTo(std::move(callee), std::move(args), void_type);
   if (!entered) {
     return std::unexpected(std::move(entered.error()));
+  }
+  // Once the base is built the object is a value of this class, which is what
+  // the rest of a C++ constructor's prologue makes it.
+  auto prologue = EmitCallTo(
+      lir::SymbolTarget{.symbol = construction_->prologue}, {object},
+      void_type);
+  if (!prologue) {
+    return std::unexpected(std::move(prologue.error()));
   }
   return {};
 }
@@ -1002,8 +881,8 @@ auto FunctionLowerer::OwesItsEnd(const lir::Operand& value) const -> bool {
 }
 
 auto FunctionLowerer::HandOn(lir::Operand value) -> lir::Operand {
-  const std::optional<lir::TypeId> type = lir::OperandType(fn_, value);
-  if (!type.has_value() || !unit_->Types().Get(*type).IsOwnedValue()) {
+  const lir::TypeId type = lir::OperandType(fn_, value);
+  if (!unit_->Types().Get(type).IsOwnedValue()) {
     return value;
   }
   if (const auto* use = std::get_if<lir::Use>(&value)) {
@@ -1023,9 +902,8 @@ auto FunctionLowerer::HandOn(lir::Operand value) -> lir::Operand {
     }
   }
   return HandOn(Emit(
-      *type,
-      lir::CallInstr{
-          .target = lir::CopyValueTarget{}, .args = {std::move(value)}}));
+      type, lir::CallInstr{
+                .target = lir::CopyValueTarget{}, .args = {std::move(value)}}));
 }
 
 auto FunctionLowerer::CompletionCellType(lir::TypeId payload) -> lir::TypeId {
@@ -1166,19 +1044,14 @@ void FunctionLowerer::OpenVariables() {
   if (fn_.variables.empty()) {
     return;
   }
-  // The storage crosses as the runtime object it is: the body opens it, hands
-  // it back at each operation over it, and ends it, and never reads through it.
+  // The storage is the body's own and the body never reads through it; it only
+  // names it when reaching a variable in it and when closing it.
   const lir::TypeId opened = unit_->Types().Intern(
       lir::Type{lir::PointerType{
           .pointee = unit_->Types().Intern(lir::Type{lir::VoidType{}}),
           .ownership = lir::PointerOwnership::kBorrowed,
           .mutability = lir::Mutability::kMutable}});
-  variables_ = Emit(
-      opened, lir::CallInstr{.target = lir::OpenVariablesTarget{}, .args = {}});
-  const lir::TypeId index_type = unit_->Types().Intern(
-      lir::Type{lir::MachineIntType{
-          .width = lir::MachineIntWidth::k32,
-          .signedness = lir::Signedness::kUnsigned}});
+  variables_ = Emit(opened, lir::OpenVariablesInstr{});
   for (const mir::LocalId local : code_->locals.Ids()) {
     if (!variable_slot_[local.value].has_value()) {
       continue;
@@ -1190,18 +1063,12 @@ void FunctionLowerer::OpenVariables() {
             .pointee = lir::CellOf(unit_->Types(), value),
             .ownership = lir::PointerOwnership::kBorrowed,
             .mutability = lir::Mutability::kMutable}});
-    const lir::IntConst position{
-        .value =
-            lir::IntegralConstant{
-                .value_words = {static_cast<std::uint64_t>(
-                    *variable_slot_[local.value])},
-                .state_words = {}},
-        .type = index_type};
     locals_[local.value] = LocalBinding{CellBinding{
         .cell = Emit(
-            address, lir::CallInstr{
-                         .target = lir::VariableAddressTarget{},
-                         .args = {*variables_, position}})}};
+            address, lir::VariableAddressInstr{
+                         .variables = *variables_,
+                         .position = lir::VariablePosition{
+                             *variable_slot_[local.value]}})}};
   }
 }
 
@@ -1211,8 +1078,7 @@ void FunctionLowerer::CloseVariables() {
   }
   Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
-      lir::CallInstr{
-          .target = lir::CloseVariablesTarget{}, .args = {*variables_}});
+      lir::CloseVariablesInstr{.variables = *variables_});
 }
 
 auto FunctionLowerer::InitializeCell(lir::Operand cell, lir::Operand value)
@@ -2007,8 +1873,8 @@ auto FunctionLowerer::NamesStorage(
             // something of, is not storage a part could be reached in.
             [](const mir::TypeDescriptorRef&) { return false; },
             [](const mir::IntegralConstantRef&) { return false; },
-            [](const mir::StaticConstantRef&) { return false; },
-            [](const mir::ObjectRecordRef&) { return false; },
+            [](const mir::DefinitionRef&) { return false; },
+            [](const mir::ClassConstantRef&) { return false; },
             [](const mir::FunctionRef&) { return false; }},
         reference->target);
   }
@@ -2136,11 +2002,6 @@ auto FunctionLowerer::ReferenceValue(
                 .constant = UnitLowerer::TranslateConstant(ref.constant),
                 .type = unit_->TranslateType(type)}};
           },
-          [](const mir::FunctionRef&) -> diag::Result<lir::Operand> {
-            return Unsupported(
-                "mir_to_lir: a code address as a value is not yet lowerable to "
-                "LIR");
-          },
           [&](const mir::StaticVariableRef&) -> diag::Result<lir::Operand> {
             return ReadPlace(block, id, unit_->TranslateType(type));
           },
@@ -2148,11 +2009,10 @@ auto FunctionLowerer::ReferenceValue(
               -> diag::Result<lir::Operand> {
             return ReadPlace(block, id, unit_->TranslateType(type));
           },
-          [&](const mir::StaticConstantRef&) -> diag::Result<lir::Operand> {
-            return ReadPlace(block, id, unit_->TranslateType(type));
-          },
-          [&](const mir::ObjectRecordRef&) -> diag::Result<lir::Operand> {
-            return ReadPlace(block, id, unit_->TranslateType(type));
+          [&](const mir::DefinitionRef&) -> diag::Result<lir::Operand> {
+            throw InternalError(
+                "mir_to_lir: a class's definition is read whole, where only "
+                "its address is ever taken -- please report this as a bug");
           },
           [&](const mir::StaticPropertyRef&) -> diag::Result<lir::Operand> {
             return ReadPlace(block, id, unit_->TranslateType(type));
@@ -2160,6 +2020,18 @@ auto FunctionLowerer::ReferenceValue(
           [&](const mir::ExternalStaticPropertyRef&)
               -> diag::Result<lir::Operand> {
             return ReadPlace(block, id, unit_->TranslateType(type));
+          },
+          // Only a constant names another constant or a body's address, and a
+          // constant is data rather than a body.
+          [&](const mir::ClassConstantRef&) -> diag::Result<lir::Operand> {
+            throw InternalError(
+                "mir_to_lir: a body reads a class's constant -- please report "
+                "this as a bug");
+          },
+          [&](const mir::FunctionRef&) -> diag::Result<lir::Operand> {
+            throw InternalError(
+                "mir_to_lir: a body names a function as a value -- please "
+                "report this as a bug");
           }},
       target);
 }
@@ -2266,29 +2138,13 @@ auto FunctionLowerer::ReferencePlace(
                     lir::SymbolPart::Name(ref.property_name)),
                 type);
           },
-          // A class's static constant is a compile-time record the backend
-          // consumes directly rather than storage a body reaches, the same way
-          // the unit-definition record types are.
-          [](const mir::StaticConstantRef&) -> diag::Result<lir::Place> {
-            throw InternalError(
-                "mir_to_lir: a class's static constant is a compile-time "
-                "record consumed by the backend directly and names no place -- "
-                "please report this as a bug");
-          },
-          // A class's record is not storage anything writes, but it has an
-          // address and a body reaches it to ask the class a question. So it
-          // opens the way storage named by a linkage symbol does: the operand
-          // says which class, and what the target calls that class's record is
-          // the target's own to know.
-          [&](const mir::ObjectRecordRef& r) -> diag::Result<lir::Place> {
-            auto object = ObjectTypeOf(r.of);
-            if (!object) {
-              return std::unexpected(std::move(object.error()));
-            }
+          // A class's definition is a constant the declaring unit emits, so
+          // the place opens at its address.
+          [&](const mir::DefinitionRef& r) -> diag::Result<lir::Place> {
             return lir::Place{
                 .base =
-                    lir::ObjectRecordRef{
-                        .object = *object,
+                    lir::DefinitionRef{
+                        .defined = unit_->ClassRefValueType(r.of),
                         .type = unit_->Types().Intern(
                             lir::Type{lir::PointerType{
                                 .pointee = unit_->TranslateType(type),
@@ -2304,6 +2160,9 @@ auto FunctionLowerer::ReferencePlace(
           },
           [](const mir::IntegralConstantRef&) -> diag::Result<lir::Place> {
             return Unsupported("mir_to_lir: a constant names no place");
+          },
+          [](const mir::ClassConstantRef&) -> diag::Result<lir::Place> {
+            return Unsupported("mir_to_lir: a class's constant names no place");
           },
           [](const mir::FunctionRef&) -> diag::Result<lir::Place> {
             return Unsupported("mir_to_lir: a function names no place");
@@ -2383,6 +2242,9 @@ auto FunctionLowerer::LowerPlace(
           [&](const mir::CastExpr&) {
             return names_no_place("a converted value");
           },
+          [&](const mir::DynamicCastExpr&) {
+            return names_no_place("a converted value");
+          },
           [&](const mir::ConditionalExpr&) {
             return names_no_place("a value a condition chooses");
           },
@@ -2400,9 +2262,6 @@ auto FunctionLowerer::LowerPlace(
           },
           [&](const mir::AddressOfExpr&) {
             return names_no_place("an address of storage");
-          },
-          [&](const mir::MachineArrayDataExpr&) {
-            return names_no_place("a run of machine data");
           },
           [&](const mir::MoveExpr&) {
             return names_no_place("a value moved out of where it was kept");
@@ -2505,40 +2364,31 @@ auto FunctionLowerer::LowerCallOperands(
 auto FunctionLowerer::LowerObjectConstruction(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
     -> diag::Result<lir::Operand> {
+  // A `new` allocates the object, runs its constructor on it, and only then
+  // hands it to the handle that owns it from there, as `std::shared_ptr` is
+  // given what a C++ `new` built.
   const lir::TypeId handle_type = unit_->TranslateType(type);
-  auto constructed = EmitCallTo(lir::ConstructTarget{}, {}, handle_type);
-  if (!constructed) {
-    return constructed;
+  const lir::TypeId object_type =
+      unit_->Types().Get(handle_type).Get<lir::ManagedRefType>().pointee;
+  auto allocated = EmitCallTo(
+      lir::ConstructTarget{}, {},
+      unit_->Types().Intern(
+          lir::Type{lir::PointerType{
+              .pointee = object_type,
+              .ownership = lir::PointerOwnership::kUnique,
+              .mutability = lir::Mutability::kMutable}}));
+  if (!allocated) {
+    return allocated;
   }
-  const lir::Operand handle = *std::move(constructed);
+  const lir::Operand object = *std::move(allocated);
 
   // A construction carries every argument its constructor takes -- the source
   // wrote the call, so the front end bound it against the declaration and
   // filled in whatever it left to a default. So there is nothing to establish
   // about the arguments here, and nothing to read about the class beyond how
   // its constructor is named.
-  const std::optional<EnteredConstructor> constructor =
-      ConstructorOf(ObjectClassOf(unit_->Mir().types, type));
-  if (!constructor.has_value()) {
-    throw InternalError(
-        "mir_to_lir: a construction reached a class the runtime library "
-        "defines, which no `new` expression names");
-  }
   std::vector<lir::Operand> args;
-  args.reserve(call.arguments.size() + 1);
-  // The object leads its arguments the way a receiver leads any body's
-  // parameters, and the handle names it rather than being it, so opening the
-  // handle is what reaches the storage the body runs on.
-  args.push_back(Emit(
-      unit_->Types().Intern(
-          lir::Type{lir::PointerType{
-              .pointee = constructor->object_type,
-              .ownership = lir::PointerOwnership::kBorrowed,
-              .mutability = lir::Mutability::kMutable}}),
-      lir::AddrOfInstr{
-          .place = lir::Place{
-              .base = handle,
-              .chain = {lir::Projection{lir::DerefProjection{}}}}}));
+  args.reserve(call.arguments.size());
   for (const mir::ExprId argument : call.arguments) {
     auto lowered = LowerArgument(block, argument);
     if (!lowered) {
@@ -2546,13 +2396,75 @@ auto FunctionLowerer::LowerObjectConstruction(
     }
     args.push_back(*std::move(lowered));
   }
+  if (auto entered = EnterConstructor(
+          mir::ClassOfObject(
+              unit_->Mir().types,
+              unit_->Mir().types.Get(type).Get<mir::ManagedRefType>().pointee),
+          object, std::move(args));
+      !entered) {
+    return std::unexpected(std::move(entered.error()));
+  }
+  return EmitCallTo(lir::ConstructTarget{}, {object}, handle_type);
+}
+
+auto FunctionLowerer::EnterConstructor(
+    const mir::DeclaredClassRef& cls, const lir::Operand& object,
+    std::vector<lir::Operand> arguments) -> diag::Result<void> {
+  const EnteredConstructor constructor = ConstructorOf(cls);
+  // The object leads its arguments the way a receiver leads any body's
+  // parameters, and what built it names it rather than being it, so opening
+  // that is what reaches the storage the body runs on.
+  arguments.insert(
+      arguments.begin(),
+      Emit(
+          unit_->Types().Intern(
+              lir::Type{lir::PointerType{
+                  .pointee = constructor.object_type,
+                  .ownership = lir::PointerOwnership::kBorrowed,
+                  .mutability = lir::Mutability::kMutable}}),
+          lir::AddrOfInstr{
+              .place = lir::Place{
+                  .base = object,
+                  .chain = {lir::Projection{lir::DerefProjection{}}}}}));
   auto entered = EmitCallTo(
-      constructor->callee, std::move(args),
+      constructor.callee, std::move(arguments),
       unit_->TranslateType(unit_->Mir().builtins.void_type));
   if (!entered) {
     return std::unexpected(std::move(entered.error()));
   }
-  return handle;
+  return {};
+}
+
+auto FunctionLowerer::LowerScopeConstruction(
+    const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+    -> diag::Result<lir::Operand> {
+  std::vector<lir::Operand> arguments;
+  arguments.reserve(call.arguments.size());
+  for (const mir::ExprId argument : call.arguments) {
+    auto lowered = LowerArgument(block, argument);
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    arguments.push_back(*std::move(lowered));
+  }
+  // The storage is allocated as for a value built with `new`, and the class's
+  // constructor then runs on it with every argument, building each part from
+  // the base up.
+  auto begun =
+      EmitCallTo(lir::ConstructTarget{}, {}, unit_->TranslateType(type));
+  if (!begun) {
+    return begun;
+  }
+  const lir::Operand scope = *std::move(begun);
+  if (auto entered = EnterConstructor(
+          mir::ClassOfObject(
+              unit_->Mir().types,
+              unit_->Mir().types.Get(type).Get<mir::PointerType>().pointee),
+          scope, std::move(arguments));
+      !entered) {
+    return std::unexpected(std::move(entered.error()));
+  }
+  return scope;
 }
 
 auto FunctionLowerer::LowerReferenceBind(
@@ -2650,6 +2562,9 @@ auto FunctionLowerer::LowerCall(
   // program, reached like any other -- is what runs on it (LRM 8.7).
   if (BuildsObject(unit_->Mir().types, call, type)) {
     return LowerObjectConstruction(block, call, type);
+  }
+  if (BuildsScope(unit_->Mir().types, call, type)) {
+    return LowerScopeConstruction(block, call, type);
   }
   // Reached where nothing awaits the execution -- a process handed to the
   // scheduler. Such a body finishes with no value, so there is nothing for it
@@ -3365,9 +3280,25 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             if (!operand) {
               return std::unexpected(std::move(operand.error()));
             }
+            // A handle read as another class's handle is a new handle to the
+            // same object; every other cast reads its operand again.
+            if (unit_->Mir().types.Get(type).Is<mir::ManagedRefType>()) {
+              return Emit(
+                  unit_->TranslateType(type),
+                  lir::HandleCastInstr{.operand = *std::move(operand)});
+            }
             return Emit(
                 unit_->TranslateType(type),
                 lir::CastInstr{.operand = *std::move(operand)});
+          },
+          [&](const mir::DynamicCastExpr& cast) -> diag::Result<lir::Operand> {
+            auto operand = LowerExpr(block, cast.operand);
+            if (!operand) {
+              return std::unexpected(std::move(operand.error()));
+            }
+            return Emit(
+                unit_->TranslateType(type),
+                lir::DynamicCastInstr{.operand = *std::move(operand)});
           },
           [&](const mir::CompositeExpr& composite)
               -> diag::Result<lir::Operand> {
@@ -3417,14 +3348,9 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
               }
               captures[init.target.value] = *std::move(value);
             }
-            const lir::TypeId closure_type =
-                unit_->ClosureValueType(cl.closure);
-            auto built = EmitCallTo(
-                lir::ConstructTarget{}, std::move(captures), closure_type);
-            if (!built) {
-              return built;
-            }
-            const lir::Operand value = *std::move(built);
+            const lir::Operand value = Emit(
+                unit_->ClosureValueType(cl.closure),
+                lir::ClosureInstr{.captures = std::move(captures)});
             if (!unit_->Mir().types.Get(type).Is<mir::CoroutineType>()) {
               return value;
             }
@@ -3471,18 +3397,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                   "the reference's own operations reach its storage");
             }
             auto place = LowerPlace(block, addr.operand, Reach::kWhole);
-            if (!place) {
-              return std::unexpected(std::move(place.error()));
-            }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::AddrOfInstr{.place = *std::move(place)});
-          },
-          // A contiguous aggregate begins at its own address, so the pointer to
-          // the first element is the array's address retyped by the result.
-          [&](const mir::MachineArrayDataExpr& d)
-              -> diag::Result<lir::Operand> {
-            auto place = LowerPlace(block, d.array, Reach::kWhole);
             if (!place) {
               return std::unexpected(std::move(place.error()));
             }

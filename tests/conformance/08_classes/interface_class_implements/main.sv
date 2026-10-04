@@ -8,7 +8,13 @@
 // gathering their prototypes. A variable of an interface class type may
 // hold any object whose class implements that interface class, and a call
 // through such a variable runs the implementation belonging to the object's
-// own class (LRM 8.26, 8.26.2, 8.26.5, 8.26.6.1).
+// own class. A subclass implicitly implements every interface class its
+// superclass implements, and that holds wherever each class is declared: an
+// interface class of one package may extend one of another, a class of a third
+// may implement it, and a class extending that one elsewhere is a value of all
+// of them, reached through a handle of any of them or of its superclass. A
+// handle of one interface class is cast to another the object implements
+// (LRM 8.26, 8.26.2, 8.26.5, 8.26.6.1, 26.3).
 package pkg;
   interface class Putter #(type T = int);
     pure virtual function void put(T a);
@@ -36,7 +42,41 @@ package pkg;
   endclass
 endpackage
 
+package wide_pkg;
+  interface class Sized extends pkg::Named;
+    pure virtual function int size();
+  endclass
+endpackage
+
+package stock_pkg;
+  class Stock implements wide_pkg::Sized;
+    virtual function int tag();
+      return 30;
+    endfunction
+
+    virtual function int size();
+      return 3;
+    endfunction
+
+    virtual function int scaled(int by);
+      return 3 * by;
+    endfunction
+  endclass
+endpackage
+
 module Top;
+  interface class Scalable;
+    pure virtual function int scaled(int by);
+  endclass
+
+  // Everything but `size` is answered by what it inherits, and two of the
+  // interface classes it is a value of it never names.
+  class Crate extends stock_pkg::Stock implements pkg::Tagged, Scalable;
+    virtual function int size();
+      return 9;
+    endfunction
+  endclass
+
   class Cell implements pkg::PutGet #(int), pkg::Named;
     int value = 0;
 
@@ -87,6 +127,41 @@ module Top;
   int more_tag_direct;
   int more_tag_via_named;
   int more_tag_via_tagged;
+  int crate_tag_via_named;
+  int crate_tag_via_sized;
+  int crate_size_via_sized;
+  int crate_tag_via_tagged;
+  int crate_scaled_via_scalable;
+  int crate_size_through_stock;
+  int crate_tag_after_cast;
+  bit crate_cast_succeeded;
+
+  initial begin
+    Crate crate;
+    stock_pkg::Stock as_stock;
+    wide_pkg::Sized sized_ref;
+    wide_pkg::Sized sized_through_stock;
+    pkg::Named crate_named_ref;
+    pkg::Named named_after_cast;
+    pkg::Tagged crate_tagged_ref;
+    Scalable scalable_ref;
+
+    crate = new;
+    crate_named_ref = crate;
+    crate_tag_via_named = crate_named_ref.tag();
+    sized_ref = crate;
+    crate_tag_via_sized = sized_ref.tag();
+    crate_size_via_sized = sized_ref.size();
+    crate_tagged_ref = crate;
+    crate_tag_via_tagged = crate_tagged_ref.tag();
+    scalable_ref = crate;
+    crate_scaled_via_scalable = scalable_ref.scaled(4);
+    as_stock = crate;
+    sized_through_stock = as_stock;
+    crate_size_through_stock = sized_through_stock.size();
+    crate_cast_succeeded = $cast(named_after_cast, crate_tagged_ref);
+    crate_tag_after_cast = named_after_cast.tag();
+  end
 
   initial begin
     Cell c;
@@ -172,6 +247,32 @@ module Top;
     if (more_tag_via_tagged !== 200)
       $fatal(1, "more_tag_via_tagged was %0d, expected 200",
              more_tag_via_tagged);
+    if (crate_tag_via_named !== 30)
+      $fatal(1, "crate_tag_via_named was %0d, expected 30",
+             crate_tag_via_named);
+    if (crate_tag_via_sized !== 30)
+      $fatal(1, "crate_tag_via_sized was %0d, expected 30",
+             crate_tag_via_sized);
+    if (crate_size_via_sized !== 9)
+      $fatal(1, "crate_size_via_sized was %0d, expected 9",
+             crate_size_via_sized);
+    if (crate_tag_via_tagged !== 30)
+      $fatal(1, "crate_tag_via_tagged was %0d, expected 30",
+             crate_tag_via_tagged);
+    if (crate_scaled_via_scalable !== 12)
+      $fatal(1, "crate_scaled_via_scalable was %0d, expected 12",
+             crate_scaled_via_scalable);
+    // The conversion is written against the superclass and made on an object
+    // of the class extending it.
+    if (crate_size_through_stock !== 9)
+      $fatal(1, "crate_size_through_stock was %0d, expected 9",
+             crate_size_through_stock);
+    if (crate_cast_succeeded !== 1)
+      $fatal(1, "crate_cast_succeeded was %0d, expected 1",
+             crate_cast_succeeded);
+    if (crate_tag_after_cast !== 30)
+      $fatal(1, "crate_tag_after_cast was %0d, expected 30",
+             crate_tag_after_cast);
     $display("All checks passed");
   end
 endmodule

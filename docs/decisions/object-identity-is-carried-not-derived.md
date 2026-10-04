@@ -10,6 +10,11 @@ Accepted. Settles how a source-rendering backend projects an object reference, u
 `../architecture/object_model.md` invariant 4's split between an object's identity and a reference's
 static view. Reverses nothing; it replaces a realization that predates that invariant.
 
+D5 is superseded (2026-10-02). The library's root class now has a virtual destructor, so it is the
+primary base of every object and sits at the object's own address on both backends (C++ ABI 2.4),
+whatever the source declares. A reference recovered from that part therefore names the object
+itself, and the object records nothing.
+
 ## Why this decision matters
 
 An object reference has to answer two questions that look like one: **which object** it names, and
@@ -182,8 +187,8 @@ whether or not a view word is part of the shape.
   says, which it did not before.
 - The reference type family collapses to one type. A projection that had a type per class has a
   type, and the class becomes an argument at the sites that need one.
-- The identity record on an object is added by this decision and deleted by the terminal lifetime
-  model; it is not a shape to build on.
+- The identity record on an object was added by this decision and is gone, since the part a
+  reference is recovered from now starts where the object does.
 
 ## Cross-references
 

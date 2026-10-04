@@ -150,6 +150,7 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
   }
   unit_.root_scope = *std::move(root_scope_or);
   RequireEveryClassBodyLowered();
+  ReadPromisesOfNamedClasses();
   unit_.root_scope.published_members.reserve(published_members_.size());
   for (const auto& decl : published_members_) {
     if (!decl.has_value()) {

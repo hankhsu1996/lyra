@@ -21,12 +21,12 @@
 #include "lyra/backend/llvm/object_file.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/compiler/unit_metadata.hpp"
 #include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/dpi/abi_header.hpp"
 #include "lyra/driver/artifact_store.hpp"
 #include "lyra/driver/project_layout.hpp"
+#include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
 
@@ -244,8 +244,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_cancellation_for", &lyra_rt_cancellation_for);
   add("lyra_rt_is_cancelled", &lyra_rt_is_cancelled);
   add("lyra_rt_closure_make", &lyra_rt_closure_make);
-  add("lyra_rt_object_make", &lyra_rt_object_make);
-  add("lyra_rt_object_deref", &lyra_rt_object_deref);
+  add("lyra_rt_object_adopt", &lyra_rt_object_adopt);
   add("lyra_rt_packed_shared_cell_make", &lyra_rt_packed_shared_cell_make);
   add("lyra_rt_string_shared_cell_make", &lyra_rt_string_shared_cell_make);
   add("lyra_rt_real_shared_cell_make", &lyra_rt_real_shared_cell_make);
@@ -265,18 +264,17 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_assocarray_shared_cell_make",
       &lyra_rt_assocarray_shared_cell_make);
   add("lyra_rt_shared_pointer_deref", &lyra_rt_shared_pointer_deref);
-  add("lyra_rt_method", &lyra_rt_method);
+  add("lyra_rt_handle_view", &lyra_rt_handle_view);
+  add("lyra_rt_handle_with_view", &lyra_rt_handle_with_view);
   add("lyra_rt_class_find_property", &lyra_rt_class_find_property);
-  add("lyra_rt_class_find_behavior", &lyra_rt_class_find_behavior);
   add("lyra_rt_class_find_behavior_body", &lyra_rt_class_find_behavior_body);
   add("lyra_rt_property_at", &lyra_rt_property_at);
-  add("lyra_rt_behavior_at", &lyra_rt_behavior_at);
-  add("lyra_rt_object_of", &lyra_rt_object_of);
+  add("lyra_rt_view_of", &lyra_rt_view_of);
+  add("lyra_rt_self_handle", &lyra_rt_self_handle);
   add("lyra_rt_object_root_of", &lyra_rt_object_root_of);
   add("lyra_rt_object_event_source", &lyra_rt_object_event_source);
   add("lyra_rt_open_object_write", &lyra_rt_open_object_write);
   add("lyra_rt_object_write_through", &lyra_rt_object_write_through);
-  add("lyra_rt_object_is_of_class", &lyra_rt_object_is_of_class);
   add("lyra_rt_enumeration_has", &lyra_rt_enumeration_has);
   add("lyra_rt_enumeration_name", &lyra_rt_enumeration_name);
   add("lyra_rt_enumeration_next", &lyra_rt_enumeration_next);
@@ -345,7 +343,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_dist_t", &lyra_rt_dist_t);
   add("lyra_rt_dist_erlang", &lyra_rt_dist_erlang);
   add("lyra_rt_make_segment", &lyra_rt_make_segment);
-  add("lyra_rt_make_scope", &lyra_rt_make_scope);
   add("lyra_rt_hierarchical_path", &lyra_rt_hierarchical_path);
   add("lyra_rt_parent", &lyra_rt_parent);
   add("lyra_rt_add_owned_child", &lyra_rt_add_owned_child);
@@ -360,33 +357,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_find_disable_target", &lyra_rt_find_disable_target);
   add("lyra_rt_resolve_visible_child", &lyra_rt_resolve_visible_child);
   add("lyra_rt_find_child", &lyra_rt_find_child);
-  add("lyra_rt_variables_open", &lyra_rt_variables_open);
-  add("lyra_rt_variable_addr", &lyra_rt_variable_addr);
-  add("lyra_rt_variables_close", &lyra_rt_variables_close);
-  add("lyra_rt_variable_schema_declare", &lyra_rt_variable_schema_declare);
-  add("lyra_rt_shared_storage_declare", &lyra_rt_shared_storage_declare);
-  add("lyra_rt_closure_declare_synchronous",
-      &lyra_rt_closure_declare_synchronous);
-  add("lyra_rt_closure_declare_coroutine", &lyra_rt_closure_declare_coroutine);
-  add("lyra_rt_closure_declare_per_element",
-      &lyra_rt_closure_declare_per_element);
-  add("lyra_rt_closure_declare_value", &lyra_rt_closure_declare_value);
-  add("lyra_rt_class_declare", &lyra_rt_class_declare);
-  add("lyra_rt_scope_class_declare", &lyra_rt_scope_class_declare);
-  add("lyra_rt_class_declare_base", &lyra_rt_class_declare_base);
-  add("lyra_rt_class_declare_members", &lyra_rt_class_declare_members);
-  add("lyra_rt_class_declare_introduction",
-      &lyra_rt_class_declare_introduction);
-  add("lyra_rt_class_declare_takeover", &lyra_rt_class_declare_takeover);
-  add("lyra_rt_class_declare_property_name",
-      &lyra_rt_class_declare_property_name);
-  add("lyra_rt_class_declare_behavior_name",
-      &lyra_rt_class_declare_behavior_name);
-  add("lyra_rt_class_declare_body_name", &lyra_rt_class_declare_body_name);
-  add("lyra_rt_scope_declare_program", &lyra_rt_scope_declare_program);
-  add("lyra_rt_scope_declare_subroutine", &lyra_rt_scope_declare_subroutine);
-  add("lyra_rt_scope_declare_export", &lyra_rt_scope_declare_export);
-  add("lyra_rt_scope_declare_class", &lyra_rt_scope_declare_class);
   add("lyra_rt_run_program", &lyra_rt_run_program);
 }
 
@@ -1034,7 +1004,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_managedref_value_box", &lyra_rt_managedref_value_box);
   add("lyra_rt_tuple_value_box", &lyra_rt_tuple_value_box);
   add("lyra_rt_dynarray_value_box", &lyra_rt_dynarray_value_box);
-  add("lyra_rt_tuple_held", &lyra_rt_tuple_held);
   add("lyra_rt_tuple_cell_get", &lyra_rt_tuple_cell_get);
   add("lyra_rt_tuple_cell_initialize", &lyra_rt_tuple_cell_initialize);
   add("lyra_rt_tuple_cell_set", &lyra_rt_tuple_cell_set);
@@ -1468,6 +1437,153 @@ void BindMemberOperationEntries(const auto& add) {
   add("lyra_rt_unpackedarray_filled_like", &lyra_rt_unpackedarray_filled_like);
 }
 
+// What a declaration's storage publishes: building one member's storage where
+// its owner was laid out, and ending it there. An entry here names the storage
+// kind, and the value domain where the kind holds values of one.
+void BindStorageEntries(const auto& add) {
+  add("lyra_rt_borrowed_handle_construct", &lyra_rt_borrowed_handle_construct);
+  add("lyra_rt_reference_construct", &lyra_rt_reference_construct);
+  add("lyra_rt_packed_cell_construct", &lyra_rt_packed_cell_construct);
+  add("lyra_rt_string_cell_construct", &lyra_rt_string_cell_construct);
+  add("lyra_rt_real_cell_construct", &lyra_rt_real_cell_construct);
+  add("lyra_rt_shortreal_cell_construct", &lyra_rt_shortreal_cell_construct);
+  add("lyra_rt_chandle_cell_construct", &lyra_rt_chandle_cell_construct);
+  add("lyra_rt_tuple_cell_construct", &lyra_rt_tuple_cell_construct);
+  add("lyra_rt_union_cell_construct", &lyra_rt_union_cell_construct);
+  add("lyra_rt_tagged_union_cell_construct",
+      &lyra_rt_tagged_union_cell_construct);
+  add("lyra_rt_dynarray_cell_construct", &lyra_rt_dynarray_cell_construct);
+  add("lyra_rt_unpackedarray_cell_construct",
+      &lyra_rt_unpackedarray_cell_construct);
+  add("lyra_rt_queue_cell_construct", &lyra_rt_queue_cell_construct);
+  add("lyra_rt_assocarray_cell_construct", &lyra_rt_assocarray_cell_construct);
+  add("lyra_rt_managedref_cell_construct", &lyra_rt_managedref_cell_construct);
+  add("lyra_rt_packed_value_cell_construct",
+      &lyra_rt_packed_value_cell_construct);
+  add("lyra_rt_string_value_cell_construct",
+      &lyra_rt_string_value_cell_construct);
+  add("lyra_rt_real_value_cell_construct", &lyra_rt_real_value_cell_construct);
+  add("lyra_rt_shortreal_value_cell_construct",
+      &lyra_rt_shortreal_value_cell_construct);
+  add("lyra_rt_chandle_value_cell_construct",
+      &lyra_rt_chandle_value_cell_construct);
+  add("lyra_rt_tuple_value_cell_construct",
+      &lyra_rt_tuple_value_cell_construct);
+  add("lyra_rt_union_value_cell_construct",
+      &lyra_rt_union_value_cell_construct);
+  add("lyra_rt_tagged_union_value_cell_construct",
+      &lyra_rt_tagged_union_value_cell_construct);
+  add("lyra_rt_dynarray_value_cell_construct",
+      &lyra_rt_dynarray_value_cell_construct);
+  add("lyra_rt_unpackedarray_value_cell_construct",
+      &lyra_rt_unpackedarray_value_cell_construct);
+  add("lyra_rt_queue_value_cell_construct",
+      &lyra_rt_queue_value_cell_construct);
+  add("lyra_rt_assocarray_value_cell_construct",
+      &lyra_rt_assocarray_value_cell_construct);
+  add("lyra_rt_managedref_value_cell_construct",
+      &lyra_rt_managedref_value_cell_construct);
+  add("lyra_rt_packed_net_construct", &lyra_rt_packed_net_construct);
+  add("lyra_rt_tuple_net_construct", &lyra_rt_tuple_net_construct);
+  add("lyra_rt_union_net_construct", &lyra_rt_union_net_construct);
+  add("lyra_rt_unpackedarray_net_construct",
+      &lyra_rt_unpackedarray_net_construct);
+  add("lyra_rt_packed_sampled_history_construct",
+      &lyra_rt_packed_sampled_history_construct);
+  add("lyra_rt_string_sampled_history_construct",
+      &lyra_rt_string_sampled_history_construct);
+  add("lyra_rt_real_sampled_history_construct",
+      &lyra_rt_real_sampled_history_construct);
+  add("lyra_rt_shortreal_sampled_history_construct",
+      &lyra_rt_shortreal_sampled_history_construct);
+  add("lyra_rt_tuple_sampled_history_construct",
+      &lyra_rt_tuple_sampled_history_construct);
+  add("lyra_rt_union_sampled_history_construct",
+      &lyra_rt_union_sampled_history_construct);
+  add("lyra_rt_tagged_union_sampled_history_construct",
+      &lyra_rt_tagged_union_sampled_history_construct);
+  add("lyra_rt_dynarray_sampled_history_construct",
+      &lyra_rt_dynarray_sampled_history_construct);
+  add("lyra_rt_unpackedarray_sampled_history_construct",
+      &lyra_rt_unpackedarray_sampled_history_construct);
+  add("lyra_rt_queue_sampled_history_construct",
+      &lyra_rt_queue_sampled_history_construct);
+  add("lyra_rt_assocarray_sampled_history_construct",
+      &lyra_rt_assocarray_sampled_history_construct);
+  add("lyra_rt_managedref_sampled_history_construct",
+      &lyra_rt_managedref_sampled_history_construct);
+  add("lyra_rt_named_event_construct", &lyra_rt_named_event_construct);
+  add("lyra_rt_cancellation_target_construct",
+      &lyra_rt_cancellation_target_construct);
+  add("lyra_rt_evaluation_attempts_construct",
+      &lyra_rt_evaluation_attempts_construct);
+  add("lyra_rt_channel_cancellation_construct",
+      &lyra_rt_channel_cancellation_construct);
+  add("lyra_rt_shared_pointer_construct", &lyra_rt_shared_pointer_construct);
+  add("lyra_rt_packed_cell_destroy", &lyra_rt_packed_cell_destroy);
+  add("lyra_rt_string_cell_destroy", &lyra_rt_string_cell_destroy);
+  add("lyra_rt_real_cell_destroy", &lyra_rt_real_cell_destroy);
+  add("lyra_rt_shortreal_cell_destroy", &lyra_rt_shortreal_cell_destroy);
+  add("lyra_rt_chandle_cell_destroy", &lyra_rt_chandle_cell_destroy);
+  add("lyra_rt_tuple_cell_destroy", &lyra_rt_tuple_cell_destroy);
+  add("lyra_rt_union_cell_destroy", &lyra_rt_union_cell_destroy);
+  add("lyra_rt_tagged_union_cell_destroy", &lyra_rt_tagged_union_cell_destroy);
+  add("lyra_rt_dynarray_cell_destroy", &lyra_rt_dynarray_cell_destroy);
+  add("lyra_rt_unpackedarray_cell_destroy",
+      &lyra_rt_unpackedarray_cell_destroy);
+  add("lyra_rt_queue_cell_destroy", &lyra_rt_queue_cell_destroy);
+  add("lyra_rt_assocarray_cell_destroy", &lyra_rt_assocarray_cell_destroy);
+  add("lyra_rt_managedref_cell_destroy", &lyra_rt_managedref_cell_destroy);
+  add("lyra_rt_packed_value_cell_destroy", &lyra_rt_packed_value_cell_destroy);
+  add("lyra_rt_string_value_cell_destroy", &lyra_rt_string_value_cell_destroy);
+  add("lyra_rt_tuple_value_cell_destroy", &lyra_rt_tuple_value_cell_destroy);
+  add("lyra_rt_union_value_cell_destroy", &lyra_rt_union_value_cell_destroy);
+  add("lyra_rt_tagged_union_value_cell_destroy",
+      &lyra_rt_tagged_union_value_cell_destroy);
+  add("lyra_rt_dynarray_value_cell_destroy",
+      &lyra_rt_dynarray_value_cell_destroy);
+  add("lyra_rt_unpackedarray_value_cell_destroy",
+      &lyra_rt_unpackedarray_value_cell_destroy);
+  add("lyra_rt_queue_value_cell_destroy", &lyra_rt_queue_value_cell_destroy);
+  add("lyra_rt_assocarray_value_cell_destroy",
+      &lyra_rt_assocarray_value_cell_destroy);
+  add("lyra_rt_managedref_value_cell_destroy",
+      &lyra_rt_managedref_value_cell_destroy);
+  add("lyra_rt_packed_net_destroy", &lyra_rt_packed_net_destroy);
+  add("lyra_rt_tuple_net_destroy", &lyra_rt_tuple_net_destroy);
+  add("lyra_rt_union_net_destroy", &lyra_rt_union_net_destroy);
+  add("lyra_rt_unpackedarray_net_destroy", &lyra_rt_unpackedarray_net_destroy);
+  add("lyra_rt_packed_sampled_history_destroy",
+      &lyra_rt_packed_sampled_history_destroy);
+  add("lyra_rt_string_sampled_history_destroy",
+      &lyra_rt_string_sampled_history_destroy);
+  add("lyra_rt_real_sampled_history_destroy",
+      &lyra_rt_real_sampled_history_destroy);
+  add("lyra_rt_shortreal_sampled_history_destroy",
+      &lyra_rt_shortreal_sampled_history_destroy);
+  add("lyra_rt_tuple_sampled_history_destroy",
+      &lyra_rt_tuple_sampled_history_destroy);
+  add("lyra_rt_union_sampled_history_destroy",
+      &lyra_rt_union_sampled_history_destroy);
+  add("lyra_rt_tagged_union_sampled_history_destroy",
+      &lyra_rt_tagged_union_sampled_history_destroy);
+  add("lyra_rt_dynarray_sampled_history_destroy",
+      &lyra_rt_dynarray_sampled_history_destroy);
+  add("lyra_rt_unpackedarray_sampled_history_destroy",
+      &lyra_rt_unpackedarray_sampled_history_destroy);
+  add("lyra_rt_queue_sampled_history_destroy",
+      &lyra_rt_queue_sampled_history_destroy);
+  add("lyra_rt_assocarray_sampled_history_destroy",
+      &lyra_rt_assocarray_sampled_history_destroy);
+  add("lyra_rt_managedref_sampled_history_destroy",
+      &lyra_rt_managedref_sampled_history_destroy);
+  add("lyra_rt_named_event_destroy", &lyra_rt_named_event_destroy);
+  add("lyra_rt_cancellation_target_destroy",
+      &lyra_rt_cancellation_target_destroy);
+  add("lyra_rt_evaluation_attempts_destroy",
+      &lyra_rt_evaluation_attempts_destroy);
+}
+
 // What the runtime library publishes, each entry at the shape its own
 // definition states. The entries are also the answer to what this backend can
 // carry out: an entry's name composes a value domain with an operation, and the
@@ -1487,6 +1603,7 @@ auto PublishedEntries() -> const std::map<std::string, AbiSignature>& {
     BindValueEntries(add);
     BindWriteEntries(add);
     BindMemberOperationEntries(add);
+    BindStorageEntries(add);
     return listed;
   }();
   return published;
@@ -1610,18 +1727,17 @@ auto CheckAgainstRuntime(const backend::llvm_backend::EmittedModule& module)
 // A unit's module, and the form it was emitted from, which the design root's
 // entry is emitted from as well.
 struct UnitModule {
-  compiler::ExecutableUnit executable;
+  lir::CompilationUnit lowered;
   backend::llvm_backend::EmittedModule module;
 };
 
 auto EmitUnitModule(const mir::CompilationUnit& unit)
     -> diag::Result<UnitModule> {
-  auto executable = compiler::LowerUnitToExecutable(unit);
-  if (!executable) {
-    return std::unexpected(std::move(executable.error()));
+  auto lowered = compiler::LowerUnitToExecutable(unit);
+  if (!lowered) {
+    return std::unexpected(std::move(lowered.error()));
   }
-  auto emitted = backend::llvm_backend::EmitModule(
-      executable->body, executable->definition.time_resolution);
+  auto emitted = backend::llvm_backend::EmitModule(*lowered);
   if (!emitted) {
     return std::unexpected(std::move(emitted.error()));
   }
@@ -1629,7 +1745,7 @@ auto EmitUnitModule(const mir::CompilationUnit& unit)
     return std::unexpected(std::move(checked.error()));
   }
   return UnitModule{
-      .executable = *std::move(executable), .module = *std::move(emitted)};
+      .lowered = *std::move(lowered), .module = *std::move(emitted)};
 }
 
 // The code generator's reading of how hard a build was asked to work: the same
@@ -1714,7 +1830,7 @@ auto ProgramSink::Finish(
     return std::unexpected(std::move(emitted.error()));
   }
   backend::llvm_backend::EmittedModule entry =
-      backend::llvm_backend::EmitProgramEntry(emitted->executable.body);
+      backend::llvm_backend::EmitProgramEntry(emitted->lowered);
   if (auto checked = CheckAgainstRuntime(entry); !checked) {
     return std::unexpected(std::move(checked.error()));
   }

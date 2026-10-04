@@ -39,50 +39,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "cell_refer";
     case RuntimeOp::kReferStorage:
       return "refer_storage";
-    case RuntimeOp::kVariablesOpen:
-      return "variables_open";
-    case RuntimeOp::kVariableAddress:
-      return "variable_addr";
-    case RuntimeOp::kVariablesClose:
-      return "variables_close";
-    case RuntimeOp::kVariableSchemaDeclare:
-      return "variable_schema_declare";
-    case RuntimeOp::kSharedStorageDeclare:
-      return "shared_storage_declare";
-    case RuntimeOp::kClosureDeclareSynchronous:
-      return "closure_declare_synchronous";
-    case RuntimeOp::kClosureDeclareCoroutine:
-      return "closure_declare_coroutine";
-    case RuntimeOp::kClosureDeclarePerElement:
-      return "closure_declare_per_element";
-    case RuntimeOp::kClosureDeclareValue:
-      return "closure_declare_value";
-    case RuntimeOp::kClassDeclare:
-      return "class_declare";
-    case RuntimeOp::kScopeClassDeclare:
-      return "scope_class_declare";
-    case RuntimeOp::kClassDeclareBase:
-      return "class_declare_base";
-    case RuntimeOp::kClassDeclareMembers:
-      return "class_declare_members";
-    case RuntimeOp::kClassDeclareIntroduction:
-      return "class_declare_introduction";
-    case RuntimeOp::kClassDeclareTakeover:
-      return "class_declare_takeover";
-    case RuntimeOp::kClassDeclarePropertyName:
-      return "class_declare_property_name";
-    case RuntimeOp::kClassDeclareBehaviorName:
-      return "class_declare_behavior_name";
-    case RuntimeOp::kClassDeclareBodyName:
-      return "class_declare_body_name";
-    case RuntimeOp::kScopeDeclareProgram:
-      return "scope_declare_program";
-    case RuntimeOp::kScopeDeclareSubroutine:
-      return "scope_declare_subroutine";
-    case RuntimeOp::kScopeDeclareExport:
-      return "scope_declare_export";
-    case RuntimeOp::kScopeDeclareClass:
-      return "scope_declare_class";
     case RuntimeOp::kRunProgram:
       return "run_program";
     case RuntimeOp::kSequenceMake:
@@ -91,24 +47,22 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "sequence_element";
     case RuntimeOp::kClosureMake:
       return "closure_make";
-    case RuntimeOp::kObjectMake:
-      return "object_make";
-    case RuntimeOp::kObjectDeref:
-      return "object_deref";
+    case RuntimeOp::kObjectAdopt:
+      return "object_adopt";
     case RuntimeOp::kSharedCellMake:
       return "shared_cell_make";
     case RuntimeOp::kSharedPointerDeref:
       return "shared_pointer_deref";
-    case RuntimeOp::kMethod:
-      return "method";
+    case RuntimeOp::kHandleView:
+      return "handle_view";
+    case RuntimeOp::kHandleWithView:
+      return "handle_with_view";
     case RuntimeOp::kConst:
       return "const";
     case RuntimeOp::kToBool:
       return "to_bool";
     case RuntimeOp::kValueBox:
       return "value_box";
-    case RuntimeOp::kHeld:
-      return "held";
     case RuntimeOp::kMake:
       return "make";
     case RuntimeOp::kTagMatches:
@@ -129,8 +83,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "from_entries_default";
     case RuntimeOp::kFromEntriesDefaultWildcard:
       return "from_entries_default_wildcard";
-    case RuntimeOp::kMakeScope:
-      return "make_scope";
     case RuntimeOp::kMakeSegment:
       return "make_segment";
     case RuntimeOp::kMakeTrigger:
@@ -163,6 +115,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "retain_constant";
     case RuntimeOp::kSettleDeparture:
       return "settle_departure";
+    case RuntimeOp::kConstruct:
+      return "construct";
     case RuntimeOp::kDestroy:
       return "destroy";
     case RuntimeOp::kCopy:
@@ -211,6 +165,32 @@ auto RuntimeSymbol(support::RuntimeObject object, RuntimeOp op) -> std::string {
   return std::format(
       "{}{}_{}", kRuntimeSymbolPrefix, support::RuntimeObjectName(object),
       RuntimeOpName(op));
+}
+
+auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
+    -> std::string {
+  const std::string_view kind = support::MemberStorageKindName(storage.kind);
+  switch (storage.kind) {
+    case support::MemberStorageKind::kObservableCell:
+    case support::MemberStorageKind::kResolvedNet:
+    case support::MemberStorageKind::kSampledHistory:
+    case support::MemberStorageKind::kValueCell:
+      return Symbol(
+          storage.domain, std::format("{}_{}", kind, RuntimeOpName(op)));
+    // Storage holding a value inline is that value, so what builds and ends it
+    // is what builds and ends a value of its domain.
+    case support::MemberStorageKind::kInlineValue:
+      return RuntimeSymbol(storage.domain, op);
+    case support::MemberStorageKind::kBorrowedHandle:
+    case support::MemberStorageKind::kReference:
+    case support::MemberStorageKind::kSharedPointer:
+    case support::MemberStorageKind::kNamedEvent:
+    case support::MemberStorageKind::kCancellationTarget:
+    case support::MemberStorageKind::kChannelCancellation:
+    case support::MemberStorageKind::kEvaluationAttempts:
+      return Symbol(std::format("{}_{}", kind, RuntimeOpName(op)));
+  }
+  throw InternalError("llvm codegen: unknown member storage kind");
 }
 
 auto RuntimeSymbol(support::ValueDomain domain, lir::BinaryOp op)
@@ -344,9 +324,8 @@ auto MemberStorageKindOf(
               // every access afterwards, so a member naming one points at
               // storage that outlives it rather than owning a copy.
               case lir::RuntimeLibraryKind::kPropertyCoordinate:
-              case lir::RuntimeLibraryKind::kBehaviorCoordinate:
-              // A class's record is one per class for the whole run and every
-              // object of it shares it, so a member naming one points at
+              // A class's definition is one per class for the whole run and
+              // every object of it shares it, so a member naming one points at
               // storage outliving it for the same reason.
               case lir::RuntimeLibraryKind::kObjectDefinition:
                 return support::MemberStorageKind::kBorrowedHandle;
@@ -375,6 +354,12 @@ auto MemberStorageKindOf(
               case lir::RuntimeLibraryKind::kReadReport:
               case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kControlEffect:
+              // What a constant is made of, which no member holds.
+              case lir::RuntimeLibraryKind::kResolvedProperty:
+              case lir::RuntimeLibraryKind::kDeclaredBody:
+              case lir::RuntimeLibraryKind::kScopeInfo:
+              case lir::RuntimeLibraryKind::kScopeCallable:
+              case lir::RuntimeLibraryKind::kScopeClass:
                 return std::nullopt;
             }
             throw InternalError("llvm codegen: unknown runtime library kind");
@@ -569,12 +554,6 @@ auto RuntimeSymbol(
 }
 
 auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
-  // Recovering a handle from the object it refers to is what a shared-owner
-  // realization needs and a traced one does not, since there the handle is the
-  // pointer a body already holds. So this target owes no entry: it owes the
-  // tracing that makes the recovery unnecessary.
-  constexpr std::string_view kRecoversAHandleFromItsObject =
-      "answers with the handle referring to the object a body runs on";
   constexpr std::string_view kLeavesByUnwinding =
       "leaves a body by unwinding it, where this target's bodies leave by "
       "branching";
@@ -779,9 +758,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kReferComponent:
       return NamedByStorageDomain{};
 
-    case support::BuiltinFn::kSelfHandle:
-      return NotRealized{.shape = kRecoversAHandleFromItsObject};
-
     // A body that leaves by branching reaches the gate as the pair of questions
     // the lowering already asks wherever this execution regains control -- and
     // it asks them here in place of this call rather than through an entry of
@@ -906,15 +882,14 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFindDisableTarget:
     case support::BuiltinFn::kFindClass:
     case support::BuiltinFn::kClassFindProperty:
-    case support::BuiltinFn::kClassFindBehavior:
     case support::BuiltinFn::kClassFindBehaviorBody:
-    // Applying a settled position, and recovering the object a handle names.
-    // Each is one library function serving every class, so the operation's own
-    // name is the whole of what a symbol needs.
+    // Applying a settled position, and recovering the object a handle names or
+    // a handle naming the object a body runs on. Each is one library function
+    // serving every class, so the operation's own name is the whole of what a
+    // symbol needs.
     case support::BuiltinFn::kPropertyAt:
-    case support::BuiltinFn::kBehaviorAt:
-    case support::BuiltinFn::kObjectOf:
-    case support::BuiltinFn::kObjectIsOfClass:
+    case support::BuiltinFn::kViewOf:
+    case support::BuiltinFn::kSelfHandle:
     // What reports a change to an object's properties, one library function
     // each for every class.
     case support::BuiltinFn::kObjectRootOf:
