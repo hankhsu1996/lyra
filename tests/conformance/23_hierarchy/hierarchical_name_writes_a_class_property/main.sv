@@ -6,7 +6,9 @@
 //
 // Writing is the same rule in the other direction, and it is what shows the
 // access landed on storage rather than on a copy: the declaring scope reads
-// its own object back and sees what the outside reader put there.
+// its own object back and sees what the outside reader put there. An
+// assignment operator and a property passed to a `ref` formal (LRM 13.5.2)
+// land there too.
 module Child;
   class Packet;
     int tag = 1;
@@ -54,6 +56,10 @@ module Top;
 
   Child kid ();
 
+  task automatic bump(ref int x);
+    x += 100;
+  endtask
+
   initial begin
     Stamped s = new();
     lone = s;
@@ -62,7 +68,9 @@ module Top;
   initial begin
     #2;
     down_tag = kid.lone.tag;
-    kid.lone.tag = 55;
+    kid.lone.tag = 50;
+    kid.lone.tag += 5;
+    #1 bump(kid.lone.tag);
   end
 
   initial begin
@@ -73,8 +81,8 @@ module Top;
   final begin
     if (down_tag !== 1)
       $fatal(1, "a downward read of a hidden property saw %0d, expected 1", down_tag);
-    if (kid.own_read_back !== 55)
-      $fatal(1, "a downward write left the object at %0d, expected 55", kid.own_read_back);
+    if (kid.own_read_back !== 155)
+      $fatal(1, "a downward write left the object at %0d, expected 155", kid.own_read_back);
     if (kid.up_tag !== 1)
       $fatal(1, "an upward read of a hidden property saw %0d, expected 1", kid.up_tag);
     if (own_read_back !== 77)

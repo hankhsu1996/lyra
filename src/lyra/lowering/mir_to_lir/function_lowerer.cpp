@@ -78,6 +78,30 @@ auto AssembledFrom(const lir::Type& built, std::vector<lir::Operand> parts)
       "from parts");
 }
 
+// The position a call names, where the part it names is a component of a
+// product or the member an active-member value holds. Only a reference to a
+// property names a property, and that is lowered as a step on its object
+// before any entry is called, so one reaching here is a producer that named
+// the wrong kind of part.
+auto ComponentPartOf(const mir::Direct& direct)
+    -> std::optional<base::ComponentIndex> {
+  const auto names_a_property = []() -> base::ComponentIndex {
+    throw InternalError(
+        "mir_to_lir: an entry naming a property is a reference to it, taken as "
+        "a step on its object -- please report this as a bug");
+  };
+  return direct.part.transform([&](const mir::CallPart& part) {
+    return std::visit(
+        Overloaded{
+            [](base::ComponentIndex position) { return position; },
+            [&](const mir::ClassFieldTarget&) { return names_a_property(); },
+            [&](const mir::CrossUnitClassFieldTarget&) {
+              return names_a_property();
+            }},
+        part);
+  });
+}
+
 // The place a place local names: its own storage, with nothing projected off
 // it.
 auto LocalPlace(lir::ValueId local) -> lir::Place {
@@ -92,6 +116,16 @@ auto BindsReference(
     mir::TypeId result_type) -> bool {
   return std::holds_alternative<mir::Construct>(call.callee) &&
          types.Get(result_type).Is<mir::RefType>();
+}
+
+// Whether this call opens a write into an object. The write is a library
+// object the runtime builds over the object, so a construction of one is a
+// call naming that object rather than an assembly of parts.
+auto OpensObjectWrite(
+    const mir::TypePool& types, const mir::CallExpr& call,
+    mir::TypeId result_type) -> bool {
+  return std::holds_alternative<mir::Construct>(call.callee) &&
+         types.Get(result_type).Is<mir::ObjectWriteType>();
 }
 
 // Whether this call brings an object into existence. A construction names the
@@ -239,8 +273,8 @@ auto FunctionLowerer::LowerCallTarget(
                     },
                     [&](const support::BuiltinFn& fn)
                         -> diag::Result<lir::CallTarget> {
-                      return lir::CallTarget{
-                          lir::BuiltinTarget{.fn = fn, .position = d.position}};
+                      return lir::CallTarget{lir::BuiltinTarget{
+                          .fn = fn, .position = ComponentPartOf(d)}};
                     },
                     [&](const mir::UnitCallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
@@ -1709,7 +1743,7 @@ auto SelectionOf(const mir::CallExpr& call)
 // is fixed by the call rather than computed, so it rides on the callee.
 auto PositionOf(const mir::CallExpr& call) -> base::ComponentIndex {
   const std::optional<base::ComponentIndex> position =
-      std::get<mir::Direct>(call.callee).position;
+      ComponentPartOf(std::get<mir::Direct>(call.callee));
   if (!position.has_value()) {
     throw InternalError(
         "mir_to_lir: an entry reaching a part by its position names that "
@@ -1948,6 +1982,18 @@ auto FunctionLowerer::WrapperContentsPlace(
   auto pointer = LowerExpr(block, wrapper);
   if (!pointer) {
     return std::unexpected(std::move(pointer.error()));
+  }
+  // A write in progress into an object is dereferenced to that object, as a
+  // guard is to what it guards; the library holds which object it is.
+  if (const auto* write = wrapper_ty.As<mir::ObjectWriteType>()) {
+    auto object = EmitCallTo(
+        lir::BuiltinTarget{.fn = support::BuiltinFn::kWrittenObject},
+        {*std::move(pointer)},
+        AddressType(unit_->TranslateType(write->object)));
+    if (!object) {
+      return std::unexpected(std::move(object.error()));
+    }
+    return StorageAt(*std::move(object));
   }
   // Opening a reference lands on the value the storage it names holds, which
   // is what the reference states; which of the two forms that storage is, is
@@ -2203,16 +2249,14 @@ auto FunctionLowerer::LowerPlace(
             return ReferencePlace(reference.target, expr.type, reach);
           },
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Place> {
-            auto receiver = LowerExpr(block, field.receiver);
-            if (!receiver) {
-              return std::unexpected(std::move(receiver.error()));
+            auto object = LowerPlace(block, field.receiver, HolderReach(reach));
+            if (!object) {
+              return object;
             }
-            return lir::Place{
-                .base = *std::move(receiver),
-                .chain = {
-                    lir::Projection{lir::DerefProjection{}},
-                    lir::Projection{lir::MemberProjection{
-                        .member = MemberRefOf(field.field)}}}};
+            lir::Place member = *std::move(object);
+            member.chain.emplace_back(
+                lir::MemberProjection{.member = MemberRefOf(field.field)});
+            return member;
           },
           [&](const mir::DerefExpr& deref) -> diag::Result<lir::Place> {
             return WrapperContentsPlace(block, deref.pointer);
@@ -2353,12 +2397,38 @@ auto FunctionLowerer::LowerCallOperands(
       return std::unexpected(std::move(lowered.error()));
     }
   }
-  for (const mir::ExprId argument : call.arguments) {
+  // An entry acting on an object is handed whatever reaches it, and takes the
+  // object itself, so that operand is opened the way an access's receiver is.
+  std::span<const mir::ExprId> rest = call.arguments;
+  if (const auto fn = mir::DirectBuiltinFn(call);
+      fn.has_value() && support::RuntimeEntryOf(*fn).reaches_an_object) {
+    auto object = ObjectAddress(block, rest.front());
+    if (!object) {
+      return std::unexpected(std::move(object.error()));
+    }
+    args.push_back(*std::move(object));
+    rest = rest.subspan(1);
+  }
+  for (const mir::ExprId argument : rest) {
     if (auto lowered = lower_into(argument); !lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
   }
   return args;
+}
+
+auto FunctionLowerer::ObjectAddress(
+    const mir::Block& block, mir::ExprId reaches)
+    -> diag::Result<lir::Operand> {
+  auto object = WrapperContentsPlace(block, reaches);
+  if (!object) {
+    return std::unexpected(std::move(object.error()));
+  }
+  return AddressOf(
+      *std::move(object),
+      unit_->TranslateType(
+          mir::ObjectReachedThrough(
+              unit_->Mir().types, block.exprs.Get(reaches).type)));
 }
 
 auto FunctionLowerer::LowerObjectConstruction(
@@ -2477,20 +2547,72 @@ auto FunctionLowerer::LowerReferenceBind(
     throw InternalError(
         "mir_to_lir: a reference is built over exactly one referent");
   }
-  // A reference built over a reference denotes the storage at the end of the
-  // chain rather than binding afresh (LRM 23.3.3.2), so what it carries is the
-  // reference it was handed and there is no second address to take.
-  if (unit_->Mir()
-          .types.Get(block.exprs.Get(call.arguments[0]).type)
-          .Is<mir::RefType>()) {
-    return LowerExpr(block, call.arguments[0]);
-  }
   auto cell = LowerCellPlace(block, call.arguments[0]);
   if (!cell) {
     return std::unexpected(std::move(cell.error()));
   }
   return Emit(
       unit_->TranslateType(type), lir::AddrOfInstr{.place = *std::move(cell)});
+}
+
+auto FunctionLowerer::LowerPropertyReference(
+    const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+    -> diag::Result<lir::Operand> {
+  const auto& direct = std::get<mir::Direct>(call.callee);
+  if (call.arguments.size() != 1 || !direct.part.has_value()) {
+    throw InternalError(
+        "mir_to_lir: a reference to a property is a step taken on its object, "
+        "naming the property -- please report this as a bug");
+  }
+  const mir::FieldRef property = std::visit(
+      Overloaded{
+          [](base::ComponentIndex) -> mir::FieldRef {
+            throw InternalError(
+                "mir_to_lir: a reference to a property names a property, and "
+                "this one names a position -- please report this as a bug");
+          },
+          [](const mir::ClassFieldTarget& t) -> mir::FieldRef { return t; },
+          [](const mir::CrossUnitClassFieldTarget& t) -> mir::FieldRef {
+            return t;
+          }},
+      *direct.part);
+  // The object is reached once, as every entry acting on an object reaches it,
+  // and both what holds the storage and where the storage is are read off it,
+  // the way a member access reaches its storage through its receiver.
+  auto args = LowerCallOperands(block, call);
+  if (!args) {
+    return std::unexpected(std::move(args.error()));
+  }
+  const lir::TypeId value = unit_->TranslateType(
+      unit_->Mir().types.Get(type).Get<mir::RefType>().pointee);
+  args->push_back(AddressOf(
+      lir::Place{
+          .base = args->front(),
+          .chain =
+              {lir::Projection{lir::DerefProjection{}},
+               lir::Projection{
+                   lir::MemberProjection{.member = MemberRefOf(property)}}}},
+      value));
+  return EmitCallTo(
+      lir::BuiltinTarget{.fn = support::BuiltinFn::kReferProperty},
+      *std::move(args), unit_->TranslateType(type));
+}
+
+auto FunctionLowerer::LowerObjectWriteOpening(
+    const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+    -> diag::Result<lir::Operand> {
+  if (call.arguments.size() != 1) {
+    throw InternalError(
+        "mir_to_lir: a write into an object is opened on the one object it "
+        "writes -- please report this as a bug");
+  }
+  auto object = ObjectAddress(block, call.arguments.front());
+  if (!object) {
+    return object;
+  }
+  return EmitCallTo(
+      lir::BuiltinTarget{.fn = support::BuiltinFn::kOpenObjectWrite},
+      {*std::move(object)}, unit_->TranslateType(type));
 }
 
 auto FunctionLowerer::LowerCellPlace(
@@ -2555,6 +2677,9 @@ auto FunctionLowerer::LowerCall(
   if (BindsReference(unit_->Mir().types, call, type)) {
     return LowerReferenceBind(block, call, type);
   }
+  if (OpensObjectWrite(unit_->Mir().types, call, type)) {
+    return LowerObjectWriteOpening(block, call, type);
+  }
 
   // Bringing an object into existence and initializing it are two operations
   // over one heap the runtime owns: it answers an object whose properties hold
@@ -2574,6 +2699,9 @@ auto FunctionLowerer::LowerCall(
   }
 
   if (const auto fn = mir::DirectBuiltinFn(call); fn.has_value()) {
+    if (*fn == support::BuiltinFn::kReferProperty) {
+      return LowerPropertyReference(block, call, type);
+    }
     // A foreign caller cannot be parked, so the entry point it reached drives
     // the body to its end where it stands instead of waiting for it (LRM 35.8).
     if (*fn == support::BuiltinFn::kRunExportedTaskToCompletion) {
@@ -3281,8 +3409,13 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
               return std::unexpected(std::move(operand.error()));
             }
             // A handle read as another class's handle is a new handle to the
-            // same object; every other cast reads its operand again.
-            if (unit_->Mir().types.Get(type).Is<mir::ManagedRefType>()) {
+            // same object; every other cast reads its operand again. Which of
+            // the two a cast is follows from the pair of types, as a C++ cast
+            // is chosen from its pair.
+            const auto& types = unit_->Mir().types;
+            if (types.Get(type).Is<mir::ManagedRefType>() &&
+                types.Get(block.exprs.Get(cast.operand).type)
+                    .Is<mir::ManagedRefType>()) {
               return Emit(
                   unit_->TranslateType(type),
                   lir::HandleCastInstr{.operand = *std::move(operand)});

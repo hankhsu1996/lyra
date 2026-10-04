@@ -32,6 +32,23 @@ struct Operand {
 // A type, as the type mapping spells it.
 void WriteType(const ScopeView& view, TargetText& out, mir::TypeId type);
 
+// The object a member -- a field, or a member function a call enters -- is
+// reached on, followed by the access to it: `p->` where the object is what a
+// pointer designates, which C++ defines as `(*p).` ([expr.ref]), and `o.`
+// otherwise.
+void WriteMemberReceiver(
+    const ScopeView& view, TargetText& out, mir::ExprId object);
+
+// A pointer to the member a property is, `&Class::field`, qualified by the
+// class declaring it: how a call naming the property as the part it reaches is
+// handed which one.
+void WriteMemberPointer(
+    TargetText& out, const mir::CompilationUnit& unit,
+    const mir::ClassFieldTarget& property);
+void WriteMemberPointer(
+    TargetText& out, const mir::CompilationUnit& unit,
+    const mir::CrossUnitClassFieldTarget& property);
+
 // One piece of a write that lists punctuation and what it wraps in the order
 // they are read. An expression id is rendered as a whole expression, an
 // `Operand` at the precedence it states, a type through the type mapping, and

@@ -7,6 +7,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/mir/class.hpp"
+#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
@@ -26,6 +27,21 @@ auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
   mir::Expr read = frame.bindings->MakeReadExpr(self, *frame.current_block);
   read.type = self_ptr_type;
   return read;
+}
+
+auto BuildObjectDeref(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reaches)
+    -> mir::ExprId {
+  // `*&x` is `x`: an object whose address was just taken to reach it is that
+  // object, so the round trip is not stated.
+  if (const auto* address =
+          std::get_if<mir::AddressOfExpr>(&block.exprs.Get(reaches).data)) {
+    return address->operand;
+  }
+  return block.exprs.Add(
+      mir::MakeDerefExpr(
+          reaches, mir::ObjectReachedThrough(
+                       unit.types, block.exprs.Get(reaches).type)));
 }
 
 auto BindImplicitParameters(
@@ -110,7 +126,7 @@ auto BuildEnclosingScopeReceiver(
                 MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
             return block.exprs.Add(
                 mir::MakeFieldAccessExpr(
-                    self,
+                    BuildObjectDeref(unit, block, self),
                     mir::ClassFieldTarget{
                         .owner = frame.current_class_id,
                         .slot = through.member},
@@ -135,7 +151,7 @@ auto BuildEnclosingScopeReceiver(
                     .callee =
                         mir::Direct{
                             .target = support::BuiltinFn::kParent,
-                            .receiver = nav},
+                            .receiver = BuildObjectDeref(unit, block, nav)},
                     .arguments = {}},
             .type = unit.builtins.scope_ptr});
   }
@@ -150,7 +166,9 @@ auto BuildStructuralFieldAccessExpr(
     mir::EnclosingHops hops, mir::FieldId var) -> mir::Expr {
   const EnclosingClass owner = frame.EnclosingClassAtHops(hops);
   const mir::TypeId field_type = owner.cls->fields.Get(var).type;
-  const mir::ExprId receiver = BuildEnclosingScopeReceiver(frame, unit, hops);
+  const mir::ExprId receiver = BuildObjectDeref(
+      unit, *frame.current_block,
+      BuildEnclosingScopeReceiver(frame, unit, hops));
   return mir::MakeFieldAccessExpr(
       receiver, mir::ClassFieldTarget{.owner = owner.id, .slot = var},
       field_type);
@@ -163,13 +181,10 @@ auto BuildReferenceArg(
   // Referencing a value that is itself a reference seals to the same final
   // cell: a `Ref<T>` taken over a `Ref<T>` aliases what that reference aliases,
   // never nesting into `Ref<Ref<T>>` (LRM 23.3.3.2). The argument is the
-  // existing reference, copied to share its pointee.
+  // existing reference itself, as a C++ reference initialized from a reference
+  // binds what that one binds.
   if (pointee_ty.Is<mir::RefType>()) {
-    return block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{.callee = mir::Construct{}, .arguments = {cell}},
-            .type = pointee});
+    return cell;
   }
   // The reference aliases the cell's value, not its storage wrapper: a `Ref<T>`
   // over an observable cell binds the underlying `Var<T>`, so the pointee is

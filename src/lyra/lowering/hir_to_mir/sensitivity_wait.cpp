@@ -128,14 +128,10 @@ auto BuildReportCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
     support::BuiltinFn entry, std::vector<mir::ExprId> arguments,
     mir::TypeId type) -> mir::ExprId {
-  const mir::ExprId object = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::DerefExpr{
-                  .pointer = block.exprs.Add(
-                      mir::MakeLocalRefExpr(
-                          report, unit.builtins.read_report_ptr))},
-          .type = unit.builtins.read_report});
+  const mir::ExprId object = BuildObjectDeref(
+      unit, block,
+      block.exprs.Add(
+          mir::MakeLocalRefExpr(report, unit.builtins.read_report_ptr)));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -337,8 +333,7 @@ auto ReportObjectThenHops(
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Block& block = *frame.current_block;
   ReportPlace(
-      unit, block, report,
-      ObjectEventSourceOf(unit, block, ObjectRootOf(unit, block, object())),
+      unit, block, report, ObjectEventSourceOf(unit, block, object()),
       WholeRun(unit, block));
   if (hops.empty()) return {};
   const hir::ObjectChain::Hop& hop = hops.front();

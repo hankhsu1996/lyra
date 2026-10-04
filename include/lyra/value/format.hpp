@@ -155,7 +155,8 @@ struct FormatArg {
   // The same operand, carrying the text its type renders it as. An enumeration
   // is its base integral under every other conversion, so it keeps its value
   // beside the text.
-  FormatArg(const PackedArray& value, const String& pattern);
+  [[nodiscard]] static auto Patterned(
+      const PackedArray& value, const String& pattern) -> FormatArg;
 
   // An operand that reads only as the text its type renders it as, every other
   // conversion being one the language leaves undefined for it and this refuses
@@ -202,9 +203,11 @@ inline FormatArg::FormatArg(const Chandle& value)
 inline FormatArg::FormatArg(const ObjectRef& value)
     : FormatArg(MakeFormatArg(value)) {
 }
-inline FormatArg::FormatArg(const PackedArray& value, const String& pattern)
-    : FormatArg(MakeFormatArg(value)) {
-  this->pattern = &pattern;
+inline auto FormatArg::Patterned(
+    const PackedArray& value, const String& pattern) -> FormatArg {
+  FormatArg arg = MakeFormatArg(value);
+  arg.pattern = &pattern;
+  return arg;
 }
 inline auto FormatArg::Rendered(const String& pattern) -> FormatArg {
   FormatArg arg;

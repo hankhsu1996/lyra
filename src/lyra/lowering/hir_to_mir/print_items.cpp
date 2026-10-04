@@ -186,12 +186,13 @@ auto BuildRuntimeFormatOperand(
     return block.exprs.Add(mir::MakeLocalRefExpr(value, value_type));
   };
 
-  const auto make_arg = [&](std::vector<mir::ExprId> parts) {
+  const auto make_arg = [&](mir::Callee callee,
+                            std::vector<mir::ExprId> parts) {
     return block.exprs.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
-                    .callee = mir::Construct{}, .arguments = std::move(parts)},
+                    .callee = std::move(callee), .arguments = std::move(parts)},
             .type = unit.builtins.format_arg});
   };
 
@@ -210,20 +211,15 @@ auto BuildRuntimeFormatOperand(
 
   switch (PatternReadingOf(lowerer.Owner().Hir(), source.type)) {
     case PatternReading::kTheValueAnswers:
-      return make_arg({read_value()});
+      return make_arg(mir::Construct{}, {read_value()});
     case PatternReading::kTheTypeNamesTheValue:
-      return make_arg({read_value(), bind_text()});
+      return make_arg(
+          mir::Direct{.target = support::BuiltinFn::kMakePatternedFormatArg},
+          {read_value(), bind_text()});
     case PatternReading::kTheTypeNamesItsMembers:
-      return block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::CallExpr{
-                      .callee =
-                          mir::Direct{
-                              .target =
-                                  support::BuiltinFn::kMakeRenderedFormatArg},
-                      .arguments = {bind_text()}},
-              .type = unit.builtins.format_arg});
+      return make_arg(
+          mir::Direct{.target = support::BuiltinFn::kMakeRenderedFormatArg},
+          {bind_text()});
     case PatternReading::kNothingCanAnswer:
       return RefuseAssignmentPatternText(lowerer, hir_arg);
   }
@@ -258,7 +254,8 @@ auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kHierarchicalPath,
-                          .receiver = receiver_id},
+                          .receiver =
+                              BuildObjectDeref(unit, block, receiver_id)},
                   .arguments = {}},
           .type = unit.builtins.string});
 }

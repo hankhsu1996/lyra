@@ -616,9 +616,10 @@ auto LowerProcess(
                                       mir::CallableTarget{
                                           .owner = body_frame.current_class_id,
                                           .slot = advance},
-                                  .receiver =
+                                  .receiver = BuildObjectDeref(
+                                      unit, closure.Body(),
                                       closure.Body().exprs.Add(MakeSelfRefExpr(
-                                          closure.Frame(), self_ptr_type))},
+                                          closure.Frame(), self_ptr_type)))},
                           .arguments = {}},
                   .type = void_type})});
 
@@ -666,7 +667,7 @@ auto BuildEvaluationAttemptsExpr(
       MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
-          self,
+          BuildObjectDeref(lowerer.Owner().Unit(), block, self),
           mir::ClassFieldTarget{.owner = frame.current_class_id, .slot = field},
           frame.current_class->fields.Get(field).type));
 }
@@ -761,9 +762,12 @@ void AppendConcurrentAssertionInstall(
                                             .owner =
                                                 activate_frame.current_class_id,
                                             .slot = target},
-                                    .receiver = closure.Body().exprs.Add(
-                                        MakeSelfRefExpr(
-                                            closure.Frame(), self_ptr_type))},
+                                    .receiver = BuildObjectDeref(
+                                        unit, closure.Body(),
+                                        closure.Body().exprs.Add(
+                                            MakeSelfRefExpr(
+                                                closure.Frame(),
+                                                self_ptr_type)))},
                             .arguments = {}},
                     .type = void_type})});
     return block.exprs.Add(closure.BuildVoid());

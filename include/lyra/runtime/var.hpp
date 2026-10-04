@@ -14,6 +14,8 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/class_definition.hpp"
+#include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/registration.hpp"
@@ -23,6 +25,7 @@
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/object_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
@@ -506,6 +509,20 @@ class Ref {
   explicit Ref(const ErasedReference& erased) : erased_(erased) {
   }
 
+  // A reference to the property `at` places on an object, held by the object so
+  // a write through it tells the object as it lands (LRM 9.4.2, 13.5.2), for a
+  // referrer whose class declares no position it can count for the property.
+  // The object is given by whatever reaches it.
+  [[nodiscard]] static auto AtProperty(
+      GcObject* object, const PropertyCoordinate* at) -> Ref {
+    return Ref{
+        ErasedReference{.holder = object, .storage = PropertyAt(object, at)}};
+  }
+  [[nodiscard]] static auto AtProperty(
+      const value::ObjectRef& handle, const PropertyCoordinate* at) -> Ref {
+    return AtProperty(ObjectRootOf(handle), at);
+  }
+
   [[nodiscard]] auto Erased() const -> const ErasedReference& {
     return erased_;
   }
@@ -620,13 +637,39 @@ class Ref {
   ErasedReference erased_;
 };
 
-// A reference to a property of the object `object` addresses (LRM 8.4), which
-// a write through it tells as it lands (LRM 9.4.2): the reference to the
-// property's storage, held by the object.
-template <value::LyraValue T>
-auto ReferProperty(GcObject* object, const Ref<T>& storage) -> Ref<T> {
-  return Ref<T>{
-      ErasedReference{.holder = object, .storage = storage.Erased().storage}};
+// The class declaring a member, and the member's type, as a pointer to the
+// member states them.
+template <class MemberPointer>
+struct MemberOf;
+
+template <class T, class C>
+struct MemberOf<T C::*> {
+  using Class = C;
+  using Value = T;
+};
+
+// A reference to the property `Property` of an object (LRM 8.4), held by the
+// object so a write through it tells the object as it lands (LRM 9.4.2,
+// 13.5.2), given whatever reaches the object: the running method's own object,
+// or a handle. The property is a step taken on the object, so the object is
+// reached once. Reaching a property through a handle naming no object is the
+// design's own failure.
+template <auto Property>
+auto ReferProperty(typename MemberOf<decltype(Property)>::Class* object)
+    -> Ref<typename MemberOf<decltype(Property)>::Value> {
+  if (object == nullptr) {
+    value::RaiseNullObjectHandleAccess();
+  }
+  return Ref<typename MemberOf<decltype(Property)>::Value>{ErasedReference{
+      .holder = static_cast<GcObject*>(object),
+      .storage = &(object->*Property)}};
+}
+
+template <auto Property>
+auto ReferProperty(const value::ObjectRef& handle)
+    -> Ref<typename MemberOf<decltype(Property)>::Value> {
+  return ReferProperty<Property>(
+      handle.View<typename MemberOf<decltype(Property)>::Class>());
 }
 
 // What a wait on the storage `reference` names registers on (LRM 13.5.2): what
@@ -909,6 +952,12 @@ class Designation {
       before_.emplace(*part_);
     }
     return *part_;
+  }
+
+  // A member reached through the designation is reached on what `*` lands on,
+  // as `p->m` is `(*p).m`.
+  auto operator->() -> Part* {
+    return &**this;
   }
 
  private:

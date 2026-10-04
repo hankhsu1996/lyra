@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -111,7 +112,8 @@ auto ForwardingBody(
                           .target =
                               mir::CallableTarget{
                                   .owner = id, .slot = callable},
-                          .receiver = entry.self},
+                          .receiver = BuildObjectDeref(
+                              unit, entry.code.Body(), entry.self)},
                   .arguments = std::move(entry.args)},
           .type = prototype.result});
   CompleteWith(unit, entry.code, call, prototype.result);
@@ -129,8 +131,8 @@ auto AddFieldAddressEntry(
   mir::Block& body = entry.code.Body();
   const mir::ExprId field = body.exprs.Add(
       mir::MakeFieldAccessExpr(
-          entry.self, mir::ClassFieldTarget{.owner = id, .slot = slot},
-          field_type));
+          BuildObjectDeref(unit, body, entry.self),
+          mir::ClassFieldTarget{.owner = id, .slot = slot}, field_type));
   const mir::ExprId address = body.exprs.Add(
       mir::MakeAddressOfExpr(
           field, unit.types.Intern(
@@ -158,8 +160,9 @@ auto AddDispatchingEntry(
               mir::CallExpr{
                   .callee =
                       mir::Virtual{
-                          .receiver =
-                              AsIntroducer(unit.types, body, entry.self, slot),
+                          .receiver = BuildObjectDeref(
+                              unit, body,
+                              AsIntroducer(unit.types, body, entry.self, slot)),
                           .slot = slot},
                   .arguments = std::move(entry.args)},
           .type = prototype.result});

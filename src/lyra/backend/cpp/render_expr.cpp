@@ -170,15 +170,25 @@ void RenderCastExpr(
       });
 }
 
+// A field of another unit's class, declared in that unit's header. Its name is
+// built from the slot and the field name that unit published, the same way
+// that unit built it.
+auto ExternalFieldName(
+    const mir::CompilationUnit& unit, const mir::CrossUnitClassFieldTarget& t)
+    -> MintedName {
+  const mir::ExternalClass* declaring =
+      mir::FindExternalClass(unit.external_classes, t.unit_name, t.class_name);
+  if (declaring == nullptr || t.slot.value >= declaring->fields.size()) {
+    throw InternalError(
+        "backend::cpp: a property access names a slot no consumed promise "
+        "describes");
+  }
+  return CppFieldNameOf(t.slot, declaring->fields.Get(t.slot).name);
+}
+
 void RenderFieldAccessExpr(
     const ScopeView& view, const mir::FieldAccessExpr& m, TargetText& out) {
-  const auto write_receiver = [&]() {
-    const mir::Expr& receiver = view.Expr(m.receiver);
-    WriteStorageOf(out, view.Unit(), receiver.type, [&](Precedence at_least) {
-      Write(view, out, Operand{.expr = m.receiver, .at_least = at_least});
-    });
-    out += ".";
-  };
+  WriteMemberReceiver(view, out, m.receiver);
   std::visit(
       Overloaded{
           [&](const mir::ClassFieldTarget& t) {
@@ -187,31 +197,15 @@ void RenderFieldAccessExpr(
             // access means was settled by the source, not by the receiver's
             // type (LRM 8.14).
             const auto& cls = view.Unit().GetClass(t.owner);
-            write_receiver();
             Write(
                 out, CppClassName(cls, t.owner),
                 "::", CppFieldName(cls.named_fields, t.slot));
           },
           [&](const mir::ClosureFieldTarget& t) {
-            write_receiver();
             Write(out, CppClosureCaptureName(t.slot));
           },
           [&](const mir::CrossUnitClassFieldTarget& t) {
-            // A field of another unit's class, declared in that unit's
-            // header. Its name is built from the slot and the field name that
-            // unit published, the same way that unit built it.
-            const mir::ExternalClass* declaring = mir::FindExternalClass(
-                view.Unit().external_classes, t.unit_name, t.class_name);
-            if (declaring == nullptr ||
-                t.slot.value >= declaring->fields.size()) {
-              throw InternalError(
-                  "RenderFieldAccessExpr: a property access names a slot no "
-                  "consumed promise describes");
-            }
-            write_receiver();
-            Write(
-                out,
-                CppFieldNameOf(t.slot, declaring->fields.Get(t.slot).name));
+            Write(out, ExternalFieldName(view.Unit(), t));
           }},
       m.field);
 }
@@ -388,10 +382,10 @@ void RenderPartsAsBraceInit(
 
 void RenderDerefExpr(
     const ScopeView& view, const mir::DerefExpr& d, TargetText& out) {
-  const mir::Expr& pointer = view.Expr(d.pointer);
-  WriteStorageOf(out, view.Unit(), pointer.type, [&](Precedence at_least) {
-    Write(view, out, Operand{.expr = d.pointer, .at_least = at_least});
-  });
+  WriteDeref(
+      out, view.Unit(), view.Expr(d.pointer).type, [&](Precedence at_least) {
+        Write(view, out, Operand{.expr = d.pointer, .at_least = at_least});
+      });
 }
 
 // How a float literal is written so it reads back exactly: the fewest digits
@@ -445,6 +439,42 @@ void RenderMachineFloatLiteral(
 
 void WriteType(const ScopeView& view, TargetText& out, mir::TypeId type) {
   Write(out, CppType(view.Unit(), type));
+}
+
+void WriteMemberReceiver(
+    const ScopeView& view, TargetText& out, mir::ExprId object) {
+  if (const auto* through =
+          std::get_if<mir::DerefExpr>(&view.Expr(object).data)) {
+    WriteArrowAccess(
+        out, view.Unit(), view.Expr(through->pointer).type,
+        [&](Precedence at_least) {
+          Write(
+              view, out,
+              Operand{.expr = through->pointer, .at_least = at_least});
+        });
+    return;
+  }
+  Write(
+      view, out, Operand{.expr = object, .at_least = Precedence::kPostfix},
+      ".");
+}
+
+void WriteMemberPointer(
+    TargetText& out, const mir::CompilationUnit& unit,
+    const mir::ClassFieldTarget& property) {
+  const auto& cls = unit.GetClass(property.owner);
+  Write(
+      out, "&", CppClassName(cls, property.owner),
+      "::", CppFieldName(cls.named_fields, property.slot));
+}
+
+void WriteMemberPointer(
+    TargetText& out, const mir::CompilationUnit& unit,
+    const mir::CrossUnitClassFieldTarget& property) {
+  Write(
+      out, "&", CppUnitScope(property.unit_name),
+      "::", ToCppName(property.class_name),
+      "::", ExternalFieldName(unit, property));
 }
 
 void WriteCommaSeparated(

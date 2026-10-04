@@ -131,24 +131,41 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
       expr.data);
 }
 
-// Rebuilds a target's descent onto a body-side reference to its owner. The
-// navigation that reaches the owner is evaluated
-// once at submit time and captured as `captured_owner`; the descent above it
-// is restated over that capture with every coordinate snapshotted by value, so
-// the body writes the part the statement named at submit time (LRM 10.4.2). A
-// target that designates nothing is the captured reference itself. The object
-// an owner is a property of is captured beside it, so the write the body makes
-// is the one that tells the object.
+// The owner of a target as the body reaches it, evaluated once at submit time
+// and captured (LRM 10.4.2). A place is captured as a reference to it. A
+// property of an object is captured as its object, so the write the body makes
+// is opened on that object then and is the one that tells it.
+auto FrozenOwner(
+    UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
+    ClosureBuilder& closure, const PathOwner& owner) -> PathOwner {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& outer_block = *outer_frame.current_block;
+  const auto captured = [&](mir::ExprId id) {
+    return SnapshotIntoClosure(unit_lowerer, outer_frame, closure, id);
+  };
+  return std::visit(
+      Overloaded{
+          [&](mir::ExprId place) -> PathOwner {
+            return captured(BuildReferenceArg(
+                unit, outer_block, place, outer_block.exprs.Get(place).type));
+          },
+          [&](const ObjectProperty& property) -> PathOwner {
+            return ObjectProperty{
+                .object = captured(property.object),
+                .property = CoordinateMapped(property.property, captured),
+                .type = property.type};
+          }},
+      owner);
+}
+
+// Rebuilds a target's descent onto its frozen owner. The descent is restated
+// over the capture with every coordinate snapshotted by value, so the body
+// writes the part the statement named at submit time (LRM 10.4.2).
 auto FreezeTarget(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
-    ClosureBuilder& closure, const AccessPath& target,
-    mir::ExprId captured_owner) -> AccessPath {
+    ClosureBuilder& closure, const AccessPath& target) -> AccessPath {
   AccessPath frozen = target;
-  frozen.owner = captured_owner;
-  if (target.object.has_value()) {
-    frozen.object =
-        SnapshotIntoClosure(unit_lowerer, outer_frame, closure, *target.object);
-  }
+  frozen.owner = FrozenOwner(unit_lowerer, outer_frame, closure, target.owner);
   for (DescentStep& step : frozen.descent) {
     for (mir::ExprId& coordinate : step.operands) {
       coordinate =
@@ -173,18 +190,9 @@ auto FreezeAssignmentInto(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, const AccessPath& target_in_outer,
     std::span<const mir::ExprId> operands_in_outer) -> FrozenAssignment {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& outer_block = *outer_frame.current_block;
-
-  const mir::ExprId place_ref = BuildReferenceArg(
-      unit, outer_block, target_in_outer.owner,
-      outer_block.exprs.Get(target_in_outer.owner).type);
-  const mir::ExprId captured_owner =
-      SnapshotIntoClosure(unit_lowerer, outer_frame, closure, place_ref);
-
   FrozenAssignment frozen{
-      .target = FreezeTarget(
-          unit_lowerer, outer_frame, closure, target_in_outer, captured_owner),
+      .target =
+          FreezeTarget(unit_lowerer, outer_frame, closure, target_in_outer),
       .operands = {}};
   frozen.operands.reserve(operands_in_outer.size());
   for (const mir::ExprId op : operands_in_outer) {
@@ -202,9 +210,18 @@ auto FreezeAssignmentInto(
 // of it: reaching it means a target was lowered to storage the source did not
 // name.
 auto CheckTargetOutlivesUpdate(
-    const mir::Block& block, mir::ExprId target_in_outer, diag::SourceSpan span)
-    -> diag::Result<void> {
-  if (!TargetOutlivesDeferredUpdate(block, target_in_outer)) {
+    const mir::Block& block, const PathOwner& target_in_outer,
+    diag::SourceSpan span) -> diag::Result<void> {
+  // A property is storage its object holds, which outlives the update whatever
+  // reaches the object, as a field reached through a pointer does.
+  const bool outlives = std::visit(
+      Overloaded{
+          [&](mir::ExprId place) {
+            return TargetOutlivesDeferredUpdate(block, place);
+          },
+          [](const ObjectProperty&) { return true; }},
+      target_in_outer);
+  if (!outlives) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedAssignmentTarget,
         "a nonblocking assignment names storage that does not outlive the "

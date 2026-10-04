@@ -103,8 +103,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_format_spec";
     case RuntimeOp::kMakeFormatArg:
       return "make_format_arg";
-    case RuntimeOp::kMakeFormatArgWithPattern:
-      return "make_format_arg_with_pattern";
     case RuntimeOp::kMakeDpiBitBuffer:
       return "make_dpi_bit_buffer";
     case RuntimeOp::kMakeDpiLogicBuffer:
@@ -806,6 +804,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFormat:
     case support::BuiltinFn::kFormatRuntime:
     case support::BuiltinFn::kMakeRenderedFormatArg:
+    case support::BuiltinFn::kMakePatternedFormatArg:
     case support::BuiltinFn::kWrite:
     case support::BuiltinFn::kWriteln:
     case support::BuiltinFn::kDiagnostic:
@@ -892,14 +891,14 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSelfHandle:
     // What reports a change to an object's properties, one library function
     // each for every class.
-    case support::BuiltinFn::kObjectRootOf:
     case support::BuiltinFn::kObjectEventSource:
     case support::BuiltinFn::kOpenObjectWrite:
-    case support::BuiltinFn::kObjectWriteThrough:
+    case support::BuiltinFn::kWrittenObject:
     // A reference to a property holds the property erased, so one function
     // serves every property's type; and what any reference reports to is a
     // fact of the reference, whatever it names.
     case support::BuiltinFn::kReferProperty:
+    case support::BuiltinFn::kReferPropertyAt:
     case support::BuiltinFn::kReferenceReportsTo:
     // What an enumeration's member list answers about a value. One routine
     // serves every enumeration, because the list is the receiver and every

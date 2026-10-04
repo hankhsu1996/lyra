@@ -279,6 +279,13 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{
                 lir::DesignationType{.value = TranslateType(d.value)}};
           },
+          // Which class the write answers its object as is a fact of the
+          // writer's own accesses, each of which states its member's class, so
+          // below MIR the write is the one library object every class shares.
+          [](const mir::ObjectWriteType&) -> lir::Type {
+            return lir::Type{lir::RuntimeLibraryType{
+                .kind = lir::RuntimeLibraryKind::kObjectWrite}};
+          },
           [&](const mir::ObservableType& ob) -> lir::Type {
             return lir::Type{
                 lir::ObservableType{.value = TranslateType(ob.value)}};
@@ -362,8 +369,6 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kObservation);
     case mir::RuntimeLibraryKind::kReadReport:
       return mirror(lir::RuntimeLibraryKind::kReadReport);
-    case mir::RuntimeLibraryKind::kObjectWrite:
-      return mirror(lir::RuntimeLibraryKind::kObjectWrite);
     case mir::RuntimeLibraryKind::kCancellationTarget:
       return mirror(lir::RuntimeLibraryKind::kCancellationTarget);
     case mir::RuntimeLibraryKind::kControlEffect:

@@ -210,14 +210,11 @@ class UnitLowerer {
   // because consuming it is what makes the unit a dependency.
   auto RecordPromisedClass(const hir::ExternalUnitObject& promised) -> void;
 
-  // Convenience that dispatches a HIR class property reference to its MIR
-  // `FieldRef` peer: the intra-unit arm translates the owner class and the
-  // field slot through the class registry, the cross-unit arm records this
-  // unit's dependency on the declaring unit in the same call. A caller reading
-  // a class property reaches for one entry point instead of visiting the
-  // variant at each access site.
-  auto TranslateClassPropertyTarget(const hir::ClassPropertyTarget& target)
-      -> mir::FieldRef;
+  // A property of a class of this unit as its MIR field, translated through the
+  // class registry.
+  [[nodiscard]] auto TranslateClassPropertyTarget(
+      const hir::LocalClassPropertyTarget& local) const
+      -> mir::ClassFieldTarget;
 
   auto MakeExternalStaticPropertyRef(
       const hir::ExternalStaticPropertyTarget& target)

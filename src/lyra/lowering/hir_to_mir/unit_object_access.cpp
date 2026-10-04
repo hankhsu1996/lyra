@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -30,7 +31,7 @@ auto ReadPublishedMember(
               mir::CallExpr{
                   .callee =
                       mir::Virtual{
-                          .receiver = object,
+                          .receiver = BuildObjectDeref(unit, block, object),
                           .slot =
                               mir::ExternalVirtualSlot{
                                   .unit_name = promised.unit_name,

@@ -93,7 +93,6 @@ enum class RuntimeOp : std::uint8_t {
   kMakePrintValueItem,
   kMakeFormatSpec,
   kMakeFormatArg,
-  kMakeFormatArgWithPattern,
   kMakeDpiBitBuffer,
   kMakeDpiLogicBuffer,
   kMakeDpiOpenArray,

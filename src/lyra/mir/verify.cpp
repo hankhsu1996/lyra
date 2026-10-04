@@ -400,6 +400,46 @@ void VerifyNoRunEvaluatesTwice(
   }
 }
 
+// A member -- a field, or a member function a call enters -- is reached on the
+// object as a place, and whatever reaches an object is dereferenced to it
+// first. A receiver that still reaches one would leave every consumer to work
+// out from its type that it has to be opened. A field is a member of an object
+// alone; a call may also be entered on a value of the library's, such as a
+// handle or a reference, whose own member function it names, so only a pointer
+// is refused there.
+void VerifyMemberReceivers(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  const auto refuse = [&](ExprId id) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} reaches a member through {} (expression {} of its "
+            "block) on what reaches an object rather than on the object, so "
+            "the dereference it implies is stated nowhere",
+            describe(), Describe(block.exprs.Get(id).data), id.value));
+  };
+  for (const ExprId id : block.exprs.Ids()) {
+    const ExprData& data = block.exprs.Get(id).data;
+    if (const auto* access = std::get_if<FieldAccessExpr>(&data)) {
+      const Type& receiver =
+          unit.types.Get(block.exprs.Get(access->receiver).type);
+      if (receiver.Is<PointerType>() || receiver.Is<ManagedRefType>() ||
+          receiver.Is<ObjectWriteType>() || receiver.Is<RefType>()) {
+        refuse(id);
+      }
+    }
+    if (const auto* call = std::get_if<CallExpr>(&data)) {
+      const std::optional<ExprId> receiver = CalleeReceiver(call->callee);
+      if (receiver.has_value() &&
+          unit.types.Get(block.exprs.Get(*receiver).type).Is<PointerType>()) {
+        refuse(id);
+      }
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyMemberReceivers(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
 // `describe` names the body, and is asked only once there is something to
 // report: the check runs over every body of every unit, and composing a name
 // for each one costs more than the check itself.
@@ -410,6 +450,7 @@ void VerifyCode(
     return;
   }
   VerifyNoRunEvaluatesTwice(*code.body, {}, describe);
+  VerifyMemberReceivers(unit, *code.body, describe);
   if (!Suspends(unit, *code.body, describe) ||
       unit.types.Get(code.result_type).Is<CoroutineType>()) {
     return;

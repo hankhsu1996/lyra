@@ -279,7 +279,7 @@ auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
     case support::LibraryObject::kDesignation:
       return Of<ErasedDesignation>();
     case support::LibraryObject::kObjectWrite:
-      return Of<ObjectWrite>();
+      return Of<ErasedObjectWrite>();
     case support::LibraryObject::kReference:
       return Of<ErasedReference>();
   }

@@ -18,19 +18,18 @@ auto EventSourceOf(GcObject* object) -> Observable* {
   return &object->EventSource();
 }
 
-ObjectWrite::ObjectWrite(GcObject* object, const void* place)
-    : object_(object), place_(place) {
+ErasedObjectWrite::ErasedObjectWrite(GcObject* object) : object_(object) {
   if (object_ == nullptr) {
     value::RaiseNullObjectHandleAccess();
   }
 }
 
-ObjectWrite::~ObjectWrite() {
+ErasedObjectWrite::~ErasedObjectWrite() {
   object_->PublishChange();
 }
 
-auto ObjectWrite::Place() const -> const void* {
-  return place_;
+auto ErasedObjectWrite::Object() const -> GcObject* {
+  return object_;
 }
 
 }  // namespace lyra::runtime

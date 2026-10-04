@@ -131,6 +131,7 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           [&](const mir::DriverType&) { return crosses_no_boundary(); },
           [&](const mir::OpenWriteType&) { return crosses_no_boundary(); },
           [&](const mir::DesignationType&) { return crosses_no_boundary(); },
+          [&](const mir::ObjectWriteType&) { return crosses_no_boundary(); },
           [&](const mir::SampledHistoryType&) { return crosses_no_boundary(); },
           [&](const mir::EvaluationAttemptsType&) {
             return crosses_no_boundary();

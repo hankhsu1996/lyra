@@ -320,11 +320,13 @@ enum class BuiltinFn : std::uint16_t {
   // step says so where it is taken.
   kReferElement,
   kReferComponent,
-  // A reference to a property of an object (LRM 13.5.2, 8.4), taking the object
-  // as the root every object shares and the property's address. A write
-  // through it tells the object as it lands (LRM 9.4.2), so the object travels
-  // with the reference.
+  // A reference to a property of an object (LRM 13.5.2, 8.4), a step taken on
+  // the object. A write through it tells the object as it lands (LRM 9.4.2), so
+  // the object travels with the reference. The first names the property as the
+  // part the call reaches; the second takes the coordinate a class answers
+  // where the referrer can count no position for it.
   kReferProperty,
+  kReferPropertyAt,
   // What a wait on the storage a reference names registers on: whatever a
   // write through the reference is told to -- the variable, or the object a
   // property belongs to (LRM 13.5.2, 9.4.2) -- as an erased pointer, the form
@@ -428,6 +430,12 @@ enum class BuiltinFn : std::uint16_t {
   // conversion and one that reads only as its pattern being two ways of making
   // one thing out of the same argument type.
   kMakeRenderedFormatArg,
+  // An operand of such a format string that reads by conversion and also
+  // carries the text its type renders it as (LRM 21.2.1.6): an enumeration,
+  // which is its base integral under every other conversion. A factory of its
+  // own, so which of the two operations a construction is never depends on how
+  // many operands it was handed.
+  kMakePatternedFormatArg,
   kWrite,
   kWriteln,
   // Diagnostic subsystem accessor and severity-fixed emit operations.
@@ -687,26 +695,24 @@ enum class BuiltinFn : std::uint16_t {
   // nothing left to decide at the call.
   kClassFindProperty,
   kClassFindBehaviorBody,
-  // Applying that position to whichever object a handle holds: the class the
-  // position names answers where the storage is on that object. Which object
-  // it is, is not decided until the access runs, so the position alone reaches
-  // nothing and this is the step that spends it.
+  // Applying that position to whichever object the access reaches: the class
+  // the position names answers where the storage is on that object. Which
+  // object it is, is not decided until the access runs, so the position alone
+  // reaches nothing and this is the step that spends it.
   kPropertyAt,
   // The part of the object a handle reaches it through. A body runs on that
   // part rather than on a reference to it, and a handle refers to one without
   // being one, so a call entering a body of a class it cannot name asks for
   // the part here.
   kViewOf,
-  // What reports a change to an object's properties (LRM 9.4.2), each taking
-  // the object as the root every object shares: that root of the object a
-  // handle names; the event source a wait reaching the object subscribes to; a
-  // write into one of its properties, opened for the place written, open while
-  // the full-expression doing it lasts and telling the object when it ends;
-  // and that place, reached through the write.
-  kObjectRootOf,
+  // What reports a change to an object's properties (LRM 9.4.2): the event
+  // source a wait reaching the object subscribes to; a write into its
+  // properties, opened on the object alone, open while the full-expression
+  // doing it lasts and telling the object when it ends; and the object a write
+  // answers, which is how a dereference of the write is reached below MIR.
   kObjectEventSource,
   kOpenObjectWrite,
-  kObjectWriteThrough,
+  kWrittenObject,
   // Fork-join branch dispatch. Each entry spawns every branch as its own
   // coroutine and yields the parent's wait shape per LRM 9.3.2: `kForkWaitAll`
   // for `join` (resume after the last branch), `kForkWaitFirst` for
@@ -1116,6 +1122,13 @@ struct RuntimeEntry {
   // Where the library declares the entry, and what a call site writes to reach
   // it.
   EntryDeclaration declaration;
+  // Whether the entry acts on an object, its first operand being whatever
+  // reaches that object -- a class handle, the running method's own object, or
+  // a write in progress into it -- as an access's receiver is. Reaching the
+  // object from it is each target's, as it is for a member access: the C++
+  // library takes each kind as it is, and below MIR the object is opened from
+  // it the way a member access opens its receiver.
+  bool reaches_an_object = false;
   // Whether the entry's implementation takes the engine handle -- to reach the
   // scheduler, or to identify the process that is running. It is an ordinary
   // operand, riding immediately after the object the entry acts on and first

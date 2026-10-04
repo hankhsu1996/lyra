@@ -496,7 +496,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kReferProperty:
       return {
           .name = "refer_property",
-          .declaration = FreeFunction{"lyra::runtime::ReferProperty"}};
+          .declaration = FreeFunction{"lyra::runtime::ReferProperty"},
+          .reaches_an_object = true};
+    case BuiltinFn::kReferPropertyAt:
+      return {
+          .name = "refer_property_at",
+          .declaration = StaticFactory{"AtProperty"},
+          .reaches_an_object = true};
     case BuiltinFn::kReferenceReportsTo:
       return {
           .name = "reference_reports_to",
@@ -588,6 +594,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "make_rendered_format_arg",
           .declaration = StaticFactory{"Rendered"}};
+    case BuiltinFn::kMakePatternedFormatArg:
+      return {
+          .name = "make_patterned_format_arg",
+          .declaration = StaticFactory{"Patterned"}};
     case BuiltinFn::kWrite:
       return {.name = "write", .declaration = Method{"Write"}};
     case BuiltinFn::kWriteln:
@@ -887,25 +897,23 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kPropertyAt:
       return {
           .name = "property_at",
-          .declaration = FreeFunction{"lyra::runtime::PropertyAt"}};
+          .declaration = FreeFunction{"lyra::runtime::PropertyAt"},
+          .reaches_an_object = true};
     case BuiltinFn::kViewOf:
       return {
           .name = "view_of",
           .declaration = FreeFunction{"lyra::runtime::ViewOf"}};
-    case BuiltinFn::kObjectRootOf:
-      return {
-          .name = "object_root_of",
-          .declaration = FreeFunction{"lyra::runtime::ObjectRootOf"}};
     case BuiltinFn::kObjectEventSource:
       return {
           .name = "object_event_source",
-          .declaration = FreeFunction{"lyra::runtime::EventSourceOf"}};
+          .declaration = FreeFunction{"lyra::runtime::EventSourceOf"},
+          .reaches_an_object = true};
     case BuiltinFn::kOpenObjectWrite:
       return {
           .name = "open_object_write",
-          .declaration = FreeFunction{"lyra::runtime::ObjectWrite"}};
-    case BuiltinFn::kObjectWriteThrough:
-      return {.name = "object_write_through", .declaration = Method{"Place"}};
+          .declaration = FreeFunction{"lyra::runtime::ErasedObjectWrite"}};
+    case BuiltinFn::kWrittenObject:
+      return {.name = "written_object", .declaration = Method{"Object"}};
     case BuiltinFn::kClassFindBehaviorBody:
       return {
           .name = "class_find_behavior_body",

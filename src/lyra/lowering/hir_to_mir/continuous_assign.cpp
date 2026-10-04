@@ -3,6 +3,7 @@
 #include <expected>
 #include <optional>
 #include <utility>
+#include <variant>
 
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
@@ -38,13 +39,13 @@ struct AttachedDriver {
 
 // The class field access reaching an attached driver from `frame`'s body.
 auto DriverAccess(
-    const WalkFrame& frame, mir::Block& block, const AttachedDriver& driver)
-    -> mir::ExprId {
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
+    const AttachedDriver& driver) -> mir::ExprId {
   const mir::ExprId self = block.exprs.Add(
       MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
-          self,
+          BuildObjectDeref(unit, block, self),
           mir::ClassFieldTarget{
               .owner = frame.current_class_id, .slot = driver.field},
           driver.type));
@@ -90,7 +91,7 @@ auto LowerContinuousAssign(
     if (!named_or) return std::unexpected(std::move(named_or.error()));
     if (!driver.has_value()) return named_or;
     AccessPath rerooted = *std::move(named_or);
-    rerooted.owner = DriverAccess(frame, block, *driver);
+    rerooted.owner = DriverAccess(unit, frame, block, *driver);
     return rerooted;
   };
 
@@ -101,9 +102,15 @@ auto LowerContinuousAssign(
     mir::Block& resolve_block = *resolve_frame.current_block;
     auto named_or = lowerer.LowerLhsExpr(hir_lhs, resolve_frame);
     if (!named_or) return std::unexpected(std::move(named_or.error()));
-    const mir::ExprId cell = named_or->owner;
-    if (const auto* net = unit.types.Get(resolve_block.exprs.Get(cell).type)
-                              .As<mir::ResolvedType>()) {
+    // A property of an object is a variable's storage, never a net's, so only
+    // a place can be a net.
+    const auto* place = std::get_if<mir::ExprId>(&named_or->owner);
+    const auto* net = place == nullptr
+                          ? nullptr
+                          : unit.types.Get(resolve_block.exprs.Get(*place).type)
+                                .As<mir::ResolvedType>();
+    if (net != nullptr) {
+      const mir::ExprId cell = *place;
       const mir::TypeId driver_type =
           unit.types.Intern(mir::Type{mir::DriverType{.value = net->value}});
       mir::Class& mir_class = *resolve_frame.current_class;
@@ -115,7 +122,7 @@ auto LowerContinuousAssign(
       const mir::ExprId attach = resolve_block.exprs.Add(
           mir::MakeNetAttachDriverCallExpr(cell, strength, driver_type));
       const mir::ExprId handle =
-          DriverAccess(resolve_frame, resolve_block, *driver);
+          DriverAccess(unit, resolve_frame, resolve_block, *driver);
       resolve_block.AppendStmt(
           mir::ExprStmt{
               .expr = resolve_block.exprs.Add(

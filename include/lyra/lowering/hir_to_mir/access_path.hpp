@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
+#include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -66,17 +67,29 @@ struct DescentStep {
     const mir::CompilationUnit& unit, mir::Block& block,
     const DescentStep& step) -> std::vector<mir::ExprId>;
 
-// A part of a value named from its owner: the place that owns the whole value,
-// and the descent that reaches the part. A write lands in it, a reference is
-// formed over it, a wait watches it and a join of nets covers it, and each is
-// handed this one statement of which part it is. A path that names no part
-// descends nowhere and is its owner's own place.
-//
-// Where the owner is a property of an object (LRM 8.4), `object` is that
-// object, as the address its members are reached through. A write to the
-// property is opened on the object, and a reference to it carries the object,
-// which is what tells it that it was written (LRM 9.4.2); a variable's own
-// storage reports a write itself and has none.
+// A property of an object as what owns a value (LRM 8.4): the object, as the
+// expression the source reaches it through -- a class handle, or the running
+// method's own object -- and which of its properties. The object is kept apart
+// from the storage the property occupies because what a path is taken for
+// decides how the object is reached: a write opens a write on the object and
+// reaches the property through it, a reference is a step taken on the object,
+// and a read reads the member. Either way the object is what is told that it
+// was written (LRM 9.4.2).
+struct ObjectProperty {
+  mir::ExprId object;
+  PropertyName property;
+  mir::TypeId type;
+};
+
+// What owns the value a path descends into: a place -- a variable, a cell, a
+// reference, a field of the running scope -- or a property of an object.
+using PathOwner = std::variant<mir::ExprId, ObjectProperty>;
+
+// A part of a value named from its owner: what owns the whole value, and the
+// descent that reaches the part. A write lands in it, a reference is formed
+// over it, a wait watches it and a join of nets covers it, and each is handed
+// this one statement of which part it is. A path that names no part descends
+// nowhere and is its owner's own place.
 //
 // This is the lowering's own shape and reaches no layer below. What MIR carries
 // is what the descent lowers to -- a run of ordinary calls, each naming its own
@@ -84,10 +97,19 @@ struct DescentStep {
 // descent itself would have to decide which operation each step is, which is
 // the decision this layer is here to make.
 struct AccessPath {
-  mir::ExprId owner;
+  PathOwner owner;
   std::vector<DescentStep> descent;
-  std::optional<mir::ExprId> object = std::nullopt;
 };
+
+// The place a path's owner is, for a construct whose owner is never a property
+// of an object: the nets a join covers.
+[[nodiscard]] auto OwnerPlace(const AccessPath& path) -> mir::ExprId;
+
+// The type of the value `owner` holds: what a capability wrapper stands for,
+// the type of any other place, or the property's own type.
+[[nodiscard]] auto OwnerValueType(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    const PathOwner& owner) -> mir::TypeId;
 
 // The same path one step deeper. This is the only thing that builds a descent,
 // so the path gains exactly one step per level of the source's own nesting and
@@ -112,15 +134,16 @@ struct AccessPath {
 // starting from the whole of what it designates, which is how it learns what
 // forming each did, and the place is where the last of them is dereferenced.
 // An owner that is a property of an object is reached through a write opened on
-// the object.
+// the object alone, as the member of the object the write answers.
 [[nodiscard]] auto PathPlace(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
 
 // The path as a reference (LRM 13.5.2): a reference to the whole of what the
-// owner holds, then one step per part, each taken on the reference before it.
-// What a reference to a part belongs to travels with it, so a write through it
-// is a write of the owner at the moment it lands, however long the reference is
+// owner holds -- for a property of an object, a step taken on the object --
+// then one step per part, each taken on the reference before it. What a
+// reference to a part belongs to travels with it, so a write through it is a
+// write of the owner at the moment it lands, however long the reference is
 // held.
 [[nodiscard]] auto PathReference(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
@@ -177,21 +200,26 @@ struct AccessPath {
     const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId place)
     -> mir::ExprId;
 
+// `owner` with whatever is computed on the way to it evaluated here, once: the
+// way to a place, or the object a property belongs to.
+[[nodiscard]] auto SettledOwner(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const PathOwner& owner) -> PathOwner;
+
 // The same path with everything it computes evaluated here, once: the way to
-// its owner, the object a property belongs to, and every operand of its steps.
-// A path describes nodes that are evaluated wherever it is taken, so one taken
-// at more than one place is settled first.
+// its owner and every operand of its steps. A path describes nodes that are
+// evaluated wherever it is taken, so one taken at more than one place is
+// settled first.
 [[nodiscard]] auto Settled(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path)
     -> AccessPath;
 
-// A part a construct reads at several places: where its owner lies and the
-// descent to it, neither evaluating anything, and the block their nodes are
-// named in. Every read of it reaches the same part. A read asks nothing of the
-// object a property belongs to, so none is named.
+// A part a construct reads at several places: its owner and the descent to it,
+// neither evaluating anything, and the block their nodes are named in. Every
+// read of it reaches the same part.
 struct SettledPath {
   const mir::Block* named_in = nullptr;
-  mir::ExprId owner;
+  PathOwner owner;
   std::vector<DescentStep> descent;
 };
 

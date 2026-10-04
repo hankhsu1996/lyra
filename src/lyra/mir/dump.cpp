@@ -85,6 +85,30 @@ auto FormatExprList(std::span<const ExprId> ids) -> std::string {
   return text;
 }
 
+auto FormatField(const ClassFieldTarget& t) -> std::string {
+  return std::format("Class[{}]::Field[{}]", t.owner.value, t.slot.value);
+}
+
+auto FormatField(const ClosureFieldTarget& t) -> std::string {
+  return std::format("Closure[{}]::Field[{}]", t.owner.value, t.slot.value);
+}
+
+auto FormatField(const CrossUnitClassFieldTarget& t) -> std::string {
+  return std::format(
+      "External[{}::{}#{}]", t.unit_name, t.class_name, t.slot.value);
+}
+
+auto FormatCallPart(const CallPart& part) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](base::ComponentIndex position) {
+            return std::format("{}", position.value);
+          },
+          [](const ClassFieldTarget& t) { return FormatField(t); },
+          [](const CrossUnitClassFieldTarget& t) { return FormatField(t); }},
+      part);
+}
+
 class MirDumper {
  public:
   auto Dump(const CompilationUnit& unit) -> std::string {
@@ -426,8 +450,6 @@ class MirDumper {
                   return "RuntimeLibrary(Observation)";
                 case RuntimeLibraryKind::kReadReport:
                   return "RuntimeLibrary(ReadReport)";
-                case RuntimeLibraryKind::kObjectWrite:
-                  return "RuntimeLibrary(ObjectWrite)";
                 case RuntimeLibraryKind::kObjectDefinition:
                   return "RuntimeLibrary(ObjectDefinition)";
                 case RuntimeLibraryKind::kDpiBitBuffer:
@@ -537,6 +559,10 @@ class MirDumper {
             },
             [](const DesignationType& d) -> std::string {
               return std::format("Designation(value=Type[{}])", d.value.value);
+            },
+            [](const ObjectWriteType& w) -> std::string {
+              return std::format(
+                  "ObjectWrite(object=Type[{}])", w.object.value);
             },
             [](const SampledHistoryType& h) -> std::string {
               return std::format(
@@ -691,13 +717,13 @@ class MirDumper {
                   d.receiver.has_value()
                       ? std::format(" recv=Expr[{}]", d.receiver->value)
                       : std::string{};
-              const std::string position =
-                  d.position.has_value()
-                      ? std::format(" at={}", d.position->value)
+              const std::string part =
+                  d.part.has_value()
+                      ? std::format(" at={}", FormatCallPart(*d.part))
                       : std::string{};
               return std::format(
                   "Direct[{}{}{}]", FormatDirectTarget(d.target), receiver,
-                  position);
+                  part);
             },
             [](const Indirect& i) -> std::string {
               return std::format("Indirect[code=Expr[{}]]", i.code.value);
@@ -867,21 +893,14 @@ class MirDumper {
                   m.receiver.value,
                   std::visit(
                       Overloaded{
-                          [](const ClassFieldTarget& t) -> std::string {
-                            return std::format(
-                                "Class[{}]::Field[{}]", t.owner.value,
-                                t.slot.value);
+                          [](const ClassFieldTarget& t) {
+                            return FormatField(t);
                           },
-                          [](const ClosureFieldTarget& t) -> std::string {
-                            return std::format(
-                                "Closure[{}]::Field[{}]", t.owner.value,
-                                t.slot.value);
+                          [](const ClosureFieldTarget& t) {
+                            return FormatField(t);
                           },
-                          [](const CrossUnitClassFieldTarget& t)
-                              -> std::string {
-                            return std::format(
-                                "External[{}::{}#{}]", t.unit_name,
-                                t.class_name, t.slot.value);
+                          [](const CrossUnitClassFieldTarget& t) {
+                            return FormatField(t);
                           }},
                       m.field));
             },

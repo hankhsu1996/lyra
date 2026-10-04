@@ -97,78 +97,61 @@ class CppClassRef {
 
 void WriteOne(TargetText& out, const CppClassRef& ref);
 
-// How to reach the storage behind a place of this type as an lvalue. A pointer,
-// and a `ref` to a cell (LRM 23.3.3.2), are dereferenced: `(*p)`. A reference
-// to an object is opened as the class the code assumes, `r.Deref<T>()`, which
-// is also where a null reference is caught (LRM 8.4). Any other type stands for
-// no storage and is refused.
-//
-// This is the only place that spells the runtime's access protocol; the rest
-// of the render writes punctuation around its answer.
-struct OpenedByDereference {};
+// How C++ dereferences a value of this type. A pointer takes the indirection
+// operator built in; a `ref` to a cell (LRM 23.3.3.2) and a write in progress
+// take it through the `operator*` and `operator->` their library types declare.
+// An object reference declares neither, being one type whatever class it
+// refers to, so it is opened through its view as the class the code assumes,
+// which is also where a null reference is caught (LRM 8.4). Any other type
+// reaches nothing to dereference and is refused.
+struct DerefByOperator {};
 
-struct OpenedThroughView {
+struct DerefThroughView {
   mir::TypeId pointee;
 };
 
-using PlaceAccess = std::variant<OpenedByDereference, OpenedThroughView>;
+using DerefSpelling = std::variant<DerefByOperator, DerefThroughView>;
 
-[[nodiscard]] auto PlaceAccessAsCpp(
-    const mir::CompilationUnit& unit, mir::TypeId type_id) -> PlaceAccess;
+[[nodiscard]] auto DerefSpellingAsCpp(
+    const mir::CompilationUnit& unit, mir::TypeId type_id) -> DerefSpelling;
 
-// The object a call is entered on, given its receiver of this type. A pointer
-// designates the object it addresses, which is opened as any place of it is:
-// `(*p)`. A value of any other type is that object itself -- a library value
-// whose own member function the call names, such as a string or a reference to
-// an object -- so there is nothing to open. A receiver may be such a value
-// where a place never is, which is why this is a question of its own.
-struct ReceiverIsTheObject {};
-
-using ReceiverAccess = std::variant<ReceiverIsTheObject, OpenedByDereference>;
-
-[[nodiscard]] auto ReceiverAccessAsCpp(
-    const mir::CompilationUnit& unit, mir::TypeId type_id) -> ReceiverAccess;
-
-// What a dereference opens, as a postfix form: `(*p)`. `write_place` writes
-// the pointer and is told the precedence it needs after the `*`.
-template <typename WritePlace>
-void WriteDereferenced(TargetText& out, WritePlace write_place) {
-  out += "(*";
-  write_place(Precedence::kPrefix);
-  out += ")";
-}
-
-// The object a call is entered on, followed by the `.` its member takes.
-// `write_receiver` writes the receiver and is told the precedence its position
-// needs.
-template <typename WriteReceiver>
-void WriteReceiverObject(
-    TargetText& out, const ReceiverAccess& access,
-    WriteReceiver write_receiver) {
+// C++'s indirection over a value of `pointer_type`, `(*p)` ([expr.unary.op]),
+// or `r.Deref<T>()` where the dereference goes through a view. `write_pointer`
+// writes the pointer and is told the precedence its position needs.
+template <typename WritePointer>
+void WriteDeref(
+    TargetText& out, const mir::CompilationUnit& unit, mir::TypeId pointer_type,
+    WritePointer write_pointer) {
   std::visit(
       Overloaded{
-          [&](ReceiverIsTheObject) { write_receiver(Precedence::kPostfix); },
-          [&](OpenedByDereference) { WriteDereferenced(out, write_receiver); }},
-      access);
-  out += ".";
-}
-
-// The storage behind a place, written as a postfix form so the caller can put a
-// member or a call right after it. `write_place` writes the place itself and is
-// told the precedence its position needs: after the `*` of a dereference, or
-// before a member call.
-template <typename WritePlace>
-void WriteStorageOf(
-    TargetText& out, const mir::CompilationUnit& unit, mir::TypeId place_type,
-    WritePlace write_place) {
-  std::visit(
-      Overloaded{
-          [&](OpenedByDereference) { WriteDereferenced(out, write_place); },
-          [&](const OpenedThroughView& view) {
-            write_place(Precedence::kPostfix);
+          [&](DerefByOperator) {
+            out += "(*";
+            write_pointer(Precedence::kPrefix);
+            out += ")";
+          },
+          [&](const DerefThroughView& view) {
+            write_pointer(Precedence::kPostfix);
             Write(out, ".Deref<", CppType(unit, view.pointee), ">()");
           }},
-      PlaceAccessAsCpp(unit, place_type));
+      DerefSpellingAsCpp(unit, pointer_type));
+}
+
+// A member access through what `pointer_type` designates, up to the member's
+// name: `p->`, which C++ defines as `(*p).` ([expr.ref]), or `r.Deref<T>().`
+// where the dereference goes through a view. `write_pointer` writes the
+// pointer and is told the precedence its position needs.
+template <typename WritePointer>
+void WriteArrowAccess(
+    TargetText& out, const mir::CompilationUnit& unit, mir::TypeId pointer_type,
+    WritePointer write_pointer) {
+  write_pointer(Precedence::kPostfix);
+  std::visit(
+      Overloaded{
+          [&](DerefByOperator) { out += "->"; },
+          [&](const DerefThroughView& view) {
+            Write(out, ".Deref<", CppType(unit, view.pointee), ">().");
+          }},
+      DerefSpellingAsCpp(unit, pointer_type));
 }
 
 // How a value of one type is written as another. C++'s cast notation picks the

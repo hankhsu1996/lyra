@@ -589,8 +589,10 @@ auto ClassDeclLowerer::PopulateBodies(
         frame, unit_lowerer.Unit(), mir::EnclosingHops{});
     const mir::ExprId target = ctor_block.exprs.Add(
         mir::MakeFieldAccessExpr(
-            ctor_block.exprs.Add(
-                MakeSelfRefExpr(frame, shape.self_pointer_type)),
+            BuildObjectDeref(
+                unit_lowerer.Unit(), ctor_block,
+                ctor_block.exprs.Add(
+                    MakeSelfRefExpr(frame, shape.self_pointer_type))),
             mir::ClassFieldTarget{.owner = class_id_, .slot = instance->member},
             instance->type));
     ctor_block.AppendStmt(
@@ -663,7 +665,7 @@ auto ClassDeclLowerer::PopulateBodies(
         ctor_block.exprs.Add(MakeSelfRefExpr(frame, shape.self_pointer_type));
     const mir::ExprId target = ctor_block.exprs.Add(
         mir::MakeFieldAccessExpr(
-            self_ref,
+            BuildObjectDeref(unit_lowerer.Unit(), ctor_block, self_ref),
             mir::ClassFieldTarget{.owner = class_id_, .slot = mir_field_id},
             field_type));
     const mir::ExprId assign =

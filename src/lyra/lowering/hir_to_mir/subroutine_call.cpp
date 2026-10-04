@@ -567,7 +567,9 @@ auto BuildAmbientHandle(
                         ReachedObject{
                             .expr = frame.current_block->exprs.Add(
                                 mir::MakeFieldAccessExpr(
-                                    nav,
+                                    BuildObjectDeref(
+                                        lowerer.Owner().Unit(),
+                                        *frame.current_block, nav),
                                     mir::ClassFieldTarget{
                                         .owner = owner,
                                         .slot = anchor.borrowed_handle},
@@ -621,7 +623,8 @@ auto ResolveCallee(
             return ResolvedCallee{
                 .callee =
                     mir::Direct{
-                        .target = named.callee.target, .receiver = *handle_or},
+                        .target = named.callee.target,
+                        .receiver = BuildObjectDeref(unit, block, *handle_or)},
                 .leading = std::nullopt};
           },
           [&](const DispatchedCallee& dispatched)
@@ -634,8 +637,11 @@ auto ResolveCallee(
             return ResolvedCallee{
                 .callee =
                     mir::Virtual{
-                        .receiver = AsIntroducer(
-                            unit.types, block, *receiver_or, dispatched.slot),
+                        .receiver = BuildObjectDeref(
+                            unit, block,
+                            AsIntroducer(
+                                unit.types, block, *receiver_or,
+                                dispatched.slot)),
                         .slot = dispatched.slot},
                 .leading = std::nullopt};
           },

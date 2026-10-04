@@ -82,6 +82,13 @@ using DeclaredClassRef = std::variant<IntraUnitClassRef, CrossUnitClassRef>;
 [[nodiscard]] auto ClassOfObject(const TypePool& types, TypeId object)
     -> DeclaredClassRef;
 
+// The object a value of type `reaches` reaches, as the class it is reached as:
+// the class a handle is of, what a pointer points at, or the class a write in
+// progress is open on. A value of any other type reaches no object, so
+// asking is a producer's defect.
+[[nodiscard]] auto ObjectReachedThrough(const TypePool& types, TypeId reaches)
+    -> TypeId;
+
 // A method that introduces a new virtual dispatch slot on the class it
 // declares -- LRM 8.20 `virtual function` first appearance in an inheritance
 // chain. The slot's canonical identity is this method's own declaration

@@ -11,10 +11,13 @@
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
+#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/field.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
@@ -282,6 +285,88 @@ TEST(MirVerifyTest, AValueBoundAmongStepsIsNamedAtEachPlace) {
                         .type = u.builtins.int_type})});
       })),
       InternalError);
+}
+
+// A field is accessed on the object, and what reaches an object is dereferenced
+// to it first, so an access made on the pointer itself is refused -- here in a
+// nested block, where a lowering writes most statements.
+TEST(MirVerifyTest, AFieldIsAccessedOnTheObjectAPointerReaches) {
+  const auto access_on = [](bool dereferenced) {
+    return UnitWithBody([dereferenced](CompilationUnit& u, Block& body) {
+      const TypeId pointer_type = u.types.Intern(
+          Type{PointerType{
+              .pointee = u.builtins.int_type,
+              .ownership = PointerOwnership::kBorrowed}});
+      Block inner;
+      const ExprId pointer =
+          inner.exprs.Add(Expr{.data = NullLiteral{}, .type = pointer_type});
+      const ExprId receiver =
+          dereferenced
+              ? inner.exprs.Add(MakeDerefExpr(pointer, u.builtins.int_type))
+              : pointer;
+      inner.AppendStmt(
+          ExprStmt{
+              .expr = inner.exprs.Add(MakeFieldAccessExpr(
+                  receiver,
+                  ClassFieldTarget{
+                      .owner = ClassId{.value = 0},
+                      .slot = FieldId{.value = 0}},
+                  u.builtins.int_type))});
+      const BlockId scope = body.child_scopes.Add(std::move(inner));
+      body.AppendStmt(BlockStmt{.scope = scope});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(access_on(true)));
+  try {
+    Verify(access_on(false));
+    FAIL() << "a field access on a pointer was accepted";
+  } catch (const InternalError& error) {
+    const std::string message = error.what();
+    EXPECT_NE(message.find("'f' of unit 'U'"), std::string::npos) << message;
+    EXPECT_NE(
+        message.find("on what reaches an object rather than on the object"),
+        std::string::npos)
+        << message;
+  }
+}
+
+// A member function is entered on the object as well, so a call whose receiver
+// is the pointer itself is refused and one on what the pointer designates is
+// not.
+TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
+  const auto call_on = [](bool dereferenced) {
+    return UnitWithBody([dereferenced](CompilationUnit& u, Block& body) {
+      const TypeId pointer_type = u.types.Intern(
+          Type{PointerType{
+              .pointee = u.builtins.int_type,
+              .ownership = PointerOwnership::kBorrowed}});
+      const ExprId pointer =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = pointer_type});
+      const ExprId receiver =
+          dereferenced
+              ? body.exprs.Add(MakeDerefExpr(pointer, u.builtins.int_type))
+              : pointer;
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.exprs.Add(
+                  Expr{
+                      .data =
+                          CallExpr{
+                              .callee =
+                                  Direct{
+                                      .target =
+                                          CallableTarget{
+                                              .owner = ClassId{.value = 0},
+                                              .slot = CallableId{.value = 0}},
+                                      .receiver = receiver},
+                              .arguments = {}},
+                      .type = u.builtins.void_type})});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(call_on(true)));
+  EXPECT_THROW(Verify(call_on(false)), InternalError);
 }
 
 }  // namespace

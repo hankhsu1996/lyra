@@ -336,7 +336,8 @@ auto BuildOwnedInstance(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kAddOwnedChild,
-                          .receiver = parent_self},
+                          .receiver = BuildObjectDeref(
+                              unit_lowerer.Unit(), block, parent_self)},
                   .arguments = {ctor_call_id}},
           .type = builtins.scope_ptr});
   return block.exprs.Add(
@@ -475,8 +476,10 @@ auto EmitInstanceMemberConstruction(
         SequenceOver(unit_lowerer, borrowed, im.array_dims.size());
     const mir::ExprId member = block.exprs.Add(
         mir::MakeFieldAccessExpr(
-            block.exprs.Add(
-                MakeSelfRefExpr(frame, frame.current_class->self_pointer_type)),
+            BuildObjectDeref(
+                unit_lowerer.Unit(), block,
+                block.exprs.Add(MakeSelfRefExpr(
+                    frame, frame.current_class->self_pointer_type))),
             mir::ClassFieldTarget{
                 .owner = frame.current_class_id,
                 .slot = lowerer.InstanceMemberField(id)},
@@ -640,7 +643,8 @@ auto StepToChildByName(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kFindChild,
-                          .receiver = receiver},
+                          .receiver = BuildObjectDeref(
+                              unit_lowerer.Unit(), block, receiver)},
                   .arguments =
                       {BuildStringLiteral(unit_lowerer, block, name),
                        BuildIndicesLiteral(unit_lowerer, block, indices)}},
@@ -667,8 +671,10 @@ auto BuildRouteAnchor(
         .target = OwnScope{&lowerer.EnclosingScopeAtHops(ih->hops)}};
   }
 
-  const mir::ExprId self_ref = block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  const mir::ExprId self_object = BuildObjectDeref(
+      unit, block,
+      block.exprs.Add(
+          MakeSelfRefExpr(frame, frame.current_class->self_pointer_type)));
 
   if (std::holds_alternative<hir::RootHead>(head)) {
     const mir::ExprId root = block.exprs.Add(
@@ -678,7 +684,7 @@ auto BuildRouteAnchor(
                     .callee =
                         mir::Direct{
                             .target = support::BuiltinFn::kResolveRoot,
-                            .receiver = self_ref},
+                            .receiver = self_object},
                     .arguments = {}},
             .type = scope_ptr_type});
     return RouteReceiver{.expr = root, .target = ScopeBase{}};
@@ -693,7 +699,7 @@ auto BuildRouteAnchor(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kResolveVisibleChild,
-                          .receiver = self_ref},
+                          .receiver = self_object},
                   .arguments =
                       {BuildStringLiteral(unit_lowerer, block, vc.head_name),
                        BuildIndicesLiteral(
@@ -726,7 +732,7 @@ auto StepToOwnedChild(
       ReachedObject{
           .expr = block.exprs.Add(
               mir::MakeFieldAccessExpr(
-                  receiver.expr,
+                  BuildObjectDeref(unit_lowerer.Unit(), block, receiver.expr),
                   mir::ClassFieldTarget{
                       .owner = receiver_class, .slot = anchor.borrowed_handle},
                   reached)),
@@ -763,7 +769,7 @@ auto StepThroughInterfacePort(
       ReachedObject{
           .expr = block.exprs.Add(
               mir::MakeFieldAccessExpr(
-                  receiver.expr,
+                  BuildObjectDeref(unit_lowerer.Unit(), block, receiver.expr),
                   mir::ClassFieldTarget{.owner = receiver_class, .slot = field},
                   reached)),
           .type = reached},
@@ -794,7 +800,7 @@ auto AddressTypedLeaf(
       unit_lowerer.GetClassShape(owner_class).fields.Get(field).type;
   const mir::ExprId access = block.exprs.Add(
       mir::MakeFieldAccessExpr(
-          receiver.expr,
+          BuildObjectDeref(unit_lowerer.Unit(), block, receiver.expr),
           mir::ClassFieldTarget{.owner = owner_class, .slot = field},
           field_type));
   return block.exprs.Add(
@@ -843,7 +849,9 @@ auto MaterializeLeaf(
                             .callee =
                                 mir::Direct{
                                     .target = support::BuiltinFn::kFindSignal,
-                                    .receiver = receiver.expr},
+                                    .receiver = BuildObjectDeref(
+                                        unit_lowerer.Unit(), block,
+                                        receiver.expr)},
                             .arguments = {BuildStringLiteral(
                                 unit_lowerer, block, l.name)}},
                     .type = mir::ErasedPointer(unit_lowerer.Unit().types)});
@@ -884,7 +892,8 @@ auto MaterializeLeaf(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kFindSubroutine,
-                          .receiver = receiver.expr},
+                          .receiver = BuildObjectDeref(
+                              unit_lowerer.Unit(), block, receiver.expr)},
                   .arguments = {BuildStringLiteral(
                       unit_lowerer, block, leaf.name)}},
           .type = mir::ErasedFunction(unit_lowerer.Unit().types)});
@@ -916,7 +925,9 @@ auto MaterializeLeaf(
                                 mir::Direct{
                                     .target =
                                         support::BuiltinFn::kFindDisableTarget,
-                                    .receiver = receiver.expr},
+                                    .receiver = BuildObjectDeref(
+                                        unit_lowerer.Unit(), block,
+                                        receiver.expr)},
                             .arguments = {}},
                     .type = pointer_type});
           }},
@@ -940,7 +951,8 @@ auto AskClassMember(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kFindClass,
-                          .receiver = receiver.expr},
+                          .receiver = BuildObjectDeref(
+                              unit_lowerer.Unit(), block, receiver.expr)},
                   .arguments = {BuildStringLiteral(
                       unit_lowerer, block, member.class_name)}},
           .type = class_type});
@@ -1023,21 +1035,18 @@ auto BuildRouteValue(
 // Stores `value` into the scope's own `slot`. Every slot a scope settles is
 // filled this way, once, and read directly at every use afterwards.
 void FillScopeSlot(
-    const WalkFrame& frame, mir::FieldId slot, mir::ExprId value) {
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::FieldId slot,
+    mir::ExprId value) {
   mir::Class& mir_class = *frame.current_class;
   mir::Block& block = *frame.current_block;
   const mir::TypeId slot_type = mir_class.fields.Get(slot).type;
   const mir::ExprId self =
       block.exprs.Add(MakeSelfRefExpr(frame, mir_class.self_pointer_type));
   const mir::ExprId target = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::FieldAccessExpr{
-                  .receiver = self,
-                  .field =
-                      mir::ClassFieldTarget{
-                          .owner = frame.current_class_id, .slot = slot}},
-          .type = slot_type});
+      mir::MakeFieldAccessExpr(
+          BuildObjectDeref(unit, block, self),
+          mir::ClassFieldTarget{.owner = frame.current_class_id, .slot = slot},
+          slot_type));
   const mir::ExprId assign = block.exprs.Add(
       mir::Expr{
           .data = mir::AssignExpr{.target = target, .value = value},
@@ -1058,7 +1067,7 @@ void InstallStoredRoutes(
             [](const ClimbedRoute&) {},
             [&](const StoredRoute& stored) {
               FillScopeSlot(
-                  resolve_frame, stored.slot,
+                  lowerer.Owner().Unit(), resolve_frame, stored.slot,
                   BuildRouteValue(lowerer, resolve_frame, routes.Get(hir_id)));
             }},
         lowerer.ReachOf(hir_id));
@@ -1094,8 +1103,9 @@ void AppendProcessRegistration(
   mir::Block& block = *activate_frame.current_block;
   const mir::TypeId self_ptr_type =
       activate_frame.current_class->self_pointer_type;
-  const mir::ExprId body_self =
-      block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type));
+  const mir::ExprId body_self = BuildObjectDeref(
+      unit_lowerer.Unit(), block,
+      block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type)));
   const mir::ExprId body_call = block.exprs.Add(
       mir::Expr{
           .data =
@@ -1332,7 +1342,7 @@ auto CoupleSides(
 auto BuildNetJoinStmt(
     mir::CompilationUnit& unit, mir::Block& block, const Coupling& coupling)
     -> mir::Stmt {
-  const mir::ExprId other = coupling.there->part.owner;
+  const mir::ExprId other = OwnerPlace(coupling.there->part);
   const mir::TypeId net_ptr_type = unit.types.Intern(
       mir::Type{mir::PointerType{
           .pointee = block.exprs.Get(other).type,
@@ -1342,7 +1352,7 @@ auto BuildNetJoinStmt(
       .data = mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeNetJoinCallExpr(
-                  coupling.here->part.owner,
+                  OwnerPlace(coupling.here->part),
                   block.exprs.Add(mir::MakeAddressOfExpr(other, net_ptr_type)),
                   PositionWithinNet(
                       unit, block, *coupling.here, coupling.here_offset),
@@ -1546,7 +1556,7 @@ auto BuildOwnedChildHandle(
     }
     return arm_block.exprs.Add(
         mir::MakeFieldAccessExpr(
-            self_read(),
+            BuildObjectDeref(unit_lowerer.Unit(), arm_block, self_read()),
             mir::ClassFieldTarget{
                 .owner = arm_frame.current_class_id,
                 .slot = *runtime_parent_handle},
@@ -1604,7 +1614,8 @@ auto BuildOwnedChildHandle(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kAddOwnedChild,
-                          .receiver = parent_read()},
+                          .receiver = BuildObjectDeref(
+                              unit_lowerer.Unit(), arm_block, parent_read())},
                   .arguments = {ctor_call_id}},
           .type = builtins.scope_ptr});
   return arm_block.exprs.Add(
@@ -1628,8 +1639,10 @@ void AppendOwnedChildConstruction(
       child_scope_id, array_index, handle_type, std::move(arguments));
   const mir::ExprId member = arm_block.exprs.Add(
       mir::MakeFieldAccessExpr(
-          arm_block.exprs.Add(
-              MakeSelfRefExpr(arm_frame, owner_class.self_pointer_type)),
+          BuildObjectDeref(
+              unit_lowerer.Unit(), arm_block,
+              arm_block.exprs.Add(
+                  MakeSelfRefExpr(arm_frame, owner_class.self_pointer_type))),
           mir::ClassFieldTarget{
               .owner = arm_frame.current_class_id, .slot = handle_field},
           handle_type));
@@ -1682,8 +1695,10 @@ auto LowerRepeatedGenerate(
   const auto index_place = [&](mir::Block& in) -> mir::ExprId {
     return in.exprs.Add(
         mir::MakeFieldAccessExpr(
-            in.exprs.Add(MakeSelfRefExpr(
-                frame.WithBlock(&in), owner_class.self_pointer_type)),
+            BuildObjectDeref(
+                unit, in,
+                in.exprs.Add(MakeSelfRefExpr(
+                    frame.WithBlock(&in), owner_class.self_pointer_type))),
             mir::ClassFieldTarget{
                 .owner = frame.current_class_id, .slot = index_field},
             owner_class.fields.Get(index_field).type));
@@ -1764,8 +1779,10 @@ auto LowerRepeatedGenerate(
 
   const mir::ExprId member = body.exprs.Add(
       mir::MakeFieldAccessExpr(
-          body.exprs.Add(
-              MakeSelfRefExpr(body_frame, owner_class.self_pointer_type)),
+          BuildObjectDeref(
+              unit, body,
+              body.exprs.Add(
+                  MakeSelfRefExpr(body_frame, owner_class.self_pointer_type))),
           mir::ClassFieldTarget{
               .owner = frame.current_class_id, .slot = binding.borrowed_handle},
           sequence_type));
@@ -2611,12 +2628,15 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   mir::Block& activate_block = activate_code.Body();
   const WalkFrame activate_frame =
       scope_frame.WithBlock(&activate_block).WithBindings(&activate_bindings);
-  const auto self_read = [&]() -> mir::ExprId {
-    return ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame, self_ptr_type));
+  const auto self_object = [&]() -> mir::ExprId {
+    return BuildObjectDeref(
+        unit_lowerer.Unit(), ctor_block,
+        ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame, self_ptr_type)));
   };
-  const auto init_self_read = [&]() -> mir::ExprId {
-    return initialize_block.exprs.Add(
-        MakeSelfRefExpr(init_frame, self_ptr_type));
+  const auto init_self_object = [&]() -> mir::ExprId {
+    return BuildObjectDeref(
+        unit_lowerer.Unit(), initialize_block,
+        initialize_block.exprs.Add(MakeSelfRefExpr(init_frame, self_ptr_type)));
   };
 
   // What elaboration settles is read while the object is still being built -- a
@@ -2631,7 +2651,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         TranslateStructuralDataObject(hir::StructuralHops{0}, id);
     const mir::ExprId target = ctor_block.exprs.Add(
         mir::MakeFieldAccessExpr(
-            self_read(),
+            self_object(),
             mir::ClassFieldTarget{.owner = class_id_, .slot = field},
             mir_class.fields.Get(field).type));
     ctor_block.AppendStmt(
@@ -2721,7 +2741,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (is_assignable_value) {
       const mir::ExprId init_target = initialize_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              init_self_read(),
+              init_self_object(),
               mir::ClassFieldTarget{.owner = class_id_, .slot = mir_id},
               mir_field_type));
       const auto append_stmt = [&](mir::Expr expr) {
@@ -2747,8 +2767,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       if (unit_lowerer.Unit().types.Get(mir_field_type).IsCapabilityWrapper()) {
         const mir::ExprId install_target = install_block.exprs.Add(
             mir::MakeFieldAccessExpr(
-                install_block.exprs.Add(
-                    MakeSelfRefExpr(install_frame, self_ptr_type)),
+                BuildObjectDeref(
+                    unit_lowerer.Unit(), install_block,
+                    install_block.exprs.Add(
+                        MakeSelfRefExpr(install_frame, self_ptr_type))),
                 mir::ClassFieldTarget{.owner = class_id_, .slot = mir_id},
                 mir_field_type));
         const mir::ExprId prototype = install_block.exprs.Add(
@@ -2792,7 +2814,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (net != nullptr) {
       const mir::ExprId net_target = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              self_read(),
+              self_object(),
               mir::ClassFieldTarget{.owner = class_id_, .slot = mir_id},
               mir_field_type));
       const mir::ExprId prototype = ctor_block.exprs.Add(
@@ -2820,7 +2842,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (is_signal) {
       const mir::ExprId var_ref = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              self_read(),
+              self_object(),
               mir::ClassFieldTarget{.owner = class_id_, .slot = mir_id},
               mir_field_type));
       const mir::TypeId var_ptr_type = unit_lowerer.Unit().types.Intern(
@@ -2840,7 +2862,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                       .callee =
                           mir::Direct{
                               .target = support::BuiltinFn::kRegisterSignal,
-                              .receiver = self_read()},
+                              .receiver = self_object()},
                       .arguments = {name_id, addr_id}},
               .type = void_type});
       ctor_block.AppendStmt(mir::ExprStmt{.expr = call});
@@ -2972,14 +2994,14 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       const mir::FieldId field = DisableTargetField(scope_id);
       const mir::ExprId cell = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              self_read(),
+              self_object(),
               mir::ClassFieldTarget{.owner = class_id_, .slot = field},
               mir_class.fields.Get(field).type));
       const mir::ExprId addr = ctor_block.exprs.Add(
           mir::MakeAddressOfExpr(cell, disable_target_ptr_type));
       const mir::ExprId node = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              self_read(),
+              self_object(),
               mir::ClassFieldTarget{
                   .owner = class_id_, .slot = name_node.borrowed_handle},
               mir_class.fields.Get(name_node.borrowed_handle).type));
@@ -2993,7 +3015,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                                   mir::Direct{
                                       .target = support::BuiltinFn::
                                           kRegisterDisableTarget,
-                                      .receiver = node},
+                                      .receiver = BuildObjectDeref(
+                                          unit_lowerer.Unit(), ctor_block,
+                                          node)},
                               .arguments = {addr}},
                       .type = void_type})});
     }
@@ -3022,7 +3046,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       const mir::FieldId field = InstanceFieldOf(binding);
       const mir::ExprId cell = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              self_read(),
+              self_object(),
               mir::ClassFieldTarget{.owner = class_id_, .slot = field},
               binding.cell_type));
       const mir::ExprId addr = ctor_block.exprs.Add(
@@ -3035,7 +3059,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           scopes_.Get(binding.scope).name_node->borrowed_handle;
       const mir::ExprId node = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(
-              self_read(),
+              self_object(),
               mir::ClassFieldTarget{
                   .owner = class_id_, .slot = borrowed_handle},
               mir_class.fields.Get(borrowed_handle).type));
@@ -3064,7 +3088,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                                   mir::Direct{
                                       .target =
                                           support::BuiltinFn::kRegisterSignal,
-                                      .receiver = node},
+                                      .receiver = BuildObjectDeref(
+                                          unit_lowerer.Unit(), ctor_block,
+                                          node)},
                               .arguments = {name_lit, addr}},
                       .type = void_type})});
     }
@@ -3403,7 +3429,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     mir::Block& body = code.Body();
     const mir::ExprId member = body.exprs.Add(
         mir::MakeFieldAccessExpr(
-            body.exprs.Add(mir::MakeLocalRefExpr(self, self_ptr_type)),
+            BuildObjectDeref(
+                unit, body,
+                body.exprs.Add(mir::MakeLocalRefExpr(self, self_ptr_type))),
             mir::ClassFieldTarget{.owner = class_id_, .slot = slot},
             cell_type));
     body.AppendStmt(

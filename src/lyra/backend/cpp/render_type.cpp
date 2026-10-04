@@ -85,8 +85,6 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::runtime::Observation";
     case mir::RuntimeLibraryKind::kReadReport:
       return "lyra::runtime::ReadReport";
-    case mir::RuntimeLibraryKind::kObjectWrite:
-      return "lyra::runtime::ObjectWrite";
     case mir::RuntimeLibraryKind::kObjectDefinition:
       return "lyra::runtime::ObjectDefinition";
     case mir::RuntimeLibraryKind::kResolvedProperty:
@@ -335,6 +333,10 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                 "the expression that opens the write, so nothing names its "
                 "type -- please report this as a bug");
           },
+          // Named where it is opened, by constructing it on the object.
+          [&](const mir::ObjectWriteType& w) {
+            Write(out, "lyra::runtime::ObjectWrite<", type(w.object), ">");
+          },
           [&](const mir::SampledHistoryType& h) {
             Write(out, "lyra::runtime::SampledHistory<", type(h.value), ">");
           },
@@ -347,89 +349,81 @@ void WriteOne(TargetText& out, const CppType& spelling) {
       });
 }
 
-auto ReceiverAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
-    -> ReceiverAccess {
-  if (unit.types.Get(type_id).Is<mir::PointerType>()) {
-    return OpenedByDereference{};
-  }
-  return ReceiverIsTheObject{};
-}
-
-auto PlaceAccessAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
-    -> PlaceAccess {
-  const auto opens_no_storage = []() -> PlaceAccess {
+auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
+    -> DerefSpelling {
+  const auto reaches_nothing = []() -> DerefSpelling {
     throw InternalError(
-        "PlaceAccessAsCpp: a place of this type stands for no storage, "
-        "so there is nothing for an access to open -- please report this as a "
-        "bug");
+        "backend::cpp: a value of this type reaches nothing, so there is "
+        "nothing for a dereference to open -- please report this as a bug");
   };
   return unit.types.Get(type_id).Visit(
       Overloaded{
-          [&](const mir::PointerType&) -> PlaceAccess {
-            return OpenedByDereference{};
+          [&](const mir::PointerType&) -> DerefSpelling {
+            return DerefByOperator{};
           },
           // A `ref` is dereferenced like a pointer, which reaches the cell it
           // is bound to (LRM 23.3.3.2).
-          [&](const mir::RefType&) -> PlaceAccess {
-            return OpenedByDereference{};
+          [&](const mir::RefType&) -> DerefSpelling {
+            return DerefByOperator{};
           },
           // A place designated within a write is dereferenced like a pointer,
           // which reaches it, where the write lands. The write itself names no
           // place.
-          [&](const mir::DesignationType&) -> PlaceAccess {
-            return OpenedByDereference{};
+          [&](const mir::DesignationType&) -> DerefSpelling {
+            return DerefByOperator{};
           },
-          [&](const mir::OpenWriteType&) { return opens_no_storage(); },
-          [&](const mir::ManagedRefType& m) -> PlaceAccess {
-            return OpenedThroughView{.pointee = m.pointee};
+          [&](const mir::OpenWriteType&) { return reaches_nothing(); },
+          // A write in progress into an object is dereferenced to the object,
+          // as a guard is to what it guards.
+          [&](const mir::ObjectWriteType&) -> DerefSpelling {
+            return DerefByOperator{};
           },
-          // Every other type is a value, not a handle to storage, so there is
-          // nothing to open.
-          [&](const mir::PackedArrayType&) { return opens_no_storage(); },
-          [&](const mir::EnumType&) { return opens_no_storage(); },
-          [&](const mir::UnpackedArrayType&) { return opens_no_storage(); },
-          [&](const mir::DynamicArrayType&) { return opens_no_storage(); },
-          [&](const mir::QueueType&) { return opens_no_storage(); },
-          [&](const mir::AssociativeArrayType&) { return opens_no_storage(); },
-          [&](const mir::WildcardIndexType&) { return opens_no_storage(); },
-          [&](const mir::StringType&) { return opens_no_storage(); },
-          [&](const mir::MachineCStringType&) { return opens_no_storage(); },
-          [&](const mir::MachineBoolType&) { return opens_no_storage(); },
-          [&](const mir::MachineIntType&) { return opens_no_storage(); },
-          [&](const mir::MachineFloatType&) { return opens_no_storage(); },
-          [&](const mir::MachineArrayType&) { return opens_no_storage(); },
-          [&](const mir::MachineFunctionType&) { return opens_no_storage(); },
-          [&](const mir::EventType&) { return opens_no_storage(); },
-          [&](const mir::RealType&) { return opens_no_storage(); },
-          [&](const mir::ShortRealType&) { return opens_no_storage(); },
-          [&](const mir::ChandleType&) { return opens_no_storage(); },
-          [&](const mir::VoidType&) { return opens_no_storage(); },
-          [&](const mir::EmptyType&) { return opens_no_storage(); },
-          [&](const mir::ObjectType&) { return opens_no_storage(); },
-          [&](const mir::ExternalUnitObjectType&) {
-            return opens_no_storage();
+          [&](const mir::ManagedRefType& m) -> DerefSpelling {
+            return DerefThroughView{.pointee = m.pointee};
           },
-          [&](const mir::CrossUnitClassType&) { return opens_no_storage(); },
-          [&](const mir::OpaqueObjectType&) { return opens_no_storage(); },
-          [&](const mir::RuntimeClassType&) { return opens_no_storage(); },
-          [&](const mir::RuntimeEffectsType&) { return opens_no_storage(); },
-          [&](const mir::FilesType&) { return opens_no_storage(); },
-          [&](const mir::DiagnosticType&) { return opens_no_storage(); },
-          [&](const mir::RuntimeLibraryType&) { return opens_no_storage(); },
-          [&](const mir::CoroutineType&) { return opens_no_storage(); },
-          [&](const mir::VectorType&) { return opens_no_storage(); },
-          [&](const mir::TupleType&) { return opens_no_storage(); },
-          [&](const mir::UnionType&) { return opens_no_storage(); },
-          [&](const mir::TaggedUnionType&) { return opens_no_storage(); },
-          [&](const mir::ObservableType&) { return opens_no_storage(); },
-          [&](const mir::ResolvedType&) { return opens_no_storage(); },
-          [&](const mir::DriverType&) { return opens_no_storage(); },
-          [&](const mir::SampledHistoryType&) { return opens_no_storage(); },
-          [&](const mir::EvaluationAttemptsType&) {
-            return opens_no_storage();
-          },
-          [&](const mir::StructType&) { return opens_no_storage(); },
-          [&](const mir::ClosureType&) { return opens_no_storage(); },
+          // Every other type is a value that reaches nothing, so there is
+          // nothing to dereference.
+          [&](const mir::PackedArrayType&) { return reaches_nothing(); },
+          [&](const mir::EnumType&) { return reaches_nothing(); },
+          [&](const mir::UnpackedArrayType&) { return reaches_nothing(); },
+          [&](const mir::DynamicArrayType&) { return reaches_nothing(); },
+          [&](const mir::QueueType&) { return reaches_nothing(); },
+          [&](const mir::AssociativeArrayType&) { return reaches_nothing(); },
+          [&](const mir::WildcardIndexType&) { return reaches_nothing(); },
+          [&](const mir::StringType&) { return reaches_nothing(); },
+          [&](const mir::MachineCStringType&) { return reaches_nothing(); },
+          [&](const mir::MachineBoolType&) { return reaches_nothing(); },
+          [&](const mir::MachineIntType&) { return reaches_nothing(); },
+          [&](const mir::MachineFloatType&) { return reaches_nothing(); },
+          [&](const mir::MachineArrayType&) { return reaches_nothing(); },
+          [&](const mir::MachineFunctionType&) { return reaches_nothing(); },
+          [&](const mir::EventType&) { return reaches_nothing(); },
+          [&](const mir::RealType&) { return reaches_nothing(); },
+          [&](const mir::ShortRealType&) { return reaches_nothing(); },
+          [&](const mir::ChandleType&) { return reaches_nothing(); },
+          [&](const mir::VoidType&) { return reaches_nothing(); },
+          [&](const mir::EmptyType&) { return reaches_nothing(); },
+          [&](const mir::ObjectType&) { return reaches_nothing(); },
+          [&](const mir::ExternalUnitObjectType&) { return reaches_nothing(); },
+          [&](const mir::CrossUnitClassType&) { return reaches_nothing(); },
+          [&](const mir::OpaqueObjectType&) { return reaches_nothing(); },
+          [&](const mir::RuntimeClassType&) { return reaches_nothing(); },
+          [&](const mir::RuntimeEffectsType&) { return reaches_nothing(); },
+          [&](const mir::FilesType&) { return reaches_nothing(); },
+          [&](const mir::DiagnosticType&) { return reaches_nothing(); },
+          [&](const mir::RuntimeLibraryType&) { return reaches_nothing(); },
+          [&](const mir::CoroutineType&) { return reaches_nothing(); },
+          [&](const mir::VectorType&) { return reaches_nothing(); },
+          [&](const mir::TupleType&) { return reaches_nothing(); },
+          [&](const mir::UnionType&) { return reaches_nothing(); },
+          [&](const mir::TaggedUnionType&) { return reaches_nothing(); },
+          [&](const mir::ObservableType&) { return reaches_nothing(); },
+          [&](const mir::ResolvedType&) { return reaches_nothing(); },
+          [&](const mir::DriverType&) { return reaches_nothing(); },
+          [&](const mir::SampledHistoryType&) { return reaches_nothing(); },
+          [&](const mir::EvaluationAttemptsType&) { return reaches_nothing(); },
+          [&](const mir::StructType&) { return reaches_nothing(); },
+          [&](const mir::ClosureType&) { return reaches_nothing(); },
       });
 }
 
@@ -606,6 +600,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::DriverType& t) { by_naming_itself(t); },
           [&](const mir::OpenWriteType& t) { by_naming_itself(t); },
           [&](const mir::DesignationType& t) { by_naming_itself(t); },
+          [&](const mir::ObjectWriteType& t) { by_naming_itself(t); },
           [&](const mir::SampledHistoryType& t) { by_naming_itself(t); },
           [&](const mir::EvaluationAttemptsType& t) { by_naming_itself(t); },
           [&](const mir::ClosureType& t) { by_naming_itself(t); },
