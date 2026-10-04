@@ -271,10 +271,9 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_property_at", &lyra_rt_property_at);
   add("lyra_rt_view_of", &lyra_rt_view_of);
   add("lyra_rt_self_handle", &lyra_rt_self_handle);
-  add("lyra_rt_object_root_of", &lyra_rt_object_root_of);
   add("lyra_rt_object_event_source", &lyra_rt_object_event_source);
   add("lyra_rt_open_object_write", &lyra_rt_open_object_write);
-  add("lyra_rt_object_write_through", &lyra_rt_object_write_through);
+  add("lyra_rt_written_object", &lyra_rt_written_object);
   add("lyra_rt_enumeration_has", &lyra_rt_enumeration_has);
   add("lyra_rt_enumeration_name", &lyra_rt_enumeration_name);
   add("lyra_rt_enumeration_next", &lyra_rt_enumeration_next);
@@ -458,6 +457,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_packed_cell_sampled_load", &lyra_rt_packed_cell_sampled_load);
   add("lyra_rt_refer_storage", &lyra_rt_refer_storage);
   add("lyra_rt_refer_property", &lyra_rt_refer_property);
+  add("lyra_rt_refer_property_at", &lyra_rt_refer_property_at);
   add("lyra_rt_reference_reports_to", &lyra_rt_reference_reports_to);
   add("lyra_rt_packed_cell_refer", &lyra_rt_packed_cell_refer);
   add("lyra_rt_string_cell_refer", &lyra_rt_string_cell_refer);
@@ -764,8 +764,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_format_runtime", &lyra_rt_format_runtime);
   add("lyra_rt_packed_make_format_arg", &lyra_rt_packed_make_format_arg);
   add("lyra_rt_string_make_format_arg", &lyra_rt_string_make_format_arg);
-  add("lyra_rt_packed_make_format_arg_with_pattern",
-      &lyra_rt_packed_make_format_arg_with_pattern);
+  add("lyra_rt_make_patterned_format_arg", &lyra_rt_make_patterned_format_arg);
   add("lyra_rt_make_rendered_format_arg", &lyra_rt_make_rendered_format_arg);
   add("lyra_rt_chandle_make_format_arg", &lyra_rt_chandle_make_format_arg);
   add("lyra_rt_managedref_make_format_arg",

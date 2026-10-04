@@ -25,6 +25,23 @@ auto IntroducesSlot(const std::optional<VirtualDispatchRole>& role) -> bool {
       *role);
 }
 
+auto ObjectReachedThrough(const TypePool& types, TypeId reaches) -> TypeId {
+  const Type& type = types.Get(reaches);
+  if (const auto* handle = type.As<ManagedRefType>()) {
+    return handle->pointee;
+  }
+  if (const auto* pointer = type.As<PointerType>()) {
+    return pointer->pointee;
+  }
+  if (const auto* write = type.As<ObjectWriteType>()) {
+    return write->object;
+  }
+  throw InternalError(
+      "mir: an object is reached through a class handle, a pointer, or a "
+      "write in progress into it, and this is none of those -- please report "
+      "this as a bug");
+}
+
 auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
   const auto refers_to_no_class =
       [](std::string_view what) -> DeclaredClassRef {
@@ -95,6 +112,7 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
           [&](const DriverType&) { return not_an_object(); },
           [&](const OpenWriteType&) { return not_an_object(); },
           [&](const DesignationType&) { return not_an_object(); },
+          [&](const ObjectWriteType&) { return not_an_object(); },
           [&](const SampledHistoryType&) { return not_an_object(); },
           [&](const EvaluationAttemptsType&) { return not_an_object(); },
           [&](const StructType&) { return not_an_object(); },

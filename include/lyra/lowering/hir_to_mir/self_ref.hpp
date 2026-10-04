@@ -74,6 +74,14 @@ auto BuildImplicitInstanceArgument(
 auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
     -> mir::Expr;
 
+// The object `reaches` designates, as a place -- `*reaches` -- added to
+// `block`, or the place itself where `reaches` is its address. A member is
+// reached on an object, so this is what a field access or a call is made on
+// wherever a handle, a pointer, or a write in progress reaches it.
+auto BuildObjectDeref(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reaches)
+    -> mir::ExprId;
+
 // The receiver object that owns something at `hops` enclosing-class levels up.
 // At hops 0 it is the current body's `self`; above that the thing lives in an
 // enclosing class whose runtime object is this scope's ancestor, reached by
@@ -87,7 +95,7 @@ auto BuildEnclosingScopeReceiver(
     mir::EnclosingHops hops) -> mir::ExprId;
 
 // Builds a read of a structural var through the current body's `self`:
-// `FieldAccess(self, field)`. The result type is the var's declared MIR
+// `(*self).field`. The result type is the var's declared MIR
 // storage type, read from the enclosing scope reached by `hops` (a wrapper
 // type for observable storage, the value type otherwise) -- a fact that lives
 // only in the MIR scope, not in HIR, so it is read here rather than passed
@@ -98,11 +106,11 @@ auto BuildStructuralFieldAccessExpr(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops, mir::FieldId var) -> mir::Expr;
 
-// Constructs a reference to the cell `cell` denotes (LRM 13.5.2): adds a
-// reference-construction `CallExpr` to `block` whose result type is a
-// `RefType` over `pointee`, and returns its id. The body that holds the
-// resulting reference reads / writes the live cell through it. Used for a
-// `ref` / `const ref` actual and for a by-reference closure capture.
+// A reference to the cell `cell` denotes (LRM 13.5.2): a reference
+// construction added to `block`, whose result type is a `RefType` over
+// `pointee` -- or `cell` itself where it already is a reference. The body that
+// holds the resulting reference reads / writes the live cell through it. Used
+// for a `ref` / `const ref` actual and for a by-reference closure capture.
 auto BuildReferenceArg(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId;

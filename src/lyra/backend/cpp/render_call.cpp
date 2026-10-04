@@ -29,54 +29,43 @@ enum class ReceiverPlacement : std::uint8_t {
   kIntoArgumentList
 };
 
-// A call's receiver, and how the object it is entered on is reached from it.
-struct CallReceiver {
-  mir::ExprId expr;
-  ReceiverAccess access;
-};
-
-auto ResolveReceiver(const ScopeView& view, const mir::Callee& callee)
-    -> std::optional<CallReceiver> {
-  const std::optional<mir::ExprId> receiver = mir::CalleeReceiver(callee);
-  if (!receiver.has_value()) {
-    return std::nullopt;
-  }
-  return CallReceiver{
-      .expr = *receiver,
-      .access = ReceiverAccessAsCpp(view.Unit(), view.Expr(*receiver).type)};
-}
-
-void WriteCallReceiver(
-    const ScopeView& view, const CallReceiver& receiver, TargetText& out) {
-  WriteReceiverObject(out, receiver.access, [&](Precedence at_least) {
-    Write(view, out, Operand{.expr = receiver.expr, .at_least = at_least});
-  });
-}
-
 // Whether a templated method name follows a value or a type. After a value,
 // `v.template Component<2>()` needs the `template` keyword, because C++ cannot
 // yet tell whether `<` starts an argument list or a comparison; after a type,
 // `T::Make<2>()` does not.
 enum class NameReachedThrough : std::uint8_t { kAValue, kAType };
 
-// A runtime function name, with the component position as a template argument
-// where the call names one: `Component<2>`. The position is a template argument
-// because each component has a type of its own.
+// A runtime function name, with the part the call names as a template argument
+// where it names one: a component by its position, `Component<2>`, and a
+// property by a pointer to it, `ReferProperty<&C::x>`. The part is a template
+// argument because each part has a type of its own.
 struct OperationName {
+  const mir::CompilationUnit* unit;
   std::string_view identifier;
-  std::optional<base::ComponentIndex> position;
+  std::optional<mir::CallPart> part;
   NameReachedThrough reached;
 };
 
 void WriteOne(TargetText& out, const OperationName& name) {
-  if (!name.position.has_value()) {
+  if (!name.part.has_value()) {
     out += name.identifier;
     return;
   }
   if (name.reached == NameReachedThrough::kAValue) {
     out += "template ";
   }
-  Write(out, name.identifier, "<", name.position->value, ">");
+  Write(out, name.identifier, "<");
+  std::visit(
+      Overloaded{
+          [&](base::ComponentIndex position) { Write(out, position.value); },
+          [&](const mir::ClassFieldTarget& property) {
+            WriteMemberPointer(out, *name.unit, property);
+          },
+          [&](const mir::CrossUnitClassFieldTarget& property) {
+            WriteMemberPointer(out, *name.unit, property);
+          }},
+      *name.part);
+  out += ">";
 }
 
 // Writes one call. Each callee form states, in the same `Named` call, the
@@ -86,13 +75,13 @@ void WriteOne(TargetText& out, const OperationName& name) {
 class CallWriter {
  public:
   CallWriter(
-      const ScopeView& view, const std::optional<CallReceiver>& receiver,
+      const ScopeView& view, std::optional<mir::ExprId> receiver,
       TargetText& out)
-      : view_(&view), receiver_(&receiver), out_(&out) {
+      : view_(&view), receiver_(receiver), out_(&out) {
   }
 
   [[nodiscard]] auto HasReceiver() const -> bool {
-    return receiver_->has_value();
+    return receiver_.has_value();
   }
 
   // A callee with a name: a method, a factory on a type, a free function, or a
@@ -102,7 +91,7 @@ class CallWriter {
     if (HasReceiver()) {
       switch (placement) {
         case ReceiverPlacement::kIntoCalleeName:
-          WriteCallReceiver(*view_, **receiver_, *out_);
+          WriteMemberReceiver(*view_, *out_, *receiver_);
           break;
         case ReceiverPlacement::kIntoArgumentList:
           receiver_leads_arguments_ = true;
@@ -130,7 +119,7 @@ class CallWriter {
   void Arguments(std::span<const mir::ExprId> arguments) {
     std::vector<mir::ExprId> operands;
     if (receiver_leads_arguments_) {
-      operands.push_back((*receiver_)->expr);
+      operands.push_back(*receiver_);
     }
     operands.insert(operands.end(), arguments.begin(), arguments.end());
     *out_ += "(";
@@ -140,7 +129,7 @@ class CallWriter {
 
  private:
   const ScopeView* view_;
-  const std::optional<CallReceiver>* receiver_;
+  std::optional<mir::ExprId> receiver_;
   TargetText* out_;
   bool receiver_leads_arguments_ = false;
 };
@@ -150,13 +139,18 @@ class CallWriter {
 // Nothing about the call itself is read to decide which.
 void WriteEntryCallee(
     const ScopeView& view, const support::RuntimeEntry& entry,
-    const std::optional<base::ComponentIndex>& position,
-    mir::TypeId result_type, CallWriter& callee) {
+    const std::optional<mir::CallPart>& part, mir::TypeId result_type,
+    CallWriter& callee) {
   std::visit(
       Overloaded{
           [&](const support::FreeFunction& f) {
             callee.Named(
-                ReceiverPlacement::kIntoArgumentList, f.qualified_name);
+                ReceiverPlacement::kIntoArgumentList,
+                OperationName{
+                    .unit = &view.Unit(),
+                    .identifier = f.qualified_name,
+                    .part = part,
+                    .reached = NameReachedThrough::kAType});
           },
           // A method is called on something, so a call with no receiver
           // cannot be written.
@@ -170,8 +164,9 @@ void WriteEntryCallee(
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
                 OperationName{
+                    .unit = &view.Unit(),
                     .identifier = m.identifier,
-                    .position = position,
+                    .part = part,
                     .reached = NameReachedThrough::kAValue});
           },
           // A factory is called on the type it builds, which is the call's
@@ -181,8 +176,9 @@ void WriteEntryCallee(
                 ReceiverPlacement::kIntoCalleeName,
                 CppType(view.Unit(), result_type), "::",
                 OperationName{
+                    .unit = &view.Unit(),
                     .identifier = s.identifier,
-                    .position = position,
+                    .part = part,
                     .reached = NameReachedThrough::kAType});
           }},
       entry.declaration);
@@ -214,7 +210,7 @@ void WriteDirectCallee(
           },
           [&](const support::BuiltinFn& id) {
             WriteEntryCallee(
-                view, support::RuntimeEntryOf(id), direct.position, result_type,
+                view, support::RuntimeEntryOf(id), direct.part, result_type,
                 callee);
           },
           // A function of another unit (LRM 26.3): `::Pkg::f`.
@@ -304,9 +300,7 @@ void WriteCallee(
 void RenderCallExpr(
     const ScopeView& view, const mir::CallExpr& call, mir::TypeId result_type,
     TargetText& out) {
-  const std::optional<CallReceiver> receiver =
-      ResolveReceiver(view, call.callee);
-  CallWriter text(view, receiver, out);
+  CallWriter text(view, mir::CalleeReceiver(call.callee), out);
   WriteCallee(view, call, result_type, text);
   text.Arguments(call.arguments);
 }
@@ -314,8 +308,7 @@ void RenderCallExpr(
 void RenderStructuralCall(
     const ScopeView& view, support::BuiltinFn fn, mir::TypeId result_type,
     TargetText& out) {
-  const std::optional<CallReceiver> receiver;
-  CallWriter text(view, receiver, out);
+  CallWriter text(view, std::nullopt, out);
   WriteEntryCallee(
       view, support::RuntimeEntryOf(fn), std::nullopt, result_type, text);
   text.Arguments({});

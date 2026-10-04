@@ -301,8 +301,9 @@ auto lyra_rt_class_find_property(const void* definition, const void* name)
 auto lyra_rt_class_find_behavior_body(const void* definition, const void* name)
     -> LyraMethodEntry;
 
-// Applying a property coordinate to the object a handle names.
-auto lyra_rt_property_at(const void* handle, const void* coordinate) -> void*;
+// Applying a property coordinate to an object, given as the root every object
+// shares.
+auto lyra_rt_property_at(void* object, const void* coordinate) -> void*;
 
 // The part of the object a class handle reaches it through (LRM 8.3), which is
 // what a member access is applied to and what a body settled against a class
@@ -317,15 +318,13 @@ auto lyra_rt_view_of(const void* handle) -> void*;
 auto lyra_rt_self_handle(void* self, void* out) -> void*;
 
 // What reports a change to an object's properties (LRM 9.4.2), each taking the
-// object as the root every object shares: that root of the object a handle
-// names, the source a wait on the object subscribes to, and a write into one
-// of its properties, opened in storage the writing body gives, through which
-// the place written is reached and whose end tells the object.
-auto lyra_rt_object_root_of(const void* handle) -> void*;
+// object as the root every object shares: the source a wait on the object
+// subscribes to, and a write into its properties, opened on the object alone
+// in storage the writing body gives, which answers the object the properties
+// are reached through and whose end tells the object.
 auto lyra_rt_object_event_source(void* object) -> void*;
-auto lyra_rt_open_object_write(void* object, const void* place, void* out)
-    -> void*;
-auto lyra_rt_object_write_through(const void* write) -> const void*;
+auto lyra_rt_open_object_write(void* object, void* out) -> void*;
+auto lyra_rt_written_object(const void* write) -> void*;
 
 // What an enumeration's member list answers about a value (LRM 6.19.5,
 // 6.24.2). Whether it is a member crosses as the machine integer every computed
@@ -679,10 +678,13 @@ auto lyra_rt_run_program(
 // variable's cell names the whole of it, and is named by the domain the cell
 // holds since where the value lies inside the cell is the cell's type's to
 // say; one over storage nothing is told about is handed the value's handle and
-// names nothing; and one over a class property is that reference to the
-// property's storage, handed the object that holds it.
+// names nothing; and one over a class property is held by the object, given
+// the property's storage where the caller places it and its coordinate where
+// the class places it. A property reached through a handle naming no object
+// is the design's own failure (LRM 8.4).
 auto lyra_rt_refer_storage(void* storage, void* out) -> void*;
-auto lyra_rt_refer_property(void* object, const void* storage, void* out)
+auto lyra_rt_refer_property(void* object, void* storage, void* out) -> void*;
+auto lyra_rt_refer_property_at(void* object, const void* coordinate, void* out)
     -> void*;
 // What a wait on the storage a reference names registers on: the variable or
 // the object's event source, and null for storage nothing is told about.
@@ -2091,7 +2093,7 @@ auto lyra_rt_string_make_format_arg(const void* value, void* out) -> void*;
 // The same operand, carrying the text LRM 21.2.1.6 renders it as -- composed
 // where the type that decides it was still in hand, because a format string
 // the program computes reaches no directive until it is parsed.
-auto lyra_rt_packed_make_format_arg_with_pattern(
+auto lyra_rt_make_patterned_format_arg(
     const void* value, const void* pattern, void* out) -> void*;
 // An operand that reads only as that text, there being no other conversion the
 // language defines for what it stands for.

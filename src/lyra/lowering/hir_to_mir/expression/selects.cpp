@@ -23,7 +23,6 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
-#include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
@@ -565,7 +564,7 @@ void AppendTagChecks(
     const RequiredTag tag = *target.descent[taken].required_tag;
     // The check and the write both take the owner and the steps before this
     // one, so what those evaluate is evaluated here and both read the result.
-    target.owner = SettledPlace(unit_lowerer, frame, target.owner);
+    target.owner = SettledOwner(unit_lowerer, frame, target.owner);
     for (; settled < taken; ++settled) {
       for (mir::ExprId& operand : target.descent[settled].operands) {
         operand = EvaluatedOnce(frame, operand);
@@ -777,24 +776,22 @@ auto LowerHirMemberAccessExprPath(
                             sel.field_index, result_type));
 }
 
-// LRM 8.4: a class property write reaches the object through the handle. The
-// place is the same one the read produces, so the write and read share one path
-// (a class field is a reference-storage receiver, and the mutate flow is the
-// usual observable-cell path when the property is itself an observable cell).
+// LRM 8.4: a class property is reached through the handle naming its object.
+// The path holds the object and which of its properties, and what the path is
+// taken for decides how the object is reached, so the handle the source wrote
+// once is named once.
 template <ExprLowerer Lowerer>
 auto PropertyPath(
     Lowerer& lowerer, const WalkFrame& frame, mir::ExprId receiver,
     const hir::ClassPropertyTarget& target, mir::TypeId result_type)
     -> AccessPath {
-  auto& block = *frame.current_block;
-  // The handle is reached to name the property and again to name the object
-  // that hears a write to it, and the source evaluates it once (LRM 8.4).
-  const mir::ExprId handle = EvaluatedOnce(frame, receiver);
   return AccessPath{
-      .owner = block.exprs.Add(BuildClassPropertyAccess(
-          lowerer, frame, handle, target, result_type)),
-      .descent = {},
-      .object = ObjectRootOf(lowerer.Owner().Unit(), block, handle)};
+      .owner =
+          ObjectProperty{
+              .object = receiver,
+              .property = PropertyNameOf(lowerer, frame, target),
+              .type = result_type},
+      .descent = {}};
 }
 
 template <ExprLowerer Lowerer>

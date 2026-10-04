@@ -524,3 +524,21 @@ write through it is a write of the owner at the moment it lands (LRM 13.5.2, 4.3
 ended with the caller's full-expression can be; so a reference is formed over the owner and each
 step into a part is taken on the reference (`refer_element`, `refer_component`), answering a
 reference to that part that belongs to the same owner.
+
+Where the owner is a property of an object (LRM 8.4), the object is what hears the write (LRM
+9.4.2), and it is reached once, as the source reaches it once. A write is a write-in-progress value
+constructed on whatever reaches the object -- a class handle, or the running method's own object --
+and dereferenced to the object, as a guard is dereferenced to what it guards, so the write ends with
+the full-expression and reports then. A reference is a step taken on the object naming the property
+(`refer_property`), as `refer_component` names a component. An entry acting on an object is handed
+whatever reaches it, as a method is handed the pointer to its own object rather than the object.
+
+A field is a member of an object, so a field access is made on the object as a place, and an object
+that a handle, a pointer or a write in progress reaches is first dereferenced to it: `p->f` is a
+field access over `*p`, as rustc's MIR projects a field from a place that is itself a dereference.
+The dereference is stated where it happens rather than implied by the receiver's type, so no
+consumer works out from a type whether the receiver still has to be opened. A call entering a member
+function is reached the same way: its receiver is the object, so `p->f()` is a call on `*p`, and the
+body is handed that object's address, as clang's code generation forms `this` from the object an
+arrow call names. A call naming a member function of a library value -- a string, a handle, a
+reference -- is entered on that value, which is the object the function belongs to.

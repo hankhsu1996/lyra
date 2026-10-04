@@ -1251,7 +1251,9 @@ auto SynthesizeForeignExportEntry(
                             *scope_param, unit.builtins.scope_ptr))},
             .type = self_type});
     body.AppendStmt(mir::LocalDeclStmt{.target = self_local, .init = narrowed});
-    receiver = body.exprs.Add(mir::MakeLocalRefExpr(self_local, self_type));
+    receiver = BuildObjectDeref(
+        unit, body,
+        body.exprs.Add(mir::MakeLocalRefExpr(self_local, self_type)));
   }
 
   const auto param_ref = [&](std::size_t i) -> mir::ExprId {

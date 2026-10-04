@@ -181,6 +181,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const DriverType& t) { HashId(seed, t.value); },
           [&](const OpenWriteType& t) { HashId(seed, t.value); },
           [&](const DesignationType& t) { HashId(seed, t.value); },
+          [&](const ObjectWriteType& t) { HashId(seed, t.object); },
           [&](const SampledHistoryType& t) { HashId(seed, t.value); },
           [](const EvaluationAttemptsType&) {},
           [&](const StructType& t) {
@@ -310,6 +311,7 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const ResolvedType&) { return false; },
           [](const OpenWriteType&) { return false; },
           [](const DesignationType&) { return false; },
+          [](const ObjectWriteType&) { return false; },
           [](const SampledHistoryType&) { return false; },
           [](const EvaluationAttemptsType&) { return false; },
           [](const EventType&) { return false; },
@@ -377,6 +379,7 @@ auto Type::PartsAreStorage() const -> bool {
           [](const ResolvedType&) { return false; },
           [](const OpenWriteType&) { return false; },
           [](const DesignationType&) { return false; },
+          [](const ObjectWriteType&) { return false; },
           [](const SampledHistoryType&) { return false; },
           [](const EvaluationAttemptsType&) { return false; },
           [](const EventType&) { return false; },
@@ -442,6 +445,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const DriverType&) -> Element { return std::nullopt; },
           [](const OpenWriteType&) -> Element { return std::nullopt; },
           [](const DesignationType&) -> Element { return std::nullopt; },
+          [](const ObjectWriteType&) -> Element { return std::nullopt; },
           [](const SampledHistoryType&) -> Element { return std::nullopt; },
           [](const EvaluationAttemptsType&) -> Element { return std::nullopt; },
 

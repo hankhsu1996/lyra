@@ -134,6 +134,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const DriverType&) { return bare(); },
           [&](const OpenWriteType&) { return bare(); },
           [&](const DesignationType&) { return bare(); },
+          [&](const ObjectWriteType&) { return bare(); },
           [&](const SampledHistoryType&) { return bare(); },
           [&](const EvaluationAttemptsType&) { return bare(); },
           [&](const ClosureType&) { return bare(); },

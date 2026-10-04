@@ -949,29 +949,11 @@ auto UnitLowerer::RecordPromisedClass(const hir::ExternalUnitObject& promised)
 }
 
 auto UnitLowerer::TranslateClassPropertyTarget(
-    const hir::ClassPropertyTarget& target) -> mir::FieldRef {
-  return std::visit(
-      Overloaded{
-          [&](const hir::LocalClassPropertyTarget& local) -> mir::FieldRef {
-            const mir::ClassId owner = TranslateClass(local.owner);
-            return mir::ClassFieldTarget{
-                .owner = owner,
-                .slot =
-                    GetClassShape(owner).field_translation.Get(local.field)};
-          },
-          [&](const hir::ExternalClassPropertyTarget& published)
-              -> mir::FieldRef {
-            return MakeCrossUnitClassFieldTarget(published);
-          },
-          // A position settled while the design elaborates is read from where
-          // it was settled, which needs the body being emitted into; nothing
-          // here has one, so the access forms it and this is never asked.
-          [](const hir::UnpublishedClassPropertyTarget&) -> mir::FieldRef {
-            throw InternalError(
-                "hir_to_mir: a property whose position the design settles is "
-                "translated where the access is emitted");
-          }},
-      target);
+    const hir::LocalClassPropertyTarget& local) const -> mir::ClassFieldTarget {
+  const mir::ClassId owner = TranslateClass(local.owner);
+  return mir::ClassFieldTarget{
+      .owner = owner,
+      .slot = GetClassShape(owner).field_translation.Get(local.field)};
 }
 
 auto UnitLowerer::MakeExternalStaticPropertyRef(

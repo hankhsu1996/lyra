@@ -402,11 +402,6 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // which the wait adds what it reaches and every function the expression
   // calls reports what a call of it reads.
   kReadReport,
-  // A write in progress into a property of an object (LRM 8.4):
-  // `lyra::runtime::ObjectWrite`, through which the place written is reached,
-  // and which tells the object it was written when the full-expression doing
-  // the write ends (LRM 9.4.2).
-  kObjectWrite,
   // LRM 23.3.3.5 / 27.6 elaborated hierarchy segment:
   // `lyra::runtime::HierarchySegment`, the per-scope structured identity each
   // child carries from construction (base name plus per-dimension indices).
@@ -738,6 +733,18 @@ struct DesignationType {
   auto operator==(const DesignationType&) const -> bool = default;
 };
 
+// A write in progress into the properties of an object (LRM 8.4), opened on
+// the object alone, which answers the object as `object`, the class its
+// properties are reached through. It is an object the writer holds and it ends
+// with the full-expression that opened it, which is when it tells the object it
+// was written (LRM 9.4.2); the expression waiting on the object decides whether
+// that was an event, so nothing from before the write is kept.
+struct ObjectWriteType {
+  TypeId object;
+
+  auto operator==(const ObjectWriteType&) const -> bool = default;
+};
+
 // A type one MIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
 // that names each one rather than defaulting is what makes an alternative added
@@ -759,8 +766,8 @@ class Type {
       DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
       ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
       EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
-      DesignationType, SampledHistoryType, EvaluationAttemptsType, StructType,
-      ClosureType>;
+      DesignationType, ObjectWriteType, SampledHistoryType,
+      EvaluationAttemptsType, StructType, ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

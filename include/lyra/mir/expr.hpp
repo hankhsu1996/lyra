@@ -270,6 +270,61 @@ struct StructMethodTarget {
   auto operator==(const StructMethodTarget&) const -> bool = default;
 };
 
+// Identity of a class field at an access site: the class whose field arena
+// declares the field, and the slot within that arena. Owner is the declaring
+// class, not the receiver's class; the two coincide when the receiver's class
+// declares the field itself and diverge when the field is inherited from a
+// base (LRM 8.14).
+struct ClassFieldTarget {
+  ClassId owner;
+  FieldId slot;
+
+  auto operator==(const ClassFieldTarget&) const -> bool = default;
+};
+
+// Identity of a captured binding, which the closure declaration holds as a
+// field like any other storage a declaration declares.
+struct ClosureFieldTarget {
+  ClosureId owner;
+  FieldId slot;
+
+  auto operator==(const ClosureFieldTarget&) const -> bool = default;
+};
+
+// Identity of a property on an SV class another compilation unit declares: the
+// declaring unit, the class's canonical name -- matched at link time -- and the
+// slot that class gave the property, counted out of what it published. The
+// class is named by its parts rather than by an id, which is how every identity
+// crossing a unit boundary is carried.
+struct CrossUnitClassFieldTarget {
+  std::string unit_name;
+  std::string class_name;
+  FieldId slot;
+
+  auto operator==(const CrossUnitClassFieldTarget&) const -> bool = default;
+};
+
+// Which field a `FieldAccessExpr` reaches, stated as the declaration that
+// declares it and the slot that declaration gave it. One alternative per
+// declaration kind, because the declaration kinds are what the arenas holding
+// field names are keyed by, and a name is resolved by reading the arena the
+// access states rather than by classifying what the receiver turned out to be.
+//
+// A field is storage an object or a closure keeps, reached through that object
+// or closure, which is what separates it from a part of a product -- a tuple's
+// component or a struct's member. A product is a value, reached whether it is
+// stored, computed or behind a pointer, so reaching a part of one is an
+// operation on the value rather than a name in an arena, and it is a call.
+using FieldRef = std::variant<
+    ClassFieldTarget, ClosureFieldTarget, CrossUnitClassFieldTarget>;
+
+// The part a call acts on where the call itself fixes it: a component of a
+// product or the member an active-member value holds, by position, or a
+// property of an object, by the class declaring it. A closure's captures are
+// reached only from inside the closure, so no call names one.
+using CallPart = std::variant<
+    base::ComponentIndex, ClassFieldTarget, CrossUnitClassFieldTarget>;
+
 // The target of a `Direct` call -- the symbol identity. Each alternative is one
 // identity space, told apart by the table that resolves the name: a class of
 // this unit (`CallableTarget`), this unit's own namespace
@@ -299,17 +354,18 @@ using DirectTarget = std::variant<
 // call that dispatches on nothing -- a type-associated method (LRM 8.10), a
 // package subroutine (LRM 26.3), a runtime entry the program reaches by name.
 // The target says where the code is found and this says what it is applied to,
-// so the two vary independently.
-// `position` names the part an entry acts on where that part is fixed by the
-// call itself: a component of a product, the member an active-member value
-// holds. It rides with the callee rather than among the arguments because the
+// so the two vary independently. It is the object itself, as a field access's
+// receiver is: one a pointer reaches is dereferenced to it first, so `p->f()`
+// is a call on `*p`.
+// `part` names the part an entry acts on where that part is fixed by the call
+// itself. It rides with the callee rather than among the arguments because the
 // part named has a type of its own, so a target with a type system settles the
-// position where it settles types -- which is naming the operation, not handing
-// it a value. Absent for every entry that names no part.
+// part where it settles types -- which is naming the operation, not handing it
+// a value. Absent for every entry that names no part.
 struct Direct {
   DirectTarget target;
   std::optional<ExprId> receiver = std::nullopt;
-  std::optional<base::ComponentIndex> position = std::nullopt;
+  std::optional<CallPart> part = std::nullopt;
 };
 
 // A call through a code address the program computed -- the indirect-call
@@ -353,11 +409,11 @@ struct ExternalVirtualSlot {
 // never split across two dispatch node kinds.
 using VirtualSlot = std::variant<LocalVirtualSlot, ExternalVirtualSlot>;
 
-// A virtually-dispatched call: the receiver is evaluated once and then the
-// implementation of the named slot on that receiver's dynamic type runs
-// (LRM 8.20). The receiver rides here, distinct from user-supplied
-// `CallExpr::arguments`, so the call carries exactly the arguments the SV
-// source wrote and the receiver is not conflated with them.
+// A virtually-dispatched call: the receiver -- the object, as a direct call's
+// is -- is evaluated once and then the implementation of the named slot on
+// that object's dynamic type runs (LRM 8.20). The receiver rides here, distinct
+// from user-supplied `CallExpr::arguments`, so the call carries exactly the
+// arguments the SV source wrote and the receiver is not conflated with them.
 struct Virtual {
   ExprId receiver;
   VirtualSlot slot;
@@ -426,60 +482,14 @@ struct MoveExpr {
   ExprId operand;
 };
 
-// Identity of a class field at an access site: the class whose field arena
-// declares the field, and the slot within that arena. Owner is the declaring
-// class, not the receiver's class; the two coincide when the receiver's class
-// declares the field itself and diverge when the field is inherited from a
-// base (LRM 8.14).
-struct ClassFieldTarget {
-  ClassId owner;
-  FieldId slot;
-
-  auto operator==(const ClassFieldTarget&) const -> bool = default;
-};
-
-// Identity of a captured binding, which the closure declaration holds as a
-// field like any other storage a declaration declares.
-struct ClosureFieldTarget {
-  ClosureId owner;
-  FieldId slot;
-
-  auto operator==(const ClosureFieldTarget&) const -> bool = default;
-};
-
-// Identity of a property on an SV class another compilation unit declares: the
-// declaring unit, the class's canonical name -- matched at link time -- and the
-// slot that class gave the property, counted out of what it published. The
-// class is named by its parts rather than by an id, which is how every identity
-// crossing a unit boundary is carried.
-struct CrossUnitClassFieldTarget {
-  std::string unit_name;
-  std::string class_name;
-  FieldId slot;
-
-  auto operator==(const CrossUnitClassFieldTarget&) const -> bool = default;
-};
-
-// Which field a `FieldAccessExpr` reaches, stated as the declaration that
-// declares it and the slot that declaration gave it. One alternative per
-// declaration kind, because the declaration kinds are what the arenas holding
-// field names are keyed by, and a name is resolved by reading the arena the
-// access states rather than by classifying what the receiver turned out to be.
-//
-// A field is storage an object or a closure keeps, reached through that object
-// or closure, which is what separates it from a part of a product -- a tuple's
-// component or a struct's member. A product is a value, reached whether it is
-// stored, computed or behind a pointer, so reaching a part of one is an
-// operation on the value rather than a name in an arena, and it is a call.
-using FieldRef = std::variant<
-    ClassFieldTarget, ClosureFieldTarget, CrossUnitClassFieldTarget>;
-
-// Field access through an explicit receiver expression: `receiver.field`. The
-// receiver is a value of whichever declaration the field names, reached by
-// pointer or held directly, which is the receiver expression's business and
-// not this node's. So a backend never asks "what is the current receiver?",
-// and never derives which arena declares the name from what the receiver's
-// type turns out to be.
+// Field access on an explicit receiver: `receiver.field`. The receiver is the
+// object of whichever declaration the field names, as a place. An object a
+// handle, a pointer, or a write in progress reaches is first dereferenced to
+// it, so `p->field` is this node over `*p`, as in rustc's MIR, where a field is
+// projected from a place that is itself a dereference. So a backend never asks
+// "what is the current receiver?", never asks whether the receiver must first
+// be opened, and never derives which arena declares the name from what the
+// receiver's type turns out to be.
 //
 // One node serves reading the field and writing it. Which of the two an
 // occurrence is follows from where it stands -- a value position reads, an
@@ -757,7 +767,7 @@ struct Expr {
                   Direct{
                       .target = support::BuiltinFn::kComponent,
                       .receiver = subject,
-                      .position = index},
+                      .part = index},
               .arguments = {}},
       .type = component};
 }
@@ -773,7 +783,7 @@ struct Expr {
                   Direct{
                       .target = support::BuiltinFn::kComponentRef,
                       .receiver = subject,
-                      .position = index},
+                      .part = index},
               .arguments = {}},
       .type = component};
 }
@@ -792,7 +802,7 @@ struct Expr {
                   Direct{
                       .target = support::BuiltinFn::kTagMatches,
                       .receiver = subject,
-                      .position = index},
+                      .part = index},
               .arguments = {}},
       .type = machine_boolean};
 }
@@ -807,7 +817,7 @@ struct Expr {
               .callee =
                   Direct{
                       .target = support::BuiltinFn::kMakeActiveMember,
-                      .position = index},
+                      .part = index},
               .arguments = {value}},
       .type = built};
 }

@@ -119,7 +119,9 @@ cross-check predicts. This file owns only which instances are known and what is 
       that declares it. The runtime lost the entries those partial forms named, and an associative
       array's absent-key answer stopped being an optional whose absence stood for the element
       default -- which also settled a disagreement between the two realizations of that type about
-      whether the answer is part of the value a change is detected against.
+      whether the answer is part of the value a change is detected against. A fourth was found
+      later: a format operand carrying the text its type renders it as (LRM 21.2.1.6) was told from
+      a plain one by its operand count, and is now a construction of its own name.
 - [x] T6 -- A runtime operation is named once, in the namespace of the layer that states it. A
       second namespace sat beside the shared one, private to the execution backend, and seven of its
       entries were second names for the three accesses a capability wrapper defines. MIR states

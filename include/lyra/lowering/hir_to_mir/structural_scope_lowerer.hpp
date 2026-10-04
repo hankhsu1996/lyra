@@ -23,6 +23,7 @@
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
+#include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -30,9 +31,6 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/type.hpp"
-#include "lyra/mir/type_builders.hpp"
-#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -581,46 +579,40 @@ class StructuralScopeLowerer {
   std::vector<ClassDeclLowerer> class_lowerers_;
 };
 
+// Which property a class property access names (LRM 8.4). Where the class
+// published a position, the access names the member at it. A class that
+// published nothing left no position to count and no member anything here can
+// name, so the access names the coordinate the class settles where the design
+// elaborates, read from where it was settled.
+template <typename Lowerer>
+auto PropertyNameOf(
+    Lowerer& lowerer, const WalkFrame& frame,
+    const hir::ClassPropertyTarget& target) -> PropertyName {
+  return std::visit(
+      Overloaded{
+          [&](const hir::LocalClassPropertyTarget& local) -> PropertyName {
+            return lowerer.Owner().TranslateClassPropertyTarget(local);
+          },
+          [&](const hir::ExternalClassPropertyTarget& published)
+              -> PropertyName {
+            return lowerer.Owner().MakeCrossUnitClassFieldTarget(published);
+          },
+          [&](const hir::UnpublishedClassPropertyTarget& settled)
+              -> PropertyName {
+            return PropertyCoordinate{
+                .at = lowerer.RouteEnd(frame, settled.coordinate)};
+          }},
+      target);
+}
+
 // The storage one class property access reaches, over `receiver` (LRM 8.4).
-//
-// Where the class published a position, the access names the member at it. A
-// class that published nothing left no position to count and no member anything
-// here can name, so the access says instead what it would have taken to reach
-// one: the class answers with the address, that address is read as the type the
-// access already knows the property has, and the storage is reached through it.
-// None of the three is a member at a position, which is the one thing a body
-// that cannot name the class is in no position to say.
 template <typename Lowerer>
 auto BuildClassPropertyAccess(
     Lowerer& lowerer, const WalkFrame& frame, mir::ExprId receiver,
     const hir::ClassPropertyTarget& target, mir::TypeId reached) -> mir::Expr {
-  const auto* settled =
-      std::get_if<hir::UnpublishedClassPropertyTarget>(&target);
-  if (settled == nullptr) {
-    return mir::MakeFieldAccessExpr(
-        receiver, lowerer.Owner().TranslateClassPropertyTarget(target),
-        reached);
-  }
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
-  const mir::ExprId coordinate = lowerer.RouteEnd(frame, settled->coordinate);
-  const mir::ExprId address = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = support::BuiltinFn::kPropertyAt},
-                  .arguments = {receiver, coordinate}},
-          .type = mir::ErasedPointer(unit.types)});
-  const mir::ExprId typed = block.exprs.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = address},
-          .type = unit.types.Intern(
-              mir::Type{mir::PointerType{
-                  .pointee = reached,
-                  .ownership = mir::PointerOwnership::kBorrowed,
-                  .mutability = mir::Mutability::kMutable}})});
-  return mir::MakeDerefExpr(typed, reached);
+  return PropertyStorage(
+      lowerer.Owner().Unit(), *frame.current_block, receiver,
+      PropertyNameOf(lowerer, frame, target), reached);
 }
 
 // A value the walk has reached, and the type it has there.

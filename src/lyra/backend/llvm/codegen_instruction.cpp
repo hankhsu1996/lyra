@@ -27,7 +27,6 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/place_query.hpp"
-#include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -2019,15 +2018,8 @@ auto CodeGenFunction::ConstructionOf(
               // full-expression as the print, and ends only after it.
               case lir::RuntimeLibraryKind::kPrintValueItem:
                 return over_operand(RuntimeOp::kMakePrintValueItem);
-              // An operand, and an operand carrying the text its own type
-              // renders it as (LRM 21.2.1.6), are two operations: the second
-              // is the construction that brings that text, and each answers
-              // with an entry of its own name.
               case lir::RuntimeLibraryKind::kFormatArg:
-                return over_operand(
-                    call.args.size() == 1
-                        ? RuntimeOp::kMakeFormatArg
-                        : RuntimeOp::kMakeFormatArgWithPattern);
+                return over_operand(RuntimeOp::kMakeFormatArg);
               // The DPI-C boundary temporaries (LRM 35.5.6.1, Annex H.7.7).
               // Each images one SV value in the canonical form the C side
               // reads, so the entry is one function over every value it can

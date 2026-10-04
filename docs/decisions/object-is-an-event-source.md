@@ -167,9 +167,11 @@ the subscription must represent. A virtual interface is stricter -- LRM 25.9 mak
 - **A write to a property is a write opened on the object**, the way a write to a variable is one
   opened on the variable: ending it is what reports to the source, so every form of write reaches
   the object without any of them saying so -- an assignment, a nonblocking one when it lands, and a
-  built-in method changing the property. A `ref` bound to a property outlasts any full-expression,
-  so it carries the object and each write through it reports as it lands, as one bound to a variable
-  does (LRM 13.5.2).
+  built-in method changing the property. It is opened on the object alone and the property is
+  reached through it, as Rust's `RefCell::borrow_mut` guard is, so the handle the source wrote once
+  is evaluated once. A `ref` bound to a property outlasts any full-expression, so it carries the
+  object and each write through it reports as it lands, as one bound to a variable does (LRM
+  13.5.2).
 - **Collecting the sources an evaluation reached (D3, D4) is done by the waiting process.** A wait
   whose expression reaches anything through a handle resumes on every candidacy, evaluates the
   handles again to find what it now reaches, and waits anew; before waiting it compares the

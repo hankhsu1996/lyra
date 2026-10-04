@@ -561,13 +561,26 @@ auto ReferToStorage(void* storage, void* out) -> void* {
   return BuildReference(out, ErasedReference{.holder = {}, .storage = storage});
 }
 
-// A reference to a property of an object, which a write through it tells: the
-// reference to the property's storage, held by the object.
-auto ReferToProperty(void* object, const void* storage, void* out) -> void* {
+// A reference to a property of an object, held by the object so a write
+// through it tells the object. Reaching a property through a handle naming no
+// object is the design's own failure (LRM 8.4).
+auto ReferToProperty(void* object, void* storage, void* out) -> void* {
+  if (object == nullptr) {
+    value::RaiseNullObjectHandleAccess();
+  }
   return BuildReference(
       out, ErasedReference{
-               .holder = static_cast<GcObject*>(object),
-               .storage = ErasedAt(storage).storage});
+               .holder = static_cast<GcObject*>(object), .storage = storage});
+}
+
+auto ReferToPropertyAt(void* object, const void* coordinate, void* out)
+    -> void* {
+  return ReferToProperty(
+      object,
+      PropertyAt(
+          static_cast<GcObject*>(object),
+          static_cast<const PropertyCoordinate*>(coordinate)),
+      out);
 }
 
 // The steps a reference takes into a part of what it names, each over the
@@ -889,6 +902,7 @@ using lyra::runtime::EnterCancellationTarget;
 using lyra::runtime::EnterForeignTask;
 using lyra::runtime::ErasedAt;
 using lyra::runtime::ErasedDesignation;
+using lyra::runtime::ErasedObjectWrite;
 using lyra::runtime::ErasedReference;
 using lyra::runtime::EvaluationAttempts;
 using lyra::runtime::EventSourceOf;
@@ -909,8 +923,6 @@ using lyra::runtime::MakeSharedCell;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
 using lyra::runtime::ObjectDefinition;
-using lyra::runtime::ObjectRootOf;
-using lyra::runtime::ObjectWrite;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
 using lyra::runtime::OpenCellWrite;
@@ -938,6 +950,7 @@ using lyra::runtime::RefArmSampling;
 using lyra::runtime::ReferElement;
 using lyra::runtime::ReferToCell;
 using lyra::runtime::ReferToProperty;
+using lyra::runtime::ReferToPropertyAt;
 using lyra::runtime::ReferToStorage;
 using lyra::runtime::ReferToTupleCell;
 using lyra::runtime::RefGet;
@@ -2005,22 +2018,17 @@ auto lyra_rt_self_handle(void* self, void* out) -> void* {
   return Emplace(out, lyra::runtime::SelfHandle(static_cast<GcObject*>(self)));
 }
 
-auto lyra_rt_object_root_of(const void* handle) -> void* {
-  return ObjectRootOf(Read<ObjectRef>(handle));
-}
-
 auto lyra_rt_object_event_source(void* object) -> void* {
   return EventSourceOf(static_cast<GcObject*>(object));
 }
 
-auto lyra_rt_open_object_write(void* object, const void* place, void* out)
-    -> void* {
+auto lyra_rt_open_object_write(void* object, void* out) -> void* {
   return std::construct_at(
-      static_cast<ObjectWrite*>(out), static_cast<GcObject*>(object), place);
+      static_cast<ErasedObjectWrite*>(out), static_cast<GcObject*>(object));
 }
 
-auto lyra_rt_object_write_through(const void* write) -> const void* {
-  return static_cast<const ObjectWrite*>(write)->Place();
+auto lyra_rt_written_object(const void* write) -> void* {
+  return static_cast<const ErasedObjectWrite*>(write)->Object();
 }
 
 auto lyra_rt_enumeration_has(const void* enumeration, const void* value)
@@ -2050,9 +2058,9 @@ auto lyra_rt_enumeration_prev(
                .Prev(Read<PackedArray>(value), Read<PackedArray>(count)));
 }
 
-auto lyra_rt_property_at(const void* handle, const void* coordinate) -> void* {
+auto lyra_rt_property_at(void* object, const void* coordinate) -> void* {
   return PropertyAt(
-      Read<ObjectRef>(handle),
+      static_cast<GcObject*>(object),
       static_cast<const PropertyCoordinate*>(coordinate));
 }
 
@@ -2120,9 +2128,13 @@ auto lyra_rt_refer_storage(void* storage, void* out) -> void* {
   return ReferToStorage(storage, out);
 }
 
-auto lyra_rt_refer_property(void* object, const void* storage, void* out)
-    -> void* {
+auto lyra_rt_refer_property(void* object, void* storage, void* out) -> void* {
   return ReferToProperty(object, storage, out);
+}
+
+auto lyra_rt_refer_property_at(void* object, const void* coordinate, void* out)
+    -> void* {
+  return ReferToPropertyAt(object, coordinate, out);
 }
 
 auto lyra_rt_reference_reports_to(const void* reference) -> void* {
@@ -6089,10 +6101,11 @@ auto lyra_rt_string_make_format_arg(const void* value, void* out) -> void* {
   return Emplace(out, MakeFormatArg(Read<String>(value)));
 }
 
-auto lyra_rt_packed_make_format_arg_with_pattern(
+auto lyra_rt_make_patterned_format_arg(
     const void* value, const void* pattern, void* out) -> void* {
   return Emplace(
-      out, FormatArg(Read<PackedArray>(value), Read<String>(pattern)));
+      out,
+      FormatArg::Patterned(Read<PackedArray>(value), Read<String>(pattern)));
 }
 
 auto lyra_rt_make_rendered_format_arg(const void* pattern, void* out) -> void* {
@@ -6500,7 +6513,7 @@ void lyra_rt_open_write_destroy(void* object) {
   std::destroy_at(static_cast<OpenWrite*>(object));
 }
 void lyra_rt_object_write_destroy(void* object) {
-  std::destroy_at(static_cast<ObjectWrite*>(object));
+  std::destroy_at(static_cast<ErasedObjectWrite*>(object));
 }
 
 // A second value equal to one the body already holds, built in further storage

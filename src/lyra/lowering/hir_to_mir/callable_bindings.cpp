@@ -125,8 +125,10 @@ auto CallableBindings::MakeReadExpr(BodyBindingRef ref, mir::Block& block) const
           [&](mir::FieldId field) -> mir::Expr {
             const mir::TypeId field_type =
                 closure_decl_->fields.Get(field).type;
-            const mir::ExprId receiver = block.exprs.Add(
-                mir::MakeLocalRefExpr(self_local_, self_ptr_type_));
+            const mir::ExprId receiver = BuildObjectDeref(
+                *unit_, block,
+                block.exprs.Add(
+                    mir::MakeLocalRefExpr(self_local_, self_ptr_type_)));
             return mir::MakeFieldAccessExpr(
                 receiver,
                 mir::ClosureFieldTarget{.owner = closure_id_, .slot = field},

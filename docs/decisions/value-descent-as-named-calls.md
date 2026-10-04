@@ -80,6 +80,9 @@ The tell that this is the right placement is arithmetic. A fact placed among the
 not belong there costs one special case at every site that walks operands, and every layer walks
 operands. Moving it to the callee removed three such cases and added none.
 
+A property of an object a call takes a step to is named the same way, by the class declaring it and
+its slot there, because a property's type is a function of which one it is just as a component's is.
+
 ### D4. A write target is built as a descent, so no consumer recovers an owner
 
 The lowering that peels a write target holds the descent as its own structure: one step per level of

@@ -33,17 +33,6 @@ auto Find(const ObjectDefinition* cls, auto table, std::string_view name)
   return nullptr;
 }
 
-// The object a handle refers to, which an access applies what it asks to. The
-// share names the object whatever part the handle reaches it through. Naming
-// no object is the design's own failure (LRM 8.4).
-auto AnsweringObject(const value::ObjectRef& ref) -> GcObject* {
-  auto* object = static_cast<GcObject*>(ref.Handle().Share().get());
-  if (object == nullptr) {
-    value::RaiseNullObjectHandleAccess();
-  }
-  return object;
-}
-
 auto NoSuchName(std::string_view what, std::string_view name) -> std::string {
   return std::format(
       "a name reaching past a compilation unit's signature asks for {} '{}' on "
@@ -104,8 +93,10 @@ auto ViewOf(const value::ObjectRef& ref) -> void* {
   return view;
 }
 
-auto PropertyAt(const value::ObjectRef& ref, const PropertyCoordinate* at)
-    -> void* {
+auto PropertyAt(GcObject* object, const PropertyCoordinate* at) -> void* {
+  if (object == nullptr) {
+    value::RaiseNullObjectHandleAccess();
+  }
   const std::span<const PropertySlotEntry> slots =
       RequireDefinition(at->declared_by)->property_slots.Entries();
   if (at->slot >= slots.size()) {
@@ -113,7 +104,7 @@ auto PropertyAt(const value::ObjectRef& ref, const PropertyCoordinate* at)
         "class definition: the class an access names holds no property at the "
         "position the access carries");
   }
-  return slots[at->slot](AnsweringObject(ref));
+  return slots[at->slot](object);
 }
 
 }  // namespace lyra::runtime

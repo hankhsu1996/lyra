@@ -5,9 +5,13 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
@@ -41,7 +45,18 @@ auto TakeoverTarget(
         target.span, diag::DiagCode::kUnsupportedStatementForm,
         "taking over part of a target is not yet supported (LRM 10.6.2)");
   }
-  return target_or->owner;
+  return std::visit(
+      Overloaded{
+          [](mir::ExprId place) -> diag::Result<mir::ExprId> { return place; },
+          // A member of a dynamic type is no variable a takeover may name,
+          // which the front end refuses before anything is lowered.
+          [](const ObjectProperty&) -> diag::Result<mir::ExprId> {
+            throw InternalError(
+                "procedural continuous assignment: the target is a class "
+                "property, which the front end refuses -- please report this "
+                "as a bug");
+          }},
+      target_or->owner);
 }
 
 }  // namespace

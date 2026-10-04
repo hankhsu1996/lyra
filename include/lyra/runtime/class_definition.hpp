@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string_view>
 
+#include "lyra/runtime/object_change.hpp"
+#include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/scope_info.hpp"
 #include "lyra/value/object_ref.hpp"
 
@@ -130,11 +132,22 @@ struct ObjectDefinition {
 // on. A handle naming no object is the design's own failure (LRM 8.4).
 [[nodiscard]] auto ViewOf(const value::ObjectRef& ref) -> void*;
 
-// Applying a coordinate to whichever object a handle holds: the class declaring
-// the property answers where it is. Reaching through a handle naming no object
-// is the design's own failure (LRM 8.4), the same failure as reaching a member
-// by name through one.
-[[nodiscard]] auto PropertyAt(
-    const value::ObjectRef& ref, const PropertyCoordinate* at) -> void*;
+// Applying a coordinate to an object: the class declaring the property answers
+// where it is. The object is given by whatever reaches it -- the root every
+// object shares, a handle, or a write in progress into it. Reaching through a
+// handle naming no object is the design's own failure (LRM 8.4), the same
+// failure as reaching a member by name through one.
+[[nodiscard]] auto PropertyAt(GcObject* object, const PropertyCoordinate* at)
+    -> void*;
+
+[[nodiscard]] inline auto PropertyAt(
+    const value::ObjectRef& handle, const PropertyCoordinate* at) -> void* {
+  return PropertyAt(ObjectRootOf(handle), at);
+}
+
+[[nodiscard]] inline auto PropertyAt(
+    const ErasedObjectWrite& write, const PropertyCoordinate* at) -> void* {
+  return PropertyAt(write.Object(), at);
+}
 
 }  // namespace lyra::runtime

@@ -26,6 +26,13 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+// The part a step names, where it names one by its position.
+auto PartAt(std::optional<base::ComponentIndex> position)
+    -> std::optional<mir::CallPart> {
+  return position.transform(
+      [](base::ComponentIndex at) { return mir::CallPart{at}; });
+}
+
 auto CallEntry(
     mir::Block& block, support::BuiltinFn fn,
     std::optional<base::ComponentIndex> position, mir::ExprId receiver,
@@ -38,7 +45,7 @@ auto CallEntry(
                       mir::Direct{
                           .target = fn,
                           .receiver = receiver,
-                          .position = position},
+                          .part = PartAt(position)},
                   .arguments = std::move(operands)},
           .type = type});
 }
@@ -110,15 +117,24 @@ auto ReferringStepOf(const DescentStep& step) -> support::BuiltinFn {
   throw InternalError("access path: unknown part selection");
 }
 
-// The owner as a write reaches it: through a write opened on the object it is a
-// property of, where it is one, so that ending the write tells the object.
-auto WrittenOwner(
-    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
-    -> mir::ExprId {
-  if (!path.object.has_value()) {
-    return path.owner;
-  }
-  return PropertyWrittenThrough(unit, block, *path.object, path.owner);
+// The owner, where it is a capability wrapper whose whole contents a store may
+// replace by acting on the wrapper.
+auto StoredWrapper(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    const PathOwner& owner) -> std::optional<mir::ExprId> {
+  return std::visit(
+      Overloaded{
+          [&](mir::ExprId place) -> std::optional<mir::ExprId> {
+            const mir::Type& type = unit.types.Get(block.exprs.Get(place).type);
+            if (!type.IsCapabilityWrapper() || type.Is<mir::ResolvedType>()) {
+              return std::nullopt;
+            }
+            return place;
+          },
+          [](const ObjectProperty&) -> std::optional<mir::ExprId> {
+            return std::nullopt;
+          }},
+      owner);
 }
 
 // `lhs op= rhs`, at an operator whose two forms are the whole of what an
@@ -215,8 +231,7 @@ auto ValueSelectedWithin(
     const mir::CompilationUnit& unit, const mir::Block& block,
     const AccessPath& path) -> mir::TypeId {
   const auto stepped_into = [&](std::size_t step) {
-    return step == 0 ? PathValueType(
-                           unit, block, {.owner = path.owner, .descent = {}})
+    return step == 0 ? OwnerValueType(unit, block, path.owner)
                      : path.descent[step - 1].part_type;
   };
   std::size_t first = path.descent.size() - 1;
@@ -245,16 +260,40 @@ auto DescendInto(AccessPath base, DescentStep step) -> AccessPath {
   return base;
 }
 
+auto OwnerPlace(const AccessPath& path) -> mir::ExprId {
+  return std::visit(
+      Overloaded{
+          [](mir::ExprId place) { return place; },
+          [](const ObjectProperty&) -> mir::ExprId {
+            throw InternalError(
+                "access path: this construct's owner is a place, and a "
+                "property of an object reached it");
+          }},
+      path.owner);
+}
+
+auto OwnerValueType(
+    const mir::CompilationUnit& unit, const mir::Block& block,
+    const PathOwner& owner) -> mir::TypeId {
+  return std::visit(
+      Overloaded{
+          [&](mir::ExprId place) {
+            const mir::TypeId owner_type = block.exprs.Get(place).type;
+            const mir::Type& owner_ty = unit.types.Get(owner_type);
+            return owner_ty.IsCapabilityWrapper() ? owner_ty.WrappedValueType()
+                                                  : owner_type;
+          },
+          [](const ObjectProperty& property) { return property.type; }},
+      owner);
+}
+
 auto PathValueType(
     const mir::CompilationUnit& unit, const mir::Block& block,
     const AccessPath& path) -> mir::TypeId {
   if (!path.descent.empty()) {
     return path.descent.back().part_type;
   }
-  const mir::TypeId owner_type = block.exprs.Get(path.owner).type;
-  const mir::Type& owner_ty = unit.types.Get(owner_type);
-  return owner_ty.IsCapabilityWrapper() ? owner_ty.WrappedValueType()
-                                        : owner_type;
+  return OwnerValueType(unit, block, path.owner);
 }
 
 auto PathPlace(
@@ -267,10 +306,11 @@ auto PathPlace(
         type);
   };
   auto step = path.descent.begin();
-  const mir::ExprId owner = WrittenOwner(unit, block, path);
-  mir::ExprId reached = owner;
-  const mir::Type& owner_ty = unit.types.Get(block.exprs.Get(path.owner).type);
-  if (owner_ty.IsCapabilityWrapper()) {
+  const auto from_place = [&](mir::ExprId owner) -> mir::ExprId {
+    const mir::Type& owner_ty = unit.types.Get(block.exprs.Get(owner).type);
+    if (!owner_ty.IsCapabilityWrapper()) {
+      return owner;
+    }
     RefuseNetCell(owner_ty);
     // The write is opened on the wrapper, the whole of what the wrapper holds
     // is designated within it, and each step into a part that is storage of its
@@ -307,8 +347,21 @@ auto PathPlace(
         break;
       }
     }
-    reached = block.exprs.Add(mir::MakeDerefExpr(designation, value));
-  }
+    return block.exprs.Add(mir::MakeDerefExpr(designation, value));
+  };
+  // A property is written through a write opened on its object alone, which
+  // the object hears when the write ends; the property is reached through the
+  // write, as a member is through a guard.
+  mir::ExprId reached = std::visit(
+      Overloaded{
+          from_place,
+          [&](const ObjectProperty& owner) {
+            return block.exprs.Add(PropertyStorage(
+                unit, block,
+                OpenObjectWrite(unit, block, owner.object, owner.property),
+                owner.property, owner.type));
+          }},
+      path.owner);
   for (; step != path.descent.end(); ++step) {
     reached = reach(step->part_entry, reached, *step, step->part_type);
   }
@@ -318,13 +371,18 @@ auto PathPlace(
 auto PathReference(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId {
-  mir::ExprId reference =
-      path.object.has_value()
-          ? PropertyReferred(unit, block, *path.object, path.owner)
-          : BuildReferenceArg(
-                unit, block, path.owner, block.exprs.Get(path.owner).type);
-  mir::TypeId value =
-      PathValueType(unit, block, {.owner = path.owner, .descent = {}});
+  mir::ExprId reference = std::visit(
+      Overloaded{
+          [&](mir::ExprId place) {
+            return BuildReferenceArg(
+                unit, block, place, block.exprs.Get(place).type);
+          },
+          [&](const ObjectProperty& owner) {
+            return PropertyReference(
+                unit, block, owner.object, owner.property, owner.type);
+          }},
+      path.owner);
+  mir::TypeId value = OwnerValueType(unit, block, path.owner);
   for (const DescentStep& step : path.descent) {
     if (!unit.types.Get(value).PartsAreStorage()) {
       throw InternalError(
@@ -345,12 +403,22 @@ auto PathReference(
 auto PathValue(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId {
-  const mir::Type& owner_ty = unit.types.Get(block.exprs.Get(path.owner).type);
-  mir::ExprId reached = path.owner;
-  if (owner_ty.IsCapabilityWrapper()) {
-    reached = block.exprs.Add(
-        mir::MakeCellLoadCallExpr(path.owner, owner_ty.WrappedValueType()));
-  }
+  mir::ExprId reached = std::visit(
+      Overloaded{
+          [&](mir::ExprId place) {
+            const mir::Type& owner_ty =
+                unit.types.Get(block.exprs.Get(place).type);
+            if (!owner_ty.IsCapabilityWrapper()) {
+              return place;
+            }
+            return block.exprs.Add(
+                mir::MakeCellLoadCallExpr(place, owner_ty.WrappedValueType()));
+          },
+          [&](const ObjectProperty& owner) {
+            return block.exprs.Add(PropertyStorage(
+                unit, block, owner.object, owner.property, owner.type));
+          }},
+      path.owner);
   for (const DescentStep& step : path.descent) {
     reached = block.exprs.Add(StepRead(unit, block, step, reached));
   }
@@ -367,7 +435,7 @@ auto StepRead(
                   mir::Direct{
                       .target = step.value_entry,
                       .receiver = receiver,
-                      .position = step.position},
+                      .part = PartAt(step.position)},
               .arguments = StepArguments(unit, block, step)},
       .type = step.part_type};
 }
@@ -497,13 +565,30 @@ auto SettledPlace(
       node.data);
 }
 
+auto SettledOwner(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const PathOwner& owner) -> PathOwner {
+  return std::visit(
+      Overloaded{
+          [&](mir::ExprId place) -> PathOwner {
+            return SettledPlace(unit_lowerer, frame, place);
+          },
+          [&](const ObjectProperty& property) -> PathOwner {
+            const auto once = [&](mir::ExprId id) {
+              return EvaluatedOnce(frame, id);
+            };
+            return ObjectProperty{
+                .object = once(property.object),
+                .property = CoordinateMapped(property.property, once),
+                .type = property.type};
+          }},
+      owner);
+}
+
 auto Settled(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path)
     -> AccessPath {
-  path.owner = SettledPlace(unit_lowerer, frame, path.owner);
-  if (path.object.has_value()) {
-    path.object = EvaluatedOnce(frame, *path.object);
-  }
+  path.owner = SettledOwner(unit_lowerer, frame, path.owner);
   for (DescentStep& step : path.descent) {
     for (mir::ExprId& operand : step.operands) {
       operand = EvaluatedOnce(frame, operand);
@@ -515,7 +600,6 @@ auto Settled(
 auto SettledForRead(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path)
     -> SettledPath {
-  path.object = std::nullopt;
   AccessPath settled = Settled(unit_lowerer, frame, std::move(path));
   return SettledPath{
       .named_in = frame.current_block,
@@ -531,7 +615,17 @@ auto NamedIn(const SettledPath& settled, mir::Block& to) -> AccessPath {
   if (&from == &to) {
     return path;
   }
-  path.owner = NamedAgain(from, to, path.owner);
+  const auto again = [&](mir::ExprId id) { return NamedAgain(from, to, id); };
+  path.owner = std::visit(
+      Overloaded{
+          [&](mir::ExprId place) -> PathOwner { return again(place); },
+          [&](const ObjectProperty& property) -> PathOwner {
+            return ObjectProperty{
+                .object = again(property.object),
+                .property = CoordinateMapped(property.property, again),
+                .type = property.type};
+          }},
+      path.owner);
   for (DescentStep& step : path.descent) {
     for (mir::ExprId& operand : step.operands) {
       operand = NamedAgain(from, to, operand);
@@ -589,9 +683,9 @@ auto BuildStoreExpr(
   // watching -- so it is a call taking the wrapper as its destination. A store
   // that descends writes a part, which reaches storage the way a read does and
   // assigns through what it reaches.
-  const mir::Type& owner_ty = unit.types.Get(block.exprs.Get(path.owner).type);
-  if (path.descent.empty() && owner_ty.IsCapabilityWrapper() &&
-      !owner_ty.Is<mir::ResolvedType>()) {
+  const std::optional<mir::ExprId> wrapper =
+      StoredWrapper(unit, block, path.owner);
+  if (path.descent.empty() && wrapper.has_value()) {
     // The operands are the destination and the value, and nothing else: the
     // engine the wrapper reports through is the ambient one, which has the
     // standing of a stack pointer rather than of program data.
@@ -601,7 +695,7 @@ auto BuildStoreExpr(
                 .callee =
                     mir::Direct{
                         .target = support::BuiltinFn::kStore,
-                        .receiver = WrittenOwner(unit, block, path)},
+                        .receiver = wrapper},
                 .arguments = {rhs_id}},
         .type = unit.builtins.void_type};
   }

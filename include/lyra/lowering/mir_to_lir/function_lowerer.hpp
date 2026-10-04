@@ -453,6 +453,20 @@ class FunctionLowerer {
   auto LowerReferenceBind(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
+  // A reference to a property of an object (LRM 13.5.2), the call naming the
+  // property as its part: the runtime entry takes what holds the storage and
+  // where the storage is, both of which are the one object reached once.
+  auto LowerPropertyReference(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
+  // A write opened on the object its one argument reaches (LRM 8.4, 9.4.2).
+  auto LowerObjectWriteOpening(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
+  // The address of the object `reaches` reaches -- `&*reaches` -- whether it
+  // is a class handle, a pointer, or a write in progress into the object.
+  auto ObjectAddress(const mir::Block& block, mir::ExprId reaches)
+      -> diag::Result<lir::Operand>;
   // The place naming the storage a reference binds. It is the same storage a
   // write to the referent descends into, so what may be lent and what may be
   // written are one question; only a local the body gave storage of its own is
