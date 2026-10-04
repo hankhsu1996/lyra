@@ -387,8 +387,8 @@ auto ConnectInterfacePort(
   return {};
 }
 
-// The couplings a bidirectional port connection states (LRM 23.3.3, 23.3.3.7).
-// Both sides are a sequence of runs of net positions: the actual may name a
+// The join a bidirectional port connection states (LRM 23.3.3, 23.3.3.7). Both
+// sides are a sequence of runs of net positions: the actual may name a
 // concatenation of nets, and the child's port may stand for part of one of its
 // own declarations, which that unit answers for on its signature because only
 // its own source says which part. The two are laid over each other from the
@@ -398,13 +398,13 @@ auto ConnectBidirectionalPort(
     StructuralScopeLowerer& scope, const slang::ast::Symbol& eval_scope,
     const slang::ast::Expression& actual, hir::Expr child_net,
     hir::PublishedRun child_run, diag::SourceSpan span, WalkFrame frame)
-    -> diag::Result<std::vector<hir::NetJoin>> {
+    -> diag::Result<hir::NetJoin> {
   auto outside = NetRunsOfLvalue(
       scope, eval_scope, actual, span,
       diag::DiagCode::kUnsupportedPortConnectionForm, frame);
   if (!outside) return std::unexpected(std::move(outside.error()));
   std::uint32_t named = 0;
-  for (const NetRun& run : *outside) {
+  for (const hir::NetRun& run : *outside) {
     named += run.width;
   }
   if (named != child_run.width) {
@@ -413,11 +413,12 @@ auto ConnectBidirectionalPort(
         "an inout port connected to a net of a different width is not yet "
         "supported");
   }
-  const NetSide inside = {NetRun{
+  hir::NetSide inside = {hir::NetRun{
       .part = frame.Exprs().Add(std::move(child_net)),
       .offset = child_run.position,
       .width = child_run.width}};
-  return CoupleSides(*outside, inside, span);
+  return hir::NetJoin{
+      .span = span, .sides = {*std::move(outside), std::move(inside)}};
 }
 
 // Connects one data-carrying part of a port (LRM 23.3.3). The child's port is
@@ -592,15 +593,13 @@ auto ConnectDataPort(
             "ConnectDataPort: an inout port connection is stated as an "
             "assignment to the parent-side target");
       }
-      auto couplings = ConnectBidirectionalPort(
+      auto join = ConnectBidirectionalPort(
           scope, *child.instance,
           expr->as<slang::ast::AssignmentExpression>().left(),
           unit_lowerer.MakeRoutedMemberRef(child.home_frame, port_route, span),
           *projection->run, span, frame);
-      if (!couplings) return std::unexpected(std::move(couplings.error()));
-      for (const hir::NetJoin& coupling : *couplings) {
-        frame.current_structural_scope->net_joins.push_back(coupling);
-      }
+      if (!join) return std::unexpected(std::move(join.error()));
+      frame.current_structural_scope->net_joins.push_back(*std::move(join));
       return {};
     }
   }

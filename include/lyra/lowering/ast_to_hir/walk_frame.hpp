@@ -13,7 +13,6 @@
 #include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/hir/expr_id.hpp"
-#include "lyra/hir/loop_label_id.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
@@ -155,21 +154,10 @@ struct WalkFrame {
   // fork is tracked correctly. Zero outside a process body.
   std::uint32_t fork_branch_depth = 0;
 
-  // Non-local break target for the innermost enclosing loop. A `foreach`
-  // lowers to nested loops, so a `break` whose innermost SystemVerilog loop is
-  // that foreach must leave the whole nest -- it carries the outermost loop's
-  // label. Set while lowering a foreach body; reset to nullopt while lowering
-  // an ordinary loop body (whose break is a plain innermost exit). When a break
-  // consumes the label, `innermost_break_used` is flipped so the foreach knows
-  // to mark the outer loop as a landing target.
-  std::optional<hir::LoopLabelId> innermost_break_label = std::nullopt;
-  bool* innermost_break_used = nullptr;
-
-  // The queue base whose `$` (LRM 7.10 last index) is resolved while lowering
-  // an element-select index or slice bound: `$` lowers to `size(base) - 1`.
-  // Null outside a queue index / bound expression. Re-set per select, so each
-  // `$` in a nested `q[r[$]]` binds to the array its own select indexes.
-  std::optional<hir::ExprId> dollar_base = std::nullopt;
+  // Whether the subtree being lowered is the index or a slice bound of a select
+  // taken from a queue, which is the one place `$` has a value (LRM 7.10.1:
+  // the queue's last index).
+  bool within_queue_select = false;
 
   // The active LRM 7.12 array-method `with`-clause iterators whose bodies are
   // being lowered, each enclosing clause kept so an inner body can still name
@@ -333,11 +321,18 @@ struct WalkFrame {
     return next;
   }
 
-  // Binds `base` as the queue whose `$` resolves to its last index while the
-  // index / slice-bound subtree is lowered (LRM 7.10).
-  [[nodiscard]] auto WithDollarBase(hir::ExprId base) const -> WalkFrame {
+  // Enters the index or a slice bound of a select taken from a queue.
+  [[nodiscard]] auto WithinQueueSelect() const -> WalkFrame {
     WalkFrame next = *this;
-    next.dollar_base = base;
+    next.within_queue_select = true;
+    return next;
+  }
+
+  // Enters a subtree in which `$` is not a queue's last index even under a
+  // queue select: a bound of a value range (LRM 11.4.13).
+  [[nodiscard]] auto OutsideQueueSelect() const -> WalkFrame {
+    WalkFrame next = *this;
+    next.within_queue_select = false;
     return next;
   }
 
@@ -401,27 +396,6 @@ struct WalkFrame {
       open_scope->children.push_back(scope.id);
     }
     return scope.id;
-  }
-
-  // Establishes `label` as the break target for the body being lowered. `used`
-  // points at a flag the foreach owns; a break that consumes the label flips
-  // it. Used by the foreach lowering for its nested loop body.
-  [[nodiscard]] auto WithBreakLabel(hir::LoopLabelId label, bool* used) const
-      -> WalkFrame {
-    WalkFrame next = *this;
-    next.innermost_break_label = label;
-    next.innermost_break_used = used;
-    return next;
-  }
-
-  // Clears the foreach break target. An ordinary loop body uses this so a break
-  // inside it is the plain innermost exit, not an escape to an enclosing
-  // foreach.
-  [[nodiscard]] auto WithoutBreakLabel() const -> WalkFrame {
-    WalkFrame next = *this;
-    next.innermost_break_label = std::nullopt;
-    next.innermost_break_used = nullptr;
-    return next;
   }
 
   [[nodiscard]] auto InForkBranch() const -> bool {

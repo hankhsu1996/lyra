@@ -93,8 +93,10 @@ under each item, and the conformance gaps at the end.
       entry and lives only for that activation; a static local (the module default) has one
       per-instance copy that is default-initialized once and persists across activations, so it
       stays live after the process body completes -- which is what lets a detached fork branch read
-      it after detaching. A bare declaration takes the module's static default. Static locals that
-      share a name across sibling or nested blocks of one process are kept distinct. See
+      it after detaching. An automatic local a detached fork branch still reads outlives the scope
+      that declared it, whether a declaration statement declares it or a `foreach` does as its loop
+      variable (LRM 12.7.3). A bare declaration takes the module's static default. Static locals
+      that share a name across sibling or nested blocks of one process are kept distinct. See
       `decisions/variable-lifetime-storage.md` for the storage rationale.
 
 ### Procedural assignments

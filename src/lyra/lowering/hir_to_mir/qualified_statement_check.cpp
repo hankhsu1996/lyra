@@ -73,12 +73,10 @@ void AppendReportEmit(
   // time-unit power is unread.
   const mir::ExprId items_array =
       block.exprs.Add(BuildPrintItemsArray(unit, block, items, 0));
-  const mir::ExprId runtime_id =
-      block.exprs.Add(mir::MakeCurrentRuntimeCallExpr(unit.builtins.effects));
-  const mir::ExprId text_id = block.exprs.Add(
-      BuildFormatCallExpr(unit, block, runtime_id, items_array));
+  const mir::ExprId text_id =
+      block.exprs.Add(BuildFormatCallExpr(unit, block, items_array));
   const mir::ExprId diagnostic_id =
-      block.exprs.Add(BuildDiagnosticCallExpr(unit, runtime_id));
+      block.exprs.Add(BuildDiagnosticCallExpr(unit, block));
   const mir::ExprId origin_id =
       BuildStringValueExpr(unit, block, std::move(origin));
   block.AppendStmt(

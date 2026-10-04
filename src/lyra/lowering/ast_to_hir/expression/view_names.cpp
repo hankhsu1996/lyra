@@ -84,24 +84,28 @@ auto ViewDefinedPlaceExpr(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const ViewNameOnInstance& view_name, const hir::ViewDefinedPlace& place,
     diag::SourceSpan span) -> hir::Expr {
-  std::vector<hir::ExprId> parts;
+  std::vector<hir::Expr> parts;
   parts.reserve(place.parts.size());
   for (const hir::MemberProjection& part : place.parts) {
-    parts.push_back(frame.Exprs().Add(ProjectPublishedPath(
+    parts.push_back(ProjectPublishedPath(
         unit_lowerer, frame, part.path,
         MemberOnInstance(unit_lowerer, frame, view_name, part.member, span),
-        span)));
+        span));
   }
   // Joining is what gives the name a type its parts do not have, so a single
   // part already carrying the name's type is the name -- and one that does not
   // was joined by the view and is joined here too.
-  if (parts.size() == 1 &&
-      frame.Exprs().Get(parts.front()).type == place.type) {
-    return frame.Exprs().Get(parts.front());
+  if (parts.size() == 1 && parts.front().type == place.type) {
+    return std::move(parts.front());
+  }
+  std::vector<hir::ExprId> operands;
+  operands.reserve(parts.size());
+  for (hir::Expr& part : parts) {
+    operands.push_back(frame.Exprs().Add(std::move(part)));
   }
   return hir::Expr{
       .type = place.type,
-      .data = hir::ConcatExpr{.operands = std::move(parts)},
+      .data = hir::ConcatExpr{.operands = std::move(operands)},
       .span = span};
 }
 

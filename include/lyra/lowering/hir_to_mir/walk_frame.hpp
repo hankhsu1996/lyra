@@ -10,6 +10,7 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/stmt.hpp"
 
 namespace lyra::mir {
 struct Class;
@@ -19,6 +20,7 @@ struct Block;
 namespace lyra::lowering::hir_to_mir {
 
 class CallableBindings;
+struct SettledPath;
 
 // A class the walk can name, and the identity it was minted under. Reaching one
 // is reaching the other: a reference to a member reads its type off the
@@ -138,6 +140,19 @@ struct WalkFrame {
   // the name.
   std::optional<mir::FieldId> scope_name_borrowed_handle;
 
+  // The queue the innermost enclosing select is taken from, while that select's
+  // index or bounds are lowered: what `$` there reads the last index of (LRM
+  // 7.10.1). The select evaluates the queue once and owns this on its stack
+  // frame; it is set per select, so each `$` of a nested `q[r[$]]` reads the
+  // queue its own select is taken from. Null outside such a subtree.
+  const SettledPath* selected_queue = nullptr;
+
+  // The loop a `break` names, where the innermost loop the source wrote around
+  // it is built as a nest: a `break` there leaves every loop of the nest (LRM
+  // 12.8), so it names the outermost by the label that loop carries. Absent
+  // under a loop built as one loop, which a `break` leaves by being inside it.
+  std::optional<mir::LoopLabelId> break_leaves;
+
   // How this body reaches the instance of the structural scope its outward
   // references count from. Settled once where the body's frame is built, so
   // nothing that resolves a reference asks what kind of body it is in.
@@ -233,6 +248,24 @@ struct WalkFrame {
   [[nodiscard]] auto WithBlock(mir::Block* block) const -> WalkFrame {
     WalkFrame next = *this;
     next.current_block = block;
+    return next;
+  }
+
+  // Enters the index or a bound of a select taken from `queue`, which outlives
+  // the descent on the caller's stack.
+  [[nodiscard]] auto WithSelectedQueue(const SettledPath* queue) const
+      -> WalkFrame {
+    WalkFrame next = *this;
+    next.selected_queue = queue;
+    return next;
+  }
+
+  // Enters the body of a loop: `loop` is the label a `break` there names,
+  // absent where the loop is left without naming it.
+  [[nodiscard]] auto WithBreakLeaving(
+      std::optional<mir::LoopLabelId> loop) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.break_leaves = loop;
     return next;
   }
 

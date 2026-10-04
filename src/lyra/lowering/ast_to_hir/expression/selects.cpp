@@ -13,10 +13,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
-#include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/hir/primary.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -25,43 +24,29 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-// LRM 7.10: `$` in a queue index or slice bound denotes the last element, i.e.
-// `size(base) - 1`. The base whose `$` this resolves is threaded on the walk
-// frame by the enclosing queue select; outside that context `$` has no value.
+// LRM 7.10.1: `$` in a queue index or slice bound denotes the last element of
+// the queue the select is taken from. Which queue that is follows from where
+// the `$` stands, so it is stated as a leaf and names none; outside a queue
+// select `$` has no value.
 auto LowerUnboundedLiteralProc(
     ProcessLowerer& proc, WalkFrame frame, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  if (!frame.dollar_base.has_value()) {
+  if (!frame.within_queue_select) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "`$` is only supported as a queue index or slice bound (LRM 7.10)");
   }
-  const hir::TypeId int_type = proc.Owner().Unit().builtins.int_type;
-  const hir::ExprId size_id = frame.Exprs().Add(
-      hir::Expr{
-          .type = int_type,
-          .data =
-              hir::CallExpr{
-                  .callee = hir::SubroutineRef{hir::BuiltinMethodRef{
-                      .method = support::BuiltinFn::kSize,
-                      .receiver = frame.dollar_base}},
-                  .arguments = {}},
-          .span = span});
-  const hir::ExprId one_id =
-      frame.Exprs().Add(hir::MakeIntLiteral(1, int_type, span));
   return hir::Expr{
-      .type = int_type,
-      .data =
-          hir::BinaryExpr{
-              .op = hir::BinaryOp::kSub, .lhs = size_id, .rhs = one_id},
+      .type = proc.Owner().Unit().builtins.int_type,
+      .data = hir::PrimaryExpr{.data = hir::QueueLastIndex{}},
       .span = span};
 }
 
 // The string base realizes as a `getc` query at HIR -> MIR (LRM 6.16.3); the
 // queue base ($-index handling) is dynamic-only. slang rejects an element of a
 // dynamic type outside procedural code, so those operands never arrive in a
-// structural scope -- the guard and the $-base threading are uniform and the
-// dynamic branches are simply dead there.
+// structural scope -- the guard and the marking of a queue select are uniform
+// and the dynamic branches are simply dead there.
 template <ExprLowerer Lowerer>
 auto LowerElementSelectExpr(
     Lowerer& lowerer, WalkFrame frame,
@@ -79,7 +64,7 @@ auto LowerElementSelectExpr(
   const hir::ExprId base_id = frame.Exprs().Add(*std::move(base_or));
 
   const WalkFrame idx_frame =
-      sel.value().type->isQueue() ? frame.WithDollarBase(base_id) : frame;
+      sel.value().type->isQueue() ? frame.WithinQueueSelect() : frame;
   auto idx_or = lowerer.LowerExpr(sel.selector(), idx_frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const hir::ExprId idx_id = frame.Exprs().Add(*std::move(idx_or));
@@ -143,7 +128,7 @@ auto LowerRangeSelectExpr(
   const hir::ExprId base_id = frame.Exprs().Add(*std::move(base_or));
 
   const WalkFrame bound_frame =
-      sel.value().type->isQueue() ? frame.WithDollarBase(base_id) : frame;
+      sel.value().type->isQueue() ? frame.WithinQueueSelect() : frame;
 
   // A select bound lowers as an ordinary expression, the same faithful lowering
   // any operand gets. A genuinely constant bound (LRM 11.5.1) becomes a

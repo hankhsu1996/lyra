@@ -233,8 +233,9 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
 // observable-cell leaf flows out as the bare cell. It peels rather than
 // composes: a kind that reaches a part of a value adds one step to the descent
 // and recurses, and every other kind is the place the descent bottoms out in.
-// It appends nothing, so what it answers with is only a statement of which
-// part is named.
+// What it answers with is only a statement of which part is named: the part is
+// neither read nor written here, and the one thing appended is the binding of
+// a value the path is reached through where the path takes it more than once.
 template <ExprLowerer L>
 auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<AccessPath> {
@@ -297,19 +298,19 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return as_place(
                 LowerHirInterfaceMemberAccessExpr(lowerer, frame, sel));
           },
-          // A destructuring target is written as a whole: the join stands for
-          // the run of destinations the source spelled, and each run reaches
-          // its own place from inside it.
-          [&](const hir::ConcatExpr& c) -> diag::Result<AccessPath> {
-            return as_place(
-                LowerHirConcatExpr(lowerer, frame, c, expr.type, result_type));
+          // A join of destinations (LRM 11.4.12) stands for a run of places and
+          // is not one itself: the assignment that consumes it gives each its
+          // share. A context that reaches one here is one where the write is
+          // not a procedural assignment statement of its own.
+          [&](const hir::ConcatExpr&) -> diag::Result<AccessPath> {
+            return diag::Fail(
+                expr.span, diag::DiagCode::kUnsupportedExpressionForm,
+                "a concatenation is not yet supported as the target of this "
+                "kind of write (LRM 11.4.12)");
           },
-          // A stream stands for a run of destinations too, but it does not
-          // stand for a place: what fills each of them is a share of a
-          // sequence of bits rather than a share of a value laid out like the
-          // targets, so the assignment that consumes it distributes the shares
-          // itself. Every context that can reach one does that; a context that
-          // cannot is one where the assignment is not a statement of its own.
+          // A stream stands for a run of destinations in the same way, and
+          // what fills each of them is a share of a sequence of bits rather
+          // than a share of a value laid out like the targets.
           [&](const hir::StreamingConcatExpr&) -> diag::Result<AccessPath> {
             return diag::Fail(
                 expr.span, diag::DiagCode::kUnsupportedExpressionForm,

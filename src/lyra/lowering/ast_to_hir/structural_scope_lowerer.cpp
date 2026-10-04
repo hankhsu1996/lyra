@@ -780,10 +780,8 @@ auto StructuralScopeLowerer::PopulateContinuousAssignMember(
 }
 
 // An alias states that the bits of the signals it lists are the same physical
-// nets (LRM 10.11). Each member is one side of the overlay, and being the same
-// physical net is transitive, so stating it between each side and the next
-// states it among all of them -- which is also why a design may write the same
-// pair in two statements and get one physical net rather than two.
+// nets (LRM 10.11). Each member is one side of the overlay, and the list is one
+// statement about all of them.
 //
 // What the standard demands of the members is decided over the elaborated
 // design and reported there: one net type across the list, sides of equal
@@ -793,19 +791,16 @@ auto StructuralScopeLowerer::PopulateNetAliasMember(
     -> diag::Result<void> {
   const diag::SourceSpan span =
       owner_->SourceMapper().PointSpanOf(alias.location);
-  std::optional<NetSide> previous;
+  std::vector<hir::NetSide> sides;
   for (const slang::ast::Expression* member : alias.getNetReferences()) {
     auto side = NetRunsOfLvalue(
         *this, slang_scope_->asSymbol(), *member, span,
         diag::DiagCode::kUnsupportedStructuralMember, frame);
     if (!side) return std::unexpected(std::move(side.error()));
-    if (previous.has_value()) {
-      for (const hir::NetJoin& coupling : CoupleSides(*previous, *side, span)) {
-        frame.current_structural_scope->net_joins.push_back(coupling);
-      }
-    }
-    previous = *std::move(side);
+    sides.push_back(*std::move(side));
   }
+  frame.current_structural_scope->net_joins.push_back(
+      hir::NetJoin{.span = span, .sides = std::move(sides)});
   return {};
 }
 

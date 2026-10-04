@@ -62,13 +62,8 @@ constexpr base::ComponentIndex kTraversalFound{0};
 constexpr base::ComponentIndex kTraversalVisitedIndex{1};
 
 // LRM 7.9.4 -- 7.9.7 associative traversal (`m.first(idx)` / `last` / `next` /
-// `prev`). The query answers with the SV int 1 / 0 and the index it visited,
-// so it completes with the two of them and the index reaches the variable the
-// source named through that variable's own write -- which is what fires its
-// LRM 4.3 update event. Binding the completion and writing the index back are
-// statements while the call sits in expression position (the canonical
-// `do ... while (m.next(idx))` idiom), so they are the steps of one block
-// expression.
+// `prev`), with the array and the index it is asked of lowered as the first of
+// its steps.
 template <ExprLowerer Lowerer>
 auto LowerAssociativeTraversal(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& c,
@@ -78,7 +73,6 @@ auto LowerAssociativeTraversal(
   // of is the object the entry acts on.
   const std::vector<hir::ExprId> operands = RequiredOperands(c, 1);
   auto& unit_lowerer = lowerer.Owner();
-  auto& unit = unit_lowerer.Unit();
   const auto& hir_exprs = lowerer.HirExprs();
   const hir::ExprId recv_hir = ObjectActedOn(b);
   const hir::ExprId idx_hir = operands[0];
@@ -92,37 +86,11 @@ auto LowerAssociativeTraversal(
   auto map_read_or = lowerer.LowerExpr(hir_exprs.Get(recv_hir), step_frame);
   if (!map_read_or) return std::unexpected(std::move(map_read_or.error()));
   const mir::ExprId map_read_id = body.exprs.Add(*std::move(map_read_or));
-  // `first` / `last` ignore the index's current value and `next` / `prev` read
-  // it as the search bound, so every form takes it as an ordinary operand.
-  auto idx_read_or = lowerer.LowerExpr(hir_exprs.Get(idx_hir), step_frame);
-  if (!idx_read_or) return std::unexpected(std::move(idx_read_or.error()));
-  const mir::ExprId idx_read_id = body.exprs.Add(*std::move(idx_read_or));
-
-  const mir::TypeId payload_type =
-      CompletionPayloadType(unit, {result_type, key_type});
-  const mir::ExprId query_id = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = b.method, .receiver = map_read_id},
-                  .arguments = {idx_read_id}},
-          .type = payload_type});
-  const mir::LocalId completion =
-      steps.Bindings().DeclareAnonymous(payload_type);
-  body.AppendStmt(mir::LocalDeclStmt{.target = completion, .init = query_id});
-
   auto idx_lhs_or = lowerer.LowerLhsExpr(hir_exprs.Get(idx_hir), step_frame);
   if (!idx_lhs_or) return std::unexpected(std::move(idx_lhs_or.error()));
-  const mir::ExprId visited_id = ProjectCompletionComponent(
-      body, completion, payload_type, kTraversalVisitedIndex, key_type);
-  body.AppendStmt(
-      mir::ExprStmt{
-          .expr = body.exprs.Add(BuildStoreExpr(
-              unit, body, *idx_lhs_or, visited_id, std::nullopt, key_type))});
-
-  return steps.Build(ProjectCompletionComponent(
-      body, completion, payload_type, kTraversalFound, result_type));
+  return BuildAssociativeTraversal(
+      unit_lowerer, steps, b.method, map_read_id, *std::move(idx_lhs_or),
+      key_type, result_type);
 }
 
 // The canonical-default prototype type for an entry whose result shape the
@@ -480,6 +448,44 @@ auto LowerBuiltinMethodCall(
 }
 
 }  // namespace
+
+auto BuildAssociativeTraversal(
+    UnitLowerer& unit_lowerer, BlockBuilder& steps, support::BuiltinFn method,
+    mir::ExprId array, AccessPath index, mir::TypeId key_type,
+    mir::TypeId result_type) -> mir::Expr {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Block& body = steps.Body();
+  // `first` / `last` ignore the index's current value and `next` / `prev` read
+  // it as the search bound, so every form takes it as an ordinary operand. The
+  // index is then written with the one visited, so it is read and written
+  // through one path.
+  const ReadThenWritten visited_into =
+      ReadThenWrite(unit_lowerer, steps.Frame(), std::move(index));
+
+  const mir::TypeId payload_type =
+      CompletionPayloadType(unit, {result_type, key_type});
+  const mir::ExprId query_id = body.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Direct{.target = method, .receiver = array},
+                  .arguments = {visited_into.incoming}},
+          .type = payload_type});
+  const mir::LocalId completion =
+      steps.Bindings().DeclareAnonymous(payload_type);
+  body.AppendStmt(mir::LocalDeclStmt{.target = completion, .init = query_id});
+
+  const mir::ExprId visited_id = ProjectCompletionComponent(
+      body, completion, payload_type, kTraversalVisitedIndex, key_type);
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.exprs.Add(BuildStoreExpr(
+              unit, body, visited_into.place, visited_id, std::nullopt,
+              key_type))});
+
+  return steps.Build(ProjectCompletionComponent(
+      body, completion, payload_type, kTraversalFound, result_type));
+}
 
 template <ExprLowerer Lowerer>
 auto LowerHirCallExpr(

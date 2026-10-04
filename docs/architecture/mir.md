@@ -243,6 +243,21 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     they are different MIR, and no consumer needs to know which lowering built either to tell them
     apart._
 
+15. No run of a body evaluates a node that computes twice. Every consumer evaluates a node at each
+    place that reaches it, which is what serves the requirement that an operand the source wrote
+    once is evaluated once: a node reached at two places one run can both take is that operand
+    evaluated twice. A value wanted at several such places is bound to a local, by a statement or
+    among a block expression's steps, and named at each. Two places under different arms of one
+    conditional expression are not such a pair, because a run takes one arm. A node that names a
+    declared thing, spells a constant, or forms a place computes nothing itself, so it may stand
+    anywhere, and what it stands for is the evaluations of what it reaches. Which computations would
+    be harmless to repeat is not stated and not asked: a call with no effect is a call. The unit's
+    verification refuses a body that breaks this, where the unit is produced.
+
+    _Programming-language consequence: an expression is a tree, and a value used twice has a name.
+    This is the relation a compiler's syntax tree has to a value bound once and referred to from
+    several later expressions, and the structured form of a definition dominating its uses._
+
 ## Boundary to Adjacent Layers
 
 - Consumes HIR. HIR-to-MIR is the layer where SV-specific concepts get translated into MIR's generic

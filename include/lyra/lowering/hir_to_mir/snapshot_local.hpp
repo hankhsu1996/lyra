@@ -27,6 +27,15 @@ auto SnapshotExprToLocal(
     mir::TypeId type, mir::ExprId expr_id,
     std::optional<BindingOriginId> origin = std::nullopt) -> mir::LocalId;
 
+// `value` as a node that may stand at several places. A node that computes is
+// evaluated at every place that reaches it, so one is evaluated here, once, as
+// the initializer of a local of the enclosing body, and the result names that
+// local; a node that evaluates nothing already may stand at several and is
+// handed back. The value is what the local starts out as, so one of a type no
+// declaration holds -- a pointer, a machine integer -- is held the same way.
+[[nodiscard]] auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value)
+    -> mir::ExprId;
+
 // Freezes an outer expression's value into a closure's environment: hoists it
 // into a temp local of the outer body (with a fresh synthesized origin) and
 // forwards that local into `closure` as a captured environment element,

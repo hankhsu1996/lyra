@@ -94,6 +94,36 @@ auto BuildTagTest(
       owner, block, subject, ProjectPackedAggregate(owner, ty), index);
 }
 
+// The value a level of a pattern is matched against: what the construct matches
+// as a whole, and the members stepped into from it. A level is read wherever
+// its pattern tests it and again wherever it binds, so it is stated as how to
+// reach it and read afresh at each use: `whole` names a value and evaluates
+// nothing, and a step is one member read.
+struct Subject {
+  struct Step {
+    hir::TypeId of;
+    base::ComponentIndex member;
+  };
+
+  mir::ExprId whole;
+  std::vector<Step> steps;
+};
+
+auto MemberOf(Subject subject, hir::TypeId of, base::ComponentIndex member)
+    -> Subject {
+  subject.steps.push_back(Subject::Step{.of = of, .member = member});
+  return subject;
+}
+
+auto Read(UnitLowerer& owner, mir::Block& block, const Subject& subject)
+    -> mir::ExprId {
+  mir::ExprId reached = subject.whole;
+  for (const Subject::Step& step : subject.steps) {
+    reached = SubjectMember(owner, block, reached, step.of, step.member);
+  }
+  return reached;
+}
+
 // Adds to `tests` the conditions a pattern imposes on `subject`, the expression
 // reaching the value it is matched against, in the order they have to be tried:
 // the pattern matches where every one holds, and a later one may only be
@@ -104,7 +134,7 @@ auto BuildTagTest(
 // pattern node, which carries the type of what it matches.
 template <ExprLowerer Lowerer>
 auto CollectPatternTests(
-    Lowerer& lowerer, WalkFrame frame, mir::ExprId subject,
+    Lowerer& lowerer, WalkFrame frame, const Subject& subject,
     hir::PatternId pattern_id, std::vector<mir::ExprId>& tests)
     -> diag::Result<void> {
   auto& owner = lowerer.Owner();
@@ -123,24 +153,23 @@ auto CollectPatternTests(
             }
             const mir::ExprId constant =
                 block.exprs.Add(*std::move(constant_or));
+            const mir::ExprId value = Read(owner, block, subject);
             tests.push_back(block.exprs.Add(BuildMirBinaryExpr(
-                unit, block, hir::BinaryOp::kEquality, subject, constant,
+                unit, block, hir::BinaryOp::kEquality, value, constant,
                 OneBitAnswerType(
                     unit, std::array{
-                              block.exprs.Get(subject).type,
+                              block.exprs.Get(value).type,
                               block.exprs.Get(constant).type}))));
             return {};
           },
           [&](const hir::TaggedPattern& tagged) -> diag::Result<void> {
             tests.push_back(BuildTagTest(
-                owner, block, subject, pattern.subject_type,
+                owner, block, Read(owner, block, subject), pattern.subject_type,
                 tagged.member_index));
             if (!tagged.value_pattern.has_value()) return {};
             return CollectPatternTests(
                 lowerer, frame,
-                SubjectMember(
-                    owner, block, subject, pattern.subject_type,
-                    tagged.member_index),
+                MemberOf(subject, pattern.subject_type, tagged.member_index),
                 *tagged.value_pattern, tests);
           },
           [&](const hir::StructurePattern& structure) -> diag::Result<void> {
@@ -148,8 +177,8 @@ auto CollectPatternTests(
                  structure.field_patterns) {
               auto collected = CollectPatternTests(
                   lowerer, frame,
-                  SubjectMember(
-                      owner, block, subject, pattern.subject_type,
+                  MemberOf(
+                      subject, pattern.subject_type,
                       base::ComponentIndex{static_cast<std::uint32_t>(field)}),
                   field_pattern, tests);
               if (!collected) return collected;
@@ -166,7 +195,7 @@ auto CollectPatternTests(
 template <ExprLowerer Lowerer>
 void BindPatternIdentifiers(
     Lowerer& lowerer, const WalkFrame& declared_in, const WalkFrame& matched,
-    mir::ExprId subject, hir::PatternId pattern_id) {
+    const Subject& subject, hir::PatternId pattern_id) {
   auto& owner = lowerer.Owner();
   const hir::Pattern& pattern = lowerer.HirPatterns().Get(pattern_id);
   mir::Block& assigned = *matched.current_block;
@@ -191,15 +220,13 @@ void BindPatternIdentifiers(
                         mir::MakeAssignExpr(
                             assigned.exprs.Add(
                                 mir::MakeLocalRefExpr(local, type)),
-                            subject, type))});
+                            Read(owner, assigned, subject), type))});
           },
           [&](const hir::TaggedPattern& tagged) {
             if (!tagged.value_pattern.has_value()) return;
             BindPatternIdentifiers(
                 lowerer, declared_in, matched,
-                SubjectMember(
-                    owner, assigned, subject, pattern.subject_type,
-                    tagged.member_index),
+                MemberOf(subject, pattern.subject_type, tagged.member_index),
                 *tagged.value_pattern);
           },
           [&](const hir::StructurePattern& structure) {
@@ -207,8 +234,8 @@ void BindPatternIdentifiers(
                  structure.field_patterns) {
               BindPatternIdentifiers(
                   lowerer, declared_in, matched,
-                  SubjectMember(
-                      owner, assigned, subject, pattern.subject_type,
+                  MemberOf(
+                      subject, pattern.subject_type,
                       base::ComponentIndex{static_cast<std::uint32_t>(field)}),
                   field_pattern);
             }
@@ -245,7 +272,8 @@ auto PatternPredicate(
 
         std::vector<mir::ExprId> tests;
         auto collected = CollectPatternTests(
-            lowerer, steps.Frame(), read_subject(body), pattern, tests);
+            lowerer, steps.Frame(),
+            Subject{.whole = read_subject(body), .steps = {}}, pattern, tests);
         if (!collected) return std::unexpected(std::move(collected.error()));
         const mir::LocalId matched = steps.DeclareLocal(
             bit, ConditionAsBit(unit, body, AllHold(unit, body, tests)));
@@ -256,7 +284,7 @@ auto PatternPredicate(
         mir::Block bound;
         BindPatternIdentifiers(
             lowerer, declared_in, steps.Frame().WithBlock(&bound),
-            read_subject(bound), pattern);
+            Subject{.whole = read_subject(bound), .steps = {}}, pattern);
         body.AppendStmt(
             mir::IfStmt{
                 .condition = ReduceToCondition(unit, body, read_matched()),

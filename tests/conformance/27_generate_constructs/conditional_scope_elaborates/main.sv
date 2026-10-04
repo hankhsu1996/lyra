@@ -14,6 +14,51 @@
 // indices. Each index gets the alternative its own condition selected, the
 // block keeps the name the source gave it whichever alternative stood, and a
 // hierarchical name reaches into the one that did.
+//
+// The expression a case-generate selects by is any constant expression, a call
+// of a constant function over the module's parameters included (LRM 13.4.3),
+// so one module selects a different alternative in each instance that
+// overrides them. Whichever label matches -- the first, one of a list, the
+// last, or none, which leaves the default -- exactly one block is instantiated.
+module Selected #(
+    parameter int A = 0,
+    parameter int B = 0
+);
+  function automatic int folded(int a, int b);
+    return a * 2 + b;
+  endfunction
+
+  int which;
+  int built;
+
+  case (folded(A, B))
+    0: begin : arm
+      initial begin
+        which = 10;
+        built = built + 1;
+      end
+    end
+    1, 2: begin : arm
+      initial begin
+        which = 20;
+        built = built + 1;
+      end
+    end
+    3: begin : arm
+      initial begin
+        which = 30;
+        built = built + 1;
+      end
+    end
+    default: begin : arm
+      initial begin
+        which = 40;
+        built = built + 1;
+      end
+    end
+  endcase
+endmodule
+
 module Top;
   localparam int N = 6;
 
@@ -138,9 +183,26 @@ module Top;
     end
   end
 
+  Selected #(.A(0), .B(0)) by_first_label ();
+  Selected #(.A(1), .B(0)) by_listed_label ();
+  Selected #(.A(1), .B(1)) by_last_label ();
+  Selected #(.A(4), .B(1)) by_default ();
+
   initial top_ran = 1;
 
   final begin
+    if (by_first_label.which !== 10 || by_first_label.built !== 1)
+      $fatal(1, "a selector of 0 built %0d blocks, the last writing %0d",
+             by_first_label.built, by_first_label.which);
+    if (by_listed_label.which !== 20 || by_listed_label.built !== 1)
+      $fatal(1, "a selector of 2 built %0d blocks, the last writing %0d",
+             by_listed_label.built, by_listed_label.which);
+    if (by_last_label.which !== 30 || by_last_label.built !== 1)
+      $fatal(1, "a selector of 3 built %0d blocks, the last writing %0d",
+             by_last_label.built, by_last_label.which);
+    if (by_default.which !== 40 || by_default.built !== 1)
+      $fatal(1, "a selector of 9 built %0d blocks, the last writing %0d",
+             by_default.built, by_default.which);
     if (!top_ran) $fatal(1, "the module's initial procedure did not run");
     if (!child_ran)
       $fatal(1, "the generate block's initial procedure did not run");

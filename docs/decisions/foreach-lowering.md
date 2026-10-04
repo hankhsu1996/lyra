@@ -41,20 +41,23 @@ the whole foreach is modeled as a labeled break -- the universal multi-level-exi
    advances the key, and its loop variable is the key the body indexes by. `continue` lands on the
    step, so it advances to the next key (LRM 12.8); an empty array returns 0 from `first`, so the
    body never runs. Key-walked and index-counted dimensions nest freely in one foreach, since both
-   are just a `for`.
+   are just a `for`. The source names the array once, so what reaching it computes is evaluated
+   once, ahead of every loop, and each dimension that reads the array while the program runs reads
+   that one evaluation.
 
-2. **Labeled break.** HIR and MIR carry a `LoopLabelId`: a loop may be a break target, and a `break`
-   may name the loop it exits. A `break` whose innermost SystemVerilog loop is the foreach carries
-   the outermost loop's label; an ordinary innermost break carries none. The AST-to-HIR walk threads
-   the current foreach label through the body and clears it on entering any nested loop, so a break
-   binds to the nearest enclosing loop exactly as SystemVerilog requires. `continue` and `return`
-   stay plain: a plain innermost `continue` already advances to the next tuple, and a plain `return`
-   already exits the enclosing subroutine.
+2. **Labeled break.** MIR carries a `LoopLabelId`: a loop may be a break target, and a `break` may
+   name the loop it exits. HIR states the `foreach` as one loop, so a `break` in it is a `break`
+   like any other. HIR-to-MIR, which builds the nested loops, names the outermost one for a `break`
+   whose innermost SystemVerilog loop is the foreach, and clears that on entering any other loop, so
+   a break binds to the nearest enclosing loop exactly as SystemVerilog requires; an ordinary
+   innermost break carries no label. `continue` and `return` stay plain: a plain innermost
+   `continue` already advances to the next tuple, and a plain `return` already exits the enclosing
+   subroutine.
 
 3. **Each backend renders the primitive its own way.** The C++ backend, lacking labeled break, emits
    a `goto` to a label placed after the outermost loop -- the canonical C idiom for leaving a loop
-   nest. An LLVM backend would emit a branch to the loop's merge block directly. The labeled break
-   lives in the semantic layers (HIR/MIR); the exit mechanism is a backend concern.
+   nest. The LLVM backend emits a branch to the block that follows the labeled loop. The labeled
+   break lives in the semantic layer (MIR); the exit mechanism is a backend concern.
 
 ## History: why not a flat counter
 
@@ -98,11 +101,12 @@ labeled-break-via-`goto` choice (item 3 above) is the resolution:
 - Per-iteration cost is a plain nested loop. A dynamic level pays one `.size()` read on entry
   (sampled into a local, not re-queried each iteration).
 - The labeled break is the only new IR concept, and it is the same primitive every other
-  multi-level-exit language and IR uses, so the model transfers directly to a future LLVM backend (a
-  branch) rather than baking in a C++-specific trick.
+  multi-level-exit language and IR uses, so the model serves the LLVM backend as a branch rather
+  than baking in a C++-specific trick.
 - Associative-array `foreach` fits the same nested-`for` model with no new construct: its dimension
-  is just a `for` whose pieces are a key walk instead of an index count. String `foreach` remains
-  rejected: it iterates by byte (LRM 6.16), a distinct model with its own lowering.
+  is just a `for` whose pieces are a key walk instead of an index count. A string fits it too: LRM
+  12.7.3 treats one as a dynamic array of bytes indexed from 0, so it is a dimension counted while
+  the program runs whose count is the string's length.
 
 ## Cross-references
 

@@ -23,78 +23,77 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto LowerAutomaticVarDeclStmt(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
-    mir::TypeId type) -> diag::Result<mir::Stmt> {
+// The value a variable starts at where its declaration is reached, in the
+// frame's block: its declaration assignment, or its type's default value where
+// the source wrote none, at the variable's declared type.
+auto BuildInitialValue(
+    ProcessLowerer& process, WalkFrame frame,
+    const hir::ProceduralVarDecl& hir_local, mir::TypeId type)
+    -> diag::Result<mir::ExprId> {
   auto& block = *frame.current_block;
-  mir::CompilationUnit& unit = process.Owner().Unit();
-  const DeclaredVariable variable = DeclareVariable(
-      unit, *frame.bindings, block, BindingOriginId::Procedural(v.var),
-      hir_local.name, type, frame.body_can_wait);
-  process.MapProceduralVar(v.var, AutomaticVarBinding{.type = variable.type});
-
-  mir::ExprId init_value{};
+  mir::ExprId value{};
   if (hir_local.init.has_value()) {
     auto init_or =
         process.LowerExpr(process.HirBody().exprs.Get(*hir_local.init), frame);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
-    init_value = block.exprs.Add(*std::move(init_or));
+    value = block.exprs.Add(*std::move(init_or));
   } else {
-    init_value = block.exprs.Add(
+    value = block.exprs.Add(
         BuildDefaultValueFromHir(process.Owner(), block, hir_local.type));
   }
-  init_value = ConvertToType(unit, block, init_value, type);
+  return ConvertToType(process.Owner().Unit(), block, value, type);
+}
 
-  mir::Stmt initialized = InitializeVariable(unit, block, variable, init_value);
-  initialized.label = std::move(label);
-  return initialized;
+auto LowerAutomaticVarDeclaration(
+    ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var,
+    const hir::ProceduralVarDecl& hir_local, mir::TypeId type)
+    -> diag::Result<mir::Stmt> {
+  auto& block = *frame.current_block;
+  mir::CompilationUnit& unit = process.Owner().Unit();
+  const DeclaredVariable variable = DeclareVariable(
+      unit, *frame.bindings, block, BindingOriginId::Procedural(var),
+      hir_local.name, type, frame.body_can_wait);
+  process.MapProceduralVar(var, AutomaticVarBinding{.type = variable.type});
+
+  auto initial = BuildInitialValue(process, frame, hir_local, type);
+  if (!initial) return std::unexpected(std::move(initial.error()));
+  return InitializeVariable(unit, block, variable, *initial);
 }
 
 // A lifetime-extended automatic (LRM 6.21) is a cell held by a shared pointer;
 // its declaration initializes that cell through the handle rather than a
-// local's own. The handle was recorded when the activation scope opened;
-// consume it here, in HIR id order, to register the binding its references
-// resolve through.
-auto LowerPromotedVarDeclStmt(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::VarDeclStmt& v, const hir::ProceduralVarDecl& hir_local,
-    mir::TypeId type) -> diag::Result<mir::Stmt> {
-  const PromotedVarBinding pb = process.TakePendingActivation(v.var);
-  process.MapProceduralVar(v.var, pb);
+// local's own. The handle was recorded where the scope declaring the variable
+// was entered; the declaration takes it and binds the variable to it, which is
+// what every later reference resolves through.
+auto LowerPromotedVarDeclaration(
+    ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var,
+    const hir::ProceduralVarDecl& hir_local, mir::TypeId type)
+    -> diag::Result<mir::Stmt> {
+  const PromotedVarBinding pb = process.TakePendingActivation(var);
+  process.MapProceduralVar(var, pb);
   auto& block = *frame.current_block;
   mir::CompilationUnit& unit = process.Owner().Unit();
   const mir::ExprId target = block.exprs.Add(PromotedVarPlace(frame, pb));
-  mir::ExprId init_value{};
-  if (hir_local.init.has_value()) {
-    auto init_or =
-        process.LowerExpr(process.HirBody().exprs.Get(*hir_local.init), frame);
-    if (!init_or) return std::unexpected(std::move(init_or.error()));
-    init_value = block.exprs.Add(*std::move(init_or));
-  } else {
-    init_value = block.exprs.Add(
-        BuildDefaultValueFromHir(process.Owner(), block, hir_local.type));
-  }
-  init_value = ConvertToType(unit, block, init_value, type);
+  auto initial = BuildInitialValue(process, frame, hir_local, type);
+  if (!initial) return std::unexpected(std::move(initial.error()));
   return mir::Stmt{
-      .label = std::move(label),
+      .label = std::nullopt,
       .data = mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeCapabilityInstallCallExpr(
-                  target, init_value, support::BuiltinFn::kInitialize,
+                  target, *initial, support::BuiltinFn::kInitialize,
                   unit.builtins.void_type))}};
 }
 
 }  // namespace
 
-auto LowerVarDeclStmt(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
-  const auto& hir_local = process.HirBody().procedural_vars.Get(v.var);
+auto LowerVarDeclaration(
+    ProcessLowerer& process, WalkFrame frame, hir::ProceduralVarId var)
+    -> diag::Result<mir::Stmt> {
+  const auto& hir_local = process.HirBody().procedural_vars.Get(var);
   const mir::TypeId type = process.Owner().TranslateType(hir_local.type);
   if (hir_local.lifetime_extended) {
-    return LowerPromotedVarDeclStmt(
-        process, frame, std::move(label), v, hir_local, type);
+    return LowerPromotedVarDeclaration(process, frame, var, hir_local, type);
   }
   // LRM 6.21: a static-lifetime body local keeps a cell that outlives every
   // activation, so its storage and its binding are both settled before the body
@@ -102,10 +101,18 @@ auto LowerVarDeclStmt(
   // before any process starts. Reaching the declaration is therefore not an
   // event: it binds nothing and emits nothing.
   if (hir_local.lifetime == hir::VariableLifetime::kStatic) {
-    return mir::Stmt{.label = std::move(label), .data = mir::EmptyStmt{}};
+    return mir::Stmt{.label = std::nullopt, .data = mir::EmptyStmt{}};
   }
-  return LowerAutomaticVarDeclStmt(
-      process, frame, std::move(label), v, hir_local, type);
+  return LowerAutomaticVarDeclaration(process, frame, var, hir_local, type);
+}
+
+auto LowerVarDeclStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::VarDeclStmt& v) -> diag::Result<mir::Stmt> {
+  auto declared = LowerVarDeclaration(process, frame, v.var);
+  if (!declared) return std::unexpected(std::move(declared.error()));
+  declared->label = std::move(label);
+  return declared;
 }
 
 auto LowerReturnStmt(
@@ -128,15 +135,11 @@ auto LowerReturnStmt(
       .label = std::move(label), .data = mir::ReturnStmt{.value = payload}};
 }
 
-auto LowerBreakStmt(
-    std::optional<std::string> label, std::optional<hir::LoopLabelId> target)
+auto LowerBreakStmt(std::optional<std::string> label, const WalkFrame& frame)
     -> diag::Result<mir::Stmt> {
   return mir::Stmt{
       .label = std::move(label),
-      .data = mir::BreakStmt{
-          .target = target.has_value()
-                        ? std::optional{mir::LoopLabelId{target->value}}
-                        : std::nullopt}};
+      .data = mir::BreakStmt{.target = frame.break_leaves}};
 }
 
 auto LowerContinueStmt(std::optional<std::string> label)

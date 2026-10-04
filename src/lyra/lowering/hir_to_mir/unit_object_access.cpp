@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/behavior_ordinal.hpp"
@@ -80,16 +81,13 @@ auto GuardHeldInterface(
     mir::TypeId object_pointer) -> mir::Expr {
   mir::Block& body = steps.Body();
   const mir::TypeId type = handle.type;
-  const mir::LocalId held = steps.Bindings().DeclareAnonymous(type);
-  body.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = held, .init = body.exprs.Add(std::move(handle))});
-  const auto read = [&]() {
-    return body.exprs.Add(mir::MakeLocalRefExpr(held, type));
-  };
+  // The handle is tested and then reached through, and the source wrote it
+  // once.
+  const mir::ExprId held =
+      EvaluatedOnce(steps.Frame(), body.exprs.Add(std::move(handle)));
   const mir::ExprId present = body.exprs.Add(
       mir::Expr{
-          .data = mir::CastExpr{.operand = read()},
+          .data = mir::CastExpr{.operand = held},
           .type = unit.builtins.machine_bool});
   const mir::ExprId test = body.exprs.Add(
       mir::Expr{
@@ -109,7 +107,7 @@ auto GuardHeldInterface(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kRequire,
-                          .receiver = read()},
+                          .receiver = held},
                   .arguments = {test, message}},
           .type = type});
   // The handle is a value holding the instance's address, so reaching the

@@ -461,31 +461,42 @@ struct PortConnection {
   auto operator==(const PortConnection&) const -> bool = default;
 };
 
-// A run of one net's positions and an equally wide run of another's, which a
-// construct states are the same physical net (LRM 23.3.3.7, 10.11). `here` and
-// `there` are each the part of a net the source wrote -- the net whole, or a
-// constant select of it -- and the offsets say where the shared run starts in
-// each part, counted from the part's lowest position. A select's index may be a
-// value each construction is given, so the part is stated as the select rather
-// than as the positions one construction settles it to.
+// A run of one net's positions, as one operand of a side names it. `part` is
+// the part of a net the source wrote -- the net whole, or a constant select of
+// it -- and `offset` and `width` say where among that part's positions the run
+// starts, counted from the part's lowest, and how many it covers. A select's
+// index may be a value each construction is given, so the part is stated as
+// the select rather than as the positions one construction settles it to.
 //
-// What such a construct states is a position-wise overlay -- LRM 10.11 gives it
-// the bit overlay rules of a packed union, and LRM 7.6 makes whole-value
-// correspondence positional rather than range-relative -- so a run is counted
-// in positions, never in either side's declared range. A construct naming one
-// whole net on each side states the run that covers both, which is the case
-// every design that joins whole nets is in rather than a shape of its own.
+// A run is counted in positions, never in the range the net was declared with:
+// LRM 10.11 gives an overlay the bit overlay rules of a packed union, and LRM
+// 7.6 makes whole-value correspondence positional rather than range-relative.
+struct NetRun {
+  ExprId part;
+  std::uint32_t offset{};
+  std::uint32_t width{};
+
+  auto operator==(const NetRun&) const -> bool = default;
+};
+
+// One side of a join: the runs it names, most significant first. A side naming
+// one whole net is the one-run case, and a concatenation names one run per
+// operand (LRM 10.11 `net_lvalue`).
+using NetSide = std::vector<NetRun>;
+
+// The sides one construct states are the same physical nets (LRM 23.3.3.7,
+// 10.11), each named once, in the order the source lists them. Every side
+// covers the same number of positions, and the sides are laid over each other
+// position-wise from the most significant end, so which run of one net meets
+// which run of another follows from the sides.
 //
 // Nothing is driven, read, or waited on: a bidirectional connection (LRM
-// 23.3.3) and an `alias` (LRM 10.11) both state which positions resolve
+// 23.3.3), whose two sides are the actual and the port, and an `alias` (LRM
+// 10.11), which lists two sides or more, both state which positions resolve
 // together and state no direction, so one construct spelling covers both.
 struct NetJoin {
   diag::SourceSpan span;
-  ExprId here;
-  std::uint32_t here_offset{};
-  ExprId there;
-  std::uint32_t there_offset{};
-  std::uint32_t width{};
+  std::vector<NetSide> sides;
 
   auto operator==(const NetJoin&) const -> bool = default;
 };

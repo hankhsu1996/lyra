@@ -6,11 +6,14 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -96,6 +99,189 @@ TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
     const std::string message = error.what();
     EXPECT_NE(message.find("not an execution"), std::string::npos) << message;
   }
+}
+
+// A unit whose one body, `f`, is the statements `fill` writes into it.
+template <typename Fill>
+auto UnitWithBody(const Fill& fill) -> CompilationUnit {
+  CompilationUnit unit;
+  unit.name = "U";
+  CallableCode code = CallableCode::Defined();
+  code.result_type = unit.builtins.void_type;
+  fill(unit, code.Body());
+  const CallableId id = unit.callables.Add(
+      CallableDecl{
+          .code = std::move(code),
+          .foreign = std::nullopt,
+          .virtual_dispatch = std::nullopt});
+  unit.named_callables.push_back(NamedCallable{.name = "f", .body = id});
+  return unit;
+}
+
+auto AddCall(const CompilationUnit& unit, Block& block) -> ExprId {
+  return block.exprs.Add(MakeCurrentRuntimeCallExpr(unit.builtins.effects));
+}
+
+auto AddSum(const CompilationUnit& unit, Block& block, ExprId lhs, ExprId rhs)
+    -> ExprId {
+  return block.exprs.Add(
+      Expr{
+          .data = BinaryExpr{.op = BinaryOp::kAdd, .lhs = lhs, .rhs = rhs},
+          .type = unit.builtins.int_type});
+}
+
+// A node that computes is evaluated at every place reaching it, so a body that
+// reaches one at two places a run takes both of is refused, and the refusal
+// names the body and what stands at the two places.
+TEST(MirVerifyTest, AComputationOneRunReachesTwiceIsRefused) {
+  const CompilationUnit unit =
+      UnitWithBody([](const CompilationUnit& u, Block& body) {
+        const ExprId call = AddCall(u, body);
+        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, call, call)});
+      });
+  try {
+    Verify(unit);
+    FAIL() << "a call reached as both operands of one operation was accepted";
+  } catch (const InternalError& error) {
+    const std::string message = error.what();
+    EXPECT_NE(message.find("'f' of unit 'U'"), std::string::npos) << message;
+    EXPECT_NE(
+        message.find("one run evaluates it at two of them"), std::string::npos)
+        << message;
+    EXPECT_NE(message.find("a binary operation"), std::string::npos) << message;
+  }
+}
+
+// Two places under different arms of one conditional expression are not a pair
+// a run can both take, so one node may stand at both; under the same arm, or
+// with one of them the condition, a run takes both.
+TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
+  const auto conditional = [](const CompilationUnit& u, Block& body,
+                              ExprId condition, ExprId then_value,
+                              ExprId else_value) {
+    return body.exprs.Add(
+        Expr{
+            .data =
+                ConditionalExpr{
+                    .condition = condition,
+                    .then_value = then_value,
+                    .else_value = else_value},
+            .type = u.builtins.int_type});
+  };
+  const auto flag = [](const CompilationUnit& u, Block& body) {
+    return body.exprs.Add(
+        Expr{
+            .data = MachineBoolLiteral{.value = true},
+            .type = u.builtins.machine_bool});
+  };
+
+  EXPECT_NO_THROW(
+      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        const ExprId call = AddCall(u, body);
+        const ExprId inner =
+            conditional(u, body, flag(u, body), call, AddCall(u, body));
+        body.AppendStmt(
+            ExprStmt{.expr = conditional(u, body, flag(u, body), call, inner)});
+      })));
+
+  EXPECT_THROW(
+      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        const ExprId call = AddCall(u, body);
+        const ExprId sum = AddSum(u, body, call, call);
+        body.AppendStmt(
+            ExprStmt{
+                .expr = conditional(
+                    u, body, flag(u, body), sum, AddCall(u, body))});
+      })),
+      InternalError);
+
+  EXPECT_THROW(
+      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        const ExprId test = body.exprs.Add(
+            Expr{
+                .data = CastExpr{.operand = AddCall(u, body)},
+                .type = u.builtins.machine_bool});
+        const ExprId as_value = body.exprs.Add(
+            Expr{
+                .data = CastExpr{.operand = test},
+                .type = u.builtins.int_type});
+        body.AppendStmt(
+            ExprStmt{
+                .expr =
+                    conditional(u, body, test, as_value, AddCall(u, body))});
+      })),
+      InternalError);
+}
+
+// A node that names a thing, spells a constant or forms a place computes
+// nothing itself, so it may stand at two places, and what counts is what it
+// reaches: a place formed over a call reaches that call at each.
+TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
+  EXPECT_NO_THROW(
+      Verify(UnitWithBody([](const CompilationUnit& u, Block& body) {
+        const ExprId literal = body.exprs.Add(
+            Expr{
+                .data = MachineIntLiteral{.value = 1},
+                .type = u.builtins.int_type});
+        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, literal, literal)});
+      })));
+
+  const auto place_over = [](const CompilationUnit& u, Block& body,
+                             ExprId pointer) {
+    return body.exprs.Add(MakeDerefExpr(pointer, u.builtins.int_type));
+  };
+  EXPECT_NO_THROW(
+      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        const ExprId null = body.exprs.Add(
+            Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+        const ExprId place = place_over(u, body, null);
+        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, place, place)});
+      })));
+  EXPECT_THROW(
+      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        const ExprId place = place_over(u, body, AddCall(u, body));
+        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, place, place)});
+      })),
+      InternalError);
+}
+
+// A value wanted at several places is bound among a block expression's steps
+// and named at each, and the value the block yields is reached in the block of
+// its steps.
+TEST(MirVerifyTest, AValueBoundAmongStepsIsNamedAtEachPlace) {
+  EXPECT_NO_THROW(
+      Verify(UnitWithBody([](const CompilationUnit& u, Block& body) {
+        Block steps;
+        const ExprId call = AddCall(u, steps);
+        steps.AppendStmt(ExprStmt{.expr = call});
+        const ExprId literal = steps.exprs.Add(
+            Expr{
+                .data = MachineIntLiteral{.value = 1},
+                .type = u.builtins.int_type});
+        const ExprId value = AddSum(u, steps, literal, literal);
+        const BlockId scope = body.child_scopes.Add(std::move(steps));
+        body.AppendStmt(
+            ExprStmt{
+                .expr = body.exprs.Add(
+                    Expr{
+                        .data = BlockExpr{.scope = scope, .value = value},
+                        .type = u.builtins.int_type})});
+      })));
+
+  EXPECT_THROW(
+      Verify(UnitWithBody([](const CompilationUnit& u, Block& body) {
+        Block steps;
+        const ExprId call = AddCall(u, steps);
+        steps.AppendStmt(ExprStmt{.expr = call});
+        const BlockId scope = body.child_scopes.Add(std::move(steps));
+        body.AppendStmt(
+            ExprStmt{
+                .expr = body.exprs.Add(
+                    Expr{
+                        .data = BlockExpr{.scope = scope, .value = call},
+                        .type = u.builtins.int_type})});
+      })),
+      InternalError);
 }
 
 }  // namespace

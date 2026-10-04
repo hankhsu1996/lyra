@@ -11,7 +11,6 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/assertion.hpp"
 #include "lyra/hir/expr_id.hpp"
-#include "lyra/hir/loop_label_id.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -53,11 +52,6 @@ struct ExprStmt {
 // declaration is the same shape as one with both. The scope record holds the
 // block's segment name, its direct declarations, and the scopes nested inside
 // it; runtime addressability is a separate axis on that record.
-//
-// This is also the sequence a lowering composes when it expands one source
-// statement into several and the surrounding slot admits one (LRM 12.7.3 gives
-// `foreach` such a shape). Such a block declares nothing and carries no name,
-// which is what makes it transparent -- not a kind of its own.
 struct BlockStmt {
   std::vector<StmtId> statements;
   ProceduralScopeId scope;
@@ -250,29 +244,39 @@ struct ConcurrentCoverStmt {
 using ConcurrentAssertion =
     std::variant<ConcurrentAssertStmt, ConcurrentCoverStmt>;
 
-struct ForInitDecl {
-  ProceduralVarId var = {};
-  std::optional<ExprId> init;
-
-  auto operator==(const ForInitDecl&) const -> bool = default;
-};
-
-struct ForInitExpr {
-  ExprId expr;
-
-  auto operator==(const ForInitExpr&) const -> bool = default;
-};
-
-using ForInit = std::variant<ForInitDecl, ForInitExpr>;
-
+// LRM 12.7.1 `for`. `init` holds the initialization assignments the source
+// wrote in the loop's own header; a variable the header declares is a
+// declaration of the implicit block around the loop, and stands there.
 struct ForStmt {
-  std::vector<ForInit> init;
+  std::vector<ExprId> init;
   std::optional<ExprId> condition;
   std::vector<ExprId> step;
   StmtId body;
-  std::optional<LoopLabelId> break_label = std::nullopt;
 
   auto operator==(const ForStmt&) const -> bool = default;
+};
+
+// LRM 12.7.3 `foreach (array[i, , k]) body`. `array` is the array the source
+// names. `loop_vars` has one entry per dimension the source's list reaches,
+// outermost first, absent at a position the list leaves empty: that dimension
+// is not iterated. Dimensions past the end of the list are not iterated either
+// and have no entry. How a dimension is iterated -- over a declared range, a
+// size read while the program runs, or the keys an associative array holds --
+// follows from the array's type at that dimension.
+//
+// Each loop variable is an automatic, read-only variable of the implicit block
+// around the loop, declared the way any variable of a block is; this statement
+// names which dimension it indexes.
+//
+// It is one loop however many dimensions it iterates: a `break` in the body
+// leaves all of them and a `continue` moves to the next combination of indices
+// (LRM 12.8).
+struct ForeachStmt {
+  ExprId array;
+  std::vector<std::optional<ProceduralVarId>> loop_vars;
+  StmtId body;
+
+  auto operator==(const ForeachStmt&) const -> bool = default;
 };
 
 struct WhileStmt {
@@ -303,8 +307,6 @@ struct ForeverStmt {
 };
 
 struct BreakStmt {
-  std::optional<LoopLabelId> target = std::nullopt;
-
   auto operator==(const BreakStmt&) const -> bool = default;
 };
 
@@ -430,8 +432,8 @@ struct ProceduralContinuousEndStmt {
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt, CaseStmt,
     PatternCaseStmt, AssertStmt, CoverStmt, ConcurrentAssertStmt,
-    ConcurrentCoverStmt, ForStmt, WhileStmt, RepeatStmt, DoWhileStmt,
-    ForeverStmt, BreakStmt, ContinueStmt, ReturnStmt, TimedStmt,
+    ConcurrentCoverStmt, ForStmt, ForeachStmt, WhileStmt, RepeatStmt,
+    DoWhileStmt, ForeverStmt, BreakStmt, ContinueStmt, ReturnStmt, TimedStmt,
     EventTriggerStmt, WaitStmt, WaitForkStmt, DisableForkStmt, DisableStmt,
     ProceduralContinuousAssignStmt, ProceduralContinuousEndStmt>;
 

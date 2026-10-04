@@ -2716,11 +2716,11 @@ enough to warrant its own focused review.
       wants a design of its own. Copying how it keeps writes does not serve: a write another write
       covers is dropped, and a read dropped that way differs between constructions.
 
-- [ ] R160 -- HIR has no check of its own, where MIR and LIR each have one run as a unit is
-      produced. A reference to a declaration that is not in scope where it stands is therefore found
-      by whatever lowers it, in that stage's terms, and not by the stage that wrote it. Target: a
-      unit's HIR is held to its own well-formedness where it is produced, failing in HIR's terms.
-      Not blocked.
+- [ ] R160 -- HIR's own check, run as a unit is produced, holds one rule: an expression is held by
+      one construct. It does not yet hold that a reference names a declaration in scope where it
+      stands, so that is still found by whatever lowers it, in that stage's terms, and not by the
+      stage that wrote it. Target: a unit's HIR is held to its own well-formedness where it is
+      produced, failing in HIR's terms. Not blocked.
 
 - [ ] R161 -- The compiler crashing without throwing -- a fault in memory, an abort, a stack
       overflow, a fatal error inside the code generator -- says nothing about what it was working
@@ -2737,6 +2737,28 @@ enough to warrant its own focused review.
       or not any index produced a body there, and two blocks stating the same loop are one where
       either has a body -- which is what the alternatives of a conditional already do. A loop with
       no body is a shape the lowering to MIR does not take yet. Not blocked.
+
+- [ ] R163 -- What a write target computes on the way to its place is bound by a statement placed in
+      the block the write's lowering was handed. A position evaluated other than once in sequence
+      has to hand it steps of its own, or the binding runs at the wrong time. A loop's condition and
+      step do: each is lowered through its own steps, so a write there binds once per iteration. An
+      arm of `?:` and an operand a logical operator may skip do not yet, so an increment or a call
+      with a write-back actual written there binds ahead of the statement, whether or not the run
+      takes that operand. A property write's handle, a tagged member's owner and index, and a queue
+      slice's base on the write side are what is bound. Target: every operand that may be skipped is
+      lowered through steps of its own, as a loop's condition is. Not blocked: a logical operator is
+      now the conditional over its first operand, so a skipped operand is an arm, and the arms are
+      the one position to change.
+
+- [ ] R164 -- A source operand lowered twice is evaluated twice. Two of the three ways that happens
+      are refused: a body that reaches one computing node at two places a run both takes, and a
+      source expression stated under two parents before lowering. An operand a construct reads and
+      then writes is taken as one path, settled, and read and written through it. What nothing
+      refuses is the third: a lowering that asks for one source expression twice builds two nodes,
+      each reached once, and both checks pass. Target: lowering an operand a second time is
+      something a lowering has to say it means -- a construct evaluated once per position the source
+      gives it, a body built again for another run -- so an unstated second lowering is refused
+      where it is made. Not blocked.
 
 ## Out of Scope
 

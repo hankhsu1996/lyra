@@ -285,15 +285,18 @@ auto BuildDefaultValueExpr(
           // the element type's default. That uniform value is the element
           // default replicated across the array's size, so it builds through
           // the repeat call and stays O(1) in the array's element count. The
-          // shield seed and the repeat unit are the same element default.
+          // shield seed and the repeat unit are each the element default.
           [&](const mir::UnpackedArrayType& ua) -> mir::Expr {
             const auto size = static_cast<std::int64_t>(ua.Size());
-            const mir::ExprId element_default = block.exprs.Add(
-                BuildDefaultValueExpr(unit, block, ua.element_type));
+            const mir::TypeId element_type = ua.element_type;
+            const mir::ExprId seed = block.exprs.Add(
+                BuildDefaultValueExpr(unit, block, element_type));
+            const mir::ExprId repeated = block.exprs.Add(
+                BuildDefaultValueExpr(unit, block, element_type));
             const mir::ExprId size_id =
                 BuildMachineIntLiteral(unit, block, size);
             return BuildArrayRepeatCall(
-                unit, block, type, element_default, {element_default}, size_id);
+                unit, block, type, seed, {repeated}, size_id);
           },
           // LRM Table 7-1: a product defaults component-wise -- each takes its
           // own type's default, recursively. Synthesized at each use rather
@@ -330,7 +333,7 @@ auto BuildDefaultValueExpr(
             return BuildAssociativeConstructionCall(
                 unit, block, type,
                 BuildPlaceholderElementDefault(unit, block, type), {},
-                std::nullopt);
+                BuildPlaceholderElementDefault(unit, block, type));
           },
           // Types whose default is what their own constructor makes of no
           // arguments: a named event, which SV gives no initializer grammar at
@@ -538,14 +541,16 @@ auto BuildDefaultValueFromHir(
           // the value the table gives the element type, which is the source
           // default again and not the translated type's.
           [&](const hir::UnpackedArrayType& ua) -> mir::Expr {
-            const mir::ExprId element_default = block.exprs.Add(
+            const mir::ExprId seed = block.exprs.Add(
+                BuildDefaultValueFromHir(unit_lowerer, block, ua.element_type));
+            const mir::ExprId repeated = block.exprs.Add(
                 BuildDefaultValueFromHir(unit_lowerer, block, ua.element_type));
             const mir::ExprId size_id = BuildMachineIntLiteral(
                 unit_lowerer.Unit(), block,
                 static_cast<std::int64_t>(ua.dim.ElementCount()));
             return BuildArrayRepeatCall(
-                unit_lowerer.Unit(), block, mir_type, element_default,
-                {element_default}, size_id);
+                unit_lowerer.Unit(), block, mir_type, seed, {repeated},
+                size_id);
           },
           [&](const hir::ScalarBitType& t) { return type_default(t); },
           [&](const hir::PackedArrayType& t) { return type_default(t); },
@@ -568,7 +573,8 @@ auto BuildDefaultValueFromHir(
           [&](const hir::AssociativeArrayType& a) -> mir::Expr {
             return BuildAssociativeConstructionCall(
                 unit_lowerer.Unit(), block, mir_type,
-                element_default(a.element_type), {}, std::nullopt);
+                element_default(a.element_type), {},
+                element_default(a.element_type));
           },
           [&](const hir::WildcardIndexType& t) { return type_default(t); },
           [&](const hir::StringType& t) { return type_default(t); },
@@ -692,7 +698,7 @@ auto BuildAssociativeConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
     mir::ExprId element_default,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
-    std::optional<mir::ExprId> user_default) -> mir::Expr {
+    mir::ExprId absent_key_answer) -> mir::Expr {
   const auto* assoc =
       unit.types.Get(assoc_type).As<mir::AssociativeArrayType>();
   if (assoc == nullptr) {
@@ -720,17 +726,11 @@ auto BuildAssociativeConstructionCall(
           .data = mir::CompositeExpr{.parts = std::move(tuple_ids)},
           .type = entries_type});
 
-  // Every associative array answers a read of an absent key with something
-  // (LRM 7.8.6), so that answer is always an operand: a `default:` clause names
-  // it, and a literal without one names the element type's own default, which
-  // is what such a read returns.
   return mir::Expr{
       .data =
           mir::CallExpr{
               .callee = mir::Construct{},
-              .arguments =
-                  {element_default, entries_id,
-                   user_default.value_or(element_default)}},
+              .arguments = {element_default, entries_id, absent_key_answer}},
       .type = assoc_type};
 }
 

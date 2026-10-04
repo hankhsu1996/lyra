@@ -114,7 +114,10 @@ auto QueueSpan(
   mir::Block& block = *frame.current_block;
   auto base_or = lowerer.LowerExpr(lowerer.HirExprs().Get(base), frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
+  // The base is one bound and the other is counted from it, so it is
+  // evaluated once and both read that.
+  const mir::ExprId base_id =
+      EvaluatedOnce(frame, block.exprs.Add(*std::move(base_or)));
   auto width_or = lowerer.LowerExpr(lowerer.HirExprs().Get(width), frame);
   if (!width_or) return std::unexpected(std::move(width_or.error()));
   const mir::ExprId width_id = block.exprs.Add(*std::move(width_or));
@@ -285,61 +288,6 @@ auto MemberStep(
       ProjectPackedAggregate(unit_lowerer, aggregate), index, part_type);
 }
 
-// The read `step` takes from `receiver`: its value entry, answering at the
-// part's type.
-auto MakeStepRead(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    const DescentStep& step, mir::ExprId receiver) -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = step.value_entry,
-                      .receiver = receiver,
-                      .position = step.position},
-              .arguments = StepArguments(unit, block, step)},
-      .type = step.part_type};
-}
-
-// The packed value a view answers with, kept as a value of its own (Rust's
-// `&[T]::to_owned() -> Vec<T>` pattern).
-auto KeptPackedValue(mir::ExprId view, mir::TypeId type) -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kToOwned, .receiver = view},
-              .arguments = {}},
-      .type = type};
-}
-
-// Read-side wrap that materialises a borrowed packed view into an owning
-// value. A non-packed receiver falls through unchanged because its access
-// already returns an owning value.
-auto WrapPackedAsOwned(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::Expr access_call,
-    mir::TypeId result_type) -> mir::Expr {
-  if (!unit.types.Get(result_type).IsIntegralPacked()) {
-    return access_call;
-  }
-  return KeptPackedValue(block.exprs.Add(std::move(access_call)), result_type);
-}
-
-// A read of `value` evaluated here, once, into a local of the enclosing body.
-// An expression named by two others is evaluated by both, so a construct that
-// has to name a value twice names this instead.
-auto EvaluatedOnce(
-    const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId value)
-    -> mir::ExprId {
-  mir::Block& block = *frame.current_block;
-  const mir::TypeId type = block.exprs.Get(value).type;
-  return block.exprs.Add(
-      mir::MakeLocalRefExpr(
-          SnapshotExprToLocal(unit_lowerer, frame, block, type, value), type));
-}
-
 // Whether reaching a member of `aggregate` is checked against a tag carried in
 // the aggregate's own bits (LRM 11.9), which is so only of a packed tagged
 // union naming more than one member.
@@ -347,29 +295,6 @@ auto CarriesATag(const UnitLowerer& unit_lowerer, const hir::Type& aggregate)
     -> bool {
   return aggregate.Is<hir::PackedUnionType>() &&
          ProjectPackedAggregate(unit_lowerer, aggregate).tag_bits != 0;
-}
-
-// The type a part-select of `source_type` materialises a field of `field_type`
-// as. LRM 11.8.1: a part-select is unsigned regardless of the operands, and its
-// state domain follows the value it selects from, so a field (LRM 7.2.1,
-// selected as a part-select of the aggregate's storage) is produced with the
-// field's dimensions but the aggregate's signedness-stripped state domain --
-// not the field's own declared state. Naming this keeps the field-read's MIR
-// node type equal to what the runtime produces; the field's declared signedness
-// and, for a 2-state field inside a 4-state aggregate, its narrower state
-// domain are reconciled downstream by an explicit conversion.
-auto PartSelectNaturalType(
-    mir::CompilationUnit& unit, mir::TypeId source_type, mir::TypeId field_type)
-    -> mir::TypeId {
-  const auto& source = unit.types.Get(source_type);
-  const auto& field = unit.types.Get(field_type);
-  if (!source.IsIntegralPacked() || !field.IsIntegralPacked()) {
-    return field_type;
-  }
-  mir::PackedArrayType natural = field.PackedShape();
-  natural.signedness = mir::Signedness::kUnsigned;
-  natural.state_kind = source.PackedShape().state_kind;
-  return unit.types.Intern(mir::Type{std::move(natural)});
 }
 
 // Reconciles a field read materialised at its part-select natural type to the
@@ -447,7 +372,7 @@ auto ReadMember(
     mir::ExprId base_id, mir::TypeId result_type) -> mir::Expr {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   if (step.position.has_value()) {
-    return MakeStepRead(unit, block, step, base_id);
+    return StepRead(unit, block, step, base_id);
   }
   const mir::ExprId subject =
       step.required_tag.has_value()
@@ -456,9 +381,102 @@ auto ReadMember(
                 "read of a tagged union member inconsistent with the current "
                 "tag (LRM 11.9)"))
           : base_id;
-  mir::Expr owned = WrapPackedAsOwned(
-      unit, block, MakeStepRead(unit, block, step, subject), step.part_type);
+  mir::Expr owned =
+      OwnedValue(unit, block, StepRead(unit, block, step, subject));
   return WrapSliceToDeclaredType(unit, block, std::move(owned), result_type);
+}
+
+// Whether a read of `expr` finds its value lying in storage, as opposed to
+// being handed a value that lies nowhere: a name, or a part of what a name
+// reaches. This is a question about reading and not about what may be written:
+// a concatenation names destinations to a write and is still a value built
+// from its operands to a read.
+template <ExprLowerer Lowerer>
+auto LiesInStorage(Lowerer& lowerer, const hir::Expr& expr) -> bool {
+  const auto base_lies = [&](hir::ExprId base) {
+    return LiesInStorage(lowerer, lowerer.HirExprs().Get(base));
+  };
+  return std::visit(
+      Overloaded{
+          [](const hir::PrimaryExpr&) { return true; },
+          [&](const hir::ElementSelectExpr& e) {
+            return base_lies(e.base_value);
+          },
+          [&](const hir::RangeSelectExpr& e) {
+            return base_lies(e.base_value);
+          },
+          [&](const hir::MemberAccessExpr& e) {
+            return base_lies(e.base_value);
+          },
+          // A property lies in the object its handle reaches (LRM 8.4), however
+          // the handle was come by.
+          [](const hir::ClassPropertyAccessExpr&) { return true; },
+          [](const hir::InterfaceMemberAccessExpr&) { return true; },
+          [](const hir::UnaryExpr&) { return false; },
+          [](const hir::BinaryExpr&) { return false; },
+          [](const hir::ConditionalExpr&) { return false; },
+          [](const hir::AssignExpr&) { return false; },
+          [](const hir::IncDecExpr&) { return false; },
+          [](const hir::CallExpr&) { return false; },
+          [](const hir::ConversionExpr&) { return false; },
+          [](const hir::ValueRangeExpr&) { return false; },
+          [](const hir::InsideExpr&) { return false; },
+          [](const hir::InterfaceInstanceAccessExpr&) { return false; },
+          [](const hir::ConcatExpr&) { return false; },
+          [](const hir::StreamingConcatExpr&) { return false; },
+          [](const hir::ReplicationExpr&) { return false; },
+          [](const hir::AssignmentPatternExpr&) { return false; },
+          [](const hir::AssignmentPatternReplicationExpr&) { return false; },
+          [](const hir::DynamicArrayNewExpr&) { return false; },
+          [](const hir::ClassNewExpr&) { return false; },
+          [](const hir::AssociativeAssignmentPatternExpr&) { return false; },
+          [](const hir::AssignmentPatternKeyedExpr&) { return false; },
+          [](const hir::TaggedUnionExpr&) { return false; },
+          [](const hir::DynamicCastExpr&) { return false; }},
+      expr.data);
+}
+
+// The queue a select read as a value is taken from, evaluated here, once (LRM
+// 11.4.1: the source wrote it once, and both the select and each `$` under it
+// take it). A queue lying in storage is read where it lies, so only what is
+// computed on the way to it is evaluated and the queue itself is not copied; a
+// queue that lies nowhere -- a function's result -- is kept in a local.
+template <ExprLowerer Lowerer>
+auto EvaluateSelectedQueue(
+    Lowerer& lowerer, const WalkFrame& at, const hir::Expr& base)
+    -> diag::Result<SettledPath> {
+  UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::Block& block = *at.current_block;
+  // A sampled read answers with the value each cell kept (LRM 16.5.1), which
+  // is a question a read of the value asks and a path does not.
+  if (at.reads_as_of == ReadsAsOf::kNow && LiesInStorage(lowerer, base)) {
+    auto path = lowerer.LowerAccessPath(base, at);
+    if (!path) return std::unexpected(std::move(path.error()));
+    return SettledForRead(unit_lowerer, at, *std::move(path));
+  }
+  auto value = lowerer.LowerExpr(base, at);
+  if (!value) return std::unexpected(std::move(value.error()));
+  return SettledPath{
+      .named_in = &block,
+      .owner = EvaluatedOnce(at, block.exprs.Add(*std::move(value))),
+      .descent = {}};
+}
+
+// The queue a select named as a part is taken from, where it is taken from
+// one: `base` with what it computes evaluated here, once, since the part and
+// each `$` under the select both take it (LRM 7.10.1, 11.4.1).
+auto SettleSelectedQueue(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const hir::Expr& base_expr, AccessPath& base)
+    -> std::optional<SettledPath> {
+  if (!unit_lowerer.Hir().types.Get(base_expr.type).Is<hir::QueueType>()) {
+    return std::nullopt;
+  }
+  base = Settled(unit_lowerer, frame, std::move(base));
+  return SettledPath{
+      .named_in = frame.current_block,
+      .owner = base.owner,
+      .descent = base.descent};
 }
 
 }  // namespace
@@ -498,7 +516,7 @@ auto BuildElementAccessCallExpr(
     mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr {
   const DescentStep step = ElementStep(
       unit_lowerer, block, block.exprs.Get(base_id).type, idx_id, result_type);
-  return MakeStepRead(unit_lowerer.Unit(), block, step, base_id);
+  return StepRead(unit_lowerer.Unit(), block, step, base_id);
 }
 
 auto BuildPackedRunRead(
@@ -509,8 +527,7 @@ auto BuildPackedRunRead(
   const DescentStep step = RunStep(
       BuildConstantPosition(unit, block, static_cast<std::int64_t>(bit_offset)),
       bit_width, result_type);
-  return WrapPackedAsOwned(
-      unit, block, MakeStepRead(unit, block, step, base), result_type);
+  return OwnedValue(unit, block, StepRead(unit, block, step, base));
 }
 
 auto BuildPackedMemberRead(
@@ -546,27 +563,24 @@ void AppendTagChecks(
       continue;
     }
     const RequiredTag tag = *target.descent[taken].required_tag;
-    // The check and the write both take the steps before this one, so what
-    // those steps evaluate is evaluated here and both read the result.
+    // The check and the write both take the owner and the steps before this
+    // one, so what those evaluate is evaluated here and both read the result.
+    target.owner = SettledPlace(unit_lowerer, frame, target.owner);
     for (; settled < taken; ++settled) {
       for (mir::ExprId& operand : target.descent[settled].operands) {
-        operand = EvaluatedOnce(unit_lowerer, frame, operand);
+        operand = EvaluatedOnce(frame, operand);
       }
     }
     // The tag is a fact of the value the step is taken into, which is what the
     // steps before it reach.
     const std::span<const DescentStep> before =
         std::span<const DescentStep>(target.descent).first(taken);
-    const mir::ExprId reached = PathValue(
-        unit, block,
-        AccessPath{
-            .owner = target.owner,
-            .descent = {before.begin(), before.end()},
-            .object = target.object});
     const mir::ExprId stepped_into = EvaluatedOnce(
-        unit_lowerer, frame,
-        block.exprs.Add(
-            KeptPackedValue(reached, block.exprs.Get(reached).type)));
+        frame, PathOwnedValue(
+                   unit, block,
+                   AccessPath{
+                       .owner = target.owner,
+                       .descent = {before.begin(), before.end()}}));
     block.AppendStmt(
         mir::ExprStmt{
             .expr = block.exprs.Add(BuildTagGuard(
@@ -582,8 +596,27 @@ auto LowerHirElementSelectExpr(
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   const auto& exprs = lowerer.HirExprs();
-  auto& block = *frame.current_block;
   const hir::Expr& base_expr = exprs.Get(sel.base_value);
+  // An element of a queue may be indexed from the queue's own last index (LRM
+  // 7.10.1), so the queue is evaluated once in a run of steps, where the
+  // select is written, and the read is what those steps yield.
+  if (unit_lowerer.Hir().types.Get(base_expr.type).Is<hir::QueueType>()) {
+    BlockBuilder steps(frame);
+    mir::Block& body = steps.Body();
+    auto queue = EvaluateSelectedQueue(lowerer, steps.Frame(), base_expr);
+    if (!queue) return std::unexpected(std::move(queue.error()));
+    const mir::ExprId queue_id =
+        PathValue(unit_lowerer.Unit(), body, NamedIn(*queue, body));
+    auto index = lowerer.LowerExpr(
+        exprs.Get(sel.index), steps.Frame().WithSelectedQueue(&*queue));
+    if (!index) return std::unexpected(std::move(index.error()));
+    const mir::ExprId index_id = body.exprs.Add(*std::move(index));
+    return steps.Build(body.exprs.Add(OwnedValue(
+        unit_lowerer.Unit(), body,
+        BuildElementAccessCallExpr(
+            unit_lowerer, body, queue_id, index_id, result_type))));
+  }
+  auto& block = *frame.current_block;
   auto base_or = lowerer.LowerExpr(base_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
@@ -599,25 +632,41 @@ auto LowerHirElementSelectExpr(
   if (unit_lowerer.Hir().types.Get(base_expr.type).Is<hir::StringType>()) {
     return access_call;
   }
-  return WrapPackedAsOwned(
-      unit_lowerer.Unit(), block, std::move(access_call), result_type);
+  return OwnedValue(unit_lowerer.Unit(), block, std::move(access_call));
 }
 
 template <ExprLowerer Lowerer>
 auto LowerHirRangeSelectExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const hir::Expr& base_expr = lowerer.HirExprs().Get(sel.base_value);
+  // A queue's slice works both of its ends out from one base, and either may
+  // be counted from the queue's own last index (LRM 7.10.1), so the queue and
+  // that base are each evaluated once in a run of steps, where the select is
+  // written, and the read is what those steps yield.
+  if (unit_lowerer.Hir().types.Get(base_expr.type).Is<hir::QueueType>()) {
+    BlockBuilder steps(frame);
+    mir::Block& body = steps.Body();
+    auto queue = EvaluateSelectedQueue(lowerer, steps.Frame(), base_expr);
+    if (!queue) return std::unexpected(std::move(queue.error()));
+    const mir::ExprId queue_id = PathValue(unit, body, NamedIn(*queue, body));
+    auto step = RangeStep(
+        lowerer, steps.Frame().WithSelectedQueue(&*queue), sel.bounds,
+        body.exprs.Get(queue_id).type, result_type);
+    if (!step) return std::unexpected(std::move(step.error()));
+    return steps.Build(body.exprs.Add(
+        OwnedValue(unit, body, StepRead(unit, body, *step, queue_id))));
+  }
   auto& block = *frame.current_block;
-  auto base_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(sel.base_value), frame);
+  auto base_or = lowerer.LowerExpr(base_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   auto step = RangeStep(
       lowerer, frame, sel.bounds, block.exprs.Get(base_id).type, result_type);
   if (!step) return std::unexpected(std::move(step.error()));
-  return WrapPackedAsOwned(
-      unit, block, MakeStepRead(unit, block, *step, base_id), result_type);
+  return OwnedValue(unit, block, StepRead(unit, block, *step, base_id));
 }
 
 template <ExprLowerer Lowerer>
@@ -640,7 +689,7 @@ auto LowerHirMemberAccessExpr(
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   if (steps.has_value()) {
-    base_id = EvaluatedOnce(unit_lowerer, at, base_id);
+    base_id = EvaluatedOnce(at, base_id);
   }
   const mir::TypeId natural = PartSelectNaturalType(
       unit_lowerer.Unit(), block.exprs.Get(base_id).type, result_type);
@@ -677,10 +726,14 @@ auto LowerHirElementSelectExprPath(
     mir::TypeId result_type) -> diag::Result<AccessPath> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   auto& block = *frame.current_block;
-  auto base =
-      lowerer.LowerAccessPath(lowerer.HirExprs().Get(sel.base_value), frame);
+  const hir::Expr& base_expr = lowerer.HirExprs().Get(sel.base_value);
+  auto base = lowerer.LowerAccessPath(base_expr, frame);
   if (!base) return std::unexpected(std::move(base.error()));
-  auto idx_or = lowerer.LowerExpr(lowerer.HirExprs().Get(sel.index), frame);
+  const std::optional<SettledPath> queue =
+      SettleSelectedQueue(unit_lowerer, frame, base_expr, *base);
+  auto idx_or = lowerer.LowerExpr(
+      lowerer.HirExprs().Get(sel.index),
+      queue.has_value() ? frame.WithSelectedQueue(&*queue) : frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
   const mir::TypeId container =
@@ -695,12 +748,16 @@ auto LowerHirRangeSelectExprPath(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeSelectExpr& sel,
     mir::TypeId result_type) -> diag::Result<AccessPath> {
   auto& block = *frame.current_block;
-  auto base =
-      lowerer.LowerAccessPath(lowerer.HirExprs().Get(sel.base_value), frame);
+  const hir::Expr& base_expr = lowerer.HirExprs().Get(sel.base_value);
+  auto base = lowerer.LowerAccessPath(base_expr, frame);
   if (!base) return std::unexpected(std::move(base.error()));
+  const std::optional<SettledPath> queue =
+      SettleSelectedQueue(lowerer.Owner(), frame, base_expr, *base);
   const mir::TypeId container =
       PathValueType(lowerer.Owner().Unit(), block, *base);
-  auto step = RangeStep(lowerer, frame, sel.bounds, container, result_type);
+  auto step = RangeStep(
+      lowerer, queue.has_value() ? frame.WithSelectedQueue(&*queue) : frame,
+      sel.bounds, container, result_type);
   if (!step) return std::unexpected(std::move(step.error()));
   return DescendInto(*std::move(base), *std::move(step));
 }
@@ -730,11 +787,14 @@ auto PropertyPath(
     const hir::ClassPropertyTarget& target, mir::TypeId result_type)
     -> AccessPath {
   auto& block = *frame.current_block;
+  // The handle is reached to name the property and again to name the object
+  // that hears a write to it, and the source evaluates it once (LRM 8.4).
+  const mir::ExprId handle = EvaluatedOnce(frame, receiver);
   return AccessPath{
       .owner = block.exprs.Add(BuildClassPropertyAccess(
-          lowerer, frame, receiver, target, result_type)),
+          lowerer, frame, handle, target, result_type)),
       .descent = {},
-      .object = ObjectRootOf(lowerer.Owner().Unit(), block, receiver)};
+      .object = ObjectRootOf(lowerer.Owner().Unit(), block, handle)};
 }
 
 template <ExprLowerer Lowerer>

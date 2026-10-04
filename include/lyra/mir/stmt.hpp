@@ -26,7 +26,7 @@ struct StmtId {
 };
 
 // Identifies a loop as a non-local break target (the outermost loop of a
-// multi-dimensional `foreach`). The universal labeled-break primitive; the C++
+// `foreach`). The universal labeled-break primitive; the C++
 // backend renders it as a `goto` to a label after the loop, an LLVM backend as
 // a branch.
 struct LoopLabelId {

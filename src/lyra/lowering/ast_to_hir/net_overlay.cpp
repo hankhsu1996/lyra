@@ -1,11 +1,8 @@
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 
-#include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <utility>
-#include <vector>
 
 #include <slang/ast/EvalContext.h>
 #include <slang/ast/Expression.h>
@@ -14,7 +11,6 @@
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -29,9 +25,9 @@ namespace {
 auto RunsOf(
     StructuralScopeLowerer& scope, slang::ast::EvalContext& eval_context,
     const slang::ast::Expression& expr, diag::SourceSpan span,
-    diag::DiagCode code, WalkFrame frame) -> diag::Result<NetSide> {
+    diag::DiagCode code, WalkFrame frame) -> diag::Result<hir::NetSide> {
   if (expr.kind == slang::ast::ExpressionKind::Concatenation) {
-    NetSide runs;
+    hir::NetSide runs;
     for (const slang::ast::Expression* operand :
          expr.as<slang::ast::ConcatenationExpression>().operands()) {
       auto named = RunsOf(scope, eval_context, *operand, span, code, frame);
@@ -62,7 +58,7 @@ auto RunsOf(
   }
   auto part = scope.LowerExpr(expr, frame);
   if (!part) return std::unexpected(std::move(part.error()));
-  return NetSide{NetRun{
+  return hir::NetSide{hir::NetRun{
       .part = frame.Exprs().Add(*std::move(part)),
       .offset = 0,
       .width = static_cast<std::uint32_t>(
@@ -74,50 +70,9 @@ auto RunsOf(
 auto NetRunsOfLvalue(
     StructuralScopeLowerer& scope, const slang::ast::Symbol& eval_scope,
     const slang::ast::Expression& expr, diag::SourceSpan span,
-    diag::DiagCode code, WalkFrame frame) -> diag::Result<NetSide> {
+    diag::DiagCode code, WalkFrame frame) -> diag::Result<hir::NetSide> {
   slang::ast::EvalContext eval_context(eval_scope);
   return RunsOf(scope, eval_context, expr, span, code, frame);
-}
-
-auto CoupleSides(
-    const NetSide& left, const NetSide& right, diag::SourceSpan span)
-    -> std::vector<hir::NetJoin> {
-  std::vector<hir::NetJoin> couplings;
-  std::size_t at_left = 0;
-  std::size_t at_right = 0;
-  std::uint32_t taken_left = 0;
-  std::uint32_t taken_right = 0;
-  while (at_left < left.size() && at_right < right.size()) {
-    const NetRun& here = left[at_left];
-    const NetRun& there = right[at_right];
-    const std::uint32_t run =
-        std::min(here.width - taken_left, there.width - taken_right);
-    couplings.push_back(
-        hir::NetJoin{
-            .span = span,
-            .here = here.part,
-            .here_offset = here.offset + here.width - taken_left - run,
-            .there = there.part,
-            .there_offset = there.offset + there.width - taken_right - run,
-            .width = run});
-    taken_left += run;
-    taken_right += run;
-    if (taken_left == here.width) {
-      ++at_left;
-      taken_left = 0;
-    }
-    if (taken_right == there.width) {
-      ++at_right;
-      taken_right = 0;
-    }
-  }
-  if (at_left != left.size() || at_right != right.size()) {
-    throw InternalError(
-        "CoupleSides: the two sides of one statement cover the same number of "
-        "positions, which the front end requires of every construct that "
-        "forms an overlay");
-  }
-  return couplings;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

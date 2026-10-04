@@ -6,13 +6,14 @@
 // `mir::Block`.
 
 #include <optional>
+#include <span>
 #include <string>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/field.hpp"
 #include "lyra/mir/stmt.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -31,6 +32,17 @@ auto LowerEmptyStmt(std::optional<std::string> label)
 auto BuildCancellableRegion(
     ProcessLowerer& process, const WalkFrame& frame, mir::Block&& body,
     const StaticStorageHome& target) -> mir::TryStmt;
+
+// LRM 6.21: an automatic variable a detached fork branch borrows can outlive
+// the scope that declares it, so each such variable among `declared` is lifted
+// into a cell of its own, held by a shared pointer made in the frame's block,
+// and the pointer is recorded so the variable's declaration and its references
+// reach the cell through it. A branch keeps each cell it names alive by holding
+// a by-value copy of its pointer. `declared` is every variable the scope being
+// entered declares; which of them are lifted is the variables' own statement.
+void OpenActivationScope(
+    ProcessLowerer& process, const WalkFrame& frame,
+    std::span<const hir::ProceduralVarId> declared);
 
 auto LowerBlockStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,

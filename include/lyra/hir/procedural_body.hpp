@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cstdint>
-
 #include "lyra/base/arena.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/hir/assertion.hpp"
@@ -35,11 +33,6 @@ struct ProceduralBody {
   base::Arena<SequenceExpr, SequenceExprId> sequence_exprs;
   base::Arena<PropertyExpr, PropertyExprId> property_exprs;
   base::Registry<ProceduralVarDecl, ProceduralVarId> procedural_vars;
-  std::uint32_t loop_label_count = 0;
-
-  auto AddLoopLabel() -> LoopLabelId {
-    return LoopLabelId{loop_label_count++};
-  }
 
   auto operator==(const ProceduralBody&) const -> bool = default;
 };

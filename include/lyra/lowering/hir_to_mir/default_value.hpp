@@ -1,6 +1,5 @@
 #pragma once
 
-#include <optional>
 #include <utility>
 #include <vector>
 
@@ -112,14 +111,14 @@ namespace lyra::lowering::hir_to_mir {
 // Builds the construction call for an associative-array literal (LRM 7.9.11).
 // Each (key, value) entry is a pair, and the entries ride in the plain-data
 // array of those pairs, so the constructor arguments are `[element_default,
-// entries, absent_key_answer]`. `user_default` is the LRM 7.9.11 persistent
-// fallback a read of an absent key returns; a literal that writes no `default:`
-// clause answers such a read with the element type's own default, so that is
-// what stands there instead, and the operand is never missing.
+// entries, absent_key_answer]`. `absent_key_answer` is what a read of an absent
+// key returns (LRM 7.8.6): the LRM 7.9.11 `default:` clause where the literal
+// writes one, and the element type's own default where it does not, built by
+// the caller as a value of its own beside `element_default`.
 [[nodiscard]] auto BuildAssociativeConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
     mir::ExprId element_default,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
-    std::optional<mir::ExprId> user_default) -> mir::Expr;
+    mir::ExprId absent_key_answer) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -22,9 +22,10 @@ namespace lyra::lowering::ast_to_hir {
 
 class ProcessLowerer;
 
-// LRM 7.10 `$` (UnboundedLiteral) in a queue index / slice bound. Resolves to
-// the queue's last index via the base bound on the walk frame. A queue is a
-// dynamic type, so `$` only ever appears in procedural code (LRM 7.10.1).
+// LRM 7.10.1 `$` (UnboundedLiteral) in a queue index / slice bound: the last
+// index of the queue the enclosing select is taken from, and a diagnostic where
+// no queue select encloses it. A queue is a dynamic type, so `$` only ever
+// appears in procedural code.
 auto LowerUnboundedLiteralProc(
     ProcessLowerer& proc, WalkFrame frame, diag::SourceSpan span)
     -> diag::Result<hir::Expr>;

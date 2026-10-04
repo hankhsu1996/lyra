@@ -25,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/statement/branches.hpp"
 #include "lyra/lowering/hir_to_mir/statement/flow.hpp"
+#include "lyra/lowering/hir_to_mir/statement/foreach.hpp"
 #include "lyra/lowering/hir_to_mir/statement/fork_join.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/statement/procedural_continuous.hpp"
@@ -94,6 +95,9 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           [&](const hir::ForStmt& f) {
             return LowerForStmt(*this, frame, stmt.label, f);
           },
+          [&](const hir::ForeachStmt& f) {
+            return LowerForeachStmt(*this, frame, stmt.label, f);
+          },
           [&](const hir::WhileStmt& w) {
             return LowerWhileStmt(*this, frame, stmt.label, w);
           },
@@ -106,8 +110,8 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           [&](const hir::ForeverStmt& f) {
             return LowerForeverStmt(*this, frame, stmt.label, f);
           },
-          [&](const hir::BreakStmt& b) {
-            return LowerBreakStmt(stmt.label, b.target);
+          [&](const hir::BreakStmt&) {
+            return LowerBreakStmt(stmt.label, frame);
           },
           [&](const hir::ContinueStmt&) {
             return LowerContinueStmt(stmt.label);

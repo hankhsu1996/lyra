@@ -7,4 +7,3 @@
 # out inside the case, where nothing would notice.
 #
 # A case may appear in this file or in the refusal record, never both.
-08_classes/property_write_evaluates_its_handle_once: "a write ran the handle's call 2 times, expected 1"

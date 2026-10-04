@@ -100,9 +100,11 @@ auto LowerHirClassPropertyAccessExpr(
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 // A select named as a part rather than read: the path its base names, one step
-// deeper. Each adds the same step the read of it takes and appends nothing, so
-// what comes back is rooted at the cell itself rather than at the storage it
-// stands for, and is the one statement of the part every use of it is given.
+// deeper. Each adds the same step the read of it takes, so what comes back is
+// rooted at the cell itself rather than at the storage it stands for, and is
+// the one statement of the part every use of it is given. A select taken from
+// a queue has what its base computes evaluated where it is reached, once: `$`
+// in its index or bounds reads that queue again (LRM 7.10.1).
 template <ExprLowerer Lowerer>
 auto LowerHirElementSelectExprPath(
     Lowerer& lowerer, WalkFrame frame, const hir::ElementSelectExpr& sel,

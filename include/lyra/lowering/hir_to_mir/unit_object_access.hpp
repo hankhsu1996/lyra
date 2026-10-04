@@ -38,7 +38,7 @@ auto StepThroughPublishedMember(
     const hir::SignatureMemberStep& step) -> mir::ExprId;
 
 // The rest of reaching the instance a virtual interface holds, given the handle
-// already lowered into `steps`: the handle bound once, and yielded as
+// already lowered into `steps`: the handle evaluated once, and yielded as
 // `object_pointer` only when it holds an instance.
 auto GuardHeldInterface(
     mir::CompilationUnit& unit, BlockBuilder& steps, mir::Expr handle,
