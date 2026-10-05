@@ -83,9 +83,9 @@ the detail lives in the entry itself.
   integers in the runtime, a known-flag position, and restating a literal in a deferred write are
   rejected.
 - [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend a union or a
-  container is a runtime-owned erased value, not structurally monomorphized; the choice is below
-  LIR, and LIR's aggregate operations stay realization-agnostic. Superseded for tuples by the entry
-  below.
+  container is a runtime-owned object behind a handle, not structurally monomorphized, holding its
+  elements as their type's bytes; the choice is below LIR, and LIR's aggregate operations stay
+  realization-agnostic. Superseded for tuples by the entry below.
 - [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) -- on the execution backend
   a tuple has one form wherever it lies: its type's layout, opening with its type's operation table,
   as a C++ object with virtual functions opens with its vtable pointer. The code generator compiles

@@ -27,7 +27,6 @@ enum class LibraryObject : std::uint8_t {
   kDpiLogicBuffer,
   kDpiOpenArray,
   kChannelCancellation,
-  kErasedValue,
   kExecution,
   kSharedPointer,
   kOpenWrite,

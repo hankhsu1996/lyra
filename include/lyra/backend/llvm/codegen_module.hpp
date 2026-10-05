@@ -148,6 +148,17 @@ class CodeGenModule {
   // and one of another are named the same way.
   auto DefinitionOf(lir::TypeId type) -> diag::Result<llvm::Constant*>;
 
+  // The type the library asks of a value of `type`: a tuple's own, which this
+  // unit emits with the tuple type, or the library's for a value of one of its
+  // own kinds.
+  auto ValueTypeOf(lir::TypeId type) -> diag::Result<llvm::Constant*>;
+
+  // The library kind a value of `type` is, which names the entries acting on
+  // it; a type the library realizes as no kind of its own is one this backend
+  // does not carry.
+  [[nodiscard]] auto DomainOf(lir::TypeId type) const
+      -> diag::Result<support::ValueDomain>;
+
   // Storage the whole program shares, under the symbol it is linked by. The
   // symbol is the storage itself, so its address is what a reference names.
   auto SharedStorage(const std::string& symbol) -> llvm::GlobalVariable*;

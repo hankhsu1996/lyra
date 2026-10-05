@@ -30,6 +30,7 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/runtime_object.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -141,9 +142,6 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           },
           [&](const lir::ArrayInstr& array) -> diag::Result<llvm::Value*> {
             return LowerArray(array, result_type);
-          },
-          [&](const lir::UnionInstr& u) -> diag::Result<llvm::Value*> {
-            return LowerUnion(u, result_type, out);
           },
           [&](const lir::AggregateExtractInstr& extract)
               -> diag::Result<llvm::Value*> {
@@ -1016,26 +1014,45 @@ auto CodeGenFunction::CallArgs(
   if (!encoding) {
     return std::unexpected(std::move(encoding.error()));
   }
-  if (const std::optional<ErasedArgument>& argument = encoding->erased) {
-    operands[argument->position] =
-        Box(argument->domain, operands[argument->position]);
-  }
   // A position the callee names is not a value the program computed, so this
   // target writes it where its calls take values: right after the object whose
   // part it names, and first where the entry acts on no object -- which is what
   // its declaration says by being a factory on the type it builds.
+  std::optional<std::size_t> position_at;
+  llvm::Value* position = nullptr;
   if (const auto* builtin = std::get_if<lir::BuiltinTarget>(&call.target);
       builtin != nullptr && builtin->position.has_value()) {
     const bool acts_on_an_object =
         !std::holds_alternative<support::StaticFactory>(
             support::RuntimeEntryOf(builtin->fn).declaration);
-    operands.insert(
-        operands.begin() + (acts_on_an_object ? 1 : 0),
-        llvm::ConstantInt::get(
-            llvm::Type::getInt64Ty(module_->Context()),
-            builtin->position->value));
+    position_at = acts_on_an_object ? 1 : 0;
+    position = llvm::ConstantInt::get(
+        llvm::Type::getInt64Ty(module_->Context()), builtin->position->value);
   }
-  return ArgsInForm(encoding->operand_form, operands);
+  // An erased operand crosses as itself followed by its type.
+  llvm::Value* erased_type = nullptr;
+  if (const std::optional<ErasedArgument>& argument = encoding->erased) {
+    auto type_object = module_->ValueTypeOf(argument->type);
+    if (!type_object) {
+      return std::unexpected(std::move(type_object.error()));
+    }
+    erased_type = *type_object;
+  }
+  std::vector<llvm::Value*> args;
+  args.reserve(operands.size() + 2);
+  for (std::size_t i = 0; i <= operands.size(); ++i) {
+    if (position_at == i) {
+      args.push_back(position);
+    }
+    if (i == operands.size()) {
+      break;
+    }
+    args.push_back(operands[i]);
+    if (encoding->erased.has_value() && encoding->erased->position == i) {
+      args.push_back(erased_type);
+    }
+  }
+  return ArgsInForm(encoding->operand_form, args);
 }
 
 auto CodeGenFunction::ArgsInForm(
@@ -1264,9 +1281,8 @@ auto CodeGenFunction::LowerTuple(
   return out;
 }
 
-auto CodeGenFunction::UnionMemberDomain(
-    lir::TypeId union_type, std::uint32_t index) const
-    -> diag::Result<support::ValueDomain> {
+auto CodeGenFunction::UnionMemberType(
+    lir::TypeId union_type, std::uint32_t index) const -> lir::TypeId {
   const lir::Type& ty = module_->Unit().types.Get(union_type);
   if (!ty.IsUnion()) {
     throw InternalError(
@@ -1276,33 +1292,7 @@ auto CodeGenFunction::UnionMemberDomain(
   if (index >= members.size()) {
     throw InternalError("llvm codegen: a union member index is out of range");
   }
-  return DomainOf(members[index]);
-}
-
-auto CodeGenFunction::LowerUnion(
-    const lir::UnionInstr& u, lir::TypeId result_type, llvm::Value* out)
-    -> diag::Result<llvm::Value*> {
-  // The live member's value crosses boxed in its own domain, which the union
-  // holds no prototype to read off; the union domain's `make` takes which
-  // member is live beside it.
-  auto member_domain = UnionMemberDomain(result_type, u.index.value);
-  if (!member_domain) {
-    return std::unexpected(std::move(member_domain.error()));
-  }
-  auto value = LowerOperand(u.value);
-  if (!value) {
-    return std::unexpected(std::move(value.error()));
-  }
-  auto union_domain = DomainOf(result_type);
-  if (!union_domain) {
-    return std::unexpected(std::move(union_domain.error()));
-  }
-  return BuildInto(
-      RuntimeSymbol(*union_domain, RuntimeOp::kMake),
-      {llvm::ConstantInt::get(
-           llvm::Type::getInt64Ty(module_->Context()), u.index.value),
-       Box(*member_domain, *value)},
-      out);
+  return members[index];
 }
 
 auto CodeGenFunction::LowerTagTest(
@@ -1341,11 +1331,12 @@ auto CodeGenFunction::SelectorArgs(
       shape.push_back(*lowered);
       continue;
     }
-    auto domain = DomainOf(OperandType(operand));
-    if (!domain) {
-      return std::unexpected(std::move(domain.error()));
+    auto type_object = module_->ValueTypeOf(OperandType(operand));
+    if (!type_object) {
+      return std::unexpected(std::move(type_object.error()));
     }
-    shape.push_back(Box(*domain, *lowered));
+    shape.push_back(*lowered);
+    shape.push_back(*type_object);
   }
   return {};
 }
@@ -1454,33 +1445,29 @@ auto CodeGenFunction::LowerAggregateUpdate(
     shape.push_back(*replacement);
     return shape;
   };
-  // A member is replaced by naming its index and the value that takes its
-  // place; the aggregate's own domain names the entry that performs it.
-  const auto positional = [&](base::ComponentIndex index,
-                              llvm::Value* written) -> llvm::Value* {
-    return BuildInto(
-        RuntimeSymbol(*domain, RuntimeOp::kWithComponent),
-        {*aggregate,
-         llvm::ConstantInt::get(
-             llvm::Type::getInt64Ty(module_->Context()), index.value),
-         written},
-        out);
-  };
   return std::visit(
       Overloaded{
+          // A member is replaced by naming its index and the value that takes
+          // its place, and the aggregate's own domain names the entry that
+          // performs it. The union's entries are compiled once for every
+          // member type, so the replacement crosses with the type its member
+          // is declared as. Whether the write then makes the member live or
+          // faults a mismatched tag follows from the domain the entry is named
+          // in.
           [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
-            // An active-member value keeps no per-member prototype, so the
-            // runtime cannot recover which domain a raw handle is in and the
-            // caller states it by boxing the replacement in the member's own
-            // domain. Whether the write then makes the member live or faults a
-            // mismatched tag follows from the domain the entry is named in.
-            auto member_domain =
-                UnionMemberDomain(container, component.index.value);
-            if (!member_domain) {
-              return std::unexpected(std::move(member_domain.error()));
+            auto member_type = module_->ValueTypeOf(
+                UnionMemberType(container, component.index.value));
+            if (!member_type) {
+              return std::unexpected(std::move(member_type.error()));
             }
-            return positional(
-                component.index, Box(*member_domain, *replacement));
+            return BuildInto(
+                RuntimeSymbol(*domain, RuntimeOp::kWithComponent),
+                {*aggregate,
+                 llvm::ConstantInt::get(
+                     llvm::Type::getInt64Ty(module_->Context()),
+                     component.index.value),
+                 *replacement, *member_type},
+                out);
           },
           [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
             auto shape = coordinates(e.operands);
@@ -1966,8 +1953,8 @@ auto CodeGenFunction::ConstructionOf(
                                         : RuntimeOp::kFromLiteral));
           },
           // LRM 7.8: the index type imposes the order the entries are held in.
-          // Every declared index type's order is the one its own values carry,
-          // which an erased index answers itself; a wildcard index (LRM 7.8.1)
+          // Every declared index type's order is its own, which an index's type
+          // answers wherever the index crosses; a wildcard index (LRM 7.8.1)
           // is self-determined, treated as unsigned, and admits one value at
           // any width, so its order is absent from the indices and the array
           // is built holding it.
@@ -2234,43 +2221,33 @@ auto CodeGenFunction::ConstructionOf(
           }});
 }
 
-auto CodeGenFunction::InItsOwnDomain(
-    const lir::CallInstr& call, std::size_t position) const
-    -> diag::Result<ErasedArgument> {
+auto CodeGenFunction::OfItsOwnType(
+    const lir::CallInstr& call, std::size_t position) const -> ErasedArgument {
   if (position >= call.args.size()) {
     throw InternalError(
         "llvm codegen: an entry names an operand it was not handed -- please "
         "report this as a bug");
   }
-  auto domain = DomainOf(OperandType(call.args.at(position)));
-  if (!domain) {
-    return std::unexpected(std::move(domain.error()));
-  }
-  return ErasedArgument{.position = position, .domain = *domain};
+  return ErasedArgument{
+      .position = position, .type = OperandType(call.args.at(position))};
 }
 
 auto CodeGenFunction::BuiltinErasedOperand(
     const lir::BuiltinTarget& target, const lir::CallInstr& call,
-    lir::TypeId result_type) const
-    -> diag::Result<std::optional<ErasedArgument>> {
+    lir::TypeId result_type) const -> std::optional<ErasedArgument> {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(target.fn);
-  // A value made the live member of an active-member value crosses in the
-  // member's own domain, since that value holds no prototype for its members.
-  // It is the call's last operand, everything before it naming which member.
-  // The value it goes into is what the call answers with, because an entry that
-  // builds one takes no object to read it from.
-  if (target.fn == support::BuiltinFn::kMakeActiveMember) {
-    auto member = UnionMemberDomain(result_type, target.position->value);
-    if (!member) {
-      return std::unexpected(std::move(member.error()));
-    }
-    return ErasedArgument{.position = call.args.size() - 1, .domain = *member};
+  // The union a member goes into is what the call answers with, because an
+  // entry that builds one takes no object to read it from.
+  if (entry.member_operand.has_value()) {
+    return ErasedArgument{
+        .position = *entry.member_operand,
+        .type = UnionMemberType(result_type, target.position->value)};
   }
   if (entry.result_prototype_operand.has_value()) {
-    return InItsOwnDomain(call, *entry.result_prototype_operand);
+    return OfItsOwnType(call, *entry.result_prototype_operand);
   }
   if (entry.spread_operand.has_value()) {
-    return InItsOwnDomain(call, *entry.spread_operand);
+    return OfItsOwnType(call, *entry.spread_operand);
   }
   // A coordinate crosses erased only where the container it selects into holds
   // no prototype for one; where a container names its entries by ordinals, the
@@ -2286,7 +2263,7 @@ auto CodeGenFunction::BuiltinErasedOperand(
                                .value_or(receiver))) {
     return std::nullopt;
   }
-  return InItsOwnDomain(call, *entry.index_operand);
+  return OfItsOwnType(call, *entry.index_operand);
 }
 
 auto CodeGenFunction::EncodingOf(
@@ -2302,11 +2279,8 @@ auto CodeGenFunction::EncodingOf(
   return std::visit(
       Overloaded{
           [&](const lir::BuiltinTarget& t) -> Encoded {
-            auto erased = BuiltinErasedOperand(t, call, result_type);
-            if (!erased) {
-              return std::unexpected(std::move(erased.error()));
-            }
-            return CallEncoding{.erased = *erased};
+            return CallEncoding{
+                .erased = BuiltinErasedOperand(t, call, result_type)};
           },
           [&](const lir::ConstructTarget&) -> Encoded {
             auto construction = ConstructionOf(call, result_type);
@@ -2316,12 +2290,9 @@ auto CodeGenFunction::EncodingOf(
             if (!construction->shape_operand.has_value()) {
               return CallEncoding{.operand_form = construction->operand_form};
             }
-            auto erased = InItsOwnDomain(call, *construction->shape_operand);
-            if (!erased) {
-              return std::unexpected(std::move(erased.error()));
-            }
             return CallEncoding{
-                .erased = *erased, .operand_form = construction->operand_form};
+                .erased = OfItsOwnType(call, *construction->shape_operand),
+                .operand_form = construction->operand_form};
           },
           [](const lir::FunctionTarget&) -> Encoded { return CallEncoding{}; },
           [](const lir::DispatchTarget&) -> Encoded { return CallEncoding{}; },

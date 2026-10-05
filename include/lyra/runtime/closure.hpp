@@ -1,16 +1,9 @@
 #pragma once
 
-#include <array>
-#include <bit>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <new>
-#include <utility>
 
-#include "lyra/support/value_domain.hpp"
 #include "lyra/value/any_value.hpp"
-#include "lyra/value/runtime_value.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
@@ -31,9 +24,7 @@ namespace lyra::runtime {
 //
 // A body that answers a value builds it in storage its caller gives, and states
 // the type it comes back in, because a handle carries no type: it is a fact
-// only whoever compiled the body holds. A body run per entry also states which
-// of the runtime's kinds of value that type is, which is what an entry's answer
-// is held as.
+// only whoever compiled the body holds.
 //
 // The captures lie in the value itself, after what this library keeps there,
 // where the code building the closure placed them and fills them. So of the
@@ -47,7 +38,6 @@ struct ClosureDefinition {
       void* self, const void* item, const void* index, void* out) = nullptr;
   void* (*run_value)(void* self, void* out) = nullptr;
   const value::ValueType* result_type = nullptr;
-  support::ValueDomain result_domain{};
   std::uint64_t size = 0;
   void (*end_captures)(void* self) = nullptr;
 };
@@ -94,11 +84,10 @@ class ClosureValue {
   // having run no statement of it; the caller drives it from there.
   [[nodiscard]] auto Start() -> void*;
 
-  // Runs a per-element body on one entry (LRM 7.12.4) and answers the value it
-  // settled on.
-  [[nodiscard]] auto RunPerElement(
-      const value::RuntimeValue& item, const value::RuntimeValue& index)
-      -> value::RuntimeValue;
+  // Runs a per-element body on one entry, handed the element and its index
+  // where each lies (LRM 7.12.4), and answers the value it settled on.
+  [[nodiscard]] auto RunPerElement(const void* item, const void* index)
+      -> value::AnyValue;
 
   // Runs a body that takes nothing and answers what it settled on.
   [[nodiscard]] auto RunValue() -> value::AnyValue;
@@ -107,19 +96,19 @@ class ClosureValue {
   // kinds.
   template <typename T>
   [[nodiscard]] auto RunValueOf(const value::ValueTypeOf<T>& type) -> T {
-    alignas(T) std::array<std::byte, sizeof(T)> storage{};
-    RunValueInto(type, storage.data());
-    T* built = std::launder(std::bit_cast<T*>(storage.data()));
-    T answer = std::move(*built);
-    std::destroy_at(built);
-    return answer;
+    RequireAnswers(type);
+    return value::TakeBuilt<T>([&](void* out) { RunValueInto(out); });
   }
 
  private:
   explicit ClosureValue(const ClosureDefinition* definition);
 
-  // Runs a body that takes nothing into `out`, which is sized for `type`.
-  void RunValueInto(const value::ValueType& type, void* out);
+  // Refuses a caller expecting a value of another type than the body answers.
+  void RequireAnswers(const value::ValueType& type) const;
+
+  // Runs a body that takes nothing into `out`, which is sized for the type it
+  // answers.
+  void RunValueInto(void* out);
 
   const ClosureDefinition* definition_;
 };

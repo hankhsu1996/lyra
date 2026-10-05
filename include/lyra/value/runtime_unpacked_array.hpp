@@ -2,74 +2,66 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <memory>
+#include <optional>
+#include <span>
 #include <vector>
 
+#include "lyra/value/basic_dynamic_array.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/net_resolution.hpp"
 #include "lyra/value/packed_array.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
 
-struct RuntimeValue;
 class String;
+struct PackedType;
 
-// The runtime-owned realization of a fixed-size unpacked array (LRM 7.4.2),
-// MIR's `UnpackedArrayType`. A homogeneous container whose element count is
-// fixed at construction and which owns its elements by value: copy is an
-// element-wise deep copy, destruction is C++ RAII, so an element never borrows
-// caller storage.
-//
-// This is the execution backend's type-erased counterpart of the C++ backend's
-// monomorphized `UnpackedArray<T>`, the fixed-size peer of
-// `RuntimeDynamicArray`. A compile-once runtime cannot instantiate a distinct
-// C++ type per element type, so one `RuntimeUnpackedArray` holds a vector of
-// type-erased `RuntimeValue` elements and an element-default prototype, and
-// composes the value contract by visiting them.
+// A fixed-size unpacked array (LRM 7.4.2) as the library holds one: the
+// dynamic array's run of elements, compiled once with its element type's
+// table, whose count the array's type fixes rather than the running program.
+// Every element is handed in and out by its address, which is where it lies in
+// the array.
 //
 // The payload is ordinal-only: an access names an element by its ordinal,
 // counted from the left, because the declared range is a fact of the static
 // type the select was written against and is read there. Whole-value movement
 // is therefore range-agnostic and no store relabels a coordinate.
-//
-// Each element is storage of its own, written where it lies, and value
-// semantics hold because a copy of the array copies its elements: no two arrays
-// share one, so a write through one is never seen through another.
 class RuntimeUnpackedArray {
  public:
-  // The uninitialized sentinel form -- the empty array before its declared
-  // element shape is known. It is the declared default state of a
-  // `Var<RuntimeUnpackedArray>` cell; the cell's first initialization
-  // overwrites it with the real element shape.
+  // The array before its declared element type is known: the declared default
+  // state of a cell, which the cell's first initialization overwrites.
   RuntimeUnpackedArray();
 
-  // LRM 10.9.1: `count` replications of `unit`, where a replication stands for
-  // an entire dimension. Covers both a fixed array's all-default state (`unit`
-  // is one element default, LRM Table 7-1) and an `'{count{...}}` pattern
-  // (`unit` is the replicated items), which are the same repeat-and-count shape
-  // and so construct through one path, keeping a uniform array O(unit) to build
-  // where an enumerated element list would be O(unit * count).
+  // An array of elements of `element` holding copies of `items`, in order.
   RuntimeUnpackedArray(
-      RuntimeValue element_default, std::vector<RuntimeValue> unit,
-      std::size_t count);
+      const ValueType& element, const void* element_default,
+      std::span<const void* const> items);
+
+  RuntimeUnpackedArray(const RuntimeUnpackedArray&);
+  RuntimeUnpackedArray(RuntimeUnpackedArray&&) noexcept;
+  auto operator=(const RuntimeUnpackedArray&) -> RuntimeUnpackedArray&;
+  auto operator=(RuntimeUnpackedArray&&) noexcept -> RuntimeUnpackedArray&;
+  ~RuntimeUnpackedArray();
 
   // LRM 7.6: a fixed-size unpacked array assigned an array of another unpacked
   // kind takes its elements in left-to-right order, and how many elements it
   // has is a declared property of the variable being written rather than
   // anything the source decides -- so a source of another size is a run-time
   // error and the assignment does not happen.
-  [[nodiscard]] static auto FromArray(
-      const RuntimeValue& source, RuntimeValue element_default,
-      std::int64_t declared) -> RuntimeUnpackedArray;
+  [[nodiscard]] static auto FromElements(
+      const ValueType& element, const void* element_default,
+      std::span<const void* const> items, std::int64_t declared)
+      -> RuntimeUnpackedArray;
 
   // LRM 5.9 / 21.3.3: a string value assigned to an unpacked array of bytes is
   // left-justified -- the first character lands at the array's left bound and
   // runs toward the right bound, an element past the end of the text keeps the
   // element type's default, and text beyond the array's last element is
   // dropped. The clause admits this form for an array of bytes alone, so the
-  // element shape is a packed type rather than a type of any domain, and
-  // `count` is the destination's element count.
+  // element shape is a packed type rather than a type of any kind, and `count`
+  // is the destination's element count.
   [[nodiscard]] static auto FromString(
       const String& text, const PackedType& element_type,
       const PackedArray& count) -> RuntimeUnpackedArray;
@@ -82,77 +74,54 @@ class RuntimeUnpackedArray {
       const PackedArray& bits, const PackedType& element_type,
       const PackedArray& count) -> RuntimeUnpackedArray;
 
-  // An array built directly from an already-computed element run and its
-  // default -- what a slice yields (LRM 7.4.6): ordinal-only payload over the
-  // given elements, with no declared range of its own.
-  [[nodiscard]] static auto FromValues(
-      RuntimeValue element_default, std::vector<RuntimeValue> data)
-      -> RuntimeUnpackedArray;
-
-  RuntimeUnpackedArray(const RuntimeUnpackedArray&);
-  RuntimeUnpackedArray(RuntimeUnpackedArray&&) noexcept;
-  auto operator=(const RuntimeUnpackedArray&) -> RuntimeUnpackedArray&;
-  auto operator=(RuntimeUnpackedArray&&) noexcept -> RuntimeUnpackedArray&;
-  ~RuntimeUnpackedArray();
-
   // LRM 21.3.4.3: the array read as a contiguous character sequence in element
   // order, the low byte of each element becoming one character and embedded
   // NULs included -- what a scan takes as its input text. The inverse of the
   // string construction above, under the same clause's byte order.
   [[nodiscard]] auto ToByteString() const -> String;
 
-  // LRM 7.4.2: the element count as an SV `int`. Fixed for the value's life.
+  [[nodiscard]] auto ElementType() const -> const ValueType&;
+  [[nodiscard]] auto ElementDefault() const -> const void*;
+
+  // LRM 7.4.2: the element count, and as an SV `int`. Fixed for the value's
+  // life.
+  [[nodiscard]] auto Count() const -> std::size_t;
   [[nodiscard]] auto Size() const -> PackedArray;
 
-  // The element-default prototype. Its runtime domain is the array's element
-  // domain, so a caller boxing an incoming element value into the erased
-  // representation reads the target domain from here.
-  [[nodiscard]] auto ElementDefault() const -> const RuntimeValue&;
+  // The element at storage position `position`, counted from the left -- the
+  // coordinate LRM 7.12 walks a container by.
+  [[nodiscard]] auto ElementAt(std::size_t position) const -> const void*;
+  [[nodiscard]] auto ElementAt(std::size_t position) -> void*;
 
-  // LRM 7.4.5: reads the element `position` names, counted from the left. A
-  // position that names no element here reads the element default.
-  [[nodiscard]] auto Element(const PackedArray& position) const
-      -> const RuntimeValue&;
-
-  // LRM 7.4.5: the element `position` names, as storage a write lands in. A
-  // position that names no element here yields storage nothing reads, so a
-  // write there is discarded, and `formed` says which of the two it was.
+  // LRM 7.4.5: the element `position` names, the element default where it
+  // names none; and the element as storage a write lands in, where no read
+  // reaches where it names none.
+  [[nodiscard]] auto Element(const PackedArray& position) const -> const void*;
   [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
-      -> RuntimeValue&;
-  [[nodiscard]] auto ElementRef(const PackedArray& position) -> RuntimeValue&;
+      -> void*;
 
-  // The element at storage position `position`, counted from the first in the
-  // array's own order -- the coordinate LRM 7.12 walks a container by. A
-  // position past the last is a walk defect rather than an out-of-range read.
-  [[nodiscard]] auto ElementAt(std::size_t position) const
-      -> const RuntimeValue&;
-
-  // LRM 7.4.5 contiguous-range selector: `count` elements from `start`. An
-  // element outside the array reads the element default, and a start that
-  // names no position reads a wholly-default sub-array. The result is
-  // ordinal-only payload, so it carries no declared range of its own.
+  // LRM 7.4.5 / 7.4.6: the `count` elements from `start`, each the element
+  // default where it lies outside the array, every one of them where `start`
+  // names no position.
+  [[nodiscard]] auto SliceElements(const PackedArray& start, std::int64_t count)
+      const -> std::vector<const void*>;
   [[nodiscard]] auto Slice(const PackedArray& start, std::int64_t count) const
       -> RuntimeUnpackedArray;
 
-  // A whole-slice write (LRM 7.6): the window takes `replacement`, element for
-  // element, into the elements already there. The same places that read the
-  // default write nothing -- an element outside the array is skipped, and a
-  // start that names no position writes no element at all. Assignment
-  // compatibility gives the two the same element count. Answers whether any
-  // element took a different value.
+  // LRM 7.6: the window takes `replacement`, element for element; an element
+  // outside the array is skipped and a start naming no position writes
+  // nothing. Answers whether any element took a different value (LRM 4.3).
   auto AssignSlice(
       const PackedArray& start, std::int64_t count,
-      const RuntimeUnpackedArray& replacement) -> bool;
+      std::span<const void* const> replacement) -> bool;
 
-  // LRM 11.4.5 `==` / `!=` (Any data type): an element-wise reduction that
-  // propagates X / Z through each element's own equality.
+  // LRM 7.12.2: puts the value that was at `order[k]` at position `k`.
+  void Permute(std::span<const std::size_t> order);
+
   [[nodiscard]] auto operator==(const RuntimeUnpackedArray& other) const
       -> PackedArray;
   [[nodiscard]] auto operator!=(const RuntimeUnpackedArray& other) const
       -> PackedArray;
-
-  // LRM 11.4.5 `===` / `!==`: element-wise case equality, deterministic in
-  // X / Z.
   [[nodiscard]] auto CaseEqual(const RuntimeUnpackedArray& other) const
       -> PackedArray;
 
@@ -186,20 +155,13 @@ class RuntimeUnpackedArray {
       const RuntimeUnpackedArray& prototype, const PackedArray& fill)
       -> RuntimeUnpackedArray;
 
-  // LRM 9.4.2 update-event predicate (engine change-detection hook).
+  // LRM 9.4.2: a size mismatch is a change, which is how the array a fresh
+  // cell holds before its declaration is told apart from the first write.
   [[nodiscard]] auto IsBitIdentical(const RuntimeUnpackedArray& other) const
       -> bool;
-
-  // LRM 20.9: any element carrying an unknown bit propagates up.
   [[nodiscard]] auto HasUnknown() const -> bool;
   [[nodiscard]] auto IsUnknown() const -> PackedArray;
-
-  // LRM 20.6.2 `$bits`: the sum of the elements' own widths, an aggregate's
-  // bit stream being its elements' laid end to end.
   [[nodiscard]] auto BitstreamWidth() const -> PackedArray;
-
-  // LRM 20.9 `$countbits`: the element-wise sum of each element's own count,
-  // an unpacked array being a bit stream of its elements.
   [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
       -> PackedArray;
 
@@ -212,16 +174,15 @@ class RuntimeUnpackedArray {
       -> RuntimeUnpackedArray;
 
  private:
-  // Each element pair folded under one table; the three tables differ only in
-  // the elements' own fold.
-  [[nodiscard]] auto FoldedWith(
-      const RuntimeUnpackedArray& other, NetResolution fold) const
-      -> RuntimeUnpackedArray;
+  using Core = BasicDynamicArray<WitnessedElem>;
 
-  // Indirect because `RuntimeValue` closes over this type: a by-value member
-  // would need `RuntimeValue` complete here, which it is not.
-  std::unique_ptr<RuntimeValue> element_default_;
-  std::vector<RuntimeValue> data_;
+  explicit RuntimeUnpackedArray(Core core);
+
+  void RequireInstalled() const;
+  [[nodiscard]] auto Installed() const -> const Core&;
+  [[nodiscard]] auto Installed() -> Core&;
+
+  std::optional<Core> core_;
 };
 
 static_assert(LyraValue<RuntimeUnpackedArray>);
@@ -231,7 +192,6 @@ static_assert(ConditionallyMergeable<RuntimeUnpackedArray>);
 static_assert(Sized<RuntimeUnpackedArray>);
 static_assert(BitstreamSizable<RuntimeUnpackedArray>);
 static_assert(BitstreamConvertible<RuntimeUnpackedArray>);
-static_assert(EntryWalkable<RuntimeUnpackedArray>);
 static_assert(Sliceable<RuntimeUnpackedArray>);
 
 }  // namespace lyra::value

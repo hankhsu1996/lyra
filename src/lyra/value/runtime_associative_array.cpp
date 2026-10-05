@@ -1,290 +1,165 @@
 #include "lyra/value/runtime_associative_array.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
-#include <optional>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/value/any_value.hpp"
+#include "lyra/value/basic_associative_array.hpp"
+#include "lyra/value/element_policy.hpp"
+#include "lyra/value/formation.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/runtime_value.hpp"
+#include "lyra/value/value_type.hpp"
+#include "lyra/value/wildcard_index.hpp"
 
 namespace lyra::value {
 
-namespace {
-
-// LRM 7.8.6: an index carrying x or z is invalid whatever value it carries, so
-// it names no entry to read and allocates none to write.
-[[nodiscard]] auto NamesNoEntry(const RuntimeValue& index) -> bool {
-  return RuntimeValueHasUnknown(index);
-}
-
-constexpr auto kEntryIndex =
-    [](const RuntimeAssociativeEntry& entry) -> const RuntimeValue& {
-  return entry.index;
-};
-
-}  // namespace
-
-RuntimeAssociativeArray::RuntimeAssociativeArray()
-    : element_default_(std::make_unique<RuntimeValue>()),
-      user_default_(std::make_unique<RuntimeValue>()) {
-}
-
-RuntimeAssociativeArray::RuntimeAssociativeArray(
-    AssociativeIndexOrder index_order, RuntimeValue element_default,
-    RuntimeValue user_default)
-    : element_default_(
-          std::make_unique<RuntimeValue>(std::move(element_default))),
-      user_default_(std::make_unique<RuntimeValue>(std::move(user_default))),
-      index_order_(index_order) {
-}
-
-RuntimeAssociativeArray::RuntimeAssociativeArray(
-    const RuntimeAssociativeArray& other)
-    : element_default_(std::make_unique<RuntimeValue>(*other.element_default_)),
-      user_default_(std::make_unique<RuntimeValue>(*other.user_default_)),
-      data_(other.data_),
-      index_order_(other.index_order_) {
-}
-
-RuntimeAssociativeArray::RuntimeAssociativeArray(
-    RuntimeAssociativeArray&&) noexcept = default;
-
-auto RuntimeAssociativeArray::operator=(const RuntimeAssociativeArray& other)
-    -> RuntimeAssociativeArray& {
-  if (this != &other) {
-    element_default_ = std::make_unique<RuntimeValue>(*other.element_default_);
-    user_default_ = std::make_unique<RuntimeValue>(*other.user_default_);
-    data_ = other.data_;
-    index_order_ = other.index_order_;
-  }
-  return *this;
-}
-
-auto RuntimeAssociativeArray::operator=(RuntimeAssociativeArray&&) noexcept
-    -> RuntimeAssociativeArray& = default;
-
-RuntimeAssociativeArray::~RuntimeAssociativeArray() = default;
-
-auto RuntimeAssociativeArray::OrderBefore(
-    const RuntimeValue& a, const RuntimeValue& b) const -> bool {
-  switch (index_order_) {
+auto WitnessedKey::Less::operator()(IndexView a, IndexView b) const -> bool {
+  switch (order) {
     case AssociativeIndexOrder::kIndexValueDomain:
-      return RuntimeValueOrderBefore(a, b);
+      return a.type->OrderBefore(a.bytes, b.bytes);
+    // A wildcard index reaches the array as the bare value the program wrote,
+    // so this normalizes per comparison where the array compiled with its
+    // index type normalizes once per key. The clause admits only an integral
+    // index.
     case AssociativeIndexOrder::kWildcardNumeric:
-      return WildcardIndexOrderBefore(a, b);
+      return WildcardIndexBefore(
+          WildcardIndexValue(*static_cast<const PackedArray*>(a.bytes)),
+          WildcardIndexValue(*static_cast<const PackedArray*>(b.bytes)));
   }
   throw InternalError("RuntimeAssociativeArray: unknown index order");
 }
 
-auto RuntimeAssociativeArray::SameIndex(
-    const RuntimeValue& a, const RuntimeValue& b) const -> bool {
-  return !OrderBefore(a, b) && !OrderBefore(b, a);
+RuntimeAssociativeArray::RuntimeAssociativeArray() = default;
+
+RuntimeAssociativeArray::RuntimeAssociativeArray(
+    AssociativeIndexOrder index_order, const ValueType& element,
+    const void* element_default, const void* miss)
+    : core_(
+          std::in_place, WitnessedKey{.order = index_order},
+          WitnessedElem(element, element_default), miss) {
 }
 
-auto RuntimeAssociativeArray::LowerBound(const RuntimeValue& index) const
-    -> std::size_t {
-  const auto position = std::ranges::lower_bound(
-      data_, index,
-      [this](const RuntimeValue& a, const RuntimeValue& b) -> bool {
-        return OrderBefore(a, b);
-      },
-      kEntryIndex);
-  return static_cast<std::size_t>(
-      std::ranges::distance(data_.begin(), position));
-}
+RuntimeAssociativeArray::RuntimeAssociativeArray(
+    const RuntimeAssociativeArray&) = default;
+RuntimeAssociativeArray::RuntimeAssociativeArray(
+    RuntimeAssociativeArray&&) noexcept = default;
+auto RuntimeAssociativeArray::operator=(const RuntimeAssociativeArray&)
+    -> RuntimeAssociativeArray& = default;
+auto RuntimeAssociativeArray::operator=(RuntimeAssociativeArray&&) noexcept
+    -> RuntimeAssociativeArray& = default;
+RuntimeAssociativeArray::~RuntimeAssociativeArray() = default;
 
-void RuntimeAssociativeArray::Settle() {
-  std::ranges::stable_sort(
-      data_,
-      [this](const RuntimeValue& a, const RuntimeValue& b) {
-        return OrderBefore(a, b);
-      },
-      kEntryIndex);
-  std::vector<RuntimeAssociativeEntry> kept;
-  kept.reserve(data_.size());
-  for (RuntimeAssociativeEntry& entry : data_) {
-    if (!kept.empty() && SameIndex(kept.back().index, entry.index)) {
-      kept.back() = std::move(entry);
-      continue;
-    }
-    kept.push_back(std::move(entry));
+// An array whose declaration has not installed its element type has no
+// entries to act on, so being asked to act on one is a lowering defect.
+void RuntimeAssociativeArray::RequireInstalled() const {
+  if (!core_.has_value()) {
+    throw InternalError(
+        "RuntimeAssociativeArray: an array is used before its declaration "
+        "installs its element type -- please report this as a bug");
   }
-  data_ = std::move(kept);
 }
 
-auto RuntimeAssociativeArray::Find(const RuntimeValue& index) const
-    -> std::optional<std::size_t> {
-  if (NamesNoEntry(index)) {
-    return std::nullopt;
-  }
-  const std::size_t position = LowerBound(index);
-  if (position < data_.size() && SameIndex(index, data_[position].index)) {
-    return position;
-  }
-  return std::nullopt;
+auto RuntimeAssociativeArray::Installed() const -> const Core& {
+  RequireInstalled();
+  return *core_;
 }
 
-auto RuntimeAssociativeArray::Size() const -> PackedArray {
-  return PackedArray::Int(static_cast<std::int32_t>(data_.size()));
-}
-
-auto RuntimeAssociativeArray::ElementDefault() const -> const RuntimeValue& {
-  return *element_default_;
-}
-
-auto RuntimeAssociativeArray::Exists(const RuntimeValue& index) const
-    -> PackedArray {
-  return PackedArray::Int(Find(index).has_value() ? 1 : 0);
-}
-
-auto RuntimeAssociativeArray::AbsentIndexValue() const -> const RuntimeValue& {
-  return *user_default_;
+auto RuntimeAssociativeArray::Installed() -> Core& {
+  RequireInstalled();
+  return *core_;
 }
 
 auto RuntimeAssociativeArray::IndexOrder() const -> AssociativeIndexOrder {
-  return index_order_;
+  return Installed().KeyType().order;
 }
 
-auto RuntimeAssociativeArray::Element(const RuntimeValue& index) const
-    -> const RuntimeValue& {
-  if (const std::optional<std::size_t> position = Find(index)) {
-    return data_[*position].element;
-  }
-  return *user_default_;
+auto RuntimeAssociativeArray::ElementType() const -> const ValueType& {
+  return Installed().Element().Type();
 }
 
-auto RuntimeAssociativeArray::IndexAt(std::size_t position) const
-    -> const RuntimeValue& {
-  if (position >= data_.size()) {
-    throw InternalError(
-        "RuntimeAssociativeArray::IndexAt: the position is past the last");
-  }
-  return data_[position].index;
+auto RuntimeAssociativeArray::ElementDefault() const -> const void* {
+  return Installed().Element().Default();
 }
 
-auto RuntimeAssociativeArray::ElementAt(std::size_t position) const
-    -> const RuntimeValue& {
-  if (position >= data_.size()) {
-    throw InternalError(
-        "RuntimeAssociativeArray::ElementAt: the position is past the last");
-  }
-  return data_[position].element;
+auto RuntimeAssociativeArray::Miss() const -> const void* {
+  return Installed().Miss();
 }
 
-auto RuntimeAssociativeArray::ElementRef(
-    const RuntimeValue& index, Formation& formed) -> RuntimeValue& {
-  if (const std::optional<std::size_t> position = Find(index)) {
-    formed = Formation::kExisting;
-    return data_[*position].element;
-  }
-  if (NamesNoEntry(index)) {
-    formed = Formation::kNowhere;
-    return DiscardTarget(*element_default_);
-  }
-  const auto inserted = data_.insert(
-      data_.begin() + static_cast<std::ptrdiff_t>(LowerBound(index)),
-      RuntimeAssociativeEntry{.index = index, .element = *user_default_});
-  formed = Formation::kMade;
-  return inserted->element;
+auto RuntimeAssociativeArray::Count() const -> std::size_t {
+  return core_.has_value() ? core_->Count() : 0;
 }
 
-auto RuntimeAssociativeArray::ElementRef(const RuntimeValue& index)
-    -> RuntimeValue& {
-  Formation formed{};
-  return ElementRef(index, formed);
+auto RuntimeAssociativeArray::Size() const -> PackedArray {
+  return PackedArray::Int(static_cast<std::int32_t>(Count()));
 }
 
-auto RuntimeAssociativeArray::WithEntries(
-    std::vector<RuntimeAssociativeEntry> entries) const
-    -> RuntimeAssociativeArray {
-  // Appending leaves the entries already held ahead of the writes, and the
-  // writes in the order they were made, which is what makes the last write to
-  // an index the one that stands once they are settled.
-  RuntimeAssociativeArray result(*this);
-  for (RuntimeAssociativeEntry& entry : entries) {
-    if (!NamesNoEntry(entry.index)) {
-      result.data_.push_back(std::move(entry));
-    }
-  }
-  result.Settle();
-  return result;
+auto RuntimeAssociativeArray::Exists(IndexView index) const -> PackedArray {
+  return PackedArray::Int(Installed().Exists(index) ? 1 : 0);
+}
+
+auto RuntimeAssociativeArray::Element(IndexView index) const -> const void* {
+  return Installed().ElementAt(index);
+}
+
+auto RuntimeAssociativeArray::ElementRef(IndexView index, Formation& formed)
+    -> void* {
+  return Installed().ElementRef(index, formed);
+}
+
+void RuntimeAssociativeArray::Store(IndexView index, const void* value) {
+  Installed().Store(index, value);
 }
 
 void RuntimeAssociativeArray::Delete() {
-  data_.clear();
+  Installed().Clear();
 }
 
-void RuntimeAssociativeArray::DeleteIndex(const RuntimeValue& index) {
-  if (const std::optional<std::size_t> position = Find(index)) {
-    data_.erase(data_.begin() + static_cast<std::ptrdiff_t>(*position));
+void RuntimeAssociativeArray::DeleteIndex(IndexView index) {
+  Installed().Erase(index);
+}
+
+auto RuntimeAssociativeArray::FirstIndex() const -> const AnyValue* {
+  return core_.has_value() ? core_->FirstKey() : nullptr;
+}
+
+auto RuntimeAssociativeArray::LastIndex() const -> const AnyValue* {
+  return core_.has_value() ? core_->LastKey() : nullptr;
+}
+
+auto RuntimeAssociativeArray::NextIndex(IndexView probe) const
+    -> const AnyValue* {
+  return core_.has_value() ? core_->KeyAfter(probe) : nullptr;
+}
+
+auto RuntimeAssociativeArray::PrevIndex(IndexView probe) const
+    -> const AnyValue* {
+  return core_.has_value() ? core_->KeyBefore(probe) : nullptr;
+}
+
+auto RuntimeAssociativeArray::Entries() const
+    -> std::vector<std::pair<const AnyValue*, const void*>> {
+  std::vector<std::pair<const AnyValue*, const void*>> entries;
+  if (!core_.has_value()) {
+    return entries;
   }
-}
-
-auto RuntimeAssociativeArray::FirstIndex() const
-    -> std::optional<RuntimeValue> {
-  if (data_.empty()) {
-    return std::nullopt;
+  entries.reserve(core_->Count());
+  for (const auto& [index, element] : core_->Entries()) {
+    entries.emplace_back(&index, element);
   }
-  return data_.front().index;
+  return entries;
 }
 
-auto RuntimeAssociativeArray::LastIndex() const -> std::optional<RuntimeValue> {
-  if (data_.empty()) {
-    return std::nullopt;
-  }
-  return data_.back().index;
-}
-
-auto RuntimeAssociativeArray::NextIndex(const RuntimeValue& probe) const
-    -> std::optional<RuntimeValue> {
-  std::size_t position = LowerBound(probe);
-  if (position < data_.size() && SameIndex(probe, data_[position].index)) {
-    ++position;
-  }
-  if (position >= data_.size()) {
-    return std::nullopt;
-  }
-  return data_[position].index;
-}
-
-auto RuntimeAssociativeArray::PrevIndex(const RuntimeValue& probe) const
-    -> std::optional<RuntimeValue> {
-  const std::size_t position = LowerBound(probe);
-  if (position == 0) {
-    return std::nullopt;
-  }
-  return data_[position - 1].index;
-}
-
-auto RuntimeAssociativeArray::MinIndex(const RuntimeValue& unallocated) const
-    -> RuntimeValue {
-  return FirstIndex().value_or(unallocated);
-}
-
-auto RuntimeAssociativeArray::MaxIndex(const RuntimeValue& unallocated) const
-    -> RuntimeValue {
-  return LastIndex().value_or(unallocated);
-}
-
+// An array with no element type yet holds no entries, which is all a
+// comparison with one can read.
 auto RuntimeAssociativeArray::operator==(
     const RuntimeAssociativeArray& other) const -> PackedArray {
-  if (data_.size() != other.data_.size()) {
-    return PackedArray::Bit(false);
+  if (!core_.has_value() || !other.core_.has_value()) {
+    return PackedArray::Bit(Count() == other.Count());
   }
-  PackedArray result = PackedArray::Bit(true);
-  for (std::size_t i = 0; i < data_.size(); ++i) {
-    if (!SameIndex(data_[i].index, other.data_[i].index)) {
-      return PackedArray::Bit(false);
-    }
-    result =
-        result && RuntimeValueEqual(data_[i].element, other.data_[i].element);
-  }
-  return result;
+  return core_->Equal(*other.core_);
 }
 
 auto RuntimeAssociativeArray::operator!=(
@@ -294,45 +169,22 @@ auto RuntimeAssociativeArray::operator!=(
 
 auto RuntimeAssociativeArray::CaseEqual(
     const RuntimeAssociativeArray& other) const -> PackedArray {
-  if (data_.size() != other.data_.size()) {
-    return PackedArray::Bit(false);
+  if (!core_.has_value() || !other.core_.has_value()) {
+    return PackedArray::Bit(Count() == other.Count());
   }
-  PackedArray result = PackedArray::Bit(true);
-  for (std::size_t i = 0; i < data_.size(); ++i) {
-    if (!SameIndex(data_[i].index, other.data_[i].index)) {
-      return PackedArray::Bit(false);
-    }
-    result = result &&
-             RuntimeValueCaseEqual(data_[i].element, other.data_[i].element);
-  }
-  return result;
+  return core_->CaseEqual(*other.core_);
 }
 
 auto RuntimeAssociativeArray::IsBitIdentical(
     const RuntimeAssociativeArray& other) const -> bool {
-  // What a read of an absent index answers with is part of the array's value,
-  // so an array differing only in that differs (LRM 9.4.2).
-  if (!RuntimeValueBitIdentical(*user_default_, *other.user_default_)) {
-    return false;
+  if (!core_.has_value() || !other.core_.has_value()) {
+    return Count() == other.Count();
   }
-  if (data_.size() != other.data_.size()) {
-    return false;
-  }
-  for (std::size_t i = 0; i < data_.size(); ++i) {
-    if (!SameIndex(data_[i].index, other.data_[i].index)) {
-      return false;
-    }
-    if (!RuntimeValueBitIdentical(data_[i].element, other.data_[i].element)) {
-      return false;
-    }
-  }
-  return true;
+  return core_->IsBitIdentical(*other.core_);
 }
 
 auto RuntimeAssociativeArray::HasUnknown() const -> bool {
-  return std::ranges::any_of(data_, [](const RuntimeAssociativeEntry& entry) {
-    return RuntimeValueHasUnknown(entry.element);
-  });
+  return core_.has_value() && core_->HasUnknown();
 }
 
 auto RuntimeAssociativeArray::IsUnknown() const -> PackedArray {
@@ -340,20 +192,13 @@ auto RuntimeAssociativeArray::IsUnknown() const -> PackedArray {
 }
 
 auto RuntimeAssociativeArray::BitstreamWidth() const -> PackedArray {
-  PackedArray total = PackedArray::Int(0);
-  for (const RuntimeAssociativeEntry& entry : data_) {
-    total = total + RuntimeValueBitstreamWidth(entry.element);
-  }
-  return total;
+  return core_.has_value() ? core_->BitstreamWidth() : PackedArray::Int(0);
 }
 
 auto RuntimeAssociativeArray::CountBits(const PackedArray& control_bits) const
     -> PackedArray {
-  PackedArray total = PackedArray::Int(0);
-  for (const RuntimeAssociativeEntry& entry : data_) {
-    total = total + RuntimeValueCountBits(entry.element, control_bits);
-  }
-  return total;
+  return core_.has_value() ? core_->CountBits(control_bits)
+                           : PackedArray::Int(0);
 }
 
 }  // namespace lyra::value

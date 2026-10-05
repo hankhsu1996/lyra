@@ -11,7 +11,7 @@
 
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/runtime_value.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
 
@@ -30,51 +30,50 @@ void DpiOpenArray::Shape(
 }
 
 DpiOpenArray::DpiOpenArray(
-    const RuntimeValue& sv, std::span<const UnpackedRange> bounds,
-    const PackedType& element_type, bool addressable_elements) {
+    const void* sv, const ValueType& sv_type,
+    std::span<const UnpackedRange> bounds, const PackedType& element_type,
+    bool addressable_elements) {
   Shape(bounds, element_type, addressable_elements);
   std::size_t position = 0;
-  FillErased(sv, 0, position);
+  FillErased(sv, sv_type, 0, position);
 }
 
 void DpiOpenArray::FillErased(
-    const RuntimeValue& value, std::size_t dimension, std::size_t& position) {
-  if (const auto* leaf = std::get_if<PackedArray>(&value.value)) {
-    WriteLeaf(*leaf, position);
+    const void* value, const ValueType& type, std::size_t dimension,
+    std::size_t& position) {
+  if (dimension == dims_.size()) {
+    WriteLeaf(*static_cast<const PackedArray*>(value), position);
     ++position;
     return;
   }
-  const std::size_t count = RuntimeValueContainerSize(value);
-  for (std::size_t p = 0; p < count; ++p) {
+  const ValueType& part = type.PartType(value);
+  for (std::size_t p = 0; p < type.PartCount(value); ++p) {
     FillErased(
-        RuntimeValueContainerElementAt(value, OrdinalAt(dimension, p)),
-        dimension + 1, position);
-  }
-}
-
-auto DpiOpenArray::ToErasedValue(const RuntimeValue& prototype) const
-    -> RuntimeValue {
-  std::size_t position = 0;
-  return RebuildErased(prototype, 0, position);
-}
-
-auto DpiOpenArray::RebuildErased(
-    const RuntimeValue& prototype, std::size_t dimension,
-    std::size_t& position) const -> RuntimeValue {
-  if (const auto* leaf = std::get_if<PackedArray>(&prototype.value)) {
-    const PackedArray value = ReadLeaf(*leaf, position);
-    ++position;
-    return RuntimeValue{value};
-  }
-  const std::size_t count = RuntimeValueContainerSize(prototype);
-  std::vector<RuntimeValue> elements(count);
-  for (std::size_t p = 0; p < count; ++p) {
-    const std::size_t ordinal = OrdinalAt(dimension, p);
-    elements[ordinal] = RebuildErased(
-        RuntimeValueContainerElementAt(prototype, ordinal), dimension + 1,
+        type.PartAt(value, OrdinalAt(dimension, p)), part, dimension + 1,
         position);
   }
-  return RuntimeValueContainerOf(prototype, std::move(elements));
+}
+
+void DpiOpenArray::WriteBack(void* value, const ValueType& type) const {
+  std::size_t position = 0;
+  WriteErased(value, type, 0, position);
+}
+
+void DpiOpenArray::WriteErased(
+    void* value, const ValueType& type, std::size_t dimension,
+    std::size_t& position) const {
+  if (dimension == dims_.size()) {
+    auto& leaf = *static_cast<PackedArray*>(value);
+    leaf = ReadLeaf(leaf, position);
+    ++position;
+    return;
+  }
+  const ValueType& part = type.PartType(value);
+  for (std::size_t p = 0; p < type.PartCount(value); ++p) {
+    WriteErased(
+        type.PartRefAt(value, OrdinalAt(dimension, p)), part, dimension + 1,
+        position);
+  }
 }
 
 auto DpiOpenArray::ElementCount() const -> std::size_t {

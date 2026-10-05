@@ -1143,40 +1143,18 @@ enough to warrant its own focused review.
       it is an argument of the map, an argument of a call that looks something up rather than
       writing it, or admitted with the reason it is neither.
 
-- [ ] R77 -- The value layer states every aggregate operation twice, once for each realization. A
-      product, a union and a fixed-size unpacked array each exist as a monomorphized template the
-      C++ backend instantiates and as a type-erased class the execution backend holds, and the two
-      carry the same algorithm: recurse into the components, apply the operation, put the results
-      back. Which realization a backend uses is settled (`decisions/jit-aggregate-realization.md`)
-      and is not what this entry disputes; what it disputes is that the algorithm is written per
-      realization rather than once over "a value made of parts".
+- [x] R77 -- A union's whole-value operations are one algorithm over how its live member is held:
+      compare the live member indices, then apply the operation to the member. The C++ backend's
+      untagged and tagged unions hold the member as an alternative of the members' C++ types, the
+      library's as a value with its type, and each union kind adds only what it lets a program read
+      or write of a member. Before, the same algorithm was written four times, once per union kind
+      and realization.
 
-      The cost is per operation rather than per type, which is why it grows. Adding net domination
-      and a shape-preserving fill -- two operations -- cost seven implementations each: one packed,
-      three monomorphized aggregates, three erased ones. Every operation the value layer has ever
-      gained paid the same, and nothing about the second copy is a decision: the erased one differs
-      from the template one only in reaching its parts through a variant rather than a pack.
-
-      Target: an aggregate's per-part operations are stated once against how it reaches its parts,
-      so a new operation is one implementation plus whatever a leaf type states for itself. Nothing
-      blocks it. The obstacle is that the two families expose their parts differently -- an index
-      sequence over a type pack on one side, a vector of erased values on the other -- so what has
-      to be found first is the one surface both can answer, and that is a design question rather
-      than a transcription.
-
-- [ ] R78 -- Whether a pairwise operation requires two values to have the same shape is decided per
-      operation. The runtime product checks the component counts agree in its equality and its case
-      equality and does not in its net resolution or its domination; the erased array family is
-      split the same way. Every one of them indexes the other value by position, so the ones that do
-      not check read out of bounds where the ones that do report. The states that would reach it are
-      unreachable today -- a net fixes the shape of every contribution to it, and an assignment
-      fixes the shape of a comparison's operands -- so this is a shape argument rather than a bug
-      report.
-
-      Target: how a pairwise operation over parts obtains its pairs is stated once, so whether the
-      counts agree is asked once rather than per operation, and the answer for a shape that cannot
-      arrive is the same everywhere. Blocked by nothing, and R77 is where it naturally lands: the
-      one surface that hands out the pairs is the place the question belongs.
+- [x] R78 -- A pairwise operation over the elements of a fixed-size array is one algorithm on both
+      backends, and the ones a net applies -- resolution and domination -- refuse contributions of
+      different element counts as a lowering defect, since a net fixes the shape of every
+      contribution (LRM 6.7.1). Comparisons answer a size mismatch as unequal, which a dynamic array
+      can reach. A product's operations are generated per type and pair components of one type.
 
 - [x] R79 -- A declaration the source never wrote carries no name. Its identity is the position it
       sits at, and being reachable by an identifier is a relation its owner holds, which only what
@@ -2911,6 +2889,15 @@ enough to warrant its own focused review.
       test MIR's own check asks of a node -- whether it evaluates nothing -- is that same question.
       Target: the field's word for the concept, at the lowering and at MIR's check alike, once it is
       settled whether MIR takes "operand" into its vocabulary. Not blocked.
+
+- [ ] R180 -- Which C++ class realizes each runtime value domain is written once per storage family:
+      the layout of a value, a value cell, a variable, a history and a net each restate the whole
+      domain-to-class list, the explicit instantiations restate it again per family, and a switch
+      beside them exists only to fail the build when the domain list changes. What differs between
+      the families -- which domains each one admits -- is a property of the value class (a net
+      admits what is resolvable as one, LRM 6.7.1), so it can be asked of the class rather than
+      listed. Target: the mapping stated once, as a visit from a domain to its value class, with
+      each family asking its admission of the class it is handed. Not blocked.
 
 ## Out of Scope
 

@@ -710,11 +710,6 @@ struct Expr {
 [[nodiscard]] auto CalleeReceiver(const Callee& callee)
     -> std::optional<ExprId>;
 
-// Whether the call's receiver is mutated by the dispatch. True only for a
-// direct call to a built-in whose id is in the mutating set; everything
-// else (direct call to a user method, indirect, construct) is false.
-[[nodiscard]] auto IsMutatingCallee(const Callee& callee) -> bool;
-
 // `callee(arguments...)`, answering `type`.
 [[nodiscard]] inline auto MakeCallExpr(
     Callee callee, std::vector<ExprId> arguments, TypeId type) -> Expr {

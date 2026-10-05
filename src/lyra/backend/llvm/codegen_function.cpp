@@ -24,7 +24,6 @@
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/place_query.hpp"
 #include "lyra/runtime/object_layout.hpp"
@@ -102,33 +101,13 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
   for (std::uint32_t i = 0; i < fn_->blocks.size(); ++i) {
     builder_.SetInsertPoint(blocks_[i]);
     const lir::BasicBlock& block = fn_->blocks[i];
-    // What the call that leads here left owed is ended as the block opens --
-    // after the landing pad, where the block is a landing, since nothing may
-    // stand ahead of that.
-    std::vector<llvm::Value*> owed;
-    if (const auto found = owed_on_entry_.find(blocks_[i]);
-        found != owed_on_entry_.end()) {
-      owed = std::move(found->second);
-      owed_on_entry_.erase(found);
-    }
-    const auto settle_owed = [&] {
-      for (llvm::Value* box : owed) {
-        EndObject(support::LibraryObject::kErasedValue, box);
-      }
-      owed.clear();
-    };
     for (const lir::Instr& instr : block.instrs) {
-      if (!std::holds_alternative<lir::ReceiveDepartureInstr>(instr.data)) {
-        settle_owed();
-      }
       auto lowered = LowerInstr(instr);
       if (!lowered) {
         return std::unexpected(std::move(lowered.error()));
       }
       values_.emplace(instr.result, *lowered);
-      EndBoxes();
     }
-    settle_owed();
     auto terminated = LowerTerminatorInto(block.terminator);
     if (!terminated) {
       return std::unexpected(std::move(terminated.error()));
@@ -245,31 +224,6 @@ auto CodeGenFunction::ComponentAddress(
   return builder_.CreateConstInBoundsGEP1_64(
       builder_.getInt8Ty(), value,
       module_->Types().LayoutOfTuple(tuple).offsets.at(index));
-}
-
-auto CodeGenFunction::Box(support::ValueDomain domain, llvm::Value* value)
-    -> llvm::Value* {
-  llvm::Value* box = BuildInto(
-      RuntimeSymbol(domain, RuntimeOp::kValueBox), {value},
-      ObjectStorage(support::LibraryObject::kErasedValue));
-  boxes_.push_back(box);
-  return box;
-}
-
-void CodeGenFunction::EndBoxes() {
-  for (llvm::Value* box : boxes_) {
-    EndObject(support::LibraryObject::kErasedValue, box);
-  }
-  boxes_.clear();
-}
-
-void CodeGenFunction::OweBoxesOnEntry(
-    std::initializer_list<lir::BlockId> successors) {
-  for (const lir::BlockId successor : successors) {
-    std::vector<llvm::Value*>& owed = owed_on_entry_[blocks_[successor.value]];
-    owed.insert(owed.end(), boxes_.begin(), boxes_.end());
-  }
-  boxes_.clear();
 }
 
 auto CodeGenFunction::ObjectOf(lir::TypeId type) const
@@ -517,7 +471,6 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
                 resolved->callee, blocks_[call.returned.value],
                 blocks_[call.landing.value], resolved->args);
             values_[call.result] = out != nullptr ? out : invoked;
-            OweBoxesOnEntry({call.returned, call.landing});
             return {};
           }},
       terminator.data);
@@ -530,17 +483,7 @@ auto CodeGenFunction::OperandType(const lir::Operand& operand) const
 
 auto CodeGenFunction::DomainOf(lir::TypeId type) const
     -> diag::Result<support::ValueDomain> {
-  const std::optional<support::ValueDomain> domain =
-      ValueDomainOf(module_->Unit(), type);
-  if (!domain) {
-    return diag::Fail(
-        diag::DiagCode::kUnsupportedTypeKind,
-        std::format(
-            "llvm codegen: a value of type {} has no runtime library "
-            "realization",
-            module_->Unit().types.Get(type).KindName()));
-  }
-  return *domain;
+  return module_->DomainOf(type);
 }
 
 }  // namespace lyra::backend::llvm_backend

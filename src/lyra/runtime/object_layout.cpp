@@ -44,7 +44,6 @@
 #include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/runtime_union.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
-#include "lyra/value/runtime_value.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -268,8 +267,6 @@ auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
       return Of<value::DpiOpenArray>();
     case support::LibraryObject::kChannelCancellation:
       return Of<ChannelCancellation>();
-    case support::LibraryObject::kErasedValue:
-      return Of<value::RuntimeValue>();
     case support::LibraryObject::kExecution:
       return Of<Coroutine<void>>();
     case support::LibraryObject::kSharedPointer:

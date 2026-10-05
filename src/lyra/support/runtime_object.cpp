@@ -35,8 +35,6 @@ auto LibraryObjectName(LibraryObject object) -> std::string_view {
       return "dpi_open_array";
     case LibraryObject::kChannelCancellation:
       return "channel_cancellation";
-    case LibraryObject::kErasedValue:
-      return "erased_value";
     case LibraryObject::kExecution:
       return "execution";
     case LibraryObject::kSharedPointer:

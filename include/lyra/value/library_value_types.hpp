@@ -1,5 +1,7 @@
 #pragma once
 
+#include <type_traits>
+
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/object_ref.hpp"
@@ -63,3 +65,40 @@ extern const lyra::value::ValueTypeOf<lyra::value::RuntimeAssociativeArray>
 extern const lyra::value::ValueTypeOf<lyra::value::ObjectRef>
     lyra_rt_managedref_value_type;
 }
+
+namespace lyra::value {
+
+// The library's type of a value of its own kind `T`.
+template <typename T>
+[[nodiscard]] auto LibraryTypeOf() -> const ValueTypeOf<T>& {
+  if constexpr (std::is_same_v<T, PackedArray>) {
+    return lyra_rt_packed_value_type;
+  } else if constexpr (std::is_same_v<T, String>) {
+    return lyra_rt_string_value_type;
+  } else if constexpr (std::is_same_v<T, Real>) {
+    return lyra_rt_real_value_type;
+  } else if constexpr (std::is_same_v<T, ShortReal>) {
+    return lyra_rt_shortreal_value_type;
+  } else if constexpr (std::is_same_v<T, Chandle>) {
+    return lyra_rt_chandle_value_type;
+  } else if constexpr (std::is_same_v<T, Empty>) {
+    return lyra_rt_empty_value_type;
+  } else if constexpr (std::is_same_v<T, RuntimeUnion>) {
+    return lyra_rt_union_value_type;
+  } else if constexpr (std::is_same_v<T, RuntimeTaggedUnion>) {
+    return lyra_rt_tagged_union_value_type;
+  } else if constexpr (std::is_same_v<T, RuntimeDynamicArray>) {
+    return lyra_rt_dynarray_value_type;
+  } else if constexpr (std::is_same_v<T, RuntimeUnpackedArray>) {
+    return lyra_rt_unpackedarray_value_type;
+  } else if constexpr (std::is_same_v<T, RuntimeQueue>) {
+    return lyra_rt_queue_value_type;
+  } else if constexpr (std::is_same_v<T, RuntimeAssociativeArray>) {
+    return lyra_rt_assocarray_value_type;
+  } else {
+    static_assert(std::is_same_v<T, ObjectRef>);
+    return lyra_rt_managedref_value_type;
+  }
+}
+
+}  // namespace lyra::value

@@ -134,7 +134,6 @@ auto MakesValue(const InstrData& instr) -> bool {
           [](const DynamicCastInstr&) { return true; },
           [](const TupleInstr&) { return true; },
           [](const ClosureInstr&) { return true; },
-          [](const UnionInstr&) { return true; },
           [](const AggregateExtractInstr&) { return true; },
           [](const AggregateUpdateInstr&) { return true; },
           [](const BinaryInstr&) { return true; },

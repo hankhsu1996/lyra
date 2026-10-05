@@ -16,14 +16,15 @@ cycle.
 
 ## Phase 1: what is specific to a type is generated, not described
 
-- [ ] A runtime facility that acts on a value of any type -- formatting, DPI conversion, file and
+- [x] A runtime facility that acts on a value of any type -- formatting, DPI conversion, file and
       memory-image reading and writing, sampled history, a wait's comparison -- is handed the
       functions the compiler generated for that type, and the erased any-value form goes.
 - [ ] A write reports the range it reached, and a wait decided at the write tests that range against
       what it watches on the words, without materializing either side.
-- [ ] On the execution backend, a queue, a dynamic array and an associative array hold their
-      elements as raw storage acted on through the element type's generated functions, and an
-      element at an index is addressed without a call.
+- [x] On the execution backend, a queue, a dynamic array, an associative array and a fixed-size
+      array hold their elements as raw storage acted on through the element type's generated
+      functions, a union holds its member with the member's type, and a value whose representation
+      an entry cannot know crosses as itself and its type.
 
 ## Phase 2: a packed value is its words
 
@@ -36,7 +37,12 @@ cycle.
 - [ ] A wait on part of an unpacked aggregate is passed over by a write that reached another part of
       it.
 - [ ] The execution backend lays out values, cells and frames from the type, and constants are
-      compile-time constants on both backends.
+      compile-time constants on both backends. A tuple's bytes no longer open with its type: every
+      holder of one -- a cell, a reference, a designated part, a net, a sampled history -- states
+      the type of what it holds.
+- [ ] On the execution backend, an element of a queue or a dynamic array at an index is addressed
+      without a call. It waits on the packed value being its words, since reading the index is a
+      call while a packed value is a library object.
 - [ ] Runtime scalars that were packed values -- descriptors, delays, seeds -- are machine integers.
 - [ ] The C++ backend's compile time on Ibex and on the largest open designs available is measured
       against the run before, and stated here.

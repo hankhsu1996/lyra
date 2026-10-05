@@ -80,8 +80,8 @@ out the way clang carries it out.**
   as they are.
 - Both call directions share the out-storage convention: the runtime calls a closure's value body
   and an integral constant's initializer with storage of its own, and takes the value from there.
-- A value boxed into the erased representation for one call lives in the caller's frame until that
-  call returns, on both edges where the call is one a departure can leave.
+- A value handed to a call erased crosses as its address and its type and is borrowed for the call,
+  so nothing is built for it and nothing is ended after.
 - A null of a handle type is built like any other value and holds nothing, so its storage going away
   is the whole of its end.
 

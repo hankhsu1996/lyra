@@ -27,17 +27,14 @@ namespace lyra::value {
 
 class PackedArray;
 struct PackedType;
-struct RuntimeValue;
 
-// C++ storage mechanics every runtime value type must satisfy so it can
-// live in the STL containers the runtime stores it in (`std::vector` /
-// `std::deque` / `std::map`) and survive their relocation (insert / erase /
-// grow). `std::copyable` requires move- and copy-construction, move- and
-// copy-assignment, and swappability -- and, per the standard library
-// contract it builds on, a moved-from object that remains valid for
-// assignment and destruction. That moved-from validity is the property that
-// actually bites: a value type whose move leaves an unusable husk crashes
-// inside container relocation.
+// C++ storage mechanics every runtime value type must satisfy so a container
+// or a cell can copy, move, and relocate it. `std::copyable` requires move- and
+// copy-construction, move- and copy-assignment, and swappability -- and, per
+// the standard library contract it builds on, a moved-from object that remains
+// valid for assignment and destruction. That moved-from validity is the
+// property that actually bites: a value type whose move leaves an unusable husk
+// crashes wherever it is relocated.
 //
 // This is a C++-mechanics contract, NOT a statement about SystemVerilog
 // assignment meaning. Every value type's assignment is an ordinary whole-value
@@ -264,9 +261,7 @@ concept Sortable = requires(T& t) {
 // IndexTraversal: associative-array ordered-index navigation (LRM 7.9.4 --
 // 7.9.7). Each call returns the next / previous index relative to the probe
 // (or the smallest / largest with no probe), or nullopt on an empty receiver
-// or end-of-traversal. The two realizations of the domain -- one C++ type per
-// index and element type, and one type-erased -- both claim it, which is what
-// keeps them answering the same question under the same name.
+// or end-of-traversal.
 template <typename T, typename Index>
 concept IndexTraversal = requires(const T& t, const Index& probe) {
   { t.FirstIndex() } -> std::same_as<std::optional<Index>>;
@@ -288,31 +283,6 @@ concept OrdinalElements = requires(const T& t, std::size_t ordinal) {
   { t.RawAt(ordinal) };
 };
 
-// EntryWalkable: the LRM 7.12 entry stream, read by position. A method of that
-// clause visits every entry of its receiver in the container's own order, and
-// the position is the one coordinate every container answers to -- an ordinally
-// indexed container's own index, and the place a key sits in index order for a
-// keyed one. A position past the last is a walk defect rather than the
-// out-of-range read a declared coordinate gets, so the element comes back by
-// reference and the walk stays within what the size reports.
-//
-// The type-erased realizations claim this; the monomorphized ones expose the
-// same stream as a lazy view over storage whose type they can name, which no
-// concept over a position can state.
-template <typename T>
-concept EntryWalkable = Sized<T> && requires(const T& t, std::size_t position) {
-  { t.ElementAt(position) } -> std::same_as<const RuntimeValue&>;
-};
-
-// KeyedEntryWalkable: the same stream where an entry reports the index it is
-// stored under rather than an ordinal (LRM 7.12.4), so a walk reads the two as
-// a pair.
-template <typename T>
-concept KeyedEntryWalkable =
-    EntryWalkable<T> && requires(const T& t, std::size_t position) {
-      { t.IndexAt(position) } -> std::same_as<const RuntimeValue&>;
-    };
-
 // Reducible and Searchable are documented for completeness but not exposed
 // as compile-time concepts: every method in those families is templated on
 // a closure F, and C++ concepts cannot probe templated methods without
@@ -321,10 +291,5 @@ concept KeyedEntryWalkable =
 // `Sum/Product/And/Or/Xor` (Reducible, LRM 7.12.3) or
 // `Find/FindIndex/.../Min/Max/Unique` (Searchable, LRM 7.12.1) breaks the
 // caller, not the concept.
-//
-// The Writable protocol (write-side analogue of Indexable) is intentionally
-// absent from this header: the three array containers today overload
-// the write-side overload of `ElementRef`; the runtime-side protocol shape
-// is documented by the `Indexable` concept above.
 
 }  // namespace lyra::value

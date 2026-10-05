@@ -5,7 +5,6 @@
 #include <optional>
 #include <span>
 #include <type_traits>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -15,7 +14,7 @@
 
 namespace lyra::value {
 
-struct RuntimeValue;
+class ValueType;
 
 // A DPI-C open array as the foreign side sees it (LRM 35.5.6.1, Annex H.12): a
 // canonical image of the whole actual, plus the coordinate system of each
@@ -52,14 +51,14 @@ class DpiOpenArray {
     Fill(sv, 0, position);
   }
 
-  // The same image built from an actual that is one type-erased value, which is
-  // how the execution backend holds every aggregate. A monomorphized walk ends
-  // at its leaf type because the type is a compile-time fact there; this one
-  // ends where the value says it holds no elements by position, which is the
-  // same question asked of the value instead of of its type.
+  // The same image built from an actual of `sv_type`, a type the library was
+  // compiled without, which is how the execution backend hands every aggregate
+  // over. Each level is read through its type's ordered parts, and the walk
+  // ends after one level per unpacked dimension, where the leaves are.
   DpiOpenArray(
-      const RuntimeValue& sv, std::span<const UnpackedRange> bounds,
-      const PackedType& element_type, bool addressable_elements);
+      const void* sv, const ValueType& sv_type,
+      std::span<const UnpackedRange> bounds, const PackedType& element_type,
+      bool addressable_elements);
 
   // The SV value the image now holds, shaped like `prototype` -- the write-back
   // of an `output` or `inout` open array. Reading through a prototype is what
@@ -71,8 +70,9 @@ class DpiOpenArray {
     return Rebuild(prototype, 0, position);
   }
 
-  [[nodiscard]] auto ToErasedValue(const RuntimeValue& prototype) const
-      -> RuntimeValue;
+  // The same write-back into a value of `type` already shaped like the
+  // prototype, each leaf written where it lies.
+  void WriteBack(void* value, const ValueType& type) const;
 
   [[nodiscard]] auto Handle() -> svOpenArrayHandle {
     return this;
@@ -185,12 +185,13 @@ class DpiOpenArray {
     }
   }
 
-  // The two walks above, over a value whose domain is a run-time fact.
+  // The two walks above, over a value whose type is a run-time fact.
   void FillErased(
-      const RuntimeValue& value, std::size_t dimension, std::size_t& position);
-  [[nodiscard]] auto RebuildErased(
-      const RuntimeValue& prototype, std::size_t dimension,
-      std::size_t& position) const -> RuntimeValue;
+      const void* value, const ValueType& type, std::size_t dimension,
+      std::size_t& position);
+  void WriteErased(
+      void* value, const ValueType& type, std::size_t dimension,
+      std::size_t& position) const;
 
   template <typename T>
   [[nodiscard]] auto Rebuild(

@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <initializer_list>
 #include <optional>
 #include <span>
 #include <string>
@@ -22,7 +21,6 @@
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
@@ -108,15 +106,6 @@ class CodeGenFunction {
   auto ComponentAddress(
       lir::TypeId tuple, llvm::Value* value, std::size_t index) -> llvm::Value*;
 
-  // A value boxed into the erased representation of `domain`, in storage of
-  // its own that lives until the call it is handed to returns.
-  auto Box(support::ValueDomain domain, llvm::Value* value) -> llvm::Value*;
-  // Ends every box made for the instruction just emitted, whose one call has
-  // returned. Where that call is one a departure can leave, the boxes are owed
-  // on both edges, so they are ended as each successor opens.
-  void EndBoxes();
-  void OweBoxesOnEntry(std::initializer_list<lir::BlockId> successors);
-
   auto ResolveCall(
       const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<ResolvedCall>;
@@ -151,14 +140,10 @@ class CodeGenFunction {
   auto LowerTuple(
       const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  auto LowerUnion(
-      const lir::UnionInstr& u, lir::TypeId result_type, llvm::Value* out)
-      -> diag::Result<llvm::Value*>;
-  // The runtime domain a union's member `index` boxes as. Both union kinds hold
-  // their member types positionally, so this reads either one.
-  [[nodiscard]] auto UnionMemberDomain(
-      lir::TypeId union_type, std::uint32_t index) const
-      -> diag::Result<support::ValueDomain>;
+  // The type of a union's member `index`. Both union kinds hold their member
+  // types positionally, so this reads either one.
+  [[nodiscard]] auto UnionMemberType(
+      lir::TypeId union_type, std::uint32_t index) const -> lir::TypeId;
   auto LowerAggregateExtract(
       const lir::AggregateExtractInstr& extract, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
@@ -318,14 +303,13 @@ class CodeGenFunction {
       const OperandForm& form, const std::vector<llvm::Value*>& operands)
       -> diag::Result<std::vector<llvm::Value*>>;
 
-  // Which operand of a call crosses erased, and in which representation. A
-  // value crosses erased exactly where it states a representation, and as the
-  // bare handle of its own domain where it conforms to one the entry already
-  // holds. Which of an entry's operands states one is that entry's own
+  // Which operand of a call crosses with its type, and the type it crosses
+  // with: one whose type the entry, compiled once for every type, has no other
+  // way to know. Which of an entry's operands that is is the entry's own
   // property.
   struct ErasedArgument {
     std::size_t position;
-    support::ValueDomain domain;
+    lir::TypeId type;
   };
 
   // This target's own encoding of a call: which operand crosses erased, and
@@ -340,20 +324,18 @@ class CodeGenFunction {
       const lir::CallInstr& call, lir::TypeId result_type) const
       -> diag::Result<CallEncoding>;
 
-  // The erased operand of a call on a library entry, which is the one target
-  // whose three roles -- a result prototype, a spread part, a coordinate -- are
-  // read off the entry's own declaration.
+  // The operand of a call on a library entry that crosses with its type, read
+  // off the entry's own declaration: a union's member, a result prototype, a
+  // spread part, or a coordinate.
   [[nodiscard]] auto BuiltinErasedOperand(
       const lir::BuiltinTarget& target, const lir::CallInstr& call,
-      lir::TypeId result_type) const
-      -> diag::Result<std::optional<ErasedArgument>>;
+      lir::TypeId result_type) const -> std::optional<ErasedArgument>;
 
-  // The operand at one position, boxed into the domain its own type names.
-  // Every erased operand crosses this way, since what a value states about
-  // itself is read from the value.
-  [[nodiscard]] auto InItsOwnDomain(
-      const lir::CallInstr& call, std::size_t position) const
-      -> diag::Result<ErasedArgument>;
+  // The operand at one position, crossing with the type the call states it in.
+  // Every such operand but a union member crosses this way; a member crosses
+  // with the type its union declares for it.
+  [[nodiscard]] auto OfItsOwnType(
+      const lir::CallInstr& call, std::size_t position) const -> ErasedArgument;
 
   auto SelectorArgs(
       lir::TypeId container, const std::vector<lir::Operand>& operands,
@@ -454,11 +436,6 @@ class CodeGenFunction {
   llvm::Instruction* frame_storage_point_ = nullptr;
   // Where the body's variables sit, laid out once for the whole body.
   std::optional<RecordLayout> variables_;
-  // The boxes made for the call being emitted, and the boxes a call a
-  // departure can leave owes each of its successors as it opens.
-  std::vector<llvm::Value*> boxes_;
-  std::unordered_map<llvm::BasicBlock*, std::vector<llvm::Value*>>
-      owed_on_entry_;
   // A coroutine body's ramp state: the coroutine identity (which names the
   // frame to release) and its handle, plus the blocks every suspension and
   // return funnels through. The frame's layout and the resume state machine are

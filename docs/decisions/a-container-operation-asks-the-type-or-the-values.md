@@ -89,9 +89,12 @@ an index type imposes is another: the keyed container is built holding it.
 
 ### D2. A fact the values always have and the declaration does not fix is read off the value
 
-A wildcard key's width is one. Whether a walk has reached a leaf is another -- an erased value
-answers what domain it is, which is the same question a template asks of its type, asked of the
-value instead. Neither is handed down, and handing either down would mean inventing it.
+A wildcard key's width is one: it is not handed down, and handing it down would mean inventing it.
+
+Whether a walk has reached a leaf was a second example while every value crossed as one erased
+object that answered what domain it was. It is no longer one (revised 2026-10-05): a value the
+library was compiled without crosses with its type, so a walk asks the type, as a template does, and
+that is D1 -- the fact the declaration fixes arrives as an operand.
 
 ### D3. A position type is realized as what reaches it
 

@@ -102,8 +102,8 @@ ownership, or native in-frame layout) for every value.
       variable of its own, and comes into existence from the pointer a foreign call hands back --
       the only way one ever holds a value, since the language admits no other literal for it. It is
       an object in the frame like every other value, one that owns nothing, so ending it is nothing.
-- [x] **A class handle as a value domain** (LRM 8.3) -- realized on the execution backend as the
-      erased value a type-erased aggregate holds, beside the member slot and the local it already
+- [x] **A class handle as a value domain** (LRM 8.3) -- realized on the execution backend as an
+      element or member a library aggregate holds, beside the member slot and the local it already
       lived in. A handle is an element of a fixed-size unpacked array, a dynamic array, a queue and
       an associative array, a member of an unpacked structure, and an associative array's index
       whose entries order by which object each names (LRM 7.8.3, a null index included). It takes

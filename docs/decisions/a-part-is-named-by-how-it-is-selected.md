@@ -33,8 +33,8 @@ on one is that name plus a fixed suffix, in every layer.**
 | Build the whole, replaced | `with_element`           | `with_component`                   | `with_slice`         |
 | C++ method, read / reach  | `Element` / `ElementRef` | `Component<I>` / `ComponentRef<I>` | `Slice` / `SliceRef` |
 
-The selector below MIR, the place step, the erased values' methods and the runtime entries use the
-same word. "Component" is the word the position type and the selection kind already used, and
+The selector below MIR, the place step, the library containers' methods and the runtime entries use
+the same word. "Component" is the word the position type and the selection kind already used, and
 "member" stays free for a member of a scope or a class, which is a different selection.
 
 ## Rejected

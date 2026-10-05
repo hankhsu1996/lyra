@@ -1,6 +1,6 @@
 #include "lyra/backend/llvm/codegen_tuple.hpp"
 
-#include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -8,6 +8,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -51,59 +52,109 @@ static_assert(
 static_assert(
     sizeof(value::TupleComponent) ==
     sizeof(std::uint32_t) + sizeof(std::uint32_t) + sizeof(void*));
+static_assert(offsetof(value::TupleComponent, type) == sizeof(void*));
 
-// One body of a tuple type's table, in the order its class declares its
-// virtual functions after the destructor: the storage's own lifecycle, then
-// the operations the language defines on the whole value (LRM 11.4.5, 20.6.2,
-// 20.9, 6.24.3, 6.6.1, 28.12.1), which the type's declaration states as its
-// methods. A body answering whether something holds answers what the function
-// filling it answers; every other one answers in storage it was handed.
+// The operations a container's algorithms ask of an element or of what a
+// `with` clause answers -- an order, a truth, a reduction (LRM 7.8, 7.12, 12.4)
+// -- and what a walk asks of a value whose parts are ordered by position, none
+// of which is asked of a structure: it has no relational or arithmetic
+// operator to order, test or fold by, an associative array indexed by one is
+// refused where it is declared, and its parts are components named by position
+// in its type rather than a run of one type.
+struct NoStructureAnswers {};
+
+// Where the virtual function `member` lies in its class's table, counted in
+// entries from the address point. A pointer to a virtual member function holds
+// one plus that entry's byte offset (C++ ABI 2.3), so the class declaration is
+// the one statement of the order and nothing here repeats it.
+template <typename Member>
+auto EntryOf(Member member) -> std::size_t {
+  struct Representation {
+    std::uintptr_t offset_plus_one;
+    std::ptrdiff_t adjustment;
+  };
+  static_assert(sizeof(Member) == sizeof(Representation));
+  const auto held = std::bit_cast<Representation>(member);
+  return (held.offset_plus_one - 1) / sizeof(void*);
+}
+
+// What the virtual function a member pointer names returns.
+template <typename Member>
+struct ReturnOf;
+template <typename R, typename... Params>
+struct ReturnOf<R (value::ValueType::*)(Params...) const> {
+  using Type = R;
+};
+template <typename R, typename... Params>
+struct ReturnOf<R (value::ValueType::*)(Params...) const noexcept> {
+  using Type = R;
+};
+
+// One body of a tuple type's table: the storage's own lifecycle, the operations
+// the language defines on the whole value (LRM 11.4.5, 20.6.2, 20.9, 6.24.3,
+// 6.6.1, 28.12.1), which the type's declaration states as its methods, or one
+// no structure answers. A body whose function answers whether something holds
+// returns that answer; every other one answers in storage it was handed.
 struct TableSlot {
   std::string_view name;
-  std::variant<TupleLifecycle, support::ValueOperation> filled_by;
-  bool answers_truth = false;
+  std::size_t entry;
+  bool answers_truth;
+  std::variant<TupleLifecycle, support::ValueOperation, NoStructureAnswers>
+      filled_by;
 };
 
-const std::array<TableSlot, 17> kTableSlots{
-    TableSlot{.name = "copy", .filled_by = TupleLifecycle::kCopy},
-    TableSlot{.name = "move", .filled_by = TupleLifecycle::kMove},
-    TableSlot{.name = "destroy", .filled_by = TupleLifecycle::kDestroy},
-    TableSlot{.name = "assign", .filled_by = TupleLifecycle::kAssign},
-    TableSlot{.name = "equal", .filled_by = support::ValueOperator::kEquality},
-    TableSlot{
-        .name = "case_equal", .filled_by = support::BuiltinFn::kCaseEqual},
-    TableSlot{
-        .name = "bit_identical",
-        .filled_by = support::BuiltinFn::kBitIdentical,
-        .answers_truth = true},
-    TableSlot{
-        .name = "has_unknown",
-        .filled_by = support::BuiltinFn::kHasUnknown,
-        .answers_truth = true},
-    TableSlot{
-        .name = "bitstream_width",
-        .filled_by = support::BuiltinFn::kBitstreamWidth},
-    TableSlot{
-        .name = "count_bits", .filled_by = support::BuiltinFn::kCountBits},
-    TableSlot{
-        .name = "to_bitstream", .filled_by = support::BuiltinFn::kToBitstream},
-    TableSlot{
-        .name = "from_bitstream",
-        .filled_by = support::BuiltinFn::kFromBitstream},
-    TableSlot{
-        .name = "resolve_tri_state",
-        .filled_by = support::BuiltinFn::kResolveTriState},
-    TableSlot{
-        .name = "resolve_wired_and",
-        .filled_by = support::BuiltinFn::kResolveWiredAnd},
-    TableSlot{
-        .name = "resolve_wired_or",
-        .filled_by = support::BuiltinFn::kResolveWiredOr},
-    TableSlot{
-        .name = "dominating", .filled_by = support::BuiltinFn::kDominating},
-    TableSlot{
-        .name = "filled_like", .filled_by = support::BuiltinFn::kFilledLike},
-};
+template <typename Member>
+auto Slot(
+    std::string_view name, Member member,
+    std::variant<TupleLifecycle, support::ValueOperation, NoStructureAnswers>
+        filled_by) -> TableSlot {
+  return {
+      .name = name,
+      .entry = EntryOf(member),
+      .answers_truth = std::is_same_v<typename ReturnOf<Member>::Type, bool>,
+      .filled_by = filled_by};
+}
+
+auto TableSlots() -> std::vector<TableSlot> {
+  using support::BuiltinFn;
+  using value::ValueType;
+  return {
+      Slot("copy", &ValueType::Copy, TupleLifecycle::kCopy),
+      Slot("move", &ValueType::Move, TupleLifecycle::kMove),
+      Slot("destroy", &ValueType::Destroy, TupleLifecycle::kDestroy),
+      Slot("assign", &ValueType::Assign, TupleLifecycle::kAssign),
+      Slot("equal", &ValueType::Equal, support::ValueOperator::kEquality),
+      Slot("case_equal", &ValueType::CaseEqual, BuiltinFn::kCaseEqual),
+      Slot("bit_identical", &ValueType::BitIdentical, BuiltinFn::kBitIdentical),
+      Slot("has_unknown", &ValueType::HasUnknown, BuiltinFn::kHasUnknown),
+      Slot(
+          "bitstream_width", &ValueType::BitstreamWidth,
+          BuiltinFn::kBitstreamWidth),
+      Slot("count_bits", &ValueType::CountBits, BuiltinFn::kCountBits),
+      Slot("to_bitstream", &ValueType::ToBitstream, BuiltinFn::kToBitstream),
+      Slot(
+          "from_bitstream", &ValueType::FromBitstream,
+          BuiltinFn::kFromBitstream),
+      Slot(
+          "resolve_tri_state", &ValueType::ResolveTriState,
+          BuiltinFn::kResolveTriState),
+      Slot(
+          "resolve_wired_and", &ValueType::ResolveWiredAnd,
+          BuiltinFn::kResolveWiredAnd),
+      Slot(
+          "resolve_wired_or", &ValueType::ResolveWiredOr,
+          BuiltinFn::kResolveWiredOr),
+      Slot("dominating", &ValueType::Dominating, BuiltinFn::kDominating),
+      Slot("filled_like", &ValueType::FilledLike, BuiltinFn::kFilledLike),
+      Slot("order_before", &ValueType::OrderBefore, NoStructureAnswers{}),
+      Slot("is_true", &ValueType::IsTrue, NoStructureAnswers{}),
+      Slot("reduce", &ValueType::Reduce, NoStructureAnswers{}),
+      Slot("part_count", &ValueType::PartCount, NoStructureAnswers{}),
+      Slot("part_type", &ValueType::PartType, NoStructureAnswers{}),
+      Slot("part_at", &ValueType::PartAt, NoStructureAnswers{}),
+      Slot("part_ref_at", &ValueType::PartRefAt, NoStructureAnswers{}),
+  };
+}
 
 // The destructor's two entries open the table (C++ ABI 2.5.2). A type lasts as
 // long as the program and nothing ends one, so neither is ever entered.
@@ -295,23 +346,19 @@ auto CodeGenTuples::TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable* {
   }
 
   const TupleLayout& layout = types_->LayoutOfTuple(tuple);
-  llvm::StructType* component_ty =
-      llvm::StructType::get(ctx, {word, llvm::Type::getInt8Ty(ctx), ptr});
+  llvm::StructType* component_ty = llvm::StructType::get(ctx, {word, ptr});
   std::vector<llvm::Constant*> components;
   components.reserve(layout.components.size());
   for (std::size_t i = 0; i < layout.components.size(); ++i) {
-    const lir::TypeId component = layout.components[i];
-    const bool nested = unit_->types.Get(component).IsProduct();
-    const ValueDomain domain = *ValueDomainOf(*unit_, component);
+    auto component_type = owner_->ValueTypeOf(layout.components[i]);
+    if (!component_type) {
+      throw InternalError(
+          "llvm codegen: a tuple component is no value the runtime realizes");
+    }
     components.push_back(
         llvm::ConstantStruct::get(
-            component_ty,
-            {llvm::ConstantInt::get(word, layout.offsets[i]),
-             llvm::ConstantInt::get(
-                 llvm::Type::getInt8Ty(ctx),
-                 static_cast<std::uint64_t>(domain)),
-             nested ? llvm::cast<llvm::Constant>(TypeOf(component))
-                    : llvm::ConstantPointerNull::get(ptr)}));
+            component_ty, {llvm::ConstantInt::get(word, layout.offsets[i]),
+                           *component_type}));
   }
   auto* components_ty =
       llvm::ArrayType::get(component_ty, layout.components.size());
@@ -324,14 +371,25 @@ auto CodeGenTuples::TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable* {
   // description, which nothing reads since no cast is ever made to or from a
   // type; then the bodies, whose first the type holds the address of.
   auto* i64 = llvm::Type::getInt64Ty(ctx);
-  std::vector<llvm::Constant*> entries{
-      llvm::ConstantExpr::getIntToPtr(llvm::ConstantInt::get(i64, 0), ptr),
-      llvm::ConstantPointerNull::get(ptr)};
-  const std::size_t address_point = entries.size();
+  const std::vector<TableSlot> slots = TableSlots();
+  constexpr std::size_t kAddressPoint = 2;
+  std::vector<llvm::Constant*> entries(
+      kAddressPoint + kDestructorEntries + slots.size(), nullptr);
+  entries[0] =
+      llvm::ConstantExpr::getIntToPtr(llvm::ConstantInt::get(i64, 0), ptr);
+  entries[1] = llvm::ConstantPointerNull::get(ptr);
   for (std::size_t i = 0; i < kDestructorEntries; ++i) {
-    entries.push_back(Body(tuple, "destructor", nullptr, false));
+    entries[kAddressPoint + i] = Body(tuple, "destructor", nullptr, false);
   }
-  for (const TableSlot& slot : kTableSlots) {
+  for (const TableSlot& slot : slots) {
+    const std::size_t at = kAddressPoint + slot.entry;
+    if (at >= entries.size() || entries[at] != nullptr) {
+      throw InternalError(
+          std::format(
+              "llvm codegen: the tuple table's `{}` entry falls outside the "
+              "operations listed for it, or on another's",
+              slot.name));
+    }
     llvm::Function* filling = std::visit(
         Overloaded{
             [&](TupleLifecycle step) -> llvm::Function* {
@@ -342,9 +400,10 @@ auto CodeGenTuples::TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable* {
                   MethodAnswering(methods, operation);
               return method.has_value() ? owner_->UnitFunction(*method)
                                         : nullptr;
-            }},
+            },
+            [](NoStructureAnswers) -> llvm::Function* { return nullptr; }},
         slot.filled_by);
-    entries.push_back(Body(tuple, slot.name, filling, slot.answers_truth));
+    entries[at] = Body(tuple, slot.name, filling, slot.answers_truth);
   }
   auto* table_ty = llvm::ArrayType::get(ptr, entries.size());
   llvm::GlobalVariable* table =
@@ -355,7 +414,7 @@ auto CodeGenTuples::TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable* {
       llvm::ConstantStruct::get(
           type_ty,
           {llvm::ConstantExpr::getInBoundsGetElementPtr(
-               ptr, table, llvm::ConstantInt::get(i64, address_point)),
+               ptr, table, llvm::ConstantInt::get(i64, kAddressPoint)),
            llvm::ConstantInt::get(word, layout.storage.size),
            llvm::ConstantInt::get(word, layout.storage.align),
            llvm::ConstantInt::get(word, layout.components.size()), listed}));

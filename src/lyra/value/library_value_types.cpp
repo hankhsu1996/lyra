@@ -1,7 +1,9 @@
 #include "lyra/value/library_value_types.hpp"
 
 #include "lyra/value/chandle.hpp"
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/empty.hpp"
+#include "lyra/value/index_order.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
@@ -15,6 +17,20 @@
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
+
+// An index type's own order where it keys an associative array (LRM 7.8),
+// which for a handle is no SV operator at all; otherwise the type's `<`.
+template <LyraValue T>
+auto ValueTypeOf<T>::OrderBefore(const void* lhs, const void* rhs) const
+    -> bool {
+  if constexpr (requires { typename AssocKeyTraits<T>::Less; }) {
+    return typename AssocKeyTraits<T>::Less{}(Of(lhs), Of(rhs));
+  } else if constexpr (requires { Of(lhs) < Of(rhs); }) {
+    return static_cast<bool>(Of(lhs) < Of(rhs));
+  } else {
+    detail::LacksOperation();
+  }
+}
 
 template class ValueTypeOf<PackedArray>;
 template class ValueTypeOf<String>;

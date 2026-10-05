@@ -406,18 +406,6 @@ struct ArrayInstr {
   std::vector<Operand> elements;
 };
 
-// Builds an active-member value -- a union or tagged union -- naming which
-// member `index` is live and carrying `value`. Its result is that value; unlike
-// a product it names one member rather than all of them, because a union holds
-// one at a time. The result type says whether the tag is observable and a
-// mismatched access faults (a tagged union) or is erased with a cross-member
-// read defaulted (an untagged one); this instruction is the same build for
-// both.
-struct UnionInstr {
-  base::ComponentIndex index;
-  Operand value;
-};
-
 // Names a member of an active-member value by its declaration-order position,
 // carrying no operands because the position is the whole coordinate. What a
 // read of a member that is not live answers with, and whether an update settles
@@ -656,11 +644,11 @@ struct CloseVariablesInstr {
 };
 
 using InstrData = std::variant<
-    CallInstr, TupleInstr, ClosureInstr, ArrayInstr, UnionInstr,
-    AggregateExtractInstr, AggregateUpdateInstr, TagTestInstr, LoadInstr,
-    StoreInstr, AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr,
-    HandleCastInstr, DynamicCastInstr, ReceiveDepartureInstr,
-    OpenVariablesInstr, VariableAddressInstr, CloseVariablesInstr>;
+    CallInstr, TupleInstr, ClosureInstr, ArrayInstr, AggregateExtractInstr,
+    AggregateUpdateInstr, TagTestInstr, LoadInstr, StoreInstr, AddrOfInstr,
+    BinaryInstr, UnaryInstr, CastInstr, HandleCastInstr, DynamicCastInstr,
+    ReceiveDepartureInstr, OpenVariablesInstr, VariableAddressInstr,
+    CloseVariablesInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

@@ -271,16 +271,14 @@ backend, one surface at a time.
       against the C++ backend. A `real` import is excluded, but not by anything DPI owns: the
       execution backend has no real value domain at all, so it cannot read a real out of an SV value
       in the first place (`execution-backend.md`).
-- [ ] D11 -- General and 4-state / wide import marshaling on the execution backend: the D2 and D3
+- [x] D11 -- General and 4-state / wide import marshaling on the execution backend: the D2 and D3
       surface -- `output` / `inout` copy-back, `chandle`, and canonical `svBitVecVal*` /
-      `svLogicVecVal*` buffers. The marshaling itself is in: a canonical buffer images the actual
-      and hands the foreign side the chunk pointer it reads and writes through, a copy-back
-      direction rebuilds the SV value from it, a 1-bit 4-state value crosses as its `svLogic`
-      scalar, and a `chandle` crosses in either direction and round-trips its identity. An open
-      array images a single packed actual; one whose actual is an unpacked array is refused, and not
-      by anything DPI owns -- imaging walks the actual down to its leaves, which the erased value
-      layer has no walk for (`execution-backend.md`). What is left of this item is that walk. A
-      `real` import rides on the real value domain, not on this item.
+      `svLogicVecVal*` buffers. A canonical buffer images the actual and hands the foreign side the
+      chunk pointer it reads and writes through, a copy-back direction writes the image back into
+      the SV value, a 1-bit 4-state value crosses as its `svLogic` scalar, and a `chandle` crosses
+      in either direction and round-trips its identity. An open array images a packed actual or an
+      unpacked one of any of the ordered array kinds, walked down to its leaves by the type it is
+      handed with. A `real` import rides on the real value domain, not on this item.
 - [x] D12 -- Export and DPI tasks on the execution backend: the D4 and D5-D6b surface. An exported
       subroutine's entry point is a function of the design's own link-level unit, emitted under the
       linkage name the standard fixes (LRM 35.4), and each scope publishes what it answers a foreign

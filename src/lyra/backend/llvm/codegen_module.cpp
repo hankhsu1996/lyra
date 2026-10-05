@@ -1194,32 +1194,23 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
   // Which protocol a body answers to follows from what it results in and what
   // it is handed: a coroutine yields the handle its caller drives, a body
   // resulting in nothing runs to completion, and one resulting in a value
-  // states the type that value comes back in -- a tuple's own, or the
-  // library's for a value of one of its own kinds -- and which of those kinds
-  // it is. Taking an entry and its position beyond the receiver is what
-  // separates the two that answer a value.
+  // states the type that value comes back in. Taking an entry and its position
+  // beyond the receiver is what separates the two that answer a value.
   const lir::Function& invoke = unit_->functions.Get(closure.invoke);
   const lir::Type& result = unit_->types.Get(invoke.result_type);
   std::size_t entry = offsetof(ClosureDefinition, run);
-  support::ValueDomain domain{};
   llvm::Constant* type = llvm::ConstantPointerNull::get(types_.Ptr());
   if (result.Is<lir::CoroutineType>()) {
     entry = offsetof(ClosureDefinition, start);
   } else if (!result.Is<lir::VoidType>()) {
-    const std::optional<support::ValueDomain> settled =
-        ValueDomainOf(*unit_, invoke.result_type);
-    if (!settled) {
-      throw InternalError(
-          "llvm codegen: a closure body answering a value settles a runtime "
-          "value");
-    }
-    domain = *settled;
     entry = invoke.params.size() > 1
                 ? offsetof(ClosureDefinition, run_per_element)
                 : offsetof(ClosureDefinition, run_value);
-    type = result.IsProduct()
-               ? tuples_.TypeOf(invoke.result_type)
-               : DefinitionGlobal(RuntimeSymbol(domain, RuntimeOp::kValueType));
+    auto answered = ValueTypeOf(invoke.result_type);
+    if (!answered) {
+      return std::unexpected(std::move(answered.error()));
+    }
+    type = *answered;
   }
   ConstantRecord out(*context_, sizeof(ClosureDefinition));
   // Each body entry the protocol does not use stays null.
@@ -1234,16 +1225,39 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
   }
   out.Place(offsetof(ClosureDefinition, result_type), type);
   out.Place(
-      offsetof(ClosureDefinition, result_domain),
-      Int(static_cast<std::uint64_t>(domain),
-          sizeof(ClosureDefinition::result_domain)));
-  out.Place(
       offsetof(ClosureDefinition, size),
       Int(captures->size, sizeof(ClosureDefinition::size)));
   out.Place(offsetof(ClosureDefinition, end_captures), end);
   DefineConstant(symbol, std::move(out).Build())
       ->setAlignment(llvm::Align(alignof(ClosureDefinition)));
   return {};
+}
+
+auto CodeGenModule::ValueTypeOf(lir::TypeId type)
+    -> diag::Result<llvm::Constant*> {
+  if (unit_->types.Get(type).IsProduct()) {
+    return tuples_.TypeOf(type);
+  }
+  auto domain = DomainOf(type);
+  if (!domain) {
+    return std::unexpected(std::move(domain.error()));
+  }
+  return DefinitionGlobal(RuntimeSymbol(*domain, RuntimeOp::kValueType));
+}
+
+auto CodeGenModule::DomainOf(lir::TypeId type) const
+    -> diag::Result<support::ValueDomain> {
+  const std::optional<support::ValueDomain> domain =
+      ValueDomainOf(*unit_, type);
+  if (!domain) {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedTypeKind,
+        std::format(
+            "llvm codegen: a value of type {} has no runtime library "
+            "realization",
+            unit_->types.Get(type).KindName()));
+  }
+  return *domain;
 }
 
 auto CodeGenModule::SharedStorageOf(const lir::StaticStorage& storage)

@@ -43,6 +43,14 @@ module Top;
   int lanes_seen;
   int lanes_runs;
 
+  // An ordering method (LRM 7.12.2) changes the variable exactly where it
+  // moves a value to a position holding another.
+  int ranks [3];
+  int heights [];
+  int queued [$];
+  int first_seen;
+  int first_runs;
+
   always_comb begin
     mem_runs = mem_runs + 1;
     mem_seen = mem[idx];
@@ -66,6 +74,11 @@ module Top;
   always_comb begin
     lanes_runs = lanes_runs + 1;
     lanes_seen = lanes[idx].size();
+  end
+
+  always_comb begin
+    first_runs = first_runs + 1;
+    first_seen = ranks[idx] + heights.size() + queued.size();
   end
 
   function automatic void write_through(ref int target, input int value);
@@ -160,6 +173,41 @@ module Top;
     base = lanes_runs;
     lanes[0].sort();
     #1 expect_runs("an element a method left as it was", lanes_runs - base, 0);
+
+    ranks = '{3, 1, 2};
+    heights = '{1, 2, 3};
+    queued = '{2, 1};
+    #1 base = first_runs;
+    ranks.sort();
+    #1 expect_runs("a fixed-size array sort that moves values",
+                   first_runs - base, 1);
+    base = first_runs;
+    ranks.sort();
+    #1 expect_runs("a fixed-size array sort of a sorted array",
+                   first_runs - base, 0);
+    base = first_runs;
+    ranks.reverse();
+    #1 expect_runs("a fixed-size array reversed", first_runs - base, 1);
+    base = first_runs;
+    heights.rsort();
+    #1 expect_runs("a dynamic array reverse sort that moves values",
+                   first_runs - base, 1);
+    base = first_runs;
+    heights.rsort();
+    #1 expect_runs("a dynamic array reverse sort of a sorted array",
+                   first_runs - base, 0);
+    base = first_runs;
+    queued.sort();
+    #1 expect_runs("a queue sort that moves values", first_runs - base, 1);
+    base = first_runs;
+    queued.rsort();
+    #1 expect_runs("a queue reverse sort that moves values",
+                   first_runs - base, 1);
+    if (ranks[0] !== 3 || ranks[2] !== 1 || heights[0] !== 3 ||
+        heights[2] !== 1 || queued[0] !== 2 || queued[1] !== 1)
+      $fatal(1, "an ordering method left the wrong order");
+    if (first_seen !== 3 + 3 + 2)
+      $fatal(1, "the procedure saw %0d, expected 8", first_seen);
 
     $display("All checks passed");
   end

@@ -3,9 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <functional>
 #include <optional>
-#include <ranges>
 #include <span>
 #include <string>
 #include <utility>
@@ -13,13 +11,13 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/value/array_case_equal.hpp"
-#include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/basic_dynamic_array.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/element_policy.hpp"
+#include "lyra/value/element_sequence.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/net_resolution.hpp"
-#include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/position.hpp"
 #include "lyra/value/queue.hpp"
@@ -42,8 +40,10 @@ class String;
   return static_cast<std::size_t>(count);
 }
 
-// SystemVerilog fixed-size unpacked array (LRM 7.4.2). One C++ container layer
-// per declared unpacked dimension; multi-dim composes as
+// SystemVerilog fixed-size unpacked array (LRM 7.4.2): the dynamic array's run
+// of elements, compiled with the element's C++ type, whose count the array's
+// type fixes rather than the running program. One C++ container layer per
+// declared unpacked dimension; multi-dim composes as
 // `UnpackedArray<UnpackedArray<...>>`. Mirrors `PackedArray`'s surface for
 // every op that crosses the SV / C++ boundary: `Element` / `Slice` for indexed
 // and range access (no `operator[]`), and `operator==` / `CaseEqual` returning
@@ -54,34 +54,26 @@ class String;
 // names an element by its ordinal, counted from the left (LRM 7.6), because
 // the declared range is a fact of the static type the select was written
 // against and is read there. Whole-array movement is ordinal-wise and
-// range-agnostic. The element default and the invalid-index discard target are
-// carried by an `OobShield`.
+// range-agnostic.
 template <typename T>
-class UnpackedArray {
+class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
  public:
   using ElementType = T;
+  template <typename U>
+  using Rebound = UnpackedArray<U>;
 
-  // Sentinel "uninitialized" form -- empty container with a default-constructed
-  // shield. Used as the declared default state of a `Var<UnpackedArray<T>>`
+  // Sentinel "uninitialized" form -- an empty container with no element
+  // default. Used as the declared default state of a `Var<UnpackedArray<T>>`
   // field; the first MIR-level assignment overwrites the whole array (LRM 10.5
   // variable initialization).
   UnpackedArray() = default;
 
-  // Empty container with the shield seeded. Internal use only -- a fresh
-  // `UnpackedArray` that a `Slice` fills element-by-element. The payload is
-  // ordinal-only; a declared range is a fact of the receiver's static type, not
-  // of the value.
-  explicit UnpackedArray(T element_default)
-      : shield_(std::move(element_default)) {
-  }
-
-  // Shield + element-list construction: the seeded shield and the explicit
-  // initial elements (LRM 10.9 assignment pattern lowering). The element list
-  // is taken as a span so the emit side can hand in a `std::array<T, N>{...}`
-  // literal whose self-determined type is unambiguous; the element count sizes
-  // the payload.
+  // Element-list construction (LRM 10.9 assignment pattern lowering). The
+  // element list is taken as a span so the emit side can hand in a
+  // `std::array<T, N>{...}` literal whose self-determined type is unambiguous;
+  // the element count sizes the payload.
   UnpackedArray(T element_default, std::span<const T> init)
-      : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
+      : UnpackedArray(std::move(element_default), init, 1) {
   }
 
   // LRM 10.9.1: `count` replications of `unit`, where a replication stands for
@@ -90,13 +82,14 @@ class UnpackedArray {
   // (`unit` is the replicated items), which are the same repeat-and-count shape
   // and so construct through one path. Taking the two separately keeps a
   // uniform array O(unit) to build where an enumerated element list would be
-  // O(unit * count); the seeded shield is the out-of-range / discard source.
+  // O(unit * count).
   UnpackedArray(T element_default, std::span<const T> unit, std::size_t count)
-      : shield_(std::move(element_default)) {
-    data_.reserve(unit.size() * count);
-    for (std::size_t i = 0; i < count; ++i) {
-      data_.insert(data_.end(), unit.begin(), unit.end());
-    }
+      : core_(
+            Core::Built(
+                StaticElem<T>(std::move(element_default)), unit.size() * count,
+                [&](std::size_t i, void* out) {
+                  StaticElem<T>::Copy(&unit[i % unit.size()], out);
+                })) {
   }
 
   // LRM 5.9 / 21.3.3: a string value assigned to an unpacked array of bytes is
@@ -133,12 +126,7 @@ class UnpackedArray {
               "fixed-size target has {} (LRM 10.10)",
               parts.RawSize(), count));
     }
-    std::vector<T> elements;
-    elements.reserve(parts.RawSize());
-    for (std::size_t i = 0; i < parts.RawSize(); ++i) {
-      elements.push_back(parts.RawAt(i));
-    }
-    return UnpackedArray(parts.ElementDefault(), std::span<const T>(elements));
+    return Of(parts.ElementDefault(), parts);
   }
 
   // LRM 7.6: a fixed-size unpacked array assigned an array of another unpacked
@@ -159,12 +147,7 @@ class UnpackedArray {
               "an array of {} (LRM 7.6)",
               declared, source.RawSize()));
     }
-    UnpackedArray result(std::move(element_default));
-    result.data_.reserve(source.RawSize());
-    for (std::size_t i = 0; i < source.RawSize(); ++i) {
-      result.data_.push_back(source.RawAt(i));
-    }
-    return result;
+    return Of(std::move(element_default), source);
   }
 
   UnpackedArray(const UnpackedArray&) = default;
@@ -179,21 +162,20 @@ class UnpackedArray {
   }
 
   [[nodiscard]] auto RawSize() const -> std::size_t {
-    return data_.size();
+    return core_.Count();
   }
 
-  // Flat-storage element read: `i` is a storage ordinal in [0, RawSize()), with
-  // no invalid-index handling. It serves a traversal that already walks storage
-  // in ordinal order, where a position the program computed may name no
-  // element and is answered the way LRM 7.4.5 requires.
+  // The element at storage ordinal `i`, in [0, RawSize()), for a traversal that
+  // walks storage in ordinal order; a position the program computed is read
+  // through `Element` instead, which answers one naming no element.
   [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
-    return data_[i];
+    return *static_cast<const T*>(core_.At(i));
   }
 
   // The element type's default (LRM Table 7-1), the shape an out-of-range read
   // returns and a derived container seeds its own out-of-range source with.
   [[nodiscard]] auto ElementDefault() const -> const T& {
-    return shield_.Default();
+    return core_.Element().DefaultValue();
   }
 
   [[nodiscard]] auto ToOwned() const -> UnpackedArray {
@@ -207,91 +189,52 @@ class UnpackedArray {
   // correspondence, so every element takes that default.
   [[nodiscard]] auto MergeConditional(const UnpackedArray& other) const
       -> UnpackedArray {
-    const bool paired = RawSize() == other.RawSize();
-    UnpackedArray result = *this;
-    for (std::size_t i = 0; i < result.data_.size(); ++i) {
-      const bool agree = paired && (data_[i] == other.data_[i]).Truth() ==
-                                       Truthiness::kKnownNonzero;
-      if (!agree) {
-        result.data_[i] = shield_.Default();
-      }
-    }
-    return result;
+    return UnpackedArray(core_.MergeConditional(other.core_));
   }
 
-  // LRM 7.4.5: an invalid-index write lands on the shield's discard target,
-  // which is no element of the array.
+  // LRM 7.4.5: an invalid-index write lands where no read reaches, which is no
+  // element of the array.
   [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
       -> T& {
-    const auto ordinal = ElementOrdinal(position, data_.size());
-    if (!ordinal) {
-      formed = Formation::kNowhere;
-      return shield_.DiscardTarget();
-    }
-    formed = Formation::kExisting;
-    return data_[*ordinal];
+    return *static_cast<T*>(core_.ElementRef(position, formed));
   }
   [[nodiscard]] auto ElementRef(const PackedArray& position) -> T& {
-    Formation formed{};
-    return ElementRef(position, formed);
+    return *static_cast<T*>(core_.ExistingAt(position));
   }
 
   // LRM 7.4.5: an invalid-index read returns the element default (LRM Table
   // 7-1).
   [[nodiscard]] auto Element(const PackedArray& position) const -> const T& {
-    const auto ordinal = ElementOrdinal(position, data_.size());
-    if (!ordinal) {
-      return shield_.Default();
-    }
-    return data_[*ordinal];
+    return *static_cast<const T*>(core_.ElementAt(position));
   }
 
   // LRM 7.4.5 contiguous-range selector: `count` elements from `start`. An
-  // element outside the array reads the canonical default, and a start that
-  // names no position reads a wholly-default sub-array. The result is
-  // ordinal-only payload.
+  // element outside the array reads the element default, and a start that names
+  // no position reads a wholly-default sub-array. The result is ordinal-only
+  // payload.
   [[nodiscard]] auto Slice(const PackedArray& start, std::int64_t count) const
       -> UnpackedArray {
-    return UnpackedArray(
-        shield_.Default(),
-        detail::ArraySliceGather(
-            data_, shield_.Default(), ReadPosition(start), SliceCount(count)));
+    return SliceOf(core_, ReadPosition(start), SliceCount(count));
   }
 
   [[nodiscard]] auto SliceRef(const PackedArray& start, std::int64_t count)
       -> ArraySliceRef<T> {
-    return ArraySliceRef<T>{
-        data_, shield_.Default(), ReadPosition(start), SliceCount(count)};
+    return ArraySliceRef<T>{core_, ReadPosition(start), SliceCount(count)};
   }
 
-  // LRM 11.2.2 + 11.4.5 aggregate equality / case-equality. Slang's binding
-  // enforces equivalent operand size, so the loops over `data_` are matched.
-  // `==` / `!=` propagate X / Z; `CaseEqual` returns a deterministic 0/1.
+  // LRM 11.2.2 + 11.4.5 aggregate equality / case-equality. `==` / `!=`
+  // propagate X / Z; `CaseEqual` returns a deterministic 0/1.
   [[nodiscard]] auto operator==(const UnpackedArray& other) const
       -> PackedArray {
-    // LRM 11.4.5: the answer carries the state class an element's own equality
-    // produces, because that is what a run of them reduces to. Reading the
-    // class off the element shape rather than off a first element is what lets
-    // the run start at the identity, so no length is a case of its own.
-    PackedArray result = PackedArray::FromInt(
-        1, 1, false, (shield_.Default() == shield_.Default()).IsFourState());
-    for (std::size_t i = 0; i < data_.size(); ++i) {
-      result = result && (data_[i] == other.data_[i]);
-    }
-    return result;
+    return detail::SequenceEqual(core_, other.core_);
   }
   [[nodiscard]] auto operator!=(const UnpackedArray& other) const
       -> PackedArray {
     return !(*this == other);
   }
-
   [[nodiscard]] auto CaseEqual(const UnpackedArray& other) const
       -> PackedArray {
-    PackedArray result = detail::ArrayCaseEqElement(data_[0], other.data_[0]);
-    for (std::size_t i = 1; i < data_.size(); ++i) {
-      result = result && detail::ArrayCaseEqElement(data_[i], other.data_[i]);
-    }
-    return result;
+    return detail::SequenceCaseEqual(core_, other.core_);
   }
 
   // LRM 9.4.2 update event predicate (engine change-detection hook): are the
@@ -300,65 +243,38 @@ class UnpackedArray {
   // different from the first sized write, so the declared-shape initializer
   // commits.
   [[nodiscard]] auto IsBitIdentical(const UnpackedArray& other) const -> bool {
-    if (data_.size() != other.data_.size()) {
-      return false;
-    }
-    for (std::size_t i = 0; i < data_.size(); ++i) {
-      if (!data_[i].IsBitIdentical(other.data_[i])) {
-        return false;
-      }
-    }
-    return true;
+    return detail::SequenceBitIdentical(core_, other.core_);
   }
 
-  // Net resolution applied element-wise under each truth table (LRM 6.6). LRM
-  // 6.7.1 defines a net over an unpacked array as one net composed of its
-  // elements' bits, so folding two contributions is folding each element pair.
+  // Net resolution under each truth table (LRM 6.6), and what a stronger
+  // contribution leaves a weaker one (LRM 28.12.1), element by element.
   [[nodiscard]] auto ResolveTriState(const UnpackedArray& other) const
       -> UnpackedArray {
-    return FoldedWith(other, NetResolution::kTriState);
+    return UnpackedArray(core_.Resolved(NetResolution::kTriState, other.core_));
   }
   [[nodiscard]] auto ResolveWiredAnd(const UnpackedArray& other) const
       -> UnpackedArray {
-    return FoldedWith(other, NetResolution::kWiredAnd);
+    return UnpackedArray(core_.Resolved(NetResolution::kWiredAnd, other.core_));
   }
   [[nodiscard]] auto ResolveWiredOr(const UnpackedArray& other) const
       -> UnpackedArray {
-    return FoldedWith(other, NetResolution::kWiredOr);
+    return UnpackedArray(core_.Resolved(NetResolution::kWiredOr, other.core_));
   }
-
-  // What a stronger contribution leaves a weaker one, element by element (LRM
-  // 28.12.1).
   [[nodiscard]] auto Dominating(const UnpackedArray& weaker) const
       -> UnpackedArray {
-    UnpackedArray resolved = *this;
-    for (std::size_t i = 0; i < resolved.data_.size(); ++i) {
-      resolved.data_[i] = resolved.data_[i].Dominating(weaker.data_[i]);
-    }
-    return resolved;
+    return UnpackedArray(core_.Dominating(weaker.core_));
   }
 
-  // `prototype`'s shape with every bit set to `fill`: the element count and
-  // each element filled the same way (LRM 6.7.1). Only the prototype's shape is
-  // read. The out-of-bounds shield keeps the prototype's element default, which
-  // an invalid-index read returns under LRM 7.4.5 whether the array is a net or
-  // a variable.
+  // `prototype`'s shape with every bit set to `fill` (LRM 6.7.1).
   [[nodiscard]] static auto FilledLike(
       const UnpackedArray& prototype, const PackedArray& fill)
       -> UnpackedArray {
-    UnpackedArray filled = prototype;
-    for (T& element : filled.data_) {
-      element = T::FilledLike(element, fill);
-    }
-    return filled;
+    return UnpackedArray(prototype.core_.FilledLike(fill));
   }
 
   // LRM 20.9: any element carrying an unknown bit propagates up.
   [[nodiscard]] auto HasUnknown() const -> bool {
-    for (const auto& e : data_) {
-      if (e.HasUnknown()) return true;
-    }
-    return false;
+    return detail::SequenceHasUnknown(core_);
   }
 
   [[nodiscard]] auto IsUnknown() const -> PackedArray {
@@ -369,11 +285,7 @@ class UnpackedArray {
   // bit counts. A fixed-size unpacked array folds at elaboration; this path
   // serves the case where an element is itself dynamically sized.
   [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
-    PackedArray total = PackedArray::Int(0);
-    for (const auto& e : data_) {
-      total = total + e.BitstreamWidth();
-    }
-    return total;
+    return detail::SequenceBitstreamWidth(core_);
   }
 
   // LRM 20.9 `$countbits`: the bit stream this value contributes is its
@@ -381,207 +293,71 @@ class UnpackedArray {
   // elements' own counts under the same control bits.
   [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
       -> PackedArray {
-    PackedArray total = PackedArray::Int(0);
-    for (const auto& e : data_) {
-      total = total + e.CountBits(control_bits);
-    }
-    return total;
+    return detail::SequenceCountBits(core_, control_bits);
   }
 
-  // LRM 6.24.3: the elements' own streams laid end to end, the element at
-  // index 0 most significant -- the order a `foreach` traverses them in
-  // (LRM 11.4.14.1).
+  // LRM 6.24.3: the elements' own streams laid end to end, and the inverse
+  // under a prototype that states the element count and every element's shape.
   [[nodiscard]] auto ToBitstream() const -> PackedArray {
-    PackedArray stream = data_[0].ToBitstream();
-    for (std::size_t i = 1; i < data_.size(); ++i) {
-      stream = stream.Concat(data_[i].ToBitstream());
-    }
-    return stream;
+    return core_.ToBitstream();
   }
-
-  // The inverse, each element taking its own width off the front of what is
-  // left (LRM 11.4.14.3). The prototype states the element count and every
-  // element's shape, both of which a sequence of bits carries nothing of.
   [[nodiscard]] static auto FromBitstream(
       const PackedArray& bits, const UnpackedArray& prototype)
       -> UnpackedArray {
-    UnpackedArray result = prototype;
-    std::uint64_t consumed = 0;
-    for (std::size_t i = 0; i < result.data_.size(); ++i) {
-      const auto width = static_cast<std::uint64_t>(
-          prototype.data_[i].BitstreamWidth().ToInt64());
-      result.data_[i] = T::FromBitstream(
-          BitstreamSegment(bits, consumed, width), prototype.data_[i]);
-      consumed += width;
-    }
-    return result;
-  }
-
-  // LRM 7.12.2 ordering: an in-place positional permutation at constant size (a
-  // fixed array never grows or shrinks). `reverse` takes no closure; `sort` /
-  // `rsort` order by the closure-projected key with the ordinal position as
-  // index.
-  auto Reverse() -> void {
-    detail::ArrayReverse(data_);
-  }
-  template <typename F>
-  auto Sort(F&& key) -> void {
-    detail::ArraySortByKey(data_, std::forward<F>(key), std::less<>{});
-  }
-  template <typename F>
-  auto Rsort(F&& key) -> void {
-    detail::ArraySortByKey(data_, std::forward<F>(key), std::greater<>{});
-  }
-
-  // LRM 7.12.3 reduction over the entry stream. `proto` is the
-  // producer-supplied result default for an empty receiver and carries the
-  // result shape otherwise.
-  template <typename F, typename R>
-  [[nodiscard]] auto Sum(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a + v; });
-  }
-  template <typename F, typename R>
-  [[nodiscard]] auto Product(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a * v; });
-  }
-  template <typename F, typename R>
-  [[nodiscard]] auto And(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a & v; });
-  }
-  template <typename F, typename R>
-  [[nodiscard]] auto Or(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a | v; });
-  }
-  template <typename F, typename R>
-  [[nodiscard]] auto Xor(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a ^ v; });
-  }
-
-  // LRM 7.12.1 locator methods over the entry stream. Value locators return a
-  // queue of elements; index locators return a queue of the ordinal index.
-  // Both seed the result with the producer-supplied `proto`. No match yields an
-  // empty queue. The `with` clause is mandatory for the find family (a Boolean
-  // predicate) and optional for `min` / `max` / `unique` (a comparison key,
-  // defaulting to the element).
-  template <typename F>
-  [[nodiscard]] auto Find(F pred, T proto) const -> Queue<T> {
-    return Queue<T>(std::move(proto), detail::ArrayFind(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindIndex(F pred, PackedArray proto) const
-      -> Queue<PackedArray> {
-    return Queue<PackedArray>(
-        std::move(proto), detail::ArrayFindIndex(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindFirst(F pred, T proto) const -> Queue<T> {
-    return Queue<T>(std::move(proto), detail::ArrayFindFirst(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindFirstIndex(F pred, PackedArray proto) const
-      -> Queue<PackedArray> {
-    return Queue<PackedArray>(
-        std::move(proto), detail::ArrayFindFirstIndex(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindLast(F pred, T proto) const -> Queue<T> {
-    return Queue<T>(std::move(proto), detail::ArrayFindLast(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindLastIndex(F pred, PackedArray proto) const
-      -> Queue<PackedArray> {
-    return Queue<PackedArray>(
-        std::move(proto), detail::ArrayFindLastIndex(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto Min(F&& key, T proto) const -> Queue<T> {
-    return Queue<T>(
-        std::move(proto), detail::ArrayMin(Entries(), std::forward<F>(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Max(F&& key, T proto) const -> Queue<T> {
-    return Queue<T>(
-        std::move(proto), detail::ArrayMax(Entries(), std::forward<F>(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Unique(F key, T proto) const -> Queue<T> {
-    return Queue<T>(
-        std::move(proto), detail::ArrayUnique(Entries(), std::move(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto UniqueIndex(F key, PackedArray proto) const
-      -> Queue<PackedArray> {
-    return Queue<PackedArray>(
-        std::move(proto), detail::ArrayUniqueIndex(Entries(), std::move(key)));
-  }
-
-  // LRM 7.12.5 projection into a same-size fixed unpacked array; `proto` seeds
-  // the result element type's canonical default (producer-supplied, since the
-  // result element type may differ from this array's).
-  template <typename F, typename U>
-  [[nodiscard]] auto Map(F closure, U proto) const -> UnpackedArray<U> {
-    return UnpackedArray<U>(
-        std::move(proto), detail::ArrayMap(Entries(), closure));
+    return UnpackedArray(prototype.core_.FromBitstream(bits));
   }
 
  private:
-  // Each element pair folded under one table; the three tables differ only in
-  // the elements' own fold.
-  [[nodiscard]] auto FoldedWith(
-      const UnpackedArray& other, NetResolution fold) const -> UnpackedArray {
-    UnpackedArray resolved = *this;
-    for (std::size_t i = 0; i < resolved.data_.size(); ++i) {
-      resolved.data_[i] =
-          ResolvedUnder(fold, resolved.data_[i], other.data_[i]);
-    }
-    return resolved;
+  friend class OrdinalArrayMethods<UnpackedArray<T>, T>;
+
+  using Core = BasicDynamicArray<StaticElem<T>>;
+
+  explicit UnpackedArray(Core core) : core_(std::move(core)) {
   }
 
-  // The LRM 7.12 entry stream: a lazy view pairing each element with its
-  // ordinal index, in declared order.
-  [[nodiscard]] auto Entries() const {
-    return std::views::enumerate(data_) |
-           std::views::transform([](auto&& pair) {
-             auto&& [i, e] = pair;
-             return detail::Entry<PackedArray, T>{
-                 PackedArray::Int(static_cast<int>(i)), &e};
-           });
+  // An array of `element_default`'s type holding copies of `source`'s
+  // elements, in order.
+  template <typename C>
+  [[nodiscard]] static auto Of(T element_default, const C& source)
+      -> UnpackedArray {
+    return UnpackedArray(
+        Core::Built(
+            StaticElem<T>(std::move(element_default)), source.RawSize(),
+            [&](std::size_t i, void* out) {
+              StaticElem<T>::Copy(&source.RawAt(i), out);
+            }));
   }
 
-  detail::OobShield<T> shield_;
-  std::vector<T> data_;
+  // The `count` elements of `core` from `start` (LRM 7.4.5 / 7.4.6), as an
+  // array of their own.
+  [[nodiscard]] static auto SliceOf(
+      const Core& core, std::optional<std::int64_t> start, std::size_t count)
+      -> UnpackedArray {
+    return UnpackedArray(
+        Core(core.Element()).Extended(core.SliceElements(start, count)));
+  }
+
+  Core core_;
 
   friend class ArraySliceRef<T>;
+  template <typename U>
+  friend class DynamicArray;
 };
 
 // LRM 7.6: an assignment to an unpacked slice is a single assignment to the
-// entire slice. The proxy aliases the source storage (a non-owning pointer to
-// its element vector) plus the window's start and count, so a fixed-size
-// unpacked array and a dynamic array share one slice-write surface. A start
-// that names no position makes `ToOwned()` a wholly-default sub-array and
-// `operator=` a no-op; partial-OOB behaves per-element. The materialized owned
-// value is ordinal-only payload (no range). Move-only so the proxy cannot
-// outlive what it aliases.
+// entire slice. The proxy aliases the elements of the array it was taken from,
+// plus the window's start and count, so a fixed-size unpacked array and a
+// dynamic array share one slice-write surface. A start that names no position
+// makes `ToOwned()` a wholly-default sub-array and `operator=` a no-op;
+// partial-OOB behaves per-element. The materialized owned value is ordinal-only
+// payload (no range). Move-only so the proxy cannot outlive what it aliases.
 template <typename T>
 class ArraySliceRef {
  public:
   ArraySliceRef(
-      std::vector<T>& data, T canonical, std::optional<std::int64_t> start,
-      std::size_t count)
-      : data_(&data),
-        canonical_(std::move(canonical)),
-        start_(start),
-        count_(count) {
+      BasicDynamicArray<StaticElem<T>>& elements,
+      std::optional<std::int64_t> start, std::size_t count)
+      : elements_(&elements), start_(start), count_(count) {
   }
   ArraySliceRef(const ArraySliceRef&) = delete;
   auto operator=(const ArraySliceRef&) -> ArraySliceRef& = delete;
@@ -590,9 +366,7 @@ class ArraySliceRef {
   ~ArraySliceRef() = default;
 
   [[nodiscard]] auto ToOwned() const -> UnpackedArray<T> {
-    return UnpackedArray<T>(
-        canonical_,
-        detail::ArraySliceGather(*data_, canonical_, start_, count_));
+    return UnpackedArray<T>::SliceOf(*elements_, start_, count_);
   }
 
   auto operator=(const UnpackedArray<T>& value) -> ArraySliceRef& {
@@ -603,12 +377,12 @@ class ArraySliceRef {
   // The assignment, answering whether any element of the window took a
   // different value.
   auto Assign(const UnpackedArray<T>& value) -> bool {
-    return detail::ArraySliceScatter(*data_, start_, count_, value.data_);
+    return elements_->AssignSlice(
+        start_, count_, detail::OrdinalAddresses(value));
   }
 
  private:
-  std::vector<T>* data_;
-  T canonical_;
+  BasicDynamicArray<StaticElem<T>>* elements_;
   std::optional<std::int64_t> start_;
   std::size_t count_;
 };
