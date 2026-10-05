@@ -202,7 +202,7 @@ auto PopulateNamespaceOwnStorage(
                   AccessPath{
                       .owner = make_cell(value_block, variable, cell_type),
                       .descent = {}},
-                  value_id, std::nullopt, value_type))});
+                  value_id))});
     }
   }
 

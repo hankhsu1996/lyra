@@ -207,7 +207,7 @@ auto LowerStaticStorageInto(
         mir::ExprStmt{
             .expr = block.exprs.Add(BuildStoreExpr(
                 unit, block, AccessPath{.owner = target, .descent = {}},
-                value_id, std::nullopt, prop_type))});
+                value_id))});
   }
 
   // LRM 6.21 applies such an initializer once before any process starts, rather
@@ -498,7 +498,8 @@ auto ClassDeclLowerer::PopulateBodies(
     ctor_block.AppendStmt(
         mir::ExprStmt{
             .expr = ctor_block.exprs.Add(
-                mir::MakeAssignExpr(target, value, instance->type))});
+                mir::MakeAssignExpr(
+                    unit_lowerer.Unit().builtins, target, value))});
   }
   // Register the ctor formals early so a base-constructor arg (LRM 8.7) can
   // reference them: `super.new(a * 2)` in the derived ctor reads its own `a`
@@ -565,8 +566,8 @@ auto ClassDeclLowerer::PopulateBodies(
             BuildObjectDeref(unit_lowerer.Unit(), ctor_block, self_ref),
             mir::ClassFieldTarget{.owner = class_id_, .slot = mir_field_id},
             field_type));
-    const mir::ExprId assign =
-        ctor_block.exprs.Add(mir::MakeAssignExpr(target, value_id, field_type));
+    const mir::ExprId assign = ctor_block.exprs.Add(
+        mir::MakeAssignExpr(unit_lowerer.Unit().builtins, target, value_id));
     ctor_block.AppendStmt(mir::ExprStmt{.expr = assign});
   }
 

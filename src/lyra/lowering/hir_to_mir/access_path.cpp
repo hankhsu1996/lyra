@@ -145,19 +145,12 @@ auto StoredWrapper(
 // nodes with nothing left to decide.
 auto BuildCompoundExpr(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
-    mir::ExprId rhs_id, CompoundOperation op, mir::TypeId result_type)
-    -> mir::Expr {
+    mir::ExprId rhs_id, CompoundOperation op) -> mir::Expr {
   const mir::ExprId place = PathPlace(unit, block, path);
   return std::visit(
       Overloaded{
           [&](mir::BinaryOp applied) -> mir::Expr {
-            return mir::Expr{
-                .data =
-                    mir::AssignExpr{
-                        .target = place,
-                        .compound_op = applied,
-                        .value = rhs_id},
-                .type = result_type};
+            return mir::MakeAssignExpr(unit.builtins, place, rhs_id, applied);
           },
           [&](support::BuiltinFn entry) -> mir::Expr {
             return mir::Expr{
@@ -211,7 +204,6 @@ auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
           [&](const mir::ConditionalExpr&) { return computes(); },
           [&](const mir::BlockExpr&) { return computes(); },
           [&](const mir::AssignExpr&) { return computes(); },
-          [&](const mir::IncDecExpr&) { return computes(); },
           [&](const mir::CallExpr&) { return computes(); },
           [&](const mir::MoveExpr&) { return computes(); },
           [&](const mir::ClosureExpr&) { return computes(); },
@@ -553,7 +545,6 @@ auto SettledPlace(
           [&](const mir::ConditionalExpr&) { return computed(); },
           [&](const mir::BlockExpr&) { return computed(); },
           [&](const mir::AssignExpr&) { return computed(); },
-          [&](const mir::IncDecExpr&) { return computed(); },
           [&](const mir::CallExpr&) { return computed(); },
           [&](const mir::MoveExpr&) { return computed(); },
           [&](const mir::ClosureExpr&) { return computed(); },
@@ -661,8 +652,8 @@ auto RunWithinOwner(
 
 auto BuildStoreExpr(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
-    mir::ExprId rhs_id, std::optional<CompoundOperation> compound_op,
-    mir::TypeId result_type) -> mir::Expr {
+    mir::ExprId rhs_id, std::optional<CompoundOperation> compound_op)
+    -> mir::Expr {
   // A compound store computes its value through the operator, which already
   // yields the destination's shape, so only a plain store carries the
   // right-hand side to the destination's declared representation (LRM 10.6.1).
@@ -670,8 +661,7 @@ auto BuildStoreExpr(
   // dimension stack -- and, for a container, the element representation and
   // bound -- is the axis it leaves to assignment.
   if (compound_op.has_value()) {
-    return BuildCompoundExpr(
-        unit, block, path, rhs_id, *compound_op, result_type);
+    return BuildCompoundExpr(unit, block, path, rhs_id, *compound_op);
   }
   rhs_id = ConvertToType(unit, block, rhs_id, PathValueType(unit, block, path));
   // Replacing the whole of what a capability wrapper holds acts on the wrapper
@@ -695,11 +685,8 @@ auto BuildStoreExpr(
                 .arguments = {rhs_id}},
         .type = unit.builtins.void_type};
   }
-  return mir::Expr{
-      .data =
-          mir::AssignExpr{
-              .target = PathPlace(unit, block, path), .value = rhs_id},
-      .type = result_type};
+  return mir::MakeAssignExpr(
+      unit.builtins, PathPlace(unit, block, path), rhs_id);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

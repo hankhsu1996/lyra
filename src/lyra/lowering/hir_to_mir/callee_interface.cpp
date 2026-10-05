@@ -186,9 +186,8 @@ auto BindCompletion(
         body, completion, payload_type, writeback.component, writeback.type);
     body.AppendStmt(
         mir::ExprStmt{
-            .expr = body.exprs.Add(BuildStoreExpr(
-                unit, body, writeback.place, component, std::nullopt,
-                writeback.type))});
+            .expr = body.exprs.Add(
+                BuildStoreExpr(unit, body, writeback.place, component))});
   }
   return completion;
 }

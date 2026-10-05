@@ -17,9 +17,8 @@
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
-#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
@@ -40,139 +39,18 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// LRM 11.4.12 LHS destructuring desugar. Triggered when an ExprStmt wraps an
-// AssignExpr whose LHS is a ConcatExpr -- the only context in which
-// destructuring is grammatically legal. Emits a block that snapshots the RHS
-// into a single packed temp then distributes per-part slices to each LHS
-// operand. The source wrote one assignment, so a nonblocking one carries every
-// part into one deferred effect: a control on it is read once, and every part's
-// share lands in the same slot.
+// LRM 11.4.12: an assignment statement to a concatenation, as a block of its
+// own, where nothing reads the value it binds.
 auto LowerDestructuringAssign(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::AssignExpr& assign, const hir::ConcatExpr& lhs_concat,
     diag::SourceSpan span) -> diag::Result<mir::Stmt> {
-  const hir::ProceduralBody& hir_proc = process.HirBody();
-  mir::Block wrapper;
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
-
-  std::vector<std::uint64_t> part_widths;
-  part_widths.reserve(lhs_concat.operands.size());
-  mir::IntegralStateKind state_kind = mir::IntegralStateKind::kTwoState;
-  std::uint64_t total_width = 0;
-  const auto& hir_types = process.Owner().Hir().types;
-  const auto& mir_types = process.Owner().Unit().types;
-  for (const hir::ExprId op_id : lhs_concat.operands) {
-    const hir::Expr& op = hir_proc.exprs.Get(op_id);
-    if (!hir_types.Get(op.type).IsIntegral()) {
-      throw InternalError(
-          "LowerDestructuringAssign: destructuring operand is not "
-          "an integral type");
-    }
-    // Width and state domain are properties of the operand's MIR type, which
-    // is what the snapshot is sliced against.
-    const auto& packed =
-        mir_types.Get(process.Owner().TranslateType(op.type)).PackedShape();
-    const std::uint64_t w = packed.BitWidth();
-    part_widths.push_back(w);
-    total_width += w;
-    if (packed.state_kind == mir::IntegralStateKind::kFourState) {
-      state_kind = mir::IntegralStateKind::kFourState;
-    }
-  }
-  if (total_width == 0) {
-    throw InternalError(
-        "LowerDestructuringAssign: destructuring total width must be positive");
-  }
-
-  const mir::TypeId temp_type = mir::PackedVectorOf(
-      process.Owner().Unit().types, total_width, state_kind);
-
-  const mir::ExprId temp_default_init = wrapper.exprs.Add(
-      BuildDefaultValueExpr(process.Owner().Unit(), wrapper, temp_type));
-  const mir::LocalId snapshot_var =
-      wrapper_frame.bindings->DeclareAnonymous(temp_type);
-  wrapper.AppendStmt(
-      mir::LocalDeclStmt{.target = snapshot_var, .init = temp_default_init});
-
-  // RHS is evaluated once; the snapshot temp is what gets distributed,
-  // which is what makes `{a, b} = {b, a}` swap correctly.
-  auto rhs_or =
-      process.LowerExpr(hir_proc.exprs.Get(assign.rhs), wrapper_frame);
-  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  mir::ExprId rhs_id = wrapper.exprs.Add(*std::move(rhs_or));
-  if (wrapper.exprs.Get(rhs_id).type != temp_type) {
-    rhs_id = wrapper.exprs.Add(BuildValueConversion(
-        process.Owner().Unit(), wrapper, rhs_id, temp_type));
-  }
-
-  const mir::ExprId temp_assign_target =
-      wrapper.exprs.Add(mir::MakeLocalRefExpr(snapshot_var, temp_type));
-  const mir::ExprId temp_assign_id = wrapper.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::AssignExpr{.target = temp_assign_target, .value = rhs_id},
-          .type = temp_type});
-  wrapper.AppendStmt(mir::ExprStmt{.expr = temp_assign_id});
-
-  // MSB-first per LRM 11.4.12: operands[0] occupies the high bits of the
-  // snapshot, operands.back() the low bits.
-  std::vector<DestructuredPart> parts;
-  parts.reserve(lhs_concat.operands.size());
-  std::uint64_t offset = total_width;
-  for (std::size_t i = 0; i < lhs_concat.operands.size(); ++i) {
-    const std::uint64_t w = part_widths[i];
-    offset -= w;
-
-    auto part_lhs_or = process.LowerLhsExpr(
-        hir_proc.exprs.Get(lhs_concat.operands[i]), wrapper_frame);
-    if (!part_lhs_or) {
-      return std::unexpected(std::move(part_lhs_or.error()));
-    }
-    const mir::TypeId part_mir_type = process.Owner().TranslateType(
-        hir_proc.exprs.Get(lhs_concat.operands[i]).type);
-
-    const mir::ExprId temp_ref =
-        wrapper.exprs.Add(mir::MakeLocalRefExpr(snapshot_var, temp_type));
-    const mir::TypeId slice_type =
-        mir::PackedVectorOf(process.Owner().Unit().types, w, state_kind);
-    const mir::ExprId slice_id = wrapper.exprs.Add(BuildPackedRunRead(
-        process.Owner(), wrapper, temp_ref, offset, w, slice_type));
-    mir::ExprId rhs_for_part = slice_id;
-    if (part_mir_type != slice_type) {
-      rhs_for_part = wrapper.exprs.Add(BuildValueConversion(
-          process.Owner().Unit(), wrapper, slice_id, part_mir_type));
-    }
-
-    parts.push_back(
-        DestructuredPart{
-            .target = *std::move(part_lhs_or),
-            .value = rhs_for_part,
-            .type = part_mir_type});
-  }
-
-  if (const auto* deferred =
-          std::get_if<hir::NonBlockingEffect>(&assign.timing)) {
-    auto effect_or = BuildDestructuredDeferredAssign(
-        process, wrapper_frame, span, deferred->control, parts);
-    if (!effect_or) return std::unexpected(std::move(effect_or.error()));
-    wrapper.AppendStmt(
-        mir::ExprStmt{.expr = wrapper.exprs.Add(*std::move(effect_or))});
-  } else {
-    for (const DestructuredPart& part : parts) {
-      wrapper.AppendStmt(
-          mir::ExprStmt{
-              .expr = wrapper.exprs.Add(BuildStoreExpr(
-                  process.Owner().Unit(), wrapper, part.target, part.value,
-                  std::nullopt, part.type))});
-    }
-  }
-
-  const mir::BlockId wrapper_scope_id =
-      frame.current_block->child_scopes.Add(std::move(wrapper));
-
-  return mir::Stmt{
-      .label = std::move(label),
-      .data = mir::BlockStmt{.scope = wrapper_scope_id}};
+  BlockBuilder steps(frame);
+  auto bound = Destructure(process, steps.Frame(), assign, lhs_concat, span);
+  if (!bound) return std::unexpected(std::move(bound.error()));
+  mir::Stmt stmt = steps.BuildStatement();
+  stmt.label = std::move(label);
+  return stmt;
 }
 
 // One target of an unpack, with the width it takes off the stream. The width
@@ -190,7 +68,7 @@ struct UnpackTarget {
 // the surplus is at its least significant end and is dropped -- which is why
 // the usable run is taken before the re-ordering rather than after.
 //
-// The shape follows the LRM 11.4.12 destructuring beside it: the source is
+// The shape follows the LRM 11.4.12 destructuring: the source is
 // snapshotted once and distributed, so a target appearing on both sides reads
 // what the assignment started with.
 auto LowerStreamingUnpackAssign(
@@ -256,20 +134,7 @@ auto LowerStreamingUnpackAssign(
   const mir::LocalId stream_var =
       wrapper_frame.bindings->DeclareAnonymous(stream_type);
   wrapper.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = stream_var,
-          .init = wrapper.exprs.Add(
-              BuildDefaultValueExpr(unit, wrapper, stream_type))});
-  wrapper.AppendStmt(
-      mir::ExprStmt{
-          .expr = wrapper.exprs.Add(
-              mir::Expr{
-                  .data =
-                      mir::AssignExpr{
-                          .target = wrapper.exprs.Add(
-                              mir::MakeLocalRefExpr(stream_var, stream_type)),
-                          .value = distributable_id},
-                  .type = stream_type})});
+      mir::LocalDeclStmt{.target = stream_var, .init = distributable_id});
 
   std::vector<DestructuredPart> parts;
   parts.reserve(targets.size());
@@ -293,9 +158,7 @@ auto LowerStreamingUnpackAssign(
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     parts.push_back(
         DestructuredPart{
-            .target = *std::move(part_lhs_or),
-            .value = *value_or,
-            .type = target.type});
+            .target = *std::move(part_lhs_or), .value = *value_or});
   }
 
   if (const auto* deferred =
@@ -310,8 +173,7 @@ auto LowerStreamingUnpackAssign(
       wrapper.AppendStmt(
           mir::ExprStmt{
               .expr = wrapper.exprs.Add(BuildStoreExpr(
-                  process.Owner().Unit(), wrapper, part.target, part.value,
-                  std::nullopt, part.type))});
+                  process.Owner().Unit(), wrapper, part.target, part.value))});
     }
   }
 
@@ -487,17 +349,12 @@ auto LowerExprStmt(
   const hir::ProceduralBody& hir_proc = process.HirBody();
   auto& block = *frame.current_block;
 
-  // LRM 11.4.12 LHS destructuring: detect AssignExpr-with-ConcatExpr-LHS
-  // and dispatch to the snapshot+distribute desugar.
+  // LRM 11.4.12: an assignment statement to a concatenation is a block of its
+  // own rather than an expression whose value nobody reads.
   const hir::Expr& inner = hir_proc.exprs.Get(e.expr);
   if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
     const hir::Expr& lhs = hir_proc.exprs.Get(assign->lhs);
     if (const auto* concat = std::get_if<hir::ConcatExpr>(&lhs.data)) {
-      if (assign->compound_op.has_value()) {
-        throw InternalError(
-            "LowerExprStmt: compound assignment with concatenation lvalue "
-            "is not a legal SV form (LRM A.6.2 grammar)");
-      }
       return LowerDestructuringAssign(
           process, frame, std::move(label), *assign, *concat, inner.span);
     }
@@ -580,7 +437,7 @@ auto LowerExprStmt(
     }
   }
 
-  auto expr_or = process.LowerExpr(hir_proc.exprs.Get(e.expr), frame);
+  auto expr_or = process.LowerIgnoredExpr(inner, frame);
   if (!expr_or) {
     return std::unexpected(std::move(expr_or.error()));
   }

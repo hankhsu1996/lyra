@@ -261,13 +261,9 @@ auto BuildKeyLoopStmt(
   const mir::ExprId first = traversal(support::BuiltinFn::kAssocFirst);
   const mir::ExprId next = traversal(support::BuiltinFn::kAssocNext);
   const mir::ExprId advance = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::AssignExpr{
-                  .target =
-                      block.exprs.Add(mir::MakeLocalRefExpr(more, int_type)),
-                  .value = next},
-          .type = int_type});
+      mir::MakeAssignExpr(
+          unit.builtins, block.exprs.Add(mir::MakeLocalRefExpr(more, int_type)),
+          next));
 
   std::vector<mir::ForInit> init;
   init.emplace_back(mir::ForInitDecl{.induction_var = more, .init = first});

@@ -191,11 +191,6 @@ class FunctionLowerer {
   // passes its end along with it; one it was only lent is copied, so what is
   // handed on is always one this body owned.
   auto HandOn(lir::Operand value) -> lir::Operand;
-  // A value the expression goes on reading after it writes where the value was
-  // read from. One this body made is its own already; one it was only lent is
-  // copied, since the write changes what the loan shows. The copy ends with the
-  // full-expression like any other value it made.
-  auto Kept(lir::Operand value) -> lir::Operand;
   // Whether this body made `value` and still owes its end.
   [[nodiscard]] auto OwesItsEnd(const lir::Operand& value) const -> bool;
   // States the end of an owned value, and of the one a frame slot holds.
@@ -545,8 +540,6 @@ class FunctionLowerer {
   auto LowerValuePartSelector(
       const mir::Block& block, const mir::CallExpr& call)
       -> diag::Result<lir::AggregateSelector>;
-  auto LowerIncDec(const mir::Block& block, const mir::IncDecExpr& inc_dec)
-      -> diag::Result<lir::Operand>;
   auto LowerConditional(
       const mir::Block& block, const mir::ConditionalExpr& cond,
       mir::TypeId type) -> diag::Result<lir::Operand>;

@@ -57,14 +57,10 @@ auto Read(const WalkFrame& frame, mir::LocalId local, mir::TypeId type)
 }
 
 auto Assign(
-    const WalkFrame& frame, mir::LocalId target, mir::TypeId type,
-    mir::ExprId value) -> mir::ExprId {
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::LocalId target, mir::TypeId type, mir::ExprId value) -> mir::ExprId {
   return frame.current_block->exprs.Add(
-      mir::Expr{
-          .data =
-              mir::AssignExpr{
-                  .target = Read(frame, target, type), .value = value},
-          .type = type});
+      mir::MakeAssignExpr(unit.builtins, Read(frame, target, type), value));
 }
 
 // Builds one type's text out of the texts of the types it reaches. Each is a
@@ -559,7 +555,8 @@ auto Renderer::BuildIndexedElements(
         body_frame, {Read(body_frame, text, StringType()), separator,
                      Render(body_frame, element, element_type)});
     loop_body.AppendStmt(
-        mir::ExprStmt{.expr = Assign(body_frame, text, StringType(), grown)});
+        mir::ExprStmt{
+            .expr = Assign(Unit(), body_frame, text, StringType(), grown)});
   }
   const mir::BlockId loop_scope = block.child_scopes.Add(std::move(loop_body));
 
@@ -572,7 +569,7 @@ auto Renderer::BuildIndexedElements(
                   .rhs = count},
           .type = Unit().builtins.bit1});
   const mir::ExprId next_ordinal = Assign(
-      frame, ordinal, IntType(),
+      Unit(), frame, ordinal, IntType(),
       block.exprs.Add(
           mir::Expr{
               .data =
@@ -582,7 +579,7 @@ auto Renderer::BuildIndexedElements(
                       .rhs = BuildIntLiteral(Unit(), block, 1)},
               .type = IntType()}));
   const mir::ExprId next_index = Assign(
-      frame, index, IntType(),
+      Unit(), frame, index, IntType(),
       block.exprs.Add(
           mir::Expr{
               .data =
@@ -681,7 +678,8 @@ auto Renderer::BuildAssociativeEntries(
                      index_text, Text(body_frame, kNameMark),
                      Render(body_frame, element, array.element_type)});
     loop_body.AppendStmt(
-        mir::ExprStmt{.expr = Assign(body_frame, text, StringType(), grown)});
+        mir::ExprStmt{
+            .expr = Assign(Unit(), body_frame, text, StringType(), grown)});
   }
   const mir::BlockId loop_scope = block.child_scopes.Add(std::move(loop_body));
 
@@ -689,9 +687,9 @@ auto Renderer::BuildAssociativeEntries(
       frame, value, mir_type, key, key_type, support::BuiltinFn::kAssocFirst);
   const mir::ExprId next = TraversalStep(
       frame, value, mir_type, key, key_type, support::BuiltinFn::kAssocNext);
-  const mir::ExprId next_more = Assign(frame, more, IntType(), next);
+  const mir::ExprId next_more = Assign(Unit(), frame, more, IntType(), next);
   const mir::ExprId next_ordinal = Assign(
-      frame, ordinal, IntType(),
+      Unit(), frame, ordinal, IntType(),
       block.exprs.Add(
           mir::Expr{
               .data =

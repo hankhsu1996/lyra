@@ -107,8 +107,8 @@ auto LowerSFormatSystemSubroutineCallStmt(
   const mir::ExprId value_id =
       ConvertToType(process.Owner().Unit(), block, call_id, out_type);
 
-  const mir::Expr assign_expr = BuildStoreExpr(
-      process.Owner().Unit(), block, *out_or, value_id, std::nullopt, out_type);
+  const mir::Expr assign_expr =
+      BuildStoreExpr(process.Owner().Unit(), block, *out_or, value_id);
   const mir::ExprId assign_id = block.exprs.Add(assign_expr);
 
   return mir::Stmt{

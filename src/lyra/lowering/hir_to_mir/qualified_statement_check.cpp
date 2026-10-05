@@ -157,7 +157,8 @@ auto BuildUniquenessReportBody(
     body.AppendStmt(
         mir::ExprStmt{
             .expr = body.exprs.Add(
-                mir::MakeAssignExpr(read_count(body), counted, int_type))});
+                mir::MakeAssignExpr(
+                    unit.builtins, read_count(body), counted))});
   }
 
   mir::Block report;

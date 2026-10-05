@@ -56,12 +56,8 @@ auto KeepsSampledValue(const L& lowerer, const hir::Expr& expr) -> bool {
 // expression's meaning does not depend on whether a process body or a
 // structural scope encloses it, so every context-free kind routes to one shared
 // handler listed exactly once -- a kind cannot be wired in one context and
-// forgotten in the other. The two real differences are parameterized inline: a
-// bare name resolves to different storage per scope, and the kinds LRM allows
-// only in procedural code (the assignment expression LRM 10.3, increment /
-// decrement LRM 11.4.2, the dynamic-array constructor LRM 7.5.1) cannot appear
-// in a structural HIR -- AST-to-HIR has already rejected them there, so the
-// structural arm is an unreachable invariant. An observable-cell leaf is
+// forgotten in the other. The one real difference is parameterized inline: a
+// bare name resolves to different storage per scope. An observable-cell leaf is
 // auto-wrapped in a `Get` call so the result is value-typed.
 template <ExprLowerer L>
 auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
@@ -349,6 +345,23 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
       expr.data);
 }
 
+// An expression whose value nothing reads, shared by both pass classes. A write
+// is then the write alone, as clang's `EmitIgnoredExpr` emits an assignment
+// without its result; only where the source reads one does the lowering hold
+// what it stored. Every other expression is its value, discarded.
+template <ExprLowerer L>
+auto LowerIgnoredExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<mir::Expr> {
+  const diag::FailureContext at(expr.span);
+  if (const auto* assign = std::get_if<hir::AssignExpr>(&expr.data)) {
+    return LowerHirAssignWrite(lowerer, frame, *assign, expr.span);
+  }
+  if (const auto* inc = std::get_if<hir::IncDecExpr>(&expr.data)) {
+    return LowerHirIncDecWrite(lowerer, frame, *inc);
+  }
+  return LowerExprImpl(lowerer, expr, frame);
+}
+
 // The part `expr` names as the target of a write, shared by both pass classes:
 // the path, with the checks the write owes before it lands appended where the
 // statement is reached.
@@ -368,6 +381,11 @@ auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
   return LowerExprImpl(*this, expr, frame);
 }
 
+auto ProcessLowerer::LowerIgnoredExpr(const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<mir::Expr> {
+  return LowerIgnoredExprImpl(*this, expr, frame);
+}
+
 auto ProcessLowerer::LowerAccessPath(const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<AccessPath> {
   return LowerAccessPathImpl(*this, expr, frame);
@@ -381,6 +399,11 @@ auto ProcessLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
 auto StructuralScopeLowerer::LowerExpr(
     const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
   return LowerExprImpl(*this, expr, frame);
+}
+
+auto StructuralScopeLowerer::LowerIgnoredExpr(
+    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
+  return LowerIgnoredExprImpl(*this, expr, frame);
 }
 
 auto StructuralScopeLowerer::LowerAccessPath(

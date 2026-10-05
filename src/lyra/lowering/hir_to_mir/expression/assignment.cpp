@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
@@ -13,11 +15,18 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/inc_dec_op.hpp"
+#include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -26,6 +35,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -119,7 +129,6 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
           [&](const mir::ConditionalExpr&) { return not_a_target(); },
           [&](const mir::BlockExpr&) { return not_a_target(); },
           [&](const mir::AssignExpr&) { return not_a_target(); },
-          [&](const mir::IncDecExpr&) { return not_a_target(); },
           [&](const mir::AddressOfExpr&) { return not_a_target(); },
           [&](const mir::MoveExpr&) { return not_a_target(); },
           [&](const mir::ClosureExpr&) { return not_a_target(); },
@@ -230,8 +239,8 @@ auto CheckTargetOutlivesUpdate(
   return {};
 }
 
-// Axis B (timing): apply a target's write effect where the statement is
-// reached, or as an update due later. `effect_fn(block, target, operands)`
+// Applies a target's write where the statement is reached, or as an update due
+// later. `effect_fn(block, target, operands)`
 // builds the write into `block`, the same node for either timing, so a target
 // says nothing about when its write happens (LRM 10.4).
 template <typename EffectFn>
@@ -263,19 +272,139 @@ auto ApplyAssignEffect(
       });
 }
 
+// The operator an increment or a decrement applies to what its target holds,
+// with one as the other operand (LRM 11.4.2).
+auto StepOperator(hir::IncDecOp op) -> hir::BinaryOp {
+  switch (op) {
+    case hir::IncDecOp::kPreInc:
+    case hir::IncDecOp::kPostInc:
+      return hir::BinaryOp::kAdd;
+    case hir::IncDecOp::kPreDec:
+    case hir::IncDecOp::kPostDec:
+      return hir::BinaryOp::kSub;
+  }
+  throw InternalError("StepOperator: unknown increment or decrement operator");
+}
+
+auto One(const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
+    -> mir::ExprId {
+  return ConvertToType(unit, block, BuildIntLiteral(unit, block, 1), type);
+}
+
 }  // namespace
 
-// Axis A: the store itself, against the storage the target designates.
-// Timing-agnostic: the same effect serves blocking and NBA.
+auto Destructure(
+    ProcessLowerer& process, const WalkFrame& frame,
+    const hir::AssignExpr& assign, const hir::ConcatExpr& lhs_concat,
+    diag::SourceSpan span) -> diag::Result<mir::ExprId> {
+  if (assign.compound_op.has_value()) {
+    throw InternalError(
+        "Destructure: a compound assignment to a concatenation is not a legal "
+        "SV form (LRM A.6.2 grammar)");
+  }
+  const hir::ProceduralBody& hir_proc = process.HirBody();
+  mir::CompilationUnit& unit = process.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+
+  std::vector<std::uint64_t> part_widths;
+  part_widths.reserve(lhs_concat.operands.size());
+  mir::IntegralStateKind state_kind = mir::IntegralStateKind::kTwoState;
+  std::uint64_t total_width = 0;
+  for (const hir::ExprId op_id : lhs_concat.operands) {
+    const hir::Expr& op = hir_proc.exprs.Get(op_id);
+    if (!process.Owner().Hir().types.Get(op.type).IsIntegral()) {
+      throw InternalError(
+          "Destructure: a destructuring operand is not an integral type");
+    }
+    // Width and state domain are properties of the operand's MIR type, which
+    // is what the bound value is sliced against.
+    const auto& packed =
+        unit.types.Get(process.Owner().TranslateType(op.type)).PackedShape();
+    const std::uint64_t w = packed.BitWidth();
+    part_widths.push_back(w);
+    total_width += w;
+    if (packed.state_kind == mir::IntegralStateKind::kFourState) {
+      state_kind = mir::IntegralStateKind::kFourState;
+    }
+  }
+  if (total_width == 0) {
+    throw InternalError("Destructure: the total width must be positive");
+  }
+
+  // The right-hand side is evaluated once and the bound value is what gets
+  // distributed, which is what makes `{a, b} = {b, a}` swap.
+  const mir::TypeId bound_type =
+      mir::PackedVectorOf(unit.types, total_width, state_kind);
+  auto rhs_or = process.LowerExpr(hir_proc.exprs.Get(assign.rhs), frame);
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  const mir::LocalId bound = frame.bindings->DeclareAnonymous(bound_type);
+  block.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = bound,
+          .init = ConvertToType(
+              unit, block, block.exprs.Add(*std::move(rhs_or)), bound_type)});
+  const auto read_bound = [&] {
+    return block.exprs.Add(mir::MakeLocalRefExpr(bound, bound_type));
+  };
+
+  // MSB-first: operands[0] takes the high bits, operands.back() the low ones.
+  std::vector<DestructuredPart> parts;
+  parts.reserve(lhs_concat.operands.size());
+  std::uint64_t offset = total_width;
+  for (std::size_t i = 0; i < lhs_concat.operands.size(); ++i) {
+    const std::uint64_t w = part_widths[i];
+    offset -= w;
+    const hir::Expr& part = hir_proc.exprs.Get(lhs_concat.operands[i]);
+    auto part_lhs_or = process.LowerLhsExpr(part, frame);
+    if (!part_lhs_or) {
+      return std::unexpected(std::move(part_lhs_or.error()));
+    }
+    const mir::TypeId part_type = process.Owner().TranslateType(part.type);
+    const mir::ExprId share = block.exprs.Add(BuildPackedRunRead(
+        process.Owner(), block, read_bound(), offset, w,
+        mir::PackedVectorOf(unit.types, w, state_kind)));
+    parts.push_back(
+        DestructuredPart{
+            .target = *std::move(part_lhs_or),
+            .value = ConvertToType(unit, block, share, part_type)});
+  }
+
+  if (const auto* deferred =
+          std::get_if<hir::NonBlockingEffect>(&assign.timing)) {
+    auto effect_or = BuildDestructuredDeferredAssign(
+        process, frame, span, deferred->control, parts);
+    if (!effect_or) return std::unexpected(std::move(effect_or.error()));
+    block.AppendStmt(
+        mir::ExprStmt{.expr = block.exprs.Add(*std::move(effect_or))});
+  } else {
+    for (const DestructuredPart& part : parts) {
+      block.AppendStmt(
+          mir::ExprStmt{
+              .expr = block.exprs.Add(
+                  BuildStoreExpr(unit, block, part.target, part.value))});
+    }
+  }
+  return read_bound();
+}
+
 template <ExprLowerer Lowerer>
-auto LowerHirAssignExpr(
+auto LowerHirAssignWrite(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignExpr& a,
-    diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    diag::SourceSpan span) -> diag::Result<mir::Expr> {
   if (a.compound_op.has_value() &&
       std::holds_alternative<hir::NonBlockingEffect>(a.timing)) {
     throw InternalError(
-        "LowerHirAssignExpr: compound assignment with non-blocking timing "
+        "LowerHirAssignWrite: compound assignment with non-blocking timing "
         "is not a legal SV form (LRM A.6.2 grammar)");
+  }
+  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+    const hir::Expr& lhs = lowerer.HirExprs().Get(a.lhs);
+    if (const auto* concat = std::get_if<hir::ConcatExpr>(&lhs.data)) {
+      BlockBuilder steps(frame);
+      auto bound = Destructure(lowerer, steps.Frame(), a, *concat, span);
+      if (!bound) return std::unexpected(std::move(bound.error()));
+      return steps.Build(*bound);
+    }
   }
   auto& block = *frame.current_block;
 
@@ -293,7 +422,7 @@ auto LowerHirAssignExpr(
   const auto store = [&](mir::Block& blk, const AccessPath& target,
                          std::span<const mir::ExprId> ops) -> mir::Expr {
     return BuildStoreExpr(
-        lowerer.Owner().Unit(), blk, target, ops[0], compound_op, result_type);
+        lowerer.Owner().Unit(), blk, target, ops[0], compound_op);
   };
   // What a write to the target is belongs to the store built above, and what
   // belongs here is when it takes place. Only a procedure has a later region
@@ -307,12 +436,132 @@ auto LowerHirAssignExpr(
   }
 }
 
+template <ExprLowerer Lowerer>
+auto LowerHirAssignExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::AssignExpr& a,
+    diag::SourceSpan span, mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  if (!std::holds_alternative<hir::ImmediateEffect>(a.timing)) {
+    throw InternalError(
+        "LowerHirAssignExpr: a nonblocking assignment is a statement and has "
+        "no value (LRM 10.4.2) -- please report this as a bug");
+  }
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  BlockBuilder steps(frame);
+  mir::Block& body = steps.Body();
+  const hir::Expr& lhs = lowerer.HirExprs().Get(a.lhs);
+  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+    if (const auto* concat = std::get_if<hir::ConcatExpr>(&lhs.data)) {
+      auto value_or = Destructure(lowerer, steps.Frame(), a, *concat, span);
+      if (!value_or) return std::unexpected(std::move(value_or.error()));
+      return steps.Build(*value_or);
+    }
+  }
+
+  auto rhs_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.rhs), steps.Frame());
+  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
+  const mir::ExprId rhs_id = body.exprs.Add(*std::move(rhs_or));
+  auto target_or = lowerer.LowerLhsExpr(lhs, steps.Frame());
+  if (!target_or) return std::unexpected(std::move(target_or.error()));
+
+  // What the assignment stores is its value (LRM 11.3.6), so that is computed
+  // once, held, and both written and yielded; the target read again after the
+  // write would answer differently where the write is dropped. A compound one
+  // stores the operator applied to what the target held (LRM 11.4.1), with the
+  // target settled once for the read and the write.
+  AccessPath target = *std::move(target_or);
+  mir::ExprId stored = rhs_id;
+  if (a.compound_op.has_value()) {
+    ReadThenWritten settled =
+        ReadThenWrite(lowerer.Owner(), steps.Frame(), std::move(target));
+    target = std::move(settled.place);
+    stored = body.exprs.Add(BuildMirBinaryExpr(
+        unit, body, *a.compound_op, settled.incoming, rhs_id, result_type));
+  }
+  const mir::LocalId value = steps.DeclareLocal(
+      result_type, ConvertToType(unit, body, stored, result_type));
+  const auto read_value = [&] {
+    return body.exprs.Add(mir::MakeLocalRefExpr(value, result_type));
+  };
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.exprs.Add(
+              BuildStoreExpr(unit, body, target, read_value()))});
+  return steps.Build(read_value());
+}
+
+template <ExprLowerer Lowerer>
+auto LowerHirIncDecWrite(
+    Lowerer& lowerer, WalkFrame frame, const hir::IncDecExpr& inc)
+    -> diag::Result<mir::Expr> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  auto target_or =
+      lowerer.LowerLhsExpr(lowerer.HirExprs().Get(inc.target), frame);
+  if (!target_or) return std::unexpected(std::move(target_or.error()));
+  const mir::TypeId type = PathValueType(unit, block, *target_or);
+  return BuildStoreExpr(
+      unit, block, *target_or, One(unit, block, type),
+      LowerCompoundOperation(StepOperator(inc.op)));
+}
+
+template <ExprLowerer Lowerer>
+auto LowerHirIncDecExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::IncDecExpr& inc,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  BlockBuilder steps(frame);
+  mir::Block& body = steps.Body();
+  auto target_or =
+      lowerer.LowerLhsExpr(lowerer.HirExprs().Get(inc.target), steps.Frame());
+  if (!target_or) return std::unexpected(std::move(target_or.error()));
+
+  // The value before the step and the value after it are both held, since a
+  // postfix form yields the first and the write stores the second (LRM
+  // 11.4.2), and the target is settled once for the read and the write.
+  const ReadThenWritten settled =
+      ReadThenWrite(lowerer.Owner(), steps.Frame(), *std::move(target_or));
+  const mir::LocalId before = steps.DeclareLocal(
+      result_type, ConvertToType(unit, body, settled.incoming, result_type));
+  const auto read = [&](mir::LocalId local) {
+    return body.exprs.Add(mir::MakeLocalRefExpr(local, result_type));
+  };
+  const mir::LocalId after = steps.DeclareLocal(
+      result_type, body.exprs.Add(BuildMirBinaryExpr(
+                       unit, body, StepOperator(inc.op), read(before),
+                       One(unit, body, result_type), result_type)));
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.exprs.Add(
+              BuildStoreExpr(unit, body, settled.place, read(after)))});
+  const bool yields_before =
+      inc.op == hir::IncDecOp::kPostInc || inc.op == hir::IncDecOp::kPostDec;
+  return steps.Build(read(yields_before ? before : after));
+}
+
+template auto LowerHirAssignWrite(
+    ProcessLowerer&, WalkFrame, const hir::AssignExpr&, diag::SourceSpan)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirAssignWrite(
+    const StructuralScopeLowerer&, WalkFrame, const hir::AssignExpr&,
+    diag::SourceSpan) -> diag::Result<mir::Expr>;
 template auto LowerHirAssignExpr(
     ProcessLowerer&, WalkFrame, const hir::AssignExpr&, diag::SourceSpan,
     mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssignExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::AssignExpr&,
     diag::SourceSpan, mir::TypeId) -> diag::Result<mir::Expr>;
+template auto LowerHirIncDecWrite(
+    ProcessLowerer&, WalkFrame, const hir::IncDecExpr&)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirIncDecWrite(
+    const StructuralScopeLowerer&, WalkFrame, const hir::IncDecExpr&)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirIncDecExpr(
+    ProcessLowerer&, WalkFrame, const hir::IncDecExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
+template auto LowerHirIncDecExpr(
+    const StructuralScopeLowerer&, WalkFrame, const hir::IncDecExpr&,
+    mir::TypeId) -> diag::Result<mir::Expr>;
 
 auto BuildDestructuredDeferredAssign(
     ProcessLowerer& process, WalkFrame frame, diag::SourceSpan span,
@@ -337,13 +586,12 @@ auto BuildDestructuredDeferredAssign(
         return frozen;
       },
       [&](mir::Block& body, const std::vector<FrozenAssignment>& frozen) {
-        for (std::size_t i = 0; i < frozen.size(); ++i) {
+        for (const FrozenAssignment& part : frozen) {
           body.AppendStmt(
               mir::ExprStmt{
                   .expr = body.exprs.Add(BuildStoreExpr(
-                      process.Owner().Unit(), body, frozen[i].target,
-                      frozen[i].operands.front(), std::nullopt,
-                      parts[i].type))});
+                      process.Owner().Unit(), body, part.target,
+                      part.operands.front()))});
         }
       });
 }

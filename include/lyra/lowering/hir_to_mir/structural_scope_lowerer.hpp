@@ -154,6 +154,11 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto LowerExpr(const hir::Expr& expr, WalkFrame frame) const
       -> diag::Result<mir::Expr>;
 
+  // The same expression where nothing reads its value: a loop generate's step.
+  // A write is then the write alone.
+  [[nodiscard]] auto LowerIgnoredExpr(
+      const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr>;
+
   // Dispatcher for an expression named as a part rather than read: addressable
   // kinds only, no auto-Get wrap, peeled into the place that owns the value and
   // the descent above it. Nothing is appended, so a construct that only names

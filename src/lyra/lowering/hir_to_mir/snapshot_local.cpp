@@ -27,9 +27,7 @@ auto SnapshotExprToLocal(
   const mir::ExprId target_id =
       wrapper.exprs.Add(mir::MakeLocalRefExpr(snap_var, type));
   const mir::ExprId assign_id = wrapper.exprs.Add(
-      mir::Expr{
-          .data = mir::AssignExpr{.target = target_id, .value = expr_id},
-          .type = type});
+      mir::MakeAssignExpr(unit_lowerer.Unit().builtins, target_id, expr_id));
   wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
   return snap_var;

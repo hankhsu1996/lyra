@@ -30,16 +30,11 @@ enum class BinaryOp : std::uint8_t {
   kLogicalOr,
 };
 
-// Unary plus is an identity and is folded away before LIR. Increment and
-// decrement are the successor and predecessor of a value at that value's own
-// width -- the operand of a source-level `++` / `--`, whose read-modify-write
-// and result ordering the lowering has already made explicit.
+// Unary plus is an identity and is folded away before LIR.
 enum class UnaryOp : std::uint8_t {
   kMinus,
   kBitwiseNot,
   kLogicalNot,
-  kIncrement,
-  kDecrement,
 };
 
 // The operator's stable spelling. This is an interface contract, not a display

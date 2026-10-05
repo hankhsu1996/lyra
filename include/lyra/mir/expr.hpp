@@ -18,7 +18,6 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local_ref.hpp"
 #include "lyra/mir/minted_entry.hpp"
@@ -31,6 +30,8 @@
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
+
+struct BuiltinMirTypes;
 
 struct StringLiteral {
   std::string value;
@@ -135,6 +136,11 @@ struct BlockExpr {
   ExprId value;
 };
 
+// A write, which yields nothing: its type is `void`, as an assignment's is in
+// Rust's MIR. Where the source reads the value of an assignment, the lowering
+// binds what the write stores and reads that binding (LRM 11.3.6), so no
+// consumer works out what a write yields.
+//
 // `compound_op.has_value()` marks the assignment as `target op= value`;
 // `nullopt` is a simple write. `value` is already typed to match `target`. The
 // operator is one a target applies to two values of one type, which is all
@@ -153,14 +159,6 @@ struct AssignExpr {
   ExprId target;
   std::optional<BinaryOp> compound_op = std::nullopt;
   ExprId value;
-};
-
-// LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Mirrors hir::IncDecExpr. `target`
-// takes whatever an assignment target takes; a join in target position is
-// illegal per slang.
-struct IncDecExpr {
-  IncDecOp op;
-  ExprId target;
 };
 
 // Identity of a concrete callable at a call site: the class whose callable
@@ -665,8 +663,8 @@ struct ReferenceExpr {
 using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
     MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
-    DynamicCastExpr, ConditionalExpr, BlockExpr, AssignExpr, IncDecExpr,
-    CallExpr, DerefExpr, AddressOfExpr, MoveExpr, FieldAccessExpr, ClosureExpr,
+    DynamicCastExpr, ConditionalExpr, BlockExpr, AssignExpr, CallExpr,
+    DerefExpr, AddressOfExpr, MoveExpr, FieldAccessExpr, ClosureExpr,
     CompositeExpr, AwaitExpr, WaitExpr, VectorGetExpr>;
 
 struct Expr {
@@ -711,11 +709,12 @@ struct Expr {
       .type = type};
 }
 
-[[nodiscard]] inline auto MakeAssignExpr(
-    ExprId target, ExprId value, TypeId type) -> Expr {
-  return Expr{
-      .data = AssignExpr{.target = target, .value = value}, .type = type};
-}
+// A write of `value` into `target`, applying `compound_op` to what the target
+// holds where one is given. Typed `void`, which is the whole of what a write
+// yields.
+[[nodiscard]] auto MakeAssignExpr(
+    const BuiltinMirTypes& builtins, ExprId target, ExprId value,
+    std::optional<BinaryOp> compound_op = std::nullopt) -> Expr;
 
 // The object the call dispatches on, absent for a call that dispatches on
 // nothing. The one place the question is answered, so no consumer works out

@@ -955,8 +955,6 @@ auto lyra_rt_packed_logical_or(const void* lhs, const void* rhs, void* out)
 auto lyra_rt_packed_neg(const void* operand, void* out) -> void*;
 auto lyra_rt_packed_not(const void* operand, void* out) -> void*;
 auto lyra_rt_packed_logical_not(const void* operand, void* out) -> void*;
-auto lyra_rt_packed_inc(const void* operand, void* out) -> void*;
-auto lyra_rt_packed_dec(const void* operand, void* out) -> void*;
 auto lyra_rt_packed_to_bool(const void* operand) -> bool;
 
 // Value builtins: the operations the source language spells as a call rather
@@ -1095,8 +1093,6 @@ auto lyra_rt_real_sub(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_real_mul(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_real_div(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_real_neg(const void* operand, void* out) -> void*;
-auto lyra_rt_real_inc(const void* operand, void* out) -> void*;
-auto lyra_rt_real_dec(const void* operand, void* out) -> void*;
 auto lyra_rt_real_eq(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_real_ne(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_real_lt(const void* lhs, const void* rhs, void* out) -> void*;
@@ -1162,8 +1158,6 @@ auto lyra_rt_shortreal_mul(const void* lhs, const void* rhs, void* out)
 auto lyra_rt_shortreal_div(const void* lhs, const void* rhs, void* out)
     -> void*;
 auto lyra_rt_shortreal_neg(const void* operand, void* out) -> void*;
-auto lyra_rt_shortreal_inc(const void* operand, void* out) -> void*;
-auto lyra_rt_shortreal_dec(const void* operand, void* out) -> void*;
 auto lyra_rt_shortreal_eq(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_shortreal_ne(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_shortreal_lt(const void* lhs, const void* rhs, void* out) -> void*;

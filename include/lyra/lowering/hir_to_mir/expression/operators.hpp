@@ -3,7 +3,8 @@
 #include <span>
 
 // Lowering of operator-family expressions (LRM 11.4): unary, binary,
-// conditional (`?:`), conversion, and increment / decrement.
+// conditional (`?:`) and conversion. An increment or decrement is a write and
+// lowers with assignments.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
@@ -76,15 +77,6 @@ auto LowerHirConditionalExpr(
 template <ExprLowerer Lowerer>
 auto LowerHirConversionExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
-
-// Increment / decrement is a write (LRM 11.4.2), and where the write happens
-// says nothing about what it is, so one template serves both contexts. The
-// structural one is a loop generate's step, which LRM 27.4 admits in this form
-// as readily as in an assignment's.
-template <ExprLowerer Lowerer>
-auto LowerHirIncDecExpr(
-    Lowerer& lowerer, WalkFrame frame, const hir::IncDecExpr& inc,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

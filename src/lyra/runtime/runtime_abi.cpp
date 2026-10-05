@@ -2868,18 +2868,6 @@ auto lyra_rt_packed_logical_not(const void* operand, void* out) -> void* {
   return Emplace(out, !Read<PackedArray>(operand));
 }
 
-auto lyra_rt_packed_inc(const void* operand, void* out) -> void* {
-  PackedArray value = Read<PackedArray>(operand);
-  ++value;
-  return Emplace(out, std::move(value));
-}
-
-auto lyra_rt_packed_dec(const void* operand, void* out) -> void* {
-  PackedArray value = Read<PackedArray>(operand);
-  --value;
-  return Emplace(out, std::move(value));
-}
-
 auto lyra_rt_packed_to_bool(const void* operand) -> bool {
   return static_cast<bool>(Read<PackedArray>(operand));
 }
@@ -3305,18 +3293,6 @@ auto lyra_rt_real_neg(const void* operand, void* out) -> void* {
   return Emplace(out, -Read<Real>(operand));
 }
 
-auto lyra_rt_real_inc(const void* operand, void* out) -> void* {
-  Real value = Read<Real>(operand);
-  ++value;
-  return Emplace(out, std::move(value));
-}
-
-auto lyra_rt_real_dec(const void* operand, void* out) -> void* {
-  Real value = Read<Real>(operand);
-  --value;
-  return Emplace(out, std::move(value));
-}
-
 auto lyra_rt_real_eq(const void* lhs, const void* rhs, void* out) -> void* {
   return Emplace(out, Read<Real>(lhs) == Read<Real>(rhs));
 }
@@ -3514,18 +3490,6 @@ auto lyra_rt_shortreal_div(const void* lhs, const void* rhs, void* out)
 
 auto lyra_rt_shortreal_neg(const void* operand, void* out) -> void* {
   return Emplace(out, -Read<ShortReal>(operand));
-}
-
-auto lyra_rt_shortreal_inc(const void* operand, void* out) -> void* {
-  ShortReal value = Read<ShortReal>(operand);
-  ++value;
-  return Emplace(out, std::move(value));
-}
-
-auto lyra_rt_shortreal_dec(const void* operand, void* out) -> void* {
-  ShortReal value = Read<ShortReal>(operand);
-  --value;
-  return Emplace(out, std::move(value));
 }
 
 auto lyra_rt_shortreal_eq(const void* lhs, const void* rhs, void* out)

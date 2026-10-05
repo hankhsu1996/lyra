@@ -22,7 +22,6 @@ auto IntegrateStaticInitializer(
   auto& value_block = *value_frame.current_block;
   mir::CompilationUnit& unit = process.Owner().Unit();
   const hir::ProceduralVarDecl& decl = body.procedural_vars.Get(binding.var);
-  const mir::TypeId storage_type = process.Owner().TranslateType(decl.type);
 
   // An observable cell installs its declared representation and default
   // contents once (LRM 10.5); a later user initializer stores through the cell,
@@ -62,8 +61,8 @@ auto IntegrateStaticInitializer(
   }
 
   const mir::Expr assign_expr = BuildStoreExpr(
-      unit, value_block, AccessPath{.owner = target, .descent = {}}, init_value,
-      std::nullopt, storage_type);
+      unit, value_block, AccessPath{.owner = target, .descent = {}},
+      init_value);
   value_block.AppendStmt(
       mir::ExprStmt{.expr = value_block.exprs.Add(assign_expr)});
   return {};

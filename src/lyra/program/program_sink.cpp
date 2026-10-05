@@ -670,8 +670,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_packed_neg", &lyra_rt_packed_neg);
   add("lyra_rt_packed_not", &lyra_rt_packed_not);
   add("lyra_rt_packed_logical_not", &lyra_rt_packed_logical_not);
-  add("lyra_rt_packed_inc", &lyra_rt_packed_inc);
-  add("lyra_rt_packed_dec", &lyra_rt_packed_dec);
   add("lyra_rt_packed_to_bool", &lyra_rt_packed_to_bool);
   add("lyra_rt_packed_convert_from_packed",
       &lyra_rt_packed_convert_from_packed);
@@ -878,8 +876,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_real_mul", &lyra_rt_real_mul);
   add("lyra_rt_real_div", &lyra_rt_real_div);
   add("lyra_rt_real_neg", &lyra_rt_real_neg);
-  add("lyra_rt_real_inc", &lyra_rt_real_inc);
-  add("lyra_rt_real_dec", &lyra_rt_real_dec);
   add("lyra_rt_real_eq", &lyra_rt_real_eq);
   add("lyra_rt_real_ne", &lyra_rt_real_ne);
   add("lyra_rt_real_lt", &lyra_rt_real_lt);
@@ -929,8 +925,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_shortreal_mul", &lyra_rt_shortreal_mul);
   add("lyra_rt_shortreal_div", &lyra_rt_shortreal_div);
   add("lyra_rt_shortreal_neg", &lyra_rt_shortreal_neg);
-  add("lyra_rt_shortreal_inc", &lyra_rt_shortreal_inc);
-  add("lyra_rt_shortreal_dec", &lyra_rt_shortreal_dec);
   add("lyra_rt_shortreal_eq", &lyra_rt_shortreal_eq);
   add("lyra_rt_shortreal_ne", &lyra_rt_shortreal_ne);
   add("lyra_rt_shortreal_lt", &lyra_rt_shortreal_lt);
