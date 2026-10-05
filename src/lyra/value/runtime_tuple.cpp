@@ -14,10 +14,10 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/support/tuple_operations.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_value.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
 
@@ -105,18 +105,8 @@ auto ValueAt(ValueDomain domain, const void* at) -> RuntimeValue {
   throw InternalError("RuntimeTuple: unknown value domain");
 }
 
-auto OpsAt(const void* laid_out) noexcept -> const support::TupleOperations& {
-  return **static_cast<const support::TupleOperations* const*>(laid_out);
-}
-
-// An operation the table does not carry is one no program can ask of this
-// type, so asking is a defect upstream of here.
-template <typename Operation>
-auto Required(Operation operation, const char* what) -> Operation {
-  if (operation == nullptr) {
-    throw InternalError(what);
-  }
-  return operation;
+auto TypeAt(const void* laid_out) noexcept -> const TupleType& {
+  return **static_cast<const TupleType* const*>(laid_out);
 }
 
 // A value of type `T` that `build` constructs in storage handed to it, taken
@@ -134,9 +124,9 @@ auto Answered(Build build) -> T {
 }  // namespace
 
 void RuntimeTuple::End::operator()(void* laid_out) const noexcept {
-  const support::TupleOperations& ops = OpsAt(laid_out);
-  ops.destroy(laid_out);
-  Deallocate{std::align_val_t{ops.align}}(laid_out);
+  const TupleType& type = TypeAt(laid_out);
+  type.Destroy(laid_out);
+  Deallocate{std::align_val_t{type.Align()}}(laid_out);
 }
 
 RuntimeTuple::RuntimeTuple(const RuntimeTuple& other) {
@@ -151,8 +141,9 @@ auto RuntimeTuple::operator=(const RuntimeTuple& other) -> RuntimeTuple& {
   }
   // Two tuples of one type assign component by component, into the storage
   // this already owns.
-  if (bytes_ != nullptr && other.bytes_ != nullptr && &Ops() == &other.Ops()) {
-    Ops().assign(Bytes(), other.Bytes());
+  if (bytes_ != nullptr && other.bytes_ != nullptr &&
+      &Type() == &other.Type()) {
+    Type().Assign(Bytes(), other.Bytes());
     return *this;
   }
   RuntimeTuple copy(other);
@@ -160,25 +151,23 @@ auto RuntimeTuple::operator=(const RuntimeTuple& other) -> RuntimeTuple& {
 }
 
 auto RuntimeTuple::CopyOf(const void* laid_out) -> RuntimeTuple {
-  const support::TupleOperations& ops = OpsAt(laid_out);
-  return Built(ops, [&](void* out) { ops.copy(laid_out, out); });
+  const TupleType& type = TypeAt(laid_out);
+  return Built(type, [&](void* out) { type.Copy(laid_out, out); });
 }
 
 auto RuntimeTuple::MovedFrom(void* laid_out) -> RuntimeTuple {
-  const support::TupleOperations& ops = OpsAt(laid_out);
-  return Built(ops, [&](void* out) { ops.move(laid_out, out); });
+  const TupleType& type = TypeAt(laid_out);
+  return Built(type, [&](void* out) { type.Move(laid_out, out); });
 }
 
 auto RuntimeTuple::LayOut(void* out, std::vector<RuntimeValue> components)
     -> void* {
-  const support::TupleOperations& ops = OpsAt(out);
-  if (components.size() != ops.count) {
+  const std::span<const TupleComponent> stated = TypeAt(out).Components();
+  if (components.size() != stated.size()) {
     throw InternalError(
         "RuntimeTuple: a tuple is built from a component count its type "
         "does not have");
   }
-  const std::span<const support::TupleComponent> stated(
-      ops.components, ops.count);
   for (std::size_t i = 0; i < components.size(); ++i) {
     void* at = At(out, stated[i].offset);
     std::visit(
@@ -208,9 +197,7 @@ auto RuntimeTuple::Bytes() -> void* {
 }
 
 auto RuntimeTuple::ComponentAt(void* laid_out, std::size_t index) -> void* {
-  const support::TupleOperations& ops = OpsAt(laid_out);
-  const std::span<const support::TupleComponent> stated(
-      ops.components, ops.count);
+  const std::span<const TupleComponent> stated = TypeAt(laid_out).Components();
   if (index >= stated.size()) {
     throw InternalError("RuntimeTuple::ComponentAt: index out of range");
   }
@@ -218,43 +205,38 @@ auto RuntimeTuple::ComponentAt(void* laid_out, std::size_t index) -> void* {
 }
 
 auto RuntimeTuple::BitIdentical(const void* lhs, const void* rhs) -> bool {
-  const auto bit_identical = Required(
-      OpsAt(lhs).bit_identical,
-      "RuntimeTuple: bit identity asked of a tuple whose type states none");
-  return bit_identical(lhs, rhs);
+  return TypeAt(lhs).BitIdentical(lhs, rhs);
 }
 
 void RuntimeTuple::AssignAt(void* storage, const void* value) {
-  OpsAt(storage).assign(storage, value);
+  TypeAt(storage).Assign(storage, value);
 }
 
 auto RuntimeTuple::CopyInto(void* out) const -> void* {
-  Ops().copy(Bytes(), out);
+  Type().Copy(Bytes(), out);
   return out;
 }
 
 auto RuntimeTuple::MoveInto(void* out) && -> void* {
-  Ops().move(Bytes(), out);
+  Type().Move(Bytes(), out);
   bytes_.reset();
   return out;
 }
 
-auto RuntimeTuple::Ops() const -> const support::TupleOperations& {
+auto RuntimeTuple::Type() const -> const TupleType& {
   if (bytes_ == nullptr) {
     throw InternalError(
         "RuntimeTuple: a tuple is read from storage that holds none");
   }
-  return OpsAt(Bytes());
+  return TypeAt(Bytes());
 }
 
 auto RuntimeTuple::RawSize() const -> std::size_t {
-  return Ops().count;
+  return Type().Components().size();
 }
 
 auto RuntimeTuple::Component(std::size_t index) const -> RuntimeValue {
-  const support::TupleOperations& ops = Ops();
-  const std::span<const support::TupleComponent> stated(
-      ops.components, ops.count);
+  const std::span<const TupleComponent> stated = Type().Components();
   if (index >= stated.size()) {
     throw InternalError("RuntimeTuple::Component: index out of range");
   }
@@ -262,11 +244,8 @@ auto RuntimeTuple::Component(std::size_t index) const -> RuntimeValue {
 }
 
 auto RuntimeTuple::operator==(const RuntimeTuple& other) const -> PackedArray {
-  const auto equal = Required(
-      Ops().equal,
-      "RuntimeTuple: equality asked of a tuple whose type states none");
   return Answered<PackedArray>(
-      [&](void* out) { equal(Bytes(), other.Bytes(), out); });
+      [&](void* out) { Type().Equal(Bytes(), other.Bytes(), out); });
 }
 
 auto RuntimeTuple::operator!=(const RuntimeTuple& other) const -> PackedArray {
@@ -274,72 +253,51 @@ auto RuntimeTuple::operator!=(const RuntimeTuple& other) const -> PackedArray {
 }
 
 auto RuntimeTuple::CaseEqual(const RuntimeTuple& other) const -> PackedArray {
-  const auto case_equal = Required(
-      Ops().case_equal,
-      "RuntimeTuple: case equality asked of a tuple with a real component "
-      "(LRM Table 11-1)");
   return Answered<PackedArray>(
-      [&](void* out) { case_equal(Bytes(), other.Bytes(), out); });
+      [&](void* out) { Type().CaseEqual(Bytes(), other.Bytes(), out); });
 }
 
 auto RuntimeTuple::ResolveTriState(const RuntimeTuple& other) const
     -> RuntimeTuple {
-  return FoldedBy(Ops().resolve_tri_state, other);
+  return FoldedBy(&ValueType::ResolveTriState, other);
 }
 
 auto RuntimeTuple::ResolveWiredAnd(const RuntimeTuple& other) const
     -> RuntimeTuple {
-  return FoldedBy(Ops().resolve_wired_and, other);
+  return FoldedBy(&ValueType::ResolveWiredAnd, other);
 }
 
 auto RuntimeTuple::ResolveWiredOr(const RuntimeTuple& other) const
     -> RuntimeTuple {
-  return FoldedBy(Ops().resolve_wired_or, other);
+  return FoldedBy(&ValueType::ResolveWiredOr, other);
 }
 
 auto RuntimeTuple::FoldedBy(Fold fold, const RuntimeTuple& other) const
     -> RuntimeTuple {
-  const auto resolve = Required(
-      fold,
-      "RuntimeTuple: a tuple not valid for a net is resolved as one (LRM "
-      "6.7.1)");
-  return Built(Ops(), [&](void* out) { resolve(Bytes(), other.Bytes(), out); });
+  return Built(
+      Type(), [&](void* out) { (Type().*fold)(Bytes(), other.Bytes(), out); });
 }
 
 auto RuntimeTuple::Dominating(const RuntimeTuple& weaker) const
     -> RuntimeTuple {
-  const auto dominating = Required(
-      Ops().dominating,
-      "RuntimeTuple: a tuple not valid for a net is contributed to one (LRM "
-      "6.7.1)");
-  return Built(
-      Ops(), [&](void* out) { dominating(Bytes(), weaker.Bytes(), out); });
+  return Built(Type(), [&](void* out) {
+    Type().Dominating(Bytes(), weaker.Bytes(), out);
+  });
 }
 
 auto RuntimeTuple::FilledLike(
     const RuntimeTuple& prototype, const PackedArray& fill) -> RuntimeTuple {
-  const auto filled_like = Required(
-      prototype.Ops().filled_like,
-      "RuntimeTuple: a tuple not valid for a net is filled as one (LRM "
-      "6.7.1)");
-  return Built(prototype.Ops(), [&](void* out) {
-    filled_like(prototype.Bytes(), &fill, out);
+  return Built(prototype.Type(), [&](void* out) {
+    prototype.Type().FilledLike(prototype.Bytes(), &fill, out);
   });
 }
 
 auto RuntimeTuple::IsBitIdentical(const RuntimeTuple& other) const -> bool {
-  const auto bit_identical = Required(
-      Ops().bit_identical,
-      "RuntimeTuple: bit identity asked of a tuple whose type states none");
-  return bit_identical(Bytes(), other.Bytes());
+  return Type().BitIdentical(Bytes(), other.Bytes());
 }
 
 auto RuntimeTuple::HasUnknown() const -> bool {
-  const auto has_unknown = Required(
-      Ops().has_unknown,
-      "RuntimeTuple: an unknown bit asked of a tuple whose type states no "
-      "such question");
-  return has_unknown(Bytes());
+  return Type().HasUnknown(Bytes());
 }
 
 auto RuntimeTuple::IsUnknown() const -> PackedArray {
@@ -347,39 +305,25 @@ auto RuntimeTuple::IsUnknown() const -> PackedArray {
 }
 
 auto RuntimeTuple::BitstreamWidth() const -> PackedArray {
-  const auto width = Required(
-      Ops().bitstream_width,
-      "RuntimeTuple: a tuple with no bit stream is measured as one (LRM "
-      "6.24.3)");
-  return Answered<PackedArray>([&](void* out) { width(Bytes(), out); });
+  return Answered<PackedArray>(
+      [&](void* out) { Type().BitstreamWidth(Bytes(), out); });
 }
 
 auto RuntimeTuple::CountBits(const PackedArray& control_bits) const
     -> PackedArray {
-  const auto count = Required(
-      Ops().count_bits,
-      "RuntimeTuple: a tuple with no bit stream has its bits counted (LRM "
-      "20.9)");
   return Answered<PackedArray>(
-      [&](void* out) { count(Bytes(), &control_bits, out); });
+      [&](void* out) { Type().CountBits(Bytes(), &control_bits, out); });
 }
 
 auto RuntimeTuple::ToBitstream() const -> PackedArray {
-  const auto to_bitstream = Required(
-      Ops().to_bitstream,
-      "RuntimeTuple: a tuple with no bit stream is read as one (LRM "
-      "6.24.3)");
-  return Answered<PackedArray>([&](void* out) { to_bitstream(Bytes(), out); });
+  return Answered<PackedArray>(
+      [&](void* out) { Type().ToBitstream(Bytes(), out); });
 }
 
 auto RuntimeTuple::FromBitstream(
     const PackedArray& bits, const RuntimeTuple& prototype) -> RuntimeTuple {
-  const auto from_bitstream = Required(
-      prototype.Ops().from_bitstream,
-      "RuntimeTuple: a tuple with no bit stream is built from one (LRM "
-      "6.24.3)");
-  return Built(prototype.Ops(), [&](void* out) {
-    from_bitstream(&bits, prototype.Bytes(), out);
+  return Built(prototype.Type(), [&](void* out) {
+    prototype.Type().FromBitstream(&bits, prototype.Bytes(), out);
   });
 }
 

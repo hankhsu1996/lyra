@@ -7,8 +7,11 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/erased_value.hpp"
+#include "lyra/support/value_domain.hpp"
+#include "lyra/value/any_value.hpp"
 #include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/runtime_value.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
 
@@ -38,15 +41,15 @@ auto Entered(Entry entry, std::string_view protocol) -> Entry {
   return entry;
 }
 
-// What a body answering a value built in storage given here, taken out of it.
-// A tuple is built in storage its own type sizes, which the runtime then holds
-// it in; every other value fits storage laid out for any value.
+// What a body run per entry built in storage given here, taken out of it. A
+// tuple is built in storage its own type sizes, which the runtime then holds it
+// in; every other value fits storage laid out for any value.
 template <typename Run>
 auto Answered(const ClosureDefinition& definition, Run run)
     -> value::RuntimeValue {
-  if (definition.result_tuple != nullptr) {
+  if (definition.result_domain == support::ValueDomain::kTuple) {
     return value::RuntimeValue{value::RuntimeTuple::Built(
-        *definition.result_tuple, [&](void* out) { run(out); })};
+        *definition.result_type, [&](void* out) { run(out); })};
   }
   AnswerStorage answer{};
   return TakeValue(definition.result_domain, run(answer.bytes.data()));
@@ -93,10 +96,19 @@ auto ClosureValue::RunPerElement(
   });
 }
 
-auto ClosureValue::RunValue() -> value::RuntimeValue {
-  const auto run =
-      Entered(definition_->run_value, "that answers a value on its own");
-  return Answered(*definition_, [&](void* out) { return run(this, out); });
+auto ClosureValue::RunValue() -> value::AnyValue {
+  const value::ValueType& type = *definition_->result_type;
+  return value::AnyValue::Built(
+      type, [&](void* out) { RunValueInto(type, out); });
+}
+
+void ClosureValue::RunValueInto(const value::ValueType& type, void* out) {
+  if (definition_->result_type != &type) {
+    throw InternalError(
+        "ClosureValue: a body is run for a value of a type it does not answer "
+        "-- please report this as a bug");
+  }
+  Entered(definition_->run_value, "that answers a value on its own")(this, out);
 }
 
 }  // namespace lyra::runtime

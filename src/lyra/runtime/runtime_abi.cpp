@@ -57,6 +57,7 @@
 #include "lyra/runtime/simulation_entry.hpp"
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/support/event_edge.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
@@ -64,6 +65,7 @@
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/library_value_types.hpp"
 #include "lyra/value/managed_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
@@ -750,8 +752,30 @@ auto ShareClosure(void* closure) -> std::function<void()> {
 // A closure an observation keeps and runs each time it is asked -- what the
 // watched expression is worth now, or whether an `iff` qualifier holds. The
 // observation outlives the body that built the closure, so it takes it.
-auto TakeEvaluator(void* closure) {
-  return [held = TakeOwner(closure)] { return held->RunValue(); };
+auto TakeCondition(void* closure) {
+  return [held = TakeOwner(closure)] {
+    return held->RunValueOf(lyra_rt_packed_value_type);
+  };
+}
+
+// An observation of the expression `closure` computes, which `observe` builds
+// from what evaluates it. An edge is a transition of the expression's least
+// significant bit, so what it watches is a packed value (LRM 9.4.2); any other
+// event is a change anywhere in a value of whatever type the expression has.
+template <typename Observe>
+auto ObservingClosure(void* closure, const void* edge, Observe observe)
+    -> Observation {
+  const auto& stated = Read<value::PackedArray>(edge);
+  OwnedClosure held = TakeOwner(closure);
+  if (EventEdgeOf(stated) == support::EventEdge::kAnyChange) {
+    return observe(
+        [held = std::move(held)] { return held->RunValue(); }, stated);
+  }
+  return observe(
+      [held = std::move(held)] {
+        return held->RunValueOf(lyra_rt_packed_value_type);
+      },
+      stated);
 }
 
 // The body an LRM 7.12 method runs, as the value layer takes it. The closure is
@@ -922,6 +946,7 @@ using lyra::runtime::ObjectDefinition;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
 using lyra::runtime::ObservationHandles;
+using lyra::runtime::ObservingClosure;
 using lyra::runtime::OpenCellWrite;
 using lyra::runtime::OpenDriverWrite;
 using lyra::runtime::OpenRefWrite;
@@ -968,7 +993,7 @@ using lyra::runtime::SpawnAll;
 using lyra::runtime::STimeInUnit;
 using lyra::runtime::TakeBranches;
 using lyra::runtime::TakeClosure;
-using lyra::runtime::TakeEvaluator;
+using lyra::runtime::TakeCondition;
 using lyra::runtime::TakeOwner;
 using lyra::runtime::TestPlusargs;
 using lyra::runtime::Trigger;
@@ -1521,20 +1546,24 @@ auto lyra_rt_observation_on_reaching(void* out) -> void* {
 auto lyra_rt_observation_of_value(void* expression, const void* edge, void* out)
     -> void* {
   return Emplace(
-      out,
-      Observation::OfValue(TakeEvaluator(expression), Read<PackedArray>(edge)));
+      out, ObservingClosure(
+               expression, edge, [](auto evaluate, const PackedArray& stated) {
+                 return Observation::OfValue(std::move(evaluate), stated);
+               }));
 }
 
 auto lyra_rt_observation_of_value_qualified(
     void* expression, const void* edge, void* condition, void* out) -> void* {
   return Emplace(
-      out, Observation::OfValueQualified(
-               TakeEvaluator(expression), Read<PackedArray>(edge),
-               TakeEvaluator(condition)));
+      out, ObservingClosure(
+               expression, edge, [&](auto evaluate, const PackedArray& stated) {
+                 return Observation::OfValueQualified(
+                     std::move(evaluate), stated, TakeCondition(condition));
+               }));
 }
 
 auto lyra_rt_observation_qualified(void* condition, void* out) -> void* {
-  return Emplace(out, Observation::Qualified(TakeEvaluator(condition)));
+  return Emplace(out, Observation::Qualified(TakeCondition(condition)));
 }
 
 void lyra_rt_observation_arm(const void* observation) {

@@ -109,6 +109,9 @@ enum class RuntimeOp : std::uint8_t {
   kCopy,
   kMove,
   kAssign,
+  // The type of a value of one of the library's own kinds, which the library
+  // defines once per kind and generated code hands over beside such a value.
+  kValueType,
 };
 
 // What a member slot is for, which two declarations answer differently for a

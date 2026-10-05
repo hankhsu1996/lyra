@@ -123,6 +123,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "move";
     case RuntimeOp::kAssign:
       return "assign";
+    case RuntimeOp::kValueType:
+      return "value_type";
   }
   throw InternalError("llvm codegen: unknown runtime operation");
 }

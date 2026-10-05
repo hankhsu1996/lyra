@@ -102,6 +102,10 @@ using DispatchSlot = std::variant<LineageSlot, InterfaceSlot>;
 // offset to top), the first of the two entries every table opens with.
 inline constexpr std::uint64_t kOffsetToTopEntry = 2;
 
+// What a table holds where no class gives a virtual function a body: the host's
+// C++ runtime ends the program if it is ever entered.
+inline constexpr std::string_view kNoBody = "__cxa_pure_virtual";
+
 // The allocation function a value's storage comes from (C++ ABI mangling of
 // `operator new(std::size_t)`).
 inline constexpr std::string_view kOperatorNew = "_Znwm";

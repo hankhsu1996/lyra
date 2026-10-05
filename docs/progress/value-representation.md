@@ -33,6 +33,8 @@ cycle.
       a fixed word count above, a call taking the words only for the long algorithms.
 - [ ] An element or a member at a run-time index is reached by bit addressing at the cost of the
       element.
+- [ ] A wait on part of an unpacked aggregate is passed over by a write that reached another part of
+      it.
 - [ ] The execution backend lays out values, cells and frames from the type, and constants are
       compile-time constants on both backends.
 - [ ] Runtime scalars that were packed values -- descriptors, delays, seeds -- are machine integers.
@@ -50,6 +52,9 @@ cycle.
 
 ## Not this workstream
 
-- A process the language makes a reaction (a continuous assignment, `always_comb`, `always_ff`)
-  realized as a function subscribed once rather than a coroutine that waits again. It is the other
-  half of the gap to Verilator and is designed on its own.
+- How the engine carries out a wait and a wake: a wait whose places are fixed registered once rather
+  than at every activation, an edge decided where the write lands, a nonblocking assignment held as
+  a value of its type, and a process the language makes a reaction (a continuous assignment,
+  `always_comb`, `always_ff`) realized as a function rather than a coroutine that waits again.
+  Measured on Ibex, that per-event work is a larger part of the gap to Verilator than the value work
+  here, and it is designed on its own.

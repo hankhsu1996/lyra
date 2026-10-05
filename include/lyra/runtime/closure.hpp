@@ -1,11 +1,17 @@
 #pragma once
 
+#include <array>
+#include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <new>
+#include <utility>
 
-#include "lyra/support/tuple_operations.hpp"
 #include "lyra/support/value_domain.hpp"
+#include "lyra/value/any_value.hpp"
 #include "lyra/value/runtime_value.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
 
@@ -24,9 +30,10 @@ namespace lyra::runtime {
 // run. Whoever runs a closure asks for the protocol it runs it under.
 //
 // A body that answers a value builds it in storage its caller gives, and states
-// which representation it comes back in, because a handle carries no type: it
-// is a fact only whoever compiled the body holds. A tuple answer also names its
-// type, which is what says how much storage it needs.
+// the type it comes back in, because a handle carries no type: it is a fact
+// only whoever compiled the body holds. A body run per entry also states which
+// of the runtime's kinds of value that type is, which is what an entry's answer
+// is held as.
 //
 // The captures lie in the value itself, after what this library keeps there,
 // where the code building the closure placed them and fills them. So of the
@@ -39,8 +46,8 @@ struct ClosureDefinition {
   void* (*run_per_element)(
       void* self, const void* item, const void* index, void* out) = nullptr;
   void* (*run_value)(void* self, void* out) = nullptr;
+  const value::ValueType* result_type = nullptr;
   support::ValueDomain result_domain{};
-  const support::TupleOperations* result_tuple = nullptr;
   std::uint64_t size = 0;
   void (*end_captures)(void* self) = nullptr;
 };
@@ -94,10 +101,25 @@ class ClosureValue {
       -> value::RuntimeValue;
 
   // Runs a body that takes nothing and answers what it settled on.
-  [[nodiscard]] auto RunValue() -> value::RuntimeValue;
+  [[nodiscard]] auto RunValue() -> value::AnyValue;
+
+  // The same, for a body answering a value of `type`, one of the library's own
+  // kinds.
+  template <typename T>
+  [[nodiscard]] auto RunValueOf(const value::ValueTypeOf<T>& type) -> T {
+    alignas(T) std::array<std::byte, sizeof(T)> storage{};
+    RunValueInto(type, storage.data());
+    T* built = std::launder(std::bit_cast<T*>(storage.data()));
+    T answer = std::move(*built);
+    std::destroy_at(built);
+    return answer;
+  }
 
  private:
   explicit ClosureValue(const ClosureDefinition* definition);
+
+  // Runs a body that takes nothing into `out`, which is sized for `type`.
+  void RunValueInto(const value::ValueType& type, void* out);
 
   const ClosureDefinition* definition_;
 };

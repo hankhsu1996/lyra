@@ -949,7 +949,7 @@ auto CodeGenFunction::ResolveCall(
   // which tuple it is before anything is built there.
   if (out != nullptr) {
     if (module_->Unit().types.Get(result_type).IsProduct()) {
-      builder_.CreateStore(module_->Tuples().Operations(result_type), out);
+      builder_.CreateStore(module_->Tuples().TypeOf(result_type), out);
     }
     args->push_back(out);
   }
@@ -1251,7 +1251,7 @@ auto CodeGenFunction::LowerTuple(
         "llvm codegen: a tuple's result type does not describe the components "
         "it is built from");
   }
-  builder_.CreateStore(module_->Tuples().Operations(result_type), out);
+  builder_.CreateStore(module_->Tuples().TypeOf(result_type), out);
   for (std::size_t i = 0; i < tuple.components.size(); ++i) {
     auto component = LowerOperand(tuple.components[i]);
     if (!component) {
