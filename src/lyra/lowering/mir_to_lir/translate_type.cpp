@@ -194,16 +194,27 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [](const mir::EmptyType&) -> lir::Type {
             return lir::Type{lir::EmptyType{}};
           },
+          // The execution model tells a class whose definition this unit
+          // emits from one it only declares, as LLVM tells a defined struct
+          // from an opaque one: that is what a class of this unit and one of
+          // another unit are below MIR.
           [&](const mir::ObjectType& ob) -> lir::Type {
-            return lir::Type{lir::ObjectType{
-                .class_id = class_identities_.Get(ob.class_id).lir_class}};
+            return std::visit(
+                Overloaded{
+                    [&](const mir::IntraUnitClassRef& own) {
+                      return lir::Type{lir::ObjectType{
+                          .class_id =
+                              class_identities_.Get(own.class_id).lir_class}};
+                    },
+                    [](const mir::CrossUnitClassRef& other) {
+                      return lir::Type{lir::CrossUnitClassType{
+                          .unit_name = other.unit_name,
+                          .class_name = other.class_name}};
+                    }},
+                ob.of);
           },
           [](const mir::RuntimeClassType& e) -> lir::Type {
             return lir::Type{lir::RuntimeClassType{.which = e.which}};
-          },
-          [](const mir::CrossUnitClassType& e) -> lir::Type {
-            return lir::Type{lir::CrossUnitClassType{
-                .unit_name = e.unit_name, .class_name = e.class_name}};
           },
           [](const mir::RuntimeEffectsType&) -> lir::Type {
             return lir::Type{lir::RuntimeEffectsType{}};

@@ -85,17 +85,25 @@ auto FormatExprList(std::span<const ExprId> ids) -> std::string {
   return text;
 }
 
+auto FormatClass(const DeclaredClassRef& cls) -> std::string {
+  return std::visit(
+      Overloaded{
+          [](const IntraUnitClassRef& intra) {
+            return std::format("Class[{}]", intra.class_id.value);
+          },
+          [](const CrossUnitClassRef& cross) {
+            return std::format(
+                "Class[{}::{}]", cross.unit_name, cross.class_name);
+          }},
+      cls);
+}
+
 auto FormatField(const ClassFieldTarget& t) -> std::string {
-  return std::format("Class[{}]::Field[{}]", t.owner.value, t.slot.value);
+  return std::format("{}::Field[{}]", FormatClass(t.owner), t.slot.value);
 }
 
 auto FormatField(const ClosureFieldTarget& t) -> std::string {
   return std::format("Closure[{}]::Field[{}]", t.owner.value, t.slot.value);
-}
-
-auto FormatField(const CrossUnitClassFieldTarget& t) -> std::string {
-  return std::format(
-      "External[{}::{}#{}]", t.unit_name, t.class_name, t.slot.value);
 }
 
 auto FormatCallPart(const CallPart& part) -> std::string {
@@ -104,8 +112,7 @@ auto FormatCallPart(const CallPart& part) -> std::string {
           [](base::ComponentIndex position) {
             return std::format("{}", position.value);
           },
-          [](const ClassFieldTarget& t) { return FormatField(t); },
-          [](const CrossUnitClassFieldTarget& t) { return FormatField(t); }},
+          [](const ClassFieldTarget& t) { return FormatField(t); }},
       part);
 }
 
@@ -393,11 +400,7 @@ class MirDumper {
             [](const ChandleType&) -> std::string { return "ChandleType"; },
             [](const VoidType&) -> std::string { return "VoidType"; },
             [](const ObjectType& o) -> std::string {
-              return std::format("Object(#{})", o.class_id.value);
-            },
-            [](const CrossUnitClassType& e) -> std::string {
-              return std::format(
-                  "CrossUnitClass(\"{}::{}\")", e.unit_name, e.class_name);
+              return std::format("Object({})", FormatClass(o.of));
             },
             [](const RuntimeClassType& e) -> std::string {
               return std::format(
@@ -861,17 +864,7 @@ class MirDumper {
                   "FieldAccessExpr receiver=Expr[{}] field={}",
                   m.receiver.value,
                   std::visit(
-                      Overloaded{
-                          [](const ClassFieldTarget& t) {
-                            return FormatField(t);
-                          },
-                          [](const ClosureFieldTarget& t) {
-                            return FormatField(t);
-                          },
-                          [](const CrossUnitClassFieldTarget& t) {
-                            return FormatField(t);
-                          }},
-                      m.field));
+                      [](const auto& t) { return FormatField(t); }, m.field));
             },
             [](const DerefExpr& d) -> std::string {
               return std::format("DerefExpr pointer=Expr[{}]", d.pointer.value);

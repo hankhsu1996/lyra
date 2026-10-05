@@ -290,12 +290,9 @@ auto InterfaceActualRoutes(
   }
   // The actual is a name like any other, so where it starts -- here, or where
   // its search landed above this instance (LRM 23.8) -- is the name's own.
-  RouteOrigin origin = FromReader{};
-  if (named != nullptr) {
-    auto started = unit_lowerer.StartOf(frame, named->hierRef, span);
-    if (!started) return std::unexpected(std::move(started.error()));
-    origin = *std::move(started);
-  }
+  const RouteOrigin origin = named == nullptr
+                                 ? RouteOrigin{FromReader{}}
+                                 : unit_lowerer.StartOf(frame, named->hierRef);
   // How many objects the member stands for is what the child published; how
   // many this connection supplies is what the parent worked out from the
   // frontend. Each side counted its own and they meet here -- a count taken

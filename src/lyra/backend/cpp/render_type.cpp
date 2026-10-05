@@ -193,7 +193,7 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             out += "lyra::value::WildcardKey";
           },
           [&](const mir::ObjectType& o) {
-            Write(out, CppClassName(unit.GetClass(o.class_id), o.class_id));
+            Write(out, CppClassRef(unit, o.of));
           },
           // A struct is the type its declaring unit defines: named as that unit
           // names it, inside the unit's types namespace where another unit
@@ -213,10 +213,6 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                           "::", ToCppName(ref.name));
                     }},
                 s.declaration);
-          },
-          [&](const mir::CrossUnitClassType& e) {
-            Write(
-                out, CppUnitScope(e.unit_name), "::", ToCppName(e.class_name));
           },
           [&](const mir::RuntimeClassType& e) {
             out += RuntimeClassCppType(e.which);
@@ -378,7 +374,6 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::VoidType&) { return reaches_nothing(); },
           [&](const mir::EmptyType&) { return reaches_nothing(); },
           [&](const mir::ObjectType&) { return reaches_nothing(); },
-          [&](const mir::CrossUnitClassType&) { return reaches_nothing(); },
           [&](const mir::RuntimeClassType&) { return reaches_nothing(); },
           [&](const mir::RuntimeEffectsType&) { return reaches_nothing(); },
           [&](const mir::FilesType&) { return reaches_nothing(); },
@@ -546,7 +541,6 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::WildcardIndexType& t) { by_naming_itself(t); },
           [&](const mir::ObjectType& t) { by_naming_itself(t); },
           [&](const mir::StructType& t) { by_naming_itself(t); },
-          [&](const mir::CrossUnitClassType& t) { by_naming_itself(t); },
           [&](const mir::RuntimeClassType& t) { by_naming_itself(t); },
           [&](const mir::RuntimeEffectsType& t) { by_naming_itself(t); },
           [&](const mir::FilesType& t) { by_naming_itself(t); },

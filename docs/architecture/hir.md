@@ -51,9 +51,13 @@ that identity is the suspect, not the analysis.
 1. Every compilation-unit-local declaration has a typed id. References to that declaration carry the
    typed id, never a frontend symbol id. _Source-faithful consequence: HIR is the layer's source of
    identity; frontend identity ends at AST-to-HIR._
-2. A reference that targets a declaration outside the current compilation unit uses a separate,
-   explicitly named variant. Local and cross-unit references never share a key space. _Source-
-   faithful consequence: SV's compilation-unit boundary is explicit in the IR, not flattened._
+2. A reference that reaches a declaration through what a unit published uses a separate, explicitly
+   named variant, naming the declaration by that unit and the name it was published under -- the
+   only identity a signature carries -- never by a typed id of the current unit. Such a reference
+   may name the current unit itself, where a hierarchical name leaves the instance and reaches
+   another instance of the same module (LRM 23.6); which unit it names is part of the identity, and
+   resolving it to the unit's own declaration is the lowering's. _Source-faithful consequence: SV's
+   compilation-unit boundary is explicit in the IR, not flattened._
 3. HIR preserves LRM-level constructs without flattening them into lower-level primitives. Loops are
    loops, assertions are assertions, classes are classes. _Source-faithful consequence: the
    abstraction level is the language the user wrote; flattening into a generic vocabulary is MIR's

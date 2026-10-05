@@ -1192,9 +1192,8 @@ auto LowerSubroutineCall(
   // resolved it to in the instance being lowered: in another instance of this
   // unit the same text reaches another object. Only a name that stays inside
   // the instance may enable a subroutine this unit declares as its own.
-  auto start = unit_lowerer.StartOf(frame, call.lookupInfo.hierRef, span);
-  if (!start) return std::unexpected(std::move(start.error()));
-  const auto binding = std::holds_alternative<FromReader>(*start)
+  RouteOrigin start = unit_lowerer.StartOf(frame, call.lookupInfo.hierRef);
+  const auto binding = std::holds_alternative<FromReader>(start)
                            ? unit_lowerer.LookupSubroutineBinding(*sym)
                            : std::nullopt;
   // What is left is a subroutine another instance declares -- one an interface
@@ -1203,7 +1202,7 @@ auto LowerSubroutineCall(
   // does.
   if (!binding.has_value()) {
     return LowerObjectSubroutineCall(
-        unit_lowerer, frame, *std::move(start), *sym, std::move(arg_ids), span);
+        unit_lowerer, frame, std::move(start), *sym, std::move(arg_ids), span);
   }
   // The scope that declares the callee, reached the way a reference to a
   // declaration in that same scope is: a climb to the nearest scope enclosing

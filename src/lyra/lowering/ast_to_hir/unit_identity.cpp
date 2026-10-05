@@ -218,39 +218,31 @@ auto ParameterInput(
 // types and positions from there, so two instantiations bound to different
 // interfaces build different objects and are different units, exactly as two
 // parameter bindings are. A port carrying a range carries one interface per
-// element, and where those are not all one unit, each element's is part of the
-// answer, in row-major order. A modport belongs to the same answer, and not
-// merely because it narrows: a view also names things of its own (LRM 25.5.4),
-// and two views may give one name different storage, so a unit bound through
-// each reaches a different place under the same spelling.
+// element, each its own, so the answer is which unit stands at each position.
+// A modport belongs to the same answer, and not merely because it narrows: a
+// view also names things of its own (LRM 25.5.4), and two views may give one
+// name different storage, so a unit bound through each reaches a different
+// place under the same spelling.
 auto InterfacePortInput(
     const slang::ast::PortConnection& connection,
     const SpecializationPolicy& policy) -> SpecializationInput {
   const auto [instances, modport] =
       ConnectedInterfaceOf(connection.getIfaceConn());
-  std::vector<std::string> units;
-  units.reserve(instances.size());
+  FixedInterface fixed{
+      .units = {},
+      .taken = {},
+      .modport =
+          modport == nullptr ? std::string{} : std::string{modport->name}};
+  fixed.taken.reserve(instances.size());
   for (const slang::ast::InstanceSymbol* instance : instances) {
-    units.push_back(SpecializationName(*instance, policy));
-  }
-  std::string unit_name;
-  if (std::ranges::all_of(units, [&](const std::string& unit) {
-        return unit == units.front();
-      })) {
-    unit_name = units.empty() ? std::string{} : units.front();
-  } else {
-    for (const std::string& unit : units) {
-      unit_name += unit_name.empty() ? "[" : ",";
-      unit_name += unit;
-    }
-    unit_name += ']';
+    std::string unit = SpecializationName(*instance, policy);
+    const auto known = std::ranges::find(fixed.units, unit);
+    fixed.taken.push_back(
+        static_cast<std::uint32_t>(known - fixed.units.begin()));
+    if (known == fixed.units.end()) fixed.units.push_back(std::move(unit));
   }
   return SpecializationInput{
-      .name = std::string{connection.port.name},
-      .kind = FixedInterface{
-          .unit_name = std::move(unit_name),
-          .modport =
-              modport == nullptr ? std::string{} : std::string{modport->name}}};
+      .name = std::string{connection.port.name}, .kind = std::move(fixed)};
 }
 
 // Whether `symbol` is the scope a compilation unit is: a package (LRM 26), a
@@ -317,9 +309,16 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
             [](const FixedValue& v) { return v.value; },
             [](const FixedType& v) { return v.type; },
             [](const FixedInterface& v) {
-              return v.modport.empty()
-                         ? v.unit_name
-                         : std::format("{}.{}", v.unit_name, v.modport);
+              std::string at = "<";
+              for (const std::string& unit : v.units) {
+                at += unit;
+                at += ',';
+              }
+              at += '|';
+              for (const std::uint32_t taken : v.taken) {
+                at += std::format("{},", taken);
+              }
+              return std::format("{}|{}>", at, v.modport);
             },
             [](const SuppliedAtConstruction&) {
               return std::string{"<supplied>"};

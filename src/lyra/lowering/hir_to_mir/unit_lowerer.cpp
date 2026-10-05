@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <expected>
+#include <format>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -35,6 +37,7 @@
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -365,8 +368,8 @@ auto PublishObjectEntry(
   const auto owning_pointer = [&](mir::ClassId cls) {
     return unit.types.Intern(
         mir::Type{mir::PointerType{
-            .pointee =
-                unit.types.Intern(mir::Type{mir::ObjectType{.class_id = cls}}),
+            .pointee = unit.types.Intern(
+                mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{cls}}}),
             .ownership = mir::PointerOwnership::kUnique}});
   };
   // What it makes is the class that realizes the object; what it answers with
@@ -398,11 +401,7 @@ auto PublishObjectEntry(
                   .callee = mir::Construct{},
                   .arguments = std::move(arguments)},
           .type = made});
-  body.AppendStmt(
-      mir::ReturnStmt{
-          .value = body.exprs.Add(
-              mir::Expr{
-                  .data = mir::CastExpr{.operand = built}, .type = owning})});
+  body.AppendStmt(mir::ReturnStmt{.value = ObjectAs(body, built, owning)});
 
   return unit.callables.Add(
       mir::CallableDecl{
@@ -457,33 +456,61 @@ auto UnitLowerer::MemberCellType(
       storage);
 }
 
-auto UnitLowerer::ExternalUnitClass(hir::ExternalScopeClassId hir_id) const
-    -> mir::CrossUnitClassRef {
+auto UnitLowerer::ScopeClassIdentity(hir::ExternalScopeClassId hir_id) const
+    -> mir::DeclaredClassRef {
   const hir::ExternalScopeClass& scope_class =
       hir_->external_scope_classes.Get(hir_id);
-  return mir::CrossUnitClassRef{
-      .unit_name = scope_class.unit_name,
-      .class_name = scope_class.signature.class_name};
+  return ClassIdentityOf(
+      scope_class.unit_name, scope_class.signature.class_name);
 }
 
 auto UnitLowerer::UnitObjectType(hir::ExternalScopeClassId hir_id) const
     -> mir::TypeId {
-  const hir::ExternalScopeClass& scope_class =
-      hir_->external_scope_classes.Get(hir_id);
   return unit_.types.Intern(
-      mir::Type{mir::CrossUnitClassType{
-          .unit_name = scope_class.unit_name,
-          .class_name = scope_class.signature.class_name}});
+      mir::Type{mir::ObjectType{.of = ScopeClassIdentity(hir_id)}});
 }
 
-auto UnitLowerer::UnitObjectNamed(
+auto UnitLowerer::ClassIdentityOf(
     const std::string& unit_name, const std::string& class_name) const
-    -> mir::Type {
-  if (!external_unit_classes_.contains({unit_name, class_name})) {
-    return mir::Type{mir::VoidType{}};
+    -> mir::DeclaredClassRef {
+  if (unit_name == unit_.name) {
+    return mir::IntraUnitClassRef{
+        .class_id = PublishedScopeClassNamed(class_name)};
   }
-  return mir::Type{mir::CrossUnitClassType{
-      .unit_name = unit_name, .class_name = class_name}};
+  return mir::CrossUnitClassRef{
+      .unit_name = unit_name, .class_name = class_name};
+}
+
+auto UnitLowerer::PublishedScopeClassNamed(std::string_view class_name) const
+    -> mir::ClassId {
+  const auto it = published_scope_classes_.find(class_name);
+  if (it == published_scope_classes_.end()) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::PublishedScopeClassNamed: this unit published no "
+            "scope as '{}' -- please report this as a bug",
+            class_name));
+  }
+  return it->second;
+}
+
+auto UnitLowerer::TakePublishedScopeClass(
+    const hir::ScopePublication& published) -> mir::ClassId {
+  const mir::ClassId id = unit_.DeclareClass();
+  const auto answer_to = [&](const std::string& name) {
+    if (!published_scope_classes_.emplace(name, id).second) {
+      throw InternalError(
+          std::format(
+              "UnitLowerer::TakePublishedScopeClass: two scopes of this unit "
+              "are published as '{}' -- please report this as a bug",
+              name));
+    }
+  };
+  answer_to(published.signature.class_name);
+  for (const std::string& alias : published.aliases) {
+    answer_to(alias);
+  }
+  return id;
 }
 
 auto UnitLowerer::TakeClassIdentities(const hir::ClassDecl& decl)
@@ -497,8 +524,8 @@ auto UnitLowerer::TakeClassIdentities(const hir::ClassDecl& decl)
   }
   return ClassTranslation{
       .id = id,
-      .object_type =
-          unit_.types.Intern(mir::Type{mir::ObjectType{.class_id = id}}),
+      .object_type = unit_.types.Intern(
+          mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{id}}}),
       .methods = {decl.methods.size(), std::move(methods)}};
 }
 
@@ -522,15 +549,6 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   // A composite type's translation reads the translations of its components,
   // which HIR minted before it, so the answers land one at a time and each one
   // can see the ones before it.
-  // Every scope class this unit compiled against is named before any type
-  // translates: a type may name one of them -- an interface port's does (LRM
-  // 25.3) -- and it has to resolve to the class that unit builds.
-  for (const hir::ExternalScopeClass& scope_class :
-       hir_->external_scope_classes) {
-    external_unit_classes_.emplace(
-        scope_class.unit_name, scope_class.signature.class_name);
-  }
-
   type_translations_ =
       base::Translation<hir::TypeId, mir::TypeId>{hir_->types.size()};
   for (const hir::TypeId hir_id : hir_->types.Ids()) {
@@ -638,25 +656,31 @@ auto UnitLowerer::RunDesignRoot(DesignNamespaces namespaces)
 auto UnitLowerer::PopulateModuleRoot(DesignNamespaces namespaces)
     -> diag::Result<void> {
   WalkFrame root_frame;
+  // The tree of scope lowerers is built first, and building it takes the
+  // identity of every class the unit published of its scopes: a type a record
+  // of another unit states may name one -- wherever a name leaves an instance
+  // of this unit and reaches another -- so each exists before any type
+  // translates. The namespaces the design root brings up ride on the root
+  // scope's lowering and are empty for a source module.
+  const std::unique_ptr<StructuralScopeLowerer> root =
+      StructuralScopeLowerer::ForScope(
+          *this, nullptr, hir_->root_scope, std::move(namespaces));
   if (auto prologue = PublishUnitDeclarations(); !prologue) {
     return std::unexpected(std::move(prologue.error()));
   }
 
-  // Two-sweep structural lowering: the first sweep mints every class identity
-  // and settles its declaration; the second lowers every body and commits the
-  // composed class to the unit. The namespaces the design root brings up ride
-  // on the root scope's lowering and are empty for a source module.
-  StructuralScopeLowerer root(
-      *this, nullptr, hir_->root_scope, std::move(namespaces));
-  auto top_r = root.DeclareShape();
+  // Two-sweep structural lowering: the first sweep settles every class's
+  // declaration; the second lowers every body and commits the composed class
+  // to the unit.
+  auto top_r = root->DeclareShape();
   if (!top_r) return std::unexpected(std::move(top_r.error()));
-  auto body_r = root.PopulateBodies(root_frame);
+  auto body_r = root->PopulateBodies(root_frame);
   if (!body_r) return std::unexpected(std::move(body_r.error()));
 
   unit_.content = mir::RootedTree{
       .root = *top_r,
       .object_entry = PublishObjectEntry(
-          unit_, *top_r, root.PublishedClassId(), root.ConstructionValues())};
+          unit_, *top_r, root->PublishedClassId(), root->ConstructionValues())};
   return {};
 }
 
@@ -806,10 +830,8 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
 
 auto UnitLowerer::MakeExternalClassPointee(const hir::ExternalClassRef& ref)
     -> mir::TypeId {
-  unit_.ConsumeClassOf(ref.unit_name, ref.class_name);
   return unit_.types.Intern(
-      mir::Type{mir::CrossUnitClassType{
-          .unit_name = ref.unit_name, .class_name = ref.class_name}});
+      mir::Type{mir::ObjectType{.of = MakeExternalClassRef(ref)}});
 }
 
 auto UnitLowerer::MakeExternalClassRef(const hir::ExternalClassRef& ref)
@@ -834,14 +856,14 @@ auto UnitLowerer::TranslateClassRef(const hir::ClassRef& ref)
 }
 
 auto UnitLowerer::MakeCrossUnitClassFieldTarget(
-    const hir::ExternalClassPropertyTarget& target)
-    -> mir::CrossUnitClassFieldTarget {
+    const hir::ExternalClassPropertyTarget& target) -> mir::ClassFieldTarget {
   unit_.ConsumeClassOf(target.unit_name, target.class_name);
   // The properties a class publishes are a prefix of its own storage, so the
   // position counted out of the signature is the slot that class gave.
-  return mir::CrossUnitClassFieldTarget{
-      .unit_name = target.unit_name,
-      .class_name = target.class_name,
+  return mir::ClassFieldTarget{
+      .owner =
+          mir::CrossUnitClassRef{
+              .unit_name = target.unit_name, .class_name = target.class_name},
       .slot = mir::FieldId{target.property.value}};
 }
 
@@ -905,15 +927,23 @@ auto UnitLowerer::RecordPublishedScopeClass(
     hir::ExternalScopeClassId hir_id, const hir::ExternalScopeClass& scope)
     -> void {
   const std::string& class_name = scope.signature.class_name;
+  // A class this unit published is its own: what is known of it is the
+  // declaration this unit states, laid out where its scope's shape is, and it
+  // is no dependency.
+  if (std::holds_alternative<mir::IntraUnitClassRef>(
+          ScopeClassIdentity(hir_id))) {
+    return;
+  }
   unit_.ConsumeClassOf(scope.unit_name, class_name);
-  // The class of a scope of a unit -- one of its instances, or a generate
-  // block inside one -- is a class of that unit, reached the way any other is.
-  // It is a scope of the design hierarchy, so it extends the library's root of
-  // that tree, and what the scope published is its first fields. What the unit
-  // adds while lowering its bodies is placed after them and named by nothing,
-  // so the record states none of it; no other unit extends the class, and its
-  // own unit makes every object of it, so nothing here needs its size. A
-  // published subroutine is one of its methods, called directly.
+  // The class of a scope of another unit -- one of its instances, or a
+  // generate block inside one -- is a class of that unit, reached the way any
+  // other is. It is a scope of the design hierarchy, so it extends the
+  // library's root of that tree, and what the scope published is its first
+  // fields. What the unit adds while lowering its bodies is placed after them
+  // and named by nothing, so the record states none of it; no other unit
+  // extends the class, and its own unit makes every object of it, so nothing
+  // here needs its size. A published subroutine is one of its methods, called
+  // directly.
   mir::ExternalClass record{
       .unit_name = scope.unit_name,
       .class_name = class_name,
@@ -939,7 +969,7 @@ auto UnitLowerer::RecordPublishedScopeClass(
   }
   external_scope_layouts_.emplace(
       hir_id,
-      ExternalScopeLayout{
+      ScopeClassLayout{
           .cls =
               mir::CrossUnitClassRef{
                   .unit_name = scope.unit_name, .class_name = class_name},
@@ -951,21 +981,54 @@ auto UnitLowerer::RecordPublishedScopeClass(
   }
 }
 
-auto UnitLowerer::ExternalScopeLayoutOf(hir::ExternalScopeClassId hir_id) const
-    -> const ExternalScopeLayout& {
-  const auto it = external_scope_layouts_.find(hir_id);
-  if (it == external_scope_layouts_.end()) {
-    throw InternalError(
-        "UnitLowerer::ExternalScopeLayoutOf: every scope class of another unit "
-        "this unit records is laid out before any body lowers");
-  }
-  return it->second;
+auto UnitLowerer::ScopeClassLayoutOf(hir::ExternalScopeClassId hir_id) const
+    -> const ScopeClassLayout& {
+  // What is known of a class is one question with two answers: the layout this
+  // unit gave a class of its own, and the record of what another unit
+  // published.
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntraUnitClassRef& own) -> const ScopeClassLayout& {
+            const auto it = own_scope_layouts_.find(own.class_id);
+            if (it == own_scope_layouts_.end()) {
+              throw InternalError(
+                  "UnitLowerer::ScopeClassLayoutOf: every scope class of this "
+                  "unit is laid out before any body lowers");
+            }
+            return it->second;
+          },
+          [&](const mir::CrossUnitClassRef&) -> const ScopeClassLayout& {
+            const auto it = external_scope_layouts_.find(hir_id);
+            if (it == external_scope_layouts_.end()) {
+              throw InternalError(
+                  "UnitLowerer::ScopeClassLayoutOf: every scope class of "
+                  "another unit this unit records is laid out before any body "
+                  "lowers");
+            }
+            return it->second;
+          }},
+      ScopeClassIdentity(hir_id));
+}
+
+void UnitLowerer::RecordOwnScopeLayout(
+    mir::ClassId published, std::vector<mir::TypeId> field_types,
+    PublishedScopeLayout layout) {
+  own_scope_layouts_.emplace(
+      published, ScopeClassLayout{
+                     .cls = mir::IntraUnitClassRef{.class_id = published},
+                     .field_types = std::move(field_types),
+                     .published = std::move(layout)});
 }
 
 namespace {
 
 // The member holding what a generate construct built: one handle for a
 // construct that builds at most one block, and a sequence of them for a loop.
+// Each block is published under a class of its own, and which of them are one
+// body is decided by lowering the bodies, which a unit's publication does not
+// depend on -- an edit to a body never changes what a referrer compiles
+// against. So the handle holds the base every block extends, as a C++ header
+// keeps a pointer to a base whose derived classes its implementation defines.
 auto BlockHandles(const mir::CompilationUnit& unit, bool one_per_block)
     -> mir::TypeId {
   return one_per_block ? unit.types.Intern(
@@ -1036,7 +1099,7 @@ auto UnitLowerer::TranslateClassPropertyTarget(
     const hir::LocalClassPropertyTarget& local) const -> mir::ClassFieldTarget {
   const mir::ClassId owner = TranslateClass(local.owner);
   return mir::ClassFieldTarget{
-      .owner = owner,
+      .owner = mir::IntraUnitClassRef{owner},
       .slot = GetClassShape(owner).field_translation.Get(local.field)};
 }
 
@@ -1111,14 +1174,22 @@ auto UnitLowerer::MakeNamespaceCallableTarget(
 
 auto UnitLowerer::MakeExternalUnitMethodTarget(
     hir::ExternalScopeClassId scope_class,
-    hir::PublishedCallableId callable) const
-    -> mir::ExternalUnitClassMethodTarget {
+    hir::PublishedCallableId callable) const -> mir::DirectTarget {
   const hir::ExternalScopeClass& scope =
       Hir().external_scope_classes.Get(scope_class);
-  return mir::ExternalUnitClassMethodTarget{
-      .unit_name = scope.unit_name,
-      .class_name = scope.signature.class_name,
-      .method_name = scope.signature.callables.Get(callable).name};
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntraUnitClassRef& own) -> mir::DirectTarget {
+            return mir::CallableTarget{
+                .owner = own.class_id, .slot = PublishedMethodOf(callable)};
+          },
+          [&](const mir::CrossUnitClassRef& other) -> mir::DirectTarget {
+            return mir::ExternalUnitClassMethodTarget{
+                .unit_name = other.unit_name,
+                .class_name = other.class_name,
+                .method_name = scope.signature.callables.Get(callable).name};
+          }},
+      ScopeClassIdentity(scope_class));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

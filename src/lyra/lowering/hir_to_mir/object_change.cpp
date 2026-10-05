@@ -2,10 +2,8 @@
 
 #include <optional>
 #include <utility>
-#include <variant>
 #include <vector>
 
-#include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -45,18 +43,9 @@ auto ObjectEventSourceOf(
 
 auto PropertyStorage(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
-    const PropertyName& property, mir::TypeId type) -> mir::Expr {
-  return std::visit(
-      Overloaded{
-          [&](const mir::ClassFieldTarget& field) {
-            return mir::MakeFieldAccessExpr(
-                BuildObjectDeref(unit, block, object), field, type);
-          },
-          [&](const mir::CrossUnitClassFieldTarget& field) {
-            return mir::MakeFieldAccessExpr(
-                BuildObjectDeref(unit, block, object), field, type);
-          }},
-      property);
+    const mir::ClassFieldTarget& property, mir::TypeId type) -> mir::Expr {
+  return mir::MakeFieldAccessExpr(
+      BuildObjectDeref(unit, block, object), property, type);
 }
 
 auto OpenObjectWrite(
@@ -75,23 +64,13 @@ auto OpenObjectWrite(
 
 auto PropertyReference(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId receiver,
-    const PropertyName& property, mir::TypeId type) -> mir::ExprId {
+    const mir::ClassFieldTarget& property, mir::TypeId type) -> mir::ExprId {
   const mir::TypeId reference = unit.types.Intern(
       mir::Type{mir::RefType{
           .pointee = type, .mutability = mir::Mutability::kMutable}});
-  return std::visit(
-      Overloaded{
-          [&](const mir::ClassFieldTarget& field) {
-            return Call(
-                block, support::BuiltinFn::kReferProperty, field, {receiver},
-                reference);
-          },
-          [&](const mir::CrossUnitClassFieldTarget& field) {
-            return Call(
-                block, support::BuiltinFn::kReferProperty, field, {receiver},
-                reference);
-          }},
-      property);
+  return Call(
+      block, support::BuiltinFn::kReferProperty, property, {receiver},
+      reference);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

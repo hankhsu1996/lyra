@@ -30,7 +30,9 @@
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -66,10 +68,12 @@ struct ConstructionValue {
   mir::TypeId type;
 };
 
-// One subroutine a unit published: the identifier a referrer spells and the
-// body of the realizing class that carries it out. The published class states
-// a method under that identifier, entering the body on the object.
+// One subroutine a unit published: the position its signature gave it, the
+// identifier a referrer spells, and the body of the realizing class that
+// carries it out. The published class states a method under that identifier,
+// entering the body on the object.
 struct PublishedSubroutine {
+  hir::PublishedCallableId published;
   std::string name;
   mir::CallableId body;
 };
@@ -125,6 +129,15 @@ class StructuralScopeLowerer {
         hir_scope_(&hir_scope),
         namespaces_(std::move(namespaces)) {
   }
+
+  // The lowering of `hir_scope`, a scope of the design hierarchy, and of every
+  // scope it holds, each taking the identity of the class its unit published
+  // of it as it is built -- which is before any type translates, since a type
+  // may name one.
+  [[nodiscard]] static auto ForScope(
+      UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
+      const hir::StructuralScope& hir_scope, DesignNamespaces namespaces = {})
+      -> std::unique_ptr<StructuralScopeLowerer>;
 
   // Mints this class's identity, builds its structural shape, publishes the
   // shape so peer body lowering can query it, and recurses to declare every
@@ -488,11 +501,14 @@ class StructuralScopeLowerer {
   // referrer compiles against this one and holds nothing else, so what the unit
   // adds while lowering its bodies moves no field a referrer reads.
   mir::ClassId published_class_id_{};
-  // The subroutines this scope published, in the order its signature states
-  // them. Settled while the shape is declared, where a subroutine's identity
+  // The subroutines this scope published, each with the position its signature
+  // gave it. Settled while the shape is declared, where a subroutine's identity
   // is taken; read where the published class is built.
   std::vector<PublishedSubroutine> published_subroutines_;
-  std::vector<std::unique_ptr<StructuralScopeLowerer>> children_;
+  // The lowering of each block of each generate construct this scope holds,
+  // by the construct's position and then the block's, built with this one.
+  std::vector<std::vector<std::unique_ptr<StructuralScopeLowerer>>>
+      generate_children_;
   // The classes this scope declares (LRM 23.9). A class declared here is a type
   // of this scope's instance (LRM 6.22), so the scope both settles its shape
   // and lowers its bodies -- which is what gives a class body the reach a
@@ -505,14 +521,13 @@ class StructuralScopeLowerer {
 // unit published.
 template <typename Lowerer>
 auto PropertyNameOf(Lowerer& lowerer, const hir::ClassPropertyTarget& target)
-    -> PropertyName {
+    -> mir::ClassFieldTarget {
   return std::visit(
       Overloaded{
-          [&](const hir::LocalClassPropertyTarget& local) -> PropertyName {
+          [&](const hir::LocalClassPropertyTarget& local) {
             return lowerer.Owner().TranslateClassPropertyTarget(local);
           },
-          [&](const hir::ExternalClassPropertyTarget& published)
-              -> PropertyName {
+          [&](const hir::ExternalClassPropertyTarget& published) {
             return lowerer.Owner().MakeCrossUnitClassFieldTarget(published);
           }},
       target);
@@ -529,12 +544,31 @@ auto BuildClassPropertyAccess(
       PropertyNameOf(lowerer, target), reached);
 }
 
-// The type `field` was declared with, read off its class's shape, which is
-// settled before any body lowers.
+// The type `field` was declared with: read off its class's shape, which is
+// settled before any body lowers, for a class of this unit, and off the record
+// of what another unit published for one of that unit's.
 [[nodiscard]] inline auto FieldTypeOf(
     const UnitLowerer& unit_lowerer, const mir::ClassFieldTarget& field)
     -> mir::TypeId {
-  return unit_lowerer.GetClassShape(field.owner).fields.Get(field.slot).type;
+  return std::visit(
+      Overloaded{
+          [&](const mir::IntraUnitClassRef& own) {
+            return unit_lowerer.GetClassShape(own.class_id)
+                .fields.Get(field.slot)
+                .type;
+          },
+          [&](const mir::CrossUnitClassRef& other) {
+            const mir::ExternalClass* published = mir::FindExternalClass(
+                unit_lowerer.Unit().external_classes, other.unit_name,
+                other.class_name);
+            if (published == nullptr) {
+              throw InternalError(
+                  "FieldTypeOf: a field of another unit's class is reached "
+                  "through what that unit published, which this unit records");
+            }
+            return published->fields.Get(field.slot).type;
+          }},
+      field.owner);
 }
 
 // A value the walk has reached, and the type it has there.

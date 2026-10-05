@@ -56,18 +56,98 @@
 
 namespace lyra::lowering::ast_to_hir {
 
+namespace {
+
+// Where one parameter an instance takes at construction gets its value: the
+// expression its instantiation wrote (LRM 23.10.2), or none where the value
+// was given elsewhere -- a defparam, a configuration (LRM 23.10.1, 33.4.3) --
+// and is then handed as the constant it settled to.
+struct ArgumentSource {
+  const slang::ast::ParameterSymbol* parameter;
+  const slang::ast::Expression* written;
+};
+
+// How one instance is built: the unit it is an instance of, and where each
+// parameter it takes at construction gets its value, in the unit's own order.
+struct InstanceConstruction {
+  std::string unit;
+  std::vector<ArgumentSource> arguments;
+};
+
+auto ConstructionOf(
+    const slang::ast::InstanceSymbol& instance,
+    const SpecializationPolicy& policy) -> InstanceConstruction {
+  InstanceConstruction built{
+      .unit = SpecializationName(instance, policy), .arguments = {}};
+  for (const slang::ast::ParameterSymbol* param :
+       policy.SuppliedParametersOf(instance)) {
+    built.arguments.push_back(
+        ArgumentSource{
+            .parameter = param,
+            .written = ValueWrittenAtInstantiation(instance, *param)});
+  }
+  return built;
+}
+
+// Whether two elements of one instantiation are built alike. The
+// instantiation writes one assignment for every element (LRM 23.3.2), so two
+// written arguments are the same expression, and a value given elsewhere is
+// told apart by the constant it settled to.
+auto BuiltAlike(const InstanceConstruction& a, const InstanceConstruction& b)
+    -> bool {
+  return a.unit == b.unit &&
+         std::ranges::equal(
+             a.arguments, b.arguments,
+             [](const ArgumentSource& x, const ArgumentSource& y) {
+               if ((x.written == nullptr) != (y.written == nullptr)) {
+                 return false;
+               }
+               return x.written != nullptr ||
+                      ValueIdentity(x.parameter->getValue()) ==
+                          ValueIdentity(y.parameter->getValue());
+             });
+}
+
+// The arguments `child`'s constructor is passed, built as `built` says. The
+// front end binds the instantiation's own assignment where it is written (LRM
+// 23.10.2), so that is lowered here, against this scope's names. A value given
+// elsewhere was written in another scope and is part of what this unit is, so
+// it is handed as the constant it settled to.
+auto LowerConstructorArguments(
+    StructuralScopeLowerer& lowerer, const InstanceConstruction& built,
+    const slang::ast::InstanceSymbol& child, WalkFrame frame)
+    -> diag::Result<std::vector<hir::Expr>> {
+  UnitLowerer& owner = lowerer.Owner();
+  std::vector<hir::Expr> arguments;
+  for (const ArgumentSource& source : built.arguments) {
+    if (source.written != nullptr) {
+      auto lowered = lowerer.LowerExpr(*source.written, frame);
+      if (!lowered) return std::unexpected(std::move(lowered.error()));
+      arguments.push_back(*std::move(lowered));
+      continue;
+    }
+    const auto span = owner.SourceMapper().PointSpanOf(child.location);
+    auto type = owner.InternType(source.parameter->getType(), span);
+    if (!type) return std::unexpected(std::move(type.error()));
+    auto value = MakeConstantValueExpr(
+        owner.Unit(), frame, source.parameter->getValue(), *type, span);
+    if (!value) return std::unexpected(std::move(value.error()));
+    arguments.push_back(*std::move(value));
+  }
+  return arguments;
+}
+
+}  // namespace
+
 // The declaration of the child objects `elements` are, in row-major order of
 // their positions; `dims` carries the element counts of an array, a scalar
 // instance being the empty case rather than a shape of its own. What each is
 // comes off this unit's record of the class its unit's instances are, never
 // from the unit's own name.
 //
-// Two elements are one alternative where they are instances of one unit handed
-// the same thing. What the instantiation wrote is the same expression for every
-// element (LRM 23.3.2), so only a value given elsewhere can tell them apart,
-// and that one by the constant it settled to. Each alternative's arguments are
-// lowered once and stored among this scope's expressions, which is where the
-// construction reads them.
+// Every element is described by how it is built, and elements built alike are
+// one alternative. Each alternative's arguments are lowered once and stored
+// among this scope's expressions, which is where the construction reads them.
 auto StructuralScopeLowerer::BuildInstanceMember(
     std::string_view instance_name,
     std::span<const slang::ast::InstanceSymbol* const> elements,
@@ -79,24 +159,20 @@ auto StructuralScopeLowerer::BuildInstanceMember(
       .alternatives = {},
       .taken = {}};
   member.taken.reserve(elements.size());
-  std::vector<std::vector<std::string>> told_apart_by;
+  std::vector<InstanceConstruction> distinct;
   for (const slang::ast::InstanceSymbol* element : elements) {
-    std::vector<std::string> identity{
-        SpecializationName(*element, owner_->Specialization())};
-    for (const slang::ast::ParameterSymbol* param :
-         owner_->Specialization().SuppliedParametersOf(*element)) {
-      identity.push_back(
-          ValueWrittenAtInstantiation(*element, *param) != nullptr
-              ? std::string{}
-              : ValueIdentity(param->getValue()));
-    }
-    const auto known = std::ranges::find(told_apart_by, identity);
-    if (known != told_apart_by.end()) {
+    InstanceConstruction built =
+        ConstructionOf(*element, owner_->Specialization());
+    const auto known =
+        std::ranges::find_if(distinct, [&](const InstanceConstruction& other) {
+          return BuiltAlike(other, built);
+        });
+    if (known != distinct.end()) {
       member.taken.push_back(
-          static_cast<std::uint32_t>(known - told_apart_by.begin()));
+          static_cast<std::uint32_t>(known - distinct.begin()));
       continue;
     }
-    auto arguments = LowerConstructorArguments(*element, frame);
+    auto arguments = LowerConstructorArguments(*this, built, *element, frame);
     if (!arguments) return std::unexpected(std::move(arguments.error()));
     std::vector<hir::ExprId> stored;
     stored.reserve(arguments->size());
@@ -107,9 +183,9 @@ auto StructuralScopeLowerer::BuildInstanceMember(
         static_cast<std::uint32_t>(member.alternatives.size()));
     member.alternatives.push_back(
         hir::InstanceAlternative{
-            .scope_class = owner_->ScopeClassOfInstance(*element),
+            .scope_class = owner_->ExternalScopeClassOf(built.unit),
             .arguments = std::move(stored)});
-    told_apart_by.push_back(std::move(identity));
+    distinct.push_back(std::move(built));
   }
   return member;
 }
@@ -523,14 +599,6 @@ auto StructuralScopeLowerer::PopulateInterfacePortMember(
   for (const slang::ConstantRange& dim : *declared) {
     array_dims.push_back(dim.width());
   }
-  // The port holds an object of each kind bound to it, and the parent binding
-  // it holds them the same way, so the unit records every kind whether or not
-  // a name here reaches into one: what a published member holds is spelled
-  // alike where it is declared and where it is filled.
-  for (const hir::UnitObjectType& kind :
-       owner_->InterfacePortObjects(port).kinds) {
-    owner_->ExternalScopeClassOf(kind.unit_name, kind.class_name);
-  }
   const hir::InterfacePortId local =
       frame.current_structural_scope->interface_ports.Add(
           hir::InterfacePortDecl{
@@ -830,36 +898,6 @@ auto StructuralScopeLowerer::PopulateInstanceMember(
   frame.current_structural_scope->instance_members.Define(
       owner_->InstanceMemberIdOf(inst), *std::move(member));
   return {};
-}
-
-// The arguments `child`'s constructor is passed, one per parameter the child
-// takes at construction, in the child's own order. The front end binds the
-// instantiation's own assignment where it is written (LRM 23.10.2), so that is
-// lowered here, against this scope's names. A value given elsewhere -- a
-// defparam, a configuration -- was written in another scope and is part of what
-// this unit is, so it is handed as the constant it settled to.
-auto StructuralScopeLowerer::LowerConstructorArguments(
-    const slang::ast::InstanceSymbol& child, WalkFrame frame)
-    -> diag::Result<std::vector<hir::Expr>> {
-  std::vector<hir::Expr> arguments;
-  for (const slang::ast::ParameterSymbol* param :
-       owner_->Specialization().SuppliedParametersOf(child)) {
-    if (const slang::ast::Expression* given =
-            ValueWrittenAtInstantiation(child, *param)) {
-      auto lowered = LowerExpr(*given, frame);
-      if (!lowered) return std::unexpected(std::move(lowered.error()));
-      arguments.push_back(*std::move(lowered));
-      continue;
-    }
-    const auto span = owner_->SourceMapper().PointSpanOf(child.location);
-    auto type = owner_->InternType(param->getType(), span);
-    if (!type) return std::unexpected(std::move(type.error()));
-    auto value = MakeConstantValueExpr(
-        owner_->Unit(), frame, param->getValue(), *type, span);
-    if (!value) return std::unexpected(std::move(value.error()));
-    arguments.push_back(*std::move(value));
-  }
-  return arguments;
 }
 
 auto StructuralScopeLowerer::PopulateInstanceArrayMember(

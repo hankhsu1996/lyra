@@ -450,10 +450,11 @@ struct Descent {
 };
 
 // The same for a descent through published scope classes alone, which steps
-// only through what each published and so always stands on one of them.
+// only through what each published: it stands on one of them, or on several
+// objects of a set it left a dimension of unselected.
 struct PublishedDescent {
   std::vector<hir::ExternalStep> steps;
-  InExternalScope place;
+  RoutePlace place;
   std::vector<OpenDimension> open;
 };
 
@@ -1362,12 +1363,10 @@ class UnitLowerer {
   // or upward at the enclosing instance it landed in, where it leaves the
   // unit's instance, and at the reader for a name that never leaves and for
   // every name a namespace unit writes, since a namespace has no instance to
-  // leave. A name through a port that leaves several of the instances behind
-  // it in play has no one place to start, and is refused at `span`.
+  // leave.
   [[nodiscard]] auto StartOf(
       const WalkFrame& frame,
-      const slang::ast::HierarchicalReference& reference, diag::SourceSpan span)
-      -> diag::Result<RouteOrigin>;
+      const slang::ast::HierarchicalReference& reference) -> RouteOrigin;
 
   // Where a route to `target` starts when no name says so -- a scope reached
   // because a type belongs to it: at the reader where `target` stands in this
@@ -1536,8 +1535,8 @@ class UnitLowerer {
   // all.
   [[nodiscard]] auto StartsOfNames(
       const WalkFrame& frame,
-      std::span<const slang::ast::Expression* const> names,
-      diag::SourceSpan span) -> diag::Result<std::vector<RouteOrigin>>;
+      std::span<const slang::ast::Expression* const> names)
+      -> std::vector<RouteOrigin>;
 
   // The entries a set of reads watches, with `parts_of` saying which parts of
   // a bit vector a read of one watches and `declared_by` which variable of the

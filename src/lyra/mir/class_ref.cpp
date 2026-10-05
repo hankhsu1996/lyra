@@ -56,13 +56,7 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
   };
   return types.Get(object).Visit(
       Overloaded{
-          [](const ObjectType& o) -> DeclaredClassRef {
-            return IntraUnitClassRef{.class_id = o.class_id};
-          },
-          [](const CrossUnitClassType& c) -> DeclaredClassRef {
-            return CrossUnitClassRef{
-                .unit_name = c.unit_name, .class_name = c.class_name};
-          },
+          [](const ObjectType& o) -> DeclaredClassRef { return o.of; },
           // A class the runtime library defines: a symbol is its whole
           // identity, so no declaration of this unit stands behind it.
           [&](const RuntimeClassType&) {

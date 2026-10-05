@@ -47,7 +47,8 @@ auto DriverAccess(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit, block, self),
           mir::ClassFieldTarget{
-              .owner = frame.current_class_id, .slot = driver.field},
+              .owner = mir::IntraUnitClassRef{frame.current_class_id},
+              .slot = driver.field},
           driver.type));
 }
 

@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
-#include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -77,7 +76,7 @@ struct DescentStep {
 // was written (LRM 9.4.2).
 struct ObjectProperty {
   mir::ExprId object;
-  PropertyName property;
+  mir::ClassFieldTarget property;
   mir::TypeId type;
 };
 

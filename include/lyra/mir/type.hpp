@@ -9,8 +9,8 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/interner.hpp"
-#include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
@@ -266,31 +266,19 @@ struct VoidType {
   auto operator==(const VoidType&) const -> bool = default;
 };
 
-// The type of an instance of a class of this compilation unit -- a module
-// instance, a named generate scope, or a SystemVerilog class. It names the
-// class by its unit-wide identity; the unit's class registry resolves the id to
-// the declaration. The name is not here -- it is a property of the registered
-// declaration, read through the id.
+// The type of an instance of a class some compilation unit declares -- a module
+// instance, a named generate scope, an interface, or a SystemVerilog class --
+// named by the class's identity, one per class whichever unit declares it. Of
+// a class of this unit MIR knows the declaration; of another's, only what that
+// unit published, and reaching a member is a separate act from naming the type.
 struct ObjectType {
-  ClassId class_id;
+  DeclaredClassRef of;
 
   auto operator==(const ObjectType&) const -> bool = default;
 };
 
-// The type of an instance of a class another compilation unit declares, named
-// by the declaring unit and the class's canonical name. MIR does not know the
-// class's members: what a referrer may name on it is what that unit published,
-// and reaching a member is a separate act from naming the type. A backend
-// spells the pair in its own target language.
-struct CrossUnitClassType {
-  std::string unit_name;
-  std::string class_name;
-
-  auto operator==(const CrossUnitClassType&) const -> bool = default;
-};
-
 // The type of an instance of a class the runtime library defines. MIR does not
-// know its members either; unlike a class of another unit it belongs to no
+// know its members either; unlike a class some unit declares it belongs to no
 // compilation unit, so which class it is is the whole identity and no unit
 // dependency follows from naming it.
 struct RuntimeClassType {
@@ -727,12 +715,12 @@ class Type {
       AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
-      VoidType, ObjectType, CrossUnitClassType, RuntimeClassType,
-      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
-      CoroutineType, RefType, PointerType, ManagedRefType, VectorType,
-      TupleType, UnionType, TaggedUnionType, EmptyType, ObservableType,
-      ResolvedType, DriverType, OpenWriteType, DesignationType, ObjectWriteType,
-      SampledHistoryType, EvaluationAttemptsType, StructType, ClosureType>;
+      VoidType, ObjectType, RuntimeClassType, RuntimeEffectsType, FilesType,
+      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
+      ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
+      EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
+      DesignationType, ObjectWriteType, SampledHistoryType,
+      EvaluationAttemptsType, StructType, ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

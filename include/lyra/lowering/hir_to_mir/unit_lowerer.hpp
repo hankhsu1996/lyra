@@ -1,11 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
-#include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -66,11 +67,21 @@ struct PublishedScopeLayout {
       disable_targets;
 };
 
-// This unit's record of a scope class of another unit: the class, the type
-// each of its fields holds, and where it placed each thing the scope
+// The method of a scope's published class that enters the subroutine the scope
+// published at `published`: the class reserves one per published subroutine,
+// at the position the signature gave it. The declaring scope builds the method
+// there and a body of the same unit calls it there, so both read it from
+// here.
+[[nodiscard]] inline auto PublishedMethodOf(hir::PublishedCallableId published)
+    -> mir::CallableId {
+  return mir::CallableId{published.value};
+}
+
+// What this unit knows of a scope class some unit published: the class, the
+// type each of its fields holds, and where it placed each thing the scope
 // published.
-struct ExternalScopeLayout {
-  mir::CrossUnitClassRef cls;
+struct ScopeClassLayout {
+  mir::DeclaredClassRef cls;
   std::vector<mir::TypeId> field_types;
   PublishedScopeLayout published;
 };
@@ -139,33 +150,51 @@ class UnitLowerer {
     return class_translations_.Get(hir_id).id;
   }
 
-  // The class the scope of another unit `hir_id` records is -- one of its
-  // instances, or a generate block inside one: a class of that unit, reached
-  // as any other class of another unit is.
-  [[nodiscard]] auto ExternalUnitClass(hir::ExternalScopeClassId hir_id) const
-      -> mir::CrossUnitClassRef;
+  // The class the scope `hir_id` records is -- an instance of some unit, or a
+  // generate block inside one -- as this unit names it.
+  [[nodiscard]] auto ScopeClassIdentity(hir::ExternalScopeClassId hir_id) const
+      -> mir::DeclaredClassRef;
 
   // The type of such an object.
   [[nodiscard]] auto UnitObjectType(hir::ExternalScopeClassId hir_id) const
       -> mir::TypeId;
 
-  // What a name of another unit's object stands for here. A unit reaches such
-  // an object by holding what that unit published, and recording that is the
-  // act that declares the dependency. A name this unit never recorded arrived
-  // on a member of some other unit's object -- one this unit holds a pointer to
-  // and never reaches through -- so what it stands for is the pointer's
-  // representation, with the pointee left unspecified. Naming the pointee would
-  // claim a dependency this unit does not have and pull an artifact it never
-  // references.
-  [[nodiscard]] auto UnitObjectNamed(
+  // A class a unit published of one of its scopes, `class_name` of
+  // `unit_name`, as this unit names it: one of its own where `unit_name` is
+  // this unit, however the name reaching it was written, and otherwise the
+  // other unit's. One class has one identity here (LRM 23.6 lets a name leave
+  // an instance and reach another instance of the same unit).
+  [[nodiscard]] auto ClassIdentityOf(
       const std::string& unit_name, const std::string& class_name) const
-      -> mir::Type;
+      -> mir::DeclaredClassRef;
 
-  // This unit's record of the scope class of another unit `hir_id` records.
-  // The record is laid out where the object is consumed, so every reach into
+  // The class this unit published of the scope it published under
+  // `class_name`, or one of the further names a scope standing for several
+  // blocks answers to. Every one is minted before any type translates, since a
+  // type a signature states may name one.
+  [[nodiscard]] auto PublishedScopeClassNamed(std::string_view class_name) const
+      -> mir::ClassId;
+
+  // Takes the identity of the class the unit published of one of its scopes,
+  // under each name `published` says it answers to. The lowering of the scope
+  // takes it as it is built, which is before any type translates.
+  auto TakePublishedScopeClass(const hir::ScopePublication& published)
+      -> mir::ClassId;
+
+  // What this unit knows of the scope class `hir_id` records: of one of its
+  // own, where that scope's shape placed what was published; of another
+  // unit's, its record of what that unit published, laid out where the object
+  // is consumed. Either is there before any body lowers, so every reach into
   // one finds it.
-  [[nodiscard]] auto ExternalScopeLayoutOf(
-      hir::ExternalScopeClassId hir_id) const -> const ExternalScopeLayout&;
+  [[nodiscard]] auto ScopeClassLayoutOf(hir::ExternalScopeClassId hir_id) const
+      -> const ScopeClassLayout&;
+
+  // Where a scope's own shape placed what the unit published of it, in the
+  // class `published` -- what a name reaching another instance of this unit
+  // reaches it through.
+  void RecordOwnScopeLayout(
+      mir::ClassId published, std::vector<mir::TypeId> field_types,
+      PublishedScopeLayout layout);
 
   // The fields of the class a scope publishes, in the order `signature`
   // states them: one per member, named as it was published, then one per
@@ -240,8 +269,7 @@ class UnitLowerer {
   auto TranslateClassRef(const hir::ClassRef& ref) -> mir::DeclaredClassRef;
 
   auto MakeCrossUnitClassFieldTarget(
-      const hir::ExternalClassPropertyTarget& target)
-      -> mir::CrossUnitClassFieldTarget;
+      const hir::ExternalClassPropertyTarget& target) -> mir::ClassFieldTarget;
 
   // Takes one record this unit read of what another unit published about its
   // class into MIR. Every such record the unit read is taken, before anything
@@ -305,14 +333,15 @@ class UnitLowerer {
   auto MakeNamespaceCallableTarget(const hir::ExternalUnitSubroutineRef& ref)
       -> mir::DirectTarget;
 
-  // A subroutine another unit published on the object its instances are (LRM
-  // 23.6, 25.7): a method of that unit's class, called directly, since the
-  // unit an instance is of is settled where the call compiles. Reaching the
-  // object is already the dependency, so nothing further is recorded here.
+  // A subroutine a unit published on the object its instances are (LRM 23.6,
+  // 25.7): a method of that unit's published class, called directly, since the
+  // unit an instance is of is settled where the call compiles. A method of
+  // this unit's own class is named by its position, as any of its callables
+  // is; another unit's by what that unit published. Reaching the object is
+  // already the dependency, so nothing further is recorded here.
   [[nodiscard]] auto MakeExternalUnitMethodTarget(
       hir::ExternalScopeClassId scope_class,
-      hir::PublishedCallableId callable) const
-      -> mir::ExternalUnitClassMethodTarget;
+      hir::PublishedCallableId callable) const -> mir::DirectTarget;
 
   // Mints a fresh owner-site id for a synthesized binding origin -- a carrier a
   // lowering creates that has no source-level variable (an activation handle, a
@@ -415,12 +444,15 @@ class UnitLowerer {
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, mir::TypeId> type_translations_;
   base::Translation<hir::ClassId, ClassTranslation> class_translations_;
-  // The scope classes of other units this one reaches an object of, by unit
-  // and class name.
-  std::set<std::pair<std::string, std::string>> external_unit_classes_;
   // This unit's record of each of those classes, by the HIR record of it.
-  std::map<hir::ExternalScopeClassId, ExternalScopeLayout>
-      external_scope_layouts_;
+  std::map<hir::ExternalScopeClassId, ScopeClassLayout> external_scope_layouts_;
+  // Keyed by name, because a signature names a unit's scope class by name and
+  // nothing else: a class of this unit reached through another unit's
+  // signature arrives as one, and is resolved to this unit's class here.
+  std::map<std::string, mir::ClassId, std::less<>> published_scope_classes_;
+  // Where each scope's own shape placed what the unit published of it, by the
+  // class it was published as.
+  std::map<mir::ClassId, ScopeClassLayout> own_scope_layouts_;
   std::uint32_t next_synthesized_site_ = 0;
   // What the declare stage settled about each class, read by every body that
   // names a peer. Lives only on the lowerer; the finished compilation unit

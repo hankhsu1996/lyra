@@ -56,9 +56,10 @@ what the construct means.
   reached through a wrapper. Every value a runtime entry returns as a plain scalar, every table a
   runtime record reads as raw storage, and every value that crosses a foreign-call boundary is one
   of these.
-- The type system: value types (integral, real, string, event, ...); object types in two forms -- an
-  intra-unit object (a class of this unit) and an external-unit object (a class another compilation
-  unit published, named by that unit and the class); two composing wrappers, pointer and vector, a
+- The type system: value types (integral, real, string, event, ...); one object type, naming a class
+  by its identity, which is one of two forms -- an intra-unit class (a class of this unit, however
+  the name reaching it was written) and an external-unit class (a class another compilation unit
+  published, named by that unit and the class); two composing wrappers, pointer and vector, a
   pointer stating its ownership -- unique, shared or borrowed, the last two written `Shared<T>` and
   `Borrowed<T>` in these docs; and four categories: the **tuple**, the structural product
   (positional; interned by its components, so two with the same components are one type); the
@@ -162,11 +163,15 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
    flag beside its type; the type is the classification. _Programming-language consequence: the type
    system carries every fact about a member; no parallel discriminator exists, and no name has to be
    invented for a declaration the source did not write._
-8. An object type is exactly one of two forms: intra-unit, naming a class of this unit, or
-   external-unit, naming a class another compilation unit published. This single distinction is the
-   owned child's runtime scope kind -- a named generate scope versus a module instance. Nothing else
-   encodes scope kind. _Programming-language consequence: a class reference is either local to this
-   translation unit or names an external one; there is no third kind._
+8. A class is named by exactly one of two forms: intra-unit, naming a class of this unit, or
+   external-unit, naming a class another compilation unit published. Which one is a fact about the
+   class, never about the name that reached it: a class of this unit is intra-unit even where a name
+   reaches it through another instance of this unit or through a signature naming this unit, so one
+   class has one identity in a unit. For an owned child the distinction is its runtime scope kind --
+   a named generate scope versus a module instance -- and nothing else encodes scope kind.
+   _Programming-language consequence: a class reference is either local to this translation unit or
+   names an external one, as a Rust definition is of the local crate or another; there is no third
+   kind, and no class is both._
 9. Instance multiplicity is the vector wrapper, a property of the member's type, and is orthogonal
    to whether the owned object is an intra-unit scope or an external unit. The same wrapper composes
    over either object form and to any depth. _Programming-language consequence: cardinality and kind

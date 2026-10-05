@@ -15,8 +15,8 @@
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
+#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local_ref.hpp"
@@ -213,8 +213,8 @@ struct UnitCallableTarget {
 // package function or task (LRM 26.3) reached across the boundary. It carries
 // no unit-local id, because a position means nothing outside the arena that
 // minted it: it names the owning unit and the callable by name, resolved
-// against that unit's interface at link time, exactly as
-// `CrossUnitClassType` names another unit's class. Only a body the source
+// against that unit's interface at link time, exactly as a class of another
+// unit is named. Only a body the source
 // declared can be named this way, which is the whole of what a namespace
 // publishes.
 struct ExternalUnitCallableTarget {
@@ -265,13 +265,15 @@ struct StructMethodTarget {
   auto operator==(const StructMethodTarget&) const -> bool = default;
 };
 
-// Identity of a class field at an access site: the class whose field arena
-// declares the field, and the slot within that arena. Owner is the declaring
-// class, not the receiver's class; the two coincide when the receiver's class
-// declares the field itself and diverge when the field is inherited from a
-// base (LRM 8.14).
+// Identity of a class field at an access site: the class that declares the
+// field, and the slot that class gave it. Owner is the declaring class, not the
+// receiver's class; the two coincide when the receiver's class declares the
+// field itself and diverge when the field is inherited from a base (LRM 8.14).
+// A class of another unit is known by what it published, whose properties are
+// the first of its fields in the order it published them, so the slot is the
+// same coordinate whichever unit declares the class.
 struct ClassFieldTarget {
-  ClassId owner;
+  DeclaredClassRef owner;
   FieldId slot;
 
   auto operator==(const ClassFieldTarget&) const -> bool = default;
@@ -286,19 +288,6 @@ struct ClosureFieldTarget {
   auto operator==(const ClosureFieldTarget&) const -> bool = default;
 };
 
-// Identity of a property on an SV class another compilation unit declares: the
-// declaring unit, the class's canonical name -- matched at link time -- and the
-// slot that class gave the property, counted out of what it published. The
-// class is named by its parts rather than by an id, which is how every identity
-// crossing a unit boundary is carried.
-struct CrossUnitClassFieldTarget {
-  std::string unit_name;
-  std::string class_name;
-  FieldId slot;
-
-  auto operator==(const CrossUnitClassFieldTarget&) const -> bool = default;
-};
-
 // Which field a `FieldAccessExpr` reaches, stated as the declaration that
 // declares it and the slot that declaration gave it. One alternative per
 // declaration kind, because the declaration kinds are what the arenas holding
@@ -310,15 +299,13 @@ struct CrossUnitClassFieldTarget {
 // component or a struct's member. A product is a value, reached whether it is
 // stored, computed or behind a pointer, so reaching a part of one is an
 // operation on the value rather than a name in an arena, and it is a call.
-using FieldRef = std::variant<
-    ClassFieldTarget, ClosureFieldTarget, CrossUnitClassFieldTarget>;
+using FieldRef = std::variant<ClassFieldTarget, ClosureFieldTarget>;
 
 // The part a call acts on where the call itself fixes it: a component of a
 // product or the member an active-member value holds, by position, or a
 // property of an object, by the class declaring it. A closure's captures are
 // reached only from inside the closure, so no call names one.
-using CallPart = std::variant<
-    base::ComponentIndex, ClassFieldTarget, CrossUnitClassFieldTarget>;
+using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 
 // The target of a `Direct` call -- the symbol identity. Each alternative is one
 // identity space, told apart by the table that resolves the name: a class of

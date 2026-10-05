@@ -1,7 +1,5 @@
 #pragma once
 
-#include <variant>
-
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -21,18 +19,13 @@ namespace lyra::lowering::hir_to_mir {
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object)
     -> mir::ExprId;
 
-// Which property of an object an access reaches: the class declaring it, this
-// unit's or one another unit published, and the slot it has there.
-using PropertyName =
-    std::variant<mir::ClassFieldTarget, mir::CrossUnitClassFieldTarget>;
-
 // The storage `property`, holding a value of `type`, occupies on the object
 // `object` reaches (LRM 8.4). `object` is a class handle, the running method's
 // own object, or a write in progress into the object, which is dereferenced to
 // the object as a guard is.
 [[nodiscard]] auto PropertyStorage(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
-    const PropertyName& property, mir::TypeId type) -> mir::Expr;
+    const mir::ClassFieldTarget& property, mir::TypeId type) -> mir::Expr;
 
 // A write opened on the object `receiver` reaches, alone, for a write to one of
 // its properties: it lasts as long as the full-expression that writes the
@@ -49,6 +42,6 @@ using PropertyName =
 // could do.
 [[nodiscard]] auto PropertyReference(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId receiver,
-    const PropertyName& property, mir::TypeId type) -> mir::ExprId;
+    const mir::ClassFieldTarget& property, mir::TypeId type) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

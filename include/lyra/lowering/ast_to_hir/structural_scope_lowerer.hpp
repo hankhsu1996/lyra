@@ -73,9 +73,6 @@ class StructuralScopeLowerer {
   auto DeclareSettledValue(
       hir::StructuralScope& scope, const slang::ast::ValueSymbol& value,
       hir::StructuralDataObjectKind kind) -> diag::Result<void>;
-  auto LowerConstructorArguments(
-      const slang::ast::InstanceSymbol& child, WalkFrame frame)
-      -> diag::Result<std::vector<hir::Expr>>;
   auto BuildInstanceMember(
       std::string_view instance_name,
       std::span<const slang::ast::InstanceSymbol* const> elements,

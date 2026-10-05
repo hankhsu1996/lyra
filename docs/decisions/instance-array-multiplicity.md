@@ -67,15 +67,17 @@ therefore described on its own, and what the elements share is what comparing th
 found. The type the unit publishes for the member is the set: its ranges, the kinds of object in it,
 and which kind stands at each position; one kind is the set of one. A name selects one position by
 constants (LRM 23.6), so the route states which kind it reaches where it compiles, and the access
-that reaches into the object names that kind's class; where the kinds are several the sequence holds
-each object as the scope every one of them is. The member stays one member at one signature
-position. That is the shape a loop generate already publishes, one class named per block. The
-declaration states, beside that, the distinct ways its elements are built -- a kind and the
-arguments its construction passes -- and which way each position takes. The construction counts the
-positions out as before and builds, at each, the alternative it takes: equal neighbours form runs,
-so the code grows with the number of runs, which is bounded by the overrides written and never by
-the element count. One unit is one run and builds with no test. This is the loop generate's shape:
-one construct, built at every position, choosing per position among a few bodies
+that reaches into the object names that kind's class. The sequence holds each object as its class
+where the set has one kind, and as the scope every one of them is where it has several, which is how
+a C++ array of objects of different classes is held: by their common base, each converted to its own
+class where a constant index has picked it. The member stays one member at one signature position.
+That is the shape a loop generate already publishes, one class named per block. The declaration
+states, beside that, the distinct ways its elements are built -- a kind and the arguments its
+construction passes -- and which way each position takes. The construction counts the positions out
+as before and builds, at each, the alternative it takes: equal neighbours form runs, so the code
+grows with the number of runs, which is bounded by the overrides written and never by the element
+count. One unit is one run and builds with no test. This is the loop generate's shape: one
+construct, built at every position, choosing per position among a few bodies
 ([one-body-built-at-every-index](one-body-built-at-every-index.md)).
 
 ### D2. The element index is an operand, not part of a member's identity

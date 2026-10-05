@@ -5,9 +5,9 @@
 // an element reaches the one the select names: a name through the port, the
 // port handed on to another port carrying a range, part of an array connected
 // to a port, a port and an array declared in opposite directions, paired left
-// index to left index, and an array an interface holds reached through a port.
-// A virtual interface is not among them: an instance a defparam targets cannot
-// be assigned to one (LRM 25.9).
+// index to left index, an array an interface holds reached through a port, and
+// that whole array handed on to another port. A virtual interface is not among
+// them: an instance a defparam targets cannot be assigned to one (LRM 25.9).
 interface Bus #(parameter int W = 8);
   logic [W-1:0] data;
   int width = $bits(data);
@@ -56,6 +56,10 @@ module Inside (Holder h);
   end
 endmodule
 
+module Relay (Holder h);
+  Reader r (.q(h.bank));
+endmodule
+
 module Top;
   Bus b[2] ();
   defparam b[1].W = 16;
@@ -72,6 +76,7 @@ module Top;
   Holder h ();
   defparam h.bank[1].W = 16;
   Inside in (.h(h));
+  Relay relay (.h(h));
 
   final begin
     if (u.seen0 !== 16'h00ff) $fatal(1, "p[0] read back %h", u.seen0);
@@ -88,6 +93,8 @@ module Top;
              flip.w1);
     if (in.w0 !== 8 || in.w1 !== 16)
       $fatal(1, "through the holder, bank is %0d and %0d bits", in.w0, in.w1);
+    if (relay.r.w0 !== 8 || relay.r.w1 !== 16)
+      $fatal(1, "bank handed on is %0d and %0d bits", relay.r.w0, relay.r.w1);
     $display("All checks passed");
   end
 endmodule

@@ -281,8 +281,14 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             return mir::Type{mir::ManagedRefType{
                 .pointee = ImportedRuntimeObjectType(src.klass)}};
           },
+          // An object of another unit is named by its class whether or not
+          // this unit reaches into it, as a pointer to a class whose
+          // definition is unseen is still a pointer to that class: what this
+          // unit depends on that unit for is decided by what it reads, and the
+          // name alone reads nothing.
           [&](const hir::UnitObjectType& src) -> mir::Type {
-            return UnitObjectNamed(src.unit_name, src.class_name);
+            return mir::Type{mir::ObjectType{
+                .of = ClassIdentityOf(src.unit_name, src.class_name)}};
           },
           // A set of objects is a sequence per dimension, never a value array:
           // an object is reached by its address and has no value form, and
@@ -293,9 +299,10 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           // the one a select picks out names its kind.
           [&](const hir::UnitObjectsType& src) -> mir::Type {
             mir::Type held = src.kinds.size() == 1
-                                 ? UnitObjectNamed(
-                                       src.kinds.front().unit_name,
-                                       src.kinds.front().class_name)
+                                 ? mir::Type{mir::ObjectType{
+                                       .of = ClassIdentityOf(
+                                           src.kinds.front().unit_name,
+                                           src.kinds.front().class_name)}}
                                  : mir::Type{mir::RuntimeClassType{
                                        .which = support::RuntimeClass::kScope}};
             for (std::size_t d = 0; d < src.ranges.size(); ++d) {

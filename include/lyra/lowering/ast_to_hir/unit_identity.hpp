@@ -159,8 +159,13 @@ struct FixedType {
   auto operator==(const FixedType&) const -> bool = default;
 };
 
+// The interface instances an interface port is bound to, as the units they
+// are: the distinct ones, in the order the positions first meet them, and
+// which of them each position takes, in row-major order (LRM 25.3). A port
+// standing for one instance is the set of one.
 struct FixedInterface {
-  std::string unit_name;
+  std::vector<std::string> units;
+  std::vector<std::uint32_t> taken;
   // The modport the port is restricted to (LRM 25.5), which narrows the members
   // it reaches and their directions. Empty when the port reaches the whole
   // interface, which the LRM spells as the absence of one.

@@ -1667,9 +1667,8 @@ class HirDumper {
         Overloaded{
             [](const ExternalMemberRef& member) {
               return std::format(
-                  "ExternalScopeClass[{}].member[{}] as ExternalScopeClass[{}]",
-                  member.scope_class.value, member.member.value,
-                  member.result_class.value);
+                  "ExternalScopeClass[{}].member[{}]", member.scope_class.value,
+                  member.member.value);
             },
             [](const ExternalGenerateRef& generate) {
               return std::format(

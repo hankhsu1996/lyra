@@ -22,6 +22,12 @@ rule may reach one element of the connected array (LRM 23.10.1, 33.4), so the in
 whose elements are described one by one. The reasoning D1 gives -- a name is the only identity a
 signature can carry -- holds for each position.
 
+**D6 is revised from "name the pointee only where the referrer reaches into it" to "name it
+everywhere, and depend on it only where the referrer reaches into it".** The earlier form tied
+naming a class to depending on it, which left a member's cell to depend on what each unit had
+recorded; separating the two keeps both what D6 was for and the purity
+[published-member-placement](published-member-placement.md) D4 requires.
+
 ## Why this decision matters
 
 An interface exists to be written against. A module names `b.data`, and the interface instance the
@@ -144,18 +150,27 @@ It is a third thing: a member the scope declares, does not build, and is dotted 
 own arena, and the list fixing the order a unit published its members in names either kind, since an
 interface port is always published and always takes a place in that order.
 
-### D6. A referrer holds a published member's representation, and its identity only where it reaches through
+### D6. Every unit names the class a published member points at, and depends on that class only where it reaches through
 
-A unit that reaches a member on another unit's object holds what that unit published, which is what
-having consumed its signature means. A published member it never reaches through is different: what
-it needs from that member is the identifier and the place it takes in the published order, and for a
-port standing for an object that is all it ever needs, whatever the port points at.
+What a published member holds is computed from what was published alone, so the unit declaring the
+member and every unit filling or reading it build the same cell. A port standing for an object holds
+a pointer to the class of the kind bound there, in every one of those units, whether or not the unit
+reaches into it.
 
-So the object a pointer points at is named only where the referrer reaches into it. Naming it
-otherwise would declare a dependency the referrer's own output does not have: its artifact would
-pull one it never references, and a change to that unit would re-emit it while changing nothing it
-emits. This is the same rule the route already follows one level up -- what a unit compiles against
-is what it reaches -- read at the member level.
+Naming a class is not depending on it. A pointer to a class whose definition is never seen is still
+a pointer to that class -- C++ calls it a pointer to an incomplete type, which needs a declaration
+of the class and nothing else -- so a unit holding such a pointer needs to know only that the class
+exists. What a unit depends on another unit for is what it reads of that unit's signature: a unit
+reaching a member on the object consumes the class's record and its artifact pulls the class's
+definition, while a unit only holding the pointer reads nothing and pulls only the declaration. A
+change to the class then re-emits only the units that read what changed. This is the same rule the
+route follows one level up -- what a unit compiles against is what it reaches -- read at the member
+level.
+
+A unit that named the class only where it reached into it, and left the pointee unspecified
+elsewhere, would compute the cell from what it happened to have recorded rather than from the
+signature, so the declaring unit and a filling unit could spell one member two ways. A backend whose
+pointers carry no pointee does not notice; one whose pointers do refuses to compile it.
 
 ## Rejected alternatives
 
@@ -186,10 +201,16 @@ is what it reaches -- read at the member level.
   present the same types at the same positions, so one body serves both -- which is also where the
   frontend splits, so the two agree with no adjustment.
 
-- **Record every unit named by a published member of an object the referrer holds.** It is the short
-  fix for the alternative to D6, and it is what a transitive import does by default. Rejected
-  because it grows the referrer's dependencies with nesting depth, and every one of them is a
-  dependency its emitted artifact does not have.
+- **Record every unit named by a published member of an object the referrer holds.** It makes every
+  named class one the unit has recorded, so the cell is spelled alike everywhere, and it is what a
+  transitive import does by default. Rejected because recording a class is consuming it: the
+  referrer's dependencies grow with nesting depth, and every one of them is a dependency its emitted
+  artifact does not have. Naming the class without recording it gives the same cell with none of
+  those.
+- **Hold every published object as the scope every object is, naming the class only where an access
+  reaches in.** Also computed from the signature alone. Rejected because it discards a type the
+  signature states: every reach converts, where the one kind of a set is known before any reach
+  does.
 
 - **Treat an interface port as a data object with a handle type.** One arena, no new declaration
   kind. Rejected under D5: every consumer of that arena installs a cell, runs an initializer, or
