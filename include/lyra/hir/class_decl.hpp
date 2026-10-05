@@ -12,9 +12,9 @@
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/static_property_id.hpp"
-#include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
 
@@ -89,12 +89,12 @@ struct StaticPropertyInit {
 //
 // Entering the base is a construction of it, so it carries what any
 // construction of the base carries: the instance an object of it belongs to
-// (LRM 6.22). `declaring_scope_hops` is how far out of this class's own
-// declaring scope the base's sits, and a name in the base's bodies is searched
-// outward from there (LRM 23.9) whichever class extends it. Absent where a
-// namespace unit declares the base, which no instance replicates.
+// (LRM 6.22). `declaring_instance` is how this class's own declaring scope
+// reaches the base's, and a name in the base's bodies is searched outward from
+// there (LRM 23.9) whichever class extends it. Present exactly where the base
+// takes that instance, which is the base's own declaration to say.
 struct BaseCall {
-  std::optional<StructuralHops> declaring_scope_hops;
+  std::optional<DeclaringInstanceReach> declaring_instance;
   std::vector<ExprId> arguments;
 
   auto operator==(const BaseCall&) const -> bool = default;
@@ -138,6 +138,14 @@ struct ConformingBehavior {
 // consumers read to route emission and dispatch; the "which slots are
 // empty" facts hold because the frontend admits only the LRM 8.26 syntax
 // for a class flagged interface.
+//
+// `takes_declaring_instance` says whether a construction of the class and a
+// call of a method of the class itself are handed the instance the class
+// belongs to (LRM 6.22). A class a design element declares keeps what it holds
+// for itself on that instance, so it takes it; a class a namespace unit
+// declares belongs to no instance, and an interface class keeps nothing and
+// runs no body (LRM 8.26), so neither takes one. What a site hands over and
+// what the class's own bodies take both follow from it.
 //
 // `base` names the class this one extends (LRM 8.13), absent when the class
 // extends no other. Only own members appear in `fields` / `methods`;
@@ -208,6 +216,7 @@ struct ConformingBehavior {
 // declared.
 struct ClassDecl {
   bool is_interface_class = false;
+  bool takes_declaring_instance = false;
   std::optional<ClassRef> base;
   std::vector<ClassRef> implements;
   std::vector<ConformingBehavior> conforming;

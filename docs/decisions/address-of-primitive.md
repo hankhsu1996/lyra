@@ -2,6 +2,11 @@
 
 Date: 2026-06-23 Status: accepted
 
+The signal registration this entry reshaped, and the by-name scope lookup its third consequence
+names, no longer exist: since
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) no
+scope registers a declaration by name. The decision -- place-to-pointer stated in MIR -- stands.
+
 ## Context
 
 MIR has long carried `DerefExpr` (pointer -> place) but no operator for the dual direction (place ->

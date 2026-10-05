@@ -351,9 +351,6 @@ auto TranslateType(
       if (const auto imported = ImportedRuntimeClassOf(class_type)) {
         return hir::Type{hir::ImportedClassHandleType{.klass = *imported}};
       }
-      if (unit_lowerer.HasNoNameHere(class_type)) {
-        return hir::Type{hir::OpaqueObjectHandleType{}};
-      }
       auto class_ref_or = unit_lowerer.ResolveClassRef(class_type, decl_span);
       if (!class_ref_or) {
         return std::unexpected(std::move(class_ref_or.error()));
@@ -676,8 +673,8 @@ auto BuildInterfaceForwardingMethod(
     root.declarations.push_back(*result_var);
   }
 
-  auto impl_callee = unit_lowerer.MakeMethodCallee(
-      class_frame, DeclaringClassOf(impl), DeclaringClassOf(impl), impl, span);
+  auto impl_callee =
+      unit_lowerer.MakeMethodCallee(DeclaringClassOf(impl), impl, span);
   if (!impl_callee) return std::unexpected(std::move(impl_callee.error()));
   const hir::ExprId call = body.exprs.Add(
       hir::Expr{
@@ -706,10 +703,11 @@ auto BuildInterfaceForwardingMethod(
   auto taken = unit_lowerer.MakeOverriddenBehavior(impl, span);
   if (!taken) return std::unexpected(std::move(taken.error()));
 
-  // What a call of the forwarder reads is what the implementation it forwards
-  // to reads, handed the same object and the same formals.
+  // What a call of the forwarder reads and writes is what the implementation it
+  // forwards to does, handed the same object and the same formals.
   hir::Reads reads{
       .leaves = {},
+      .writes = {},
       .calls = {hir::ReportingCall{
           .call = call,
           .receiver = hir::ReportedArgument::kEvaluated,
@@ -750,9 +748,9 @@ auto SynthesizeInterfaceForwardingMethods(
   if (cls.isInterface) return {};
   // The interface classes the declaration names and the ones those extend. What
   // the class it extends is also a value of is that class's to forward.
-  std::vector<UnitLowerer::LocalOrPromisedClass> named;
+  std::vector<UnitLowerer::LocalOrPublishedClass> named;
   for (const auto* iface_type : cls.getDeclaredInterfaces()) {
-    auto iface = unit_lowerer.ReadAsLocalOrPromised(*iface_type, span);
+    auto iface = unit_lowerer.ReadAsLocalOrPublished(*iface_type, span);
     if (!iface) return std::unexpected(std::move(iface.error()));
     if (auto reached = unit_lowerer.ReachInterface(*iface, span, named);
         !reached) {
@@ -760,7 +758,7 @@ auto SynthesizeInterfaceForwardingMethods(
     }
   }
   std::set<const slang::ast::SubroutineSymbol*> bridged;
-  for (const UnitLowerer::LocalOrPromisedClass& iface : named) {
+  for (const UnitLowerer::LocalOrPublishedClass& iface : named) {
     for (const std::string& name : unit_lowerer.MethodNamesOf(iface)) {
       // A satisfier the class defines is wired by its own method loop, so only
       // an inherited one needs a bridge, and only one with a body to forward
@@ -869,11 +867,10 @@ auto UnitLowerer::ConstructorDeclaresFormals(
   auto ref = ResolveClassRef(cls, span);
   if (!ref) return std::unexpected(std::move(ref.error()));
   if (const auto* ext = std::get_if<hir::ExternalClassRef>(&*ref)) {
-    if (const hir::ExternalClass* published =
-            ExternalClassOf(ext->unit_name, ext->class_name)) {
-      return published->constructor.has_value() &&
-             !published->constructor->params.empty();
-    }
+    const hir::ExternalClass& published =
+        ExternalClassOf(ext->unit_name, ext->class_name);
+    return published.constructor.has_value() &&
+           !published.constructor->params.empty();
   }
   const slang::ast::SubroutineSymbol* constructor = cls.getConstructor();
   return constructor != nullptr && !constructor->getArguments().empty();
@@ -895,8 +892,7 @@ auto UnitLowerer::MakeClassMethodTarget(
 }
 
 auto UnitLowerer::MakeMethodCallee(
-    const WalkFrame& frame, const slang::ast::ClassType& owner,
-    const slang::ast::ClassType& through,
+    const slang::ast::ClassType& owner,
     const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
     -> diag::Result<hir::MethodCallee> {
   auto owner_ref = ResolveClassRef(owner, span);
@@ -907,57 +903,12 @@ auto UnitLowerer::MakeMethodCallee(
     return *local;
   }
   const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
-  // A class a design element declares publishes on no signature, so this unit
-  // has no name for it and none for anything it declares. Only the scope
-  // declaring the class can answer which body the name reaches, so the call
-  // reaches its body through what the walk to that scope lands on. The body
-  // runs on the part of the object the reference reaches it through, so the
-  // class asked is the one the reference is of, which answers every name a
-  // call through it can write. Where the object decides (LRM 8.20), what it
-  // lands on dispatches on the object.
-  //
-  // A reference of such a class reaches a method a class this unit can name
-  // declares the same way where its part of the object is not that class's --
-  // an interface class's part is its own -- since only the declaring scope can
-  // convert one part to the other. Every class of a lineage starts where the
-  // object does, so through one of those the method's own class is reached as
-  // it stands.
-  auto asked = ResolveClassRef(through, span);
-  if (!asked) return std::unexpected(std::move(asked.error()));
-  const auto* asked_external = std::get_if<hir::ExternalClassRef>(&*asked);
-  if (asked_external != nullptr && DeclaredByADesignElement(*asked_external) &&
-      (DeclaredByADesignElement(ext) || through.isInterface)) {
-    // Nothing was published for the class the body is asked of, so what the
-    // call passes and awaits comes from the method's declaration, which is
-    // also what the body the name reaches is generated from.
-    auto interface = MakeExternalCalleeInterface(method, span);
-    if (!interface) return std::unexpected(std::move(interface.error()));
-    auto route = RouteToDeclaringScope(frame, *through.getParentScope(), span);
-    if (!route) return std::unexpected(std::move(route.error()));
-    return hir::SettledMethodCallee{
-        .body =
-            hir::UnpublishedBehaviorBody{
-                .body = MapOrGetBehaviorBody(
-                    frame.Current(),
-                    hir::BehaviorBodyRoute{
-                        .head = std::move(route->head),
-                        .steps = std::move(route->steps),
-                        .leaf =
-                            {.member =
-                                 hir::ClassMemberName{
-                                     .class_name = asked_external->class_name,
-                                     .name = std::string{method.name}}}})},
-        .interface = *std::move(interface)};
-  }
   // The class declaring the method published it, so what the call passes and
   // awaits (LRM 13.5) and whether the object decides which body runs (LRM
   // 8.20) are read off that class's signature. Both are taken before anything
   // else is read, since reading another signature may move the records.
-  const hir::ExternalClass* published =
-      ExternalClassOf(ext.unit_name, ext.class_name);
-  const hir::PublishedMethod* declared =
-      published == nullptr ? nullptr
-                           : hir::FindMethod(published->methods, method.name);
+  const hir::PublishedMethod* declared = hir::FindMethod(
+      ExternalClassOf(ext.unit_name, ext.class_name).methods, method.name);
   if (declared == nullptr) {
     throw InternalError(
         std::format(
@@ -991,12 +942,10 @@ auto UnitLowerer::PublishedMethodOf(
   auto declaring = ResolveClassRef(DeclaringClassOf(method), span);
   if (!declaring) return std::unexpected(std::move(declaring.error()));
   if (const auto* ext = std::get_if<hir::ExternalClassRef>(&*declaring)) {
-    if (const hir::ExternalClass* published =
-            ExternalClassOf(ext->unit_name, ext->class_name)) {
-      if (const hir::PublishedMethod* declared =
-              hir::FindMethod(published->methods, method.name)) {
-        return std::optional{*declared};
-      }
+    if (const hir::PublishedMethod* declared = hir::FindMethod(
+            ExternalClassOf(ext->unit_name, ext->class_name).methods,
+            method.name)) {
+      return std::optional{*declared};
     }
   }
   return std::nullopt;
@@ -1037,25 +986,25 @@ auto UnitLowerer::ClassMethodPrototype(
       .result_type = *result_type};
 }
 
-auto UnitLowerer::ReadAsLocalOrPromised(
+auto UnitLowerer::ReadAsLocalOrPublished(
     const slang::ast::Type& type, diag::SourceSpan span)
-    -> diag::Result<LocalOrPromisedClass> {
+    -> diag::Result<LocalOrPublishedClass> {
   const auto& cls = type.getCanonicalType().as<slang::ast::ClassType>();
   auto ref = ResolveClassRef(cls, span);
   if (!ref) return std::unexpected(std::move(ref.error()));
   return std::visit(
       Overloaded{
-          [&](const hir::LocalClassRef&) -> LocalOrPromisedClass {
+          [&](const hir::LocalClassRef&) -> LocalOrPublishedClass {
             return &cls;
           },
-          [](const hir::ExternalClassRef& ext) -> LocalOrPromisedClass {
+          [](const hir::ExternalClassRef& ext) -> LocalOrPublishedClass {
             return ext;
           }},
       *ref);
 }
 
 auto UnitLowerer::ParentsOf(
-    const LocalOrPromisedClass& cls, diag::SourceSpan span)
+    const LocalOrPublishedClass& cls, diag::SourceSpan span)
     -> diag::Result<ClassParents> {
   return std::visit(
       Overloaded{
@@ -1063,36 +1012,32 @@ auto UnitLowerer::ParentsOf(
               -> diag::Result<ClassParents> {
             ClassParents parents;
             if (const auto* base = local->getBaseClass(); base != nullptr) {
-              auto read = ReadAsLocalOrPromised(*base, span);
+              auto read = ReadAsLocalOrPublished(*base, span);
               if (!read) return std::unexpected(std::move(read.error()));
               parents.base = *std::move(read);
             }
             for (const auto* named : local->getDeclaredInterfaces()) {
-              auto read = ReadAsLocalOrPromised(*named, span);
+              auto read = ReadAsLocalOrPublished(*named, span);
               if (!read) return std::unexpected(std::move(read.error()));
               parents.implements.push_back(*std::move(read));
             }
             return parents;
           },
-          [&](const hir::ExternalClassRef& promised)
-              -> diag::Result<ClassParents> {
+          [&](const hir::ExternalClassRef& ext) -> diag::Result<ClassParents> {
+            const hir::ExternalClass& published =
+                ExternalClassOf(ext.unit_name, ext.class_name);
             ClassParents parents;
-            // A class no signature carries names nothing this unit can read,
-            // so the walk ends on it.
-            if (const hir::ExternalClass* published =
-                    ExternalClassOf(promised.unit_name, promised.class_name)) {
-              if (published->base.has_value()) {
-                parents.base = *published->base;
-              }
-              parents.implements.assign(
-                  published->implements.begin(), published->implements.end());
+            if (published.base.has_value()) {
+              parents.base = *published.base;
             }
+            parents.implements.assign(
+                published.implements.begin(), published.implements.end());
             return parents;
           }},
       cls);
 }
 
-auto UnitLowerer::NameOf(const LocalOrPromisedClass& cls) const
+auto UnitLowerer::NameOf(const LocalOrPublishedClass& cls) const
     -> hir::ExternalClassRef {
   return std::visit(
       Overloaded{
@@ -1101,22 +1046,22 @@ auto UnitLowerer::NameOf(const LocalOrPromisedClass& cls) const
                 .unit_name = unit_.name,
                 .class_name = SpecializationName(*local, Specialization())};
           },
-          [](const hir::ExternalClassRef& promised) { return promised; }},
+          [](const hir::ExternalClassRef& ext) { return ext; }},
       cls);
 }
 
 auto UnitLowerer::ReachInterface(
-    const LocalOrPromisedClass& iface, diag::SourceSpan span,
-    std::vector<LocalOrPromisedClass>& reached) -> diag::Result<void> {
+    const LocalOrPublishedClass& iface, diag::SourceSpan span,
+    std::vector<LocalOrPublishedClass>& reached) -> diag::Result<void> {
   // By name, which is one whichever of the two ways the class was read.
   const hir::ExternalClassRef name = NameOf(iface);
-  for (const LocalOrPromisedClass& held : reached) {
+  for (const LocalOrPublishedClass& held : reached) {
     if (NameOf(held) == name) return {};
   }
   reached.push_back(iface);
   auto parents = ParentsOf(iface, span);
   if (!parents) return std::unexpected(std::move(parents.error()));
-  for (const LocalOrPromisedClass& extended : parents->implements) {
+  for (const LocalOrPublishedClass& extended : parents->implements) {
     if (auto more = ReachInterface(extended, span, reached); !more) {
       return std::unexpected(std::move(more.error()));
     }
@@ -1125,17 +1070,17 @@ auto UnitLowerer::ReachInterface(
 }
 
 auto UnitLowerer::AllInterfacesOf(
-    const LocalOrPromisedClass& cls, diag::SourceSpan span)
-    -> diag::Result<std::vector<LocalOrPromisedClass>> {
+    const LocalOrPublishedClass& cls, diag::SourceSpan span)
+    -> diag::Result<std::vector<LocalOrPublishedClass>> {
   auto parents = ParentsOf(cls, span);
   if (!parents) return std::unexpected(std::move(parents.error()));
-  std::vector<LocalOrPromisedClass> interfaces;
+  std::vector<LocalOrPublishedClass> interfaces;
   if (parents->base.has_value()) {
     auto inherited = AllInterfacesOf(*parents->base, span);
     if (!inherited) return std::unexpected(std::move(inherited.error()));
     interfaces = *std::move(inherited);
   }
-  for (const LocalOrPromisedClass& named : parents->implements) {
+  for (const LocalOrPublishedClass& named : parents->implements) {
     if (auto more = ReachInterface(named, span, interfaces); !more) {
       return std::unexpected(std::move(more.error()));
     }
@@ -1143,7 +1088,7 @@ auto UnitLowerer::AllInterfacesOf(
   return interfaces;
 }
 
-auto UnitLowerer::MethodNamesOf(const LocalOrPromisedClass& iface)
+auto UnitLowerer::MethodNamesOf(const LocalOrPublishedClass& iface)
     -> std::vector<std::string> {
   return std::visit(
       Overloaded{
@@ -1157,13 +1102,11 @@ auto UnitLowerer::MethodNamesOf(const LocalOrPromisedClass& iface)
             }
             return names;
           },
-          [&](const hir::ExternalClassRef& promised) {
+          [&](const hir::ExternalClassRef& ext) {
             std::vector<std::string> names;
-            if (const hir::ExternalClass* published =
-                    ExternalClassOf(promised.unit_name, promised.class_name)) {
-              for (const hir::PublishedMethod& method : published->methods) {
-                names.push_back(method.prototype.name);
-              }
+            for (const hir::PublishedMethod& method :
+                 ExternalClassOf(ext.unit_name, ext.class_name).methods) {
+              names.push_back(method.prototype.name);
             }
             return names;
           }},
@@ -1188,7 +1131,7 @@ auto UnitLowerer::StateConformance(
   };
   auto interfaces = AllInterfacesOf(&cls, span);
   if (!interfaces) return std::unexpected(std::move(interfaces.error()));
-  for (const LocalOrPromisedClass& iface : *interfaces) {
+  for (const LocalOrPublishedClass& iface : *interfaces) {
     auto stated = std::visit(
         Overloaded{
             [&](const slang::ast::ClassType* local) -> diag::Result<void> {
@@ -1226,22 +1169,13 @@ auto UnitLowerer::StateConformance(
               }
               return {};
             },
-            [&](const hir::ExternalClassRef& promised) -> diag::Result<void> {
-              const hir::ExternalClass* published =
-                  ExternalClassOf(promised.unit_name, promised.class_name);
-              if (published == nullptr) {
-                throw InternalError(
-                    std::format(
-                        "UnitLowerer::StateConformance: '{}::{}' is an "
-                        "interface class a class here answers and published "
-                        "nothing",
-                        promised.unit_name, promised.class_name));
-              }
+            [&](const hir::ExternalClassRef& ext) -> diag::Result<void> {
               // The virtual methods it introduces, in the order that counts
               // their ordinals, taken whole first: finding what answers one
               // reads further signatures, which may move the records.
               std::vector<std::string> introduced;
-              for (const hir::PublishedMethod& method : published->methods) {
+              for (const hir::PublishedMethod& method :
+                   ExternalClassOf(ext.unit_name, ext.class_name).methods) {
                 if (std::holds_alternative<hir::IntroducesVirtual>(
                         method.dispatch)) {
                   introduced.push_back(method.prototype.name);
@@ -1257,8 +1191,8 @@ auto UnitLowerer::StateConformance(
                     hir::ConformingBehavior{
                         .interface_behavior =
                             hir::ExternalDispatchSlot{
-                                .unit_name = promised.unit_name,
-                                .class_name = promised.class_name,
+                                .unit_name = ext.unit_name,
+                                .class_name = ext.class_name,
                                 .behavior = ordinal},
                         .answered_by = *std::move(answered_by)});
                 ++ordinal.value;
@@ -1316,19 +1250,16 @@ auto UnitLowerer::IntroducerOf(
   // published about the class it extends, and reading those signatures is what
   // makes their units dependencies of this one.
   for (std::optional<hir::ExternalClassRef> at = cls; at.has_value();) {
-    const hir::ExternalClass* published =
+    const hir::ExternalClass& published =
         ExternalClassOf(at->unit_name, at->class_name);
-    if (published == nullptr) {
-      break;
-    }
     if (const std::optional<hir::PublishedBehaviorId> behavior =
-            hir::FindIntroducedVirtual(published->methods, method_name)) {
+            hir::FindIntroducedVirtual(published.methods, method_name)) {
       return hir::ExternalDispatchSlot{
           .unit_name = at->unit_name,
           .class_name = at->class_name,
           .behavior = *behavior};
     }
-    at = published->base;
+    at = published.base;
   }
   return std::nullopt;
 }
@@ -1351,7 +1282,7 @@ auto UnitLowerer::MakeExternalCalleeInterface(
 }
 
 auto UnitLowerer::MakeClassPropertyTarget(
-    const WalkFrame& frame, const slang::ast::ClassType& owner,
+    const slang::ast::ClassType& owner,
     const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
     -> diag::Result<hir::ClassPropertyTarget> {
   auto owner_ref = ResolveClassRef(owner, span);
@@ -1362,68 +1293,27 @@ auto UnitLowerer::MakeClassPropertyTarget(
         .owner = local->class_id, .field = LookupClassPropertyFieldId(prop)};
   }
   // `owner` is the class that declares the property, which the front end
-  // settled when it resolved the name -- so the promise to read is that class's
-  // and no lineage is climbed. Which storage the access reaches follows from
-  // the class the access names rather than from what the value turns out to be
-  // (LRM 8.14), and an ancestor answering to the same identifier is a different
-  // property that an access naming this class must not reach.
+  // settled when it resolved the name -- so the signature to read is that
+  // class's and no lineage is climbed. Which storage the access reaches follows
+  // from the class the access names rather than from what the value turns out
+  // to be (LRM 8.14), and an ancestor answering to the same identifier is a
+  // different property that an access naming this class must not reach. A class
+  // publishes every property but a `local` one, which only the class's own
+  // bodies name (LRM 8.18), and those compile in the unit declaring it.
   const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
-  if (const hir::ExternalClass* published =
-          ExternalClassOf(ext.unit_name, ext.class_name)) {
-    if (const std::optional<hir::PublishedPropertyId> property =
-            hir::FindProperty(published->properties, prop.name)) {
-      return hir::ExternalClassPropertyTarget{
-          .unit_name = ext.unit_name,
-          .class_name = ext.class_name,
-          .property = *property};
-    }
+  const std::optional<hir::PublishedPropertyId> property = hir::FindProperty(
+      ExternalClassOf(ext.unit_name, ext.class_name).properties, prop.name);
+  if (!property.has_value()) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::MakeClassPropertyTarget: '{}::{}' declares '{}' and "
+            "published no such property",
+            ext.unit_name, ext.class_name, prop.name));
   }
-  // The class publishes on no signature, so no position could be counted here
-  // and none is stated: the walk to the scope declaring it is what crosses, and
-  // that scope answers where the name lands while the design elaborates.
-  if (DeclaredByADesignElement(ext)) {
-    auto route = RouteToDeclaringScope(frame, *owner.getParentScope(), span);
-    if (!route) return std::unexpected(std::move(route.error()));
-    return hir::UnpublishedClassPropertyTarget{
-        .coordinate = MapOrGetPropertyCoordinate(
-            frame.Current(), hir::PropertyCoordinateRoute{
-                                 .head = std::move(route->head),
-                                 .steps = std::move(route->steps),
-                                 .leaf = {
-                                     .member = {
-                                         .class_name = ext.class_name,
-                                         .name = std::string{prop.name}}}})};
-  }
-  return diag::Fail(
-      span, diag::DiagCode::kUnsupportedExpressionForm,
-      std::format(
-          "'{}' is on no promise this unit can read through '{}::{}', so there "
-          "is nothing to compile the access against",
-          prop.name, ext.unit_name, ext.class_name));
-}
-
-auto UnitLowerer::MakeStaticPropertyTarget(
-    const hir::ClassRef& class_ref,
-    const slang::ast::ClassPropertySymbol& prop) const
-    -> hir::StaticPropertyTarget {
-  if (const auto* local = std::get_if<hir::LocalClassRef>(&class_ref)) {
-    return hir::LocalStaticPropertyTarget{
-        .owner = local->class_id, .prop = LookupClassPropertyStaticId(prop)};
-  }
-  const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
-  return hir::ExternalStaticPropertyTarget{
+  return hir::ExternalClassPropertyTarget{
       .unit_name = ext.unit_name,
       .class_name = ext.class_name,
-      .property_name = std::string(prop.name)};
-}
-
-auto UnitLowerer::HasNoNameHere(const slang::ast::ClassType& cls) const
-    -> bool {
-  const slang::ast::Symbol& declaring = DeclaringCompilationUnit(cls);
-  if (&declaring == &scope_->asSymbol()) {
-    return false;
-  }
-  return IsDesignElement(declaring);
+      .property = *property};
 }
 
 auto UnitLowerer::ResolveClassRef(
@@ -1470,6 +1360,7 @@ auto UnitLowerer::InternLocalClass(
   auto decl_owner = std::make_unique<hir::ClassDecl>();
   hir::ClassDecl& decl = *decl_owner;
   decl.is_interface_class = cls.isInterface;
+  decl.takes_declaring_instance = BelongsToAnInstance(cls) && !cls.isInterface;
 
   // A class is the declaration scope that owns the lexical scopes of every
   // body it declares, so that ownership is stated once here and each method,
@@ -1489,13 +1380,13 @@ auto UnitLowerer::InternLocalClass(
           .WithProceduralScopeOwner(&cls, &decl.procedural_scopes);
   DeclareProceduralScopes(cls, cls, *this, decl.procedural_scopes);
 
-  std::optional<hir::ExternalClassRef> promised_base;
+  std::optional<hir::ExternalClassRef> published_base;
 
-  // What this class promises about another class is the pair naming it,
+  // What this class publishes about another class is the pair naming it,
   // whichever unit declares it: a signature is read where no id of this unit
   // means anything, and a class of this unit is as much "somewhere else" to
   // that reader as any other.
-  const auto promised = [&](const hir::ClassRef& ref) {
+  const auto as_published = [&](const hir::ClassRef& ref) {
     return std::visit(
         Overloaded{
             [&](const hir::LocalClassRef& local) {
@@ -1515,7 +1406,7 @@ auto UnitLowerer::InternLocalClass(
         base_type->getCanonicalType().as<slang::ast::ClassType>();
     auto base_ref = ResolveClassRef(base_class, span);
     if (!base_ref) return std::unexpected(std::move(base_ref.error()));
-    promised_base = promised(*base_ref);
+    published_base = as_published(*base_ref);
     decl.base = *std::move(base_ref);
   }
 
@@ -1533,12 +1424,12 @@ auto UnitLowerer::InternLocalClass(
     if (!iface_ref) return std::unexpected(std::move(iface_ref.error()));
     decl.implements.push_back(*std::move(iface_ref));
   }
-  std::vector<hir::ExternalClassRef> promised_interfaces;
-  promised_interfaces.reserve(decl.implements.size());
+  std::vector<hir::ExternalClassRef> published_interfaces;
+  published_interfaces.reserve(decl.implements.size());
   for (const hir::ClassRef& iface : decl.implements) {
-    promised_interfaces.push_back(promised(iface));
+    published_interfaces.push_back(as_published(iface));
   }
-  std::vector<hir::PublishedProperty> promised_statics;
+  std::vector<hir::PublishedProperty> published_statics;
 
   for (const auto& prop :
        cls.membersOfType<slang::ast::ClassPropertySymbol>()) {
@@ -1560,9 +1451,9 @@ auto UnitLowerer::InternLocalClass(
               .name = std::string(prop.name), .type = *prop_type});
       RegisterClassPropertyStaticId(prop, static_id);
       // A `local` one is named nowhere outside the class (LRM 8.18), so it is
-      // promised to nobody.
+      // published to nobody.
       if (prop.visibility != slang::ast::Visibility::Local) {
-        promised_statics.push_back(
+        published_statics.push_back(
             hir::PublishedProperty{
                 .name = std::string(prop.name), .type = *prop_type});
       }
@@ -1634,20 +1525,21 @@ auto UnitLowerer::InternLocalClass(
     RegisterMethodId(*proto->getSubroutine(), decl.methods.Declare());
   }
 
-  // What this class would promise another unit, taken in the one order its own
-  // arenas were just built in, so the promise and the class cannot describe
-  // different positions. Which classes a unit publishes is a separate question,
-  // settled where the signature is derived.
-  hir::ClassSignature promise{
+  // What this class would publish to another unit, taken in the one order its
+  // own arenas were just built in, so the signature and the class cannot
+  // describe different positions. Which classes a unit publishes is a separate
+  // question, settled where the signature is derived.
+  hir::ClassSignature own_signature{
       .class_name = unit_.classes.NameOf(id),
-      .base = promised_base,
+      .base = published_base,
       .is_interface_class = decl.is_interface_class,
-      .implements = std::move(promised_interfaces),
+      .implements = std::move(published_interfaces),
       .properties = {},
       .local_property_types = {},
-      .static_properties = std::move(promised_statics),
+      .static_properties = std::move(published_statics),
       .constructor = std::nullopt,
-      .methods = {}};
+      .methods = {},
+      .takes_declaring_instance = decl.takes_declaring_instance};
   // A class that declares no `new` has the implicit one, which takes nothing
   // (LRM 8.7).
   if (!decl.is_interface_class) {
@@ -1658,15 +1550,15 @@ auto UnitLowerer::InternLocalClass(
       if (!declared) return std::unexpected(std::move(declared.error()));
       entered = *std::move(declared);
     }
-    promise.constructor = std::move(entered);
+    own_signature.constructor = std::move(entered);
   }
   for (const hir::FieldId id : decl.fields.Ids()) {
     const hir::ClassField& property = decl.fields.Get(id);
     if (!property.is_published) {
-      promise.local_property_types.push_back(property.type);
+      own_signature.local_property_types.push_back(property.type);
       continue;
     }
-    promise.properties.Add(
+    own_signature.properties.Add(
         hir::PublishedProperty{.name = property.name, .type = property.type});
   }
   const auto dispatch_of = [&](const slang::ast::SubroutineSymbol& method,
@@ -1688,7 +1580,7 @@ auto UnitLowerer::InternLocalClass(
     if (!interface) return std::unexpected(std::move(interface.error()));
     auto result_type = InternType(method.getReturnType(), span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
-    promise.methods.push_back(
+    own_signature.methods.push_back(
         hir::PublishedMethod{
             .prototype =
                 hir::PublishedCallable{
@@ -1708,7 +1600,7 @@ auto UnitLowerer::InternLocalClass(
       return std::unexpected(std::move(added.error()));
     }
   }
-  own_class_promises_.emplace(&cls, std::move(promise));
+  own_class_signatures_.emplace(&cls, std::move(own_signature));
 
   pending_class_bodies_[&declaring_scope].push_back(
       UnitLowerer::PendingClassBody{
@@ -1750,7 +1642,7 @@ void UnitLowerer::RequireEveryClassBodyLowered() const {
   }
 }
 
-void UnitLowerer::ReadPromisesOfNamedClasses() {
+void UnitLowerer::ReadSignaturesOfNamedClasses() {
   // By name, since the cache is keyed by address and walks in no fixed order.
   std::vector<hir::ExternalClassRef> named;
   for (const auto& [_, ref] : class_cache_) {
@@ -1909,12 +1801,13 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
     }
     // The base's instance is found from where this class is declared, the way
     // a `new` of the base written there would find it.
-    auto base_hops = DeclaringScopeHopsFrom(
+    auto base_instance = DeclaringInstanceFrom(
         base_type->getCanonicalType().as<slang::ast::ClassType>(), class_frame,
         span);
-    if (!base_hops) return std::unexpected(std::move(base_hops.error()));
+    if (!base_instance)
+      return std::unexpected(std::move(base_instance.error()));
     decl.base_call = hir::BaseCall{
-        .declaring_scope_hops = *base_hops,
+        .declaring_instance = *std::move(base_instance),
         .arguments = *std::move(base_arguments)};
   }
   // A static property initializer (LRM 8.9 / 10.5) runs once for the cell

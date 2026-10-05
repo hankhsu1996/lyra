@@ -153,10 +153,6 @@ auto TypeImporter::Import(const Type& type) -> Type {
             return std::visit(
                 Overloaded{
                     [this](const LocalClassRef& local) -> Type {
-                      if (source_owner_.has_value() &&
-                          !source_owner_->classes_are_nameable) {
-                        return Type{OpaqueObjectHandleType{}};
-                      }
                       return Type{
                           ClassHandleType{.class_ref = ImportClassRef(local)}};
                     },
@@ -165,11 +161,9 @@ auto TypeImporter::Import(const Type& type) -> Type {
                     }},
                 t.class_ref);
           },
-          [](const OpaqueObjectHandleType& t) -> Type { return Type{t}; },
           [](const ImportedClassHandleType& t) -> Type { return Type{t}; },
           [](const UnitObjectType& t) -> Type { return Type{t}; },
           [](const VirtualInterfaceType& t) -> Type { return Type{t}; },
-          [](const OpaqueScopeType& t) -> Type { return Type{t}; },
           [](const NullType& t) -> Type { return Type{t}; },
           [](const VoidType& t) -> Type { return Type{t}; }});
 }

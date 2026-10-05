@@ -395,15 +395,9 @@ class MirDumper {
             [](const ObjectType& o) -> std::string {
               return std::format("Object(#{})", o.class_id.value);
             },
-            [](const ExternalUnitObjectType& e) -> std::string {
-              return std::format("ExternalUnitObject(#{})", e.object.value);
-            },
             [](const CrossUnitClassType& e) -> std::string {
               return std::format(
                   "CrossUnitClass(\"{}::{}\")", e.unit_name, e.class_name);
-            },
-            [](const OpaqueObjectType&) -> std::string {
-              return "OpaqueObject";
             },
             [](const RuntimeClassType& e) -> std::string {
               return std::format(
@@ -464,18 +458,10 @@ class MirDumper {
                   return "RuntimeLibrary(DpiBitChunk)";
                 case RuntimeLibraryKind::kDpiLogicChunk:
                   return "RuntimeLibrary(DpiLogicChunk)";
-                case RuntimeLibraryKind::kPropertyCoordinate:
-                  return "RuntimeLibrary(PropertyCoordinate)";
-                case RuntimeLibraryKind::kResolvedProperty:
-                  return "RuntimeLibrary(ResolvedProperty)";
-                case RuntimeLibraryKind::kDeclaredBody:
-                  return "RuntimeLibrary(DeclaredBody)";
                 case RuntimeLibraryKind::kScopeInfo:
                   return "RuntimeLibrary(ScopeInfo)";
                 case RuntimeLibraryKind::kScopeCallable:
                   return "RuntimeLibrary(ScopeCallable)";
-                case RuntimeLibraryKind::kScopeClass:
-                  return "RuntimeLibrary(ScopeClass)";
               }
               throw InternalError("dump: unknown RuntimeLibraryKind");
             },
@@ -967,6 +953,9 @@ class MirDumper {
     Line(std::format("{}{} (#{})", kind, FormatName(s.name), id.value));
     Indent();
 
+    for (const std::string& alias : s.aliases) {
+      Line(std::format("Alias: {}", alias));
+    }
     if (s.base.has_value()) {
       Line(std::format("Base: {}", FormatClassRef(*s.base)));
     }
@@ -999,13 +988,6 @@ class MirDumper {
       Dedent();
     }
     Dedent();
-
-    for (const ClassId declared : s.declares) {
-      Line(
-          std::format(
-              "Declares: Class[{}]{}", declared.value,
-              FormatName(unit_->GetClass(declared).name)));
-    }
 
     Line("Fields:");
     Indent();

@@ -617,11 +617,11 @@ cross-check predicts. This file owns only which instances are known and what is 
       by the host compiler; it is now refused, as the execution backend already refused it. It
       waited on the source backend being able to refuse at all.
 
-- [x] T35 -- Which of a scope's bodies a hierarchical name may end at is stated where the entry is
-      built, not recovered by matching identifiers across two lists. The entry a by-name caller
-      reaches names the body it publishes, so the execution lowering reads the pairing rather than
-      collecting the published identifiers and re-joining them to bodies by comparing strings -- a
-      join that held only while no two bodies of one scope could share an identifier.
+- [x] T35 -- Which of a scope's bodies a hierarchical name may end at is stated in what the scope
+      publishes, not recovered by matching identifiers across two lists: each published subroutine
+      is a method of the scope's published class that forwards to its body, and a caller calls it
+      directly. Nothing re-joins published identifiers to bodies by comparing strings -- a join that
+      held only while no two bodies of one scope could share an identifier.
 
 ## Cross-references
 

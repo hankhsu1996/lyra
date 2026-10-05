@@ -10,12 +10,13 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/external_class.hpp"
-#include "lyra/hir/external_unit_object.hpp"
+#include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_method.hpp"
 #include "lyra/hir/published_modport.hpp"
+#include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/published_target.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
@@ -67,32 +68,6 @@ struct PortDecl {
   std::optional<PublishedCallableId> default_value;
 };
 
-// The object an instance of this unit is: the class's own name, the members
-// another unit may name on it, the subroutines another unit may call on it,
-// and the views it offers over those members. A unit's name and the name of
-// the class it builds are two facts, so a referrer reads the class it reaches
-// here rather than deriving it from the unit it reached through.
-struct InstanceClassSignature {
-  std::string class_name;
-  // The order is as much a part of the promise as the names are: a member's
-  // position is what fixes where its storage sits, and both sides of the
-  // boundary read that position out of this one order.
-  base::Arena<PublishedMember, PublishedMemberId> members;
-  base::Arena<PublishedCallable, PublishedCallableId> callables;
-  std::vector<PublishedModport> modports;
-
-  // The member published under `name`, or nothing when the unit published no
-  // such name. A name with no answer here is one the unit never promised, and
-  // that is exactly what leaves a reference to it resolving at elaboration.
-  [[nodiscard]] auto Find(std::string_view name) const
-      -> std::optional<PublishedMemberId> {
-    for (const PublishedMemberId id : members.Ids()) {
-      if (members.Get(id).name == name) return id;
-    }
-    return std::nullopt;
-  }
-};
-
 // One class of the source language a unit publishes (LRM 26.2 puts a package's
 // declarations on its signature), named by the canonical name a referrer
 // reaches it under. It is the class's own declaration as the front end
@@ -129,9 +104,11 @@ struct ClassSignature {
   // take, because its own properties are placed after them.
   std::vector<TypeId> local_property_types;
   // The properties of the class itself rather than of an object of it (LRM
-  // 8.9) that another unit may name. Each is one cell the declaring unit holds
-  // and a referrer reaches by name, so no position is counted out of this
-  // list.
+  // 8.9) that another unit may name. Where a namespace unit declares the class,
+  // each is one cell that unit holds and a referrer reaches by name, so no
+  // position is counted out of this list; where a design element declares it,
+  // each is a cell of the instance the class belongs to (LRM 6.22), which the
+  // scope declaring the class publishes among its members.
   std::vector<PublishedProperty> static_properties;
   // What a construction of the class is entered with (LRM 8.7): each formal's
   // direction and type, as a method's prototype states them. Absent for an
@@ -139,6 +116,53 @@ struct ClassSignature {
   std::optional<ExternalCalleeInterface> constructor;
   // Every method the class declares, in the order it declares them.
   std::vector<PublishedMethod> methods;
+  // Whether a construction of the class and a call of a method of the class
+  // itself are handed the instance the class belongs to (LRM 6.22), as the
+  // class's own declaration states it.
+  bool takes_declaring_instance = false;
+};
+
+// What a design element (LRM 23.2.1) publishes beside its classes, which exists
+// to be instantiated and wired: its ports, the object an instance of it is, and
+// the class of every generate block an instance holds.
+struct PublishedDesignElement {
+  // In declaration order, which is the order a positional connection counts
+  // through (LRM 23.3.2.1). A consumer walking a unit's connections walks these
+  // parts in step with them rather than searching for each, so the two cannot
+  // disagree about which point is which.
+  std::vector<PortDecl> ports;
+  ScopeClassSignature instance_class;
+  // However deep (LRM 27), each reached from the scope holding its construct.
+  std::vector<ScopeClassSignature> blocks;
+
+  // The class of a scope an instance of this unit is or holds, published under
+  // `class_name`, or nothing where the unit published no such scope.
+  [[nodiscard]] auto FindScopeClass(std::string_view class_name) const
+      -> const ScopeClassSignature* {
+    if (instance_class.class_name == class_name) return &instance_class;
+    for (const ScopeClassSignature& block : blocks) {
+      if (block.class_name == class_name) return &block;
+    }
+    return nullptr;
+  }
+};
+
+// What a namespace unit -- a package (LRM 26.2) or the `$unit` scope (LRM
+// 3.12.1) -- publishes beside its classes: the subroutines another unit calls
+// by name on no object (LRM 26.3), what a call to each passes and awaits. It
+// roots no object, so nothing reaches it through a receiver.
+struct PublishedNamespace {
+  std::vector<PublishedCallable> subroutines;
+
+  // The subroutine published under `name`, or nothing where the unit published
+  // no such name.
+  [[nodiscard]] auto FindSubroutine(std::string_view name) const
+      -> const PublishedCallable* {
+    for (const PublishedCallable& published : subroutines) {
+      if (published.name == name) return &published;
+    }
+    return nullptr;
+  }
 };
 
 // What a unit publishes: the declarations another unit may name. Derived by the
@@ -155,31 +179,11 @@ struct UnitSignature {
   // For the same reason a class named in here is named by declaring unit and
   // class name, never by an id.
   TypePool types;
-  // In declaration order, which is the order a positional connection counts
-  // through (LRM 23.3.2.1). A consumer walking a unit's connections walks these
-  // parts in step with them rather than searching for each, so the two cannot
-  // disagree about which point is which.
-  std::vector<PortDecl> ports;
-  // Absent on a unit with no instance: a package names its declarations and
-  // roots no object, so nothing reaches it through a receiver.
-  std::optional<InstanceClassSignature> instance_class;
   // The classes of the source language this unit declares and other units may
   // name (LRM 26.2), each reached by its own name rather than through any
   // instance.
   std::vector<ClassSignature> classes;
-  // The subroutines this unit declares in its namespace, which another unit
-  // calls by name on no object (LRM 26.3): what a call to each passes and
-  // awaits. Empty on a design element, whose subroutines are enabled on an
-  // instance of it and so are stated on the object that instance is.
-  std::vector<PublishedCallable> subroutines;
-
-  // Whether this unit is a design element (LRM 23.2.1), which exists to be
-  // instantiated and wired and so publishes its ports and nothing it declares
-  // inside. The object its instances are is what says so: a unit that roots one
-  // is a design element, and a namespace unit roots none.
-  [[nodiscard]] auto IsDesignElement() const -> bool {
-    return instance_class.has_value();
-  }
+  std::variant<PublishedDesignElement, PublishedNamespace> unit;
 
   // The class published under `name`, or nothing where the unit published no
   // such name.
@@ -190,47 +194,41 @@ struct UnitSignature {
     }
     return nullptr;
   }
-
-  // The namespace subroutine published under `name`, on the same terms.
-  [[nodiscard]] auto FindSubroutine(std::string_view name) const
-      -> const PublishedCallable* {
-    for (const PublishedCallable& published : subroutines) {
-      if (published.name == name) return &published;
-    }
-    return nullptr;
-  }
 };
 
 // The class an instance of the unit named `unit_name` is. The unit both
-// publishes this on its signature and builds the class under it, so the promise
-// and the code cannot name different classes. Only the publishing unit computes
-// it -- a referrer reads the name the signature carries, which is what keeps a
-// unit's name and its class two facts everywhere but here.
+// publishes this on its signature and builds the class under it, so the
+// signature and the code cannot name different classes. A referrer holding the
+// signature reads the name it carries; a unit stating in its own signature
+// what type a member of it holds computes it here, because every signature is
+// derived without reading another.
 [[nodiscard]] inline auto InstanceClassName(std::string_view unit_name)
     -> std::string {
   return std::string{unit_name};
 }
 
-// The object an instance of the unit `signature` describes is. A unit whose
-// instances exist roots one, so a caller holding the signature of a unit it
-// instantiates reaches it without a case for its absence.
-[[nodiscard]] inline auto InstanceClassOf(const UnitSignature& signature)
-    -> const InstanceClassSignature& {
-  if (!signature.instance_class.has_value()) {
+// What `signature` publishes as a design element. A unit that is instantiated
+// is one, so a caller holding the signature of a unit it instantiates reaches
+// it without a case for a namespace.
+[[nodiscard]] inline auto DesignElementOf(const UnitSignature& signature)
+    -> const PublishedDesignElement& {
+  const auto* element = std::get_if<PublishedDesignElement>(&signature.unit);
+  if (element == nullptr) {
     throw InternalError(
-        "hir::InstanceClassOf: a unit that is instantiated publishes the "
-        "object its instances are");
+        "hir::DesignElementOf: a unit that is instantiated is a design "
+        "element");
   }
-  return *signature.instance_class;
+  return *element;
 }
 
-// The record a referrer keeps of the object `signature` promises, with the
-// member types taken into `into` -- the referrer's own pool, since an identity
-// on a signature indexes storage the signature carries. The whole published
-// list crosses, not the part a referrer happens to name: a member's position is
-// counted out of that list.
-[[nodiscard]] auto ImportExternalUnitObject(
-    const UnitSignature& signature, TypePool& into) -> ExternalUnitObject;
+// The record a referrer keeps of the scope class `published` of `signature`,
+// with the member types taken into `into` -- the referrer's own pool, since an
+// identity on a signature indexes storage the signature carries. The whole
+// published list crosses, not the part a referrer happens to name: a member's
+// position is counted out of that list.
+[[nodiscard]] auto ImportExternalScopeClass(
+    const UnitSignature& signature, const ScopeClassSignature& published,
+    TypePool& into) -> ExternalScopeClass;
 
 // The record a referrer keeps of one class `signature` publishes, on the same
 // terms: the whole published list crosses and the types are answered again out
@@ -247,6 +245,16 @@ struct UnitSignature {
     -> ExternalCalleeInterface;
 [[nodiscard]] auto ImportCallable(
     TypeImporter& importer, PublishedCallable callable) -> PublishedCallable;
+
+// The same for the part of a declaration a port or a view names, whose descent
+// states the type each step lands on.
+[[nodiscard]] auto ImportProjection(
+    TypeImporter& importer, MemberProjection projection) -> MemberProjection;
+
+// The same for a whole scope class, every type anywhere on it.
+[[nodiscard]] auto ImportScopeClass(
+    TypeImporter& importer, ScopeClassSignature published)
+    -> ScopeClassSignature;
 
 // A class's properties and methods taken the same way, in the order given.
 [[nodiscard]] auto ImportTypes(

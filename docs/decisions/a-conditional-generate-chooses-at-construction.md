@@ -1,6 +1,8 @@
 # A conditional generate's alternative is chosen at construction
 
-Date: 2026-09-22 Status: accepted
+Date: 2026-09-22 Status: accepted; the rejection of one member covering every alternative is
+reversed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) D3
 
 ## Context
 
@@ -179,9 +181,9 @@ where every consumer of a route asks it.
   classes and 10.8 KB per outer iteration, with both alternatives empty.
 
 - Two alternatives of one construct may carry the same name, which the standard allows precisely
-  because at most one is instantiated (LRM 27.5). They are separate members of the enclosing scope
-  and only the one that stands ever attaches to the hierarchy, so a name reaching the construct
-  reaches what elaboration said it would.
+  because at most one is instantiated (LRM 27.5). Each is its own class, the construct's one entry
+  holds whichever stands, and only that one ever attaches to the hierarchy, so a name reaching the
+  construct reaches what elaboration said it would.
 
 - [one-body-built-at-every-index](one-body-built-at-every-index.md)'s consequence that a
   `generate if` and a `generate case` "are untouched and need nothing here", on the grounds that one

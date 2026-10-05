@@ -30,6 +30,19 @@ auto CellTypeFor(
              : mir::ObservableCellOf(unit_lowerer.Unit().types, value_type);
 }
 
+// The cell the scope already placed for `var` where it published that local,
+// and otherwise a fresh one in `owner`.
+auto PlacedOrDeclared(
+    const StaticStorageOwner& owner, hir::ProceduralVarId var,
+    mir::TypeId cell_type) -> StaticStorageHome {
+  if (const auto* instance = std::get_if<InstanceStorage>(&owner)) {
+    for (const PlacedStatic& placed : instance->placed) {
+      if (placed.var == var) return InstanceFieldHome{.field = placed.field};
+    }
+  }
+  return DeclareStaticCell(owner, cell_type);
+}
+
 }  // namespace
 
 auto DeclareStaticCell(const StaticStorageOwner& owner, mir::TypeId cell_type)
@@ -38,7 +51,9 @@ auto DeclareStaticCell(const StaticStorageOwner& owner, mir::TypeId cell_type)
       Overloaded{
           [&](const InstanceStorage& instance) -> StaticStorageHome {
             return InstanceFieldHome{
-                .field = instance.shape->AddField(cell_type)};
+                .field = mir::ClassFieldTarget{
+                    .owner = instance.owner,
+                    .slot = instance.shape->AddField(cell_type)}};
           },
           [&](const ClassStorage& cls) -> StaticStorageHome {
             return ClassCellHome{
@@ -89,8 +104,7 @@ auto BindBodyStatics(
       bindings.push_back(
           StaticVarBinding{
               .var = var_id,
-              .scope = scope_id,
-              .home = DeclareStaticCell(owner, cell_type),
+              .home = PlacedOrDeclared(owner, var_id, cell_type),
               .cell_type = cell_type});
     }
     for (const hir::ProceduralScopeId child : scope.child_scopes) {
@@ -101,7 +115,7 @@ auto BindBodyStatics(
   return bindings;
 }
 
-auto InstanceFieldOf(const StaticVarBinding& binding) -> mir::FieldId {
+auto InstanceFieldOf(const StaticVarBinding& binding) -> mir::ClassFieldTarget {
   const auto* home = std::get_if<InstanceFieldHome>(&binding.home);
   if (home == nullptr) {
     throw InternalError(
@@ -120,7 +134,7 @@ auto BuildStaticStorageAccess(
       Overloaded{
           [&](const InstanceFieldHome& instance) {
             return BuildStructuralFieldAccessExpr(
-                frame, unit, hops, instance.field);
+                frame, unit, hops, instance.field, cell_type);
           },
           [&](const ClassCellHome& cls) {
             return mir::Expr{

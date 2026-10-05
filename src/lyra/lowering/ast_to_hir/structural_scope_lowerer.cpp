@@ -2,12 +2,10 @@
 
 #include <cstdint>
 #include <expected>
-#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <slang/ast/Compilation.h>
@@ -55,38 +53,6 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// The identity the compilation unit's declaration pass minted for an owned
-// child, as the kind of child `Ref` names it. Reaching this with the wrong
-// kind, or with none, means the walk that mints and the walk that fills
-// disagree about what the member even is.
-template <typename Ref>
-auto ReservedOwnedChild(
-    const UnitLowerer& owner, const slang::ast::Symbol& child,
-    std::string_view what) -> Ref {
-  const auto binding = owner.LookupOwnedChildBinding(child);
-  const auto* reserved =
-      binding.has_value() ? std::get_if<Ref>(&binding->child) : nullptr;
-  if (reserved == nullptr) {
-    throw InternalError(
-        std::format("{} was not minted by the declaration pass", what));
-  }
-  return *reserved;
-}
-
-auto ReservedGenerate(const UnitLowerer& owner, const slang::ast::Symbol& child)
-    -> hir::GenerateId {
-  return ReservedOwnedChild<hir::GenerateChildRef>(
-             owner, child, "generate block")
-      .generate;
-}
-
-auto ReservedInstanceMember(
-    const UnitLowerer& owner, const slang::ast::Symbol& child)
-    -> hir::InstanceMemberId {
-  return ReservedOwnedChild<hir::InstanceMemberId>(
-      owner, child, "instance member");
-}
-
 // The declaration of a child object, built from whichever unit `leaf` is an
 // instance of. What the child is comes off this unit's record of that unit's
 // object, never from the unit's own name; `dims` carries the element counts of
@@ -104,8 +70,7 @@ auto BuildInstanceMember(
   }
   return hir::InstanceMemberDecl{
       .instance_name = std::string{instance_name},
-      .object = owner.ExternalUnitObjectOf(
-          SpecializationName(leaf, owner.Specialization())),
+      .scope_class = owner.ScopeClassOfInstance(leaf),
       .array_dims = std::move(dims),
       .arguments = std::move(stored)};
 }
@@ -118,6 +83,8 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   // Filling a declaration is defining the identity a peer may already hold,
   // which is why this scope takes the pools rather than growing its own.
   ScopeDeclarations declarations = owner_->TakeScopeDeclarations(*slang_scope_);
+  scope.structural_data_objects =
+      std::move(declarations.structural_data_objects);
   scope.structural_subroutines = std::move(declarations.structural_subroutines);
   scope.processes = std::move(declarations.processes);
   scope.generates = std::move(declarations.generates);
@@ -139,35 +106,13 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   DeclareProceduralScopes(
       *slang_scope_, *slang_scope_, *owner_, scope.procedural_scopes);
 
-  // Instance member decls are built ahead of the port-connection synthesis
-  // below, which reads them to wire each connection. The owned-child binding a
-  // reference resolves through is established earlier still, by the whole-unit
-  // declaration pass, so this population order is a decl-availability concern,
-  // not a reference-resolution one.
+  // Structural members (variables, instances, generates, subroutine bodies)
+  // are lowered before the members that name them (processes, continuous
+  // assigns, and the aliases that state which of this scope's nets are one
+  // physical net), so such a member resolves a reference to a declaration it
+  // textually precedes -- declarations are scope-wide (LRM 27).
   for (const auto& member : slang_scope_->members()) {
-    const diag::FailureContext at(
-        owner_->SourceMapper().PointSpanOf(member.location));
-    if (member.kind == slang::ast::SymbolKind::Instance) {
-      auto r = PopulateInstanceMember(
-          member.as<slang::ast::InstanceSymbol>(), frame);
-      if (!r) return std::unexpected(std::move(r.error()));
-    } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
-      auto r = PopulateInstanceArrayMember(
-          member.as<slang::ast::InstanceArraySymbol>(), frame);
-      if (!r) return std::unexpected(std::move(r.error()));
-    }
-  }
-
-  // Structural members (variables, generates, subroutine bodies) are lowered
-  // before the members that name them (processes, continuous assigns, and the
-  // aliases that state which of this scope's nets are one physical net), so
-  // such a member resolves a reference to a declaration it textually precedes
-  // -- declarations are scope-wide (LRM 27), the same reason instances are
-  // bound in the pre-pass above.
-  for (const auto& member : slang_scope_->members()) {
-    if (member.kind == slang::ast::SymbolKind::Instance ||
-        member.kind == slang::ast::SymbolKind::InstanceArray ||
-        member.kind == slang::ast::SymbolKind::ProceduralBlock ||
+    if (member.kind == slang::ast::SymbolKind::ProceduralBlock ||
         member.kind == slang::ast::SymbolKind::ContinuousAssign ||
         member.kind == slang::ast::SymbolKind::NetAlias) {
       continue;
@@ -200,6 +145,7 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   if (!pc) return std::unexpected(std::move(pc.error()));
 
   scope.routes = owner_->TakeRoutesForFrame(frame_);
+  scope.published = owner_->TakePublication(*slang_scope_);
   return scope;
 }
 
@@ -266,7 +212,7 @@ auto StructuralScopeLowerer::DeclareSettledValue(
               .name = std::string{value.name},
               .type = *type_or,
               .kind = std::move(kind)});
-  owner_->MapStructuralDataObjectBinding(value, frame_, declared, *type_or);
+  owner_->MapStructuralDataObjectBinding(value, frame_, declared);
   return {};
 }
 
@@ -314,11 +260,11 @@ auto StructuralScopeLowerer::PopulateMember(
           member.as<slang::ast::GenerateBlockSymbol>(), frame);
 
     case SymbolKind::Instance:
+      return PopulateInstanceMember(
+          member.as<slang::ast::InstanceSymbol>(), frame);
     case SymbolKind::InstanceArray:
-      throw InternalError(
-          "StructuralScopeLowerer::PopulateMember: an instance reached the "
-          "general member walk, which runs after instance declarations are "
-          "already bound");
+      return PopulateInstanceArrayMember(
+          member.as<slang::ast::InstanceArraySymbol>(), frame);
 
     // A named sequence or property declares no storage and no behavior: what
     // an instance of one stands for is its body with the actual arguments
@@ -515,21 +461,19 @@ auto StructuralScopeLowerer::PopulateVariableMember(
     kind = hir::StructuralVariableDecl{
         .initializer = frame.Exprs().Add(*std::move(init_or))};
   }
-  const hir::StructuralDataObjectId local =
-      frame.current_structural_scope->structural_data_objects.Add(
-          hir::StructuralDataObjectDecl{
-              .name = std::string{var.name},
-              .type = *type_id_or,
-              .kind = std::move(kind)});
-  owner_->MapStructuralDataObjectBinding(var, frame_, local, *type_id_or);
+  frame.current_structural_scope->structural_data_objects.Define(
+      owner_->ReservedDataObject(var), hir::StructuralDataObjectDecl{
+                                           .name = std::string{var.name},
+                                           .type = *type_id_or,
+                                           .kind = std::move(kind)});
   return {};
 }
 
 auto StructuralScopeLowerer::PopulateInterfacePortMember(
     const slang::ast::InterfacePortSymbol& port, WalkFrame frame)
     -> diag::Result<void> {
-  const hir::ExternalUnitObjectId object =
-      owner_->ExternalUnitObjectOf(owner_->InterfaceUnitOf(port));
+  const hir::ExternalScopeClassId scope_class =
+      owner_->ExternalScopeClassOf(owner_->InterfaceUnitOf(port));
   // How many instances the port stands for is the range it declares (LRM 25.3),
   // outermost first; a port standing for one declares none, which is the same
   // answer with nothing in it.
@@ -548,9 +492,9 @@ auto StructuralScopeLowerer::PopulateInterfacePortMember(
       frame.current_structural_scope->interface_ports.Add(
           hir::InterfacePortDecl{
               .name = std::string{port.name},
-              .object = object,
+              .scope_class = scope_class,
               .array_dims = std::move(array_dims)});
-  owner_->MapInterfacePortBinding(port, frame_, local, object);
+  owner_->MapInterfacePortBinding(port, frame_, local, scope_class);
   return {};
 }
 
@@ -573,16 +517,15 @@ auto StructuralScopeLowerer::PopulateNetMember(
         "a delay on a net declaration (LRM 10.3.3) is not yet supported");
   }
 
-  const hir::StructuralDataObjectId local =
-      frame.current_structural_scope->structural_data_objects.Add(
-          hir::StructuralDataObjectDecl{
-              .name = std::string{net.name},
-              .type = *type_id_or,
-              .kind = hir::StructuralNetDecl{
-                  .net_type = *net_type,
-                  .charge_strength =
-                      TranslateChargeStrength(net.getChargeStrength())}});
-  owner_->MapStructuralDataObjectBinding(net, frame_, local, *type_id_or);
+  frame.current_structural_scope->structural_data_objects.Define(
+      owner_->ReservedDataObject(net),
+      hir::StructuralDataObjectDecl{
+          .name = std::string{net.name},
+          .type = *type_id_or,
+          .kind = hir::StructuralNetDecl{
+              .net_type = *net_type,
+              .charge_strength =
+                  TranslateChargeStrength(net.getChargeStrength())}});
 
   // A net-declaration assignment (`wire w = expr;`, LRM 6.5) is a single
   // continuous driver of the net. slang carries it as the net's initializer
@@ -597,19 +540,14 @@ auto StructuralScopeLowerer::PopulateNetMember(
     if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
     // The net is this scope's own, so the driver reaches it over the route
     // that climbs no edges.
-    auto net_ref = owner_->MakeRoutedValueRef(
-        net, frame_,
-        ScopeRoute{
-            .head = hir::InUnitHead{.hops = {}},
-            .steps = {},
-            .unit_name = std::nullopt,
-            .open = {}});
+    auto net_ref =
+        owner_->MakeRoutedValueRef(net, frame_, ScopeRoute::Enclosing({}));
     if (!net_ref) return std::unexpected(std::move(net_ref.error()));
     const hir::ExprId lhs_id =
         frame.Exprs().Add(hir::MakeRefExpr(*net_ref, *type_id_or, span));
     const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
     const auto& reads = owner_->Sensitivity().AnalyzeReads(*init, net);
-    auto sensitivity = owner_->TranslateSensitivityReads(*this, reads, frame);
+    auto sensitivity = owner_->SensitivityEntriesOf(*this, reads, frame);
     if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
     frame.current_structural_scope->continuous_assigns.Add(
         hir::ContinuousAssign{
@@ -823,7 +761,7 @@ auto StructuralScopeLowerer::PopulateGenerateArrayMember(
   auto g = BuildGenerateFromArray(array, frame);
   if (!g) return std::unexpected(std::move(g.error()));
   frame.current_structural_scope->generates.Define(
-      ReservedGenerate(*owner_, *array.entries.front()), *std::move(g));
+      owner_->GenerateIdOf(*array.entries.front()), *std::move(g));
   return {};
 }
 
@@ -837,7 +775,7 @@ auto StructuralScopeLowerer::PopulateGenerateBlockMember(
   auto g = BuildGenerateFromBlock(block, frame);
   if (!g) return std::unexpected(std::move(g.error()));
   frame.current_structural_scope->generates.Define(
-      ReservedGenerate(*owner_, block), *std::move(g));
+      owner_->GenerateIdOf(block), *std::move(g));
   return {};
 }
 
@@ -847,7 +785,7 @@ auto StructuralScopeLowerer::PopulateInstanceMember(
   auto arguments = LowerConstructorArguments(inst, frame);
   if (!arguments) return std::unexpected(std::move(arguments.error()));
   frame.current_structural_scope->instance_members.Define(
-      ReservedInstanceMember(*owner_, inst),
+      owner_->InstanceMemberIdOf(inst),
       BuildInstanceMember(
           *owner_, frame, inst.name, inst, {}, *std::move(arguments)));
   return {};
@@ -896,7 +834,7 @@ auto StructuralScopeLowerer::PopulateInstanceArrayMember(
   auto arguments = LowerConstructorArguments(*shape->leaf, frame);
   if (!arguments) return std::unexpected(std::move(arguments.error()));
   frame.current_structural_scope->instance_members.Define(
-      ReservedInstanceMember(*owner_, array),
+      owner_->InstanceMemberIdOf(array),
       BuildInstanceMember(
           *owner_, frame, array.name, *shape->leaf, std::move(counts),
           *std::move(arguments)));

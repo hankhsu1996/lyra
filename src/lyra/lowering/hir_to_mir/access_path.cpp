@@ -357,8 +357,7 @@ auto PathPlace(
           from_place,
           [&](const ObjectProperty& owner) {
             return block.exprs.Add(PropertyStorage(
-                unit, block,
-                OpenObjectWrite(unit, block, owner.object, owner.property),
+                unit, block, OpenObjectWrite(unit, block, owner.object),
                 owner.property, owner.type));
           }},
       path.owner);
@@ -574,12 +573,9 @@ auto SettledOwner(
             return SettledPlace(unit_lowerer, frame, place);
           },
           [&](const ObjectProperty& property) -> PathOwner {
-            const auto once = [&](mir::ExprId id) {
-              return EvaluatedOnce(frame, id);
-            };
             return ObjectProperty{
-                .object = once(property.object),
-                .property = CoordinateMapped(property.property, once),
+                .object = EvaluatedOnce(frame, property.object),
+                .property = property.property,
                 .type = property.type};
           }},
       owner);
@@ -622,7 +618,7 @@ auto NamedIn(const SettledPath& settled, mir::Block& to) -> AccessPath {
           [&](const ObjectProperty& property) -> PathOwner {
             return ObjectProperty{
                 .object = again(property.object),
-                .property = CoordinateMapped(property.property, again),
+                .property = property.property,
                 .type = property.type};
           }},
       path.owner);

@@ -84,27 +84,6 @@ void AppendRecord(
 
 void AppendRecord(
     std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::PropertyCoordinate& record) {
-  const auto& [declared_by, slot] = record;
-  AppendFieldsOf(out, at, record, declared_by, slot);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::ResolvedProperty& record) {
-  const auto& [name, coordinate] = record;
-  AppendFieldsOf(out, at, record, name, coordinate);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::DeclaredBody& record) {
-  const auto& [name, body] = record;
-  AppendFieldsOf(out, at, record, name, body);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
     const runtime::ScopeMetadata& record) {
   const auto& [time_unit_power, time_precision_power] = record;
   AppendFieldsOf(out, at, record, time_unit_power, time_precision_power);
@@ -119,25 +98,16 @@ void AppendRecord(
 
 void AppendRecord(
     std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::ScopeClass& record) {
-  const auto& [name, definition] = record;
-  AppendFieldsOf(out, at, record, name, definition);
-}
-
-void AppendRecord(
-    std::vector<FieldLayout>& out, std::uint64_t at,
     const runtime::ScopeInfo& record) {
-  const auto& [metadata, exports, subroutines, classes] = record;
-  AppendFieldsOf(out, at, record, metadata, exports, subroutines, classes);
+  const auto& [metadata, exports] = record;
+  AppendFieldsOf(out, at, record, metadata, exports);
 }
 
 void AppendRecord(
     std::vector<FieldLayout>& out, std::uint64_t at,
     const runtime::ObjectDefinition& record) {
-  const auto& [base, property_names, body_names, property_slots, scope] =
-      record;
-  AppendFieldsOf(
-      out, at, record, base, property_names, body_names, property_slots, scope);
+  const auto& [base, scope] = record;
+  AppendFieldsOf(out, at, record, base, scope);
 }
 
 // A field that is itself a structure stands for its own fields.
@@ -171,16 +141,10 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
   switch (kind) {
     case lir::RuntimeLibraryKind::kObjectDefinition:
       return LayoutOf<runtime::ObjectDefinition>();
-    case lir::RuntimeLibraryKind::kResolvedProperty:
-      return LayoutOf<runtime::ResolvedProperty>();
-    case lir::RuntimeLibraryKind::kDeclaredBody:
-      return LayoutOf<runtime::DeclaredBody>();
     case lir::RuntimeLibraryKind::kScopeInfo:
       return LayoutOf<runtime::ScopeInfo>();
     case lir::RuntimeLibraryKind::kScopeCallable:
       return LayoutOf<runtime::ScopeCallable>();
-    case lir::RuntimeLibraryKind::kScopeClass:
-      return LayoutOf<runtime::ScopeClass>();
     case lir::RuntimeLibraryKind::kPackedType:
     case lir::RuntimeLibraryKind::kPackedRange:
     case lir::RuntimeLibraryKind::kUnpackedRange:
@@ -205,7 +169,6 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
     case lir::RuntimeLibraryKind::kObjectWrite:
     case lir::RuntimeLibraryKind::kCancellationTarget:
     case lir::RuntimeLibraryKind::kControlEffect:
-    case lir::RuntimeLibraryKind::kPropertyCoordinate:
       break;
   }
   throw InternalError(

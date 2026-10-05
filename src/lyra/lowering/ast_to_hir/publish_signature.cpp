@@ -7,6 +7,7 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/EvalContext.h>
@@ -18,6 +19,8 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
+#include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
@@ -26,6 +29,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_ref.hpp"
@@ -39,8 +43,8 @@
 #include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
-#include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
-#include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
+#include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -73,9 +77,7 @@ auto SelectCoordinate(const slang::ast::Expression& bound)
 }
 
 // Whether a declaration holds a cell (LRM 6.5) -- what an expression over a
-// unit's declarations can be waited on through, and what a member of one is
-// read and written as. A published member need not: an instance holds an
-// object, and nothing waits on it.
+// unit's declarations can be waited on through.
 auto HoldsCell(const slang::ast::Symbol& symbol) -> bool {
   return symbol.kind == slang::ast::SymbolKind::Variable ||
          symbol.kind == slang::ast::SymbolKind::Net;
@@ -191,18 +193,64 @@ auto TranslateDirection(
       "PublishSignature: a port direction the language does not define");
 }
 
+// The descent a port expression's own selects state, turned from the leaf-first
+// steps a peel collects into the owner-to-leaf order a reader walks. Each step
+// states the type it lands on, in this unit's own types, so a reader needs no
+// knowledge of what selecting from a type produces.
+auto PublishPath(
+    UnitLowerer& lowerer, std::span<const slang::ast::Expression* const> steps,
+    diag::SourceSpan span)
+    -> diag::Result<std::vector<hir::PublishedSelector>> {
+  std::vector<hir::PublishedSelector> path;
+  path.reserve(steps.size());
+  for (const auto* step : std::views::reverse(steps)) {
+    auto projected = lowerer.InternType(*step->type, span);
+    if (!projected) return std::unexpected(std::move(projected.error()));
+    if (const auto* select =
+            step->as_if<slang::ast::ElementSelectExpression>()) {
+      const auto index = SelectCoordinate(select->selector());
+      if (!index.has_value()) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedStructuralMember,
+            "a port naming an element of an internal name at a coordinate "
+            "the front end did not fix is not yet supported");
+      }
+      path.emplace_back(
+          hir::PublishedElementSelector{
+              .index = *index, .projected_type = *projected});
+      continue;
+    }
+    const auto* select = step->as_if<slang::ast::RangeSelectExpression>();
+    if (select == nullptr) {
+      throw InternalError(
+          "PublishSignature: a step that is neither an element nor a range "
+          "select was collected as one");
+    }
+    auto range = SelectRange(*select);
+    if (!range.has_value()) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedStructuralMember,
+          "a port naming a window of an internal name at bounds the front "
+          "end did not fix is not yet supported");
+    }
+    path.emplace_back(
+        hir::PublishedSliceSelector{
+            .range = *std::move(range), .projected_type = *projected});
+  }
+  return path;
+}
+
 }  // namespace
 
-auto UnitLowerer::PublishClassSignatures() -> void {
-  // A class this unit's namespace declares is one another unit may name
-  // (LRM 26.2), and one a design element declares is not: a module exists to
-  // be instantiated and wired, so what it declares inside is its own.
-  if (scope_->asSymbol().as_if<slang::ast::InstanceBodySymbol>() != nullptr) {
-    return;
-  }
-  const auto publish = [&](const slang::ast::ClassType& cls) {
-    const auto it = own_class_promises_.find(&cls);
-    if (it == own_class_promises_.end()) {
+void UnitLowerer::PublishClassSignatures() {
+  // Every class this unit declares is one another unit may name: a package's
+  // by its declarations (LRM 26.2), and a design element's through a
+  // hierarchical name reaching an object of it (LRM 23.6). One a design element
+  // declares is a type of each instance (LRM 6.22), which every instance of
+  // this unit declares alike, so what it publishes is one class.
+  const auto publish_class = [&](const slang::ast::ClassType& cls) {
+    const auto it = own_class_signatures_.find(&cls);
+    if (it == own_class_signatures_.end()) {
       return;
     }
     hir::TypeImportMemo published;
@@ -210,38 +258,43 @@ auto UnitLowerer::PublishClassSignatures() -> void {
         unit_.types,
         hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
         signature_.types, published);
-    const hir::ClassSignature& promise = it->second;
+    const hir::ClassSignature& own = it->second;
     // The order is part of what is published: a property's slot and a virtual
     // method's ordinal are counted out of these lists by the class that
     // declares them and by every unit that reaches one, and neither states a
     // position to the other.
     signature_.classes.push_back(
         hir::ClassSignature{
-            .class_name = promise.class_name,
-            .base = promise.base,
-            .is_interface_class = promise.is_interface_class,
-            .implements = promise.implements,
-            .properties = hir::ImportProperties(importer, promise.properties),
+            .class_name = own.class_name,
+            .base = own.base,
+            .is_interface_class = own.is_interface_class,
+            .implements = own.implements,
+            .properties = hir::ImportProperties(importer, own.properties),
             .local_property_types =
-                hir::ImportTypes(importer, promise.local_property_types),
-            .static_properties = hir::ImportStaticProperties(
-                importer, promise.static_properties),
-            .constructor = promise.constructor.transform(
+                hir::ImportTypes(importer, own.local_property_types),
+            .static_properties =
+                hir::ImportStaticProperties(importer, own.static_properties),
+            .constructor = own.constructor.transform(
                 [&](const hir::ExternalCalleeInterface& stated) {
                   return hir::ImportCalleeInterface(importer, stated);
                 }),
-            .methods = hir::ImportMethods(importer, promise.methods)});
+            .methods = hir::ImportMethods(importer, own.methods),
+            .takes_declaring_instance = own.takes_declaring_instance});
   };
-  for (const auto& member : scope_->members()) {
-    if (member.kind == slang::ast::SymbolKind::ClassType) {
-      publish(member.as<slang::ast::ClassType>());
-    } else if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
-      for (const auto& spec :
-           member.as<slang::ast::GenericClassDefSymbol>().specializations()) {
-        publish(spec.getCanonicalType().as<slang::ast::ClassType>());
+  // A parameterized class is one class per specialization the design uses
+  // (LRM 8.25), each published on its own.
+  const auto publish = [&](const slang::ast::Symbol& member) {
+    if (const auto* cls = member.as_if<slang::ast::ClassType>()) {
+      publish_class(*cls);
+    } else if (
+        const auto* generic =
+            member.as_if<slang::ast::GenericClassDefSymbol>()) {
+      for (const auto& spec : generic->specializations()) {
+        publish_class(spec.getCanonicalType().as<slang::ast::ClassType>());
       }
     }
-  }
+  };
+  WalkDeclarationScopes(*scope_, publish);
 }
 
 auto UnitLowerer::PublishNamespaceSubroutines() -> diag::Result<void> {
@@ -250,26 +303,72 @@ auto UnitLowerer::PublishNamespaceSubroutines() -> diag::Result<void> {
       unit_.types,
       hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
       signature_.types, published);
-  for (const auto& member : scope_->members()) {
-    const auto* sym = member.as_if<slang::ast::SubroutineSymbol>();
-    // A DPI-C import's foreign symbol is program-global, so a caller reaches it
-    // by that name and through no unit (LRM 35.4).
-    if (sym == nullptr || sym->flags.has(slang::ast::MethodFlags::DPIImport)) {
-      continue;
-    }
-    const auto span = SourceMapper().PointSpanOf(sym->location);
-    auto interface = MakeExternalCalleeInterface(*sym, span);
-    if (!interface) return std::unexpected(std::move(interface.error()));
-    auto result_type = InternType(sym->getReturnType(), span);
-    if (!result_type) return std::unexpected(std::move(result_type.error()));
-    signature_.subroutines.push_back(
-        hir::ImportCallable(
-            importer, hir::PublishedCallable{
-                          .name = std::string{sym->name},
-                          .interface = *std::move(interface),
-                          .result_type = *result_type}));
+  auto& namespace_unit = signature_.unit.emplace<hir::PublishedNamespace>();
+  for (const ScopePublicationRecord::Callable& callable :
+       PublicationOf(*scope_).callables) {
+    auto own = PublishedCallableOf(callable);
+    if (!own) return std::unexpected(std::move(own.error()));
+    namespace_unit.subroutines.push_back(
+        hir::ImportCallable(importer, *std::move(own)));
   }
   return {};
+}
+
+auto UnitLowerer::PublishedCallableOf(
+    const ScopePublicationRecord::Callable& callable)
+    -> diag::Result<hir::PublishedCallable> {
+  // An expression another unit asks for the value of is evaluated in a
+  // function of this unit that takes nothing.
+  const auto evaluator = [&](std::string name, const slang::ast::Type& type,
+                             const slang::ast::Symbol& holder)
+      -> diag::Result<hir::PublishedCallable> {
+    auto result_type =
+        InternType(type, SourceMapper().PointSpanOf(holder.location));
+    if (!result_type) return std::unexpected(std::move(result_type.error()));
+    return hir::PublishedCallable{
+        .name = std::move(name),
+        .interface =
+            hir::ExternalCalleeInterface{
+                .kind = hir::SubroutineKind::kFunction, .params = {}},
+        .result_type = *result_type};
+  };
+  return std::visit(
+      Overloaded{
+          [&](const ScopePublicationRecord::Subroutine& declared)
+              -> diag::Result<hir::PublishedCallable> {
+            const slang::ast::SubroutineSymbol& sym = *declared.symbol;
+            const auto span = SourceMapper().PointSpanOf(sym.location);
+            auto interface = MakeExternalCalleeInterface(sym, span);
+            if (!interface) {
+              return std::unexpected(std::move(interface.error()));
+            }
+            auto result_type = InternType(sym.getReturnType(), span);
+            if (!result_type) {
+              return std::unexpected(std::move(result_type.error()));
+            }
+            return hir::PublishedCallable{
+                .name = std::string{sym.name},
+                .interface = *std::move(interface),
+                .result_type = *result_type};
+          },
+          [&](const ScopePublicationRecord::PortDefault& port) {
+            return evaluator(
+                PortDefaultName(port.port->name), port.port->getType(),
+                *port.port);
+          },
+          [&](const ScopePublicationRecord::ViewRead& read)
+              -> diag::Result<hir::PublishedCallable> {
+            const auto* connection = read.port->getConnectionExpr();
+            if (connection == nullptr) {
+              throw InternalError(
+                  "PublishSignature: a name the view defines is the "
+                  "expression it was written with");
+            }
+            return evaluator(
+                ModportReadName(read.modport->name, read.port->name),
+                *connection->type, *read.port);
+          }},
+      callable);
 }
 
 auto UnitLowerer::PublishSignature() -> diag::Result<void> {
@@ -280,233 +379,27 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   const auto* body = scope_->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
   if (body == nullptr) return PublishNamespaceSubroutines();
 
-  auto& instance_class = signature_.instance_class.emplace(
-      hir::InstanceClassSignature{
-          .class_name = hir::InstanceClassName(unit_.name),
-          .members = {},
-          .callables = {},
-          .modports = {}});
+  auto& element = signature_.unit.emplace<hir::PublishedDesignElement>(
+      hir::PublishedDesignElement{
+          .ports = {}, .instance_class = {}, .blocks = {}});
+  const ScopePublicationRecord& root = PublicationOf(*scope_);
 
   hir::TypeImportMemo published;
-  // What a design element publishes is its ports and its object, never what it
-  // declares inside (LRM 23.2.1), so a member typed by a class this unit
-  // declares publishes at the handle that names no class: a reader holding one
-  // asks this scope by name for anything it wants of the class, which is the
-  // only thing it could do with the name anyway.
-  const auto publish_type = [&](hir::TypeId own) {
-    hir::TypeImporter importer(
-        unit_.types,
-        hir::TypePoolOwner{
-            .unit_name = unit_.name,
-            .classes = &unit_.classes,
-            .classes_are_nameable = false},
-        signature_.types, published);
-    return importer.Import(own);
-  };
+  hir::TypeImporter importer(
+      unit_.types,
+      hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
+      signature_.types, published);
 
-  // One member per internal declaration, however many ports reach it: two port
-  // expressions may select disjoint parts of one name (LRM 23.2.2.2), and the
-  // storage they share is one member.
-  const auto publish_member = [&](const slang::ast::ValueSymbol& internal)
-      -> diag::Result<hir::PublishedMemberId> {
-    if (const auto it = published_member_ids_.find(&internal);
-        it != published_member_ids_.end()) {
-      return it->second;
+  const auto member_of = [&](const slang::ast::Symbol& declared) {
+    const std::optional<hir::PublishedMemberId> id = root.MemberOf(declared);
+    if (!id.has_value()) {
+      throw InternalError(
+          std::format(
+              "PublishSignature: a port of '{}' reaches '{}', which its unit "
+              "publishes no member for",
+              unit_.name, declared.name));
     }
-    const auto span = SourceMapper().PointSpanOf(internal.location);
-    auto interned = InternType(internal.getType(), span);
-    if (!interned) return std::unexpected(std::move(interned.error()));
-    const hir::PublishedMemberId id = instance_class.members.Add(
-        hir::PublishedMember{
-            .name = std::string{internal.name},
-            .type = publish_type(*interned),
-            .storage = DeclarationStorage(internal)});
-    published_member_ids_.emplace(&internal, id);
-    return id;
-  };
-
-  // A subroutine a caller enables on an instance of this unit (LRM 13.3, 25.7).
-  // A DPI-C import is not one of them: its foreign symbol is program-global and
-  // a caller reaches it by that name, through no instance at all (LRM 35.4).
-  const auto publish_callable = [&](const slang::ast::SubroutineSymbol& sym)
-      -> diag::Result<std::optional<hir::PublishedCallableId>> {
-    if (sym.flags.has(slang::ast::MethodFlags::DPIImport)) {
-      return std::nullopt;
-    }
-    const auto span = SourceMapper().PointSpanOf(sym.location);
-    auto result_type = InternType(sym.getReturnType(), span);
-    if (!result_type) return std::unexpected(std::move(result_type.error()));
-    std::vector<hir::ExternalCalleeParam> params;
-    params.reserve(sym.getArguments().size());
-    for (const auto* formal : sym.getArguments()) {
-      auto formal_type = InternType(formal->getType(), span);
-      if (!formal_type) return std::unexpected(std::move(formal_type.error()));
-      params.push_back(
-          hir::ExternalCalleeParam{
-              .direction = ParamDirectionOf(*formal),
-              .type = publish_type(*formal_type)});
-    }
-    return instance_class.callables.Add(
-        hir::PublishedCallable{
-            .name = std::string{sym.name},
-            .interface =
-                hir::ExternalCalleeInterface{
-                    .kind = ToHirSubroutineKind(sym.subroutineKind),
-                    .params = std::move(params)},
-            .result_type = publish_type(*result_type)});
-  };
-
-  // An interface port names an instance of another unit that this one neither
-  // owns nor builds (LRM 25.3). What the unit publishes about it is a member
-  // like any other: the position a connection binds, and a type naming the unit
-  // whose instance belongs there -- which is what lets the parent's connection
-  // be checked where the parent compiles rather than while the design
-  // elaborates.
-  const auto publish_interface_port =
-      [&](const slang::ast::InterfacePortSymbol& port)
-      -> diag::Result<hir::PublishedMemberId> {
-    const auto span = SourceMapper().PointSpanOf(port.location);
-    const auto refuse = [&](std::string message) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedStructuralMember,
-          std::move(message));
-    };
-    const auto declared = port.getDeclaredRange();
-    if (!declared.has_value()) {
-      return refuse(
-          "an interface port whose range is not constant is not yet "
-          "supported");
-    }
-    // Which interface the port carries is settled during elaboration, so the
-    // unit reads it here and publishes it; a header that leaves it unnamed
-    // (LRM 25.3.3) is read the same way. A unit whose ports name different
-    // interfaces is a different specialization and has its own name already.
-    // A modport restricts which members a referrer may name and in which
-    // direction (LRM 25.5), which is settled where that referrer compiles; what
-    // a connection binds is the whole interface instance under any of its
-    // views, so the port publishes the same member whichever one names it.
-    const slang::ast::InstanceSymbol* instance =
-        ConnectedInterfaceOf(port.getConnection()).instance;
-    if (instance == nullptr) {
-      return refuse("an unconnected interface port is not yet supported");
-    }
-    hir::TypeId own = unit_.types.Intern(
-        hir::Type{hir::UnitObjectType{
-            .unit_name = SpecializationName(*instance, Specialization())}});
-    // A port carrying a range stands for as many instances as the range has
-    // elements (LRM 25.3), which is a fact about what the member is and so
-    // travels on its type. The innermost dimension is wrapped first, so the
-    // range written leftmost ends up outermost.
-    for (const slang::ConstantRange& dim : std::views::reverse(*declared)) {
-      own = unit_.types.Intern(
-          hir::Type{hir::UnpackedArrayType{
-              .element_type = own,
-              .dim =
-                  hir::UnpackedRange{.left = dim.left, .right = dim.right}}});
-    }
-    interface_port_types_.emplace(&port, own);
-    const hir::PublishedMemberId id = instance_class.members.Add(
-        hir::PublishedMember{
-            .name = std::string{port.name},
-            .type = publish_type(own),
-            .storage = hir::BorrowedObjectStorage{}});
-    published_member_ids_.emplace(&port, id);
-    return id;
-  };
-
-  // A child this unit published takes the position its signature gave it. Its
-  // declaration is already bound when this runs, since a unit walks its own
-  // declarations before it publishes, so the pairing is stated here rather than
-  // where the binding is made.
-  std::vector<std::pair<hir::PublishedMemberId, hir::InstanceMemberId>>
-      published_instances;
-
-  // An interface an interface instantiates (LRM 25.3). Access to the objects an
-  // interface declares is available through a port connection (LRM 25.10), so a
-  // nested instance is on the surface the port reaches and is published like
-  // any other member. What crosses is what an interface port's member carries
-  // -- the unit whose instances belong there, its multiplicity, and that the
-  // member holds a borrowed pointer -- because from the referrer's side the two
-  // are one thing; that this scope builds this one and the parent binds that
-  // one is not a fact a referrer reads.
-  const auto publish_instance_member =
-      [&](const slang::ast::Symbol& member,
-          const slang::ast::InstanceSymbol& leaf,
-          std::span<const slang::ConstantRange> ranges) {
-        std::string instance_unit = SpecializationName(leaf, Specialization());
-        hir::TypeId own = unit_.types.Intern(
-            hir::Type{
-                hir::UnitObjectType{.unit_name = std::move(instance_unit)}});
-        // The innermost dimension is wrapped first, so the range written
-        // leftmost ends up outermost.
-        for (const slang::ConstantRange& dim : std::views::reverse(ranges)) {
-          own = unit_.types.Intern(
-              hir::Type{hir::UnpackedArrayType{
-                  .element_type = own,
-                  .dim = hir::UnpackedRange{
-                      .left = dim.left, .right = dim.right}}});
-        }
-        const auto binding = LookupOwnedChildBinding(member);
-        if (!binding.has_value()) {
-          throw InternalError(
-              "PublishSignature: an instance this unit publishes is a child "
-              "its own declaration walk bound");
-        }
-        published_instances.emplace_back(
-            instance_class.members.Add(
-                hir::PublishedMember{
-                    .name = std::string{member.name},
-                    .type = publish_type(own),
-                    .storage = hir::BorrowedObjectStorage{}}),
-            std::get<hir::InstanceMemberId>(binding->child));
-      };
-
-  // The descent a port expression's own selects state, turned from the
-  // leaf-first steps a peel collects into the owner-to-leaf order a reader
-  // walks. Each step states the type it lands on, so a reader needs no
-  // knowledge of what selecting from a type produces.
-  const auto publish_path =
-      [&](std::span<const slang::ast::Expression* const> steps,
-          diag::SourceSpan span)
-      -> diag::Result<std::vector<hir::PublishedSelector>> {
-    std::vector<hir::PublishedSelector> path;
-    path.reserve(steps.size());
-    for (const auto* step : std::views::reverse(steps)) {
-      auto step_type = InternType(*step->type, span);
-      if (!step_type) return std::unexpected(std::move(step_type.error()));
-      const hir::TypeId projected = publish_type(*step_type);
-      if (const auto* select =
-              step->as_if<slang::ast::ElementSelectExpression>()) {
-        const auto index = SelectCoordinate(select->selector());
-        if (!index.has_value()) {
-          return diag::Fail(
-              span, diag::DiagCode::kUnsupportedStructuralMember,
-              "a port naming an element of an internal name at a coordinate "
-              "the front end did not fix is not yet supported");
-        }
-        path.emplace_back(
-            hir::PublishedElementSelector{
-                .index = *index, .projected_type = projected});
-        continue;
-      }
-      const auto* select = step->as_if<slang::ast::RangeSelectExpression>();
-      if (select == nullptr) {
-        throw InternalError(
-            "PublishSignature: a step that is neither an element nor a range "
-            "select was collected as one");
-      }
-      auto range = SelectRange(*select);
-      if (!range.has_value()) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedStructuralMember,
-            "a port naming a window of an internal name at bounds the front "
-            "end did not fix is not yet supported");
-      }
-      path.emplace_back(
-          hir::PublishedSliceSelector{
-              .range = *std::move(range), .projected_type = projected});
-    }
-    return path;
+    return *id;
   };
 
   const auto publish_part =
@@ -533,7 +426,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     } else {
       return hir::PortPart{hir::DataPortPart{
           .direction = direction,
-          .type = publish_type(*interned),
+          .type = importer.Import(*interned),
           .target = hir::NoInternalTarget{}}};
     }
     if (!peeled.has_value()) {
@@ -552,51 +445,30 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
                             ? hir::ReferenceBinding::kConstRef
                             : hir::ReferenceBinding::kRef);
     }
-    auto id = publish_member(*peeled->base);
-    if (!id) return std::unexpected(std::move(id.error()));
-    auto path = publish_path(peeled->steps, span);
+    auto path = PublishPath(*this, peeled->steps, span);
     if (!path) return std::unexpected(std::move(path.error()));
     return hir::PortPart{hir::DataPortPart{
         .direction = direction,
-        .type = publish_type(*interned),
-        .target = hir::MemberProjection{
-            .member = *id,
-            .path = *std::move(path),
-            .run = RunOfPortExpression(*peeled->base, written)}}};
+        .type = importer.Import(*interned),
+        .target = hir::ImportProjection(
+            importer,
+            hir::MemberProjection{
+                .member = member_of(*peeled->base),
+                .path = *std::move(path),
+                .run = RunOfPortExpression(*peeled->base, written)})}};
   };
 
-  // The subroutine this unit evaluates a port's default in, for a port that has
-  // one. The default names this unit's own declarations (LRM 23.2.2.4), so an
-  // instantiator leaving the port unconnected asks for it rather than reading
-  // it.
-  const auto publish_default = [&](const slang::ast::PortSymbol& port)
-      -> diag::Result<std::optional<hir::PublishedCallableId>> {
-    if (port.getInitializer() == nullptr) return std::nullopt;
-    const auto span = SourceMapper().PointSpanOf(port.location);
-    auto interned = InternType(port.getType(), span);
-    if (!interned) return std::unexpected(std::move(interned.error()));
-    return instance_class.callables.Add(
-        hir::PublishedCallable{
-            .name = PortDefaultName(port.name),
-            .interface =
-                hir::ExternalCalleeInterface{
-                    .kind = hir::SubroutineKind::kFunction, .params = {}},
-            .result_type = publish_type(*interned)});
-  };
-
+  // The ports are read before the members are given their storage, because a
+  // `ref` port is what makes the declaration it reaches a reference.
   for (const auto* member : body->getPortList()) {
     if (const auto* port = member->as_if<slang::ast::PortSymbol>()) {
       auto part = publish_part(*port);
       if (!part) return std::unexpected(std::move(part.error()));
-      auto default_value = publish_default(*port);
-      if (!default_value) {
-        return std::unexpected(std::move(default_value.error()));
-      }
-      signature_.ports.push_back(
+      element.ports.push_back(
           hir::PortDecl{
               .name = std::string{port->name},
               .parts = {*std::move(part)},
-              .default_value = *default_value});
+              .default_value = root.CallableOf(*port)});
       continue;
     }
     if (const auto* multi = member->as_if<slang::ast::MultiPortSymbol>()) {
@@ -611,7 +483,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
         if (!part) return std::unexpected(std::move(part.error()));
         parts.push_back(*std::move(part));
       }
-      signature_.ports.push_back(
+      element.ports.push_back(
           hir::PortDecl{
               .name = std::string{multi->name},
               .parts = std::move(parts),
@@ -620,189 +492,353 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     }
     // A connection reaches an interface port as one point like any other, so it
     // has one part.
-    auto published =
-        publish_interface_port(member->as<slang::ast::InterfacePortSymbol>());
-    if (!published) return std::unexpected(std::move(published.error()));
-    signature_.ports.push_back(
+    element.ports.push_back(
         hir::PortDecl{
             .name = std::string{member->name},
             .parts = {hir::PortPart{
-                hir::InterfacePortPart{.member = *published}}},
+                hir::InterfacePortPart{.member = member_of(*member)}}},
             .default_value = std::nullopt});
   }
 
-  // An interface port names the interface's scope rather than a point data
-  // crosses (LRM 25.3), so every name the interface declares is reachable
-  // through one. What a module promises is its ports; what an interface
-  // promises is its whole declared surface, and it promises it here so a
-  // referrer resolves a name on the port where it compiles. A subroutine the
-  // interface declares is part of that surface: LRM 25.7 makes it callable
-  // through a port, so a caller needs its call protocol, its result, and its
-  // formals stated the same way a member's storage is.
-  if (body->getDefinition().definitionKind ==
-      slang::ast::DefinitionKind::Interface) {
-    for (const auto& member : scope_->members()) {
-      if (member.kind == slang::ast::SymbolKind::Subroutine) {
-        auto published =
-            publish_callable(member.as<slang::ast::SubroutineSymbol>());
-        if (!published) return std::unexpected(std::move(published.error()));
-        continue;
-      }
-      if (member.kind == slang::ast::SymbolKind::Instance) {
-        publish_instance_member(
-            member, member.as<slang::ast::InstanceSymbol>(), {});
-        continue;
-      }
-      if (member.kind == slang::ast::SymbolKind::InstanceArray) {
-        // A dimension with no elements constructs nothing and names no unit,
-        // so the array is no member at all -- the same answer the unit's own
-        // walk reaches through the one predicate both read.
-        const auto shape = ResolveInstanceArrayShape(
-            member.as<slang::ast::InstanceArraySymbol>());
-        if (!shape.has_value()) continue;
-        publish_instance_member(member, *shape->leaf, shape->ranges);
-        continue;
-      }
-      if (!HoldsCell(member)) continue;
-      auto id = publish_member(member.as<slang::ast::ValueSymbol>());
-      if (!id) return std::unexpected(std::move(id.error()));
+  // A hierarchical name reaches any named declaration of the element from
+  // anywhere in the design (LRM 23.6), and an interface port reaches every name
+  // the interface declares (LRM 25.3), so what a design element publishes is
+  // every scope it holds -- its own and each generate block's (LRM 27). Each is
+  // kept in this unit's own types as well, which is what the scope's own
+  // published class is laid out from.
+  for (const slang::ast::Scope* scope : publishing_scopes_) {
+    auto own = PublishScopeClass(PublicationOf(*scope));
+    if (!own) return std::unexpected(std::move(own.error()));
+    hir::ScopeClassSignature stated = hir::ImportScopeClass(importer, *own);
+    if (scope == scope_) {
+      element.instance_class = std::move(stated);
+    } else {
+      element.blocks.push_back(std::move(stated));
     }
-
-    // The storage a name the view admits a write to designates. LRM 25.5.4
-    // sends what such a name may be to LRM 23.3.3, where a connection is a
-    // continuous assignment and its sink is an lvalue, so the expression always
-    // designates storage. A concatenation joins several declarations under one
-    // name, which LRM 23.2.2.1 orders most significant first; a designator is
-    // that shape with one part.
-    const auto publish_designated_parts =
-        [&](const slang::ast::Expression& written, diag::SourceSpan span)
-        -> diag::Result<std::vector<hir::MemberProjection>> {
-      std::vector<const slang::ast::Expression*> written_parts;
-      if (const auto* joined =
-              written.as_if<slang::ast::ConcatenationExpression>()) {
-        for (const auto* operand : joined->operands()) {
-          written_parts.push_back(operand);
-        }
-      } else {
-        written_parts.push_back(&written);
-      }
-      std::vector<hir::MemberProjection> parts;
-      parts.reserve(written_parts.size());
-      for (const auto* written_part : written_parts) {
-        const auto peeled = PeelPortExpression(*written_part);
-        if (!peeled.has_value()) {
-          return diag::Fail(
-              span, diag::DiagCode::kUnsupportedStructuralMember,
-              "a view naming this part of one of its interface's declarations "
-              "is not yet supported");
-        }
-        auto id = publish_member(*peeled->base);
-        if (!id) return std::unexpected(std::move(id.error()));
-        auto path = publish_path(peeled->steps, span);
-        if (!path) return std::unexpected(std::move(path.error()));
-        parts.push_back(
-            hir::MemberProjection{
-                .member = *id,
-                .path = *std::move(path),
-                .run = RunOfPortExpression(*peeled->base, written_part)});
-      }
-      return parts;
-    };
-
-    // A modport is a named view of what the interface publishes (LRM 25.5).
-    // What a view promises is only the names it defines: an item written as a
-    // plain identifier is the interface's own item serving twice (LRM 25.5.4),
-    // already on the member list, and reached there. For a name the view wrote
-    // an expression for, what it promises is decided by the direction it
-    // declared, which is why no direction is on this signature -- a referrer
-    // never asks which way the name runs, it asks what the name is.
-    const auto publish_modport_port =
-        [&](std::string_view modport_name,
-            const slang::ast::ModportPortSymbol& port)
-        -> diag::Result<hir::PublishedModportPort> {
-      const auto span = SourceMapper().PointSpanOf(port.location);
-      const auto* connection = port.getConnectionExpr();
-      if (connection == nullptr) {
-        throw InternalError(
-            "PublishSignature: a name the view defines is the expression it "
-            "was written with");
-      }
-      auto interned = InternType(*connection->type, span);
-      if (!interned) return std::unexpected(std::move(interned.error()));
-      if (port.direction != slang::ast::ArgumentDirection::In) {
-        auto parts = publish_designated_parts(*connection, span);
-        if (!parts) return std::unexpected(std::move(parts.error()));
-        return hir::PublishedModportPort{
-            .name = std::string{port.name},
-            .meaning = hir::ViewDefinedPlace{
-                .parts = *std::move(parts), .type = publish_type(*interned)}};
-      }
-
-      // Nothing bounds a name offered only for reading to an lvalue, so what
-      // crosses is the subroutine this interface evaluates it in.
-      const hir::PublishedCallableId evaluate = instance_class.callables.Add(
-          hir::PublishedCallable{
-              .name = ModportReadName(modport_name, port.name),
-              .interface =
-                  hir::ExternalCalleeInterface{
-                      .kind = hir::SubroutineKind::kFunction, .params = {}},
-              .result_type = publish_type(*interned)});
-      // What the expression reads, which is what a process waiting on the name
-      // observes. LRM 25.5 confines those names to this interface's own
-      // declarations, so each is already a member it publishes.
-      std::vector<hir::PublishedMemberId> observes;
-      diag::Result<void> read_failure;
-      connection->visitSymbolReferences(
-          [&](const slang::ast::Expression&, const slang::ast::Symbol& symbol) {
-            if (!read_failure || !HoldsCell(symbol)) return;
-            auto id = publish_member(symbol.as<slang::ast::ValueSymbol>());
-            if (!id) {
-              read_failure = std::unexpected(std::move(id.error()));
-              return;
-            }
-            if (!std::ranges::contains(observes, *id)) observes.push_back(*id);
-          });
-      if (!read_failure) {
-        return std::unexpected(std::move(read_failure.error()));
-      }
-      return hir::PublishedModportPort{
-          .name = std::string{port.name},
-          .meaning = hir::ViewComputedValue{
-              .evaluate = evaluate, .observes = std::move(observes)}};
-    };
-
-    for (const auto& member : scope_->members()) {
-      const auto* modport = member.as_if<slang::ast::ModportSymbol>();
-      if (modport == nullptr) continue;
-      hir::PublishedModport published{
-          .name = std::string{modport->name}, .ports = {}};
-      for (const auto& item : modport->members()) {
-        const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
-        if (port == nullptr || !ViewDefinesTheName(*port)) continue;
-        auto published_port = publish_modport_port(modport->name, *port);
-        if (!published_port) {
-          return std::unexpected(std::move(published_port.error()));
-        }
-        published.ports.push_back(*std::move(published_port));
-      }
-      instance_class.modports.push_back(std::move(published));
-    }
-  }
-
-  // One slot per member published, for the declarations to fill as this unit's
-  // own walk reaches them.
-  published_members_.resize(instance_class.members.size());
-  for (const auto& [slot, instance] : published_instances) {
-    published_members_[slot.value] = instance;
-  }
-  // A published subroutine needs only the identifier it answers to, which this
-  // signature already carries, so it is taken here rather than found again once
-  // the bodies are lowered -- two walks agreeing is not the same as one order.
-  published_callables_.reserve(instance_class.callables.size());
-  for (const hir::PublishedCallableId id : instance_class.callables.Ids()) {
-    published_callables_.push_back(instance_class.callables.Get(id).name);
+    scope_classes_.emplace(scope, *std::move(own));
   }
   return {};
+}
+
+auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
+    -> diag::Result<hir::ScopeClassSignature> {
+  hir::ScopeClassSignature cls{
+      .class_name = published.class_name,
+      .members = {},
+      .callables = {},
+      .generates = {},
+      .disable_targets = {},
+      .modports = {}};
+
+  // A declaration holding storage, published as the declaration states it.
+  const auto cell = [&](const slang::ast::ValueSymbol& declared,
+                        std::vector<std::string> within)
+      -> diag::Result<hir::PublishedMember> {
+    auto interned = InternType(
+        declared.getType(), SourceMapper().PointSpanOf(declared.location));
+    if (!interned) return std::unexpected(std::move(interned.error()));
+    return hir::PublishedMember{
+        .name = std::string{declared.name},
+        .within = std::move(within),
+        .type = *interned,
+        .storage = DeclarationStorage(declared)};
+  };
+
+  // What a member standing for instances of another unit is, as this unit's
+  // type: the unit `leaf` is an instance of, as many times as `ranges` has
+  // elements. The innermost dimension is wrapped first, so the range written
+  // leftmost ends up outermost.
+  const auto objects_type = [&](const slang::ast::InstanceSymbol& leaf,
+                                std::span<const slang::ConstantRange> ranges) {
+    const std::string instance_unit =
+        SpecializationName(leaf, Specialization());
+    hir::TypeId own = unit_.types.Intern(
+        hir::Type{hir::UnitObjectType{
+            .unit_name = instance_unit,
+            .class_name = hir::InstanceClassName(instance_unit)}});
+    for (const slang::ConstantRange& dim : std::views::reverse(ranges)) {
+      own = unit_.types.Intern(
+          hir::Type{hir::UnpackedArrayType{
+              .element_type = own,
+              .dim =
+                  hir::UnpackedRange{.left = dim.left, .right = dim.right}}});
+    }
+    return own;
+  };
+
+  // A member standing for instances of another unit: an interface port, whose
+  // instances the parent binds (LRM 25.3), or an instance this scope builds,
+  // which a hierarchical name steps onto (LRM 23.6). From a referrer's side the
+  // two are one thing -- the unit whose instances belong there, how many, and a
+  // borrowed pointer to each -- and which side builds the instance is not a
+  // fact a referrer reads.
+  const auto objects = [&](const slang::ast::Symbol& member, hir::TypeId own) {
+    return hir::PublishedMember{
+        .name = std::string{member.name},
+        .within = {},
+        .type = own,
+        .storage = hir::BorrowedObjectStorage{}};
+  };
+
+  // An interface port names an instance of another unit that this one neither
+  // owns nor builds (LRM 25.3). What the unit publishes about it is a type
+  // naming the unit whose instance belongs there -- which is what lets the
+  // parent's connection be checked where the parent compiles rather than while
+  // the design elaborates.
+  const auto interface_port = [&](const slang::ast::InterfacePortSymbol& port)
+      -> diag::Result<hir::PublishedMember> {
+    const auto span = SourceMapper().PointSpanOf(port.location);
+    const auto refuse = [&](std::string message) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedStructuralMember,
+          std::move(message));
+    };
+    const auto declared = port.getDeclaredRange();
+    if (!declared.has_value()) {
+      return refuse(
+          "an interface port whose range is not constant is not yet "
+          "supported");
+    }
+    // Which interface the port carries is settled during elaboration, so the
+    // unit reads it here and publishes it; a header that leaves it unnamed
+    // (LRM 25.3.3) is read the same way. A unit whose ports name different
+    // interfaces is a different specialization and has its own name already.
+    // A modport restricts which members a referrer may name and in which
+    // direction (LRM 25.5), which is settled where that referrer compiles; what
+    // a connection binds is the whole interface instance under any of its
+    // views, so the port publishes the same member whichever one names it.
+    const slang::ast::InstanceSymbol* instance =
+        ConnectedInterfaceOf(port.getConnection()).instance;
+    if (instance == nullptr) {
+      return refuse("an unconnected interface port is not yet supported");
+    }
+    // A port carrying a range stands for as many instances as the range has
+    // elements (LRM 25.3), which is a fact about what the member is and so
+    // travels on its type.
+    const hir::TypeId own = objects_type(*instance, *declared);
+    interface_port_types_.emplace(&port, own);
+    return objects(port, own);
+  };
+
+  for (const ScopePublicationRecord::Member& member : published.members) {
+    auto made = std::visit(
+        Overloaded{
+            [&](const ScopePublicationRecord::DataObject& data) {
+              return cell(*data.symbol, {});
+            },
+            [&](const ScopePublicationRecord::LocalStatic& local) {
+              return cell(*local.symbol, local.within);
+            },
+            // Under the name the class was published as.
+            [&](const ScopePublicationRecord::ClassStatic& property) {
+              const auto own = own_class_signatures_.find(property.owner);
+              if (own == own_class_signatures_.end()) {
+                throw InternalError(
+                    "PublishSignature: every class a scope declares is "
+                    "interned before the scope's signature is published");
+              }
+              return cell(*property.symbol, {own->second.class_name});
+            },
+            [&](const ScopePublicationRecord::Instance& instance)
+                -> diag::Result<hir::PublishedMember> {
+              return objects(
+                  *instance.symbol,
+                  objects_type(*instance.shape.leaf, instance.shape.ranges));
+            },
+            [&](const ScopePublicationRecord::InterfacePort& port) {
+              return interface_port(*port.symbol);
+            }},
+        member);
+    if (!made) return std::unexpected(std::move(made.error()));
+    cls.members.Add(*std::move(made));
+  }
+
+  // A subroutine is part of a scope's declared surface: a hierarchical name
+  // enables one (LRM 23.6, 25.7), so a caller needs its call protocol, its
+  // result, and its formals stated the same way a member's storage is.
+  for (const ScopePublicationRecord::Callable& callable : published.callables) {
+    auto own = PublishedCallableOf(callable);
+    if (!own) return std::unexpected(std::move(own.error()));
+    cls.callables.Add(*std::move(own));
+  }
+
+  for (const ScopePublicationRecord::Construct& construct :
+       published.generates) {
+    cls.generates.Add(
+        std::visit(
+            Overloaded{
+                [&](const ScopePublicationRecord::Loop& loop)
+                    -> hir::PublishedGenerate {
+                  hir::PublishedLoop counted{
+                      .name = std::string{loop.loop->name}, .blocks = {}};
+                  for (const auto* entry : loop.loop->entries) {
+                    counted.blocks.push_back(
+                        hir::PublishedLoopBlock{
+                            .index = LoopIndexOf(*entry),
+                            .class_name = PublicationOf(*entry).class_name});
+                  }
+                  return counted;
+                },
+                [&](const ScopePublicationRecord::Choice& choice)
+                    -> hir::PublishedGenerate {
+                  hir::PublishedChoice chosen;
+                  for (const auto* alternative : choice.built) {
+                    chosen.blocks.push_back(
+                        hir::PublishedAlternative{
+                            .name = std::string{alternative->name},
+                            .class_name =
+                                PublicationOf(*alternative).class_name});
+                  }
+                  return chosen;
+                }},
+            construct));
+  }
+
+  for (const ScopePublicationRecord::DisableTarget& target :
+       published.disable_targets) {
+    cls.disable_targets.Add(hir::PublishedDisableTarget{.path = target.path});
+  }
+
+  // The member a declaration a view names stands for. LRM 25.5 confines those
+  // names to the interface's own declarations.
+  const auto viewed_member =
+      [&](const slang::ast::Symbol& declared,
+          diag::SourceSpan span) -> diag::Result<hir::PublishedMemberId> {
+    const std::optional<hir::PublishedMemberId> id =
+        published.MemberOf(declared);
+    if (!id.has_value()) {
+      return diag::Fail(
+          span, diag::DiagCode::kUnsupportedStructuralMember,
+          std::format(
+              "a view naming '{}', which its interface does not declare where "
+              "the view is, is not yet supported",
+              declared.name));
+    }
+    return *id;
+  };
+
+  // The storage a name the view admits a write to designates. LRM 25.5.4
+  // sends what such a name may be to LRM 23.3.3, where a connection is a
+  // continuous assignment and its sink is an lvalue, so the expression always
+  // designates storage. A concatenation joins several declarations under one
+  // name, which LRM 23.2.2.1 orders most significant first; a designator is
+  // that shape with one part.
+  const auto designated_parts = [&](const slang::ast::Expression& written,
+                                    diag::SourceSpan span)
+      -> diag::Result<std::vector<hir::MemberProjection>> {
+    std::vector<const slang::ast::Expression*> written_parts;
+    if (const auto* joined =
+            written.as_if<slang::ast::ConcatenationExpression>()) {
+      for (const auto* operand : joined->operands()) {
+        written_parts.push_back(operand);
+      }
+    } else {
+      written_parts.push_back(&written);
+    }
+    std::vector<hir::MemberProjection> parts;
+    parts.reserve(written_parts.size());
+    for (const auto* written_part : written_parts) {
+      const auto peeled = PeelPortExpression(*written_part);
+      if (!peeled.has_value()) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedStructuralMember,
+            "a view naming this part of one of its interface's declarations "
+            "is not yet supported");
+      }
+      auto id = viewed_member(*peeled->base, span);
+      if (!id) return std::unexpected(std::move(id.error()));
+      auto path = PublishPath(*this, peeled->steps, span);
+      if (!path) return std::unexpected(std::move(path.error()));
+      parts.push_back(
+          hir::MemberProjection{
+              .member = *id,
+              .path = *std::move(path),
+              .run = RunOfPortExpression(*peeled->base, written_part)});
+    }
+    return parts;
+  };
+
+  // A modport is a named view of what the interface publishes (LRM 25.5).
+  // For a name the view wrote an expression for, what it publishes is decided
+  // by the direction it declared, which is why no direction is on this
+  // signature -- a referrer never asks which way the name runs, it asks what
+  // the name is.
+  const auto view_name = [&](const ScopePublicationRecord::ViewName& name)
+      -> diag::Result<hir::PublishedModportPort> {
+    const slang::ast::ModportPortSymbol& port =
+        *std::visit([](const auto& defined) { return defined.port; }, name);
+    const auto span = SourceMapper().PointSpanOf(port.location);
+    const auto* connection = port.getConnectionExpr();
+    if (connection == nullptr) {
+      throw InternalError(
+          "PublishSignature: a name the view defines is the expression it "
+          "was written with");
+    }
+    return std::visit(
+        Overloaded{
+            [&](const ScopePublicationRecord::ViewPlace&)
+                -> diag::Result<hir::PublishedModportPort> {
+              auto interned = InternType(*connection->type, span);
+              if (!interned) {
+                return std::unexpected(std::move(interned.error()));
+              }
+              auto parts = designated_parts(*connection, span);
+              if (!parts) return std::unexpected(std::move(parts.error()));
+              return hir::PublishedModportPort{
+                  .name = std::string{port.name},
+                  .meaning = hir::ViewDefinedPlace{
+                      .parts = *std::move(parts), .type = *interned}};
+            },
+            // Nothing bounds a name offered only for reading to an lvalue, so
+            // what crosses is the subroutine this interface evaluates it in,
+            // and what the expression reads, which is what a process waiting
+            // on the name observes.
+            [&](const ScopePublicationRecord::ViewComputed&)
+                -> diag::Result<hir::PublishedModportPort> {
+              const std::optional<hir::PublishedCallableId> evaluate =
+                  published.CallableOf(port);
+              if (!evaluate.has_value()) {
+                throw InternalError(
+                    "PublishSignature: a name a view offers only for reading "
+                    "is evaluated by a callable its scope publishes");
+              }
+              std::vector<hir::PublishedMemberId> observes;
+              diag::Result<void> read_failure;
+              connection->visitSymbolReferences(
+                  [&](const slang::ast::Expression&,
+                      const slang::ast::Symbol& symbol) {
+                    if (!read_failure || !HoldsCell(symbol)) return;
+                    auto id = viewed_member(symbol, span);
+                    if (!id) {
+                      read_failure = std::unexpected(std::move(id.error()));
+                      return;
+                    }
+                    if (!std::ranges::contains(observes, *id)) {
+                      observes.push_back(*id);
+                    }
+                  });
+              if (!read_failure) {
+                return std::unexpected(std::move(read_failure.error()));
+              }
+              return hir::PublishedModportPort{
+                  .name = std::string{port.name},
+                  .meaning = hir::ViewComputedValue{
+                      .evaluate = *evaluate, .observes = std::move(observes)}};
+            }},
+        name);
+  };
+
+  for (const ScopePublicationRecord::View& view : published.views) {
+    hir::PublishedModport modport{
+        .name = std::string{view.modport->name}, .ports = {}};
+    for (const ScopePublicationRecord::ViewName& name : view.names) {
+      auto port = view_name(name);
+      if (!port) return std::unexpected(std::move(port.error()));
+      modport.ports.push_back(*std::move(port));
+    }
+    cls.modports.push_back(std::move(modport));
+  }
+  return cls;
 }
 
 auto UnitLowerer::DeclarationStorage(const slang::ast::ValueSymbol& value) const
@@ -824,35 +860,69 @@ auto UnitLowerer::ImportSignatureType(
   return importer.Import(published);
 }
 
-auto UnitLowerer::ExternalUnitObjectOf(const std::string& unit_name)
-    -> hir::ExternalUnitObjectId {
-  if (const auto it = external_unit_objects_.find(unit_name);
-      it != external_unit_objects_.end()) {
+auto UnitLowerer::ScopeClassOfInstance(
+    const slang::ast::InstanceSymbol& instance) -> hir::ExternalScopeClassId {
+  return ExternalScopeClassOf(SpecializationName(instance, Specialization()));
+}
+
+auto UnitLowerer::ExternalScopeClassOf(const std::string& unit_name)
+    -> hir::ExternalScopeClassId {
+  return ExternalScopeClassOf(
+      unit_name, hir::DesignElementOf(Signatures().Instantiated(unit_name))
+                     .instance_class.class_name);
+}
+
+auto UnitLowerer::ScopeClassTypeOf(hir::ExternalScopeClassId scope_class) const
+    -> hir::TypeId {
+  const hir::ExternalScopeClass& record =
+      unit_.external_scope_classes.Get(scope_class);
+  return unit_.types.Intern(
+      hir::Type{hir::UnitObjectType{
+          .unit_name = record.unit_name,
+          .class_name = record.signature.class_name}});
+}
+
+auto UnitLowerer::ExternalScopeClassOf(
+    const std::string& unit_name, const std::string& class_name)
+    -> hir::ExternalScopeClassId {
+  if (const auto it = external_scope_classes_.find({unit_name, class_name});
+      it != external_scope_classes_.end()) {
     return it->second;
   }
-  const hir::ExternalUnitObjectId object_id = unit_.external_unit_objects.Add(
-      hir::ImportExternalUnitObject(
-          Signatures().Instantiated(unit_name), unit_.types));
-  external_unit_objects_.emplace(unit_name, object_id);
-  return object_id;
+  const hir::UnitSignature& signature = Signatures().Instantiated(unit_name);
+  const hir::ScopeClassSignature* published =
+      hir::DesignElementOf(signature).FindScopeClass(class_name);
+  if (published == nullptr) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::ExternalScopeClassOf: '{}' publishes no scope class "
+            "'{}', and a name landed in one",
+            unit_name, class_name));
+  }
+  const hir::ExternalScopeClassId scope_class =
+      unit_.external_scope_classes.Add(
+          hir::ImportExternalScopeClass(signature, *published, unit_.types));
+  external_scope_classes_.emplace(
+      std::pair{unit_name, class_name}, scope_class);
+  return scope_class;
 }
 
 auto UnitLowerer::ExternalClassOf(
     const std::string& unit_name, const std::string& class_name)
-    -> const hir::ExternalClass* {
+    -> const hir::ExternalClass& {
   if (const hir::ExternalClass* held = hir::FindExternalClass(
           unit_.external_classes, unit_name, class_name)) {
-    return held;
+    return *held;
   }
-  // Nothing to compile against where the design compiles no such unit, or the
-  // unit publishes no such class.
   const hir::UnitSignature* signature = Signatures().Find(unit_name);
-  if (signature == nullptr) {
-    return nullptr;
-  }
-  const hir::ClassSignature* published = signature->FindClass(class_name);
+  const hir::ClassSignature* published =
+      signature == nullptr ? nullptr : signature->FindClass(class_name);
   if (published == nullptr) {
-    return nullptr;
+    throw InternalError(
+        std::format(
+            "UnitLowerer::ExternalClassOf: '{}' published no class '{}', and "
+            "every class a unit declares is published",
+            unit_name, class_name));
   }
   // A value of the class is laid out after the whole of what it extends, and
   // is also a value of each interface class it names and of what those extend,
@@ -886,13 +956,13 @@ auto UnitLowerer::ExternalClassOf(
                 unit_name, class_name, method.prototype.name));
       }
       record.overrides.push_back(
-          hir::PromisedOverride{
+          hir::PublishedOverride{
               .method = method.prototype.name,
               .behavior = *std::move(overridden)});
     }
   }
   unit_.external_classes.push_back(std::move(record));
-  return &unit_.external_classes.back();
+  return unit_.external_classes.back();
 }
 
 auto UnitLowerer::NamespaceCalleeInterface(
@@ -902,8 +972,13 @@ auto UnitLowerer::NamespaceCalleeInterface(
     return MakeExternalCalleeInterface(sym, span);
   }
   const hir::UnitSignature* signature = Signatures().Find(unit_name);
+  const auto* namespace_unit =
+      signature == nullptr
+          ? nullptr
+          : std::get_if<hir::PublishedNamespace>(&signature->unit);
   const hir::PublishedCallable* published =
-      signature == nullptr ? nullptr : signature->FindSubroutine(sym.name);
+      namespace_unit == nullptr ? nullptr
+                                : namespace_unit->FindSubroutine(sym.name);
   if (published == nullptr) {
     throw InternalError(
         std::format(
@@ -915,12 +990,6 @@ auto UnitLowerer::NamespaceCalleeInterface(
       signature->types, std::nullopt, unit_.types,
       signature_type_memos_[signature]);
   return hir::ImportCallable(importer, *published).interface;
-}
-
-auto UnitLowerer::DeclaredByADesignElement(
-    const hir::ExternalClassRef& cls) const -> bool {
-  const hir::UnitSignature* declaring = Signatures().Find(cls.unit_name);
-  return declaring != nullptr && declaring->IsDesignElement();
 }
 
 }  // namespace lyra::lowering::ast_to_hir

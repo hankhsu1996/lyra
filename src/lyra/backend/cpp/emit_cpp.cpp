@@ -1,3 +1,4 @@
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -118,14 +119,17 @@ auto FileConsumed(const mir::ConsumedSignature& consumed) -> std::string {
 // A unit becomes one C++ namespace, named after it, written across these files:
 //
 //   Top.types.hpp     the structs the unit declares under a name
-//   Top.opening.hpp   forward declarations, namespace functions and variables
-//   Top.<Class>.hpp   one per class other units may name
+//   Top.forward.hpp   the classes other units may name, declared
+//   Top.opening.hpp   namespace functions and variables
+//   Top.<Class>.hpp   one per class other units may name, and per further name
+//                     one goes by
 //   Top.hpp           includes all of the above; what other units include
 //   Top.cpp           every other class, and every definition
 //
-// The types header includes only other units' types headers, the opening
-// header only this unit's types header, and a class header the headers of its
-// bases, so two units can include each other's headers without a cycle.
+// The types header includes only other units' types headers, the forward
+// header nothing, the opening header only this unit's types header and forward
+// headers, and a class header the headers of its bases, so two units can
+// include each other's headers without a cycle.
 // Anything other units never name goes into the `.cpp`, so changing it
 // recompiles no other unit.
 auto RenderUnitFiles(
@@ -155,21 +159,32 @@ auto RenderUnitFiles(
   types += structs.signature.View();
   CloseNamespace(types, unit_namespace);
 
+  TargetText forward;
+  forward += "#pragma once\n\n";
+  OpenNamespace(forward, unit_namespace);
+  forward += forwards.signature.View();
+  CloseNamespace(forward, unit_namespace);
+
   TargetText opened;
-  AppendSection(opened, forwards.signature);
   AppendSection(opened, callables.signature);
   AppendSection(opened, variables.signature);
   opened += "\n";
 
+  // A pointer to an object of another unit's class needs only its declaration,
+  // so the unit's declarations can point at objects of a unit whose own
+  // declarations point back.
   TargetText opening;
   opening += "#pragma once\n";
   WriteInclude(opening, support::kRuntimePreludeHeader);
   WriteInclude(opening, UnitTypesFileOf(unit.name));
-  opening += "\n";
-  {
-    const TargetText::Section external(opening);
-    RenderExternalObjectDeclarations(unit, opening);
+  std::set<std::string> forward_files{UnitForwardFileOf(unit.name)};
+  for (const mir::ExternalClass& object : unit.external_classes) {
+    forward_files.insert(UnitForwardFileOf(object.unit_name));
   }
+  for (const std::string& forward_file : forward_files) {
+    WriteInclude(opening, forward_file);
+  }
+  opening += "\n";
   OpenNamespace(opening, unit_namespace);
   opening += opened.View();
   CloseNamespace(opening, unit_namespace);
@@ -179,14 +194,17 @@ auto RenderUnitFiles(
       {.relpath = UnitTypesFileOf(unit.name),
        .content = std::move(types).Take()});
   declarations.push_back(
+      {.relpath = UnitForwardFileOf(unit.name),
+       .content = std::move(forward).Take()});
+  declarations.push_back(
       {.relpath = UnitOpeningFileOf(unit.name),
        .content = std::move(opening).Take()});
 
   TargetText umbrella;
   umbrella += "#pragma once\n";
   WriteInclude(umbrella, UnitOpeningFileOf(unit.name));
-  for (const PromisedClass& promised : classes.promised) {
-    const mir::Class& cls = unit.GetClass(promised.id);
+  for (const PublishedClass& published : classes.published) {
+    const mir::Class& cls = unit.GetClass(published.id);
     TargetText file;
     file += "#pragma once\n";
     WriteInclude(file, UnitOpeningFileOf(unit.name));
@@ -196,12 +214,22 @@ auto RenderUnitFiles(
     }
     file += "\n";
     OpenNamespace(file, unit_namespace);
-    file += promised.text.View();
+    file += published.text.View();
     CloseNamespace(file, unit_namespace);
-    const std::string relpath = FileDeclaring(unit, promised.id);
+    const std::string relpath = FileDeclaring(unit, published.id);
     WriteInclude(umbrella, relpath);
     declarations.push_back(
         {.relpath = relpath, .content = std::move(file).Take()});
+    // A unit naming the class by a further name includes the file that name
+    // computes, which defines it by including the class's own.
+    for (const std::string& alias : cls.aliases) {
+      TargetText aliased;
+      aliased += "#pragma once\n";
+      WriteInclude(aliased, relpath);
+      declarations.push_back(
+          {.relpath = UnitClassFileOf(unit.name, ToCppName(alias)),
+           .content = std::move(aliased).Take()});
+    }
   }
   declarations.push_back(
       {.relpath = UnitSignatureFileOf(unit.name),

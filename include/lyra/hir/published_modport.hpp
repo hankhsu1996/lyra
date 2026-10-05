@@ -91,7 +91,7 @@ struct PublishedModportPort {
 
 // A named view of what an interface publishes (LRM 25.5). It narrows which
 // names a module written against it may use, and it names things of its own, so
-// the view itself is part of the promise rather than something a referrer
+// the view itself is part of the publication rather than something a referrer
 // derives from the members.
 struct PublishedModport {
   std::string name;

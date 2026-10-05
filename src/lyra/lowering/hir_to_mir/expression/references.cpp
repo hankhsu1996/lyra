@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -238,7 +239,7 @@ auto LowerExternalUnitValueRefExpr(
       unit.types, unit_lowerer.TranslateType(r.value_type));
   // A reference into this unit's own namespace has the arena the storage lives
   // in, so it names the position; one into another unit has only the identifier
-  // that unit published, and consuming that promise is what makes the unit a
+  // that unit published, and consuming that signature is what makes the unit a
   // dependency whose header and link edge the backend then emits.
   if (r.unit_name == unit.name) {
     const std::optional<mir::StaticVariableId> variable =
@@ -274,37 +275,40 @@ auto LowerHirIntegralConstant(const hir::IntegralConstant& c)
 // A static property (LRM 8.9) belongs to the type rather than to an object of
 // it, so it is reached without a receiver. Where its cell sits follows from
 // what replicates the class declaration, which the shape settled; the reference
-// states how far out of this body that replication sits, where one exists. The
-// reference names the cell rather than the value it holds, so the dispatcher
-// reads through it the way it does any other cell.
+// states how far out of this body the instance replicating it sits, where one
+// does. The reference names the cell rather than the value it holds, so the
+// dispatcher reads through it the way it does any other cell.
 auto LowerStaticPropertyRefExpr(
     UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const hir::StaticPropertyRef& r) -> mir::Expr {
   const mir::TypeId cell_type = mir::ObservableCellOf(
       unit_lowerer.Unit().types, unit_lowerer.TranslateType(r.value_type));
-  if (const auto* local =
-          std::get_if<hir::LocalStaticPropertyTarget>(&r.target)) {
-    const mir::ClassId owner = unit_lowerer.TranslateClass(local->owner);
-    const StaticStorageHome& home =
-        unit_lowerer.GetClassShape(owner).static_property_translation.Get(
-            local->prop);
-    // The hops answer where the instance is, and a cell the class itself owns
-    // or the unit's namespace owns is reached without one -- so the climb to an
-    // instance has no steps to take rather than an unknown number of them. The
-    // two facts arrive from different places and cannot disagree: a cell lands
-    // on an instance exactly when a structural scope replicates the class, and
-    // that is the same condition the reference records its hops under.
+  const auto own_cell = [&](const hir::LocalStaticPropertyTarget& property,
+                            mir::EnclosingHops hops) {
+    const mir::ClassId owner = unit_lowerer.TranslateClass(property.owner);
     return BuildStaticStorageAccess(
-        unit_lowerer.Unit(), frame, home, cell_type,
-        mir::EnclosingHops{
-            r.declaring_scope_hops.value_or(hir::StructuralHops{}).value});
-  }
-  return mir::Expr{
-      .data =
-          mir::ReferenceExpr{
-              .target = unit_lowerer.MakeExternalStaticPropertyRef(
-                  std::get<hir::ExternalStaticPropertyTarget>(r.target))},
-      .type = cell_type};
+        unit_lowerer.Unit(), frame,
+        unit_lowerer.GetClassShape(owner).static_property_translation.Get(
+            property.prop),
+        cell_type, hops);
+  };
+  return std::visit(
+      Overloaded{
+          [&](const hir::InstanceStaticPropertyTarget& t) -> mir::Expr {
+            return own_cell(t.property, mir::EnclosingHops{t.hops.value});
+          },
+          [&](const hir::LocalStaticPropertyTarget& t) -> mir::Expr {
+            return own_cell(t, mir::EnclosingHops{});
+          },
+          [&](const hir::ExternalStaticPropertyTarget& t) -> mir::Expr {
+            return mir::Expr{
+                .data =
+                    mir::ReferenceExpr{
+                        .target =
+                            unit_lowerer.MakeExternalStaticPropertyRef(t)},
+                .type = cell_type};
+          }},
+      r.target);
 }
 
 auto LowerHirPrimaryExprProc(

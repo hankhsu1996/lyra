@@ -48,33 +48,29 @@ auto PortConnectionUnsupported(diag::SourceSpan span, std::string message)
 }
 
 // The child instance one set of connections reaches, and how this scope reaches
-// it: the typed step onto the instance, the object its signature describes, and
+// it: the typed step onto the instance, the class its signature describes, and
 // the frame the step is taken from. Every port of the instance is connected
 // against this one record.
 struct ConnectedChild {
   const slang::ast::InstanceSymbol* instance = nullptr;
   const hir::UnitSignature* signature = nullptr;
-  hir::ExternalUnitObjectId object;
+  hir::ExternalScopeClassId scope_class;
   hir::OwnedChildStep step;
   ScopeFrameId home_frame;
   diag::SourceSpan span;
 };
 
 // The route from this scope to a member the child published: one typed step
-// onto the instance, then the position that member sits at in the object its
+// onto the instance, then the position that member sits at in the class its
 // signature describes (LRM 23.3.3). Every connection reaches the child's side
 // this way, whichever kind of port it is.
 auto PublishedMemberRoute(
-    const ConnectedChild& child, hir::PublishedMemberId member,
-    hir::PublishedStorage storage, hir::TypeId type) -> hir::ValueRoute {
+    const ConnectedChild& child, hir::ExternalMemberLeaf member)
+    -> hir::ValueRoute {
   return hir::ValueRoute{
-      .head = hir::InUnitHead{.hops = {}},
-      .steps = {hir::PathStep{child.step}},
-      .leaf = hir::SignatureMemberLeaf{
-          .object = child.object,
-          .member = member,
-          .storage = std::move(storage),
-          .type = type}};
+      .base = hir::InUnitBase{.hops = {}},
+      .steps = {hir::AsPathStep(child.step)},
+      .leaf = std::move(member)};
 }
 
 // The value an omitted input port takes (LRM 23.2.2.4): its default, which is
@@ -84,12 +80,12 @@ auto PublishedMemberRoute(
 auto PortDefault(
     UnitLowerer& unit_lowerer, const ConnectedChild& child,
     hir::PublishedCallableId evaluate, hir::TypeId type) -> hir::Expr {
-  const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-      hir::Type{hir::UnitObjectType{.unit_name = child.signature->unit_name}});
+  const hir::TypeId object_type =
+      unit_lowerer.ScopeClassTypeOf(child.scope_class);
   const ScopeRoute onto_child{
-      .head = hir::InUnitHead{.hops = {}},
-      .steps = {hir::PathStep{child.step}},
-      .unit_name = child.signature->unit_name,
+      .base = hir::InUnitBase{.hops = {}},
+      .steps = {hir::AsPathStep(child.step)},
+      .place = InExternalScope{.scope_class = child.scope_class, .within = {}},
       .open = {}};
   return hir::Expr{
       .type = type,
@@ -99,7 +95,7 @@ auto PortDefault(
                   hir::ExternalUnitMethodRef{
                       .receiver = unit_lowerer.MakeRoutedObjectRef(
                           child.home_frame, onto_child, object_type),
-                      .object = child.object,
+                      .scope_class = child.scope_class,
                       .callable = evaluate},
               .arguments = {}},
       .span = child.span};
@@ -158,9 +154,9 @@ auto CollectConnectedInstances(const slang::ast::Symbol& connected)
 }
 
 // The correspondence LRM 23.3.3.5 fixes between the positions a port stands for
-// and the objects an actual supplies. One side is the child's promise and the
-// other is what this unit worked out from its own declarations, and a value of
-// this type exists only where the two stated the same shape -- so how many
+// and the objects an actual supplies. One side is what the child published and
+// the other is what this unit worked out from its own declarations, and a value
+// of this type exists only where the two stated the same shape -- so how many
 // objects there are and which one stands at a position are both answered out of
 // that agreement. A count read off one side alone agrees with itself whatever
 // the other says, which is how a connection comes to pair positions that do not
@@ -168,15 +164,15 @@ auto CollectConnectedInstances(const slang::ast::Symbol& connected)
 class PairedPositions {
  public:
   // Nothing where the two shapes disagree. Each side arrives as the thing it
-  // already is -- a promise read off a signature, a reach built by a walk -- so
+  // already is -- a shape read off a signature, a reach built by a walk -- so
   // neither can be passed where the other belongs.
   [[nodiscard]] static auto Meet(
-      const hir::ObjectsBehindType& promised, const ScopeRoute& reach)
+      const hir::ObjectsBehindType& published, const ScopeRoute& reach)
       -> std::optional<PairedPositions> {
     // A port binds every object it stands for, so every position of every
     // dimension it declares is in play: the same statement the actual makes
     // about what it kept, at its own width.
-    std::vector<OpenDimension> port = WholeDimensions(promised.shape.dims);
+    std::vector<OpenDimension> port = WholeDimensions(published.shape.dims);
     const auto kept_count = [](const OpenDimension& dim) {
       return dim.kept.count;
     };
@@ -255,15 +251,11 @@ auto RoutesToPairedObjects(
     const std::vector<std::uint32_t> coordinate =
         paired->CoordinateAt(position);
     std::vector<hir::PathStep> steps = reach.steps;
-    std::visit(
-        [&](auto& step) {
-          step.indices.insert(
-              step.indices.end(), coordinate.begin(), coordinate.end());
-        },
-        steps.back());
+    std::vector<std::uint32_t>& selects = steps.back().selects;
+    selects.insert(selects.end(), coordinate.begin(), coordinate.end());
     peers.push_back(
         hir::ObjectRoute{
-            .head = reach.head,
+            .base = reach.base,
             .steps = std::move(steps),
             .leaf = hir::ScopeLeaf{.type = behind.shape.element_type}});
   }
@@ -276,9 +268,9 @@ auto RoutesToPairedObjects(
 // object tree, reached by the same walk every reference across an instance
 // boundary uses.
 //
-// What comes back has met the child's promise about how many objects belong
-// there: one way arrives that way by construction, the other is counted against
-// the promise here, which is where the two independent counts sit side by side.
+// What comes back has met what the child published about how many objects
+// belong there: one way arrives that way by construction, the other is counted
+// against it here, which is where the two independent counts sit side by side.
 auto InterfaceActualRoutes(
     UnitLowerer& unit_lowerer, const slang::ast::PortConnection& conn,
     const hir::ObjectsBehindType& behind, diag::SourceSpan span,
@@ -316,10 +308,18 @@ auto InterfaceActualRoutes(
     return PortConnectionUnsupported(
         span, "this interface port connection form is not yet supported");
   }
+  // The actual is a name like any other, so where it starts -- here, or where
+  // its search landed above this instance (LRM 23.8) -- is the name's own.
+  RouteOrigin origin = FromReader{};
+  if (named != nullptr) {
+    auto started = unit_lowerer.StartOf(frame, named->hierRef, span);
+    if (!started) return std::unexpected(std::move(started.error()));
+    origin = *std::move(started);
+  }
   std::vector<hir::ObjectRoute> peers;
   peers.reserve(instances->size());
   for (const auto* instance : *instances) {
-    auto route = unit_lowerer.RouteToScope(frame, instance->body);
+    auto route = unit_lowerer.RouteToScope(frame, instance->body, origin);
     if (!route.has_value()) {
       return PortConnectionUnsupported(
           span,
@@ -330,15 +330,15 @@ auto InterfaceActualRoutes(
     // member stands for rather than the member's whole shape.
     peers.push_back(
         hir::ObjectRoute{
-            .head = std::move(route->head),
+            .base = std::move(route->base),
             .steps = std::move(route->steps),
             .leaf = hir::ScopeLeaf{.type = behind.shape.element_type}});
   }
-  // How many objects the member stands for is the child's promise; how many
-  // this connection supplies is what the parent worked out from the frontend.
-  // Each side counted its own and they meet here -- a count taken from the
-  // other would agree with it whatever it said, and the two would then build
-  // different layouts with nothing able to report it.
+  // How many objects the member stands for is what the child published; how
+  // many this connection supplies is what the parent worked out from the
+  // frontend. Each side counted its own and they meet here -- a count taken
+  // from the other would agree with it whatever it said, and the two would then
+  // build different layouts with nothing able to report it.
   if (peers.size() != behind.shape.ElementCount()) {
     return PortConnectionUnsupported(
         span,
@@ -349,26 +349,23 @@ auto InterfaceActualRoutes(
 }
 
 // Binds one interface port of a child instance to the interface instances the
-// connection names (LRM 25.3). Both sides are routes resolved once in the
-// resolve phase: the child's port member, reached through the step onto the
-// instance, and one route per interface object the actual names. Nothing
-// crosses the boundary as a value, so the connection installs no driver and
-// waits on nothing.
+// connection names (LRM 25.3). Both sides are routes: the child's port member,
+// reached through the step onto the instance, and one route per interface
+// object the actual names. Nothing crosses the boundary as a value, so the
+// connection installs no driver and waits on nothing.
 auto ConnectInterfacePort(
     UnitLowerer& unit_lowerer, const ConnectedChild& child,
     const hir::InterfacePortPart& published,
     const slang::ast::PortConnection& conn, WalkFrame frame)
     -> diag::Result<void> {
-  const hir::PublishedMember& member =
-      hir::InstanceClassOf(*child.signature).members.Get(published.member);
   // The type of what is bound is the child's own statement of which unit
   // belongs there and how many of it, taken into this unit's pool, so the
-  // parent's record of the connection rests on the child's promise rather than
-  // on a second reading of the frontend.
-  const hir::TypeId member_type =
-      unit_lowerer.ImportSignatureType(*child.signature, member.type);
+  // parent's record of the connection rests on what the child published rather
+  // than on a second reading of the frontend.
+  hir::ExternalMemberLeaf member =
+      unit_lowerer.ExternalMemberLeafOf(child.scope_class, published.member);
   const auto behind =
-      hir::ObjectsBehind(unit_lowerer.Unit().types, member_type);
+      hir::ObjectsBehind(unit_lowerer.Unit().types, member.type);
   if (!behind.has_value()) {
     throw InternalError(
         "ConnectInterfacePort: an interface port's published type names the "
@@ -381,8 +378,7 @@ auto ConnectInterfacePort(
       hir::PortConnection{
           .span = child.span,
           .kind = hir::InterfacePortConnection{
-              .endpoint = PublishedMemberRoute(
-                  child, published.member, member.storage, member_type),
+              .endpoint = PublishedMemberRoute(child, std::move(member)),
               .peers = *std::move(peers)}});
   return {};
 }
@@ -442,8 +438,8 @@ auto ConnectDataPort(
   // The storage behind the part, as the child states it. Its type is wider
   // than the part's whenever the child named only a piece of it (LRM
   // 23.2.2.2), and the descent between the two is published alongside.
-  const hir::PublishedMember& member =
-      hir::InstanceClassOf(*child.signature).members.Get(projection->member);
+  const hir::ExternalMemberLeaf member =
+      unit_lowerer.ExternalMemberLeafOf(child.scope_class, projection->member);
   const auto* internal =
       port->internalSymbol == nullptr
           ? nullptr
@@ -468,9 +464,7 @@ auto ConnectDataPort(
   // Which cell that member is, is the child's own statement of it, so the
   // parent never reads the child's declaration to find out. The route ends at
   // the member, whatever part of it the port stands for.
-  const hir::ValueRoute port_route = PublishedMemberRoute(
-      child, projection->member, member.storage,
-      unit_lowerer.ImportSignatureType(*child.signature, member.type));
+  const hir::ValueRoute port_route = PublishedMemberRoute(child, member);
   // An input/output port reads the child cell during simulation, so it holds a
   // value reference; a `ref` port is bound once, so it keeps only the reach.
   const std::vector<hir::PublishedSelector> port_path =
@@ -508,7 +502,7 @@ auto ConnectDataPort(
       auto peer_or = scope.LowerExpr(*expr, frame);
       if (!peer_or) return std::unexpected(std::move(peer_or.error()));
       peer = frame.Exprs().Add(*std::move(peer_or));
-      auto entries = unit_lowerer.TranslateSensitivityReads(
+      auto entries = unit_lowerer.SensitivityEntriesOf(
           scope,
           unit_lowerer.Sensitivity().AnalyzeReads(*expr, *child.instance),
           frame);
@@ -537,10 +531,10 @@ auto ConnectDataPort(
           expr->as<slang::ast::AssignmentExpression>().left(), frame);
       if (!peer_or) return std::unexpected(std::move(peer_or.error()));
       peer = frame.Exprs().Add(*std::move(peer_or));
-      auto entries = unit_lowerer.TranslateSensitivityReads(
+      auto entries = unit_lowerer.SensitivityEntriesOf(
           scope,
-          {SensitivityRead{
-              .symbol = internal, .part = ReadOfWhole{}, .reached_by = {}}},
+          {AccessedPart{
+              .symbol = internal, .part = WholePart{}, .reached_by = {}}},
           frame);
       if (!entries) return std::unexpected(std::move(entries.error()));
       sensitivity = *std::move(entries);
@@ -616,21 +610,21 @@ auto ConnectDataPort(
 }
 
 // Records one instance's port connections as HIR. The instance is reached
-// from its owning scope as `child_ref`, with `element_indices` selecting the
-// element when it is an instance array (empty for a scalar); each port is a
-// by-name leaf past that step, so a connection is recorded the same way
-// whether the instance stands alone or sits at `c[i][j]` in an array.
+// from its owning scope by `step`, whose selects pick the element where it
+// sits in an instance array; each port is a member the child published,
+// reached past that step, so a connection is recorded the same way whether the
+// instance stands alone or sits at `c[i][j]` in an array.
 auto ConnectElementPorts(
     StructuralScopeLowerer& scope, UnitLowerer& unit_lowerer,
     const slang::ast::InstanceSymbol& inst,
-    const hir::UnitSignature& child_signature, hir::OwnedChildRef child_ref,
-    ScopeFrameId home_frame, std::vector<std::uint32_t> element_indices,
-    WalkFrame frame) -> diag::Result<void> {
+    const hir::UnitSignature& child_signature, hir::OwnedChildStep step,
+    ScopeFrameId home_frame, WalkFrame frame) -> diag::Result<void> {
   const ConnectedChild child{
       .instance = &inst,
       .signature = &child_signature,
-      .object = unit_lowerer.ExternalUnitObjectOf(child_signature.unit_name),
-      .step = {.child = child_ref, .indices = std::move(element_indices)},
+      .scope_class =
+          unit_lowerer.ExternalScopeClassOf(child_signature.unit_name),
+      .step = std::move(step),
       .home_frame = home_frame,
       .span = unit_lowerer.SourceMapper().PointSpanOf(inst.location)};
 
@@ -639,8 +633,10 @@ auto ConnectElementPorts(
   // rather than searched: the direction each connection runs in is then the
   // child's own statement of it, at the granularity data actually flows.
   const auto connections = inst.getPortConnections();
+  const std::vector<hir::PortDecl>& ports =
+      hir::DesignElementOf(child_signature).ports;
   std::size_t parts = 0;
-  for (const hir::PortDecl& declared : child_signature.ports) {
+  for (const hir::PortDecl& declared : ports) {
     parts += declared.parts.size();
   }
   if (parts != connections.size()) {
@@ -650,7 +646,7 @@ auto ConnectElementPorts(
   }
 
   std::size_t index = 0;
-  for (const hir::PortDecl& declared : child_signature.ports) {
+  for (const hir::PortDecl& declared : ports) {
     for (const hir::PortPart& published : declared.parts) {
       const slang::ast::PortConnection& conn = *connections[index++];
       auto connected = std::visit(
@@ -670,31 +666,30 @@ auto ConnectElementPorts(
   return {};
 }
 
-// Walks an instance array's elements, extending `index_prefix` by one index
-// per dimension, and records each leaf element's port connections. slang
+// Walks an instance array's elements, extending `step` by one select per
+// dimension, and records each leaf element's port connections. slang
 // distributes the connection per element (LRM 23.3.3.5), so each element
 // carries its own already index-matched connection expressions; this only
 // routes each to the right cell.
 auto ConnectArrayElements(
     StructuralScopeLowerer& scope, UnitLowerer& unit_lowerer,
     const slang::ast::InstanceArraySymbol& array,
-    const hir::UnitSignature& child_signature, hir::OwnedChildRef child,
-    ScopeFrameId home_frame, const std::vector<std::uint32_t>& index_prefix,
-    WalkFrame frame) -> diag::Result<void> {
+    const hir::UnitSignature& child_signature, const hir::OwnedChildStep& step,
+    ScopeFrameId home_frame, WalkFrame frame) -> diag::Result<void> {
   for (std::uint32_t i = 0; i < array.elements.size(); ++i) {
-    std::vector<std::uint32_t> element_prefix = index_prefix;
-    element_prefix.push_back(i);
+    hir::OwnedChildStep element_step = step;
+    element_step.selects.push_back(i);
     const auto* element = array.elements[i];
     if (element->kind == slang::ast::SymbolKind::InstanceArray) {
       auto r = ConnectArrayElements(
           scope, unit_lowerer, element->as<slang::ast::InstanceArraySymbol>(),
-          child_signature, child, home_frame, element_prefix, frame);
+          child_signature, element_step, home_frame, frame);
       if (!r) return std::unexpected(std::move(r.error()));
       continue;
     }
     auto r = ConnectElementPorts(
         scope, unit_lowerer, element->as<slang::ast::InstanceSymbol>(),
-        child_signature, child, home_frame, std::move(element_prefix), frame);
+        child_signature, std::move(element_step), home_frame, frame);
     if (!r) return std::unexpected(std::move(r.error()));
   }
   return {};
@@ -719,7 +714,7 @@ auto StructuralScopeLowerer::PopulatePortConnections(
           *this, *owner_, inst,
           owner_->Signatures().Instantiated(
               SpecializationName(inst, owner_->Specialization())),
-          binding->child, binding->home_frame, {}, frame);
+          binding->step, binding->home_frame, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {
       // A zero-element array (`Child c[0]`, LRM 23.3.2) constructs no element
@@ -744,7 +739,7 @@ auto StructuralScopeLowerer::PopulatePortConnections(
           *this, *owner_, array,
           owner_->Signatures().Instantiated(
               SpecializationName(*shape->leaf, owner_->Specialization())),
-          binding->child, binding->home_frame, {}, frame);
+          binding->step, binding->home_frame, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     }
   }

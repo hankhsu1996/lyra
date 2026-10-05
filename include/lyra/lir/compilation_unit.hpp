@@ -14,7 +14,6 @@
 #include "lyra/base/translation.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
-#include "lyra/lir/external_unit_object_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
@@ -141,10 +140,11 @@ struct GlobalConstant {
 // definition links under are two different symbols over the same parts, each
 // composed by the one function that owns its category.
 struct Class {
-  // The identifier the source declared this class under, absent for a scope of
-  // the design hierarchy, which the lowering built. Every symbol qualified by
-  // this class is composed from it where it is present and from the class's own
-  // position where it is not, so the two ranges never meet.
+  // The name another unit reaches this class by, absent where nothing outside
+  // this unit names it -- a class the lowering built for its own use. Every
+  // symbol qualified by this class is composed from it where it is present and
+  // from the class's own position where it is not, so the two ranges never
+  // meet.
   std::optional<std::string> name;
   // The type of what this class's members are placed after -- the class it
   // extends, of this unit or another, or a class of the runtime library -- and
@@ -164,7 +164,7 @@ struct Class {
   std::vector<ConformingBehavior> conforming;
 };
 
-// A class of another unit this one reaches into, as that unit promised it:
+// A class of another unit this one reaches into, as that unit published it:
 // which unit declares it and its canonical name, both resolved at link time,
 // what it extends, and its members at the slots that class gave them -- the
 // ones another unit may name first, then its `local` ones, which this unit
@@ -173,9 +173,10 @@ struct Class {
 // from. What it inherited is not among them: a member of an ancestor is reached
 // through the class that declares it.
 //
-// What a unit promised of its own object is such a class too. It lists no
-// members, because what it published is reached by performing a behavior
-// rather than by a slot, and names no body, because nothing extends it.
+// What a unit published of the object one of its scopes is -- an instance, or
+// a generate block inside one -- is such a class too. Its members are what the
+// scope published, in the order it published them, and it adds nothing to
+// dispatch, because none of its methods dispatches.
 //
 // This unit compiles none of it, which is why it sits apart from the classes
 // above.
@@ -188,17 +189,6 @@ struct ExternalClass {
   ClassDispatch dispatch;
   // The interface classes it names, as for a class of this unit.
   std::vector<TypeId> implements;
-};
-
-// The object of a unit this one references, as far as that unit published it:
-// which unit defines it and the class an instance of it is, both resolved at
-// link time. What that unit published is reached by performing a behavior of
-// the promise rather than by stepping into storage, so nothing here describes
-// storage and nothing may. This unit compiles none of it, which is why it sits
-// apart from the classes above: no walk that emits those can reach it.
-struct ExternalUnitObject {
-  std::string unit_name;
-  std::string class_name;
 };
 
 // One compiled closure: the captures it holds and the one body that reads them.
@@ -254,9 +244,9 @@ struct StaticStorage {
 
 // The LIR of one compilation unit: its own type graph, its classes, its
 // closures, its structs and those of other units it holds values of, the
-// objects of other units it compiled against, the storage it
-// shares program-wide, every function it compiles, and the class its object
-// tree is rooted at, when it roots one -- a unit that declares only a namespace
+// classes of other units it compiled against, the storage it shares
+// program-wide, every function it compiles, and the class its object tree is
+// rooted at, when it roots one -- a unit that declares only a namespace
 // compiles functions and roots no objects. Self-contained -- it holds no
 // reference to the MIR it was lowered from.
 //
@@ -276,13 +266,9 @@ struct CompilationUnit {
   // Every struct of another unit this one holds a value of, found by the
   // declaration that names it.
   std::vector<ExternalStruct> external_structs;
-  // One record per unit this one compiled against.
-  base::Registry<ExternalUnitObject, ExternalUnitObjectId>
-      external_unit_objects;
   // One entry per class of another unit this one names, found by the pair that
-  // names the class -- the pair every reference to one
-  // carries, so a reference and the record its slot is counted out of cannot
-  // come apart.
+  // names the class -- the pair every reference to one carries, so a reference
+  // and the record its slot is counted out of cannot come apart.
   std::vector<ExternalClass> external_classes;
   base::Registry<Function, FunctionId> functions;
   std::vector<StaticStorage> static_storage;
@@ -302,8 +288,8 @@ struct CompilationUnit {
 };
 
 // The record kept of the class `class_name` of unit `unit_name`, or nothing
-// where this unit holds no promise about it -- a class no signature the design
-// compiles carries.
+// where this unit holds no published record of it -- a class no signature the
+// design compiles carries.
 [[nodiscard]] inline auto FindExternalClass(
     const CompilationUnit& unit, std::string_view unit_name,
     std::string_view class_name) -> const ExternalClass* {

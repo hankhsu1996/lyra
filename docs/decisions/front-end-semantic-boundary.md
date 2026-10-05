@@ -8,7 +8,11 @@
 
 Accepted. D3's navigation-segment classifier is widened by `unit-signature.md`: descending into
 another unit's instance body crosses the boundary, but the step is still typed when its target is a
-declaration that unit published, and by-name only when it is not.
+declaration that unit published, and by-name only when it is not. **D3's by-name segment is reversed
+by [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**:
+every scope a name can step into publishes what a name can reach, so every segment is typed. The
+second immediate change, an `always_comb`'s list taken from `getSensitivityList()`, is revised by
+[an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md).
 
 D1's forbidden shape held on the read path from the day this was written and on the write path only
 from 2026-09-10, when the last classifier reading the declaration table's membership was removed --

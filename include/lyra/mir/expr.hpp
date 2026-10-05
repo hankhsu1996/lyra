@@ -216,7 +216,7 @@ struct UnitCallableTarget {
 // no unit-local id, because a position means nothing outside the arena that
 // minted it: it names the owning unit and the callable by name, resolved
 // against that unit's interface at link time, exactly as
-// `ExternalUnitObjectType` names an instantiated child. Only a body the source
+// `CrossUnitClassType` names another unit's class. Only a body the source
 // declared can be named this way, which is the whole of what a namespace
 // publishes.
 struct ExternalUnitCallableTarget {
@@ -239,17 +239,14 @@ struct ExternalUnitMintedEntryTarget {
 };
 
 // Identity of a method another compilation unit declares on a class -- an
-// instance method (LRM 8.6) or a type-associated method (LRM 8.10). The
-// declaring class carries no unit-local id here, so the target names the
-// declaring unit, the class's canonical (specialization) name, and the method's
-// source name, resolved against that unit's signature at link time. Whether the
-// call dispatches on an object is the presence of the callee's receiver, so the
-// two LRM forms are one identity here.
-//
-// Naming the implementation outright is what this is for, which is why a
-// subroutine another unit published on its object (LRM 25.7) is not one: what a
-// referrer holds there is the promise, and which implementation answers is the
-// object's to decide, so that call names a behavior instead.
+// instance method (LRM 8.6), a type-associated method (LRM 8.10), or a
+// subroutine a scope of the design hierarchy published, which a hierarchical
+// name calls on that scope's object (LRM 23.6). The declaring class carries no
+// unit-local id here, so the target names the declaring unit, the class's
+// canonical (specialization) name, and the method's source name, resolved
+// against that unit's signature at link time. Whether the call dispatches on an
+// object is the presence of the callee's receiver, so every form is one
+// identity here.
 struct ExternalUnitClassMethodTarget {
   std::string unit_name;
   std::string class_name;

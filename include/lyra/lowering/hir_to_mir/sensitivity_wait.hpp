@@ -14,6 +14,9 @@
 
 namespace lyra::lowering::hir_to_mir {
 
+class ProcessLowerer;
+class UnitLowerer;
+
 // One leaf of a wait: the storage watched, and what decides whether reaching it
 // is an event for the wait. The leaves watching for one event name one
 // observation between them, since what is being watched for is one thing.
@@ -22,10 +25,11 @@ struct ObservedLeaf {
   mir::LocalId observation;
 };
 
-// Each builder below is templated over the lowering the wait is built in -- a
-// procedural body's or a scope's own. Only a leaf that is a route asks it for
-// the scope that route is counted from, so a body sitting inside no scope, a
-// class method of a package, builds a wait over the leaves it can have.
+// Each wait builder below is templated over the lowering the wait is built in
+// -- a procedural body's or a scope's own -- except an implicit list's, which
+// only a procedure has. Only a leaf that is a route asks it for the scope that
+// route is counted from, so a body sitting inside no scope, a class method of
+// a package, builds a wait over the leaves it can have.
 
 // The observable storage one leaf names, as the place an operation on the cell
 // acts through. A leaf reaches either a cell of this design through its route,
@@ -63,9 +67,9 @@ auto ReportCells(
 // Records in the report `report` holds a pointer to everything `reads` names,
 // appending to the block `frame` is writing: each cell and the bits read of
 // it, each object a chain passes through and each interface variable a virtual
-// interface holds -- where the handle names something -- and every object
-// where a read follows no chain. Each call is made so it reports into the same
-// report.
+// interface holds -- where the handle names something -- every object where a
+// read follows no chain, and each cell and the bits written of it. Each call is
+// made so it reports into the same report.
 template <typename Lowerer>
 auto ReportReads(
     Lowerer& lowerer, const WalkFrame& frame, const hir::Reads& reads,
@@ -88,11 +92,12 @@ auto ReportReads(
     -> mir::LocalId;
 
 // Every SV construct that waits for something to happen converges on one
-// runtime call taking one trigger per leaf -- `always_comb` / `always_latch`
-// (LRM 9.2.2.2.1), `@*` (LRM 9.4.2.2), `@(...)` (LRM 9.4.2), `@e` (LRM
-// 15.5.2), `wait (cond)` (LRM 9.4.3), and a continuous assignment -- differing
-// only in what decides that reaching a leaf is an event for them. A wait its
-// process decides hands it the reports its last evaluation stated instead.
+// runtime call taking one trigger per leaf -- `@*` (LRM 9.4.2.2), `@(...)`
+// (LRM 9.4.2), `@e` (LRM 15.5.2), `wait (cond)` (LRM 9.4.3), and a continuous
+// assignment -- differing only in what decides that reaching a leaf is an
+// event for them. A wait its process decides hands it the reports its last
+// evaluation stated instead, and an implicit list (LRM 9.2.2.2.1) waits on the
+// one report it collected ahead of its first run.
 //
 // Lowering picks the observable-pointer expression per leaf so a backend
 // forwards one stored expression rather than re-deriving the shape from the
@@ -115,10 +120,25 @@ auto BuildWaitStmt(
     std::span<const ObservedLeaf> leaves, support::BuiltinFn entry)
     -> diag::Result<mir::Stmt>;
 
+// An implicit list collected once into a report, ahead of the procedure's first
+// run (LRM 9.2.2.2.1): everything `reads` names and writes is recorded, each
+// call reporting what its function reads and writes, and the report is then
+// settled as the list. Every statement lands in the block `frame` is writing;
+// the answer is the local holding a pointer to the report.
+auto CollectImplicitList(
+    const WalkFrame& frame, ProcessLowerer& lowerer, const hir::Reads& reads)
+    -> diag::Result<mir::LocalId>;
+
+// The wait on an implicit list `report` points at, each time the procedure
+// finishes its body.
+[[nodiscard]] auto BuildImplicitListWaitStmt(
+    mir::Block& block, const UnitLowerer& unit_lowerer, mir::LocalId report)
+    -> mir::Stmt;
+
 // The wait of a construct the standard makes sensitive to the variables it
-// reads, where a change to any of them is the event (LRM 9.2.2.2.1). Being
-// reached is the whole condition, so its leaves share the one observation that
-// says so.
+// reads, where a change to any of them is the event (LRM 9.4.2.2, 10.3).
+// Being reached is the whole condition, so its leaves share the one
+// observation that says so.
 template <typename Lowerer>
 auto BuildValueChangeWaitStmt(
     mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,

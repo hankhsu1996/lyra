@@ -13,4 +13,6 @@ a class.
 **Usage notes.** A module and a generate block are both classes; the declaration rules inside them
 are identical. A class holds [members](member.md), nested classes, parameters, processes, and
 methods, but no locals and no general procedural assignment outside its constructor block (see
-`architecture/runtime_model.md`).
+`architecture/runtime_model.md`). Such a scope is reached from other units through the class it
+publishes, which holds its published members; the class described here extends that one with what
+lowering adds (see `architecture/emission_model.md`).

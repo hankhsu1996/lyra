@@ -141,11 +141,9 @@ auto DimensionOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
           [&](const hir::RealTimeType&) { return none(); },
           [&](const hir::ChandleType&) { return none(); },
           [&](const hir::ClassHandleType&) { return none(); },
-          [&](const hir::OpaqueObjectHandleType&) { return none(); },
           [&](const hir::ImportedClassHandleType&) { return none(); },
           [&](const hir::UnitObjectType&) { return none(); },
           [&](const hir::VirtualInterfaceType&) { return none(); },
-          [&](const hir::OpaqueScopeType&) { return none(); },
           [&](const hir::NullType&) { return none(); },
           [&](const hir::VoidType&) { return none(); }});
 }

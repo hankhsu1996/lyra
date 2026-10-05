@@ -1,12 +1,19 @@
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 
+#include <cstdint>
+#include <span>
 #include <utility>
+#include <variant>
 
+#include "lyra/base/overloaded.hpp"
+#include "lyra/hir/external_scope_class.hpp"
+#include "lyra/hir/external_scope_ref.hpp"
+#include "lyra/hir/published_member.hpp"
+#include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
-#include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -15,54 +22,107 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-auto ReadPublishedMember(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
-    hir::PublishedMemberId member) -> mir::ExprId {
-  const mir::TypeId pointee = unit.types.Get(block.exprs.Get(object).type)
-                                  .Get<mir::PointerType>()
-                                  .pointee;
-  const mir::ExternalUnitObject& promised = unit.external_unit_objects.Get(
-      unit.types.Get(pointee).Get<mir::ExternalUnitObjectType>().object);
-  const mir::FieldId slot = UnitLowerer::TranslatePublishedMember(member);
-  const mir::PromisedField& field = promised.fields.Get(slot);
+namespace {
+
+// The field of the scope class `scope_class` records, on the object `object`
+// points at, at the place `place_of` reads out of where this unit's record of
+// the class laid out what its scope published.
+template <typename PlaceOf>
+auto AccessPublishedSlot(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    hir::ExternalScopeClassId scope_class, PlaceOf place_of) -> mir::ExprId {
+  const ExternalScopeLayout& record =
+      unit_lowerer.ExternalScopeLayoutOf(scope_class);
+  const mir::FieldId slot = place_of(record.published);
+  return block.exprs.Add(
+      mir::MakeFieldAccessExpr(
+          BuildObjectDeref(unit_lowerer.Unit(), block, object),
+          mir::CrossUnitClassFieldTarget{
+              .unit_name = record.cls.unit_name,
+              .class_name = record.cls.class_name,
+              .slot = slot},
+          record.field_types[slot.value]));
+}
+
+// The same field, addressed.
+template <typename PlaceOf>
+auto AddressPublishedSlot(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    hir::ExternalScopeClassId scope_class, PlaceOf place_of) -> mir::ExprId {
+  const mir::ExprId access =
+      AccessPublishedSlot(unit_lowerer, block, object, scope_class, place_of);
   return block.exprs.Add(
       mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Virtual{
-                          .receiver = BuildObjectDeref(unit, block, object),
-                          .slot =
-                              mir::ExternalVirtualSlot{
-                                  .unit_name = promised.unit_name,
-                                  .class_name = promised.class_name,
-                                  .ordinal = mir::BehaviorOrdinal{slot.value}}},
-                  .arguments = {}},
-          .type = unit.types.Intern(
+          .data = mir::AddressOfExpr{.operand = access},
+          .type = unit_lowerer.Unit().types.Intern(
               mir::Type{mir::PointerType{
-                  .pointee = field.type,
+                  .pointee = block.exprs.Get(access).type,
                   .ownership = mir::PointerOwnership::kBorrowed}})});
 }
 
-auto StepThroughPublishedMember(
+}  // namespace
+
+auto ReadPublishedMember(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    const hir::SignatureMemberStep& step) -> mir::ExprId {
-  const mir::ExprId storage =
-      ReadPublishedMember(unit_lowerer.Unit(), block, object, step.member);
-  const mir::TypeId reached = unit_lowerer.Unit()
-                                  .types.Get(block.exprs.Get(storage).type)
-                                  .Get<mir::PointerType>()
-                                  .pointee;
-  return IndexCoordinates(
-             unit_lowerer, block,
-             ReachedObject{
-                 .expr = block.exprs.Add(
-                     mir::Expr{
-                         .data = mir::DerefExpr{.pointer = storage},
-                         .type = reached}),
-                 .type = reached},
-             step.indices)
-      .expr;
+    hir::ExternalScopeClassId scope_class, hir::PublishedMemberId member)
+    -> mir::ExprId {
+  return AddressPublishedSlot(
+      unit_lowerer, block, object, scope_class,
+      [&](const PublishedScopeLayout& layout) {
+        return layout.members.Get(member);
+      });
+}
+
+auto ReachPublishedDisableTarget(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    const hir::ExternalDisableTargetLeaf& leaf) -> mir::ExprId {
+  return AddressPublishedSlot(
+      unit_lowerer, block, object, leaf.scope_class,
+      [&](const PublishedScopeLayout& layout) {
+        return layout.disable_targets.Get(leaf.target);
+      });
+}
+
+auto StepThroughPublished(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    const hir::ExternalScopeRef& names, std::span<const std::uint32_t> selects)
+    -> mir::ExprId {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const auto selected = [&](mir::ExprId held) {
+    return ApplyInstanceSelects(
+               unit_lowerer, block,
+               ReachedObject{.expr = held, .type = block.exprs.Get(held).type},
+               selects)
+        .expr;
+  };
+  return std::visit(
+      Overloaded{
+          [&](const hir::ExternalMemberRef& member) {
+            return selected(AccessPublishedSlot(
+                unit_lowerer, block, object, member.scope_class,
+                [&](const PublishedScopeLayout& layout) {
+                  return layout.members.Get(member.member);
+                }));
+          },
+          // What a generate construct built holds the base every block of it
+          // extends, so the block reached is viewed as the class it was
+          // published as.
+          [&](const hir::ExternalGenerateRef& generate) {
+            const mir::ExprId held = AccessPublishedSlot(
+                unit_lowerer, block, object, generate.scope_class,
+                [&](const PublishedScopeLayout& layout) {
+                  return layout.generates.Get(generate.generate);
+                });
+            return block.exprs.Add(
+                mir::Expr{
+                    .data = mir::CastExpr{.operand = selected(held)},
+                    .type = unit.types.Intern(
+                        mir::Type{mir::PointerType{
+                            .pointee = unit_lowerer.UnitObjectType(
+                                generate.result_class),
+                            .ownership = mir::PointerOwnership::kBorrowed}})});
+          }},
+      names);
 }
 
 auto InterfaceValueOf(

@@ -198,19 +198,12 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{lir::ObjectType{
                 .class_id = class_identities_.Get(ob.class_id).lir_class}};
           },
-          [&](const mir::ExternalUnitObjectType& eu) -> lir::Type {
-            return lir::Type{lir::ExternalUnitObjectType{
-                .object = external_unit_object_identities_.Get(eu.object)}};
-          },
           [](const mir::RuntimeClassType& e) -> lir::Type {
             return lir::Type{lir::RuntimeClassType{.which = e.which}};
           },
           [](const mir::CrossUnitClassType& e) -> lir::Type {
             return lir::Type{lir::CrossUnitClassType{
                 .unit_name = e.unit_name, .class_name = e.class_name}};
-          },
-          [](const mir::OpaqueObjectType&) -> lir::Type {
-            return lir::Type{lir::OpaqueObjectType{}};
           },
           [](const mir::RuntimeEffectsType&) -> lir::Type {
             return lir::Type{lir::RuntimeEffectsType{}};
@@ -373,20 +366,12 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kCancellationTarget);
     case mir::RuntimeLibraryKind::kControlEffect:
       return mirror(lir::RuntimeLibraryKind::kControlEffect);
-    case mir::RuntimeLibraryKind::kPropertyCoordinate:
-      return mirror(lir::RuntimeLibraryKind::kPropertyCoordinate);
     case mir::RuntimeLibraryKind::kObjectDefinition:
       return mirror(lir::RuntimeLibraryKind::kObjectDefinition);
-    case mir::RuntimeLibraryKind::kResolvedProperty:
-      return mirror(lir::RuntimeLibraryKind::kResolvedProperty);
-    case mir::RuntimeLibraryKind::kDeclaredBody:
-      return mirror(lir::RuntimeLibraryKind::kDeclaredBody);
     case mir::RuntimeLibraryKind::kScopeInfo:
       return mirror(lir::RuntimeLibraryKind::kScopeInfo);
     case mir::RuntimeLibraryKind::kScopeCallable:
       return mirror(lir::RuntimeLibraryKind::kScopeCallable);
-    case mir::RuntimeLibraryKind::kScopeClass:
-      return mirror(lir::RuntimeLibraryKind::kScopeClass);
   }
   throw InternalError("TranslateRuntimeLibrary: unknown RuntimeLibraryKind");
 }

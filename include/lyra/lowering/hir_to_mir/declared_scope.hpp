@@ -20,11 +20,10 @@ namespace lyra::lowering::hir_to_mir {
 // reports for itself (LRM 21.2.1.5), and what a `disable` naming it invalidates
 // (LRM 9.6.2). A static-lifetime local declared in it also outlives every
 // activation (LRM 6.21) -- but that is storage of the declaration like any
-// other, placed by the rule that places every static cell; what belongs to the
-// scope is only the spelling a hierarchical path reaches it by.
+// other, placed by the rule that places every static cell.
 //
 // So a scope of the design hierarchy becomes a name node, a runtime object
-// carrying the identity a hierarchical path matches, and everything a body
+// carrying the segment a construct inside it reports, and everything a body
 // there keeps is a field of the class enclosing it -- both one member access
 // from that body's `self`. For
 //
@@ -33,11 +32,11 @@ namespace lyra::lowering::hir_to_mir {
 //     begin : inner ... end
 //   end
 //
-// the enclosing class holds three fields: a handle on each scope's node, and
-// the cell `x` outlives its activation in. None of them answers to an
-// identifier -- the source declared no such storage -- so each is reached by
-// the position it sits at, and what a hierarchical path spells is the segment
-// its node reports and the name that node offers the cell under.
+// the enclosing class holds a handle on each scope's node, and the cell `x`
+// outlives its activation in. A handle answers to no identifier -- the source
+// declared no such storage -- so each is reached by the position it sits at;
+// `x` is one a hierarchical name reaches (LRM 23.6), so it is a member of what
+// the scope publishes, under the name the source wrote.
 //
 // How the nodes nest is the HIR scope tree, and nothing here restates it. What
 // this states is only what each scope got.
@@ -58,8 +57,9 @@ struct ScopeNameNode {
 // what a name reaches -- so nothing has to first find out which scopes some
 // `disable` names.
 //
-// The two are not owned together. A name node answers for a hierarchical path,
-// which only the design hierarchy has: a class object is reached by member
+// The two are not owned together. A name node carries a segment of a reported
+// hierarchical name, which only the design hierarchy has: a class object is
+// reached by member
 // select rather than by scope name (LRM 23.7) and a package owns no object at
 // all (LRM 26.3), so a body there reports the enclosing object's own name and
 // owns no node. A `disable` written inside such a body still names its own

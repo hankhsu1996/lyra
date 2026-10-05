@@ -34,8 +34,10 @@ shared by all consumers: external references, child routing, and construction.
 4. External references, runtime child routing, and the runtime constructor all navigate the same
    object tree. Typed members on the derived class are the ownership locus; a single non-owning
    generic adjacency list on the base scope, populated by one attachment operation per child, serves
-   both deterministic traversal and by-name lookup. No second list of child pointers is maintained
-   in parallel, and the parent never restates a child's identity that the child already carries.
+   deterministic traversal. No second list of child pointers is maintained in parallel, and the
+   parent never restates a child's identity that the child already carries. A hierarchical name
+   reaches a child through the typed member or the generate entry that holds it, never by searching
+   the adjacency list for its name.
 5. The same compilation unit compiled once serves every instance of that unit. Hierarchy does not
    fork the unit's compile-time artifacts.
 6. Parameters affect constructor-time construction, not compile-time identity. A parameter value
@@ -63,8 +65,8 @@ shared by all consumers: external references, child routing, and construction.
     per-dimension elaborated indices. The child receives that segment from its constructor's caller,
     holds it for its lifetime, and remains the sole authoritative source of its own identity; no
     consumer reconstructs the bracketed name by reverse-searching a parent registry, and the parent
-    never re-states an identity the child already carries. `%m`, hierarchical paths, debug output,
-    and by-name lookup all read from this single source.
+    never re-states an identity the child already carries. `%m`, hierarchical paths, and debug
+    output all read from this single source; resolving a hierarchical name reads none of them.
 11. A reference targeting a non-constructed runtime object is a sealing failure with a user
     diagnostic, never a runtime fallback. A conditional-generate arm not selected at Build has a
     class declaration but no runtime scope; a hierarchical reference whose route traverses such an
@@ -84,10 +86,11 @@ shared by all consumers: external references, child routing, and construction.
   resolves. This doc owns the tree's shape and construction and its faithfulness to the frontend's
   elaboration; that doc relies on this faithfulness to make cross-unit resolution total.
 - A node whose owned child is built from another compilation unit (an instantiation) crosses the
-  unit boundary: the parent references the child's interface by name, never its body or internal
-  ids. An owned child that belongs to the same unit (a named generate scope) is intra-unit and
-  crosses no boundary. `compilation_unit_model.md` owns the interface and the name-based linkage;
-  this doc owns only the resulting ownership edge in the object tree.
+  unit boundary: the parent references the class the child's unit published, never its body or
+  internal ids. An owned child that belongs to the same unit (a named generate scope) is intra-unit
+  and crosses no boundary for the unit's own code; a referrer in another unit reaches it through the
+  class it was published as. `compilation_unit_model.md` owns the signature and the name-based
+  linkage; this doc owns only the resulting ownership edge in the object tree.
 
 ## Forbidden Shapes
 
@@ -96,9 +99,13 @@ shared by all consumers: external references, child routing, and construction.
   itself.
 - Separate hierarchy models for compile-time and runtime. Only one model exists.
 - Two independently maintained runtime child views that can drift -- e.g., one list for traversal
-  plus a separate registry for by-name lookup, each written by a distinct opcode and at a distinct
-  construction-time moment. One non-owning adjacency relation serves both, populated by one
+  plus a separate registry of children, each written by a distinct opcode and at a distinct
+  construction-time moment. One non-owning adjacency relation serves traversal, populated by one
   attachment operation per child.
+- A runtime search of a scope's children, or of a scope's declarations, by name to resolve a
+  hierarchical reference. A name's target is fixed by the class each step was published as and is
+  checked where the referrer compiles; a search by text defers that check to run time and leaves an
+  unchecked cast in its place.
 - A child-routing or external-reference path that reconstructs hierarchy from flattened symbol
   names.
 - Per-instance generate trees that duplicate the unit's construction logic.
@@ -157,7 +164,7 @@ flowchart TB
   GB --> H["hidden"]
 ```
 
-Three things the picture is for.
+Four things the picture is for.
 
 **There is one tree and every kind of node is in it.** A generate scope is not a second topology
 laid over the instances; it is a node beside them, with children of its own. Nothing anywhere holds
@@ -169,8 +176,14 @@ theirs the same way, so an instance array and a generate loop differ in what dec
 nothing a consumer of the tree can see.
 
 **A node with no name is in the tree and no hierarchical name reaches it.** The procedural scope is
-a child like any other and a by-name walk descends through it transparently, which is what lets a
-process declare its own scope without putting a segment in every path beneath it.
+a child like any other and contributes no segment to the paths beneath it, so a process declares its
+own scope without lengthening any hierarchical name.
+
+**Each scope a name can step into publishes a class.** `mid`'s class publishes its members, the
+`bank` array, and one entry per generate construct: `g`'s entry lists each block's class keyed by
+its index, and `genblk2`'s keys its one block by that label. So `mid.g[1].leaf` is a typed step into
+the entry at index 1, viewed as that block's class, and then a published member. Where `g[0]` and
+`g[1]` compile to one class, each still goes by its own name, an alias of that class.
 
 If resolving a hierarchical reference requires a lookup through a table that mirrors the object
 tree, the table is redundant: the tree itself is the authority.

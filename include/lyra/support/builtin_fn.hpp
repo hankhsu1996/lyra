@@ -322,11 +322,9 @@ enum class BuiltinFn : std::uint16_t {
   kReferComponent,
   // A reference to a property of an object (LRM 13.5.2, 8.4), a step taken on
   // the object. A write through it tells the object as it lands (LRM 9.4.2), so
-  // the object travels with the reference. The first names the property as the
-  // part the call reaches; the second takes the coordinate a class answers
-  // where the referrer can count no position for it.
+  // the object travels with the reference, and the property is named as the
+  // part the call reaches.
   kReferProperty,
-  kReferPropertyAt,
   // What a wait on the storage a reference names registers on: whatever a
   // write through the reference is told to -- the variable, or the object a
   // property belongs to (LRM 13.5.2, 9.4.2) -- as an erased pointer, the form
@@ -584,15 +582,28 @@ enum class BuiltinFn : std::uint16_t {
   // what its reports hold.
   kWaitRecollecting,
   kWaitUntil,
+  // LRM 9.2.2.2.1 the wait of an `always_comb` / `always_latch` whose implicit
+  // list was collected once into a report, taking the runtime handle and that
+  // report: the same leaves every time the procedure finishes its body.
+  kWaitOnReport,
   // What an evaluation states the places it reached in (LRM 9.4.2): an empty
-  // report; a place it reads and the bits it reads there; every object at
-  // once; the bracket a function takes around reporting into it, which
-  // answers whether to go on at all; and whether the function, having
-  // reported, runs -- the one the evaluation called does. A function reaching
-  // a read no leaf watches yet refuses the report instead.
+  // report; a place it reads and the bits it reads there; a place reached
+  // through a handle; every object at once; the bracket around a call made on
+  // a handle, while which everything reported is reached through it; a place
+  // written and its bits; settling what was reported as a procedure's
+  // implicit list (LRM 9.2.2.2.1), which keeps only what was read directly,
+  // less what was written; the bracket a function takes around reporting into
+  // it, which answers whether to go on at all; and whether the function,
+  // having reported, runs -- the one the evaluation called does. A function
+  // reaching a read no leaf watches yet refuses the report instead.
   kReadReportEmpty,
   kReadReportAdd,
+  kReadReportAddThroughHandle,
   kReadReportAddEveryObject,
+  kReadReportEnterCallOnHandle,
+  kReadReportLeaveCallOnHandle,
+  kReadReportAddWrite,
+  kReadReportSettleAsImplicitList,
   kReadReportEnter,
   kReadReportLeave,
   kReadReportRunsTheBody,
@@ -642,22 +653,15 @@ enum class BuiltinFn : std::uint16_t {
   // in what it prints, so each names the entry that prints for it.
   kFinish,
   kStop,
-  // Ancestor-scope resolution for a hierarchical reference whose route starts
-  // above the referrer (LRM 23.6 / 23.8). Called once per reference in the
-  // resolve phase, dispatching on the referrer's own scope handle.
-  // `kResolveRoot` climbs to the parent-less `$root` anchor; the descent suffix
-  // starts strictly below it. `kResolveVisibleChild` walks the enclosing chain
-  // and matches a child by the canonical instance name and per-axis index it
-  // carries as arguments; the descent suffix starts below the matched child.
-  kResolveRoot,
-  kResolveVisibleChild,
-  // The scope handle's runtime ABI, each entry dispatching on it. A constructor
-  // registers a signal by name, or hands a freshly-built child to its parent to
-  // own; `kAddOwnedChild` consumes the built child (a unique pointer) and
-  // returns the parent-owned handle -- the child's own `Segment()` supplies
-  // both the by-name key and the LRM display form, so the parent never
-  // re-states them.
-  kRegisterSignal,
+  // Where a hierarchical name leaving an instance starts (LRM 23.6 / 23.8):
+  // the nearest instance above the receiver that is of the class handed in, or
+  // past the topmost a top-level instance of it. Called once per reference in
+  // the resolve phase.
+  kEnclosingInstance,
+  // A constructor hands a freshly-built child to its parent to own: this
+  // consumes the built child (a unique pointer) and returns the parent-owned
+  // handle -- the child's own `Segment()` supplies the LRM display form, so the
+  // parent never re-states it.
   kAddOwnedChild,
   // Extends a sequence still being composed by one element, answering with
   // what it became. A declaration standing for several objects counts them out
@@ -665,44 +669,9 @@ enum class BuiltinFn : std::uint16_t {
   // last answer -- so nothing a member holds is ever partly composed, and the
   // count never has to be known before the objects are.
   kExtendSequence,
-  // A constructor also hands a scope what a `disable` naming it terminates
-  // (LRM 9.6.2), which is unnamed because a scope carries exactly one.
-  kRegisterDisableTarget,
-  // What a scope answers with, one entry per kind of declaration a hierarchical
-  // name may end at (LRM 23.6): the cell of a signal, the owned child at a name
-  // and per-axis index, the entry of a subroutine, or what a `disable` naming
-  // the scope terminates. Each is reached once in the resolve phase and each
-  // fails rather than answering with nothing, because the name was resolved to
-  // a declaration of that scope before anything was emitted for it.
-  kFindSignal,
-  kFindChild,
-  kFindSubroutine,
-  kFindDisableTarget,
-  // The definition of a class the scope's unit declares. A class declared
-  // inside a design element is a distinct type per instance of that element
-  // (LRM 6.22) and nameable only inside the scope declaring it (LRM 23.9), so
-  // which definition a name reaches is the scope's to answer and no referrer's
-  // to assume. Reached in the resolve phase like the four above.
-  kFindClass,
-  // What a name reaches on a class, asked of the class rather than of a scope:
-  // the storage a property occupies among what its declaring class declares,
-  // or the body a call enters (LRM 8.14), which for a virtual method makes the
-  // call the object decides (LRM 8.20). Both are asked once while a reference
-  // resolves, and what they answer is used at each access with no name in
-  // hand. The first answers with a position because what the access reaches
-  // still depends on the object; the second answers with the body, there being
-  // nothing left to decide at the call.
-  kClassFindProperty,
-  kClassFindBehaviorBody,
-  // Applying that position to whichever object the access reaches: the class
-  // the position names answers where the storage is on that object. Which
-  // object it is, is not decided until the access runs, so the position alone
-  // reaches nothing and this is the step that spends it.
-  kPropertyAt,
   // The part of the object a handle reaches it through. A body runs on that
   // part rather than on a reference to it, and a handle refers to one without
-  // being one, so a call entering a body of a class it cannot name asks for
-  // the part here.
+  // being one.
   kViewOf,
   // What reports a change to an object's properties (LRM 9.4.2): the event
   // source a wait reaching the object subscribes to; a write into its
@@ -1028,9 +997,8 @@ enum class BuiltinFn : std::uint16_t {
   kEnumerationPrev,
   // Typed parent navigation: `scope->Parent()` returns the enclosing scope as
   // the runtime `Scope` base pointer. An intra-unit upward member access casts
-  // the result to the enclosing class and reads the member directly (the unit
-  // owns the enclosing class's layout); distinct from the by-name cross-unit
-  // navigation above.
+  // the result to the enclosing class and reads the member directly, the unit
+  // owning the enclosing class's layout.
   kParent,
   // LRM 8.11 `this`: the handle referring to the object the running subroutine
   // was invoked on. A body reaches its own object through a borrowed pointer,

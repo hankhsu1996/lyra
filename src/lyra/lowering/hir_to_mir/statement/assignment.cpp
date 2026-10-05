@@ -340,11 +340,9 @@ auto CallStatementWaits(const hir::CallExpr& call) -> bool {
           // complete as coroutines, which the call's type already answered.
           [](const hir::StructuralSubroutineRef&) { return false; },
           [](const hir::ExternalUnitSubroutineRef&) { return false; },
-          // A task an interface publishes (LRM 25.7) completes as a coroutine
-          // on the same terms, and so does one a hierarchical name reaches
-          // through no promise at all (LRM 23.6).
+          // A task another instance publishes (LRM 25.7, 23.6) completes as a
+          // coroutine on the same terms.
           [](const hir::ExternalUnitMethodRef&) { return false; },
-          [](const hir::OpaqueUnitMethodRef&) { return false; },
           // A foreign task import (LRM 35.5.2) completes as a coroutine too,
           // which the call's type already answered.
           [](const hir::ForeignImportRef&) { return false; },

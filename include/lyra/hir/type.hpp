@@ -248,19 +248,6 @@ struct ClassHandleType {
   auto operator==(const ClassHandleType&) const -> bool = default;
 };
 
-// LRM 8.3 class handle reached past another unit's signature, where the class
-// it refers to has no name here. A class a design element declares is a type of
-// each instance of that element rather than one type of the unit (LRM 6.22),
-// and it is nameable only inside the scope that declares it (LRM 23.9), so a
-// referrer outside has no name that identifies it and no promise to compile
-// against. What the handle carries is that it refers to an object; what it may
-// do is what needs no class -- compare identity, test against null, and be
-// assigned -- while reaching a member of the object needs the class and has
-// nothing here to name.
-struct OpaqueObjectHandleType {
-  auto operator==(const OpaqueObjectHandleType&) const -> bool = default;
-};
-
 // LRM 8.3 class handle whose referenced class is an imported runtime-library
 // class rather than a unit-declared one. Managed and null-legal like
 // ClassHandleType, but the class is named by its library identity, not a unit
@@ -271,13 +258,16 @@ struct ImportedClassHandleType {
   auto operator==(const ImportedClassHandleType&) const -> bool = default;
 };
 
-// The object an instance of another compilation unit is -- what an interface
-// port names (LRM 25.3). Named by the declaring unit alone: the object is
-// always another unit's, so there is no local form, and the name is what
-// identifies it from anywhere, which is what lets the type cross a signature
-// unchanged. Only the members that unit published are reachable through it.
+// The object a scope of another compilation unit is -- an instance of it, which
+// an interface port names (LRM 25.3), or a generate block inside one, which a
+// hierarchical name steps into (LRM 23.6). Named by the declaring unit and the
+// class that unit published the scope as: the object is always another unit's,
+// so there is no local form, and the pair is what identifies it from anywhere,
+// which is what lets the type cross a signature unchanged. Only what that unit
+// published is reachable through it.
 struct UnitObjectType {
   std::string unit_name;
+  std::string class_name;
 
   auto operator==(const UnitObjectType&) const -> bool = default;
 };
@@ -293,15 +283,6 @@ struct VirtualInterfaceType {
   std::string unit_name;
 
   auto operator==(const VirtualInterfaceType&) const -> bool = default;
-};
-
-// A scope on the object tree that this unit holds no promise about: what a
-// hierarchical name lands on when the declaring unit published nothing to reach
-// through (LRM 23.6). It names no unit, because naming one is what a consumed
-// signature is and there is none, so nothing in it is reachable by position and
-// everything is reached by name.
-struct OpaqueScopeType {
-  auto operator==(const OpaqueScopeType&) const -> bool = default;
 };
 
 // LRM 8.4: the type slang gives the `null` literal. It is assignment- and
@@ -327,9 +308,8 @@ class Type {
       EnumType, UnpackedStructType, UnpackedUnionType, UnpackedArrayType,
       DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
       StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
-      ClassHandleType, OpaqueObjectHandleType, ImportedClassHandleType,
-      UnitObjectType, VirtualInterfaceType, OpaqueScopeType, NullType,
-      VoidType>;
+      ClassHandleType, ImportedClassHandleType, UnitObjectType,
+      VirtualInterfaceType, NullType, VoidType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -461,6 +441,7 @@ struct UnpackedShape {
 struct ObjectsBehindType {
   UnpackedShape shape;
   std::string_view unit_name;
+  std::string_view class_name;
 };
 
 [[nodiscard]] inline auto ObjectsBehind(const TypePool& types, TypeId type)
@@ -471,7 +452,9 @@ struct ObjectsBehindType {
     return std::nullopt;
   }
   return ObjectsBehindType{
-      .shape = std::move(shape), .unit_name = object->unit_name};
+      .shape = std::move(shape),
+      .unit_name = object->unit_name,
+      .class_name = object->class_name};
 }
 
 }  // namespace lyra::hir

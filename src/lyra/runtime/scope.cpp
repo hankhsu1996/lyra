@@ -1,16 +1,13 @@
 #include "lyra/runtime/scope.hpp"
 
-#include <cstddef>
 #include <format>
 #include <memory>
 #include <ranges>
-#include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "lyra/base/simulation_error.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/class_definition.hpp"
 
 namespace lyra::runtime {
@@ -37,102 +34,6 @@ void Scope::ForEachChild(const ChildVisitor& fn) {
   }
 }
 
-auto Scope::NoSuchName(std::string_view what, std::string_view name) const
-    -> std::string {
-  return std::format(
-      "hierarchical name reaches no {} '{}' on '{}' (LRM 23.6)", what, name,
-      HierarchicalPath().CStr());
-}
-
-void Scope::RegisterSignal(std::string_view name, void* address) {
-  signals_.push_back(SignalEntry{.name = name, .address = address});
-}
-
-void Scope::RegisterDisableTarget(CancellationTarget* target) {
-  disable_target_ = target;
-}
-
-auto Scope::FindSignal(std::string_view name) -> void* {
-  for (const SignalEntry& signal : signals_) {
-    if (signal.name == name) {
-      return signal.address;
-    }
-  }
-  throw SimulationError(NoSuchName("signal", name));
-}
-
-auto Scope::FindChild(
-    std::string_view name, std::span<const lyra::value::PackedArray> indices)
-    -> Scope* {
-  if (Scope* child = LookupChild(name, indices)) {
-    return child;
-  }
-  throw SimulationError(NoSuchName("scope", name));
-}
-
-auto Scope::FindSubroutine(std::string_view name) -> ErasedEntry {
-  if (ErasedEntry entry = FindInCallableTable(Info().subroutines, name)) {
-    return entry;
-  }
-  throw SimulationError(NoSuchName("subroutine", name));
-}
-
-auto Scope::FindClass(std::string_view name) -> const ObjectDefinition* {
-  if (const ObjectDefinition* definition =
-          FindInClassTable(Info().classes, name)) {
-    return definition;
-  }
-  throw SimulationError(NoSuchName("class", name));
-}
-
-auto Scope::FindDisableTarget() -> CancellationTarget* {
-  if (disable_target_ != nullptr) {
-    return disable_target_;
-  }
-  throw SimulationError(
-      std::format(
-          "hierarchical name reaches '{}', which the source named nothing, so "
-          "no disable can end it (LRM 9.6.2)",
-          HierarchicalPath().CStr()));
-}
-
-auto Scope::LookupChild(
-    std::string_view name, std::span<const lyra::value::PackedArray> indices)
-    -> Scope* {
-  // SV-visible child lookup. Named children match on segment name +
-  // indices; anonymous children (unnamed begin/ends emitted with an empty
-  // segment name) are transparent -- the walk recurses into them so a
-  // peer's `top.outer.x` finds `outer` regardless of how many unnamed
-  // begin/ends physically wrap it (LRM 23 hierarchical-name semantics).
-  for (const auto& child : attached_children_) {
-    if (!child->IsAddressable()) {
-      if (Scope* found = child->LookupChild(name, indices)) {
-        return found;
-      }
-      continue;
-    }
-    const HierarchySegment& seg = child->segment_;
-    if (seg.BaseName() != name) {
-      continue;
-    }
-    const auto child_indices = seg.Indices();
-    if (child_indices.size() != indices.size()) {
-      continue;
-    }
-    bool matched = true;
-    for (std::size_t i = 0; i < indices.size(); ++i) {
-      if (child_indices[i].ToInt64() != indices[i].ToInt64()) {
-        matched = false;
-        break;
-      }
-    }
-    if (matched) {
-      return child.get();
-    }
-  }
-  return nullptr;
-}
-
 auto Scope::Parent() const -> Scope* {
   return parent_;
 }
@@ -143,10 +44,6 @@ auto Scope::Segment() const -> const HierarchySegment& {
 
 auto Scope::DisplaySegment() const -> std::string {
   return segment_.Display();
-}
-
-auto Scope::Name() const -> std::string_view {
-  return segment_.BaseName();
 }
 
 auto Scope::HierarchicalPath() const -> lyra::value::String {
@@ -194,28 +91,31 @@ void Scope::sv_initialize() {
 void Scope::sv_create_processes() {
 }
 
-auto Scope::ResolveVisibleChild(
-    std::string_view head_name,
-    std::span<const lyra::value::PackedArray> head_indices) -> Scope* {
-  for (Scope* level = this; level != nullptr; level = level->Parent()) {
-    if (Scope* child = level->LookupChild(head_name, head_indices)) {
-      return child;
-    }
+namespace {
+
+auto IsOfClass(const Scope& scope, const ObjectDefinition* cls) -> bool {
+  for (const ObjectDefinition* at = scope.Definition(); at != nullptr;
+       at = at->base) {
+    if (at == cls) return true;
   }
-  // The indices are values the design computes, so a reference that names no
-  // instance is the design's own failure and not a compiler invariant (LRM
-  // 23.6 upward name resolution).
-  throw SimulationError(
-      "upward reference names no instance: no child named " +
-      std::string(head_name) + " is visible from this scope");
+  return false;
 }
 
-auto Scope::ResolveRoot() -> Scope* {
-  Scope* level = this;
-  while (level->parent_ != nullptr) {
-    level = level->parent_;
+}  // namespace
+
+auto Scope::EnclosingInstance(const ObjectDefinition* cls) -> Scope* {
+  for (Scope* level = parent_; level != nullptr; level = level->parent_) {
+    if (IsOfClass(*level, cls)) return level;
+    if (level->parent_ != nullptr) continue;
+    for (const auto& top : level->attached_children_) {
+      if (IsOfClass(*top, cls)) return top.get();
+    }
   }
-  return level;
+  throw InternalError(
+      std::format(
+          "Scope::EnclosingInstance: '{}' stands in no instance of the class "
+          "its name was resolved against",
+          HierarchicalPath().CStr()));
 }
 
 auto Scope::InitializationSeeds() -> InitializationRng& {

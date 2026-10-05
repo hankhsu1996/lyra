@@ -87,16 +87,10 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::runtime::ReadReport";
     case mir::RuntimeLibraryKind::kObjectDefinition:
       return "lyra::runtime::ObjectDefinition";
-    case mir::RuntimeLibraryKind::kResolvedProperty:
-      return "lyra::runtime::ResolvedProperty";
-    case mir::RuntimeLibraryKind::kDeclaredBody:
-      return "lyra::runtime::DeclaredBody";
     case mir::RuntimeLibraryKind::kScopeInfo:
       return "lyra::runtime::ScopeInfo";
     case mir::RuntimeLibraryKind::kScopeCallable:
       return "lyra::runtime::ScopeCallable";
-    case mir::RuntimeLibraryKind::kScopeClass:
-      return "lyra::runtime::ScopeClass";
     case mir::RuntimeLibraryKind::kDpiBitBuffer:
       return "lyra::value::DpiBitBuffer";
     case mir::RuntimeLibraryKind::kDpiLogicBuffer:
@@ -109,8 +103,6 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::value::DpiOpenArray";
     case mir::RuntimeLibraryKind::kDpiOpenArrayHandle:
       return "const svOpenArrayHandle";
-    case mir::RuntimeLibraryKind::kPropertyCoordinate:
-      return "lyra::runtime::PropertyCoordinate";
   }
   throw InternalError("backend::cpp: unknown RuntimeLibraryKind");
 }
@@ -222,27 +214,9 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                     }},
                 s.declaration);
           },
-          [&](const mir::ExternalUnitObjectType& e) {
-            // The class name is read from what the other unit published, not
-            // derived from that unit's name.
-            const mir::ExternalUnitObject& object =
-                unit.external_unit_objects.Get(e.object);
-            Write(
-                out, CppUnitScope(object.unit_name),
-                "::", ToCppName(object.class_name));
-          },
           [&](const mir::CrossUnitClassType& e) {
             Write(
                 out, CppUnitScope(e.unit_name), "::", ToCppName(e.class_name));
-          },
-          // An object whose class this unit cannot name has no C++ type, and
-          // nothing asks for one: a reference to it is only carried and
-          // compared, and every use that would need the class is refused
-          // during elaboration.
-          [](const mir::OpaqueObjectType&) {
-            throw InternalError(
-                "backend::cpp: an object with no class to name has no "
-                "target-language spelling");
           },
           [&](const mir::RuntimeClassType& e) {
             out += RuntimeClassCppType(e.which);
@@ -404,9 +378,7 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::VoidType&) { return reaches_nothing(); },
           [&](const mir::EmptyType&) { return reaches_nothing(); },
           [&](const mir::ObjectType&) { return reaches_nothing(); },
-          [&](const mir::ExternalUnitObjectType&) { return reaches_nothing(); },
           [&](const mir::CrossUnitClassType&) { return reaches_nothing(); },
-          [&](const mir::OpaqueObjectType&) { return reaches_nothing(); },
           [&](const mir::RuntimeClassType&) { return reaches_nothing(); },
           [&](const mir::RuntimeEffectsType&) { return reaches_nothing(); },
           [&](const mir::FilesType&) { return reaches_nothing(); },
@@ -574,15 +546,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::WildcardIndexType& t) { by_naming_itself(t); },
           [&](const mir::ObjectType& t) { by_naming_itself(t); },
           [&](const mir::StructType& t) { by_naming_itself(t); },
-          [&](const mir::ExternalUnitObjectType& t) { by_naming_itself(t); },
           [&](const mir::CrossUnitClassType& t) { by_naming_itself(t); },
-          // Constructing an object names its class, so an object whose class
-          // cannot be named is never constructed.
-          [](const mir::OpaqueObjectType&) {
-            throw InternalError(
-                "backend::cpp: an object with no class to name is never "
-                "constructed");
-          },
           [&](const mir::RuntimeClassType& t) { by_naming_itself(t); },
           [&](const mir::RuntimeEffectsType& t) { by_naming_itself(t); },
           [&](const mir::FilesType& t) { by_naming_itself(t); },

@@ -13,13 +13,14 @@ bodies re-emits none of its referrers.
 
 This workstream reasons from these and does not restate them:
 
-- `../decisions/unit-signature.md` -- what each unit kind publishes and how that set is known to be
-  complete, the two ways a reference reaches into another unit, the signature as an artifact, and
-  what a change recompiles.
+- `../decisions/unit-signature.md` -- the signature as an artifact derived from declarations alone,
+  and what a change recompiles.
+- `../decisions/a-design-element-publishes-its-declarations.md` -- every scope a hierarchical name
+  can step into publishes what a name can reach, and a referrer reaches it by typed steps only.
 - `../architecture/compilation_unit_model.md` -- the unit boundary and the signature each kind
   publishes.
-- `../architecture/reference_resolution.md` -- routes classified per segment by whether the referrer
-  has a declaration to compile against.
+- `../architecture/reference_resolution.md` -- routes as typed steps against what the referrer
+  compiles against.
 - `../architecture/emission_model.md` -- a signature and a code artifact per unit specialization,
   and the inputs one unit's emission may depend on.
 - `../architecture/lir.md` -- logical storage topology at LIR; physical placement derived below it.
@@ -98,10 +99,9 @@ why nothing a signature states may rest on it.
       another unit was reached. A name first met inside a body -- a local whose type is another
       unit's class -- arrives after any such set is fixed, so the promise it needs is absent and the
       reference is refused for a reason that is not about the program. And the same absence was
-      standing in for a different question: whether the target published the name, which is what
-      decides between compiling against a promise and resolving during elaboration, and which does
-      not depend on who is asking. Purity is unaffected either way, since a fact on no promise
-      reaches nobody.
+      standing in for a different question: whether the target published the name, which does not
+      depend on who is asking. Purity is unaffected either way, since a fact on no promise reaches
+      nobody.
 - [x] S7 -- A signature is organized as the unit's namespace-level declarations beside an entry per
       published class, each carrying its own name, its published members in declaration order, and
       the callables another unit may enable on it. Which class a referrer instantiates is stated
@@ -120,15 +120,14 @@ why nothing a signature states may rest on it.
 
 - [x] S8 -- A reference whose target is on a signature the referrer consumes carries the declaring
       unit, the class, and the member's name, and is a member access on a receiver that names that
-      unit. A reference past a signature keeps the by-name form the runtime answers during
-      elaboration. Which of the two a route's leaf takes is settled where the step reaching the
-      target's owner is settled, because a route that has already left this unit's layout has no
-      declaration to compile either the step or the leaf against.
+      unit. Every name a hierarchical reference may reach is on a signature (S19), so no reference
+      is answered by name while the design elaborates, and one naming what a scope did not publish
+      is refused where the referrer compiles.
 - [x] S9 -- The machine-code backend resolves a reference to a published member by translating the
       signatures of the units it references into its own type graph, so the reference is an ordinary
-      operation on what the promise states. Which of the promise's behaviors answers with the member
-      is counted out of the order the signature published them, so producer and consumer arrive at
-      the same one independently and neither computes a placement at all.
+      member access. The member's place is counted out of the order the signature published the
+      members in, which the declaring unit lays them out in ahead of everything else, so producer
+      and consumer arrive at the same one independently.
 
       The referrer records what each signature promised about the object it reaches, where it
       consumes that signature, and carries the record down like any other declaration -- so no pass
@@ -141,24 +140,27 @@ why nothing a signature states may rest on it.
       inherited one is found by walking what each class promised about the class it extends.
 
 - [x] S10 -- The C++ backend emits a unit's signature as a declaration-only artifact distinct from
-      the artifact carrying its bodies, and a referrer consumes only the first. What the unit
-      promised is a class of its own there, so the target language's own dispatch answers a
-      reference to a published member and the two sides share only the order S9 states. A change
-      confined to what a unit kept to itself changes no signature, so nothing a referrer compiles
-      against moves. The program is formed by compiling each artifact and linking the results.
+      the artifact carrying its bodies, and a referrer consumes only the first. What a scope
+      published is a class of its own there, holding the published members first and a non-virtual
+      method per subroutine that forwards to its body, and the class realizing the scope extends it.
+      A change confined to what a unit kept to itself changes no signature, so nothing a referrer
+      compiles against moves. The program is formed by compiling each artifact and linking the
+      results.
 
-      A signature reaches another unit through a pointer, so it names the class without the file it
-      was declared in. The exception is a class it extends, which the target language needs whole;
-      that is the only edge one unit's declarations have to another's, and two units that each
-      extend a class the other declares have no target-language form and are refused.
+      A signature reaches another unit through a pointer, so it names the class without defining it:
+      each unit declares the classes other units may name in a header of their own that reads
+      nothing, and a unit's declarations read those headers of the units whose classes they name.
+      Two units whose names reach each other therefore compile. The exception is a class it extends,
+      which the target language needs whole; two units that each extend a class the other declares
+      have no target-language form and are refused.
 
 - [x] S11 -- A referrer that only holds a handle to another unit's instance consumes that unit's
       signature and nothing more. Constructing an instance reaches the declaring unit's own entry
       point rather than requiring its full layout at the instantiation site, and a published member
-      is reached by performing what the unit offers rather than by locating storage in its object.
-      So a declaration the unit does not publish moves nothing a referrer compiles against, which is
-      what the artifact now shows: adding one to a child leaves everything a referrer of that child
-      reads byte for byte the same, and moving a port does not.
+      is reached at its place in the published part, ahead of everything lowering adds. So an edit
+      confined to a unit's bodies moves nothing a referrer compiles against: on both backends it
+      leaves everything emitted for a unit that reaches into it byte for byte the same, while an
+      edit that adds or changes a declaration changes what the unit publishes.
 
 - [x] S12 -- A published class states every method it declares, each with its name, its protocol,
       its formals' directions and types and its result, and how it takes part in dispatch (LRM 8.20,
@@ -169,8 +171,8 @@ why nothing a signature states may rest on it.
 - [x] S13 -- A package, and the compilation-unit scope, state every subroutine they declare the same
       way (LRM 26.3, 3.12.1), and a call from another unit reads what it passes and awaits from
       there. A DPI-C import is not among them, since its foreign symbol is reached through no unit
-      (LRM 35.4). A class a design element declares is on no signature and is reached by a name
-      resolved while the design elaborates, so its methods stay on the front end's view by design.
+      (LRM 35.4). A class a design element declares is published with the element and states its
+      methods the same way.
 
 - [x] S14 -- A published class states the interface classes its declaration names and no more (LRM
       8.26.2). What a value of it is also a value of by way of the class it extends, or of an
@@ -199,6 +201,15 @@ why nothing a signature states may rest on it.
       the two lineages (LRM 8.16, 8.26.5) and not worked out from the signatures. Every class it
       walked is on a signature this unit read, so the dependency is recorded and nothing goes stale;
       what is open is one fact with two sources.
+
+- [x] S19 -- A module or an interface, and every generate block it elaborates, publishes every
+      declaration a hierarchical name may reach (LRM 23.6): its variables, nets and events, its
+      child instances and interface ports, the statics and disable targets of its named blocks and
+      subroutines with the blocks and subroutines each sits in, the classes it declares and, for an
+      interface, its views and the names each defines, its subroutines' signatures, and per generate
+      construct the class each block was published as, keyed by index or label. The publication is
+      derived from the unit's declarations and waits for no body. Before, a module published its
+      ports and everything else was found by its text while the design elaborated.
 
 ## Out of scope
 

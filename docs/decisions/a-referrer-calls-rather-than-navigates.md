@@ -17,6 +17,14 @@ D4a was revised under
 the definition a promise passes on a constant its unit emits, and whose dispatch tables are laid out
 at compile time rather than held by the definition.
 
+**D1 to D4 are reversed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).** The
+published part of a scope holds the published members first, in the order the publication states, so
+a referrer reads a member at its offset and calls a published subroutine directly through a
+non-virtual forwarding method; nothing is dispatched. This entry's requirement -- a change to what a
+unit keeps to itself moves no referrer -- still holds, through the realization extending the
+published part. D5, the element's own entry making the object, stands.
+
 ## Why this decision matters
 
 A unit publishes a promise, and a referrer is supposed to depend on that promise and nothing else.

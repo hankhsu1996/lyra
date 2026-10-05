@@ -2054,19 +2054,11 @@ enough to warrant its own focused review.
       flat schema a runtime-owned realization built is gone, and which body fills a dispatch
       position is read from tables laid out at compile time rather than asked of the class at all.
 
-- [ ] R127 -- A design element's signature lists the classes it declares, under a field whose own
-      definition is the classes another unit may name. Another unit may name none of them: a class a
-      design element declares is a type of that element's instance (LRM 6.22), which is why a
-      reference to one is reached by asking the declaring scope rather than by naming the class.
-
-      What keeps the listing from doing harm is that it carries no members, so every reader that
-      looks for one falls through to asking by name -- an emptiness doing the work a statement
-      should. A reader that asked a different question of the same listing would get an answer that
-      looks authoritative and means nothing, which is what a published member's type did until its
-      class was taken off it at publication. Target: what a unit publishes says which classes it
-      offers, and a design element offers none, so nothing downstream reads an entry to find it
-      hollow. Not blocked. Found while a referrer's artifact asked to read a class that has no
-      readable form.
+- [x] R127 -- A design element's signature lists the classes it declares, and each entry is the
+      class whole, as a package's is. A class a design element declares is a type of that element's
+      instance (LRM 6.22), but its shape is one per unit, so the element publishes it and a referrer
+      reaching an object of it through a hierarchical name compiles against it rather than asking
+      the declaring scope by name. No entry is read and found hollow.
 
 - [x] R128 -- A run of bits moves between two packed values a word at a time. Taking a run out of a
       value and writing one back used to be a loop over the run's bits, each iteration dividing,
@@ -2757,7 +2749,7 @@ enough to warrant its own focused review.
       execution backend's by its own layout step, and the runtime holds no dispatch table at all.
 
       What remains on the C++ backend is a captureless function written where the runtime holds a
-      method by name or a property's address, entering the method on the object it is handed. It is
+      body a DPI-C export names (LRM 35.7), entering the method on the object it is handed. It is
       C++'s spelling of a member function entered object first. Its prototype is the one MIR states
       for the entry, and the conversion it applies is the one that pair of types takes. Rendering
       every method as an object-first function instead would put a forwarding member on every
@@ -2897,23 +2889,21 @@ enough to warrant its own focused review.
       costs nothing until it is taken. The target is a disable target only for a block something
       names. Not blocked.
 
-- [ ] R178 -- A name that reaches a declaration inside another unit's module (LRM 23.6) is looked up
-      by its text while the design is built, and then used through an untyped address: a misspelt or
-      mistyped name is reported at elaboration and not where the referrer compiles, and each call is
-      indirect. rustc, clang and Verilator all give the referrer the declaration whole and compile
-      the access to an offset or a symbol; none looks a member up by name while the program runs.
-      The target is a module publishing its declarations the way a C++ header does, a referrer
-      resolving against that where it compiles, and a unit re-emitting only when a declaration it
-      read changed. A body edit then re-emits nobody. What the design has to answer first is a name
-      whose target depends on where the unit is instantiated (LRM 23.8). Ranked first on the
-      maintainer's word. Not blocked. What exists only to serve the lookup, and goes with it: the
-      record each class hands the library and the name tables it points at, the bodies the library
-      enters on a name's behalf, the constants a class holds for them at every layer, and the
-      execution backend's emission of those constants as data. What the library still needs of a
-      scope afterwards is its timescale and its DPI-C exports (LRM 35.5.3), both of which
-      construction can state. The same change removes the promise a module publishes beside the
-      class that realizes it, the entry a referrer builds an instance through, and the coordinate
-      formed at elaboration for a class a design element declares.
+- [x] R178 -- A name that reaches a declaration inside another unit's module or interface, or inside
+      a generate block of one (LRM 23.6), is checked and compiled where the referrer compiles. Every
+      such scope publishes what a name can reach -- its variables, nets, events, child instances,
+      interface ports, the statics and disable targets of its named blocks and subroutines, the
+      classes it declares, an interface's views, its subroutines, and its generate blocks by index
+      or label -- and the referrer reads a member as it reads its own and calls a subroutine
+      directly. A name the scope did not declare, or one used with the wrong type, is refused at
+      compile time rather than at elaboration. An upward name (LRM 23.8) starts from the nearest
+      enclosing instance of the scope it landed on, and two instances whose upward names land on
+      different classes compile separately. Nothing is looked up by name while the design is built
+      or runs; a scope keeps only its name for `%m` and its DPI-C exports. Each block of a generate
+      loop keeps its own name even where its code is shared with its siblings. An edit confined to a
+      module's bodies changes nothing emitted for the units that reach into it, on either backend;
+      an edit that adds or changes a declaration changes what the module publishes and re-emits
+      them.
 
 - [ ] R179 -- What the lowering to MIR does with an operand it names at more than one place carries
       a name of its own, where rustc's MIR building names the same contract an operand: a place or a

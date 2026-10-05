@@ -9,6 +9,14 @@
 Accepted. Extends `hierarchical-reference-routing.md`, whose D5 reserved hierarchical callable
 dispatch as a target family and stated the five things an entry adding one owes.
 
+**D3 and D4 are reversed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).** A
+module publishes its subroutines' signatures, which makes no unit graph cyclic because each unit's
+declarations are derived from that unit alone, and a referrer calls a published subroutine directly
+rather than asking the scope for it by name. D5's second leaf goes with them: a named block's
+disable target is published with the named blocks it sits in, so a `disable` reaching one in another
+unit ends at a published member like any other leaf. D1, D2's question, and D5's single route stand.
+
 ## Why this decision matters
 
 A hierarchical name may end at a subroutine as readily as at a declaration that holds a value. LRM

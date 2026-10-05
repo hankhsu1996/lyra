@@ -2,6 +2,13 @@
 
 Date: 2026-09-24 Status: accepted
 
+The ends this entry lists that the runtime or the reached scope answers by name -- a name the
+runtime answers, a subroutine's entry the scope answers with, a disable target the scope answers
+for, and a member of a class this unit cannot name -- are removed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md): each
+use now ends at a declaration this unit or the reached scope published, and a subroutine is called
+directly. One reference per use stands.
+
 ## Context
 
 A name in a structural scope reaches something elsewhere in the design hierarchy, and the source's

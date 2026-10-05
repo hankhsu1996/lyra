@@ -90,6 +90,7 @@ auto ClassShape::AddField(mir::TypeId type) -> mir::FieldId {
 auto ClassShape::OpenClass() const -> mir::Class {
   mir::Class cls{
       .name = name,
+      .aliases = aliases,
       .base = base,
       .implements = implements,
       .conforming = {},
@@ -105,7 +106,6 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .static_properties = static_properties,
       .named_static_properties = named_static_properties,
       .named_callables = {},
-      .declares = declares,
       .constants = {},
       .object_definition_initializer = {}};
   for (std::size_t i = 0; i < callable_signatures.size(); ++i) {

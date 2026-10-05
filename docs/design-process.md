@@ -189,7 +189,7 @@ paid for again at each of them.
 This beats any rule for one reason: it is greppable. A rule has no call sites and can only be
 invoked; consumers can be listed, and the list settles the argument.
 
-## Five searchable smells
+## Six searchable smells
 
 Each is the question above, pre-applied to a shape that recurs. Each has been a real defect here.
 
@@ -232,6 +232,16 @@ The fix is to collapse them and let whatever the consumers were really reading -
 a pair of types -- say it. What made each split look necessary was that it turned an unhandled case
 into a build break; that property is kept by having each backend refuse what it cannot realize,
 rather than by naming the cases in the IR.
+
+**6. One decision made in two places, with a sentence saying they agree.** Two producers each work
+out the same fact from their own inputs -- the declaring side and the reading side of a layout, two
+overloads answering one question from two representations, a position on one list read as the
+position on another -- and a comment beside them says the two "cannot disagree" or "list the same
+things in the same order". The comment is the tell: it states an agreement nothing enforces, and the
+day one side changes, the other goes on compiling. The consumers table does not see it, because each
+reader uses its own answer as it stands. Search for the sentence -- "cannot disagree", "same order",
+"must match", "in step with" -- then make one producer state the fact and have both sides read it,
+so the agreement is a fact of the code rather than of the comment.
 
 ## An optimization belongs to the layer that owns it
 

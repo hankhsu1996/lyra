@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -29,12 +30,15 @@
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/published_callable.hpp"
+#include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/ast_to_hir/climb.hpp"
+#include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
@@ -49,8 +53,11 @@ class GenerateBlockArraySymbol;
 class InterfacePortSymbol;
 class ModportPortSymbol;
 class ModportSymbol;
+class PortSymbol;
 class Scope;
 class TimingControl;
+class ValueSymbol;
+class VariableSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -58,7 +65,6 @@ namespace lyra::lowering::ast_to_hir {
 struct StructuralDataObjectBinding {
   ScopeFrameId home_frame{};
   hir::StructuralDataObjectId var_id{};
-  hir::TypeId type{};
 };
 
 // Keyed by `ValueSymbol`, the common base of a variable and a net: both are
@@ -68,12 +74,13 @@ using StructuralDataObjectBindings = std::unordered_map<
     const slang::ast::ValueSymbol*, StructuralDataObjectBinding>;
 
 // Where an interface port stands, as its own unit reaches it: the scope that
-// declares it, its identity there, and this unit's record of the object bound
-// to it. A name reached through the port is counted out of that record.
+// declares it, its identity there, and this unit's record of the class of the
+// object bound to it. A name reached through the port is counted out of that
+// record.
 struct InterfacePortBinding {
   ScopeFrameId home_frame{};
   hir::InterfacePortId port{};
-  hir::ExternalUnitObjectId object{};
+  hir::ExternalScopeClassId scope_class{};
 };
 
 struct SubroutineBinding {
@@ -112,11 +119,12 @@ using ForeignExportNames =
 // A component of a hierarchical path names an owned child of some scope this
 // unit declares: an instance / instance-array member (`c.x`, `c[1].x`), or a
 // generate block (`g[1].x`, LRM 27). The child's slang symbol maps to the
-// declaring scope's identity for it, so the reference resolves regardless of
-// whether it precedes the child in source.
+// declaring scope's identity for it, as a path element reaches it -- a loop's
+// block being the loop with the select that picks it -- so the reference
+// resolves regardless of whether it precedes the child in source.
 struct OwnedChildBinding {
   ScopeFrameId home_frame{};
-  hir::OwnedChildRef child;
+  hir::OwnedChildStep step;
 };
 
 using OwnedChildBindings =
@@ -150,6 +158,124 @@ using ProceduralStaticBindings =
 struct MintedProceduralScope {
   const slang::ast::Scope* owner;
   hir::ProceduralScopeId scope;
+};
+
+// What one scope of this unit makes reachable to other units, as the walk
+// minting the unit's identities found it: which declarations, in which order,
+// and under which named blocks and subroutines (LRM 23.6, 23.9). Each list is
+// in the order that walk reached its entries, and that order is the one the
+// signature states and the scope's published class is laid out in. The
+// signature adds names, types and storage to these entries, and the walk
+// lowering the scope reads its identities off them.
+//
+// An entry carries the identity minted for it where the walk minted one. What
+// takes its identity later -- an interface port, once the object it carries is
+// known; a class's static property, once the class is interned; a named block,
+// once its body's scopes are -- carries the front end's symbol until then.
+struct ScopePublicationRecord {
+  // A variable or net of the scope (LRM 6.5).
+  struct DataObject {
+    const slang::ast::ValueSymbol* symbol = nullptr;
+    hir::StructuralDataObjectId id;
+  };
+  // A static-lifetime variable of one of the scope's bodies (LRM 6.21),
+  // published under the named blocks and subroutine `within` it.
+  struct LocalStatic {
+    const slang::ast::VariableSymbol* symbol = nullptr;
+    hir::ProceduralBodyRef body;
+    hir::ProceduralVarId var;
+    std::vector<std::string> within;
+  };
+  // A static property of a class the scope declares (LRM 6.22, 8.9).
+  struct ClassStatic {
+    const slang::ast::ClassPropertySymbol* symbol = nullptr;
+    const slang::ast::ClassType* owner = nullptr;
+  };
+  // An instance the scope builds, or an array of them, with the unit each is
+  // an instance of and the range of each dimension; a single instance has
+  // none.
+  struct Instance {
+    const slang::ast::Symbol* symbol = nullptr;
+    hir::InstanceMemberId id;
+    InstanceArrayShape shape;
+  };
+  // An interface port (LRM 25.3).
+  struct InterfacePort {
+    const slang::ast::InterfacePortSymbol* symbol = nullptr;
+  };
+  using Member = std::variant<
+      DataObject, LocalStatic, ClassStatic, Instance, InterfacePort>;
+
+  // A subroutine the source declared on the scope (LRM 13).
+  struct Subroutine {
+    const slang::ast::SubroutineSymbol* symbol = nullptr;
+    hir::StructuralSubroutineId id;
+  };
+  // The subroutine evaluating a port's default (LRM 23.2.2.4).
+  struct PortDefault {
+    const slang::ast::PortSymbol* port = nullptr;
+    hir::StructuralSubroutineId id;
+  };
+  // The subroutine evaluating a name a view offers only for reading (LRM
+  // 25.5.4).
+  struct ViewRead {
+    const slang::ast::ModportSymbol* modport = nullptr;
+    const slang::ast::ModportPortSymbol* port = nullptr;
+    hir::StructuralSubroutineId id;
+  };
+  using Callable = std::variant<Subroutine, PortDefault, ViewRead>;
+
+  // A loop generate that counted out at least one block (LRM 27.4).
+  struct Loop {
+    hir::GenerateId id;
+    const slang::ast::GenerateBlockArraySymbol* loop = nullptr;
+  };
+  // A conditional generate (LRM 27.5), with the alternatives this elaboration
+  // built a scope for.
+  struct Choice {
+    hir::GenerateId id;
+    std::vector<const slang::ast::GenerateBlockSymbol*> built;
+  };
+  using Construct = std::variant<Loop, Choice>;
+
+  // A named block or task a `disable` ends (LRM 9.6.2), under the path of
+  // named scopes a name spells to reach it.
+  struct DisableTarget {
+    const slang::ast::Symbol* symbol = nullptr;
+    std::vector<std::string> path;
+  };
+
+  // A name a view defines with an expression of its own (LRM 25.5.4): one
+  // designating storage, or one offered only for reading, which the scope's
+  // callable for it computes.
+  struct ViewPlace {
+    const slang::ast::ModportPortSymbol* port = nullptr;
+  };
+  struct ViewComputed {
+    const slang::ast::ModportPortSymbol* port = nullptr;
+  };
+  using ViewName = std::variant<ViewPlace, ViewComputed>;
+  struct View {
+    const slang::ast::ModportSymbol* modport = nullptr;
+    std::vector<ViewName> names;
+  };
+
+  std::string class_name;
+  std::vector<Member> members;
+  std::vector<Callable> callables;
+  std::vector<Construct> generates;
+  std::vector<DisableTarget> disable_targets;
+  std::vector<View> views;
+
+  // Where the member standing for `declared` sits among the members, or
+  // nothing where the scope publishes no member for it.
+  [[nodiscard]] auto MemberOf(const slang::ast::Symbol& declared) const
+      -> std::optional<hir::PublishedMemberId>;
+
+  // Where the callable evaluating the expression `holder` holds sits among
+  // the callables, or nothing where the scope publishes none for it.
+  [[nodiscard]] auto CallableOf(const slang::ast::Symbol& holder) const
+      -> std::optional<hir::PublishedCallableId>;
 };
 
 // A contiguous run of positions kept out of one dimension, counted the way that
@@ -219,23 +345,46 @@ struct OpenDimension {
   return open;
 }
 
+// Where a walk stands once its steps are taken: still in this unit's layout,
+// where what it reaches is this unit's own declaration, or on a scope of
+// another unit, where what it reaches is counted out of what that scope
+// published.
+struct InOwnScope {};
+
+// The scope of another unit a walk stands on: this unit's record of what that
+// scope published, and the named blocks and subroutines of it the name went on
+// through, outermost first (LRM 23.9). Those are no objects, so they take no
+// step; a declaration the name reaches there is published under this path.
+struct InExternalScope {
+  hir::ExternalScopeClassId scope_class;
+  std::vector<std::string> within;
+};
+
+using RoutePlace = std::variant<InOwnScope, InExternalScope>;
+
 // How a reader reaches a scope elsewhere on the elaborated hierarchy: where
-// navigation starts, and the descent from there. What the route ends at is not
-// part of it, so one walk serves both a reference to storage some scope holds
-// and a connection naming the scope itself.
+// navigation starts, the descent from there, and where that leaves it. What
+// the route ends at is not part of it, so one walk serves both a reference to
+// storage some scope holds and a connection naming the scope itself.
 struct ScopeRoute {
-  hir::RouteHead head;
+  hir::RouteBase base;
   std::vector<hir::PathStep> steps;
-  // The unit whose object the last step lands on, where it lands on one. What
-  // the route reaches from there is counted out of that unit's signature, so
-  // the walk states which unit it stopped in; a route that stops on no object
-  // ended at a scope, and nothing past it was promised to anyone.
-  std::optional<std::string> unit_name;
+  RoutePlace place;
   // The coordinates of that landing the name left open, outermost first. A
   // name reaching one object leaves none, so this is empty for every reference
   // to storage; a connection may leave some, because a port is handed on whole
   // or in part and both are several objects rather than one.
   std::vector<OpenDimension> open;
+
+  // The route out `hops` enclosing edges of the reader's own layout, which
+  // descends nowhere -- zero of them for the reader's own scope.
+  static auto Enclosing(hir::StructuralHops hops) -> ScopeRoute {
+    return ScopeRoute{
+        .base = hir::InUnitBase{.hops = hops},
+        .steps = {},
+        .place = InOwnScope{},
+        .open = {}};
+  }
 };
 
 // A reach that stays inside one unit's layout: out `hops` enclosing edges to
@@ -248,37 +397,92 @@ struct InUnitReach {
   std::vector<hir::OwnedChildStep> descent;
 };
 
-// What a hop of a descent could be, where the unit standing above it published
-// the name: that unit's promise, and the position it gave the member. It
-// becomes a step exactly where the hops above it kept a typed pointer, which is
-// known only once the whole descent is in hand.
-struct PublishedHop {
-  const hir::UnitSignature* signature;
-  hir::PublishedMemberId member;
-  std::string unit_name;
-  // How many objects the member stands for, as the promise declares them.
-  // Empty where it stands for one.
+// A hop of a descent this unit declares nothing about, as the front end says
+// the name reached it: an instance, with the coordinates the name wrote for
+// it; a block of a loop generate, by the label of the loop and the value its
+// index stood at (LRM 27.4); a block that stands alone or that a conditional
+// chose, by its own label (LRM 27.5); or a named block or subroutine, which is
+// no object (LRM 23.9). It is resolved against what the scope standing above
+// it published, which is known only once the whole descent is in hand.
+struct InstanceHop {
+  std::string name;
+  std::vector<std::uint32_t> indices;
+};
+struct LoopBlockHop {
+  std::string loop;
+  std::int64_t index;
+};
+struct LabeledBlockHop {
+  std::string name;
+};
+struct ProceduralHop {
+  std::string name;
+};
+using NamedHop =
+    std::variant<InstanceHop, LoopBlockHop, LabeledBlockHop, ProceduralHop>;
+
+// A hop of a descent this unit declares: the step it stands as, where that
+// leaves the walk -- on the scope of another unit where this unit's
+// declaration says which, a child it declares or the interface a port of it
+// carries, and in its own layout otherwise -- and how many objects that
+// declaration says it stands over, outermost first, empty where it stands for
+// one.
+struct DeclaredHop {
+  hir::PathStep step;
+  RoutePlace place;
   std::vector<hir::UnpackedRange> dims;
 };
 
-// One hop of a descent: the step it stands as, and the unit whose object it
-// lands on where this unit's own declaration says which -- a child it declares,
-// or the interface a port of it carries. A hop it declares nothing about lands
-// on whatever the unit above it promised, which is read off that promise rather
-// than recorded here -- and which unit stands above it is known only once the
-// whole descent is in hand.
-struct DescentHop {
-  hir::PathStep step;
-  std::optional<std::string> declared_unit;
-  // How many objects this unit's own declaration says the hop stands over,
-  // outermost first. Empty where it declares nothing about the hop, and empty
-  // where what it declares stands for one object.
-  std::vector<hir::UnpackedRange> declared_dims;
+// One hop of a descent: one this unit declares, or one resolved against what
+// the scope above it published.
+using DescentHop = std::variant<DeclaredHop, NamedHop>;
+
+// Where a descent ends up: its steps, where they leave a route taking them,
+// and the coordinates of that landing left open.
+struct Descent {
+  std::vector<hir::PathStep> steps;
+  RoutePlace place;
+  std::vector<OpenDimension> open;
 };
+
+// The same for a descent through published scope classes alone, which steps
+// only through what each published and so always stands on one of them.
+struct PublishedDescent {
+  std::vector<hir::ExternalStep> steps;
+  InExternalScope place;
+  std::vector<OpenDimension> open;
+};
+
+// The reach an interface port of this unit is (LRM 25.3): the base of a route
+// to the scope that carries it, and the port as the descent's first hop,
+// standing for every object it carries until a coordinate picks one.
+struct PortReach {
+  hir::RouteBase base;
+  DeclaredHop hop;
+};
+
+// Where a name that leaves the reader's instance starts: the base the route
+// takes, the hop that brings it to stand in `below` where one does, and
+// `below`, the scope the rest of the descent starts under. A name searched
+// upward starts at the enclosing instance it landed in (LRM 23.8) and needs no
+// hop; one written through an interface port starts at the port and stands in
+// the instance bound there (LRM 25.3).
+struct RouteStart {
+  const slang::ast::Scope* below = nullptr;
+  hir::RouteBase base;
+  std::optional<DeclaredHop> leading;
+};
+
+// Where a route to a scope starts: at the reader, for a name that stays inside
+// the reader's instance and where no name is involved at all, or where a name
+// that left it starts.
+using RouteOrigin = std::variant<FromReader, RouteStart>;
 
 // The declarations of one structural scope that a peer may name before the
 // scope is built, minted here and handed to the scope when it is.
 struct ScopeDeclarations {
+  base::Registry<hir::StructuralDataObjectDecl, hir::StructuralDataObjectId>
+      structural_data_objects;
   base::Registry<hir::SubroutineDecl, hir::StructuralSubroutineId>
       structural_subroutines;
   base::Registry<hir::Process, hir::ProcessId> processes;
@@ -374,7 +578,7 @@ class UnitLowerer {
   [[nodiscard]] auto TakeSignature() -> hir::UnitSignature;
 
   // The body phase: everything this unit executes, resolved against what the
-  // design's units published. Which of those promises this unit ends up
+  // design's units published. Which of those publications this unit ends up
   // depending on is the set it reads, so nothing decides that set in advance.
   auto LowerBodies(const hir::UnitSignatures& signatures)
       -> diag::Result<hir::CompilationUnit>;
@@ -426,38 +630,45 @@ class UnitLowerer {
     return *signatures_;
   }
 
-  // This unit's record of the object an instance of `unit_name` is, taken from
-  // that unit's signature the first time one is reached and answered with the
-  // same identity every later time. Reaching another unit's object is what
-  // declares the dependency on it, so its signature is in hand here.
-  auto ExternalUnitObjectOf(const std::string& unit_name)
-      -> hir::ExternalUnitObjectId;
+  // This unit's record of the class `instance` is an object of: the class of
+  // the unit its specialization compiled to.
+  auto ScopeClassOfInstance(const slang::ast::InstanceSymbol& instance)
+      -> hir::ExternalScopeClassId;
 
-  // This unit's record of what `unit_name` promised about its class
+  // This unit's record of the class an instance of `unit_name` is an object
+  // of, taken from that unit's signature the first time one is reached and
+  // answered with the same identity every later time. Reaching another unit's
+  // object is what declares the dependency on it, so its signature is in hand
+  // here.
+  auto ExternalScopeClassOf(const std::string& unit_name)
+      -> hir::ExternalScopeClassId;
+
+  // The same record of the scope class `class_name` that unit published: the
+  // class of an instance of it, or of a generate block inside one.
+  auto ExternalScopeClassOf(
+      const std::string& unit_name, const std::string& class_name)
+      -> hir::ExternalScopeClassId;
+
+  // The type of an object of the scope class `scope_class` records.
+  [[nodiscard]] auto ScopeClassTypeOf(
+      hir::ExternalScopeClassId scope_class) const -> hir::TypeId;
+
+  // Where a route ends that reaches the member the scope class `scope_class`
+  // records published at `member`: what storage that member is and its type,
+  // as that class stated them.
+  [[nodiscard]] auto ExternalMemberLeafOf(
+      hir::ExternalScopeClassId scope_class,
+      hir::PublishedMemberId member) const -> hir::ExternalMemberLeaf;
+
+  // This unit's record of what `unit_name` published about its class
   // `class_name`, taken from that unit's signature the first time this unit
-  // asks and answered from the record every later time. Nothing where that
-  // unit published no such class, which is what leaves such a reference with
-  // nothing to compile against.
+  // asks and answered from the record every later time. Every class a unit
+  // declares is published, so the record always exists. Reading another
+  // signature may move the records, so a caller takes what it needs from one
+  // before asking for the next.
   auto ExternalClassOf(
       const std::string& unit_name, const std::string& class_name)
-      -> const hir::ExternalClass*;
-
-  // Whether `cls` has no name in this unit. A class a design element declares
-  // is a type of each instance of that element rather than one type of the unit
-  // (LRM 6.22), and is nameable only inside the scope declaring it (LRM 23.9),
-  // so from outside there is not one type to name and no name that identifies
-  // one. Read from the declaration alone, so answering it consults no other
-  // unit.
-  [[nodiscard]] auto HasNoNameHere(const slang::ast::ClassType& cls) const
-      -> bool;
-
-  // Whether a design element declares `cls`. Such a class is on no signature
-  // and no signature could carry it (LRM 23.2.1), so a name that reaches one is
-  // resolved at elaboration (LRM 23.6) rather than compiled against a promise
-  // -- which is a different answer from a promise this unit merely has not
-  // read, and the two are told apart nowhere else.
-  [[nodiscard]] auto DeclaredByADesignElement(
-      const hir::ExternalClassRef& cls) const -> bool;
+      -> const hir::ExternalClass&;
 
   // Which storage the declaration `value` holds. One answer, so what this unit
   // publishes about a declaration and what a route to it reaches cannot differ.
@@ -538,9 +749,7 @@ class UnitLowerer {
   // walks `cls.getParentScope()` up to the enclosing compilation unit and
   // caches the answer; every later encounter reads it. A local class not yet
   // interned is minted lazily on this path, so a body reads the same identity
-  // regardless of which route saw the class first. This is the sole
-  // AST-to-HIR site that walks slang's parent chain to answer "which CU
-  // declares this class?" -- the top-down mint path is walk-free by design.
+  // regardless of which route saw the class first.
   auto ResolveClassRef(const slang::ast::ClassType& cls, diag::SourceSpan span)
       -> diag::Result<hir::ClassRef>;
 
@@ -549,8 +758,7 @@ class UnitLowerer {
   // method's arena position is queryable through the `SubroutineSymbol`-keyed
   // cache the interning populated. External when the class lives in another
   // compilation unit -- the method is named by (declaring unit, class
-  // canonical name, method name), the same by-name form a cross-unit
-  // reference to any other class member uses.
+  // canonical name, method name).
   [[nodiscard]] auto MakeClassMethodTarget(
       const hir::ClassRef& class_ref,
       const slang::ast::SubroutineSymbol& method) const
@@ -560,42 +768,39 @@ class UnitLowerer {
   // declaration it resolves to answers everything else about the callee;
   // cross-unit there is no such declaration to reach, so the callee also
   // carries its dispatch role (LRM 8.20) and the interface a call marshals
-  // against (LRM 13.5). `owner` declares the method; `through` is the class
-  // the call reaches it through -- the class of the reference it is made on,
-  // or `owner` where it is made on none.
+  // against (LRM 13.5). `owner` declares the method.
   auto MakeMethodCallee(
-      const WalkFrame& frame, const slang::ast::ClassType& owner,
-      const slang::ast::ClassType& through,
+      const slang::ast::ClassType& owner,
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
       -> diag::Result<hir::MethodCallee>;
 
   // A class as this unit reads it: one it declares, read off its own
   // declaration, or one another unit declares, read off that unit's signature.
-  using LocalOrPromisedClass =
+  using LocalOrPublishedClass =
       std::variant<const slang::ast::ClassType*, hir::ExternalClassRef>;
 
   // Which of the two the class `type` names is.
-  auto ReadAsLocalOrPromised(
+  auto ReadAsLocalOrPublished(
       const slang::ast::Type& type, diag::SourceSpan span)
-      -> diag::Result<LocalOrPromisedClass>;
+      -> diag::Result<LocalOrPublishedClass>;
 
   // What a class's declaration names beside itself: the class it extends, and
   // the interface classes it implements or, for an interface class, extends
   // (LRM 8.26.2), in the order written.
   struct ClassParents {
-    std::optional<LocalOrPromisedClass> base;
-    std::vector<LocalOrPromisedClass> implements;
+    std::optional<LocalOrPublishedClass> base;
+    std::vector<LocalOrPublishedClass> implements;
   };
-  auto ParentsOf(const LocalOrPromisedClass& cls, diag::SourceSpan span)
+  auto ParentsOf(const LocalOrPublishedClass& cls, diag::SourceSpan span)
       -> diag::Result<ClassParents>;
 
   // The declaring unit and canonical name of `cls`, which identify it whichever
   // way it was read.
-  [[nodiscard]] auto NameOf(const LocalOrPromisedClass& cls) const
+  [[nodiscard]] auto NameOf(const LocalOrPublishedClass& cls) const
       -> hir::ExternalClassRef;
 
   // The names of the methods the interface class `iface` declares.
-  auto MethodNamesOf(const LocalOrPromisedClass& iface)
+  auto MethodNamesOf(const LocalOrPublishedClass& iface)
       -> std::vector<std::string>;
 
   // Appends the interface class `iface`, then every interface class it extends
@@ -604,19 +809,18 @@ class UnitLowerer {
   // read where that class states it, so one of another unit is its signature
   // consumed.
   auto ReachInterface(
-      const LocalOrPromisedClass& iface, diag::SourceSpan span,
-      std::vector<LocalOrPromisedClass>& reached) -> diag::Result<void>;
+      const LocalOrPublishedClass& iface, diag::SourceSpan span,
+      std::vector<LocalOrPublishedClass>& reached) -> diag::Result<void>;
 
   // Every interface class a value of `cls` is also a value of (LRM 8.26.5):
   // the ones the class it extends is (LRM 8.26), then the ones `cls` names and
   // the ones those extend.
-  auto AllInterfacesOf(const LocalOrPromisedClass& cls, diag::SourceSpan span)
-      -> diag::Result<std::vector<LocalOrPromisedClass>>;
+  auto AllInterfacesOf(const LocalOrPublishedClass& cls, diag::SourceSpan span)
+      -> diag::Result<std::vector<LocalOrPublishedClass>>;
 
   // What the unit declaring the class of `method` published about it, or
-  // nothing where the class is this unit's own or is on no signature -- one a
-  // name resolved while the design elaborates reaches -- which leaves the
-  // declaration as all there is to read.
+  // nothing where the class is this unit's own, which leaves the declaration as
+  // all there is to read.
   auto PublishedMethodOf(
       const slang::ast::SubroutineSymbol& method, diag::SourceSpan span)
       -> diag::Result<std::optional<hir::PublishedMethod>>;
@@ -659,22 +863,22 @@ class UnitLowerer {
       -> diag::Result<hir::OverriddenBehavior>;
 
   // The behavior named `method_name` that `cls` answers, named by the class of
-  // its lineage that introduced it. Refused where no promise up that lineage
-  // introduces one, which leaves nothing to name the behavior by.
+  // its lineage that introduced it. Refused where no signature up that lineage
+  // publishes one, which leaves nothing to name the behavior by.
   auto MakeExternalDispatchSlot(
       const hir::ExternalClassRef& cls, std::string_view method_name,
       diag::SourceSpan span) -> diag::Result<hir::ExternalDispatchSlot>;
 
-  // The same walk, answering nothing where no promise up the lineage
-  // introduces the behavior.
+  // The same walk, answering nothing where no signature up the lineage
+  // publishes the behavior.
   auto IntroducerOf(
       const hir::ExternalClassRef& cls, std::string_view method_name)
       -> std::optional<hir::ExternalDispatchSlot>;
 
   // The interface a subroutine's own declaration states: its call protocol and
   // each formal's direction and type (LRM 13.5), in this unit's types. It is
-  // what a unit publishes about a subroutine it declares, and what a call takes
-  // where the callee is on no signature.
+  // what a unit publishes about a subroutine it declares, and what a call to
+  // one of this unit's own namespace subroutines takes.
   auto MakeExternalCalleeInterface(
       const slang::ast::SubroutineSymbol& sym, diag::SourceSpan span)
       -> diag::Result<hir::ExternalCalleeInterface>;
@@ -689,23 +893,11 @@ class UnitLowerer {
   // The instance-property peer of `MakeClassMethodTarget`. Local when the class
   // was interned by this unit; external when the class lives in another
   // compilation unit, in which case the property is named by its position in
-  // what that class published. A class that published nothing leaves no
-  // position to count, so the access instead carries the walk to the scope
-  // declaring it and the two names that scope answers -- which is why the
-  // declaring class arrives as the symbol rather than as a reference already
-  // resolved from it.
+  // what that class published.
   [[nodiscard]] auto MakeClassPropertyTarget(
-      const WalkFrame& frame, const slang::ast::ClassType& owner,
+      const slang::ast::ClassType& owner,
       const slang::ast::ClassPropertySymbol& prop, diag::SourceSpan span)
       -> diag::Result<hir::ClassPropertyTarget>;
-
-  // The static-property peer of `MakeClassMethodTarget`. Local when the class
-  // was interned by this unit; external when the class lives in another
-  // compilation unit, in which case the property is named by its source name.
-  [[nodiscard]] auto MakeStaticPropertyTarget(
-      const hir::ClassRef& class_ref,
-      const slang::ast::ClassPropertySymbol& prop) const
-      -> hir::StaticPropertyTarget;
 
   // Records a frontend method symbol's HIR arena identity as the class
   // interning that owns it adds the method. Downstream consumers translate a
@@ -818,14 +1010,18 @@ class UnitLowerer {
 
   void MapStructuralDataObjectBinding(
       const slang::ast::ValueSymbol& var, ScopeFrameId home_frame,
-      hir::StructuralDataObjectId local, hir::TypeId type);
+      hir::StructuralDataObjectId local);
+  // The identity the declaration pass reserved for a variable or net this
+  // unit declares, which the walk building that declaration defines.
+  [[nodiscard]] auto ReservedDataObject(const slang::ast::ValueSymbol& declared)
+      const -> hir::StructuralDataObjectId;
   [[nodiscard]] auto LookupStructuralDataObjectBinding(
       const slang::ast::ValueSymbol& var) const
       -> std::optional<StructuralDataObjectBinding>;
 
   void MapInterfacePortBinding(
       const slang::ast::InterfacePortSymbol& port, ScopeFrameId home_frame,
-      hir::InterfacePortId local, hir::ExternalUnitObjectId object);
+      hir::InterfacePortId local, hir::ExternalScopeClassId scope_class);
   [[nodiscard]] auto LookupInterfacePortBinding(const slang::ast::Symbol& port)
       const -> std::optional<InterfacePortBinding>;
 
@@ -873,9 +1069,15 @@ class UnitLowerer {
 
   void MapOwnedChildBinding(
       const slang::ast::Symbol& child, ScopeFrameId home_frame,
-      hir::OwnedChildRef child_ref);
+      hir::OwnedChildStep step);
   [[nodiscard]] auto LookupOwnedChildBinding(const slang::ast::Symbol& child)
       const -> std::optional<OwnedChildBinding>;
+  // The identity the declaration pass gave a generate construct, or an
+  // instance, of this unit; that pass gives one to every such child.
+  [[nodiscard]] auto GenerateIdOf(const slang::ast::Symbol& construct) const
+      -> hir::GenerateId;
+  [[nodiscard]] auto InstanceMemberIdOf(
+      const slang::ast::Symbol& instance) const -> hir::InstanceMemberId;
 
   void MapProcessBinding(
       const slang::ast::ProceduralBlockSymbol& proc, hir::ProcessId id);
@@ -901,21 +1103,10 @@ class UnitLowerer {
       -> ScopeDeclarations;
 
   // The routes gathered for `owner_frame`, the scope whose names take them and
-  // which each of them is counted from, wherever its head lies. Handed over
+  // which each of them is counted from, wherever its base lies. Handed over
   // once, when the scope is finished.
   auto RoutesOf(ScopeFrameId owner_frame) -> hir::ScopeRoutes&;
   auto TakeRoutesForFrame(ScopeFrameId owner_frame) -> hir::ScopeRoutes;
-
-  // The id of a route to a member name on a class this unit cannot name, in
-  // the table of the use it is put to. Two accesses that walk to the same scope
-  // and ask it for the same name on the same class are one slot, for the reason
-  // two references over one route are one endpoint.
-  auto MapOrGetPropertyCoordinate(
-      ScopeFrameId owner_frame, hir::PropertyCoordinateRoute route)
-      -> hir::PropertyCoordinateId;
-  auto MapOrGetBehaviorBody(
-      ScopeFrameId owner_frame, hir::BehaviorBodyRoute route)
-      -> hir::BehaviorBodyId;
 
   // The compilation-unit declaration pass (LRM 23.6 / 23.9 / 27): before any
   // executable body lowers, walk the whole unit's scope tree and mint every
@@ -924,8 +1115,10 @@ class UnitLowerer {
   // locals a named block puts on the hierarchical path -- assigning each scope
   // its frame along the way. A body or sensitivity read then resolves any of
   // them regardless of which sibling scope or body lowered first. Registers no
-  // executable HIR.
-  void DeclareStructuralIdentities(const slang::ast::Scope& scope);
+  // executable HIR. What each scope publishes is recorded in the same walk,
+  // under `class_name`, the name of the class an object of the scope is.
+  void DeclareStructuralIdentities(
+      const slang::ast::Scope& scope, std::string class_name);
 
   // The frame assigned to `scope` by the declaration pass. Every scope a
   // structural lowerer is built for was assigned one, so absence is a
@@ -941,21 +1134,42 @@ class UnitLowerer {
   [[nodiscard]] auto DeclaringScopeChain(const slang::ast::Scope& scope) const
       -> std::vector<ScopeFrameId>;
 
-  // The structural scope whose instance `cls` is a type of (LRM 6.22). A class
-  // nested inside another class is a type of the same instance the outer one
-  // is, since SystemVerilog gives it no reach into the outer object.
-  [[nodiscard]] auto DeclaringStructuralScope(
-      const slang::ast::ClassType& cls) const -> const slang::ast::Scope&;
+  // Whether a design element other than this unit declares `cls`, so that an
+  // object of it belongs to an instance of that element, which no count of
+  // this unit's own scopes reaches.
+  [[nodiscard]] auto DeclaredByAnotherDesignElement(
+      const slang::ast::ClassType& cls) const -> bool;
+
+  // Whether a construction of `cls` and a call of a method of the class itself
+  // are handed the instance it belongs to, as the class states it: its own
+  // declaration where this unit declares it, and its signature otherwise.
+  auto TakesDeclaringInstance(
+      const slang::ast::ClassType& cls, diag::SourceSpan span)
+      -> diag::Result<bool>;
 
   // How far out of `frame`'s own structural scope the instance an object of
-  // `cls` would belong to sits, for a construction written there. Absent where
-  // the class is a namespace unit's, which no instance replicates. A class this
-  // unit does not declare is reached through its unit's signature, which
-  // carries no such instance, and is refused rather than answered wrongly.
+  // `cls` belongs to sits, for a class this unit declares in one of its
+  // structural scopes.
   [[nodiscard]] auto DeclaringScopeHopsFrom(
       const slang::ast::ClassType& cls, const WalkFrame& frame,
+      diag::SourceSpan span) const -> diag::Result<hir::StructuralHops>;
+
+  // How a body at `frame` reaches the instance an object of `cls` belongs to,
+  // for a construction or a call of a method of the class itself written
+  // there, or nothing where the class takes no such instance: as above where
+  // this unit declares the class, and by a route to the declaring scope's
+  // object where another design element does (LRM 6.22).
+  [[nodiscard]] auto DeclaringInstanceFrom(
+      const slang::ast::ClassType& cls, const WalkFrame& frame,
       diag::SourceSpan span)
-      -> diag::Result<std::optional<hir::StructuralHops>>;
+      -> diag::Result<std::optional<hir::DeclaringInstanceReach>>;
+
+  // What `scope` published, in this unit's own identities: asked once the walk
+  // lowering the scope has given every declaration it published its identity.
+  // A scope this unit published nothing of -- a namespace unit's -- takes the
+  // empty publication.
+  [[nodiscard]] auto TakePublication(const slang::ast::Scope& scope)
+      -> hir::ScopePublication;
 
   // Hands a structural scope the classes it declares, once. Every class the
   // unit declares is named by exactly one scope, so a scope that declares none
@@ -1055,12 +1269,12 @@ class UnitLowerer {
   // and every such scope lowers what it declares, so nothing is left over.
   void RequireEveryClassBodyLowered() const;
 
-  // Reads the promise of every class of another unit this one named, once
+  // Reads the signature of every class of another unit this one named, once
   // every body has lowered and so every name is in: a value of such a class is
   // converted to the views it has wherever it is held, which takes its layout
   // whether or not a member of it is ever reached -- as a C++ translation unit
   // includes the header of every class it names.
-  void ReadPromisesOfNamedClasses();
+  void ReadSignaturesOfNamedClasses();
 
   // Builds a HIR Expr referring to the data `route` navigates to.
   // `owner_frame` is the frame whose routes hold it.
@@ -1070,10 +1284,7 @@ class UnitLowerer {
 
   // The reference to `value` over a route the caller derived: the route says
   // how the reader reaches it, and what the route ends at follows from the
-  // route alone. A reader that can locate the target on the object tree derives
-  // the route from there; one reached through an interface port has no such
-  // position to read -- the port is the only reach -- so that route is derived
-  // at the reference site and handed here.
+  // route alone.
   [[nodiscard]] auto MakeRoutedValueRef(
       const slang::ast::ValueSymbol& value, ScopeFrameId owner_frame,
       ScopeRoute route) -> diag::Result<hir::RoutedValueRef>;
@@ -1086,32 +1297,16 @@ class UnitLowerer {
       ScopeFrameId owner_frame, ScopeRoute route, hir::TypeId object_type)
       -> hir::RoutedObjectRef;
 
-  // The reference to the callable `route` reaches by name, for a callable no
-  // unit published. It seals on the same terms the object does and over the
-  // same walk: the scope answers the name once at elaboration and the call
-  // reads the entry directly after.
-  [[nodiscard]] auto MakeRoutedCallableRef(
-      ScopeFrameId owner_frame, ScopeRoute route, std::string name,
-      hir::ExternalCalleeInterface interface) -> hir::RoutedCallableRef;
-
-  // What a `disable` naming `target` terminates, reached over a route (LRM
-  // 9.6.2, 23.6). Where this unit lays out the scope that declares `target` the
-  // route runs to that scope and carries its own identity for the block;
-  // otherwise it runs to the block's own node on the object tree, which answers
-  // for what it carries.
-  [[nodiscard]] auto MakeRoutedDisableTargetRef(
+  // What a `disable` naming `target` by `reference` terminates (LRM 9.6.2,
+  // 23.6). A target the body's own declaration scope declares is named by its
+  // identity there. Any other is reached over a route: where this unit lays
+  // out the scope that declares `target`, to that scope, carrying its identity
+  // for the block; otherwise to the scope of another unit declaring it, naming
+  // the position that scope published it at.
+  [[nodiscard]] auto DisableTargetOf(
       const WalkFrame& frame, const slang::ast::Symbol& target,
-      diag::SourceSpan span) -> diag::Result<hir::RoutedDisableTargetRef>;
-
-  // How this reader reaches the object an instance of another unit is, given
-  // how the name reached it. A port is the answer where the name went through
-  // one, since what stands behind a port is reached no other way; any other
-  // name reaches the same object in every instantiation, and the walk on the
-  // elaborated hierarchy states that. Empty when no route reaches it.
-  [[nodiscard]] auto RouteToUnitObject(
-      const WalkFrame& frame, const slang::ast::InstanceBodySymbol& body,
       const slang::ast::HierarchicalReference& reference, diag::SourceSpan span)
-      -> diag::Result<ScopeRoute>;
+      -> diag::Result<hir::DisableTarget>;
 
   // Where a declaration's cell lives, as this unit reaches it. One answer
   // serves every consumer of a reference -- reading it, writing it, and waiting
@@ -1126,7 +1321,8 @@ class UnitLowerer {
   // a property of the compiler rather than of the name.
   [[nodiscard]] auto ResolveValueTarget(
       const WalkFrame& frame, const slang::ast::ValueSymbol& value,
-      diag::SourceSpan span) -> diag::Result<hir::ValueTarget>;
+      RouteOrigin origin, diag::SourceSpan span)
+      -> diag::Result<hir::ValueTarget>;
 
   // The value a name denotes, where elaboration fills that value rather than
   // having folded it: a loop generate's index (LRM 27.4), and a parameter
@@ -1142,30 +1338,62 @@ class UnitLowerer {
   // Where a static class property's cell lives (LRM 8.9). It belongs to the
   // type rather than to any object of it, so it is reached without a receiver,
   // and how many such cells exist follows from what replicates the class
-  // declaration. Separate from the resolution above because the caller knows
-  // which of the two it is asking about, having classified the name.
+  // declaration: one a design element's scope replicates is a cell of that
+  // scope's instance, reached by a route like any of its declarations. Separate
+  // from the resolution above because the caller knows which of the two it is
+  // asking about, having classified the name.
   [[nodiscard]] auto ResolveStaticPropertyTarget(
       const WalkFrame& frame, const slang::ast::ClassPropertySymbol& prop,
-      diag::SourceSpan span) -> diag::Result<hir::StaticPropertyRef>;
+      diag::SourceSpan span) -> diag::Result<hir::ValueTarget>;
 
-  // The route to the scope that declares a callee, for a callee no unit's
-  // signature mentions. It is the walk below, with the one reason that walk can
-  // fail written where it is known rather than at whichever caller met it.
-  [[nodiscard]] auto RouteToDeclaringScope(
+  // The walk below, with the one reason that walk can fail written where it is
+  // known rather than at whichever caller met it.
+  [[nodiscard]] auto RouteToScopeOrRefuse(
       const WalkFrame& frame, const slang::ast::Scope& target,
-      diag::SourceSpan span) -> diag::Result<ScopeRoute>;
+      RouteOrigin origin, diag::SourceSpan span) -> diag::Result<ScopeRoute>;
 
   // How this reader reaches `target`, a scope elsewhere on the elaborated
-  // hierarchy: the head it anchors at and the descent from there, with each
-  // step typed where this unit declares what it lands on and by name where it
-  // does not. Empty when no route reaches the scope, never a compiler-bug
-  // invariant -- either the walk found a target form this unit cannot yet
-  // express, or the scope sits in a namespace unit, which has no instance and
-  // so nothing on the object tree a route could walk to at all. Port
-  // connections and hierarchical references share this one walk, so neither
-  // reaches across an instance boundary a way the other cannot.
+  // hierarchy, from `origin`: the base it anchors at and the descent from
+  // there, with each step typed where this unit declares what it lands on and
+  // resolved against what the scope above it published where it does not.
+  // Empty when no route reaches the scope, never a compiler-bug invariant --
+  // either the walk found a target form this unit cannot yet express, or the
+  // scope sits in a namespace unit, which has no instance and so nothing on the
+  // object tree a route could walk to at all.
   [[nodiscard]] auto RouteToScope(
-      const WalkFrame& frame, const slang::ast::Scope& target)
+      const WalkFrame& frame, const slang::ast::Scope& target,
+      RouteOrigin origin) -> std::optional<ScopeRoute>;
+
+  // Where `reference`, written in this unit, starts: through an interface port
+  // or upward at the enclosing instance it landed in, where it leaves the
+  // unit's instance, and at the reader for a name that never leaves and for
+  // every name a namespace unit writes, since a namespace has no instance to
+  // leave. A name through a port that leaves several of the instances behind
+  // it in play has no one place to start, and is refused at `span`.
+  [[nodiscard]] auto StartOf(
+      const WalkFrame& frame,
+      const slang::ast::HierarchicalReference& reference, diag::SourceSpan span)
+      -> diag::Result<RouteOrigin>;
+
+  // Where a route to `target` starts when no name says so -- a scope reached
+  // because a type belongs to it: at the reader where `target` stands in this
+  // unit's instance or below it, and otherwise at the instance one of this
+  // unit's names lands in once it leaves, or at the enclosing instance a type
+  // handed down came from. The anchor is the same in every instance this unit
+  // serves, since what tells the unit apart is where those names land. Nothing
+  // where none of these applies, which leaves no route to the scope.
+  [[nodiscard]] auto StartReaching(const slang::ast::Scope& target)
+      -> std::optional<RouteOrigin>;
+
+  // A route starting at the enclosing instance `body` is, which stands for the
+  // object of whichever unit that instance is.
+  [[nodiscard]] auto StartInEnclosing(
+      const slang::ast::InstanceBodySymbol& body) -> RouteStart;
+
+  // How this reader reaches the scope whose instance `cls` belongs to (LRM
+  // 6.22), where another design element declares it.
+  [[nodiscard]] auto RouteToClassScope(
+      const WalkFrame& frame, const slang::ast::ClassType& cls)
       -> std::optional<ScopeRoute>;
 
   // How this reader reaches `target` when `target` is a scope this unit itself
@@ -1178,48 +1406,37 @@ class UnitLowerer {
       const WalkFrame& frame, const slang::ast::Scope& target,
       diag::SourceSpan span) -> diag::Result<InUnitReach>;
 
-  // How this reader reaches the object that owns what a name reached through an
-  // interface port names (LRM 25.3). The port is the first step and says which
-  // unit the descent starts in; each hop after it either carries a coordinate
-  // on the hop before it -- already the position the select resolved to, since
+  // How this reader reaches the objects a port connection's actual names when
+  // that actual goes through one of the reader's own interface ports (LRM
+  // 25.3, 23.3.3.4): the port is the first step and says which unit the
+  // descent starts in; each hop after it either carries a coordinate on the
+  // hop before it -- already the position the select resolved to, since
   // spending the declared range is what resolving it does -- or names one more
-  // step down. Which of those steps are typed and which are answered by name is
-  // decided the way it is for every other descent, so a name may continue past
-  // what the interface published (LRM 25.10) rather than stopping there.
-  // A coordinate the path did not write stays open, because a port is handed on
-  // whole or in part and both name several objects at once (LRM 23.3.3.4).
-  // Nothing when the path is of a shape the walk does not take.
+  // step down, resolved against what the scope standing above it published. A
+  // coordinate the path did not write stays open, and a part it selected
+  // narrows the outermost one, because a port is handed on whole or in part
+  // and both name several objects at once; a single name reaches one object and
+  // is routed as any name is. Nothing when the path is of a shape the walk does
+  // not take.
   [[nodiscard]] auto ReachThroughInterfacePort(
       const WalkFrame& frame,
       const slang::ast::HierarchicalReference& reference)
       -> std::optional<ScopeRoute>;
 
-  // The same, for a name, which reaches exactly one object: a reach that left a
-  // coordinate open is several and so is not one.
-  [[nodiscard]] auto ReachOneThroughInterfacePort(
-      const WalkFrame& frame,
-      const slang::ast::HierarchicalReference& reference)
-      -> std::optional<ScopeRoute> {
-    auto reach = ReachThroughInterfacePort(frame, reference);
-    if (!reach.has_value() || !reach->open.empty()) {
-      return std::nullopt;
-    }
-    return reach;
-  }
-
-  // A dependency set as the entries watching what it reads. What each read
+  // A set of accesses as the entries naming what each reaches -- the reads a
+  // wait watches, or the writes an implicit list leaves out. What each access
   // contributes follows from what its name denotes: a value fixed before
   // simulation starts contributes nothing, so a constant read alongside a
-  // signal leaves only the signal watched (LRM 9.2.2.2.1). A read this compiler
-  // cannot watch is refused, because a process that does not wake answers
-  // wrongly and shows nothing.
+  // signal leaves only the signal watched (LRM 9.2.2.2.1). An access this
+  // compiler cannot name is refused, because a process that does not wake
+  // answers wrongly and shows nothing.
   //
-  // A read of part of a bit vector watches that part as the source selected
+  // An access to part of a bit vector names that part as the source selected
   // it, lowered by `lowerer` into the arena `frame` adds to, so an index that
   // is a value each construction is given stays that value.
   template <typename Lowerer>
-  [[nodiscard]] auto TranslateSensitivityReads(
-      Lowerer& lowerer, const std::vector<SensitivityRead>& reads,
+  [[nodiscard]] auto SensitivityEntriesOf(
+      Lowerer& lowerer, const std::vector<AccessedPart>& reads,
       const WalkFrame& frame)
       -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
@@ -1227,25 +1444,44 @@ class UnitLowerer {
   // sampled value arms is the whole cell (LRM 16.5.1). A read naming no cell
   // this scope can reach contributes none, which the caller counts.
   [[nodiscard]] auto CellsRead(
-      const std::vector<SensitivityRead>& reads, const WalkFrame& frame)
+      const std::vector<AccessedPart>& reads, const WalkFrame& frame)
       -> diag::Result<std::vector<hir::ValueTarget>>;
 
+  // The descent from the scope class `from` records, which stands for the scope
+  // `from_scope` of another unit, down to `to`, which stands in it: every hop
+  // resolved against what the scope above it published. Empty where `to` does
+  // not stand in `from_scope`, or a scope on the way published nothing the
+  // descent names.
+  [[nodiscard]] auto DescendPublished(
+      hir::ExternalScopeClassId from, const slang::ast::Scope& from_scope,
+      const slang::ast::Scope& to) -> std::optional<PublishedDescent>;
+
  private:
+  // The instance this unit lowers and where each name it writes lands once it
+  // leaves that instance, or nothing for a namespace unit, which has no
+  // instance for a name to leave.
+  struct ReaderClimbs {
+    const slang::ast::InstanceBodySymbol* body = nullptr;
+    std::span<const ClimbAnchor> climbs;
+  };
+  [[nodiscard]] auto ReaderInstance() const -> std::optional<ReaderClimbs>;
+
   // Derives what this unit publishes from its own declarations: the object an
-  // instance of it is, with a member per declaration another unit may name, and
-  // one entry per port, whose parts the instantiating unit's connections are
-  // consumed in step with. Every type is interned by this unit and then taken
+  // instance of it is and the class each generate block it elaborates is, each
+  // with a member per declaration another unit may name, and one entry per
+  // port, whose parts the instantiating unit's connections are consumed in step
+  // with. Every type is interned by this unit and then taken
   // into the signature's own pool, so what leaves stands on its own.
   auto PublishSignature() -> diag::Result<void>;
 
-  // Derives what this unit promises about each class of the source language it
+  // Derives what this unit publishes about each class of the source language it
   // declares: the properties another unit may name, in the order that fixes
   // their slots, and the behaviors the class introduces, in the order that
   // fixes their ordinals. Every class is already minted when this runs, so this
   // reads the unit's own declarations rather than the frontend's tree.
-  auto PublishClassSignatures() -> void;
+  void PublishClassSignatures();
 
-  // Derives what this unit promises about each subroutine its namespace
+  // Derives what this unit publishes about each subroutine its namespace
   // declares (LRM 26.3). A design element declares none another unit calls by
   // name alone, so it publishes none here.
   auto PublishNamespaceSubroutines() -> diag::Result<void>;
@@ -1258,60 +1494,72 @@ class UnitLowerer {
   // reads. Where the route goes from there is the caller's, so one derivation
   // serves a name read through the port and a connection handing the port's
   // interface on.
-  [[nodiscard]] auto RouteThroughInterfacePort(
-      const WalkFrame& frame, const slang::ast::Symbol& port) const
-      -> ScopeRoute;
+  [[nodiscard]] auto ReachOfPort(
+      const WalkFrame& frame, const slang::ast::InterfacePortSymbol& port) const
+      -> PortReach;
 
-  // What the unit named `unit_name` promised under `name`, where what it
-  // promised is an object of a unit of its own (LRM 25.10). Nothing when it
-  // promised no such name, which leaves the hop one the runtime answers.
-  [[nodiscard]] auto PromisedObjectMember(
-      const std::string& unit_name, std::string_view name) const
-      -> std::optional<PublishedHop>;
+  // Fills `route` with the descent `hops` state, resolving each hop this unit
+  // declares nothing about against what the scope standing above it published,
+  // and stating which scope the whole route lands on. Both follow the descent
+  // forward, since which scope stands at a hop is what every hop before it
+  // decided. False where a hop names nothing that scope published, which a
+  // name the front end resolved reaches only where the design publishes less
+  // than it declares.
+  [[nodiscard]] auto ClassifyDescent(
+      ScopeRoute& route, std::span<DescentHop> hops) -> bool;
 
-  // Fills `route` with the descent `hops` state, turning each hop the unit
-  // standing above it promised into a step through that promise, and stating
-  // which unit the whole route lands on. Both follow the descent forward, since
-  // which unit stands at a hop is what every hop before it decided.
-  void ClassifyDescent(ScopeRoute& route, std::span<DescentHop> hops);
+  // The same walk from wherever it starts, `standing`. The hops this unit
+  // declares come first, and the rest step through published scope classes.
+  [[nodiscard]] auto DescendFrom(
+      RoutePlace standing, std::span<DescentHop> hops)
+      -> std::optional<Descent>;
+
+  // The part of a descent that steps through published scope classes, from the
+  // one `standing` records: each hop resolved against what the class standing
+  // above it published.
+  [[nodiscard]] auto DescendPublishedFrom(
+      hir::ExternalScopeClassId standing, std::span<NamedHop> hops)
+      -> std::optional<PublishedDescent>;
 
   // What a process waiting on a name a modport offers observes: every member
-  // the expression behind that name reads (LRM 25.5.4), each reached through
-  // the interface the reader's own port carries. The name is no storage of its
-  // own, so nothing waits on it directly.
+  // the expression behind that name reads (LRM 25.5.4), each reached the way
+  // the interface was, from `origin`. The name is no storage of its own, so
+  // nothing waits on it directly.
   auto ObservedThroughModport(
-      const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame)
-      -> diag::Result<std::vector<hir::SensitivityEntry>>;
+      const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame,
+      RouteOrigin origin) -> diag::Result<std::vector<hir::SensitivityEntry>>;
+
+  // Where each of `names`, the names a read was reached by, starts: once per
+  // name leaving the reader's instance, and at the reader, once, for every
+  // name that stays inside it, as for a read put together with no names at
+  // all.
+  [[nodiscard]] auto StartsOfNames(
+      const WalkFrame& frame,
+      std::span<const slang::ast::Expression* const> names,
+      diag::SourceSpan span) -> diag::Result<std::vector<RouteOrigin>>;
 
   // The entries a set of reads watches, with `parts_of` saying which parts of
   // a bit vector a read of one watches and `declared_by` which variable of the
   // reading body a name binds, where it binds one.
   template <typename PartsOf, typename DeclaredBy>
   auto WatchedEntriesOf(
-      const std::vector<SensitivityRead>& reads, const WalkFrame& frame,
+      const std::vector<AccessedPart>& reads, const WalkFrame& frame,
       PartsOf parts_of, DeclaredBy declared_by)
       -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
   // The reader-relative route to a cell in an instantiated scope: a count of
   // parent edges when the target sits on the reader's own scope or one
-  // enclosing it in this unit, a typed downward head when this unit emits the
-  // head's class, or a by-name head where the route crosses into another
-  // instance's unit.
+  // enclosing it in this unit, then a descent through children this unit
+  // declares and through what each scope of another unit published.
   [[nodiscard]] auto TranslateReferenceRoute(
-      const WalkFrame& frame, const slang::ast::ValueSymbol& value)
-      -> diag::Result<std::optional<hir::RoutedValueRef>>;
+      const WalkFrame& frame, const slang::ast::ValueSymbol& value,
+      RouteOrigin origin) -> diag::Result<std::optional<hir::RoutedValueRef>>;
 
-  // What `route` reaches.
+  // What `route` reaches: a member the scope it landed on published, or this
+  // unit's own declaration where it stays in this unit's layout.
   [[nodiscard]] auto ResolveRouteTarget(
       const slang::ast::ValueSymbol& value, const ScopeRoute& route)
       -> diag::Result<hir::DataLeaf>;
-
-  // The same, when the route lands on an object of a unit that published the
-  // name. Empty otherwise, which is every case where no declaration stands
-  // behind the name at the point the reference is compiled.
-  [[nodiscard]] auto LookupPublishedRouteTarget(
-      const slang::ast::ValueSymbol& value, const ScopeRoute& route)
-      -> std::optional<hir::DataLeaf>;
 
   // Reserves an identity for each static-lifetime local one procedural block
   // subtree of `body` declares, and for each constant it declares whose value
@@ -1323,29 +1571,58 @@ class UnitLowerer {
   // so nothing is held back on the chance that nothing will name it. Only the
   // identity is minted -- what is declared, including the initializer, is an
   // expression of the body and is filled when that body lowers.
+  //
+  // What a name reaches here from elsewhere is published under the path of
+  // named scopes `within` spells (LRM 23.9): each static-lifetime variable,
+  // and each named block as what a `disable` of it ends (LRM 9.6.2). A block
+  // the source left unnamed puts nothing below it on any path, which is what
+  // an absent path says.
   void DeclareProceduralStatics(
       const slang::ast::Scope& block, const slang::ast::Symbol& body_symbol,
-      hir::ProceduralBodyRef body, ScopeFrameId frame);
+      hir::ProceduralBodyRef body, ScopeFrameId frame,
+      ScopePublicationRecord& published,
+      const std::optional<std::vector<std::string>>& within);
 
   // The identities one member of a scope brings, minted into `decls`, the
-  // scope's own, at `frame`, the scope's frame.
+  // scope's own, at `frame`, the scope's frame, and what of it the scope
+  // publishes, appended to `published`.
   void DeclareMemberIdentities(
       const slang::ast::Symbol& member, ScopeDeclarations& decls,
-      ScopeFrameId frame);
+      ScopePublicationRecord& published, ScopeFrameId frame);
   void DeclareConditionalGenerate(
       const slang::ast::GenerateBlockSymbol& block, ScopeDeclarations& decls,
-      ScopeFrameId frame);
+      ScopePublicationRecord& published, ScopeFrameId frame);
   void DeclareLoopGenerate(
       const slang::ast::GenerateBlockArraySymbol& array,
-      ScopeDeclarations& decls, ScopeFrameId frame);
+      ScopeDeclarations& decls, ScopePublicationRecord& published,
+      ScopeFrameId frame);
   void DeclareSubroutine(
       const slang::ast::SubroutineSymbol& sub, ScopeDeclarations& decls,
-      ScopeFrameId frame);
+      ScopePublicationRecord& published, ScopeFrameId frame);
   void DeclareModportEvaluators(
-      const slang::ast::ModportSymbol& modport, ScopeDeclarations& decls);
+      const slang::ast::ModportSymbol& modport, ScopeDeclarations& decls,
+      ScopePublicationRecord& published);
   void DeclareProcess(
       const slang::ast::ProceduralBlockSymbol& proc, ScopeDeclarations& decls,
-      ScopeFrameId frame);
+      ScopePublicationRecord& published, ScopeFrameId frame);
+  // A class declared in a scope is a type of each instance of it (LRM 6.22),
+  // so what the class `declared` keeps for itself (LRM 8.9) is a cell the
+  // scope publishes, and so is what each class declared inside it keeps.
+  // Anything else declares no class and keeps nothing.
+  static void DeclareClassStatics(
+      const slang::ast::Symbol& declared, ScopePublicationRecord& published);
+
+  // The class of the scope `published` records, in this unit's own types.
+  auto PublishScopeClass(const ScopePublicationRecord& published)
+      -> diag::Result<hir::ScopeClassSignature>;
+
+  // A published callable as this unit's own types state it.
+  auto PublishedCallableOf(const ScopePublicationRecord::Callable& callable)
+      -> diag::Result<hir::PublishedCallable>;
+
+  // What the identity walk recorded for `scope`.
+  [[nodiscard]] auto PublicationOf(const slang::ast::Scope& scope) const
+      -> const ScopePublicationRecord&;
 
   // Whether a parameter's value differs between the objects built from the
   // scope declaring it: supplied or computed at construction, rather than fixed
@@ -1370,19 +1647,16 @@ class UnitLowerer {
   // many connections name it.
   std::unordered_map<const hir::UnitSignature*, hir::TypeImportMemo>
       signature_type_memos_;
-  // What each class this unit declares would promise another unit, taken where
-  // that class's own arenas are built so the two count the same positions. Only
-  // the classes the unit's namespace declares reach its signature.
+  // What each class this unit declares would publish to another unit, taken
+  // where that class's own arenas are built so the two count the same
+  // positions. Only the classes the unit's namespace declares reach its
+  // signature.
   std::unordered_map<const slang::ast::ClassType*, hir::ClassSignature>
-      own_class_promises_;
-  // Which record this unit made of each referenced unit's object, so every
-  // reference into one names the same entry.
-  std::unordered_map<std::string, hir::ExternalUnitObjectId>
-      external_unit_objects_;
-  // Which published position this unit gave each of its own declarations,
-  // taken while the signature is derived and read back while bodies lower.
-  std::unordered_map<const slang::ast::Symbol*, hir::PublishedMemberId>
-      published_member_ids_;
+      own_class_signatures_;
+  // Which record this unit made of each referenced scope class, by unit and
+  // class, so every reference into one names the same entry.
+  std::map<std::pair<std::string, std::string>, hir::ExternalScopeClassId>
+      external_scope_classes_;
   // What each of this unit's interface ports stands for.
   std::unordered_map<const slang::ast::Symbol*, hir::TypeId>
       interface_port_types_;
@@ -1390,15 +1664,18 @@ class UnitLowerer {
   // port's direction states.
   std::unordered_map<const slang::ast::Symbol*, hir::ReferenceBinding>
       ref_port_internals_;
-  // The declaration standing at each published position. A slot is filled when
-  // its declaration takes its identity, and every one is filled before the unit
-  // is handed on.
-  std::vector<std::optional<hir::PublishedDecl>> published_members_;
-  // The identifier each published subroutine answers to, in the order this
-  // unit's signature published them. Taken where that signature is built, which
-  // is the one place that order is decided; a unit with no object publishes
-  // none and leaves this empty.
-  std::vector<std::string> published_callables_;
+  // What each scope of this unit publishes, recorded by the walk minting the
+  // unit's identities and read by the signature and by the walk lowering that
+  // scope; and the scopes in the order that walk reached them, the unit's own
+  // first, so the signature states them in an order that does not depend on
+  // where the front end allocated them.
+  std::unordered_map<const slang::ast::Scope*, ScopePublicationRecord>
+      scope_publications_;
+  std::vector<const slang::ast::Scope*> publishing_scopes_;
+  // The class each of those scopes published, in this unit's own types, which
+  // the signature states in its own and the walk lowering the scope hands on.
+  std::unordered_map<const slang::ast::Scope*, hir::ScopeClassSignature>
+      scope_classes_;
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   // The classification of every class this unit's lowering has resolved: the

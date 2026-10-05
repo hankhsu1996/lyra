@@ -4,6 +4,7 @@
 #include <bit>
 #include <cstdint>
 #include <format>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -30,6 +31,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
+#include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -243,20 +245,26 @@ auto IsCompilationUnit(const slang::ast::Symbol& symbol) -> bool {
 }
 
 // A generate block (LRM 27.6) as a path to a declaration inside it spells it,
-// the way the hierarchy does, which is what tells two of them apart. An `if` or
-// `case` arm answers to its own label; a loop's block carries no label of its
-// own and answers to the construct's label together with the index it
-// elaborated at (LRM 27.4), so both halves are needed for it.
+// the way the hierarchy does, which is what tells two of them apart. A block
+// standing on its own answers to its own label; a loop's block carries no
+// label of its own and answers to the construct's label together with the
+// index it elaborated at (LRM 27.4), so both halves are needed for it. The
+// alternatives of one conditional may share a label (LRM 27.5), and one loop
+// body can hold several of them where its blocks selected differently, so an
+// alternative is told apart by its position among them as well.
 auto GenerateBlockStep(const slang::ast::GenerateBlockSymbol& block)
     -> std::string {
-  const slang::SVInt* index = block.getArrayIndex();
-  if (index == nullptr) {
-    return std::string{block.name};
+  if (block.getArrayIndex() == nullptr) {
+    if (!IsAlternative(block)) return std::string{block.name};
+    const auto alternatives = AlternativesOfConstruct(block);
+    const auto position = std::ranges::find(alternatives, &block);
+    return std::format(
+        "{}#{}", block.name, std::distance(alternatives.begin(), position));
   }
   const slang::ast::Scope* array = block.getHierarchicalParent();
   return std::format(
-      "{}_{}", array == nullptr ? std::string_view{} : array->asSymbol().name,
-      index->as<std::int64_t>().value_or(0));
+      "{}[{}]", array == nullptr ? std::string_view{} : array->asSymbol().name,
+      LoopIndexOf(block));
 }
 
 // The generate blocks between a declaration and the compilation unit that owns
@@ -297,11 +305,42 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
             },
             [](const SuppliedAtConstruction&) {
               return std::string{"<supplied>"};
+            },
+            [](const LandsIn& v) { return std::format("<in {}>", v.scope); },
+            [](const LandsBack& v) {
+              std::string at = std::format("<back {}", v.levels);
+              for (const std::string& block : v.blocks) {
+                at += ' ';
+                at += block;
+              }
+              return at + '>';
             }},
         input.kind);
     bytes += ';';
   }
   return bytes;
+}
+
+// Where a name that left an instance lands, as one input to that instance's
+// key: the class of the scope it lands in, or where that scope stands relative
+// to an instance whose name is being worked out.
+auto LandingOf(
+    const slang::ast::Scope& scope, const SpecializationPolicy& policy)
+    -> SpecializationInputKind {
+  std::vector<std::string> blocks;
+  const slang::ast::Symbol* at = &scope.asSymbol();
+  while (at->kind != slang::ast::SymbolKind::InstanceBody) {
+    if (const auto* block = at->as_if<slang::ast::GenerateBlockSymbol>()) {
+      blocks.push_back(GenerateBlockStep(*block));
+    }
+    at = &at->getHierarchicalParent()->asSymbol();
+  }
+  if (const auto levels =
+          policy.LevelsOutTo(at->as<slang::ast::InstanceBodySymbol>())) {
+    std::ranges::reverse(blocks);
+    return LandsBack{.levels = *levels, .blocks = std::move(blocks)};
+  }
+  return LandsIn{.scope = ScopeClassName(scope, policy)};
 }
 
 }  // namespace
@@ -348,7 +387,47 @@ auto SpecializationKeyOf(
       key.inputs.push_back(InterfacePortInput(*connection, policy));
     }
   }
+  // A name is no parameter and declares no name of its own, so it is told
+  // apart from the body's other climbs by the order the body writes them in.
+  policy.EnterNaming(inst.body);
+  std::size_t written = 0;
+  for (const ClimbAnchor& climb : policy.ClimbsOutOf(inst)) {
+    key.inputs.push_back(
+        SpecializationInput{
+            .name = std::format("^{}", written++),
+            .kind = LandingOf(*climb.scope, policy)});
+  }
+  policy.LeaveNaming();
   return key;
+}
+
+auto SpecializationPolicy::ClimbsOutOf(const slang::ast::InstanceSymbol& inst)
+    const -> std::span<const ClimbAnchor> {
+  auto cached = climbs_.find(&inst);
+  if (cached == climbs_.end()) {
+    cached = climbs_.emplace(&inst, ast_to_hir::ClimbsOutOf(inst.body)).first;
+  }
+  return cached->second;
+}
+
+void SpecializationPolicy::EnterNaming(
+    const slang::ast::InstanceBodySymbol& body) const {
+  naming_.push_back(&body);
+}
+
+void SpecializationPolicy::LeaveNaming() const {
+  naming_.pop_back();
+}
+
+auto SpecializationPolicy::LevelsOutTo(
+    const slang::ast::InstanceBodySymbol& body) const
+    -> std::optional<std::uint32_t> {
+  for (std::size_t out = 0; out < naming_.size(); ++out) {
+    if (naming_[naming_.size() - 1 - out] == &body) {
+      return static_cast<std::uint32_t>(out);
+    }
+  }
+  return std::nullopt;
 }
 
 auto SpecializationName(const SpecializationKey& key) -> std::string {
@@ -394,6 +473,28 @@ auto SpecializationName(
   return SpecializationName(SpecializationKeyOf(cls, policy));
 }
 
+auto ScopeClassName(
+    const slang::ast::Scope& scope, const SpecializationPolicy& policy)
+    -> std::string {
+  const slang::ast::Symbol& symbol = scope.asSymbol();
+  if (const auto* body = symbol.as_if<slang::ast::InstanceBodySymbol>()) {
+    return SpecializationName(InstantiationOf(*body), policy);
+  }
+  const auto* block = symbol.as_if<slang::ast::GenerateBlockSymbol>();
+  if (block == nullptr) {
+    throw InternalError(
+        "ScopeClassName: an object stands for an instance or a generate "
+        "block, and for no other scope");
+  }
+  std::string name =
+      CompilationUnitName(DeclaringCompilationUnit(*block), policy);
+  for (const std::string& step : DeclaringBlockPath(*block)) {
+    name += "::";
+    name += step;
+  }
+  return name + "::" + GenerateBlockStep(*block);
+}
+
 auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
     -> const slang::ast::Symbol& {
   for (const slang::ast::Scope* scope = decl.getParentScope(); scope != nullptr;
@@ -408,8 +509,29 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
       "element's body, or the file-set scope");
 }
 
+auto DeclaringStructuralScope(const slang::ast::ClassType& cls)
+    -> const slang::ast::Scope& {
+  for (const slang::ast::Scope* level = cls.getParentScope(); level != nullptr;
+       level = level->asSymbol().getParentScope()) {
+    const slang::ast::SymbolKind kind = level->asSymbol().kind;
+    if (kind == slang::ast::SymbolKind::InstanceBody ||
+        kind == slang::ast::SymbolKind::GenerateBlock ||
+        kind == slang::ast::SymbolKind::Package ||
+        kind == slang::ast::SymbolKind::CompilationUnit) {
+      return *level;
+    }
+  }
+  throw InternalError(
+      "DeclaringStructuralScope: every class is declared inside a structural "
+      "scope");
+}
+
 auto IsDesignElement(const slang::ast::Symbol& unit) -> bool {
   return unit.kind == slang::ast::SymbolKind::InstanceBody;
+}
+
+auto BelongsToAnInstance(const slang::ast::ClassType& cls) -> bool {
+  return IsDesignElement(DeclaringCompilationUnit(cls));
 }
 
 auto CompilationUnitName(

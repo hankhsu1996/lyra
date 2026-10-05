@@ -1,12 +1,15 @@
 #pragma once
 
+#include <cstdint>
 #include <expected>
+#include <span>
 #include <utility>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/external_scope_ref.hpp"
 #include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/published_member.hpp"
-#include "lyra/hir/signature_member_step.hpp"
+#include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -19,23 +22,29 @@
 namespace lyra::lowering::hir_to_mir {
 
 // The storage behind a member another unit published, reached on the object
-// `object` points at: the behavior of that unit's promise which answers with
-// the member's storage, dispatched on the object. Which behavior it is is
-// counted out of the order the promise published its members in, and the
-// storage it answers with is the only thing this side learns about the object.
-// The answer is a borrowed pointer to that storage.
+// `object` points at, of the scope class `scope_class` records: the field this
+// unit's record of that class laid the member out at. The answer is a borrowed
+// pointer to that storage.
 auto ReadPublishedMember(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
-    hir::PublishedMemberId member) -> mir::ExprId;
-
-// Descends from the object `object` points at onto an instance its unit
-// declared and published (LRM 25.3, 25.10): the member at the position that
-// unit's signature gave it, then one index per coordinate the step names. The
-// answer is the reached object, as a value of the pointer type the member
-// holds.
-auto StepThroughPublishedMember(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
-    const hir::SignatureMemberStep& step) -> mir::ExprId;
+    hir::ExternalScopeClassId scope_class, hir::PublishedMemberId member)
+    -> mir::ExprId;
+
+// Descends one path element (LRM 23.6) from the object `object` points at,
+// onto what its unit published under `names`: the member at the position that
+// unit's signature gave it, then one index per select. An instance (LRM 25.3,
+// 25.10) is reached as the pointer type its member holds; a generate block
+// (LRM 27) is viewed as the class the element says it was published as.
+auto StepThroughPublished(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    const hir::ExternalScopeRef& names, std::span<const std::uint32_t> selects)
+    -> mir::ExprId;
+
+// What a `disable` of a block or task another unit published terminates (LRM
+// 9.6.2), on the object `object` points at, as a borrowed pointer.
+auto ReachPublishedDisableTarget(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
+    const hir::ExternalDisableTargetLeaf& leaf) -> mir::ExprId;
 
 // The rest of reaching the instance a virtual interface holds, given the handle
 // already lowered into `steps`: the handle evaluated once, and yielded as
@@ -60,10 +69,7 @@ auto HeldInterfaceObject(
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::TypeId object_pointer = unit.types.Intern(
       mir::Type{mir::PointerType{
-          .pointee = unit.types.Intern(
-              mir::Type{mir::ExternalUnitObjectType{
-                  .object = lowerer.Owner().TranslateExternalUnitObject(
-                      access.object)}}),
+          .pointee = lowerer.Owner().UnitObjectType(access.scope_class),
           .ownership = mir::PointerOwnership::kBorrowed}});
   BlockBuilder guard(frame);
   auto handle_or =
@@ -72,8 +78,9 @@ auto HeldInterfaceObject(
   mir::Block& block = *frame.current_block;
   mir::ExprId reached = block.exprs.Add(
       GuardHeldInterface(unit, guard, *std::move(handle_or), object_pointer));
-  for (const hir::SignatureMemberStep& step : access.steps) {
-    reached = StepThroughPublishedMember(lowerer.Owner(), block, reached, step);
+  for (const hir::ExternalStep& step : access.steps) {
+    reached = StepThroughPublished(
+        lowerer.Owner(), block, reached, step.names, step.selects);
   }
   return reached;
 }
@@ -88,7 +95,8 @@ auto HeldInterfaceMember(
   auto reached = HeldInterfaceObject(lowerer, frame, access.instance);
   if (!reached) return std::unexpected(std::move(reached.error()));
   return ReadPublishedMember(
-      lowerer.Owner().Unit(), *frame.current_block, *reached, access.member);
+      lowerer.Owner(), *frame.current_block, *reached, access.scope_class,
+      access.member);
 }
 
 // An interface instance named as a value (LRM 25.9), given a pointer to its

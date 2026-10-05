@@ -16,6 +16,12 @@ D3 is superseded by [reaching-past-a-published-class](reaching-past-a-published-
 it widens is removed rather than widened again, because a class named only inside a body arrives
 after any set computed from declarations is fixed. The rest of this entry stands.
 
+**D1 is generalized by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)** from
+interfaces to every design element: a module publishes its child instances too, and every generate
+block an element elaborates publishes a class of its own, so D1's exclusions of a module's children
+and of a generate block no longer hold. D2's step form is the one every published instance takes.
+
 ## Why this decision matters
 
 An interface can contain smaller interfaces and be passed through ports (LRM 25.3), and access to

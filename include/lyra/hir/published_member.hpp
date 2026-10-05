@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/pool_id.hpp"
@@ -12,9 +13,9 @@
 
 namespace lyra::hir {
 
-// Which of a promise's behaviors answers with this member. The position is the
-// signature's own order, so the unit that publishes and the unit that reads
-// both count it out of the same list and neither states it to the other.
+// Where a member sits in the list its scope published. The unit that publishes
+// and the unit that reads both lay the scope's published class out from this
+// list, so neither states a field's position to the other.
 struct PublishedMemberId {
   std::uint32_t value = base::kUnassignedId;
 
@@ -59,9 +60,13 @@ struct BorrowedObjectStorage {
 using PublishedStorage = std::variant<
     VariableStorage, NetStorage, ReferenceStorage, BorrowedObjectStorage>;
 
-// One declaration an instance of a unit exposes to another unit by name.
+// One declaration a scope exposes to another unit by name. `within` is the
+// path of named blocks and subroutines of the scope the declaration sits in,
+// outermost first, which a hierarchical name spells before it (LRM 23.9); it is
+// empty for a declaration of the scope itself.
 struct PublishedMember {
   std::string name;
+  std::vector<std::string> within;
   TypeId type;
   PublishedStorage storage;
 

@@ -412,12 +412,6 @@ auto BuildDefaultValueExpr(
           // not declare is a handle to it, and a handle starts out null; the
           // object type itself is what that handle points at, which a
           // construction brings into existence.
-          [&](const mir::OpaqueObjectType&) -> mir::Expr {
-            return holds_no_declared_value("an object with no class to name");
-          },
-          [&](const mir::ExternalUnitObjectType&) -> mir::Expr {
-            return holds_no_declared_value("another unit's object");
-          },
           [&](const mir::CrossUnitClassType&) -> mir::Expr {
             return holds_no_declared_value("an object of another unit's class");
           },
@@ -587,13 +581,11 @@ auto BuildDefaultValueFromHir(
           [&](const hir::RealTimeType& t) { return type_default(t); },
           [&](const hir::ChandleType& t) { return type_default(t); },
           [&](const hir::ClassHandleType& t) { return type_default(t); },
-          [&](const hir::OpaqueObjectHandleType& t) { return type_default(t); },
           [&](const hir::ImportedClassHandleType& t) {
             return type_default(t);
           },
           [&](const hir::UnitObjectType& t) { return type_default(t); },
           [&](const hir::VirtualInterfaceType& t) { return type_default(t); },
-          [&](const hir::OpaqueScopeType& t) { return type_default(t); },
           [&](const hir::NullType& t) { return type_default(t); },
           [&](const hir::VoidType& t) { return type_default(t); },
       });

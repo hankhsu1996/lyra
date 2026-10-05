@@ -59,15 +59,16 @@ under each item, and the conformance gaps at the end.
       because the LRM 9.2.2.4 restrictions are lint-only and the frontend already enforces them.
       Pathological zero-delay loops are caught by the engine's settle limit.
 - [x] P10 / P13 -- `always_comb` / `always_latch` (LRM 9.2.2.2.1) and `always @*` / `always @(*)`
-      (LRM 9.4.2.2). Slang's flow analysis produces the implicit read sets; the body runs at t = 0
-      (always_comb / always_latch) or after the first wait (`@*`), then waits on any change to the
-      read set.
+      (LRM 9.4.2.2). The block's own text is analyzed, and each function an `always_comb` or
+      `always_latch` calls reports what it reads and writes once at time zero; the body runs at t =
+      0 (`always_comb` / `always_latch`) or after the first wait (`@*`), then waits on any change to
+      the read set.
 
       What a read in that set contributes follows from what the name denotes, and every kind of
       declaration says so rather than sharing one answer. A net or a variable is waited on wherever
-      its cell lives. A static class property is one too -- LRM 8.9 makes it the single copy a class
-      shares, usable with no object of that type -- and the class may be declared inside the module
-      or outside every design unit alike. A name a view offers contributes what the interface says
+      its cell lives. A static class property is one too -- the one copy its declaring scope keeps,
+      usable with no object of that type: one for a class a package declares, one per instance of a
+      module that declares it (LRM 8.9, 6.22). A name a view offers contributes what the interface says
       it reads (LRM 25.5.4). A value fixed before simulation starts contributes nothing, which a
       parameter, an enumeration name and a specparam each are. LRM 9.2.2.2.1 excludes a reference
       through a class object and a variable the block itself declares, so an instance property and
@@ -85,6 +86,12 @@ under each item, and the conformance gaps at the end.
         containing it, where one reading a bit range of a packed value already wakes only on a write
         reaching that range. Correctness is unaffected -- the process re-evaluates and reaches the
         same answer -- so this is what separates a correct wake set from a minimal one.
+  - [x] An `always_comb` or `always_latch` calling a function declared outside its own instance --
+        reached through an interface port, by a name climbing out of the instance, down into a
+        child, or in a package -- wakes on what that function reads, and on what the functions it
+        calls read in turn. Each instance of a module wakes on what its own call reaches. What the
+        block or those functions write is left out, so a nonblocking write the block makes to a
+        variable its function reads does not run it again.
 
 ### Variable lifetime
 

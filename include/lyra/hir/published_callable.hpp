@@ -12,7 +12,7 @@ namespace lyra::hir {
 
 // Where a published callable sits in the list its unit published. A callable is
 // reached by the symbol its declaring unit emits it under rather than by a
-// position in an object, so this orders the promise and nothing else.
+// position in an object, so this orders the publication and nothing else.
 struct PublishedCallableId {
   std::uint32_t value = base::kUnassignedId;
 

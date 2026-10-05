@@ -99,9 +99,7 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           // it holds: a node of the object tree, a closure's captures, and the
           // cells a declaration installs over a value.
           [&](const lir::ObjectType& t) { return address(t); },
-          [&](const lir::ExternalUnitObjectType& t) { return address(t); },
           [&](const lir::CrossUnitClassType& t) { return address(t); },
-          [&](const lir::OpaqueObjectType& t) { return address(t); },
           [&](const lir::RuntimeClassType& t) { return address(t); },
           [&](const lir::ClosureType& t) { return address(t); },
           [&](const lir::ObservableType& t) { return address(t); },

@@ -2,12 +2,14 @@
 
 #include <cstdint>
 #include <utility>
+#include <variant>
 
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/hir/value_ref.hpp"
 
 // Pure builders for the synthetic HIR expressions a lowering reaches for
 // whenever it needs a counter, bound, or sentinel -- stateless, unlike the
@@ -42,6 +44,19 @@ namespace lyra::hir {
     Primary ref, TypeId type, diag::SourceSpan span) -> Expr {
   return Expr{
       .type = type, .data = PrimaryExpr{.data = std::move(ref)}, .span = span};
+}
+
+// The same for a resolved value target. Every way of reaching a cell -- a route
+// through the design hierarchy, a namespace unit's cell named across the
+// boundary, a static property's cell -- is a reference primary, so one wrap
+// serves them all.
+[[nodiscard]] inline auto MakeValueTargetRefExpr(
+    const ValueTarget& target, TypeId type, diag::SourceSpan span) -> Expr {
+  return std::visit(
+      [&](const auto& reached) {
+        return MakeRefExpr(Primary{reached}, type, span);
+      },
+      target);
 }
 
 }  // namespace lyra::hir

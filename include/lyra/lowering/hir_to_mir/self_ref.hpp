@@ -1,9 +1,11 @@
 #pragma once
 
 #include <optional>
+#include <variant>
 #include <vector>
 
-#include "lyra/hir/structural_hops.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/enclosing_hops.hpp"
@@ -37,31 +39,6 @@ auto BindImplicitParameters(
     const WalkFrame& frame, const ClassShape& owner, CallableForm form)
     -> BoundImplicitParameters;
 
-// The instance a construction or type-associated call hands a class that
-// belongs to one: how far out of the calling body's scope it sits, and the
-// type the class takes it as.
-struct ImplicitInstanceArgument {
-  mir::EnclosingHops hops;
-  mir::TypeId type;
-};
-
-// What a construction or type-associated call of a class passes ahead of the
-// actuals. Whether it passes anything is the class's to say through
-// `declaring`; the call site supplies only how far out it measured the class's
-// declaring scope to be, and not having measured one where the class takes an
-// instance is a compiler bug.
-auto ImplicitInstanceArgumentOf(
-    const std::optional<DeclaringInstance>& declaring,
-    std::optional<hir::StructuralHops> measured)
-    -> std::optional<ImplicitInstanceArgument>;
-
-// Reaches `argument`'s instance from where `frame` stands, and refuses as a
-// compiler bug if the climb lands on an instance of another type than the
-// class takes.
-auto BuildImplicitInstanceArgument(
-    const WalkFrame& frame, const mir::CompilationUnit& unit,
-    const ImplicitInstanceArgument& argument) -> mir::ExprId;
-
 // Makes a read of the current body's `self` binding: a direct `LocalRef` in a
 // directly-invoked body, or a field access over the closure receiver when
 // `self` was captured. The receiver is an ordinary binding resolved through the
@@ -94,6 +71,31 @@ auto BuildEnclosingScopeReceiver(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops) -> mir::ExprId;
 
+// The instance a construction or type-associated call hands a class that
+// belongs to one, reached from where `frame` stands -- a climb, or the end of a
+// route `lowerer` holds -- and handed over as the scope every instance is,
+// which is how the class takes it.
+template <typename Lowerer>
+auto BuildImplicitInstanceArgument(
+    const Lowerer& lowerer, const WalkFrame& frame,
+    const hir::DeclaringInstanceReach& reach) -> mir::ExprId {
+  const auto& unit = lowerer.Owner().Unit();
+  const mir::ExprId reached = std::visit(
+      Overloaded{
+          [&](hir::StructuralHops hops) {
+            return BuildEnclosingScopeReceiver(
+                frame, unit, mir::EnclosingHops{hops.value});
+          },
+          [&](const hir::RoutedObjectRef& routed) {
+            return lowerer.RouteEnd(frame, routed.id);
+          }},
+      reach);
+  return frame.current_block->exprs.Add(
+      mir::Expr{
+          .data = mir::CastExpr{.operand = reached},
+          .type = unit.builtins.scope_ptr});
+}
+
 // Builds a read of a structural var through the current body's `self`:
 // `(*self).field`. The result type is the var's declared MIR
 // storage type, read from the enclosing scope reached by `hops` (a wrapper
@@ -105,6 +107,15 @@ auto BuildEnclosingScopeReceiver(
 auto BuildStructuralFieldAccessExpr(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops, mir::FieldId var) -> mir::Expr;
+
+// The same read of `field`, a member of the scope's object that a class it
+// extends may declare -- what the scope's unit published of it -- so the
+// member is named by that class and its type is handed in rather than read
+// off the scope's own class.
+auto BuildStructuralFieldAccessExpr(
+    const WalkFrame& frame, const mir::CompilationUnit& unit,
+    mir::EnclosingHops hops, const mir::ClassFieldTarget& field,
+    mir::TypeId field_type) -> mir::Expr;
 
 // A reference to the cell `cell` denotes (LRM 13.5.2): a reference
 // construction added to `block`, whose result type is a `RefType` over

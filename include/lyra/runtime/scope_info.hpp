@@ -6,8 +6,6 @@
 
 namespace lyra::runtime {
 
-struct ObjectDefinition;
-
 // A run of entries a unit holds as a constant array: where the array is and how
 // many entries it has, which is what a table is in a C program and what a slice
 // is in Rust. The array is named as storage rather than as its first entry, so
@@ -48,17 +46,17 @@ struct ScopeMetadata {
 // disagree -- which is what makes the erasure safe rather than conventional.
 using ErasedEntry = void (*)();
 
-// One callable a scope answers for by name: the name a caller spells, and the
-// entry adapting that call to this scope's own subroutine. The caller supplies
-// the scope as the entry's first argument, the way every callable takes its
-// receiver. The name is the declaring unit's own NUL-terminated constant.
+// One DPI-C export a scope answers (LRM 35.5.3): the C identifier the foreign
+// side calls, and the entry adapting that call to this scope's own subroutine.
+// The caller supplies the scope as the entry's first argument, the way every
+// callable takes its receiver. The name is the declaring unit's own
+// NUL-terminated constant.
 struct ScopeCallable {
   const char* name = nullptr;
   ErasedEntry entry = nullptr;
 };
 
-// The entry published under `name`, or null when the table holds none. One
-// scan, shared by every namespace a scope answers names in.
+// The entry published under `name`, or null when the table holds none.
 [[nodiscard]] inline auto FindInCallableTable(
     ConstantRun<ScopeCallable> table, std::string_view name) -> ErasedEntry {
   for (const ScopeCallable& published : table.Entries()) {
@@ -69,46 +67,16 @@ struct ScopeCallable {
   return nullptr;
 }
 
-// One class a scope answers for by name: the identifier the source gave the
-// class, and the definition every object of it is built from. A class declared
-// inside a design element is a distinct type per instance of that element (LRM
-// 6.22) and is nameable only inside the scope declaring it (LRM 23.9), so a
-// referrer outside reaches it the way it reaches anything else past a signature
-// -- by walking to the scope and asking.
-struct ScopeClass {
-  const char* name = nullptr;
-  const ObjectDefinition* definition = nullptr;
-};
-
-// The definition published under `name`, or null when the table holds none.
-[[nodiscard]] inline auto FindInClassTable(
-    ConstantRun<ScopeClass> table, std::string_view name)
-    -> const ObjectDefinition* {
-  for (const ScopeClass& published : table.Entries()) {
-    if (published.name == name) {
-      return published.definition;
-    }
-  }
-  return nullptr;
-}
-
 // What a class of the design hierarchy tells this library about its instances
-// beyond what its type information does: its timescale, and the names an
-// instance answers while references resolve. What an instance does in each
+// beyond what its type information does: its timescale, and the DPI-C exports
+// an instance answers. A DPI-C export's name is the program-global C identifier
+// the foreign side calls (LRM 35.4), so the foreign side has no type to reach
+// the body through and finds it by that name. What an instance does in each
 // phase, and how it ends, are virtual functions of its class. What a unit
-// promises of its object has none of this, since no instance is built of it.
-//
-// A scope holds one callable table per namespace it answers names in, because a
-// DPI-C export's name is the program-global C identifier the foreign side calls
-// (LRM 35.4) while a subroutine's is the SV identifier a hierarchical name
-// spells (LRM 23.6), and one declaration may carry both under different
-// spellings. The classes its unit declares are a third name space, holding
-// class definitions rather than entries.
+// publishes of its object has none of this, since no instance is built of it.
 struct ScopeInfo {
   ScopeMetadata metadata;
   ConstantRun<ScopeCallable> exports;
-  ConstantRun<ScopeCallable> subroutines;
-  ConstantRun<ScopeClass> classes;
 };
 
 }  // namespace lyra::runtime

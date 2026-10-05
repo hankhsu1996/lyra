@@ -290,11 +290,9 @@ auto Renderer::BuildBody(
           [&](const hir::RealTimeType& t) { return none(t); },
           [&](const hir::ChandleType& t) { return none(t); },
           [&](const hir::ClassHandleType& t) { return none(t); },
-          [&](const hir::OpaqueObjectHandleType& t) { return none(t); },
           [&](const hir::ImportedClassHandleType& t) { return none(t); },
           [&](const hir::UnitObjectType& t) { return none(t); },
           [&](const hir::VirtualInterfaceType& t) { return none(t); },
-          [&](const hir::OpaqueScopeType& t) { return none(t); },
           [&](const hir::NullType& t) { return none(t); },
           [&](const hir::VoidType& t) { return none(t); },
       });
@@ -790,9 +788,6 @@ auto PatternReadingOf(const hir::CompilationUnit& hir, hir::TypeId type)
           [&](const hir::RealTimeType& t) { return value_answers(t); },
           [&](const hir::ChandleType& t) { return value_answers(t); },
           [&](const hir::ClassHandleType& t) { return value_answers(t); },
-          [&](const hir::OpaqueObjectHandleType& t) {
-            return value_answers(t);
-          },
           [&](const hir::ImportedClassHandleType& t) {
             return value_answers(t);
           },
@@ -802,7 +797,6 @@ auto PatternReadingOf(const hir::CompilationUnit& hir, hir::TypeId type)
           // is stored under, never a type a value has (LRM 7.8.1).
           [&](const hir::WildcardIndexType& t) { return not_a_value(t); },
           [&](const hir::UnitObjectType& t) { return not_a_value(t); },
-          [&](const hir::OpaqueScopeType& t) { return not_a_value(t); },
           [&](const hir::VoidType& t) { return not_a_value(t); },
       });
 }

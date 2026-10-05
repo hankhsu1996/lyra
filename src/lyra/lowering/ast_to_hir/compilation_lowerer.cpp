@@ -114,7 +114,7 @@ struct Collected {
 //
 // A virtual interface's type names an interface together with its parameters
 // (LRM 25.9), and code reaching through one compiles against that unit's
-// promise whether or not any instance of it exists -- a declaration of a
+// signature whether or not any instance of it exists -- a declaration of a
 // parameterization no instance has is legal, only never assignable. So the
 // interface a declared type names is collected as an instantiated one is. Only
 // declarations are read for it, which is what the walk reaches anyway.
@@ -600,9 +600,10 @@ auto DeclaredDesign::UnitCount() const -> std::size_t {
   return units_->lowerers.size();
 }
 
-// Which of the published promises a unit depends on is the set its bodies
+// Which of the published signatures a unit depends on is the set its bodies
 // read: a name first reached from inside a body is reached after any set fixed
-// in advance, and whether a name is on a promise does not depend on who asked.
+// in advance, and whether a name is on a signature does not depend on who
+// asked.
 auto DeclaredDesign::LowerUnit(std::size_t index)
     -> diag::Result<hir::CompilationUnit> {
   const std::scoped_lock reading(units_->reading_front_end);

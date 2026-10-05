@@ -2,6 +2,13 @@
 
 Date: 2026-09-29 Status: accepted; D4 and D5 revised and D9 added 2026-10-02
 
+**D8 is reversed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**, and
+with it D4's tables a name is answered from: a class a design element declares is published by that
+element, so a referrer names it and calls its methods as it would any published class's, and no
+class or scope carries a table of names. What D4's constant still holds is what a class of the
+design hierarchy states of its instances and a scope's DPI-C export table.
+
 ## Context
 
 A SystemVerilog class dispatches its virtual methods on the object (LRM 8.20), an interface class

@@ -59,8 +59,9 @@ one time axis; multiple top-level modules are one simulation, not several.
 
 Between construction and simulation -- still at t = 0, before any process runs -- the runtime
 executes the binding graph and seals every reference: each route reaches its target through typed
-in-artifact navigation and the runtime SDK only across opaque unit boundaries; the sealing barrier
-commits each binding's final endpoint (see `reference_resolution.md`, `emission_model.md`).
+navigation over the classes the referrer compiled against, its own and those other scopes published,
+and nothing is looked up by name; the sealing barrier commits each binding's final endpoint (see
+`reference_resolution.md`, `emission_model.md`).
 
 `elaboration_lifecycle.md` refines this construction-vs-simulation boundary into ordered phases
 (build / resolve / seal / initialize / activate) and is the authority on _when_ each piece runs:

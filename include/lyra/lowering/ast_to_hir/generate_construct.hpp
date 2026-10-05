@@ -1,12 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include <slang/ast/Scope.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/numeric/SVInt.h>
 
-#include "lyra/hir/owned_child_ref.hpp"
+#include "lyra/base/internal_error.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -19,8 +21,8 @@ namespace lyra::lowering::ast_to_hir {
 // it publishes the blocks as ordinary members of the enclosing scope, each
 // carrying the index of the construct that produced it. So a walk over those
 // members meets one construct several times, and these answer what it has to
-// know each time -- whether this is the visit that handles the construct, which
-// blocks the construct holds, and how a name identifies one of them.
+// know each time -- whether this is the visit that handles the construct,
+// which blocks the construct holds, and which value a loop's block stands at.
 
 // Whether a conditional generate produced this block, which is what makes it
 // one alternative of a set rather than a block standing on its own.
@@ -60,6 +62,22 @@ namespace lyra::lowering::ast_to_hir {
   return alternatives;
 }
 
+// The value a loop's index stood at for `block`, one of the blocks the loop
+// counted out, which is how a name selects it (LRM 27.4). A genvar holds an
+// integer (LRM 27.4), so the value always fits.
+[[nodiscard]] inline auto LoopIndexOf(
+    const slang::ast::GenerateBlockSymbol& block) -> std::int64_t {
+  const slang::SVInt* index = block.getArrayIndex();
+  const std::optional<std::int64_t> value =
+      index == nullptr ? std::nullopt : index->as<std::int64_t>();
+  if (!value.has_value()) {
+    throw InternalError(
+        "LoopIndexOf: a block a loop counted out carries the value its index "
+        "stood at");
+  }
+  return *value;
+}
+
 // Whether the visit at this block is the visit that handles its construct,
 // which is the first block the construct produced. A block no conditional
 // produced is a construct of one and always answers yes.
@@ -75,18 +93,6 @@ namespace lyra::lowering::ast_to_hir {
     return other == &block;
   }
   return true;
-}
-
-// How a name identifies one block of a construct, given the position that
-// block holds among the construct's own. A conditional selects at most one of
-// an ordered set of alternatives, so what identifies one is the position the
-// source wrote it at; every other construct declares its blocks positionally,
-// and one that declares a single block is the one-element case of that.
-[[nodiscard]] inline auto NamedBlockOf(
-    const slang::ast::GenerateBlockSymbol& block, std::uint32_t position)
-    -> hir::NamedBlock {
-  if (!IsAlternative(block)) return hir::BlockAtIndex{.index = position};
-  return hir::BlockAsAlternative{.position = position};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -11,13 +11,11 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/interface_member_access.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace slang::ast {
-class InstanceSymbol;
 class Scope;
 class Symbol;
 class VirtualInterfaceType;
@@ -25,20 +23,16 @@ class VirtualInterfaceType;
 
 namespace lyra::lowering::ast_to_hir {
 
-// This unit's record of what the interface unit `instance` is an instance of
-// published: the promise a name reached on such an instance is counted out of.
-auto InterfaceObjectOf(
-    UnitLowerer& unit_lowerer, const slang::ast::InstanceSymbol& instance)
-    -> hir::ExternalUnitObjectId;
-
-// The interface instance declaring `scope`, reached from the one the virtual
-// interface `handle` holds: that instance where `scope` is its body, or one it
-// instantiates, a step onto each interface declared on the way down. `landed`
-// is this unit's record of what the instance reached published, which is what
-// a name declared in `scope` is counted out of.
+// The scope declaring `scope`'s names, reached from the instance the virtual
+// interface `handle` holds: that instance where `scope` is its body, or an
+// interface it instantiates or a generate block inside it, a step onto each on
+// the way down. `place` is where that leaves the descent: the scope of
+// another unit it stands on and the named blocks and subroutines of it
+// `scope` sits in, under which a name declared in `scope` is counted out of
+// what that scope published.
 struct HeldDescent {
   hir::InterfaceInstanceAccessExpr instance;
-  hir::ExternalUnitObjectId landed;
+  InExternalScope place;
 };
 
 auto DescendThroughHandle(

@@ -575,7 +575,7 @@ auto LowerPropertySpec(
   if (parts.disable_condition != nullptr) {
     auto cond_or = proc.LowerExpr(*parts.disable_condition, frame);
     if (!cond_or) return std::unexpected(std::move(cond_or.error()));
-    auto sensitivity_or = proc.Owner().TranslateSensitivityReads(
+    auto sensitivity_or = proc.Owner().SensitivityEntriesOf(
         proc,
         proc.Owner().Sensitivity().AnalyzeReads(
             *parts.disable_condition, proc.ContainingSymbol()),

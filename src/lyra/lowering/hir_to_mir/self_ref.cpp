@@ -76,33 +76,6 @@ auto BindImplicitParameters(
   return bound;
 }
 
-auto ImplicitInstanceArgumentOf(
-    const std::optional<DeclaringInstance>& declaring,
-    std::optional<hir::StructuralHops> measured)
-    -> std::optional<ImplicitInstanceArgument> {
-  if (!declaring.has_value()) return std::nullopt;
-  if (!measured.has_value()) {
-    throw InternalError(
-        "ImplicitInstanceArgumentOf: the class belongs to an instance, and the "
-        "call measured no distance to it");
-  }
-  return ImplicitInstanceArgument{
-      .hops = mir::EnclosingHops{measured->value}, .type = declaring->type};
-}
-
-auto BuildImplicitInstanceArgument(
-    const WalkFrame& frame, const mir::CompilationUnit& unit,
-    const ImplicitInstanceArgument& argument) -> mir::ExprId {
-  const mir::ExprId reached =
-      BuildEnclosingScopeReceiver(frame, unit, argument.hops);
-  if (frame.current_block->exprs.Get(reached).type != argument.type) {
-    throw InternalError(
-        "BuildImplicitInstanceArgument: the climb from the call lands on an "
-        "instance of another scope than the one the class belongs to");
-  }
-  return reached;
-}
-
 auto BuildEnclosingScopeReceiver(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops) -> mir::ExprId {
@@ -121,23 +94,37 @@ auto BuildEnclosingScopeReceiver(
             return block.exprs.Add(
                 MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
           },
+          // The instance is held as the base every scope extends, and the
+          // body viewing it is one of that scope's unit, which views it as the
+          // scope's own class.
           [&](const ScopeThroughMember& through) {
             const mir::ExprId self = block.exprs.Add(
                 MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
             return block.exprs.Add(
-                mir::MakeFieldAccessExpr(
-                    BuildObjectDeref(unit, block, self),
-                    mir::ClassFieldTarget{
-                        .owner = frame.current_class_id,
-                        .slot = through.member},
-                    frame.EnclosingClassAtHops(mir::EnclosingHops{0})
-                        .cls->self_pointer_type));
+                mir::Expr{
+                    .data =
+                        mir::CastExpr{
+                            .operand = block.exprs.Add(
+                                mir::MakeFieldAccessExpr(
+                                    BuildObjectDeref(unit, block, self),
+                                    mir::ClassFieldTarget{
+                                        .owner = frame.current_class_id,
+                                        .slot = through.member},
+                                    unit.builtins.scope_ptr))},
+                    .type = frame.EnclosingClassAtHops(mir::EnclosingHops{0})
+                                .cls->self_pointer_type});
           },
           [&](const ScopeThroughParameter&) {
             const BodyBindingRef instance = frame.bindings->EnsureCarrier(
                 BindingOriginId::DeclaringInstance());
             return block.exprs.Add(
-                frame.bindings->MakeReadExpr(instance, block));
+                mir::Expr{
+                    .data =
+                        mir::CastExpr{
+                            .operand = block.exprs.Add(
+                                frame.bindings->MakeReadExpr(instance, block))},
+                    .type = frame.EnclosingClassAtHops(mir::EnclosingHops{0})
+                                .cls->self_pointer_type});
           }},
       frame.structural_base);
   if (hops.value == 0) {
@@ -165,13 +152,19 @@ auto BuildStructuralFieldAccessExpr(
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     mir::EnclosingHops hops, mir::FieldId var) -> mir::Expr {
   const EnclosingClass owner = frame.EnclosingClassAtHops(hops);
-  const mir::TypeId field_type = owner.cls->fields.Get(var).type;
+  return BuildStructuralFieldAccessExpr(
+      frame, unit, hops, mir::ClassFieldTarget{.owner = owner.id, .slot = var},
+      owner.cls->fields.Get(var).type);
+}
+
+auto BuildStructuralFieldAccessExpr(
+    const WalkFrame& frame, const mir::CompilationUnit& unit,
+    mir::EnclosingHops hops, const mir::ClassFieldTarget& field,
+    mir::TypeId field_type) -> mir::Expr {
   const mir::ExprId receiver = BuildObjectDeref(
       unit, *frame.current_block,
       BuildEnclosingScopeReceiver(frame, unit, hops));
-  return mir::MakeFieldAccessExpr(
-      receiver, mir::ClassFieldTarget{.owner = owner.id, .slot = var},
-      field_type);
+  return mir::MakeFieldAccessExpr(receiver, field, field_type);
 }
 
 auto BuildReferenceArg(

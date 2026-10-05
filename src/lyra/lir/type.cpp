@@ -107,20 +107,12 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "cancellation target";
     case RuntimeLibraryKind::kControlEffect:
       return "control effect";
-    case RuntimeLibraryKind::kPropertyCoordinate:
-      return "property coordinate";
     case RuntimeLibraryKind::kObjectDefinition:
       return "object definition";
-    case RuntimeLibraryKind::kResolvedProperty:
-      return "resolved property";
-    case RuntimeLibraryKind::kDeclaredBody:
-      return "declared body";
     case RuntimeLibraryKind::kScopeInfo:
       return "scope info";
     case RuntimeLibraryKind::kScopeCallable:
       return "scope callable";
-    case RuntimeLibraryKind::kScopeClass:
-      return "scope class";
   }
   throw InternalError("lir::RuntimeLibraryKindName: unknown kind");
 }
@@ -186,14 +178,10 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const VoidType&) {},
           [](const EmptyType&) {},
           [&](const ObjectType& t) { Combine(seed, t.class_id); },
-          [&](const ExternalUnitObjectType& t) {
-            Combine(seed, t.object.value);
-          },
           [&](const CrossUnitClassType& t) {
             Combine(seed, t.unit_name);
             Combine(seed, t.class_name);
           },
-          [](const OpaqueObjectType&) {},
           [&](const RuntimeClassType& t) { Combine(seed, t.which); },
           [&](const ClosureType& t) { Combine(seed, t.closure_id.value); },
           [](const RuntimeEffectsType&) {},
@@ -258,9 +246,7 @@ auto Type::KindName() const -> std::string_view {
           [](const VoidType&) { return "void"; },
           [](const EmptyType&) { return "empty"; },
           [](const ObjectType&) { return "class object"; },
-          [](const ExternalUnitObjectType&) { return "external unit object"; },
           [](const CrossUnitClassType&) { return "cross-unit class"; },
-          [](const OpaqueObjectType&) { return "opaque object"; },
           [](const RuntimeClassType&) { return "runtime class"; },
           [](const ClosureType&) { return "closure"; },
           [](const StructType&) { return "struct"; },
@@ -297,7 +283,6 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           // Member-bearing storage, whose members are reached through its
           // declaration.
           [](const ObjectType& t) -> Declared { return t; },
-          [](const ExternalUnitObjectType& t) -> Declared { return t; },
           [](const CrossUnitClassType& t) -> Declared { return t; },
           [](const ClosureType& t) -> Declared { return t; },
 
@@ -331,11 +316,8 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const MachineArrayType&) { return names_none(); },
           [&](const MachineFunctionType&) { return names_none(); },
 
-          // An object this unit carries no declaration of, and a class the
-          // runtime library defines: a symbol is the whole of the second's
-          // identity and the first has none at all, so neither is reached
-          // through a declaration this unit holds.
-          [&](const OpaqueObjectType&) { return names_none(); },
+          // A class the runtime library defines: a symbol is its whole
+          // identity, so no declaration of this unit stands behind it.
           [&](const RuntimeClassType&) { return names_none(); },
 
           // Storage, a service, and an address. Each stands for something
@@ -425,9 +407,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // A nominal type names a declaration, and a declaration is not a run
           // of anything.
           [](const ObjectType&) -> Element { return std::nullopt; },
-          [](const ExternalUnitObjectType&) -> Element { return std::nullopt; },
           [](const CrossUnitClassType&) -> Element { return std::nullopt; },
-          [](const OpaqueObjectType&) -> Element { return std::nullopt; },
           [](const RuntimeClassType&) -> Element { return std::nullopt; },
           [](const ClosureType&) -> Element { return std::nullopt; },
 
@@ -477,9 +457,9 @@ auto Type::DerefTarget() const -> std::optional<TypeId> {
 
 auto Type::IsAddressOnly() const -> bool {
   return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>() ||
-         Is<ExternalUnitObjectType>() || Is<CrossUnitClassType>() ||
-         Is<OpaqueObjectType>() || Is<RuntimeClassType>() || Is<EventType>() ||
-         Is<SampledHistoryType>() || Is<EvaluationAttemptsType>();
+         Is<CrossUnitClassType>() || Is<RuntimeClassType>() ||
+         Is<EventType>() || Is<SampledHistoryType>() ||
+         Is<EvaluationAttemptsType>();
 }
 
 auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
@@ -600,13 +580,9 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
               case RuntimeLibraryKind::kDpiOpenArrayHandle:
               case RuntimeLibraryKind::kCancellationTarget:
               case RuntimeLibraryKind::kControlEffect:
-              case RuntimeLibraryKind::kPropertyCoordinate:
               case RuntimeLibraryKind::kObjectDefinition:
-              case RuntimeLibraryKind::kResolvedProperty:
-              case RuntimeLibraryKind::kDeclaredBody:
               case RuntimeLibraryKind::kScopeInfo:
               case RuntimeLibraryKind::kScopeCallable:
-              case RuntimeLibraryKind::kScopeClass:
                 return std::nullopt;
             }
             throw InternalError("lir: unknown runtime library kind");
@@ -625,9 +601,7 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
           // holds: each is reached where it lives rather than held, and what it
           // holds or answers with is a value of its own.
           [](const ObjectType&) -> Held { return std::nullopt; },
-          [](const ExternalUnitObjectType&) -> Held { return std::nullopt; },
           [](const CrossUnitClassType&) -> Held { return std::nullopt; },
-          [](const OpaqueObjectType&) -> Held { return std::nullopt; },
           [](const RuntimeClassType&) -> Held { return std::nullopt; },
           [](const EventType&) -> Held { return std::nullopt; },
           [](const ObservableType&) -> Held { return std::nullopt; },

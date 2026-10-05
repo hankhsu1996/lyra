@@ -29,71 +29,57 @@ struct InstanceMemberId {
       -> std::strong_ordering = default;
 };
 
-// A loop generate declares an array of blocks (LRM 27.4), so a name reaching
-// one of them carries its position among the blocks that elaborated. The
-// position is not the value the genvar stood at -- that array may be sparse,
-// and the value the source wrote is spent where the name resolves, the same
-// way a declared port range is. A construct declaring a single block is the
-// one-element case of the same thing.
-struct BlockAtIndex {
-  std::uint32_t index = 0;
-
-  auto operator==(const BlockAtIndex&) const -> bool = default;
-};
-
-// A conditional generate declares no array: it selects at most one block from
-// an ordered set of alternatives (LRM 27.5), so what identifies one is which
-// alternative the source wrote it as. That is the same number at every index
-// the construct stands at, which is what lets a name be resolved before
-// anything knows which alternative any particular index selected.
-struct BlockAsAlternative {
-  std::uint32_t position = 0;
-
-  auto operator==(const BlockAsAlternative&) const -> bool = default;
-};
-
-// Which of a generate construct's blocks a name meant. The two forms are the
-// two the language has, and they are not two spellings of one number.
-using NamedBlock = std::variant<BlockAtIndex, BlockAsAlternative>;
-
-// A generate block (LRM 27) as a child of the scope that declares it: the
-// generate construct it belongs to, plus which of that construct's elaborated
-// blocks the name meant.
+// A loop generate (LRM 27.4), which holds one block per iteration it counted
+// out; a path picks one of them with an instance select.
 //
-// The block is named and not the compiled scope, because how many scopes the
-// construct compiled to is not something a name can be resolved against: a
-// repeated structure whose blocks agree compiles to one, and the block a name
-// meant becomes a coordinate on it, while blocks that disagree each compile to
-// their own. Both answers reach the same elaborated block, so stating the
-// block leaves the choice to whatever realizes the construct, and no name has
-// to be spelled before that choice exists.
-struct GenerateChildRef {
+// A path names the construct and selects a block of it, never the scope the
+// block compiled to: a loop whose blocks agree compiles to one scope and one
+// whose blocks disagree to one each, and both reach the same elaborated block.
+// Which scope that is stays the construct's own answer, so no name has to be
+// spelled before it exists.
+struct GenerateLoopRef {
   GenerateId generate;
-  NamedBlock block;
 
-  auto operator==(const GenerateChildRef&) const -> bool = default;
+  auto operator==(const GenerateLoopRef&) const -> bool = default;
+};
+
+// The one block a generate construct holds when it builds at most one: a
+// block standing on its own, or the one a conditional chose (LRM 27.5),
+// identified by the position the source wrote it at among the construct's
+// alternatives. That is the same number wherever the construct stands, which
+// is what lets a name be resolved before anything knows which alternative a
+// particular instance selected; a block standing on its own is the only
+// alternative of its construct.
+struct GenerateBlockRef {
+  GenerateId generate;
+  std::uint32_t alternative = 0;
+
+  auto operator==(const GenerateBlockRef&) const -> bool = default;
 };
 
 // A child object the referrer's compilation unit declares, named by the
 // declaring scope's own identity for it.
-using OwnedChildRef = std::variant<InstanceMemberId, GenerateChildRef>;
+using OwnedChildRef =
+    std::variant<InstanceMemberId, GenerateLoopRef, GenerateBlockRef>;
 
-// One object reached through such a child. `indices` are the element
-// coordinates the source named within it: an instance array is a single child
-// spanning every element (LRM 23.3.2), so a coordinate picks the element out
-// of it. A generate names its block on the child itself, so a generate step
-// carries none.
-//
-// Every reach into a child of this unit names one of these, whether it is a
-// navigation step of a reference or a hop of the descent a call takes to the
-// scope declaring its callee: which object a name means is settled during
-// elaboration either way, and a child that stands for several is the only
-// thing that makes the coordinates load-bearing.
-struct OwnedChildStep {
-  OwnedChildRef child;
-  std::vector<std::uint32_t> indices;
+// One element of a hierarchical path (LRM 23.6): what it names, and the
+// instance selects written after it. Each select picks one instance out of
+// what the name stands for -- an instance array (LRM 23.3.2), an interface
+// port carrying a range (LRM 25.3), the blocks of a loop generate -- and is
+// the position of that instance, the value the source wrote being spent where
+// the name resolves, as a declared range is. Something that stands for one
+// object takes none, which is the empty case rather than a shape of its own.
+template <typename Names>
+struct PathElement {
+  Names names;
+  std::vector<std::uint32_t> selects;
 
-  auto operator==(const OwnedChildStep&) const -> bool = default;
+  auto operator==(const PathElement&) const -> bool = default;
 };
+
+// An element naming a child of this unit. Every reach into one names it this
+// way, whether it is a step of a reference or a hop of the descent a call
+// takes to the scope declaring its callee.
+using OwnedChildStep = PathElement<OwnedChildRef>;
 
 }  // namespace lyra::hir

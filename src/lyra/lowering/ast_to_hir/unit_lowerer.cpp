@@ -3,10 +3,14 @@
 #include <algorithm>
 #include <cstdint>
 #include <expected>
+#include <format>
+#include <iterator>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/Expression.h>
@@ -28,11 +32,14 @@
 #include <slang/numeric/SVInt.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/verify.hpp"
+#include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
@@ -53,7 +60,7 @@ UnitLowerer::UnitLowerer(
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
-  DeclareStructuralIdentities(*scope_);
+  DeclareStructuralIdentities(*scope_, hir::InstanceClassName(unit_.name));
   if (auto r = InternOwnClassDeclarations(*scope_); !r) {
     return std::unexpected(std::move(r.error()));
   }
@@ -62,50 +69,6 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
   }
   return PublishSignature();
 }
-
-namespace {
-
-// Hands `visit` every member of `scope`, and of each scope within it that a
-// declaration outside a body may stand in: a class (LRM 8.3 admits a class
-// declaration as a class item), each live specialization of a parameterized
-// one (LRM 8.25), and each generate block this elaboration built (LRM 27). A
-// member is visited before anything inside it.
-template <typename Visit>
-auto WalkDeclarationScopes(const slang::ast::Scope& scope, Visit& visit)
-    -> diag::Result<void> {
-  for (const auto& member : scope.members()) {
-    if (auto r = visit(member); !r) {
-      return r;
-    }
-    std::vector<const slang::ast::Scope*> inner;
-    if (member.kind == slang::ast::SymbolKind::ClassType) {
-      inner.push_back(&member.as<slang::ast::ClassType>());
-    } else if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
-      for (const auto& spec :
-           member.as<slang::ast::GenericClassDefSymbol>().specializations()) {
-        inner.push_back(&spec.getCanonicalType().as<slang::ast::ClassType>());
-      }
-    } else if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
-      const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
-      if (!block.isUninstantiated) {
-        inner.push_back(&block);
-      }
-    } else if (member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
-      for (const auto* entry :
-           member.as<slang::ast::GenerateBlockArraySymbol>().entries) {
-        inner.push_back(entry);
-      }
-    }
-    for (const slang::ast::Scope* scope_within : inner) {
-      if (auto r = WalkDeclarationScopes(*scope_within, visit); !r) {
-        return r;
-      }
-    }
-  }
-  return {};
-}
-
-}  // namespace
 
 auto UnitLowerer::InternOwnStructureDeclarations(const slang::ast::Scope& scope)
     -> diag::Result<void> {
@@ -150,17 +113,7 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
   }
   unit_.root_scope = *std::move(root_scope_or);
   RequireEveryClassBodyLowered();
-  ReadPromisesOfNamedClasses();
-  unit_.root_scope.published_members.reserve(published_members_.size());
-  for (const auto& decl : published_members_) {
-    if (!decl.has_value()) {
-      throw InternalError(
-          "UnitLowerer::LowerBodies: a member this unit published stands on a "
-          "declaration of its own, so the declaration walk reached it");
-    }
-    unit_.root_scope.published_members.push_back(*decl);
-  }
-  unit_.root_scope.published_callables = std::move(published_callables_);
+  ReadSignaturesOfNamedClasses();
   hir::Verify(unit_);
   return std::move(unit_);
 }
@@ -217,12 +170,16 @@ auto UnitLowerer::NextWithClauseId() -> hir::WithClauseId {
 // own kind in this scope, which is the arena index the body pass assigns, so a
 // call or a hierarchical reference resolves regardless of source order
 // (LRM 13.4.2, 23.9).
-void UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope) {
+void UnitLowerer::DeclareStructuralIdentities(
+    const slang::ast::Scope& scope, std::string class_name) {
   const ScopeFrameId frame = NextScopeFrameId();
   scope_frames_.emplace(&scope, frame);
   ScopeDeclarations& decls = scope_declarations_[&scope];
+  ScopePublicationRecord& published = scope_publications_[&scope];
+  published.class_name = std::move(class_name);
+  publishing_scopes_.push_back(&scope);
   for (const auto& member : scope.members()) {
-    DeclareMemberIdentities(member, decls, frame);
+    DeclareMemberIdentities(member, decls, published, frame);
   }
 }
 
@@ -231,55 +188,97 @@ void UnitLowerer::DeclareStructuralIdentities(const slang::ast::Scope& scope) {
 // identity.
 void UnitLowerer::DeclareMemberIdentities(
     const slang::ast::Symbol& member, ScopeDeclarations& decls,
-    ScopeFrameId frame) {
+    ScopePublicationRecord& published, ScopeFrameId frame) {
   using slang::ast::SymbolKind;
+  // An instance is reached by a hierarchical name stepping onto it (LRM 23.6).
+  const auto declare_instance = [&](InstanceArrayShape shape) {
+    const hir::InstanceMemberId id = decls.instance_members.Declare();
+    MapOwnedChildBinding(
+        member, frame, hir::OwnedChildStep{.names = id, .selects = {}});
+    published.members.emplace_back(
+        ScopePublicationRecord::Instance{
+            .symbol = &member, .id = id, .shape = std::move(shape)});
+  };
   switch (member.kind) {
     case SymbolKind::GenerateBlock:
       DeclareConditionalGenerate(
-          member.as<slang::ast::GenerateBlockSymbol>(), decls, frame);
+          member.as<slang::ast::GenerateBlockSymbol>(), decls, published,
+          frame);
       return;
     case SymbolKind::GenerateBlockArray:
       DeclareLoopGenerate(
-          member.as<slang::ast::GenerateBlockArraySymbol>(), decls, frame);
+          member.as<slang::ast::GenerateBlockArraySymbol>(), decls, published,
+          frame);
       return;
     case SymbolKind::Instance:
-      MapOwnedChildBinding(member, frame, decls.instance_members.Declare());
+      declare_instance(
+          InstanceArrayShape{
+              .ranges = {}, .leaf = &member.as<slang::ast::InstanceSymbol>()});
       return;
     // A zero-element array (LRM 23.3.2) constructs nothing, so it is no member
     // and takes no id.
     case SymbolKind::InstanceArray:
-      if (ResolveInstanceArrayShape(
-              member.as<slang::ast::InstanceArraySymbol>())
-              .has_value()) {
-        MapOwnedChildBinding(member, frame, decls.instance_members.Declare());
+      if (auto shape = ResolveInstanceArrayShape(
+              member.as<slang::ast::InstanceArraySymbol>())) {
+        declare_instance(*std::move(shape));
       }
       return;
     case SymbolKind::Subroutine:
       DeclareSubroutine(
-          member.as<slang::ast::SubroutineSymbol>(), decls, frame);
+          member.as<slang::ast::SubroutineSymbol>(), decls, published, frame);
       return;
     case SymbolKind::Modport:
-      DeclareModportEvaluators(member.as<slang::ast::ModportSymbol>(), decls);
+      DeclareModportEvaluators(
+          member.as<slang::ast::ModportSymbol>(), decls, published);
       return;
     // A port's default is an expression of this unit, evaluated in its scope
     // for an instance that leaves the port unconnected (LRM 23.2.2.4), so it
     // is a subroutine of this scope the instantiator asks for.
     case SymbolKind::Port:
-      if (member.as<slang::ast::PortSymbol>().getInitializer() != nullptr) {
-        MapEvaluator(member, decls.structural_subroutines.Declare());
+      if (const auto& port = member.as<slang::ast::PortSymbol>();
+          port.getInitializer() != nullptr) {
+        const hir::StructuralSubroutineId id =
+            decls.structural_subroutines.Declare();
+        MapEvaluator(member, id);
+        published.callables.emplace_back(
+            ScopePublicationRecord::PortDefault{.port = &port, .id = id});
       }
       return;
     case SymbolKind::ProceduralBlock:
       DeclareProcess(
-          member.as<slang::ast::ProceduralBlockSymbol>(), decls, frame);
+          member.as<slang::ast::ProceduralBlockSymbol>(), decls, published,
+          frame);
+      return;
+    // A hierarchical name reaches storage of any scope (LRM 23.6), and a
+    // sibling generate block lowers whole before this scope's own storage is
+    // built, so a name from there holds the identity before its declaration.
+    case SymbolKind::Variable:
+    case SymbolKind::Net: {
+      const auto& value = member.as<slang::ast::ValueSymbol>();
+      const hir::StructuralDataObjectId id =
+          decls.structural_data_objects.Declare();
+      MapStructuralDataObjectBinding(value, frame, id);
+      published.members.emplace_back(
+          ScopePublicationRecord::DataObject{.symbol = &value, .id = id});
+      return;
+    }
+    // An interface port names an instance another unit builds and this one's
+    // parent binds (LRM 25.3); its identity comes with the record of that
+    // unit's object, which is reachable only once bodies lower.
+    case SymbolKind::InterfacePort:
+      published.members.emplace_back(
+          ScopePublicationRecord::InterfacePort{
+              .symbol = &member.as<slang::ast::InterfacePortSymbol>()});
+      return;
+    case SymbolKind::ClassType:
+    case SymbolKind::GenericClassDef:
+      DeclareClassStatics(member, published);
       return;
 
-    // Nothing a body names before it lowers: storage and connections take
-    // their identity where the member walk builds them, a type or a class is
-    // interned where it is declared or used, and the rest belongs to another
-    // scope or brings no structure of its own.
-    case SymbolKind::Variable:
-    case SymbolKind::Net:
+    // Nothing a body names before it lowers: a connection takes its identity
+    // where the member walk builds it, a type is interned where it is declared
+    // or used, and the rest belongs to another scope or brings no structure of
+    // its own.
     case SymbolKind::ContinuousAssign:
     case SymbolKind::NetAlias:
     case SymbolKind::Sequence:
@@ -308,7 +307,6 @@ void UnitLowerer::DeclareMemberIdentities(
     case SymbolKind::UnpackedStructType:
     case SymbolKind::PackedUnionType:
     case SymbolKind::UnpackedUnionType:
-    case SymbolKind::ClassType:
     case SymbolKind::CovergroupType:
     case SymbolKind::VoidType:
     case SymbolKind::NullType:
@@ -326,7 +324,6 @@ void UnitLowerer::DeclareMemberIdentities(
     case SymbolKind::ForwardingTypedef:
     case SymbolKind::NetType:
     case SymbolKind::TypeParameter:
-    case SymbolKind::GenericClassDef:
     case SymbolKind::Parameter:
     case SymbolKind::Specparam:
     case SymbolKind::DefParam:
@@ -336,7 +333,6 @@ void UnitLowerer::DeclareMemberIdentities(
     case SymbolKind::Attribute:
     case SymbolKind::ConfigBlock:
     case SymbolKind::ElabSystemTask:
-    case SymbolKind::InterfacePort:
     case SymbolKind::MultiPort:
     case SymbolKind::ModportPort:
     case SymbolKind::ModportClocking:
@@ -385,18 +381,25 @@ void UnitLowerer::DeclareMemberIdentities(
 // still one of the construct's and is named as such.
 void UnitLowerer::DeclareConditionalGenerate(
     const slang::ast::GenerateBlockSymbol& block, ScopeDeclarations& decls,
-    ScopeFrameId frame) {
+    ScopePublicationRecord& published, ScopeFrameId frame) {
   if (!OpensItsConstruct(block)) return;
   const hir::GenerateId generate = decls.generates.Declare();
+  ScopePublicationRecord::Choice choice{.id = generate, .built = {}};
   std::uint32_t position = 0;
   for (const auto* arm : AlternativesOfConstruct(block)) {
     MapOwnedChildBinding(
         *arm, frame,
-        hir::GenerateChildRef{
-            .generate = generate, .block = NamedBlockOf(*arm, position)});
+        hir::OwnedChildStep{
+            .names =
+                hir::GenerateBlockRef{
+                    .generate = generate, .alternative = position},
+            .selects = {}});
     ++position;
-    if (!arm->isUninstantiated) DeclareStructuralIdentities(*arm);
+    if (arm->isUninstantiated) continue;
+    choice.built.push_back(arm);
+    DeclareStructuralIdentities(*arm, ScopeClassName(*arm, Specialization()));
   }
+  published.generates.emplace_back(std::move(choice));
 }
 
 // A loop generate elaborates each iteration into a block of its own
@@ -406,17 +409,21 @@ void UnitLowerer::DeclareConditionalGenerate(
 // and takes no id.
 void UnitLowerer::DeclareLoopGenerate(
     const slang::ast::GenerateBlockArraySymbol& array, ScopeDeclarations& decls,
-    ScopeFrameId frame) {
+    ScopePublicationRecord& published, ScopeFrameId frame) {
   if (array.entries.empty()) return;
   const hir::GenerateId generate = decls.generates.Declare();
+  published.generates.emplace_back(
+      ScopePublicationRecord::Loop{.id = generate, .loop = &array});
   std::uint32_t block = 0;
   for (const auto* entry : array.entries) {
     MapOwnedChildBinding(
         *entry, frame,
-        hir::GenerateChildRef{
-            .generate = generate, .block = hir::BlockAtIndex{block}});
+        hir::OwnedChildStep{
+            .names = hir::GenerateLoopRef{.generate = generate},
+            .selects = {block}});
     ++block;
-    DeclareStructuralIdentities(*entry);
+    DeclareStructuralIdentities(
+        *entry, ScopeClassName(*entry, Specialization()));
   }
 }
 
@@ -427,9 +434,14 @@ void UnitLowerer::DeclareLoopGenerate(
 // namespace is never instantiated, so its declarations name none and a call to
 // one observes no scope, whether it is made from inside the namespace or from
 // a unit that imported the name.
+//
+// Every other subroutine is one a caller enables on the scope (LRM 13.3, 23.6,
+// 25.7) or on the namespace (LRM 26.3), and so one the scope publishes, along
+// with what a `disable` of it ends (LRM 9.6.2) and what a name reaches through
+// it (LRM 23.9).
 void UnitLowerer::DeclareSubroutine(
     const slang::ast::SubroutineSymbol& sub, ScopeDeclarations& decls,
-    ScopeFrameId frame) {
+    ScopePublicationRecord& published, ScopeFrameId frame) {
   if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
     if (unit_.role != hir::UnitRole::kNamespace) {
       MapForeignImportScope(sub, frame);
@@ -438,7 +450,13 @@ void UnitLowerer::DeclareSubroutine(
   }
   const hir::StructuralSubroutineId id = decls.structural_subroutines.Declare();
   MapSubroutineBinding(sub, frame, id);
-  DeclareProceduralStatics(sub, sub, hir::ProceduralBodyRef{id}, frame);
+  published.callables.emplace_back(
+      ScopePublicationRecord::Subroutine{.symbol = &sub, .id = id});
+  std::vector<std::string> path{std::string{sub.name}};
+  published.disable_targets.push_back(
+      ScopePublicationRecord::DisableTarget{.symbol = &sub, .path = path});
+  DeclareProceduralStatics(
+      sub, sub, hir::ProceduralBodyRef{id}, frame, published, std::move(path));
 }
 
 // A name a view defines and offers only for reading stands for an expression
@@ -448,14 +466,30 @@ void UnitLowerer::DeclareSubroutine(
 // storage -- an item the view wrote no expression for is the interface's own,
 // and every direction but `input` bounds the expression to an lvalue -- and
 // storage is reached rather than asked for.
+//
+// What a view publishes is only the names it defines: an item written as a
+// plain identifier is the interface's own item serving twice (LRM 25.5.4),
+// already published as a member.
 void UnitLowerer::DeclareModportEvaluators(
-    const slang::ast::ModportSymbol& modport, ScopeDeclarations& decls) {
+    const slang::ast::ModportSymbol& modport, ScopeDeclarations& decls,
+    ScopePublicationRecord& published) {
+  ScopePublicationRecord::View view{.modport = &modport, .names = {}};
   for (const auto& item : modport.members()) {
     const auto* port = item.as_if<slang::ast::ModportPortSymbol>();
     if (port == nullptr || !ViewDefinesTheName(*port)) continue;
-    if (port->direction != slang::ast::ArgumentDirection::In) continue;
-    MapEvaluator(*port, decls.structural_subroutines.Declare());
+    if (port->direction != slang::ast::ArgumentDirection::In) {
+      view.names.emplace_back(ScopePublicationRecord::ViewPlace{.port = port});
+      continue;
+    }
+    const hir::StructuralSubroutineId id =
+        decls.structural_subroutines.Declare();
+    MapEvaluator(*port, id);
+    view.names.emplace_back(ScopePublicationRecord::ViewComputed{.port = port});
+    published.callables.emplace_back(
+        ScopePublicationRecord::ViewRead{
+            .modport = &modport, .port = port, .id = id});
   }
+  published.views.push_back(std::move(view));
 }
 
 // An assertion whose enabling condition is 1 is not a procedure the design
@@ -463,7 +497,7 @@ void UnitLowerer::DeclareModportEvaluators(
 // process identity and nothing reaches into it by a hierarchical name.
 void UnitLowerer::DeclareProcess(
     const slang::ast::ProceduralBlockSymbol& proc, ScopeDeclarations& decls,
-    ScopeFrameId frame) {
+    ScopePublicationRecord& published, ScopeFrameId frame) {
   if (!Contains(proc)) return;
   if (StaticConcurrentAssertionOf(proc).assertion != nullptr) return;
   const hir::ProcessId id = decls.processes.Declare();
@@ -471,20 +505,39 @@ void UnitLowerer::DeclareProcess(
   // The frontend hoists a process's outermost blocks into this scope's member
   // list -- its body, or where the body opens no scope of its own, each block
   // written directly inside it -- so the process is the only place that says
-  // which of those blocks are its own.
+  // which of those blocks are its own. A process is unnamed, so each of them
+  // heads its own path.
   for (const auto* block : proc.getBlocks()) {
-    DeclareProceduralStatics(*block, proc, hir::ProceduralBodyRef{id}, frame);
+    std::optional<std::vector<std::string>> path;
+    if (!block->name.empty()) {
+      path.emplace(1, std::string{block->name});
+      published.disable_targets.push_back(
+          ScopePublicationRecord::DisableTarget{
+              .symbol = block, .path = *path});
+    }
+    DeclareProceduralStatics(
+        *block, proc, hir::ProceduralBodyRef{id}, frame, published, path);
   }
 }
 
 void UnitLowerer::DeclareProceduralStatics(
     const slang::ast::Scope& block, const slang::ast::Symbol& body_symbol,
-    hir::ProceduralBodyRef body, ScopeFrameId frame) {
+    hir::ProceduralBodyRef body, ScopeFrameId frame,
+    ScopePublicationRecord& published,
+    const std::optional<std::vector<std::string>>& within) {
   for (const auto& member : block.members()) {
     if (member.kind == slang::ast::SymbolKind::StatementBlock) {
+      const auto& nested = member.as<slang::ast::StatementBlockSymbol>();
+      std::optional<std::vector<std::string>> path;
+      if (within.has_value() && !nested.name.empty()) {
+        path = *within;
+        path->emplace_back(nested.name);
+        published.disable_targets.push_back(
+            ScopePublicationRecord::DisableTarget{
+                .symbol = &nested, .path = *path});
+      }
       DeclareProceduralStatics(
-          member.as<slang::ast::StatementBlockSymbol>(), body_symbol, body,
-          frame);
+          nested, body_symbol, body, frame, published, path);
       continue;
     }
     // A static-lifetime variable is storage of the object the body runs on
@@ -507,6 +560,39 @@ void UnitLowerer::DeclareProceduralStatics(
       throw InternalError(
           "UnitLowerer::DeclareProceduralStatics: procedural static already "
           "mapped");
+    }
+    if (var != nullptr && within.has_value()) {
+      published.members.emplace_back(
+          ScopePublicationRecord::LocalStatic{
+              .symbol = var, .body = body, .var = id, .within = *within});
+    }
+  }
+}
+
+void UnitLowerer::DeclareClassStatics(
+    const slang::ast::Symbol& declared, ScopePublicationRecord& published) {
+  const auto of_class = [&](const slang::ast::ClassType& cls) {
+    for (const auto& member : cls.members()) {
+      const auto* property = member.as_if<slang::ast::ClassPropertySymbol>();
+      if (property != nullptr &&
+          property->lifetime == slang::ast::VariableLifetime::Static) {
+        published.members.emplace_back(
+            ScopePublicationRecord::ClassStatic{
+                .symbol = property, .owner = &cls});
+        continue;
+      }
+      DeclareClassStatics(member, published);
+    }
+  };
+  // A parameterized class is one class per specialization the design uses
+  // (LRM 8.25).
+  if (const auto* cls = declared.as_if<slang::ast::ClassType>()) {
+    of_class(*cls);
+  } else if (
+      const auto* generic =
+          declared.as_if<slang::ast::GenericClassDefSymbol>()) {
+    for (const auto& spec : generic->specializations()) {
+      of_class(spec.getCanonicalType().as<slang::ast::ClassType>());
     }
   }
 }
@@ -558,21 +644,6 @@ auto UnitLowerer::LookupScopeFrame(const slang::ast::Scope& scope) const
   return it->second;
 }
 
-auto UnitLowerer::DeclaringStructuralScope(
-    const slang::ast::ClassType& cls) const -> const slang::ast::Scope& {
-  // A class nested in another class adds no level: SystemVerilog gives the
-  // inner one no access to the outer object, so what its bodies reach is the
-  // enclosing structural scope's instance and nothing between. Walking to the
-  // nearest scope the declaration pass assigned a frame is what states that.
-  for (const slang::ast::Scope* level = cls.getParentScope(); level != nullptr;
-       level = level->asSymbol().getParentScope()) {
-    if (scope_frames_.contains(level)) return *level;
-  }
-  throw InternalError(
-      "UnitLowerer::DeclaringStructuralScope: a class of this unit is declared "
-      "inside a structural scope of it");
-}
-
 auto UnitLowerer::DeclaringScopeChain(const slang::ast::Scope& scope) const
     -> std::vector<ScopeFrameId> {
   // Walking outward and reversing, rather than descending, because the walk
@@ -591,29 +662,42 @@ auto UnitLowerer::DeclaringScopeChain(const slang::ast::Scope& scope) const
   return chain;
 }
 
+auto UnitLowerer::DeclaredByAnotherDesignElement(
+    const slang::ast::ClassType& cls) const -> bool {
+  return BelongsToAnInstance(cls) &&
+         &DeclaringCompilationUnit(cls) != &scope_->asSymbol();
+}
+
+auto UnitLowerer::TakesDeclaringInstance(
+    const slang::ast::ClassType& cls, diag::SourceSpan span)
+    -> diag::Result<bool> {
+  auto ref = ResolveClassRef(cls, span);
+  if (!ref) return std::unexpected(std::move(ref.error()));
+  return std::visit(
+      Overloaded{
+          [&](const hir::LocalClassRef&) {
+            const auto own = own_class_signatures_.find(&cls);
+            if (own == own_class_signatures_.end()) {
+              throw InternalError(
+                  "UnitLowerer::TakesDeclaringInstance: a class this unit "
+                  "declares states what it takes once it is interned");
+            }
+            return own->second.takes_declaring_instance;
+          },
+          [&](const hir::ExternalClassRef& ext) {
+            return ExternalClassOf(ext.unit_name, ext.class_name)
+                .takes_declaring_instance;
+          }},
+      *ref);
+}
+
 auto UnitLowerer::DeclaringScopeHopsFrom(
     const slang::ast::ClassType& cls, const WalkFrame& frame,
-    diag::SourceSpan span) -> diag::Result<std::optional<hir::StructuralHops>> {
-  // A namespace unit -- a package or the `$unit` scope (LRM 26.2, 3.12.1) --
-  // replicates nothing, so an object of a class it declares belongs to no
-  // instance and construction supplies none. Which unit declares the class
-  // decides this, not which unit is being lowered: a package class reached
-  // from a module needs no instance either.
-  const slang::ast::Symbol& decl_unit = DeclaringCompilationUnit(cls);
-  if (!IsDesignElement(decl_unit)) {
-    return std::nullopt;
-  }
-  if (&decl_unit != &scope_->asSymbol()) {
-    // A module or interface declares the class, so what the class keeps for
-    // itself is replicated with that element's instance -- and what crosses a
-    // unit boundary is that unit's signature, which carries no instance of a
-    // scope inside it. Every use of this answer needs that instance, so none
-    // of them names itself here.
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedClassFeature,
-        "a class another compilation unit declares inside one of its scopes "
-        "keeps what it holds for itself on that scope's instance, which no "
-        "signature carries; reaching it is not yet supported");
+    diag::SourceSpan span) const -> diag::Result<hir::StructuralHops> {
+  if (!BelongsToAnInstance(cls) || DeclaredByAnotherDesignElement(cls)) {
+    throw InternalError(
+        "UnitLowerer::DeclaringScopeHopsFrom: only a class this unit declares "
+        "in one of its structural scopes is counted out of this unit's scopes");
   }
   const slang::ast::Scope& declaring = DeclaringStructuralScope(cls);
   const auto hops = frame.HopsTo(LookupScopeFrame(declaring));
@@ -636,39 +720,161 @@ auto UnitLowerer::TakeDeclaredClasses(const slang::ast::Scope& scope)
 
 void UnitLowerer::MapStructuralDataObjectBinding(
     const slang::ast::ValueSymbol& var, ScopeFrameId home_frame,
-    hir::StructuralDataObjectId local, hir::TypeId type) {
+    hir::StructuralDataObjectId local) {
   const auto [_, inserted] = structural_data_object_bindings_.emplace(
-      &var, StructuralDataObjectBinding{
-                .home_frame = home_frame, .var_id = local, .type = type});
+      &var,
+      StructuralDataObjectBinding{.home_frame = home_frame, .var_id = local});
   if (!inserted) {
     throw InternalError(
         "UnitLowerer::MapStructuralDataObjectBinding: structural data object "
         "already mapped");
   }
-  // A declaration this unit published takes the position its signature gave it,
-  // so the object the unit builds and the object it promised are one shape.
-  if (const auto it = published_member_ids_.find(&var);
-      it != published_member_ids_.end()) {
-    published_members_[it->second.value] = local;
-  }
 }
 
 void UnitLowerer::MapInterfacePortBinding(
     const slang::ast::InterfacePortSymbol& port, ScopeFrameId home_frame,
-    hir::InterfacePortId local, hir::ExternalUnitObjectId object) {
+    hir::InterfacePortId local, hir::ExternalScopeClassId scope_class) {
   const auto [_, inserted] = interface_port_bindings_.emplace(
-      &port, InterfacePortBinding{
-                 .home_frame = home_frame, .port = local, .object = object});
+      &port,
+      InterfacePortBinding{
+          .home_frame = home_frame, .port = local, .scope_class = scope_class});
   if (!inserted) {
     throw InternalError(
         "UnitLowerer::MapInterfacePortBinding: interface port already mapped");
   }
-  // A port this unit published takes the position its signature gave it, so the
-  // object the unit builds and the object it promised are one shape.
-  if (const auto it = published_member_ids_.find(&port);
-      it != published_member_ids_.end()) {
-    published_members_[it->second.value] = local;
+}
+
+auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
+    -> hir::ScopePublication {
+  // A namespace roots no object, so no class lays out what it publishes;
+  // another unit reaches its declarations by name (LRM 26.3).
+  if (unit_.role == hir::UnitRole::kNamespace) return {};
+  const ScopePublicationRecord& published = PublicationOf(scope);
+  const auto unbound = [] [[noreturn]] (std::string_view what) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::TakePublication: {} this unit published was given no "
+            "identity by the time its scope finished lowering",
+            what));
+  };
+
+  const auto stated = scope_classes_.find(&scope);
+  if (stated == scope_classes_.end()) {
+    throw InternalError(
+        "UnitLowerer::TakePublication: the class a scope published is stated "
+        "while the unit declares, and handed to its scope once");
   }
+  hir::ScopePublication publication{
+      .signature = std::move(stated->second),
+      .aliases = {},
+      .members =
+          base::Translation<hir::PublishedMemberId, hir::PublishedDecl>{
+              published.members.size()},
+      .generates =
+          base::Translation<hir::PublishedGenerateId, hir::GenerateId>{
+              published.generates.size()},
+      .disable_targets =
+          base::Translation<
+              hir::PublishedDisableTargetId, hir::ProceduralScopeId>{
+              published.disable_targets.size()},
+      .callables = base::Translation<
+          hir::PublishedCallableId, hir::StructuralSubroutineId>{
+          published.callables.size()}};
+  scope_classes_.erase(stated);
+  for (const ScopePublicationRecord::Member& member : published.members) {
+    publication.members.Append(
+        std::visit(
+            Overloaded{
+                [](const ScopePublicationRecord::DataObject& data)
+                    -> hir::PublishedDecl { return data.id; },
+                [](const ScopePublicationRecord::LocalStatic& local)
+                    -> hir::PublishedDecl {
+                  return hir::PublishedStatic{
+                      .body = local.body, .var = local.var};
+                },
+                [&](const ScopePublicationRecord::ClassStatic& property)
+                    -> hir::PublishedDecl {
+                  const auto owner = class_cache_.find(property.owner);
+                  const auto* local =
+                      owner == class_cache_.end()
+                          ? nullptr
+                          : std::get_if<hir::LocalClassRef>(&owner->second);
+                  if (local == nullptr) unbound("a class's static property");
+                  return hir::LocalStaticPropertyTarget{
+                      .owner = local->class_id,
+                      .prop = LookupClassPropertyStaticId(*property.symbol)};
+                },
+                [](const ScopePublicationRecord::Instance& instance)
+                    -> hir::PublishedDecl { return instance.id; },
+                [&](const ScopePublicationRecord::InterfacePort& port)
+                    -> hir::PublishedDecl {
+                  const auto binding = LookupInterfacePortBinding(*port.symbol);
+                  if (!binding.has_value()) unbound("an interface port");
+                  return binding->port;
+                }},
+            member));
+  }
+  for (const ScopePublicationRecord::Construct& construct :
+       published.generates) {
+    publication.generates.Append(
+        std::visit([](const auto& built) { return built.id; }, construct));
+  }
+  for (const ScopePublicationRecord::DisableTarget& target :
+       published.disable_targets) {
+    publication.disable_targets.Append(LookupProceduralScope(*target.symbol));
+  }
+  for (const ScopePublicationRecord::Callable& callable : published.callables) {
+    publication.callables.Append(
+        std::visit([](const auto& entered) { return entered.id; }, callable));
+  }
+  return publication;
+}
+
+auto UnitLowerer::PublicationOf(const slang::ast::Scope& scope) const
+    -> const ScopePublicationRecord& {
+  const auto it = scope_publications_.find(&scope);
+  if (it == scope_publications_.end()) {
+    throw InternalError(
+        "UnitLowerer::PublicationOf: the walk minting this unit's identities "
+        "records what every scope it reaches publishes");
+  }
+  return it->second;
+}
+
+auto ScopePublicationRecord::MemberOf(const slang::ast::Symbol& declared) const
+    -> std::optional<hir::PublishedMemberId> {
+  const auto stands_for = [&](const Member& member) {
+    return std::visit(
+        [&](const auto& entry) -> bool {
+          const slang::ast::Symbol* symbol = entry.symbol;
+          return symbol == &declared;
+        },
+        member);
+  };
+  const auto it = std::ranges::find_if(members, stands_for);
+  if (it == members.end()) return std::nullopt;
+  return hir::PublishedMemberId{
+      static_cast<std::uint32_t>(std::distance(members.begin(), it))};
+}
+
+auto ScopePublicationRecord::CallableOf(const slang::ast::Symbol& holder) const
+    -> std::optional<hir::PublishedCallableId> {
+  const auto holds = [&](const Callable& callable) {
+    return std::visit(
+        Overloaded{
+            [&](const Subroutine& sub) -> bool {
+              return sub.symbol == &holder;
+            },
+            [&](const PortDefault& port) -> bool {
+              return port.port == &holder;
+            },
+            [&](const ViewRead& read) -> bool { return read.port == &holder; }},
+        callable);
+  };
+  const auto it = std::ranges::find_if(callables, holds);
+  if (it == callables.end()) return std::nullopt;
+  return hir::PublishedCallableId{
+      static_cast<std::uint32_t>(std::distance(callables.begin(), it))};
 }
 
 auto UnitLowerer::LookupInterfacePortBinding(const slang::ast::Symbol& port)
@@ -678,6 +884,17 @@ auto UnitLowerer::LookupInterfacePortBinding(const slang::ast::Symbol& port)
     return std::nullopt;
   }
   return it->second;
+}
+
+auto UnitLowerer::ReservedDataObject(const slang::ast::ValueSymbol& declared)
+    const -> hir::StructuralDataObjectId {
+  const auto binding = LookupStructuralDataObjectBinding(declared);
+  if (!binding.has_value()) {
+    throw InternalError(
+        "UnitLowerer::ReservedDataObject: the declaration pass reserves an "
+        "identity for every variable and net a scope declares");
+  }
+  return binding->var_id;
 }
 
 auto UnitLowerer::LookupStructuralDataObjectBinding(
@@ -801,9 +1018,10 @@ auto UnitLowerer::LookupPatternVar(const slang::ast::PatternVarSymbol& sym)
 
 void UnitLowerer::MapOwnedChildBinding(
     const slang::ast::Symbol& child, ScopeFrameId home_frame,
-    hir::OwnedChildRef child_ref) {
+    hir::OwnedChildStep step) {
   const auto [_, inserted] = owned_child_bindings_.emplace(
-      &child, OwnedChildBinding{.home_frame = home_frame, .child = child_ref});
+      &child,
+      OwnedChildBinding{.home_frame = home_frame, .step = std::move(step)});
   if (!inserted) {
     throw InternalError(
         "UnitLowerer::MapOwnedChildBinding: owned child already mapped");
@@ -817,6 +1035,41 @@ auto UnitLowerer::LookupOwnedChildBinding(const slang::ast::Symbol& child) const
     return std::nullopt;
   }
   return it->second;
+}
+
+auto UnitLowerer::GenerateIdOf(const slang::ast::Symbol& construct) const
+    -> hir::GenerateId {
+  const auto it = owned_child_bindings_.find(&construct);
+  if (it == owned_child_bindings_.end()) {
+    throw InternalError(
+        "UnitLowerer::GenerateIdOf: a generate construct was given no "
+        "identity by the declaration pass");
+  }
+  return std::visit(
+      Overloaded{
+          [](hir::InstanceMemberId) -> hir::GenerateId {
+            throw InternalError(
+                "UnitLowerer::GenerateIdOf: a generate construct was given an "
+                "instance's identity");
+          },
+          [](hir::GenerateLoopRef loop) { return loop.generate; },
+          [](hir::GenerateBlockRef block) { return block.generate; }},
+      it->second.step.names);
+}
+
+auto UnitLowerer::InstanceMemberIdOf(const slang::ast::Symbol& instance) const
+    -> hir::InstanceMemberId {
+  const auto it = owned_child_bindings_.find(&instance);
+  const auto* id =
+      it == owned_child_bindings_.end()
+          ? nullptr
+          : std::get_if<hir::InstanceMemberId>(&it->second.step.names);
+  if (id == nullptr) {
+    throw InternalError(
+        "UnitLowerer::InstanceMemberIdOf: an instance was given no instance "
+        "identity by the declaration pass");
+  }
+  return *id;
 }
 
 void UnitLowerer::MapProcessBinding(

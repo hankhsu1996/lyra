@@ -7,8 +7,9 @@ parallel compilation that `north_star.md` requires. This doc owns the **emit-sid
 the compilation-unit boundary and of cross-unit reference resolution: what one unit's emitted
 artifact may depend on, how cross-unit access is expressed without breaking unit independence, and
 what role the runtime SDK plays as the link-time-resolution substrate. It is the missing layer
-between the principle in `reference_resolution.md` (a cross-unit reference resolves at construction,
-not at the referrer's compile time) and the backend code that must obey it.
+between the principle in `reference_resolution.md` (a cross-unit reference is checked against what
+the target published where the referrer compiles, and executes once at construction) and the backend
+code that must obey it.
 
 Both backends exist; the LLVM one is where the design is heading. The rules here are stated for any
 backend. Where a backend takes a transitional shortcut, that is noted as non-conforming code, not as
@@ -29,12 +30,11 @@ many of them it works on at a time.
   artifact that aggregates many units.
 - The set of inputs one unit's emission may depend on: its own MIR, the signatures of the units it
   references, and the runtime SDK.
-- The contract that a reference reaching past another unit's signature is realized at construction
-  through the SDK / object graph, that a reference to a name on a signature the referrer consumes is
-  a direct named access resolved where the referrer compiles, and that either way the referrer's
-  emitted artifact never embeds another unit's storage layout, except that of a class that unit
-  published, whose promise states its storage whole so a referrer reaching or extending it lays it
-  out at compile time, and never names a unit it does not reference.
+- The contract that a reference into another unit is a typed access against the class that unit
+  published, resolved where the referrer compiles and executed once at construction, and that the
+  referrer's emitted artifact never embeds what lies outside that published class -- what lowering
+  adds to the unit's realization, or the object's size -- and never names a unit it does not
+  reference.
 - The rule that what a change re-emits follows the signatures a referrer consumes, not the files it
   reads.
 - The role of the runtime SDK as the substrate that stands in for link-time symbol resolution and
@@ -88,57 +88,48 @@ many of them it works on at a time.
    commits as the reference's final access point; a route of parent edges within the instance has
    nothing to resolve and is walked where it is used. Either way the simulation-time read and change
    observation perform no per-access lookup (`reference_resolution.md` inv 3, 5).
-5. **Storage and fill by whether a segment is declared to the referrer.** A route is a sequence of
-   segments; each segment's realization is determined by whether the referrer has a declaration to
-   compile against for that step:
-   - **Declared segment** -- the target is a class the emitting artifact owns, or a member on a
-     signature the artifact consumes. Realization is typed navigation: through a stable MIR member
-     identity when the artifact owns both classes, and through the member's name resolved against
-     the consumed signature at the referrer's compile time when it does not. Either way the emitted
-     code reaches the next pointer / class member via a typed access expression; no run-time lookup
-     and no SDK call.
-   - **Opaque segment** -- the segment reaches past a unit's signature, where the referrer has no
-     declaration. Realization is one runtime-SDK by-name lookup, executed once at Resolve. The
-     opaque segment carries the canonical name and any indices it needs; it never names the other
-     unit's internal members, fields, or child types.
+5. **Every step of a route is a typed access.** A route is an anchor, steps and a leaf, and each is
+   compiled against a declaration the referrer has: a class the emitting artifact owns, or a class
+   another unit published. Realization is typed navigation -- through a stable MIR member identity
+   when the artifact owns both classes, and through the member's name resolved against the published
+   class at the referrer's compile time when it does not. The emitted code reaches the next pointer
+   or member via a typed access expression, steps into a generate block through the construct's
+   published entry viewed as the block's published class, and calls a published subroutine directly.
+   No step carries a string and none is an SDK lookup by name; the one SDK call a route may make is
+   the anchor of an upward name, which asks for the nearest enclosing instance of a class and
+   downcasts statically to it. The sealed endpoint is one access point however many steps the route
+   contained.
 
-   A single route may alternate; an artifact emits typed code for the declared segments and SDK
-   calls for the opaque ones, composed in route order. The sealed endpoint is one access point
-   regardless of how many segments of each kind the route contained.
-
-6. **A unit exposes what lies past its signature through the SDK.** So that any artifact's opaque
-   segments can reach a declaration a unit did not publish, each unit answers by name what is
-   hierarchically reachable in it, each in its own namespace. Its signals and its owned children are
-   registered into the object graph node during construction, and its subroutines and the classes it
-   declares are in the constant its class's definition holds. The base SDK answers a by-name query
-   from those. The unit never inspects who asks, and the dispatch is one generic scan, not a
-   per-unit synthesized branch. What such a query answers with follows from what was named: a cell,
-   a scope, or an entry to call. One thing a node answers for is not named at all: a scope carries
-   exactly one activity a `disable` can end, so reaching the node is the whole of asking for it and
-   no namespace arises. The referrer's emission consumes those registrations through one route
-   execution and stores the sealed endpoint; it never embeds another unit's layout. A name on the
-   signature needs none of this, because the referrer already compiles against it.
+6. **A scope is two classes: the published part and the realization extending it.** The published
+   part holds the published members first, in the order the publication states, and one non-virtual
+   method per subroutine that forwards to its body; the realization adds what lowering adds -- a
+   slot per route, process state, the homes of closures. A referrer compiles against the published
+   part alone, reads a member at its offset there and calls a subroutine directly, and never needs
+   the object's size, because the element's own entry makes every object of it. Nothing about a
+   scope is answered by name at run time: a scope keeps its hierarchy segment for `%m` and a scope
+   class keeps its DPI-C export table, and neither is a lookup a route reaches.
 7. **A change re-emits exactly the referrers whose consumed signature changed.** A change confined
-   to a unit's bodies changes no signature and re-emits no referrer. A change to a signature
-   re-emits every unit that consumes it, which is the dependency being real rather than the
-   mechanism being coarse. A referrer that only reaches past a signature consumes nothing and is
-   re-emitted by no change to the unit it reaches -- the price of a reference to something never
-   published, paid as an elaboration failure instead of a compile error.
+   to a unit's bodies changes only its realization, so it changes no signature and re-emits no
+   referrer. A change to a declaration changes what the unit publishes and re-emits every unit that
+   consumes it, which is the dependency being real rather than the mechanism being coarse.
 
    **A referrer consumes a part of a signature, not the unit whole.** What a unit publishes is its
-   namespace and each class it promised, and a reference reads one of those; recording which one is
+   namespace and each class it published, and a reference reads one of those; recording which one is
    what keeps a change to a class nobody read from reaching anybody. Recording the unit instead
    would make every referrer of a package depend on every class in it, which is the mechanism being
    coarse rather than the dependency being real.
 
-8. **What a unit published of its own object is reached by asking it, never by locating storage.** A
-   published class is not that object. Its promise states its storage whole, and a referrer lays it
-   out at compile time. A member the object offers is reached through a behavior the promise states,
-   so a referrer counts no position and its artifact carries nothing about where the member sits;
-   the declaring unit answers with the member's storage and every later access names what came back.
-   A declaration a unit never published therefore cannot move one that it did, and neither can the
-   placement of one that it did. A backend realizes this rule with whatever its target provides for
-   dispatch; it never re-decides it.
+8. **A published member is placed by the publication, and nothing lowering adds can move it.**
+   Because the published part leads the object (invariant 6) and everything the realization adds
+   sits after it, a referrer and the declaring unit compute one offset from the same declarations. A
+   body edit therefore moves no published member, and a referrer's access to one costs what an
+   access to its own member costs, with nothing dispatched.
+
+   **Each block of a generate loop keeps its own published name; sharing lies beneath it.** Where
+   the blocks of one loop compile to one class -- decided only after every body lowered -- each
+   block's name is an alias of that class, and each named body an alias of the shared one. Data
+   needs no alias, since its offsets come from the publication. A referrer names the block it means
+   and is unaffected by whether that block's code was shared.
 
 9. **The design's own link-level unit is a unit, and invariant 2 binds it.** A design needs one
    artifact nothing in the source declares -- the one whose construct elaborates the design by
@@ -163,13 +154,13 @@ many of them it works on at a time.
 
 - `compilation_unit_model.md` defines the unit and its signature; this doc defines what a unit's
   _emitted artifact_ may depend on, which is exactly those signatures plus the SDK.
-- `reference_resolution.md` defines route segment classification and the sealing contract; this doc
-  defines how a backend realizes each segment kind without breaking unit independence.
+- `reference_resolution.md` defines a route's steps and the sealing contract; this doc defines how a
+  backend realizes each step without breaking unit independence.
 - `backend_contract.md` defines the per-node within-an-artifact realization rules: how a MIR node
   becomes target-language source. This doc draws the artifact boundary; `backend_contract.md`
   governs what happens inside.
 - `runtime_distribution.md` owns where the SDK/runtime lives; this doc owns the SDK's role as the
-  opaque-segment resolution substrate.
+  link-time-resolution substrate.
 - `runtime_model.md` places route execution in the constructor context and the read in the
   simulation context.
 
@@ -182,31 +173,33 @@ many of them it works on at a time.
   synthesized rather than lowered from source is not a licence: it is a referrer like any other, and
   a step that needs two units' contents at once is a link step or a runtime step wearing a
   compiler's clothes.
-- A referrer's artifact that names, includes, or casts to the type of a unit it does not reference
-  -- in particular, an opaque-segment realization naming the target unit's internal type, member, or
-  field. Naming a referenced unit's own published declaration is not this shape: that declaration is
-  the promise the referrer compiles against, and reaching it by name is what a declared dependency
-  is for.
-- Embedding another unit's storage offset in the referrer's own emitted output for anything but a
-  class that unit published. An opaque segment is by-name through the SDK; a declared segment uses a
-  stable member identity or a published name, not an offset.
-- A run-time by-name lookup emitted for a name the target unit published. The referrer already
-  consumes that signature, so the access is typed; the lookup buys no independence the declared
-  dependency has not already spent, and it replaces a compile-time check with an unchecked cast.
+- A referrer's artifact that names, includes, or casts to the type of a unit it does not reference,
+  or names what a referenced unit's realization adds beyond its published class. Naming a referenced
+  unit's own published declaration is not this shape: that declaration is what the referrer compiles
+  against, and reaching it by name is what a declared dependency is for.
+- A referrer's artifact that depends on another unit's object size or on any offset past its
+  published members. Those move with the unit's bodies, so depending on them would make a body edit
+  recompile every referrer.
+- A run-time by-name lookup emitted for any hierarchical name: a scope registering its declarations
+  under their names, a child searched for by name, a name table on a scope or a class, or a string
+  carried by a route. It replaces a compile-time check with an unchecked cast, surfaces a misspelt
+  name or a type that differs between instances at run time, and makes every instance pay a
+  registration per declaration. The access is typed against the published class instead.
+- A virtual method on a scope's published part, or dispatch through one, to reach a published
+  subroutine or member. The language dispatches no such call, and a referrer that knows the
+  published class has nothing to dispatch on.
 - A signature artifact that also carries the unit's bodies, so that editing a body re-emits the
   unit's referrers. The file boundary is not the dependency boundary.
 - A route mechanism dispatched on the frontend's lexical-form classification or on source order.
-  Mechanism follows whether the segment is declared to the referrer.
+  Every step is the same typed step whatever form named the target.
 - A reference shape that splits cross-unit and intra-unit references into separate IR species,
   separate install paths, separate vocabulary items. One reference, one route.
-- A design-global signal or path table that mirrors the object graph. Opaque segments resolve
-  through local object-graph navigation (the parent chain, an owned child); a per-object by-name
-  registration is local and permitted, a global flat table is not.
+- A design-global signal or path table that mirrors the object graph. Routes navigate the object
+  graph locally -- the parent chain, an owned child, a generate entry -- through typed steps.
 - A per-access cross-instance lookup on the simulation path; the hot path reads a sealed endpoint.
-- A second cross-instance access mechanism that bypasses the SDK and the sealed endpoint.
-- An IR vocabulary item modeling a particular SDK opaque-segment resolver shape (a named-method
-  family carrying bind state, a wrapper-typed member kind). The SDK chooses how an opaque segment
-  resolves; the IR vocabulary names only segments, route, and endpoint.
+- A second cross-instance access mechanism that bypasses the route and its sealed endpoint.
+- An IR vocabulary item modeling a particular SDK resolver shape (a named-method family carrying
+  bind state, a wrapper-typed member kind). The IR vocabulary names only steps, route, and endpoint.
 - A binding installed in the constructor block. Routes execute in Resolve and seal in Seal; ctor
   allocates the shell only.
 
@@ -221,7 +214,7 @@ Two packages, where `high` declares a class extending one of `low`'s and a subro
 flowchart TB
   subgraph LOW["unit low"]
     LO["low.opening<br/>names, cells, bodies"]
-    LT["low.Thing<br/>one promised class"]
+    LT["low.Thing<br/>one published class"]
     LU["low umbrella<br/>the name a referrer writes"]
     LC["low code<br/>every body"]
   end
@@ -259,56 +252,59 @@ brought.** `high`'s code reads `low.Thing` although `high.Derived` did too. The 
 point: what a unit depends on is stated in one place a reader can open, rather than being whatever
 the declarations happened to pull in behind them.
 
-**The graph cannot close.** The only arrow a declaration can draw to another unit is the one a class
-draws to the class it rests on (invariant 1's second paragraph and D3 of
-`../decisions/only-a-base-links-two-signatures.md`), so the shape of the cross-unit edges is the
-shape of the class-extends graph -- which no program can make circular, since a class may not be its
-own ancestor. An umbrella is read by code files alone, so it starts arrows and never receives one
-from another unit.
+**The graph cannot close.** A declaration draws an arrow to another unit in two ways. A class draws
+one to the class it rests on (invariant 1's second paragraph), so those edges have the shape of the
+class-extends graph -- which no program can make circular, since a class may not be its own
+ancestor. A unit's declarations that name another design element's published classes draw an arrow
+to what declares those classes without defining them, and that reads nothing, so it ends every path
+it is on. Two units whose names reach each other -- one calling the other's task while the other
+names the first upward -- therefore read each other's declarations without a cycle. An umbrella is
+read by code files alone, so it starts arrows and never receives one from another unit.
+
+_Current implementation, C++ backend:_ each unit writes a `<Unit>.forward.hpp` holding every class
+other units may name, declared and not defined, plus a `using` line per further name a generate
+block goes by; a unit's opening header includes the forward headers of the units whose classes it
+names. The LLVM backend states each further name of a shared block's body as a symbol alias.
 
 **Same-unit sibling reference.** `always_comb from_b = b.bx;` inside generate block `a` of `Top`.
-The route has two segments: `a -> Top` (typed; the parent edge whose target class lives in Top's
+The route has two steps: `a -> Top` (typed; the parent edge whose target class lives in Top's
 artifact) and `Top -> b -> bx` (typed; sibling member access plus variable access, both in Top's
 artifact). Top's emission produces a typed pointer chain; no SDK call. Resolve produces the
 candidate endpoint; Seal commits the variable's cell.
 
-**Cross-unit downward reference, split by what the child published.** `always_comb r = c.p;` where
-`p` is one of `c`'s ports, and `always_comb r = c.x;` where `x` is one of its internal variables.
-Both routes open with the same declared segment `parent -> c`, since the parent's artifact owns the
-`c` member's pointer type. The second step differs: `c -> p` is declared, so the parent emits a
-typed access against `c`'s signature and a renamed port fails where the parent compiles; `c -> x` is
-opaque, so the parent emits one SDK by-name lookup the SDK answers from `c`'s registered signals,
-and a renamed `x` fails at elaboration instead.
+**Cross-unit downward reference.** `always_comb r = c.p;` where `p` is one of `c`'s ports, and
+`always_comb r = c.x;` where `x` is one of its internal variables. Both routes open with the same
+step `parent -> c`, since the parent's artifact owns the `c` member's pointer type, and both end at
+a member of `c`'s published class, so the parent emits a typed access at that member's offset in the
+published part and a renamed `p` or `x` fails where the parent compiles. A call `c.tick()` is a
+direct call to the published part's forwarding method for `tick`.
 
-**What each backend borrows to realize a declared cross-unit segment.** A referrer needs two things
-to reach a published member: which of the promise's behaviors answers with it, and the binding of
-that behavior to the declaring unit's implementation. The first is the position the signature
-published it at, which both sides count out of the same signature; the second is the dispatch the
-target provides. A backend emitting to a language with its own name resolution borrows both from
-that language's compiler, which is why including a declaration-only header is sufficient there. A
-backend emitting machine code reaches the same behavior through the position it occupies in the
-promise's dispatch table. Neither reaches the object's storage, which is what invariant 8 states.
+**What each backend borrows to realize a cross-unit step.** A referrer needs the published part's
+layout and the symbol of each forwarding method. A backend emitting to a language with its own name
+resolution borrows both from that language's compiler, which is why including a declaration-only
+header is sufficient there. A backend emitting machine code computes the same offsets from the same
+publication and calls the same symbols. Neither reaches past the published members, which is what
+invariant 8 states.
 
 **Cross-unit upward reference.** `always_comb x = Top.g;`. The referrer does not instantiate `Top`.
-The entire route is opaque: the SDK climbs the runtime tree by canonical instance name to the scope
-identified by the head, then performs a by-name signal lookup. The referrer's artifact carries zero
-knowledge of Top's body; the route's segments arrive as ordinary MIR primitives in the emitted
-resolve code, not as type payload -- `backend_contract.md` keeps render mechanical.
+The front end's search lands on `Top`'s class; the route's anchor asks the runtime for the nearest
+enclosing instance of that class and downcasts statically to it, and `g` is a member of `Top`'s
+published class. The referrer's artifact carries no knowledge of Top's body; the route arrives as
+ordinary MIR primitives in the emitted resolve code, not as type payload -- `backend_contract.md`
+keeps render mechanical.
 
-**Mixed route.** `top.gen.child.x` from outside `top`: the first two segments (`top -> gen`,
-`gen -> child`) are typed because `top`, `gen`, and `gen.child` (a member of `gen`'s class) all live
-in `top`'s artifact. The final segment (`child -> x`) is opaque because `x` lives in `child`'s unit.
-The route alternates typed and opaque segments cleanly; the sealed endpoint is one access point
-regardless.
+**A route through generate blocks.** `top.gen[2].child.x` from outside `top`: `top -> gen[2]` reads
+the loop construct's published entry at the block's position and views it as the block's published
+class, `gen[2] -> child` is the published member holding the child, and `child -> x` is a member of
+`child`'s published class. Every step is typed; the sealed endpoint is one access point.
 
 **Cross-unit package call.** `r = pkg::add_base(23);`, where `pkg` is a package the caller neither
 instantiates nor owns. Unlike the references above, this reaches no object and no per-instance cell:
 a package has no instance layout, only namespace-level declarations, so its callable is an ordinary
 link-time symbol. The caller's artifact renders the direct qualified call and includes the package's
-own emitted header; the linker binds the symbol. There is no runtime object-graph traversal and so
-no SDK step -- the SDK exists to resolve a reference into another unit's per-instance layout, which
-a package does not have. This is the one cross-unit reference realized by a plain linked name rather
-than the SDK, and it is sound precisely because there is no instance identity to resolve.
+own emitted header; the linker binds the symbol. There is no route and no runtime object-graph
+traversal, because a package has no instance identity to reach; a call to a module's published
+subroutine differs only in that a route first reaches the object it runs on.
 
 **Cross-unit package variable.** `x = pkg::cnt;` or `pkg::cnt = 7;` (LRM 26.2) is the storage
 counterpart of the call. A package variable is one program-global cell, not a per-instance member,
@@ -327,5 +323,5 @@ is therefore those calls executed, which makes a cyclic dependency terminate on 
 than fail and leaves nothing reading across units to decide it.
 
 Any artifact that aggregates multiple units' bodies into one is forbidden, however a build step
-packages the emitted sources: the per-unit artifact boundary and the segment-classification rules
-above are the contract every backend must satisfy.
+packages the emitted sources: the per-unit artifact boundary and the typed-step rules above are the
+contract every backend must satisfy.

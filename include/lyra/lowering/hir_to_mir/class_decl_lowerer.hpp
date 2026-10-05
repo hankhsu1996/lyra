@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_decl.hpp"
@@ -58,11 +60,14 @@ class ClassDeclLowerer {
   // method's dispatch role -- without waiting for any sibling class's body to
   // lower.
   // `declaring_shape` is the not-yet-published shape of the scope that declares
-  // the class, which takes the instance-side cells this class places -- the
-  // instance it belongs to, and everything the class keeps for itself once that
+  // the class, which takes everything the class keeps for itself once that
   // scope replicates it. Null where no scope declares the class, which is a
   // namespace unit's, since nothing replicates it and it keeps its own cells.
-  auto DeclareShape(ClassShape* declaring_shape) -> diag::Result<void>;
+  // `published_statics` are the cells of the static properties that scope
+  // published, already placed where its publication put them.
+  auto DeclareShape(
+      ClassShape* declaring_shape,
+      std::span<const PlacedProperty> published_statics) -> diag::Result<void>;
 
   // Composes the class from the already-published shape plus every body,
   // and commits it to the compilation unit. Any cross-class query the

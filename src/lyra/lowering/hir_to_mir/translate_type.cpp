@@ -293,13 +293,6 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
                 .pointee = MakeExternalClassPointee(
                     std::get<hir::ExternalClassRef>(src.class_ref))}};
           },
-          [&](const hir::OpaqueObjectHandleType&) -> mir::Type {
-            // Still a managed reference -- the collector traces it like any
-            // other handle -- over an object this unit carries no identity for.
-            return mir::Type{mir::ManagedRefType{
-                .pointee =
-                    Unit().types.Intern(mir::Type{mir::OpaqueObjectType{}})}};
-          },
           [&](const hir::ImportedClassHandleType& src) -> mir::Type {
             // A handle to an imported runtime-library class is the same managed
             // reference, its pointee the runtime-provided object type.
@@ -307,7 +300,7 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
                 .pointee = ImportedRuntimeObjectType(src.klass)}};
           },
           [&](const hir::UnitObjectType& src) -> mir::Type {
-            return UnitObjectNamed(src.unit_name);
+            return UnitObjectNamed(src.unit_name, src.class_name);
           },
           // What a virtual interface holds is which instance it names, or none
           // (LRM 25.9): a host pointer compared by identity and null until
@@ -318,13 +311,6 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           // there, where the access names that unit.
           [](const hir::VirtualInterfaceType&) -> mir::Type {
             return mir::Type{mir::ChandleType{}};
-          },
-          [](const hir::OpaqueScopeType&) -> mir::Type {
-            // Nothing was published about the scope, so what names it is what
-            // every scope is: the runtime's own, with no member of it reachable
-            // by position.
-            return mir::Type{
-                mir::RuntimeClassType{.which = support::RuntimeClass::kScope}};
           },
           [](const hir::NullType&) -> mir::Type {
             // The `null` literal names no object, so it carries no class of its

@@ -11,6 +11,8 @@
 // same, because the unit naming itself and every unit naming it must reach the
 // same answer with no shared table.
 
+#include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -18,6 +20,8 @@
 #include <utility>
 #include <variant>
 #include <vector>
+
+#include "lyra/lowering/ast_to_hir/climb.hpp"
 
 namespace slang {
 class ConstantValue;
@@ -29,6 +33,7 @@ class DefinitionSymbol;
 class InstanceBodySymbol;
 class InstanceSymbol;
 class ParameterSymbol;
+class Scope;
 class Symbol;
 class Type;
 }  // namespace slang::ast
@@ -87,6 +92,22 @@ class SpecializationPolicy {
       const slang::ast::InstanceSymbol& inst,
       const slang::ast::ParameterSymbol& param) const -> ParameterValueSource;
 
+  // Where each hierarchical name `inst`'s body writes lands once it leaves the
+  // instance, in the order the body writes them.
+  [[nodiscard]] auto ClimbsOutOf(const slang::ast::InstanceSymbol& inst) const
+      -> std::span<const ClimbAnchor>;
+
+  // Naming one instance can ask for the name of another, where a name it writes
+  // lands there, and that one may land back in the first: a path from the top
+  // can name any instance (LRM 23.6), the one writing it included. These record
+  // the chain of instances whose names are being worked out, so a name landing
+  // on one of them is told by how far out on the chain it is rather than by a
+  // name nobody has yet.
+  void EnterNaming(const slang::ast::InstanceBodySymbol& body) const;
+  void LeaveNaming() const;
+  [[nodiscard]] auto LevelsOutTo(const slang::ast::InstanceBodySymbol& body)
+      const -> std::optional<std::uint32_t>;
+
  private:
   struct PerInstance {
     std::vector<const slang::ast::ParameterSymbol*> supplied;
@@ -99,6 +120,10 @@ class SpecializationPolicy {
   std::unordered_set<const slang::ast::DefinitionSymbol*> kept_whole_;
   mutable std::unordered_map<const slang::ast::InstanceSymbol*, PerInstance>
       per_instance_;
+  mutable std::unordered_map<
+      const slang::ast::InstanceSymbol*, std::vector<ClimbAnchor>>
+      climbs_;
+  mutable std::vector<const slang::ast::InstanceBodySymbol*> naming_;
 };
 
 // The instantiation a body was elaborated for. A body is what one application
@@ -152,8 +177,32 @@ struct SuppliedAtConstruction {
   auto operator==(const SuppliedAtConstruction&) const -> bool = default;
 };
 
-using SpecializationInputKind =
-    std::variant<FixedValue, FixedType, FixedInterface, SuppliedAtConstruction>;
+// The scope a hierarchical name lands in once it leaves the instance, named
+// the way the class of that scope is. The name resolves per instance (LRM
+// 23.8), and what it reaches from there are that scope's declarations, so two
+// instances whose names land in different scopes compile differently.
+struct LandsIn {
+  std::string scope;
+
+  auto operator==(const LandsIn&) const -> bool = default;
+};
+
+// The same, where the name lands in an instance whose own name is still being
+// worked out -- the instance writing it, or one whose name asked for this
+// one's. `levels` counts how far out on that chain it is, the instance itself
+// being none, and `blocks` is the path of generate blocks below it the name
+// lands in. Stated so, the scope is named by where it stands relative to the
+// instance being named, which is all two instances could differ in there.
+struct LandsBack {
+  std::uint32_t levels = 0;
+  std::vector<std::string> blocks;
+
+  auto operator==(const LandsBack&) const -> bool = default;
+};
+
+using SpecializationInputKind = std::variant<
+    FixedValue, FixedType, FixedInterface, SuppliedAtConstruction, LandsIn,
+    LandsBack>;
 
 // One thing a parent fixed at an instantiation site: what it named, and what it
 // fixed that to. Every input is named -- a parameter by its own name, an
@@ -179,12 +228,13 @@ struct SpecializationKey {
 };
 
 // The key of the specialization `inst` is an application of, read off what its
-// parent fixed for it: its parameters (LRM 6.20, 23.10) and the interface each
-// of its interface ports is connected to (LRM 25.3). A parameter fixed by the
-// specialization enters with its value; one supplied at construction enters
-// only as being supplied, and one computed at construction not at all, so
-// instances supplied different values are one unit.
-// Two instances compile alike exactly when every part agrees.
+// parent fixed for it: its parameters (LRM 6.20, 23.10), the interface each of
+// its interface ports is connected to (LRM 25.3), and the scope each name its
+// body writes lands in once it leaves the instance (LRM 23.8). A parameter
+// fixed by the specialization enters with its value; one supplied at
+// construction enters only as being supplied, and one computed at construction
+// not at all, so instances supplied different values are one unit. Two
+// instances compile alike exactly when every part agrees.
 //
 // Every part is read at the instantiation, which is where a parent fixed it and
 // the only place all of it is stated for one instance. What the frontend chose
@@ -223,6 +273,13 @@ auto SpecializationName(
     const slang::ast::ClassType& cls, const SpecializationPolicy& policy)
     -> std::string;
 
+// The name of the class an object standing for `scope` is: the unit's, for an
+// instance's body, and the unit's followed by the generate blocks down to it,
+// each as the hierarchy spells it (LRM 27.6), for a generate block.
+auto ScopeClassName(
+    const slang::ast::Scope& scope, const SpecializationPolicy& policy)
+    -> std::string;
+
 // The symbol whose compilation unit owns `decl`, found by climbing its parent
 // scopes to the first that is one: a package (LRM 26), a design element's body
 // (LRM 23.2, 25), or the `$unit` file-set scope a declaration outside every
@@ -234,17 +291,32 @@ auto SpecializationName(
 auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
     -> const slang::ast::Symbol&;
 
+// The structural scope whose instance `cls` is a type of (LRM 6.22): the
+// nearest instance body or generate block enclosing it, or the package or
+// `$unit` scope declaring it, which no instance replicates. A class nested
+// inside another class is a type of the same instance the outer one is, since
+// SystemVerilog gives it no reach into the outer object.
+[[nodiscard]] auto DeclaringStructuralScope(const slang::ast::ClassType& cls)
+    -> const slang::ast::Scope&;
+
 // Whether `unit` is a design element (LRM 23.2.1) rather than a namespace one.
 // A design element is instantiated into the hierarchy, so a type it declares
 // inside is a type of each instance rather than one type of the unit (LRM
-// 6.22), and what it publishes is its ports. A package and the file-set scope
-// are named once and declare once.
+// 6.22), and what it publishes is the object each instance is. A package and
+// the file-set scope are named once and declare once.
 [[nodiscard]] auto IsDesignElement(const slang::ast::Symbol& unit) -> bool;
 
+// Whether `cls` belongs to an instance (LRM 6.22): a design element declares
+// it, so each instance of the scope declaring it has a type of its own. A class
+// a package or the `$unit` scope declares belongs to none, whichever unit
+// reaches it.
+[[nodiscard]] auto BelongsToAnInstance(const slang::ast::ClassType& cls)
+    -> bool;
+
 // The name a compilation unit publishes for itself, so a consumer reaching one
-// of its members by name and the unit emitting that member agree with no shared
-// table (LRM 26.3). A package publishes its declared name; a module body its
-// specialization name. An anonymous compilation-unit scope (the LRM 3.12.1
+// of its declarations and the unit emitting that declaration agree with no
+// shared table (LRM 26.3). A package publishes its declared name; a module body
+// its specialization name. An anonymous compilation-unit scope (the LRM 3.12.1
 // `$unit` file-set scope, modeled as a namespace unit with no source name)
 // publishes a name derived from its own source-input identity: the only
 // property distinguishing two such scopes is which compilation-unit input they

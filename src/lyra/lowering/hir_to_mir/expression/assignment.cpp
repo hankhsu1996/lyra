@@ -152,7 +152,7 @@ auto FrozenOwner(
           [&](const ObjectProperty& property) -> PathOwner {
             return ObjectProperty{
                 .object = captured(property.object),
-                .property = CoordinateMapped(property.property, captured),
+                .property = property.property,
                 .type = property.type};
           }},
       owner);

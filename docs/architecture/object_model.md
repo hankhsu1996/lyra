@@ -24,7 +24,7 @@ flowchart TD
   D --> A1[base lineage]
   D --> A2[reference kind]
   D --> A3[lifecycle]
-  A1 --> V1[runtime tree base<br/>what a unit promised<br/>another class<br/>none]
+  A1 --> V1[runtime tree base<br/>what a scope published<br/>another class<br/>none]
   A2 --> V2[owning<br/>borrowed<br/>shared<br/>managed]
   A3 --> V3[elaboration phases<br/>none]
 ```
@@ -68,9 +68,9 @@ reference -- destroys a distinction a consumer has to read.
   overrides; that doc states when they execute.
 - The runtime object tree's shape and its faithfulness to elaboration. That is
   `hierarchy_and_generate.md`.
-- When and into what a cross-unit reference resolves, and the by-name mechanism. That is
-  `reference_resolution.md` and `emission_model.md`. The object model states that a cross-unit
-  object reference is by-name; those docs own the resolution.
+- When and into what a cross-unit reference resolves. That is `reference_resolution.md` and
+  `emission_model.md`. The object model states that a cross-unit object reference names the
+  declaring unit and the class it published; those docs own the resolution.
 - Physical layout: object storage layout, dispatch-table layout, frame allocation, and the collector
   algorithm that realizes managed reachability. Those are LIR and the runtime.
 
@@ -85,20 +85,14 @@ reference -- destroys a distinction a consumer has to read.
 
 2. **One nominal-object reference; identity representation follows the unit boundary.** Every place
    one object type names another uses one reference abstraction. Its identity is a stable
-   compiler-owned id when the target is intra-unit, a by-name reference resolved against an imported
-   interface when the target is in another compilation unit, an imported library declaration when
-   the target is a runtime-library type, and **no identity at all** when the target is an object
-   type of an instance rather than of a unit -- a type nameable only inside the scope declaring it,
-   for which a referrer outside has nothing to name and no promise to compile against. Intra-unit
-   and cross-unit identities never share a key space. _Object-model consequence: a consumer resolves
-   any object reference through one entry point; the local-versus-external split lives in the
-   resolver, not in incompatible reference forms scattered across consumers. Having no identity is
-   one of the cases that resolver answers, not the absence of an answer._
-
-   An object type with no identity is a complete static type and states one fact: values of it are
-   objects. It carries no member and no behavior, because reaching either is what needs the
-   identity. It is not a type decided at run time, and it is not a type the compiler failed to
-   determine -- the front end resolved it, and what the referrer lacks is a name for it.
+   compiler-owned id when the target is intra-unit, the declaring unit and the class's published
+   name, resolved against that unit's signature, when the target is in another compilation unit, and
+   an imported library declaration when the target is a runtime-library type. A class a design
+   element declares is a type of that element's instance (LRM 6.22), and its shape is one per unit,
+   so the element publishes it and a referrer outside names it like any other published class.
+   Intra-unit and cross-unit identities never share a key space. _Object-model consequence: a
+   consumer resolves any object reference through one entry point; the local-versus-external split
+   lives in the resolver, not in incompatible reference forms scattered across consumers._
 
 3. **Inheritance is one concrete base plus a set of interface conformances.** The concrete base
    determines instance layout and constructor chaining; an interface conformance is a method
@@ -128,12 +122,12 @@ reference -- destroys a distinction a consumer has to read.
 
    **A static view governs the operations a program point may perform through a reference; it never
    governs the reference's representation.** Two units holding one storage under different static
-   views is the ordinary case rather than the exception -- it is what a name resolved at elaboration
-   means -- so a representation that follows the view puts two representations on one cell, and
-   reaching that cell then rests on the two agreeing rather than on an operation either side states.
-   _Object-model consequence: a backend may spell a reference whose view names a class differently
-   from one whose view names none, and may not lay them out differently; what differs between them
-   is which operations are available, and nothing else._
+   views is the ordinary case rather than the exception -- a handle declared with a base class and
+   one declared with the class itself may hold one object -- so a representation that follows the
+   view puts two representations on one cell, and reaching that cell then rests on the two agreeing
+   rather than on an operation either side states. _Object-model consequence: a backend may spell
+   references held under different views differently, and may not lay them out differently; what
+   differs between them is which operations are available, and nothing else._
 
 5. **Construction is its own concept.** Allocating an object and running its constructor, with
    optional base-constructor chaining and a defined initialization ordering, is a construction form
@@ -195,10 +189,10 @@ reference -- destroys a distinction a consumer has to read.
     classification -- the type still carries every fact about how a member is stored -- but the
     access-control axis every generic object model has, and it is what a compilation unit's
     signature projects. A published member's position is fixed ahead of every unpublished one, so
-    what a unit keeps to itself cannot move what it promised; an unpublished member's type is still
-    promised, unnamed, because a class extending this one is placed after all of it. _Object-model
-    consequence: an object's promise and its storage are one declaration read two ways, never two
-    declarations that can disagree._
+    what a unit keeps to itself cannot move what it published; an unpublished member's type is still
+    published, unnamed, because a class extending this one is placed after all of it. _Object-model
+    consequence: what an object publishes and its storage are one declaration read two ways, never
+    two declarations that can disagree._
 
 ## Boundary to Adjacent Layers
 
@@ -213,8 +207,8 @@ reference -- destroys a distinction a consumer has to read.
   post-construction lifecycle bodies are the class's own, stated by it; that doc owns their phase
   ordering.
 - **`reference_resolution.md` and `emission_model.md` own cross-unit resolution.** This doc owns
-  that a cross-unit object reference is by-name against an imported interface; those docs own when
-  and how it resolves.
+  that a cross-unit object reference names a class another unit published; those docs own when and
+  how it resolves.
 - **LIR owns physical realization.** Object layout, dispatch-table layout, and the
   managed-reachability mechanism are introduced below MIR.
 
@@ -224,10 +218,10 @@ reference -- destroys a distinction a consumer has to read.
   category is expressed through base, reference, and lifecycle. (Invariant 1.)
 - A global object-id space, or a cross-unit object reference that names another unit's internal id
   rather than its public name. (Invariant 2.)
-- A referrer minting an identity for an object type no signature publishes, so that what it invented
+- A referrer minting an identity for an object type another unit declares, so that what it invented
   and what the declaring unit owns are two names for one type. (Invariant 2.)
-- An object type with no identity read as a missing type, an incomplete type, or a type resolved at
-  run time, rather than as the static type it is. (Invariant 2.)
+- A class a design element declares left off what the element publishes, so that a referrer reaching
+  an object of it has no class to compile against and has to ask by name at run time. (Invariant 2.)
 - An object's identity derived from its static view -- taken as the address of the view, or
   recomputed when a reference is converted -- so that two references naming one object compare
   unequal because they were declared differently. (Invariant 4.)
@@ -265,19 +259,19 @@ reference -- destroys a distinction a consumer has to read.
 - A separate list of which members are published, or publication inferred from a member's name,
   position, or storage shape. The declaration states it. (Invariant 11.)
 - An unpublished member placed among the published ones, so that adding or retyping something a unit
-  never promised moves something it did. (Invariant 11.)
+  never published moves something it did. (Invariant 11.)
 
 ## Notes / Examples
 
 A module instance, a generate scope, and a SystemVerilog class differ only along the three generic
 axes:
 
-- A module instance extends what its unit promised of one, which is itself rooted in the runtime's
-  tree; it participates in the elaboration lifecycle and is reached from its parent by an owning
-  reference.
-- A generate scope extends the same runtime tree base directly, participates in the same lifecycle,
-  and is likewise an owning child. Nothing outside its unit names one, so it promises nothing and
-  has no class between it and the tree.
+- A module instance extends the class its unit published of one, which is itself rooted in the
+  runtime's tree; it participates in the elaboration lifecycle and is reached from its parent by an
+  owning reference.
+- A generate scope is the same shape: a hierarchical name steps into one from anywhere (LRM 23.6),
+  so it extends the class it was published as, participates in the same lifecycle, and is likewise
+  an owning child.
 - A SystemVerilog class extends another class or no class, is reached by a managed reference, and is
   built by `new`.
 
@@ -286,10 +280,10 @@ object system.
 
 The post-construction lifecycle bodies are the class's own, stated by whichever class supplies them
 rather than carried on a reference to a base: what roots a value in the tree says nothing about how
-one runs, and a class rooted there supplying none is what a unit promises of its object. What the
-override relation does serve here is everything a unit published, which a promise states and its
-realization overrides -- one override machinery, with a user-defined virtual method as the other
-user, and a backend realizing both the same way.
+one runs, and a class rooted there supplying none is what a scope publishes of its object. The
+published class holds the published members first and one non-virtual method per subroutine that
+forwards to the body, and the realization extends it with what lowering adds; nothing a scope
+published is overridden, so a referrer reaching it dispatches nothing.
 
 A static method is an associated function under the type, invoked without an instance. A static
 property is a single cell the type owns, observed identically from every instance. Neither is part

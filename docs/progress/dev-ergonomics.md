@@ -98,8 +98,8 @@ layer directly.
 
       The second question behind it is now answered, which is what makes the record worth building.
       What a referrer compiles against is the part the declaring unit published and nothing else, so
-      a change to what a unit kept to itself moves no text any referrer reads -- an invalidation
-      record laid over that is precise rather than nominally correct. The signature workstream owned
+      an edit confined to a unit's bodies moves no text any referrer reads, on either backend -- an
+      invalidation record laid over that is precise rather than nominally correct. The signature workstream owned
       that half; this one owns the record.
 
       A prerequisite nobody had seen is now settled: emitting one unchanged design twice produces

@@ -199,10 +199,9 @@ void WriteOne(TargetText& out, const CppName& name);
   return SourceName{.name = name};
 }
 
-// A source name as a string the library reads, `"a.b"`: one it compares with
-// the name a hierarchical or foreign reference spells, or the name a design
-// reports itself by. Either way it keeps the source's own spelling, as a C
-// string literal, rather than becoming an identifier.
+// A source name as a string the library reads, `"a.b"`: the name a design
+// reports itself by. It keeps the source's own spelling, as a C string literal,
+// rather than becoming an identifier.
 struct NameLiteral {
   std::string_view name;
 };
@@ -249,12 +248,22 @@ void WriteOne(TargetText& out, UnitScope scope);
   return TextOf(ToCppName(unit_name), ".hpp");
 }
 
-// `Top.opening.hpp`: forward declarations, and the cells and functions the
-// unit's namespace declares. Of the program it includes only the unit's types
-// file, so any class file, of this unit or another, can include it first.
+// `Top.opening.hpp`: the cells and functions the unit's namespace declares. Of
+// the program it includes only the unit's types file and forward files, so any
+// class file, of this unit or another, can include it first.
 [[nodiscard]] inline auto UnitOpeningFileOf(std::string_view unit_name)
     -> std::string {
   return TextOf(ToCppName(unit_name), ".opening.hpp");
+}
+
+// `Top.forward.hpp`: every class another unit may name, declared and not
+// defined, and each further name such a class goes by. It includes nothing, so
+// any file can include it first, and a unit holding another's class by pointer
+// takes its name from here rather than declaring it again -- which a further
+// name, being no class of its own, could not be.
+[[nodiscard]] inline auto UnitForwardFileOf(std::string_view unit_name)
+    -> std::string {
+  return TextOf(ToCppName(unit_name), ".forward.hpp");
 }
 
 // `Top.types.hpp`: the structs the unit declares under a name, which a value of
@@ -302,7 +311,8 @@ void WriteOne(TargetText& out, UnitScope scope);
       mir::FindExternalClass(unit.external_classes, unit_name, class_name);
   if (introducer == nullptr || ordinal.value >= introducer->behaviors.size()) {
     throw InternalError(
-        "backend::cpp: a behavior is named that no consumed promise describes");
+        "backend::cpp: a behavior is named that no consumed signature "
+        "describes");
   }
   return ToCppName(introducer->behaviors[ordinal.value].name);
 }
@@ -356,20 +366,15 @@ void WriteOne(TargetText& out, UnitScope scope);
 
 // The name of a class field: `sv_field_<slot>`, plus the source name where
 // there is one, `sv_field_1_v`. The source name alone would not do: a C++ class
-// has one name space for fields and methods, and a scope's class holds both
-// the cell `x` and the method another unit calls to reach it, which that unit
-// spells `x`.
+// has one name space for fields and methods, and a scope's class holds the
+// cells of every block nested in it beside the subroutines it publishes, so a
+// cell `x` of a named block can stand beside a method `x`.
 //
 // The class declaring the field and another unit reading it both call this,
-// each with the slot and the source name it knows, so the two agree.
-[[nodiscard]] inline auto CppFieldNameOf(
-    mir::FieldId slot, std::optional<std::string_view> name) -> MintedName {
-  return MintedCppNameWith("field", slot.value, name);
-}
-
+// each with the slot and the names the class answers, so the two agree.
 [[nodiscard]] inline auto CppFieldName(
     std::span<const mir::NamedField> named, mir::FieldId slot) -> MintedName {
-  return CppFieldNameOf(slot, mir::NameOf(named, slot));
+  return MintedCppNameWith("field", slot.value, mir::NameOf(named, slot));
 }
 
 // The name of a local: `sv_local_<slot>`, plus the source name where there is
@@ -405,8 +410,9 @@ void WriteOne(TargetText& out, UnitScope scope);
   return MintedCppName("variable", variable.value);
 }
 
-// The name of a class: its declared name, or `sv_scope_<n>` for a scope of the
-// design hierarchy, which has none.
+// The name of a class: the name other units reach it by, or `sv_scope_<n>` for
+// a class no other unit names, which is what realizes a scope of the design
+// hierarchy.
 [[nodiscard]] inline auto CppClassName(const mir::Class& cls, mir::ClassId id)
     -> CppName {
   if (cls.name.has_value()) {

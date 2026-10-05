@@ -108,6 +108,10 @@ class Translation {
     return answers_.end();
   }
 
+  // Derived rather than written, so a `T` that gains a field is compared on it
+  // without anyone remembering to.
+  auto operator==(const Translation&) const -> bool = default;
+
  private:
   std::vector<T> answers_;
   std::size_t source_count_ = 0;

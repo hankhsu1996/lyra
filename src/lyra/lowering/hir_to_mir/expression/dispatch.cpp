@@ -180,12 +180,9 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             // instance (LRM 6.22), so the object records which instance it
             // belongs to and construction is where that arrives -- ahead of
             // the source actuals, the way every construction prefix does.
-            if (const std::optional<ImplicitInstanceArgument> instance =
-                    ImplicitInstanceArgumentOf(
-                        lowerer.Owner().DeclaringInstanceOf(n.class_ref),
-                        n.declaring_scope_hops)) {
+            if (n.declaring_instance.has_value()) {
               args.push_back(BuildImplicitInstanceArgument(
-                  frame, lowerer.Owner().Unit(), *instance));
+                  lowerer, frame, *n.declaring_instance));
             }
             for (const hir::ExprId arg_hid : n.arguments) {
               auto arg_or =

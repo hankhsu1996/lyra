@@ -6,7 +6,6 @@
 #include <variant>
 
 #include "lyra/base/pool_id.hpp"
-#include "lyra/hir/class_coordinate_id.hpp"
 #include "lyra/hir/class_id.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
@@ -80,22 +79,8 @@ struct ExternalClassPropertyTarget {
   auto operator==(const ExternalClassPropertyTarget&) const -> bool = default;
 };
 
-// A reference to a class property (LRM 8.4) on a class a design element
-// declares, which is nameable only inside the scope declaring it (LRM 23.9) and
-// so publishes on no signature. This unit can count no position for it and
-// states none: the coordinate is settled where the design elaborates, against
-// the class the reached storage was declared with, and this names the scope
-// slot holding what that settled.
-struct UnpublishedClassPropertyTarget {
-  PropertyCoordinateId coordinate;
-
-  auto operator==(const UnpublishedClassPropertyTarget&) const
-      -> bool = default;
-};
-
-using ClassPropertyTarget = std::variant<
-    LocalClassPropertyTarget, ExternalClassPropertyTarget,
-    UnpublishedClassPropertyTarget>;
+using ClassPropertyTarget =
+    std::variant<LocalClassPropertyTarget, ExternalClassPropertyTarget>;
 
 // A reference to a class static property (LRM 8.9) at an access site: the
 // declaring class and the slot within its static-property arena. Owner-
@@ -120,9 +105,6 @@ struct ExternalStaticPropertyTarget {
   auto operator<=>(const ExternalStaticPropertyTarget&) const
       -> std::strong_ordering = default;
 };
-
-using StaticPropertyTarget =
-    std::variant<LocalStaticPropertyTarget, ExternalStaticPropertyTarget>;
 
 // A reference to a class method (LRM 8.6 / 8.10) at an access site: the
 // declaring class arena and the method slot within it. The declaring class
@@ -155,26 +137,13 @@ using ClassMethodTarget =
 // one a call happened to reach it through, because every class extending the
 // introducer answers the same behavior under the same name -- so the class
 // named here is often an ancestor of the one the source wrote, found by walking
-// what each promised about the class it extends.
+// what each published about the class it extends.
 struct ExternalDispatchSlot {
   std::string unit_name;
   std::string class_name;
   PublishedBehaviorId behavior;
 
   auto operator==(const ExternalDispatchSlot&) const -> bool = default;
-};
-
-// The body a call reaches on a class a design element declares. Such a class
-// promises nothing, so this unit can count no position; the scope declaring the
-// class answers which body the method's name reaches, once, where the design
-// elaborates, and a method the object decides (LRM 8.20) answers with one that
-// dispatches on the object. This names the scope slot holding what it landed
-// on -- a code address, not a position, because there is no position to count
-// and nothing to count it against.
-struct UnpublishedBehaviorBody {
-  BehaviorBodyId body;
-
-  auto operator==(const UnpublishedBehaviorBody&) const -> bool = default;
 };
 
 // Which behavior a method overrides (LRM 8.20). One this unit's own class

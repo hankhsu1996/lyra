@@ -28,6 +28,12 @@ neither is an interface class a value is only by way of the class it extends or 
 class it names. A referrer reads each of those off the class that states it, by the walk D2
 describes. D2 and D3 stand.
 
+The rejection of a pre-computed consumed set below mentions a choice "between compiling against a
+promise and resolving during elaboration". Since
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) every
+name a reference may reach is published, so the second branch no longer exists; the rejection's
+other ground -- the set cannot be complete -- carries it alone.
+
 ## Why this decision matters
 
 A referrer must be able to name anything a legal program can reach on another unit's class, and most

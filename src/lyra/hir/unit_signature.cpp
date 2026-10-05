@@ -9,7 +9,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/external_class.hpp"
-#include "lyra/hir/external_unit_object.hpp"
+#include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_method.hpp"
@@ -37,63 +37,76 @@ auto ImportCallable(TypeImporter& importer, PublishedCallable callable)
   return callable;
 }
 
-auto ImportExternalUnitObject(const UnitSignature& signature, TypePool& into)
-    -> ExternalUnitObject {
-  const InstanceClassSignature& published = InstanceClassOf(signature);
-  ExternalUnitObject object{
-      .unit_name = signature.unit_name,
-      .class_name = published.class_name,
+auto ImportProjection(TypeImporter& importer, MemberProjection projection)
+    -> MemberProjection {
+  for (PublishedSelector& step : projection.path) {
+    std::visit(
+        [&](auto& selector) {
+          selector.projected_type = importer.Import(selector.projected_type);
+        },
+        step);
+  }
+  return projection;
+}
+
+auto ImportScopeClass(TypeImporter& importer, ScopeClassSignature published)
+    -> ScopeClassSignature {
+  // The whole class crosses, and a type is the only part of it that cannot
+  // cross as it stands: an identity on one pool indexes the storage that pool
+  // carries, so it is answered again out of the other while every other fact
+  // is what it already was. Re-pointing the types of what was handed in states
+  // exactly that.
+  //
+  // So every type anywhere on the class is re-pointed below, and a type added
+  // to it later has to join that walk. An unlisted field is carried unchanged,
+  // which is right for a name, a position and an identity into the class
+  // itself, and wrong for a type: it would keep indexing the pool it came from
+  // and mean something else here, with nothing to report it.
+  ScopeClassSignature imported{
+      .class_name = std::move(published.class_name),
       .members = {},
       .callables = {},
-      .modports = published.modports};
-  TypeImportMemo memo;
-  TypeImporter importer(signature.types, std::nullopt, into, memo);
-  // The whole promise crosses, and a type is the only part of it that cannot
-  // cross as it stands: an identity on a signature indexes the storage the
-  // signature carries, so it is answered again out of the reader's pool while
-  // every other fact is what it already was. Taking a copy and re-pointing the
-  // types states exactly that.
-  //
-  // So every type anywhere on the promise is re-pointed below, and a type added
-  // to it later has to join that walk. A copy carries an unlisted field
-  // unchanged, which is right for a name, a position and an identity into the
-  // promise itself, and wrong for a type: it would keep indexing the publishing
-  // unit's pool and mean something else here, with nothing to report it.
+      .generates = std::move(published.generates),
+      .disable_targets = std::move(published.disable_targets),
+      .modports = std::move(published.modports)};
   for (const PublishedMemberId id : published.members.Ids()) {
     PublishedMember member = published.members.Get(id);
     member.type = importer.Import(member.type);
-    object.members.Add(std::move(member));
+    imported.members.Add(std::move(member));
   }
   for (const PublishedCallableId id : published.callables.Ids()) {
-    object.callables.Add(ImportCallable(importer, published.callables.Get(id)));
+    imported.callables.Add(
+        ImportCallable(importer, published.callables.Get(id)));
   }
   // A name a view defines by designating storage states the type each step of
-  // its descent lands on, so those are types on this promise like any other and
-  // are answered again out of the reader's pool.
-  for (PublishedModport& view : object.modports) {
+  // its descent lands on, so those are types on the class like any other.
+  for (PublishedModport& view : imported.modports) {
     for (PublishedModportPort& port : view.ports) {
       std::visit(
           Overloaded{
               [&](ViewDefinedPlace& place) {
                 place.type = importer.Import(place.type);
                 for (MemberProjection& part : place.parts) {
-                  for (PublishedSelector& step : part.path) {
-                    std::visit(
-                        [&](auto& selector) {
-                          selector.projected_type =
-                              importer.Import(selector.projected_type);
-                        },
-                        step);
-                  }
+                  part = ImportProjection(importer, std::move(part));
                 }
               },
               // What it names is a callable and the members it reads, both of
-              // which are identities this record already re-points.
+              // which are identities into the class itself.
               [](ViewComputedValue&) {}},
           port.meaning);
     }
   }
-  return object;
+  return imported;
+}
+
+auto ImportExternalScopeClass(
+    const UnitSignature& signature, const ScopeClassSignature& published,
+    TypePool& into) -> ExternalScopeClass {
+  TypeImportMemo memo;
+  TypeImporter importer(signature.types, std::nullopt, into, memo);
+  return ExternalScopeClass{
+      .unit_name = signature.unit_name,
+      .signature = ImportScopeClass(importer, published)};
 }
 
 auto ImportExternalClass(
@@ -110,7 +123,8 @@ auto ImportExternalClass(
       .static_properties = {},
       .constructor = std::nullopt,
       .methods = {},
-      .overrides = {}};
+      .overrides = {},
+      .takes_declaring_instance = published.takes_declaring_instance};
   TypeImportMemo memo;
   TypeImporter importer(signature.types, std::nullopt, into, memo);
   cls.properties = ImportProperties(importer, published.properties);

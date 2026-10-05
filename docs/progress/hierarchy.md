@@ -96,9 +96,8 @@ Unlocks `instantiation/multiple_instances`, `instantiation/nested_hierarchy`,
 - [x] C1 -- Cross-unit references resolve once at construction into a stored direct reference, read
       directly thereafter (per `reference_resolution.md`). This is the substrate Stages D and E
       consume. Landed for downward references at any depth: the slot is filled once, after the
-      subtree is built, by navigating from the referrer's own child down to the referenced leaf. The
-      resolve-once slot is the shared path ports will populate; upward resolution feeds the same
-      slot in a later cut.
+      subtree is built, by navigating from the referrer's own child down to the referenced leaf.
+      Ports and upward references fill the same resolve-once slot.
 - [x] C2 -- A process on one instance can observe a member of another instance and re-evaluate when
       that member changes, without the observed instance knowing who watches it (cross-instance
       sensitivity). The combinational process subscribes through the resolved slot, independent of
@@ -111,21 +110,19 @@ consume. Coverage is demonstrated through Stage D and Stage E.
 
 - [x] D1 -- A downward reference reads and writes a signal in a child instance.
 - [x] D2 -- An upward reference reads and writes a signal directly on the matched ancestor, at any
-      depth. The child cannot know its depth when compiled, so it resolves the reference at
-      construction inside its own artifact: it climbs its parent chain to the ancestor named by the
-      reference (matching the module name, LRM 23.8; a nearer ancestor whose instance name happens
-      to equal that module name does not shadow the target) and fetches the signal by name, naming
-      no ancestor type (see `docs/decisions/hierarchical-reference-resolution.md`,
-      `docs/architecture/emission_model.md`). A reference wrapped in a value-level operation
-      (`Top.g[3]`, `Top.g + 1`) works -- the value part is ordinary expression handling. The
-      remaining forms below are each rejected with a clean "unsupported" diagnostic, except D2d.
+      depth (LRM 23.8; a nearer ancestor whose instance name happens to equal the module name does
+      not shadow the target). The child cannot know its depth when compiled, so the reference starts
+      at the nearest enclosing instance of the scope the name landed on, found once at construction,
+      and reaches the signal as a member that scope published -- so a misspelt or mistyped name is
+      refused where the child compiles. Two instances of one module whose upward names land on
+      different classes compile separately (see
+      `docs/decisions/a-design-element-publishes-its-declarations.md`). A reference wrapped in a
+      value-level operation (`Top.g[3]`, `Top.g + 1`) works -- the value part is ordinary expression
+      handling.
 - [x] D2a -- An upward reference that descends through a child after the climb (`Top.sib.y`,
       `Top.mid.deep.z`, `Top.bank[2].y`): the climb reaches the ancestor, then the reference steps
-      down by name into the ancestor's owned children to the leaf, at any depth and through array
-      indices. The tail is by-name for the same reason the climb is -- the referrer owns neither the
-      ancestor nor its children -- so each owner answers for its own children from the names it
-      registered at construction. A leaf directly on the ancestor is the empty-tail zero-case of the
-      same walk.
+      down through the children each scope published to the leaf, at any depth and through array
+      indices. A leaf directly on the ancestor is the empty-tail zero-case of the same route.
 - [x] D2b -- An upward reference written inside a generate block (conditional or loop) rather than
       the module body. It resolves the same as one in the module body -- its member rides the
       generate-block scope and climbs that object's own parent chain -- including an upward write,
@@ -133,22 +130,18 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       (each block gets its own resolution within its own scope).
 - [x] D2c -- An upward reference whose head is a `$root`-anchored absolute path (LRM 23.6) or a
       named generate block (LRM 23.8), rather than a module instance. Both heads name a scope that
-      already exists in the object tree -- `$root` is the implicit root that owns every top-level
-      block, and a named generate block is a first-class constructed object -- so once the head
-      locates that scope the reference reads the leaf by name like any other hierarchical reference.
-      The head is the only new part: the climb matches an ancestor either by its module definition
-      name (a module head) or by the ancestor scope's own name (a generate-block label, or `$root`),
-      selected by the head; `$root` reaches the tree root and the rest of the path is a downward
-      by-name walk. A top-level block now adopts `$root` as its parent so an upward climb from
-      inside a top reaches the root. Covered for a scalar named generate block; an indexed
-      loop-generate head (`blk[i].x`) is rejected with a clean diagnostic and remains.
+      already exists in the object tree, so once the head locates that scope the reference reaches
+      the leaf like any other hierarchical reference, as a member the scope published. A `$root`
+      path starts at the top-level instance it names, and the rest of the path is a downward route
+      through what each scope published. Covered for a named generate block and for an indexed
+      loop-generate head (`blk[i].x`).
 - [x] D2d -- LRM 23.8 step b / 23.9: the climb visits each enclosing scope's children rather than
       the ancestor itself, so the head can be a sibling of any enclosing scope rather than the
       closest enclosing scope. Two generate blocks at the same level reading each other's state
       through `<sibling_label>.<member>` resolves through this path; sibling-of-grandparent at any
       depth resolves through the same path. The frontend canonicalizes the head's identity (LRM 23.9
-      instance-name precedence applies at slang's resolution step), so the runtime walks to the
-      canonical scope by name.
+      instance-name precedence applies at the front end's resolution step), so the reference starts
+      at the enclosing instance of the scope the front end landed on.
 - [x] D2e -- A hierarchical reference whose head is a named procedural block (a named `begin`/`end`,
       LRM 9.3.5 / 23.9). A named block is a first-class structural declaration of the compilation
       unit: it becomes a child runtime scope of its nearest enclosing addressable scope when
@@ -158,10 +151,10 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       it and `%m` inside one reports the subroutine. Intra-unit access (`outer.x` from a peer
       process) resolves as a typed route: the reference names the static itself, and which named
       blocks stand between it and its scope follows from the declaration, so a block label reused in
-      two scopes cannot cross-bind. Cross-unit access (`Top.c.outer.x` from another module) resolves
-      through the runtime by-name walk that `GetChild` / `GetSignal` already provide. A named
-      `fork`/`join` block as head is not yet supported; the front-end still rejects it at
-      construction.
+      two scopes cannot cross-bind. Cross-unit access (`Top.c.outer.x` from another module) is the
+      same: the module publishes each static of its named blocks with the blocks it sits in, and the
+      referrer reaches it as a published member, checked where it compiles. A named `fork`/`join`
+      block as head is not yet supported; the front-end still rejects it at construction.
 - [x] D3 -- Multi-level dotted paths resolve through the object tree across more than one level.
       Landed for downward paths through scalar instances.
 - [x] D4 -- A combinational process reading a hierarchical reference re-triggers when the referenced
@@ -184,16 +177,19 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       the assertion/debug workstream.
 - [x] D6 -- A hierarchical path that indexes an instance array (`c[i].x`) resolves to the selected
       element, including multi-dimensional arrays (`c[i][j].x`).
-- [x] D7 -- A hierarchical reference crosses a generate-block scope boundary. A by-name reference
-      reaches a generate block by its LRM name (the source label, or `genblk<n>` when unnamed, LRM
-      27.6), indexes a loop-generate block, and continues to a signal or a further child inside it;
-      when an if/case construct's alternatives share a name (LRM 27.5) the reference binds whichever
-      alternative was instantiated. Covered for every head: an upward reference whose downward tail
-      enters the generate; a reference from the scope that owns the generate descending into its own
-      block (and regardless of whether the reference precedes the generate in source); a reference
-      originating inside a generate block (see D2b); and a reference from an enclosing scope into a
-      child instance's generate block (`leaf.g.x`, `leaf.bank[i].y`, and deeper through an instance
-      inside the block).
+- [x] D7 -- A hierarchical reference crosses a generate-block scope boundary. A reference reaches a
+      generate block by its LRM name (the source label, or `genblk<n>` when unnamed, LRM 27.6),
+      indexes a loop-generate block, and continues to a signal or a further child inside it; when an
+      if/case construct's alternatives share a name (LRM 27.5) the reference binds whichever
+      alternative was instantiated. Every generate block publishes what it declares, and the scope
+      holding a generate construct publishes which block was built at each index or label, so each
+      step is checked where the referrer compiles. Each block of a loop keeps its own name even
+      where its code is shared with its siblings. Covered for every head: an upward reference whose
+      downward tail enters the generate; a reference from the scope that owns the generate
+      descending into its own block (and regardless of whether the reference precedes the generate
+      in source); a reference originating inside a generate block (see D2b); and a reference from an
+      enclosing scope into a child instance's generate block (`leaf.g.x`, `leaf.bank[i].y`, and
+      deeper through an instance inside the block).
 - [x] D8 -- A loop-generate iteration reads another iteration of the same loop by hierarchical name
       from inside its own body (`g[i-1].v` -- the systolic / pipeline / carry-chain shape),
       including a forward read of an iteration constructed after the referrer. The reference binds
@@ -205,10 +201,9 @@ consume. Coverage is demonstrated through Stage D and Stage E.
 
 The two axes of Stage D, and the only statement of this workstream's coverage that can be checked
 rather than believed. Rows are the declaration kinds LRM 23.8's Syntax 23-8 enumerates, plus the
-three LRM 23.9 adds by making a block, a task and a class define scopes. Columns are what
-`reference_resolution.md` classifies a route by -- not the spellings, of which there are many, but
-the four answers the classification gives, since `c.x`, `g[i].x` and `$root.Top.g.x` differ in
-spelling and not in what each segment is.
+three LRM 23.9 adds by making a block, a task and a class define scopes. Columns are where a route
+leads -- not the spellings, of which there are many, since `c.x`, `g[i].x` and `$root.Top.g.x`
+differ in spelling and not in what each step is.
 
 Legend: **ok** runs end to end -- **ref** refused with a located diagnostic -- **def** answers
 wrongly or fails where nothing reports it, recorded in `tests/paths/*.defects.yaml`. A cell with no
@@ -228,7 +223,7 @@ backend's gap and is recorded against it, not against the route.
 | named event                       | ok           | ok                    | ok               | ok                   |
 | static of a named block           | ok           | ok                    | ok               | ok                   |
 | static of a subroutine body       | ok           | ok                    | ok               | ok                   |
-| class property, through a handle  | ok           | ok                    | **ref**          | **ref**              |
+| class property, through a handle  | ok           | ok                    | ok               | ok                   |
 | function or task                  | ok           | ok                    | ok               | ok                   |
 | block or task, as a `disable`     | ok           | ok                    | ok               | ok                   |
 
@@ -243,17 +238,9 @@ rather than on its leaf**, and both of the ones this table carried came off the 
 of this unit was refused where a route headed at this unit's own scope reached the same net without
 complaint, and a name through an interface port was refused past what the interface published where
 the same name reaching the same declaration through a module instance resolved. Neither was a
-missing realization: each was a second walk, or a guard, deciding for one head what the one
-classification already decides for every head. That is the shape to look for before believing any
-single cell -- a lone failure is either one of these or a misreading of the row.
-
-**Two cells are refused rather than reached, under one cause, and the refusal is not the answer they
-want.** A class property reached across a unit boundary is refused where the access is compiled,
-because nothing the declaring unit promised carries the name -- out of this unit and through an
-interface alike. That is honest for a class a signature could carry and did not, and wrong for the
-case these two cells are: a module publishes no class at all, so nothing was ever going to promise
-one, and refusing on that ground refuses what LRM 23.6 permits. What they owe is the by-name arm
-every other unpromised name already takes, which is D12 below.
+missing realization: each was a second walk, or a guard, deciding for one head what the route
+already decides for every head. That is the shape to look for before believing any single cell -- a
+lone failure is either one of these or a misreading of the row.
 
 **One row is not a route fact.** An enumerator is a constant, and a name ending at one is folded to
 its value before any route is built, so that row reads `ok` everywhere by never reaching the object
@@ -294,20 +281,13 @@ at.
       (`Top.s.fn()`), through an absolute path, and through an interface port. A task suspends the
       enabling process until it completes exactly as an intra-unit enable does.
 
-      What differs between them is only what answers the name. An interface promises its whole
-      declared surface, so a call against one compiles against that promise. A module promises its
-      ports, so a subroutine of one was promised to nobody: the route reaches the object and the
-      scope answers the name with its own entry while the design elaborates, from the
-      same record it already answers a signal query from. **Promising it instead is not the
-      answer** -- an upward enable would make a child depend on its parent while the parent already
-      depends on the child, and the dependency between units has to stay acyclic, so both directions
-      take the answered-by-name arm and the asymmetry against an interface stands
-      (`docs/decisions/hierarchical-callable-dispatch.md`).
-
-      Both backends run every arm of this. Reaching the entry is a by-name query the scope answers
-      from what it declares, and calling it is a call through an address the program computed, under
-      the signature the call site states -- neither of which needs the target language's own name
-      resolution, which is the only thing one backend has and the other does not.
+      A module publishes its subroutines as an interface does, so on every route the call compiles
+      against the subroutine's published signature and is a direct call; a misspelt name or a wrong
+      argument is refused where the caller compiles. An upward enable and a downward one are the
+      same: each unit's declarations are derived from that unit alone, so two units calling into
+      each other read each other's declarations without a cycle
+      (`docs/decisions/a-design-element-publishes-its-declarations.md`). Both backends run every
+      route.
 
 - [x] D13 -- A block or task a `disable` names elsewhere on the hierarchy (LRM 9.6.2, 23.6). What
       the statement ends is selected by static declaration identity, so it may sit in another
@@ -319,12 +299,10 @@ at.
       a sibling instance of the same module, another element of the same array, another iteration of
       the same generate loop.
 
-      What a `disable` ends is not something any unit publishes, so a name reaching one past a
-      signature ends at the block's own node on the object tree and that node answers for what it
-      carries. It answers without being named anything further, because a scope has exactly one
-      activity to end and reaching the scope is the whole of naming it. Both backends carry this,
-      as they do the enable above; what the two routes seal differs -- an address against a code
-      address -- and neither is a thing only one backend can hold.
+      A module publishes each disable target of its named blocks and tasks, stated with the named
+      blocks and subroutines it sits in, so a name reaching one in another unit ends at a published
+      member like any other leaf and is checked where the referrer compiles. Both backends carry
+      this, as they do the enable above.
 
       A target the writing body's own declaration scope declares stays what it was -- an identity
       into that scope's own registry, with no route at all -- which is also the only form available
@@ -352,36 +330,30 @@ at.
       ends at that structural scope and not at the subroutine -- which the two kinds of scope now
       answer alike.
 
-- [ ] D12 -- The two cells of the table a hierarchical name reaches and the access is then refused
-      at, both found by running the corpus rather than by a design reading.
+- [x] D12 -- A **class property reached through a handle across a unit boundary**, out of this unit
+      and through an interface alike (LRM 23.6, 8.14). The class a module or interface declares is
+      published with it, so the access compiles against the class the handle was declared with and
+      reaches the property that class names, never one a derived class declares under the same name.
 
-      A **class property reached across a unit boundary**, out of this unit and through an interface
-      alike. The route composes correctly and the reference arrives; what fails is the access, which
-      is compiled against a promise and finds none. For a class a signature could have carried, that
-      refusal is the honest answer. For these two cells it is not: a module publishes no class at
-      all, so no promise was ever possible, and LRM 23.6 lets a name reach past a signature exactly
-      where nothing was promised. The answer they owe is the by-name arm -- an object asked for a
-      member by the name the source spelled, resolved once when the route resolves, naming neither
-      the declaring unit nor the class.
-
-      Two things have to be true and only one of them is. The reference must stop acquiring the
-      declaring unit's class as a type, which is the cross-unit class boundary and is where the
-      refusal now stands; and a member must then be reachable on an object whose class this unit has
-      no declaration for, which is this workstream's own shape and is the erased-entry precedent
-      applied to a member rather than a callable.
+      What such a class keeps for itself -- a static property, a static method, and an object built
+      by assigning `new` to the handle (LRM 6.22, 8.9, 8.10) -- belongs to the instance declaring
+      the class, and a name climbing out of the reader's instance reaches that instance from where
+      the climb lands (LRM 23.8). That landing is what tells one compiled module apart from another,
+      so one module instantiated under several parents reaches the same instance from each.
 
 - [x] D11 -- A hierarchical reference whose target is a net, in every direction. A net reached
-      downward reads and is waited on like a variable, and the name that reaches it there is
-      answered by the same by-name registry an upward name asks, handing back the net's resolution
-      node itself -- so the two directions were never separated by what the leaf can answer with.
-      What separated them was a guard reading the route's head, stated twice and reasoning about a
-      cell a net does not have; removing both left reading an upward net and waiting on one working
-      on either backend, with no realization added anywhere.
+      downward reads and is waited on like a variable, and the name that reaches it there ends at
+      the same published member an upward name reaches, the net's resolution node itself -- so the
+      two directions were never separated by what the leaf can answer with. What separated them was
+      a guard reading the route's head, stated twice and reasoning about a cell a net does not have;
+      removing both left reading an upward net and waiting on one working on either backend, with no
+      realization added anywhere.
 
 - [x] D14 -- A name reached through an interface port that the interface did not publish. An
       interface publishes its members (LRM 25.10), so nearly every name through a port is one the
       module compiles against; a name ending deeper than a member -- a static of a subroutine body
-      or of a named block, the LRM 23.9 cases -- is past that promise, and used to be refused there.
+      or of a named block, the LRM 23.9 cases -- is published too, stated with the blocks and
+      subroutines it sits in, and used to be refused there.
 
       It was refused by a second walk rather than by anything missing. The port decides where a
       descent starts and nothing else about it, so what each step below is follows from the one

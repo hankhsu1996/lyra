@@ -11,6 +11,12 @@ Accepted. Supersedes `hierarchical-reference-resolution.md`. D2's classifier is 
 referrer has a declaration to compile against, which includes a member on a signature it consumes
 and not only a class its own artifact owns.
 
+**D2 is reversed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).**
+Every scope a name can step into publishes what a name can reach, so no segment lies past what a
+unit published and none is answered by name; a name the scope did not publish is refused where the
+referrer compiles. The other decisions stand.
+
 ## Why this decision matters
 
 A hierarchical reference reaches a target elsewhere on the elaborated object tree. The target's
@@ -152,10 +158,13 @@ same diagnostic.
   a segment classification on one shared route.
 - `reference_resolution.md`'s intra-unit / cross-unit framing applies per segment, not per
   reference.
-- The runtime SDK's by-name child and signal lookup family persists as the opaque-segment resolver.
-  The upward-by-name wrapper (the runtime class today carrying upward bind state) ceases to be an IR
-  concept; its function moves into ordinary resolve-time route code that reaches the SDK directly
-  for opaque segments and the typed traversal for layout-visible ones.
+- The runtime SDK's by-name child and signal lookup family persisted as the opaque-segment resolver
+  until
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)
+  removed every by-name lookup at run time. The upward-by-name wrapper (the runtime class today
+  carrying upward bind state) ceases to be an IR concept; its function moves into ordinary
+  resolve-time route code that reaches the SDK directly for opaque segments and the typed traversal
+  for layout-visible ones.
 - The runtime engine treats Seal as a property of the elaborated design as a whole, exposed through
   the elaboration entry. No scope carries a `Seal` method.
 

@@ -22,8 +22,6 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/external_class.hpp"
-#include "lyra/mir/external_unit_object.hpp"
-#include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/minted_entry.hpp"
@@ -96,7 +94,7 @@ struct NamedStaticVariable {
 
 // What one unit read of another's signature. A unit publishes its namespace --
 // the cells and bodies it declares outside any class of it (LRM 26.2) -- and
-// each class it promised, and a referrer reads one of those rather than the
+// each class it published, and a referrer reads one of those rather than the
 // whole, so what it depends on is that much and no more.
 struct ConsumedNamespace {
   std::string unit_name;
@@ -122,24 +120,16 @@ using ConsumedSignature = std::variant<ConsumedNamespace, ConsumedClass>;
 }
 
 // A unit whose instances are a tree of objects the runtime drives (LRM 23.3):
-// what the unit promised of one of those objects, the class at the root of the
-// tree that realizes it, and the one body that brings one into existence.
+// the class at the root of the tree, and the one body that brings one into
+// existence.
 //
-// The promise is the whole of what another unit may name here. A design element
-// exists to be instantiated and wired (LRM 23.2.1), so everything else it
-// declares -- the class realizing the promise, the scopes below it, and any
-// class of the source language it declares inside itself -- is its own, and no
-// referrer has a name for one.
-//
-// That body exists because a unit instantiating this one consumed what this one
-// promised, and a promise states what may be reached and never how much storage
-// an object takes -- so an instantiator cannot make one and asks for one
-// instead. The party that builds the design's tops asks the same way, having no
-// more than any other referrer. It answers to no name, which is why the unit
-// holds it as the body it is rather than among the bodies an identifier
-// reaches.
+// That body exists because what a unit publishes of its object states what may
+// be reached and never how much storage the object takes -- so an instantiator
+// cannot make one and asks for one instead. The party that builds the design's
+// tops asks the same way, having no more than any other referrer. It answers to
+// no name, which is why the unit holds it as the body it is rather than among
+// the bodies an identifier reaches.
 struct RootedTree {
-  ClassId promise;
   ClassId root;
   CallableId object_entry;
 };
@@ -265,15 +255,10 @@ struct CompilationUnit {
   // named before its body is built.
   base::Registry<Class, ClassId> classes;
   UnitContent content;
-  // One entry per unit this one reaches an object of, with what each promised
-  // taken into this unit's types, under the same declare-then-define lifecycle
-  // a class has: a type may name one of these objects -- an interface port's
-  // does -- so the identity exists before the members are filled in.
-  base::Registry<ExternalUnitObject, ExternalUnitObjectId>
-      external_unit_objects;
-  // One entry per class of another unit this one names. Found by the pair that
-  // names the class, which is the pair every reference to one carries, so a
-  // reference and its record cannot come apart.
+  // One entry per class of another unit this one names -- including the class
+  // another unit's instances are, wherever this unit reaches one. Found by the
+  // pair that names the class, which is the pair every reference to one
+  // carries, so a reference and its record cannot come apart.
   std::vector<ExternalClass> external_classes;
   // Callables the unit's namespace owns directly rather than through one of its
   // classes -- a package's functions and tasks (LRM 26.3), both directions of
@@ -503,7 +488,7 @@ struct CompilationUnit {
   }
 
   // Records what this unit read of another's signature. Called from HIR-to-MIR
-  // wherever a promise is read; the same part reached twice is one entry.
+  // wherever a signature is read; the same part reached twice is one entry.
   //
   // This unit is not a dependency of itself, and that is settled here because
   // one caller cannot settle it: the design root realizes a plan of unit names
@@ -551,16 +536,13 @@ struct CompilationUnit {
 }
 
 // Whether another unit can name this class, which is what a unit contributes to
-// the program deciding. A design element publishes what it promised of its
-// object and nothing else it declares inside (LRM 23.2.1); a namespace unit
-// publishes the classes it declares (LRM 26.2), which are the ones the source
-// named. Every consumer deciding which artifact a declaration belongs in asks
-// here, so none of them answers it a second way.
-[[nodiscard]] inline auto IsPromised(const CompilationUnit& unit, ClassId id)
+// the program deciding. Every class another unit names carries the name it is
+// named by: what a design element published of its scopes, the classes it and
+// a namespace unit declare (LRM 23.6, 26.2). A class the lowering builds for
+// its own use answers to none. Every consumer deciding which artifact a
+// declaration belongs in asks here, so none of them answers it a second way.
+[[nodiscard]] inline auto IsPublished(const CompilationUnit& unit, ClassId id)
     -> bool {
-  if (const RootedTree* tree = RootedTreeOf(unit)) {
-    return id == tree->promise;
-  }
   return unit.GetClass(id).name.has_value();
 }
 

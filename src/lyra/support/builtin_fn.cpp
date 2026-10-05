@@ -498,11 +498,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "refer_property",
           .declaration = FreeFunction{"lyra::runtime::ReferProperty"},
           .reaches_an_object = true};
-    case BuiltinFn::kReferPropertyAt:
-      return {
-          .name = "refer_property_at",
-          .declaration = StaticFactory{"AtProperty"},
-          .reaches_an_object = true};
     case BuiltinFn::kReferenceReportsTo:
       return {
           .name = "reference_reports_to",
@@ -761,15 +756,40 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = FreeFunction{"lyra::runtime::WaitUntil"},
           .takes_the_runtime_handle = true,
           .parks_the_caller = true};
+    case BuiltinFn::kWaitOnReport:
+      return {
+          .name = "wait_on_report",
+          .declaration = FreeFunction{"lyra::runtime::WaitAny"},
+          .takes_the_runtime_handle = true,
+          .parks_the_caller = true};
     case BuiltinFn::kReadReportEmpty:
       return {
           .name = "read_report_empty", .declaration = StaticFactory{"Empty"}};
     case BuiltinFn::kReadReportAdd:
       return {.name = "read_report_add", .declaration = Method{"Add"}};
+    case BuiltinFn::kReadReportAddThroughHandle:
+      return {
+          .name = "read_report_add_through_handle",
+          .declaration = Method{"AddThroughHandle"}};
+    case BuiltinFn::kReadReportEnterCallOnHandle:
+      return {
+          .name = "read_report_enter_call_on_handle",
+          .declaration = Method{"EnterCallOnHandle"}};
+    case BuiltinFn::kReadReportLeaveCallOnHandle:
+      return {
+          .name = "read_report_leave_call_on_handle",
+          .declaration = Method{"LeaveCallOnHandle"}};
     case BuiltinFn::kReadReportAddEveryObject:
       return {
           .name = "read_report_add_every_object",
           .declaration = Method{"AddEveryObject"}};
+    case BuiltinFn::kReadReportAddWrite:
+      return {
+          .name = "read_report_add_write", .declaration = Method{"AddWrite"}};
+    case BuiltinFn::kReadReportSettleAsImplicitList:
+      return {
+          .name = "read_report_settle_as_implicit_list",
+          .declaration = Method{"SettleAsImplicitList"}};
     case BuiltinFn::kReadReportEnter:
       return {.name = "read_report_enter", .declaration = Method{"Enter"}};
     case BuiltinFn::kReadReportLeave:
@@ -857,15 +877,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = FreeFunction{"lyra::runtime::Stop"},
           .takes_the_runtime_handle = true,
           .ending = CallEnding::kDeparts};
-    case BuiltinFn::kResolveRoot:
-      return {.name = "resolve_root", .declaration = Method{"ResolveRoot"}};
-    case BuiltinFn::kResolveVisibleChild:
+    case BuiltinFn::kEnclosingInstance:
       return {
-          .name = "resolve_visible_child",
-          .declaration = Method{"ResolveVisibleChild"}};
-    case BuiltinFn::kRegisterSignal:
-      return {
-          .name = "register_signal", .declaration = Method{"RegisterSignal"}};
+          .name = "enclosing_instance",
+          .declaration = Method{"EnclosingInstance"}};
     case BuiltinFn::kAddOwnedChild:
       return {
           .name = "add_owned_child", .declaration = Method{"AddOwnedChild"}};
@@ -873,32 +888,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "sequence_extend",
           .declaration = FreeFunction{"lyra::runtime::ExtendSequence"}};
-    case BuiltinFn::kRegisterDisableTarget:
-      return {
-          .name = "register_disable_target",
-          .declaration = Method{"RegisterDisableTarget"}};
-    case BuiltinFn::kFindDisableTarget:
-      return {
-          .name = "find_disable_target",
-          .declaration = Method{"FindDisableTarget"}};
-    case BuiltinFn::kFindSignal:
-      return {.name = "find_signal", .declaration = Method{"FindSignal"}};
-    case BuiltinFn::kFindChild:
-      return {.name = "find_child", .declaration = Method{"FindChild"}};
-    case BuiltinFn::kFindSubroutine:
-      return {
-          .name = "find_subroutine", .declaration = Method{"FindSubroutine"}};
-    case BuiltinFn::kFindClass:
-      return {.name = "find_class", .declaration = Method{"FindClass"}};
-    case BuiltinFn::kClassFindProperty:
-      return {
-          .name = "class_find_property",
-          .declaration = FreeFunction{"lyra::runtime::FindProperty"}};
-    case BuiltinFn::kPropertyAt:
-      return {
-          .name = "property_at",
-          .declaration = FreeFunction{"lyra::runtime::PropertyAt"},
-          .reaches_an_object = true};
     case BuiltinFn::kViewOf:
       return {
           .name = "view_of",
@@ -914,10 +903,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = FreeFunction{"lyra::runtime::ErasedObjectWrite"}};
     case BuiltinFn::kWrittenObject:
       return {.name = "written_object", .declaration = Method{"Object"}};
-    case BuiltinFn::kClassFindBehaviorBody:
-      return {
-          .name = "class_find_behavior_body",
-          .declaration = FreeFunction{"lyra::runtime::FindBehaviorBody"}};
     case BuiltinFn::kForkWaitAll:
       return {
           .name = "fork_wait_all",

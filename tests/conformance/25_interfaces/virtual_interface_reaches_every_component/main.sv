@@ -3,7 +3,9 @@
 // an expression -- storage it designates, or a value it computes (LRM 25.5.4)
 // -- and an interface the instance itself instantiates, whose own components
 // and subroutines are reached through it and which is itself a value a virtual
-// interface of its type can hold. The instance may be one named directly, one
+// interface of its type can hold. A component inside a generate block of the
+// instance (LRM 27) or inside one of its named blocks (LRM 23.9) is reached
+// through it the same way. The instance may be one named directly, one
 // reached through an interface port, or one element of an array of instances.
 // A virtual interface may be the result of a function and a member of a
 // structure, and one whose parameters no instance has is a legal declaration
@@ -22,6 +24,21 @@ interface Bus #(
   logic [3:0]   flags;
   Inner         sub ();
   modport view(output .low(data[3:0]), input .plus(data + 8'd1), input flags);
+
+  for (genvar i = 0; i < 2; i++) begin : lane
+    logic [7:0] y = 8'h10 + 8'(i);
+  end
+
+  if (W == 8) begin : ctrl
+    logic [7:0] m;
+    function automatic void Set();
+      m = 8'h77;
+    endfunction
+  end
+
+  initial begin : keep
+    static logic [7:0] k = 8'h13;
+  end
 endinterface
 
 module User (
@@ -52,6 +69,8 @@ module Top;
 
   logic [7:0] seen_plus = 8'h00;
   logic [3:0] seen_flags = 4'h0;
+  logic [7:0] seen_lane = 8'h00;
+  logic [7:0] seen_keep = 8'h00;
   bit never_built_is_null = 1'b0;
 
   function automatic virtual Bus Pick(int i);
@@ -83,6 +102,12 @@ module Top;
     binding.id = 7;
     binding.bus.sub.x = 8'h61;
 
+    held = many[1];
+    seen_lane = held.lane[1].y;
+    held.lane[0].y = 8'h81;
+    held.ctrl.Set();
+    seen_keep = held.keep.k;
+
     never_built_is_null = (never_built == null);
   end
 
@@ -99,6 +124,12 @@ module Top;
     // its own function called through the outer handle.
     if (many[0].sub.x !== 8'h72) $fatal(1, "many[0].sub.x was %h, expected 72", many[0].sub.x);
     if (one.sub.x !== 8'h61) $fatal(1, "one.sub.x was %h, expected 61", one.sub.x);
+    if (seen_lane !== 8'h11) $fatal(1, "seen_lane was %h, expected 11", seen_lane);
+    if (many[1].lane[0].y !== 8'h81)
+      $fatal(1, "many[1].lane[0].y was %h, expected 81", many[1].lane[0].y);
+    if (many[1].ctrl.m !== 8'h77)
+      $fatal(1, "many[1].ctrl.m was %h, expected 77", many[1].ctrl.m);
+    if (seen_keep !== 8'h13) $fatal(1, "seen_keep was %h, expected 13", seen_keep);
     if (never_built_is_null !== 1'b1) $fatal(1, "a virtual interface never assigned was not null");
     $display("All checks passed");
   end

@@ -92,6 +92,7 @@ void ReachReads(const Reads& reads, const auto& reach) {
             [](const EveryObject&) {}},
         leaf);
   }
+  ReachSensitivity(reads.writes, reach);
   for (const ReportingCall& call : reads.calls) {
     reach(call.call, Slot::kReport);
   }
@@ -213,8 +214,7 @@ void ReachCallee(const SubroutineRef& callee, const auto& reach) {
                       reach(access.handle, Slot::kOperand);
                     }},
                 ref.receiver);
-          },
-          [](const OpaqueUnitMethodRef&) {}},
+          }},
       callee);
 }
 
@@ -574,10 +574,7 @@ auto DescribeCall(const SubroutineRef& callee) -> std::string {
             return "a namespace subroutine call";
           },
           [](const ExternalUnitMethodRef&) -> std::string {
-            return "a call on another unit's instance";
-          },
-          [](const OpaqueUnitMethodRef&) -> std::string {
-            return "a call by hierarchical name";
+            return "a call on another unit's scope";
           }},
       callee);
 }
@@ -1055,7 +1052,7 @@ void ReachFromGenerate(ArenaReaches& reaches, const Generate& generate) {
       ReachFrom(reaches, std::nullopt, "a conditional generate");
   std::visit(
       Overloaded{
-          [](const BlocksStandAlone&) {},
+          [](const SingleBlock&) {}, [](const BlocksStandAlone&) {},
           [&](const BlocksRepeat& loop) {
             from_loop(loop.initial, Slot::kOperand);
             from_loop(loop.condition, Slot::kOperand);
@@ -1158,9 +1155,19 @@ void VerifyScope(
     VerifyBody(
         process.body, entered_at,
         [&](ArenaReaches& body_reaches) {
-          ReachSensitivity(
-              process.implicit_sensitivity_list,
-              ReachFrom(body_reaches, std::nullopt, "a process"));
+          const auto from_process =
+              ReachFrom(body_reaches, std::nullopt, "a process");
+          std::visit(
+              Overloaded{
+                  [](const InitialProcess&) {}, [](const FinalProcess&) {},
+                  [](const AlwaysProcess&) {}, [](const AlwaysFfProcess&) {},
+                  [&](const AlwaysCombProcess& comb) {
+                    ReachReads(comb.implicit_reads, from_process);
+                  },
+                  [&](const AlwaysLatchProcess& latch) {
+                    ReachReads(latch.implicit_reads, from_process);
+                  }},
+              process.kind);
         },
         [&] { return std::format("process {} of {}", id.value, label); },
         lines);

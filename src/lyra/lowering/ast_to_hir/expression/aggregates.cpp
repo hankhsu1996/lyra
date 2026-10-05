@@ -485,9 +485,10 @@ auto LowerNewClassExpr(
   if (!class_ref) return std::unexpected(std::move(class_ref.error()));
   auto type_id = unit_lowerer.InternType(*nc.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto declaring_hops = unit_lowerer.DeclaringScopeHopsFrom(cls, frame, span);
-  if (!declaring_hops) {
-    return std::unexpected(std::move(declaring_hops.error()));
+  auto declaring_instance =
+      unit_lowerer.DeclaringInstanceFrom(cls, frame, span);
+  if (!declaring_instance) {
+    return std::unexpected(std::move(declaring_instance.error()));
   }
   return hir::Expr{
       .type = *type_id,
@@ -495,7 +496,7 @@ auto LowerNewClassExpr(
           hir::ClassNewExpr{
               .class_ref = *std::move(class_ref),
               .arguments = std::move(arguments),
-              .declaring_scope_hops = *declaring_hops},
+              .declaring_instance = *std::move(declaring_instance)},
       .span = span,
   };
 }

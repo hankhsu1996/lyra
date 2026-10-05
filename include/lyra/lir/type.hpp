@@ -11,7 +11,6 @@
 #include "lyra/base/interner.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
-#include "lyra/lir/external_unit_object_id.hpp"
 #include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -74,17 +73,13 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kObjectWrite,
   kCancellationTarget,
   kControlEffect,
-  kPropertyCoordinate,
   // The definition every object of one class carries. A body names it to ask
   // the class a question, and forwards its address without reading inside it,
   // so what reaches here is the kind and never the runtime struct's layout.
   kObjectDefinition,
   // The structures a definition is made of, which only a constant names.
-  kResolvedProperty,
-  kDeclaredBody,
   kScopeInfo,
   kScopeCallable,
-  kScopeClass,
 };
 
 struct PackedRange {
@@ -231,16 +226,6 @@ struct ObjectType {
   auto operator==(const ObjectType&) const -> bool = default;
 };
 
-// An instance of the object another unit defines, named by this unit's record
-// of what that unit published about it. No member of it is reachable through
-// it: what that unit published is reached by performing a behavior of the
-// promise, so a step into its storage is a shape nothing states.
-struct ExternalUnitObjectType {
-  ExternalUnitObjectId object;
-
-  auto operator==(const ExternalUnitObjectType&) const -> bool = default;
-};
-
 // A class another compilation unit declares, named by that unit and the class's
 // canonical name. A backend spells the pair in its own target language; nothing
 // here composes one.
@@ -249,15 +234,6 @@ struct CrossUnitClassType {
   std::string class_name;
 
   auto operator==(const CrossUnitClassType&) const -> bool = default;
-};
-
-// An object this unit points at without carrying what identifies it: what a
-// name reaching past another unit's signature lands on when the class it
-// reaches is one that unit's design element declares, and so is a type of each
-// instance rather than one type this unit could name. Only the reference's
-// representation crosses; no member is reachable through it.
-struct OpaqueObjectType {
-  auto operator==(const OpaqueObjectType&) const -> bool = default;
 };
 
 // A class the runtime library defines. It belongs to no compilation unit, so
@@ -431,14 +407,13 @@ struct DesignationType {
 };
 
 // The declaration of member-bearing storage a type names: a class this unit
-// compiles, an object or a class another unit declares, or a closure a lowering
-// introduces that no source declaration stands behind. What identifies each
-// differs -- a position in this unit's registry, a name its own unit gave it,
-// the position that unit counted it at -- so a consumer reaching what the
-// declaration holds asks which of the four it met rather than asking every
-// type there is.
-using TypeDeclaration = std::variant<
-    ObjectType, ExternalUnitObjectType, CrossUnitClassType, ClosureType>;
+// compiles, a class another unit declares, or a closure a lowering introduces
+// that no source declaration stands behind. What identifies each differs -- a
+// position in this unit's registry, or a name its own unit gave it -- so a
+// consumer reaching what the declaration holds asks which of the three it met
+// rather than asking every type there is.
+using TypeDeclaration =
+    std::variant<ObjectType, CrossUnitClassType, ClosureType>;
 
 // A type one LIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
@@ -456,13 +431,12 @@ class Type {
       AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
-      VoidType, EmptyType, ObjectType, ExternalUnitObjectType,
-      CrossUnitClassType, OpaqueObjectType, RuntimeClassType, ClosureType,
-      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
-      CoroutineType, RefType, PointerType, ManagedRefType, VectorType,
-      TupleType, StructType, UnionType, TaggedUnionType, ResolvedType,
-      DriverType, ObservableType, SampledHistoryType, EvaluationAttemptsType,
-      OpenWriteType, DesignationType>;
+      VoidType, EmptyType, ObjectType, CrossUnitClassType, RuntimeClassType,
+      ClosureType, RuntimeEffectsType, FilesType, DiagnosticType,
+      RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
+      VectorType, TupleType, StructType, UnionType, TaggedUnionType,
+      ResolvedType, DriverType, ObservableType, SampledHistoryType,
+      EvaluationAttemptsType, OpenWriteType, DesignationType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -475,7 +449,7 @@ class Type {
   [[nodiscard]] auto KindName() const -> std::string_view;
 
   // The declaration of member-bearing storage this type names -- a class, a
-  // closure, another unit's object or class -- absent for every other type.
+  // closure, another unit's class -- absent for every other type.
   // What that declaration holds -- its members, the class it extends, the names
   // it was emitted under -- is reached through the unit it belongs to, so this
   // answers which declaration it is and not what is in it.

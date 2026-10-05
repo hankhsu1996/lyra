@@ -207,12 +207,6 @@ auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
           [&](const ObjectType& o) {
             return DefinitionSymbol(unit, o.class_id);
           },
-          [&](const ExternalUnitObjectType& e) {
-            const ExternalUnitObject& object =
-                unit.external_unit_objects.Get(e.object);
-            return ClassDefinitionSymbol(
-                object.unit_name, SymbolPart::Name(object.class_name));
-          },
           [](const CrossUnitClassType& c) {
             return ClassDefinitionSymbol(
                 c.unit_name, SymbolPart::Name(c.class_name));

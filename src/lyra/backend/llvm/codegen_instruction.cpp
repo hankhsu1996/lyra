@@ -2033,23 +2033,13 @@ auto CodeGenFunction::ConstructionOf(
               // The rest come into existence some other way, so a construction
               // naming one would have nothing to call. A print item is built as
               // one of its two forms and never as their sum; a time format, an
-              // open-array handle, a control effect, an observation and a
-              // coordinate are what some other entry answers with; a chunk is
-              // the element type a canonical buffer's pointer addresses rather
-              // than a value; a cancellation target and a channel's joint
-              // cancel state are storage the owner holds and reaches by
-              // address; and a write into an object is opened by the entry
-              // that opens it.
-              case lir::RuntimeLibraryKind::kPropertyCoordinate:
-              // A class's definition is a constant the declaring unit emits,
-              // so a body names one and never builds one.
-              case lir::RuntimeLibraryKind::kObjectDefinition:
-              // The same for what a definition is made of.
-              case lir::RuntimeLibraryKind::kResolvedProperty:
-              case lir::RuntimeLibraryKind::kDeclaredBody:
-              case lir::RuntimeLibraryKind::kScopeInfo:
-              case lir::RuntimeLibraryKind::kScopeCallable:
-              case lir::RuntimeLibraryKind::kScopeClass:
+              // open-array handle, a control effect and an observation are what
+              // some other entry answers with, and so is a read report; a
+              // chunk is the element type a canonical buffer's pointer
+              // addresses rather than a value; a cancellation target and a
+              // channel's joint cancel state are storage the owner holds and
+              // reaches by address; and a write into an object is opened by the
+              // entry that opens it.
               case lir::RuntimeLibraryKind::kPrintItem:
               case lir::RuntimeLibraryKind::kTimeFormat:
               case lir::RuntimeLibraryKind::kDpiBitChunk:
@@ -2061,6 +2051,12 @@ auto CodeGenFunction::ConstructionOf(
               case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kCancellationTarget:
               case lir::RuntimeLibraryKind::kChannelCancellation:
+              // A class's definition, and what a definition is made of, are
+              // constants the declaring unit emits, so a body names one and
+              // never builds one.
+              case lir::RuntimeLibraryKind::kObjectDefinition:
+              case lir::RuntimeLibraryKind::kScopeInfo:
+              case lir::RuntimeLibraryKind::kScopeCallable:
                 return no_construct();
             }
             throw InternalError("llvm codegen: unknown runtime library kind");
@@ -2188,12 +2184,7 @@ auto CodeGenFunction::ConstructionOf(
           [&](const lir::ObjectType&) -> diag::Result<Construction> {
             return no_construct();
           },
-          [&](const lir::ExternalUnitObjectType&)
-              -> diag::Result<Construction> { return no_construct(); },
           [&](const lir::CrossUnitClassType&) -> diag::Result<Construction> {
-            return no_construct();
-          },
-          [&](const lir::OpaqueObjectType&) -> diag::Result<Construction> {
             return no_construct();
           },
           [&](const lir::RuntimeClassType&) -> diag::Result<Construction> {

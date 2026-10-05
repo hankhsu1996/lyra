@@ -11,7 +11,6 @@
 #include "lyra/base/interner.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
-#include "lyra/mir/external_unit_object_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
@@ -278,17 +277,6 @@ struct ObjectType {
   auto operator==(const ObjectType&) const -> bool = default;
 };
 
-// The cross-unit twin of ObjectType: an instance of the object another unit
-// publishes, named by this unit's record of what that unit promised about it.
-// Nothing of its layout is visible here: what the promise offers is behaviors,
-// so what this type carries is reached by performing one rather than by naming
-// a member.
-struct ExternalUnitObjectType {
-  ExternalUnitObjectId object;
-
-  auto operator==(const ExternalUnitObjectType&) const -> bool = default;
-};
-
 // The type of an instance of a class another compilation unit declares, named
 // by the declaring unit and the class's canonical name. MIR does not know the
 // class's members: what a referrer may name on it is what that unit published,
@@ -299,17 +287,6 @@ struct CrossUnitClassType {
   std::string class_name;
 
   auto operator==(const CrossUnitClassType&) const -> bool = default;
-};
-
-// An object this unit points at without carrying what identifies it. A class a
-// design element declares is a type of each instance of that element rather
-// than one type of the unit, and is nameable only inside the scope declaring
-// it, so a referrer outside has no identity to carry and no promise to compile
-// against. What crosses is the reference's representation and nothing more, so
-// naming such an object declares no dependency on the unit that declares it. No
-// member is reachable through it: reaching one is what needs the identity.
-struct OpaqueObjectType {
-  auto operator==(const OpaqueObjectType&) const -> bool = default;
 };
 
 // The type of an instance of a class the runtime library defines. MIR does not
@@ -399,7 +376,9 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kObservation,
   // LRM 9.4.2 what one evaluation a waiting process makes reached:
   // `lyra::runtime::ReadReport`, into which the evaluation states what it
-  // reaches and every function it calls reports what a call of it reads.
+  // reaches and every function it calls reports what a call of it reads. An
+  // `always_comb` or `always_latch` collects its implicit list into one too,
+  // once, told what is written as well (LRM 9.2.2.2.1).
   kReadReport,
   // LRM 23.3.3.5 / 27.6 elaborated hierarchy segment:
   // `lyra::runtime::HierarchySegment`, the per-scope structured identity each
@@ -418,13 +397,12 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // backend-neutral runtime-ABI storage unit a packed value crosses the foreign
   // boundary as, used as a borrowed-pointer pointee to spell the by-pointer
   // carrier an export's C entry point receives. This is a plumbing type, never
-  // an SV
-  // value type: it has no declared range, signedness, or four-state expression
-  // semantics, and no `PackedArray` operation acts on it. `kDpiBitChunk` is a
-  // 32-bit value-plane word; `kDpiLogicChunk` is a two-plane `{ aval, bval }`
-  // record, each plane a 32-bit word. Each backend's type mapping realizes it:
-  // the C++ backend as `svBitVecVal` / `svLogicVecVal`, a lower backend as the
-  // layout-equivalent word / record.
+  // an SV value type: it has no declared range, signedness, or four-state
+  // expression semantics, and no `PackedArray` operation acts on it.
+  // `kDpiBitChunk` is a 32-bit value-plane word; `kDpiLogicChunk` is a
+  // two-plane `{ aval, bval }` record, each plane a 32-bit word. Each backend's
+  // type mapping realizes it: the C++ backend as `svBitVecVal` /
+  // `svLogicVecVal`, a lower backend as the layout-equivalent word / record.
   kDpiBitChunk,
   kDpiLogicChunk,
   // A DPI-C open array as the foreign side sees it (LRM 35.5.6.1, Annex H.12):
@@ -442,28 +420,17 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // scope, which the region naming that scope binds and consumes.
   kCancellationTarget,
   kControlEffect,
-  // Where a property name lands on a class no signature publishes:
-  // `lyra::runtime::PropertyCoordinate` pairs the class declaring a property
-  // with the position it gave it. A class answers a name with one while a
-  // reference to it resolves, and the access applies it to whichever object it
-  // runs on, so nothing looks a property name up on the simulation path.
-  kPropertyCoordinate,
-  // What every object of one class carries, so the object answers where its
-  // own properties live and which body a name reaches:
-  // `lyra::runtime::ObjectDefinition`. The class's unit emits it as a constant,
-  // which every unit naming the class reaches by its symbol.
+  // What every object of one class carries, so the object answers what its
+  // class extends and what a class of the design hierarchy states of its
+  // instances: `lyra::runtime::ObjectDefinition`. The class's unit emits it as
+  // a constant, which every unit naming the class reaches by its symbol.
   kObjectDefinition,
   // The parts a definition is made of, each a structure of the library a unit
-  // states as a constant: `lyra::runtime::ResolvedProperty` is a property's
-  // name with where it lands, `DeclaredBody` a method's name with the body it
-  // runs, `ScopeInfo` what a class of the design hierarchy states of its
-  // instances, `ScopeCallable` a subroutine's name with its body, and
-  // `ScopeClass` a declared class's name with its definition.
-  kResolvedProperty,
-  kDeclaredBody,
+  // states as a constant: `lyra::runtime::ScopeInfo` is what a class of the
+  // design hierarchy states of its instances, and `ScopeCallable` a DPI-C
+  // export's C name with its body (LRM 35.5.3).
   kScopeInfo,
   kScopeCallable,
-  kScopeClass,
 };
 
 struct RuntimeLibraryType {
@@ -760,13 +727,12 @@ class Type {
       AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
-      VoidType, ObjectType, ExternalUnitObjectType, CrossUnitClassType,
-      OpaqueObjectType, RuntimeClassType, RuntimeEffectsType, FilesType,
-      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
-      ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
-      EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
-      DesignationType, ObjectWriteType, SampledHistoryType,
-      EvaluationAttemptsType, StructType, ClosureType>;
+      VoidType, ObjectType, CrossUnitClassType, RuntimeClassType,
+      RuntimeEffectsType, FilesType, DiagnosticType, RuntimeLibraryType,
+      CoroutineType, RefType, PointerType, ManagedRefType, VectorType,
+      TupleType, UnionType, TaggedUnionType, EmptyType, ObservableType,
+      ResolvedType, DriverType, OpenWriteType, DesignationType, ObjectWriteType,
+      SampledHistoryType, EvaluationAttemptsType, StructType, ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

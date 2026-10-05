@@ -19,12 +19,14 @@ namespace lyra::lowering::hir_to_mir {
 
 class StructuralScopeLowerer;
 
-// The member a reference ends at, reached from the reader: a member of the
-// class `hops` enclosing edges out -- the reader's own at zero -- or the member
-// a stored route's `slot` points at, whose type is `member_type`.
+// The member a reference ends at, reached from the reader: `field` of the
+// object `hops` enclosing edges out -- the reader's own at zero -- or the
+// member a stored route's `slot` points at. Either way the member's type is
+// `member_type`.
 struct MemberAtHops {
   mir::EnclosingHops hops;
-  mir::FieldId field;
+  mir::ClassFieldTarget field;
+  mir::TypeId member_type;
 };
 struct MemberThroughSlot {
   mir::FieldId slot;

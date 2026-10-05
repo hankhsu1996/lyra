@@ -20,6 +20,7 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/GlobalAlias.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Type.h>
@@ -186,6 +187,9 @@ auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
       llvm::FunctionType::get(types_.Map(fn.result_type), params, false);
   llvm::Function* declared = llvm::Function::Create(
       fn_ty, LinkageOf(fn.definition), fn.name, module_.get());
+  for (const std::string& alias : fn.aliases) {
+    llvm::GlobalAlias::create(alias, declared);
+  }
   // A body the runtime calls back through a tuple's table answers a
   // predicate as a C++ `bool`, which is read as a whole byte.
   if (unit_->types.Get(fn.result_type).Is<lir::MachineBoolType>()) {
@@ -403,19 +407,19 @@ auto CodeGenModule::DeclarationOf(lir::TypeId type) const -> Declared {
     return DeclaredClass(object->class_id);
   }
   if (const auto* cross = named.As<lir::CrossUnitClassType>()) {
-    const lir::ExternalClass* promised =
+    const lir::ExternalClass* published =
         lir::FindExternalClass(*unit_, cross->unit_name, cross->class_name);
-    if (promised == nullptr) {
+    if (published == nullptr) {
       throw InternalError(
           "llvm codegen: a class of another unit is read that this unit "
-          "consumed no promise about -- please report this as a bug");
+          "consumed no signature of -- please report this as a bug");
     }
     return Declared{
         .definition = *lir::DefinitionSymbol(*unit_, type),
-        .base = promised->base,
-        .members = promised->members,
-        .dispatch = &promised->dispatch,
-        .implements = promised->implements};
+        .base = published->base,
+        .members = published->members,
+        .dispatch = &published->dispatch,
+        .implements = published->implements};
   }
   throw InternalError(
       std::format(
@@ -670,13 +674,6 @@ auto CodeGenModule::RecordOf(lir::TypeId type)
         "llvm codegen: a record is asked of a type that declares no storage "
         "-- please report this as a bug");
   }
-  const auto no_record = [](std::string_view what) -> RecordLayout {
-    throw InternalError(
-        std::format(
-            "llvm codegen: {} is laid out, which holds no storage a class "
-            "extends -- please report this as a bug",
-            what));
-  };
   auto laid =
       library != nullptr
           ? diag::Result<RecordLayout>{LibraryRecord(library->which)}
@@ -688,10 +685,6 @@ auto CodeGenModule::RecordOf(lir::TypeId type)
                     [&](const lir::CrossUnitClassType&)
                         -> diag::Result<RecordLayout> {
                       return LayOut(DeclarationOf(type));
-                    },
-                    [&](const lir::ExternalUnitObjectType&)
-                        -> diag::Result<RecordLayout> {
-                      return no_record("another unit's object");
                     },
                     [&](const lir::ClosureType& closure)
                         -> diag::Result<RecordLayout> {

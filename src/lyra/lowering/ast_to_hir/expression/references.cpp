@@ -4,7 +4,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/HierarchicalReference.h>
@@ -22,10 +21,8 @@
 #include <slang/numeric/ConstantValue.h>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr_builders.hpp"
-#include "lyra/hir/external_unit_object.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
@@ -381,12 +378,11 @@ auto MakeClassPropertyRefExpr(
   if (prop.lifetime == slang::ast::VariableLifetime::Static) {
     auto property = unit_lowerer.ResolveStaticPropertyTarget(frame, prop, span);
     if (!property) return std::unexpected(std::move(property.error()));
-    return hir::MakeRefExpr(*property, *type_id, span);
+    return hir::MakeValueTargetRefExpr(*property, *type_id, span);
   }
   const auto& owner_class =
       sym.getParentScope()->asSymbol().as<slang::ast::ClassType>();
-  auto target =
-      unit_lowerer.MakeClassPropertyTarget(frame, owner_class, prop, span);
+  auto target = unit_lowerer.MakeClassPropertyTarget(owner_class, prop, span);
   if (!target) {
     return std::unexpected(std::move(target.error()));
   }
@@ -417,31 +413,6 @@ auto FailOnCurrentInstanceHandle(diag::SourceSpan span)
       "has none of (LRM 8.11)");
 }
 
-// Wraps a resolved value target as a reference Expr. Every way of reaching a
-// cell -- a route through the design hierarchy, a namespace unit's cell named
-// across the boundary, a static property's cell -- is a reference primary, so
-// one wrap serves them all.
-auto ValueTargetRefExpr(
-    const hir::ValueTarget& target, hir::TypeId type, diag::SourceSpan span)
-    -> hir::Expr {
-  const auto wrap = [&](const auto& primary) -> hir::Expr {
-    return hir::MakeRefExpr(primary, type, span);
-  };
-  return std::visit(
-      Overloaded{
-          [&](const hir::RoutedValueRef& route) -> hir::Expr {
-            return wrap(route);
-          },
-          [&](const hir::ExternalUnitValueRef& external) -> hir::Expr {
-            return wrap(external);
-          },
-          [&](const hir::StaticPropertyRef& property) -> hir::Expr {
-            return wrap(property);
-          },
-      },
-      target);
-}
-
 // Lowers a reference to a value that has a cell -- a variable or a net --
 // wherever that cell lives, through the one resolver. Shared by every
 // named-value entry once each has classified what the name denotes, which is
@@ -452,34 +423,10 @@ auto LowerValueRef(
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
   auto type_id = unit_lowerer.InternType(type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto target = unit_lowerer.ResolveValueTarget(frame, value, span);
+  auto target =
+      unit_lowerer.ResolveValueTarget(frame, value, FromReader{}, span);
   if (!target) return std::unexpected(std::move(target.error()));
-  return ValueTargetRefExpr(*target, *type_id, span);
-}
-
-// LRM 25.3: a name reached through an interface port, which is the port's own
-// reach plus the descent the name spells out from there. What each step of that
-// descent is, and what the route ends at, follow the way they do for a step
-// onto an instance the reader can see -- the port decides where the descent
-// starts and nothing else about it.
-auto LowerInterfacePortValue(
-    UnitLowerer& unit_lowerer, WalkFrame frame,
-    const slang::ast::HierarchicalValueExpression& hve,
-    const slang::ast::ValueSymbol& declaration, diag::SourceSpan span)
-    -> diag::Result<hir::Expr> {
-  auto through = unit_lowerer.ReachOneThroughInterfacePort(frame, hve.ref);
-  if (!through.has_value()) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a name reached through an interface port by a path of this shape is "
-        "not yet supported");
-  }
-  auto type_id = unit_lowerer.InternType(*hve.type, span);
-  if (!type_id) return std::unexpected(std::move(type_id.error()));
-  auto route = unit_lowerer.MakeRoutedValueRef(
-      declaration, frame.Current(), *std::move(through));
-  if (!route) return std::unexpected(std::move(route.error()));
-  return ValueTargetRefExpr(hir::ValueTarget{*route}, *type_id, span);
+  return hir::MakeValueTargetRefExpr(*target, *type_id, span);
 }
 
 }  // namespace
@@ -593,14 +540,11 @@ auto LowerNamedValueProc(
 }
 
 // LRM 23.6 hierarchical reference. A reached constant folds to its value; a
-// reached cell is located from the reader's elaborated position and the target
-// symbol, the same way a simple name's is -- the path a reference was written
-// with is provenance, not a routing authority. A name that reaches storage
-// through an interface port (LRM 25.3) is the one exception: that storage lives
-// in a unit the reader reaches no other way, so which port it came through is
-// the route and not merely how it was spelled. A constant reached through one
-// still folds to its value, because what the port changes is how the target is
-// reached and not what it is.
+// reached cell is reached from where the name starts -- here, through an
+// interface port (LRM 25.3), or where its upward search landed (LRM 23.8) --
+// since that is what differs between the instances a unit serves. A constant
+// reached through a port or a climb still folds to its value, because what
+// the start changes is how the target is reached and not what it is.
 auto LowerHierarchicalValue(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve)
@@ -652,14 +596,14 @@ auto LowerHierarchicalValue(
           span);
     case Referent::kVariableStorage:
     case Referent::kNetStorage: {
-      if (hve.ref.isViaIfacePort()) {
-        return LowerInterfacePortValue(unit_lowerer, frame, hve, target, span);
-      }
       auto type_id = unit_lowerer.InternType(*hve.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
-      auto reached = unit_lowerer.ResolveValueTarget(frame, target, span);
+      auto start = unit_lowerer.StartOf(frame, hve.ref, span);
+      if (!start) return std::unexpected(std::move(start.error()));
+      auto reached = unit_lowerer.ResolveValueTarget(
+          frame, target, *std::move(start), span);
       if (!reached) return std::unexpected(std::move(reached.error()));
-      return ValueTargetRefExpr(*reached, *type_id, span);
+      return hir::MakeValueTargetRefExpr(*reached, *type_id, span);
     }
   }
   throw InternalError("LowerHierarchicalValue: unknown Referent");
@@ -748,18 +692,15 @@ auto LowerInterfaceInstanceValue(
   // directly, through a port bound to it, or with a modport selected; a
   // modport narrows what is reached through the value and not which instance
   // it is.
-  auto route = unit_lowerer.RouteToUnitObject(
-      frame, handle_type->iface.body, named.hierRef, span);
+  auto start = unit_lowerer.StartOf(frame, named.hierRef, span);
+  if (!start) return std::unexpected(std::move(start.error()));
+  auto route = unit_lowerer.RouteToScopeOrRefuse(
+      frame, handle_type->iface.body, *std::move(start), span);
   if (!route) return std::unexpected(std::move(route.error()));
   auto type_id = unit_lowerer.InternType(*named.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
-  const hir::ExternalUnitObjectId object =
-      InterfaceObjectOf(unit_lowerer, handle_type->iface);
-  const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-      hir::Type{hir::UnitObjectType{
-          .unit_name = unit_lowerer.Unit()
-                           .external_unit_objects.Get(object)
-                           .unit_name}});
+  const hir::TypeId object_type = unit_lowerer.ScopeClassTypeOf(
+      unit_lowerer.ScopeClassOfInstance(handle_type->iface));
   return hir::MakeRefExpr(
       unit_lowerer.MakeRoutedObjectRef(
           frame.Current(), *std::move(route), object_type),

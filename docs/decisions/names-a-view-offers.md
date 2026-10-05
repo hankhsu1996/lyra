@@ -10,6 +10,12 @@ Accepted. Supersedes the write half of `publishing-part-of-a-member.md` D5 and n
 of a plain port identifier; the read half of D5 stands unchanged, as does every other decision in
 that entry.
 
+The consequence that a hierarchical path descending through a module cannot reach a view's name,
+because a module publishes no child, is revised by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md): a
+module publishes its child instances, so such a path reaches the name where it compiles, and nothing
+is reached by name at run time.
+
 ## Why this decision matters
 
 A module bound through a modport writes the names the view offers, and that is most of what

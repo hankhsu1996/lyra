@@ -27,13 +27,14 @@ struct UnitText {
 };
 
 // `class C;` for every class of the unit, written ahead of every class so a
-// field or parameter can point at a class defined later: into the opening
+// field or parameter can point at a class defined later, followed by
+// `using A = C;` for each further name the class goes by: into the forward
 // header for a class other units may name, into the code file otherwise.
 auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
     -> UnitText;
 
 // A class another unit may name, whose text goes into a header of its own.
-struct PromisedClass {
+struct PublishedClass {
   mir::ClassId id;
   TargetText text;
 };
@@ -44,7 +45,7 @@ struct PromisedClass {
 // may use any class of the unit: a scope's body reads its parent's members,
 // and the parent's body builds that scope.
 struct UnitClasses {
-  std::vector<PromisedClass> promised;
+  std::vector<PublishedClass> published;
   TargetText internal;
   TargetText definitions;
 };
@@ -97,11 +98,5 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText;
 void RenderForeignScopeSymbols(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
     TargetText& out);
-
-// `namespace U { class C; }` for each class of another unit whose objects this
-// unit points at. A pointer needs only the declaration, so that unit's header
-// is not included.
-void RenderExternalObjectDeclarations(
-    const mir::CompilationUnit& unit, TargetText& out);
 
 }  // namespace lyra::backend::cpp

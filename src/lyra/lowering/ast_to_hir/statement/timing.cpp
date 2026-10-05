@@ -237,8 +237,7 @@ auto LowerTimingControl(
     case slang::ast::TimingControlKind::ImplicitEvent: {
       const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
           controlled, proc.ContainingSymbol());
-      auto sensitivity =
-          proc.Owner().TranslateSensitivityReads(proc, reads, frame);
+      auto sensitivity = proc.Owner().SensitivityEntriesOf(proc, reads, frame);
       if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
       return hir::TimingControl{hir::ImplicitEventControl{
           .sensitivity_list = *std::move(sensitivity)}};

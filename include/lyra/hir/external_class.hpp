@@ -35,11 +35,11 @@ struct PublishedProperty {
 
 // A method of a class of another unit that overrides a virtual method one of
 // its ancestors introduced (LRM 8.20) and gives it a body, and that method.
-struct PromisedOverride {
+struct PublishedOverride {
   std::string method;
   ExternalDispatchSlot behavior;
 
-  auto operator==(const PromisedOverride&) const -> bool = default;
+  auto operator==(const PublishedOverride&) const -> bool = default;
 };
 
 using PublishedProperties = base::Arena<PublishedProperty, PublishedPropertyId>;
@@ -124,14 +124,17 @@ struct ExternalClass {
   // Each overriding method the class gives a body, with the virtual method it
   // overrides named by the class that introduced it. Resolved where the
   // signature is read, along the chain of signatures above it.
-  std::vector<PromisedOverride> overrides;
+  std::vector<PublishedOverride> overrides;
+  // Whether a construction of it and a call of a method of the class itself
+  // are handed the instance it belongs to (LRM 6.22), as the signature states.
+  bool takes_declaring_instance = false;
 
   auto operator==(const ExternalClass&) const -> bool = default;
 };
 
 // The record kept of the class `class_name` of unit `unit_name`, or nothing
-// where this unit holds no promise about it -- a class no signature the design
-// compiles carries.
+// where this unit holds no published record of it -- a class no signature the
+// design compiles carries.
 [[nodiscard]] inline auto FindExternalClass(
     std::span<const ExternalClass> records, std::string_view unit_name,
     std::string_view class_name) -> const ExternalClass* {
