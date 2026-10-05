@@ -1216,7 +1216,7 @@ auto CodeGenFunction::ResolveCallee(
 // A {pointer, length} span over a scratch buffer this function fills with
 // `values`. The element type is the caller's to state: the machine element a
 // LIR type names where the span carries plain data, and an address where it
-// carries a run of objects the library defines. Nothing here reads
+// carries a sequence of objects the library defines. Nothing here reads
 // what the values mean, so nothing depends on which entry the span feeds.
 auto CodeGenFunction::SpanOver(
     std::span<llvm::Value* const> values, llvm::Type* element) -> llvm::Value* {

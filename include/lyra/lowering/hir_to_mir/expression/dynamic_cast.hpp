@@ -13,9 +13,9 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// The construct is a run of steps ending in the answer: the value is settled
-// once, the check is made against it, the destination takes it where the
-// assignment is valid, and the design is told where the source asked to be.
+// The construct is a sequence of steps ending in the answer: the value is
+// settled once, the check is made against it, the destination takes it where
+// the assignment is valid, and the design is told where the source asked to be.
 //
 // Which check that is, is settled here rather than below: an enumeration fixes
 // the values it accepts where it is declared, so the type answers, while the

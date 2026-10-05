@@ -28,12 +28,12 @@ namespace {
 // LRM 7.3.2 fixes a packed tagged union's layout: the tag at the most
 // significant bits, the member's own bits at the least significant ones, and
 // whatever lies between them undefined. Building the value is therefore the
-// concatenation of those three runs, each carrying what that region holds --
-// the undefined run carries the union's own default, which is what "undefined"
-// resolves to for a value of this state domain. A run of zero width contributes
-// nothing: a member as wide as the union leaves no undefined run, a `void`
-// member contributes no bits of its own, and a union declaring a single member
-// needs no tag to tell its members apart.
+// concatenation of those three regions, each carrying what it holds -- the
+// undefined region carries the union's own default, which is what "undefined"
+// resolves to for a value of this state domain. A region of zero width
+// contributes nothing: a member as wide as the union leaves no undefined
+// region, a `void` member contributes no bits of its own, and a union declaring
+// a single member needs no tag to tell its members apart.
 template <ExprLowerer Lowerer>
 auto BuildPackedTaggedValue(
     Lowerer& lowerer, WalkFrame frame, const PackedProjection& layout,
@@ -44,31 +44,31 @@ auto BuildPackedTaggedValue(
   const auto member_width = layout.members[t.member_index.value].bit_width;
   const auto gap_width = layout.bit_width - layout.tag_bits - member_width;
 
-  // Every run is carried in the union's own state domain, so the runs compose
-  // into exactly the union's vector and only its signedness is left to
+  // Every region is carried in the union's own state domain, so the regions
+  // compose into exactly the union's vector and only its signedness is left to
   // reconcile.
   const mir::IntegralStateKind state_kind =
       unit.types.Get(result_type).PackedShape().state_kind;
-  std::vector<mir::ExprId> runs;
+  std::vector<mir::ExprId> regions;
   if (layout.tag_bits > 0) {
     const mir::ExprId named = BuildIntLiteral(
         unit, block, static_cast<std::int64_t>(t.member_index.value));
-    runs.push_back(ConvertToType(
+    regions.push_back(ConvertToType(
         unit, block, named,
         mir::PackedVectorOf(unit.types, layout.tag_bits, state_kind)));
   }
   if (gap_width > 0) {
-    runs.push_back(block.exprs.Add(BuildDefaultValueExpr(
+    regions.push_back(block.exprs.Add(BuildDefaultValueExpr(
         unit, block, mir::PackedVectorOf(unit.types, gap_width, state_kind))));
   }
   if (payload.has_value()) {
-    runs.push_back(ConvertToType(
+    regions.push_back(ConvertToType(
         unit, block, *payload,
         mir::PackedVectorOf(unit.types, member_width, state_kind)));
   }
 
   return BuildValueConversion(
-      unit, block, BuildPackedConcat(unit, block, runs), result_type);
+      unit, block, BuildPackedConcat(unit, block, regions), result_type);
 }
 
 }  // namespace

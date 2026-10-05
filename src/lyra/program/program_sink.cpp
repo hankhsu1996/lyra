@@ -425,6 +425,8 @@ void BindWriteEntries(const auto& add) {
   add("lyra_rt_dynarray_assign_slice", &lyra_rt_dynarray_assign_slice);
   add("lyra_rt_unpackedarray_assign_slice",
       &lyra_rt_unpackedarray_assign_slice);
+  add("lyra_rt_packed_assign_slice", &lyra_rt_packed_assign_slice);
+  add("lyra_rt_packed_read_slice", &lyra_rt_packed_read_slice);
   add("lyra_rt_packed_land", &lyra_rt_packed_land);
   add("lyra_rt_string_land", &lyra_rt_string_land);
   add("lyra_rt_real_land", &lyra_rt_real_land);

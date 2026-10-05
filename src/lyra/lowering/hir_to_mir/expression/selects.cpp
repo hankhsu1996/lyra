@@ -44,7 +44,7 @@
 //
 // A select is lowered in two moves. First it becomes a step: which entry
 // reaches the part, at what position in the selected value's own numbering,
-// and for a run of a fixed size how many parts it takes. What kind of part
+// and for a slice of a fixed size how many parts it takes. What kind of part
 // that is follows from what is selected from and not from how it was written:
 //
 //   logic [7:0] v;            v[3]    a slice of one bit, at position 3
@@ -83,11 +83,10 @@ auto ReceiverValueType(const mir::CompilationUnit& unit, mir::TypeId receiver)
   return mir::ValueTypeOf(unit, receiver);
 }
 
-// A run of a fixed count of parts: where it starts in the receiver's own
-// numbering, and how many parts it takes. A packed value's bit-select,
-// part-select and aggregate member, and an unpacked array's slice, are all this
-// one step.
-auto RunStep(mir::ExprId start, std::uint64_t count, mir::TypeId part_type)
+// A fixed count of parts in a row: where they start in the receiver's own
+// numbering, and how many there are. A packed value's bit-select, part-select
+// and aggregate member, and an unpacked array's slice, are all this one step.
+auto SliceStep(mir::ExprId start, std::uint64_t count, mir::TypeId part_type)
     -> DescentStep {
   return DescentStep{
       .value_entry = support::BuiltinFn::kSlice,
@@ -169,15 +168,15 @@ auto QueueSliceStep(
 // The step `receiver[hi:lo]`, `receiver[base+:w]` and `receiver[base-:w]` take
 // (LRM 7.4.5 / 7.4.6 / 7.10.1 / 11.5.1).
 //
-// A packed value and a fixed-size or dynamic array take a run of a fixed
+// A packed value and a fixed-size or dynamic array take a slice of a fixed
 // count, which the select's own result type states, starting at the part of
-// the run lowest in the receiver's numbering. For a constant range that is the
-// bound the declaration's direction puts there -- the right bound of a packed
-// value, whose numbering starts at its least significant bit, and the left
-// bound of an unpacked one, whose numbering starts at its left (the front end
-// has already held the range to the declaration's direction). An indexed
+// the slice lowest in the receiver's numbering. For a constant range that is
+// the bound the declaration's direction puts there -- the right bound of a
+// packed value, whose numbering starts at its least significant bit, and the
+// left bound of an unpacked one, whose numbering starts at its left (the front
+// end has already held the range to the declaration's direction). An indexed
 // select counts `w` from its base; where positions grow opposite to the way the
-// select counts, the run starts `w - 1` steps below the base.
+// select counts, the slice starts `w - 1` steps below the base.
 template <ExprLowerer Lowerer>
 auto RangeStep(
     Lowerer& lowerer, WalkFrame frame, const hir::RangeBounds& bounds,
@@ -191,18 +190,18 @@ auto RangeStep(
   }
 
   const PositionMap map = PositionMapOf(unit, value_type);
-  // How many positions the run covers, which the select's own result type
+  // How many positions the slice covers, which the select's own result type
   // states: its bits, or its elements.
   const mir::Type& result = unit.types.Get(result_type);
-  const std::uint64_t run = result.IsIntegralPacked()
-                                ? result.PackedShape().BitWidth()
-                                : result.Get<mir::UnpackedArrayType>().Size();
-  // The shift from the base's own position to the run's lowest when the run
-  // counts toward lower positions: back over every position the run covers
-  // beyond the base's own step.
-  const std::int64_t below = map.step - static_cast<std::int64_t>(run);
-  // The index the run's lowest position is named by, and how far below that
-  // index's own position the run starts.
+  const std::uint64_t count = result.IsIntegralPacked()
+                                  ? result.PackedShape().BitWidth()
+                                  : result.Get<mir::UnpackedArrayType>().Size();
+  // The shift from the base's own position to the slice's lowest when the
+  // slice counts toward lower positions: back over every position the slice
+  // covers beyond the base's own step.
+  const std::int64_t below = map.step - static_cast<std::int64_t>(count);
+  // The index the slice's lowest position is named by, and how far below that
+  // index's own position the slice starts.
   struct Start {
     hir::ExprId index;
     std::int64_t shift = 0;
@@ -227,8 +226,8 @@ auto RangeStep(
   auto index = lowerer.LowerExpr(lowerer.HirExprs().Get(start.index), frame);
   if (!index) return std::unexpected(std::move(index.error()));
   const mir::ExprId index_id = block.exprs.Add(*std::move(index));
-  return RunStep(
-      WrapIndexAsPosition(unit, block, map, index_id, start.shift), run,
+  return SliceStep(
+      WrapIndexAsPosition(unit, block, map, index_id, start.shift), count,
       result_type);
 }
 
@@ -243,7 +242,7 @@ auto RequiredTagOf(
   return RequiredTag{.tag_bits = projection.tag_bits, .member = index};
 }
 
-// The step member `index` of a packed aggregate takes: the run of the
+// The step member `index` of a packed aggregate takes: the bits of the
 // aggregate's vector the member occupies (LRM 7.2.1, 7.3.1), and the tag the
 // aggregate has to carry where it is a tagged union naming more than one
 // member.
@@ -255,7 +254,7 @@ auto PackedMemberStep(
     throw InternalError("PackedMemberStep: member index out of range");
   }
   const ProjectedMember& member = projection.members[index.value];
-  DescentStep step = RunStep(
+  DescentStep step = SliceStep(
       BuildConstantPosition(
           unit, block, static_cast<std::int64_t>(member.bit_offset)),
       member.bit_width, part_type);
@@ -269,7 +268,7 @@ auto PackedMemberStep(
 // member is storage of its own, named by its declaration-order position;
 // whether every part is live at once or one at a time is the value's own
 // semantics and reaches the step through the domain its type names. A packed
-// aggregate's member is a run of the one vector the aggregate is.
+// aggregate's member is bits of the one vector the aggregate is.
 auto MemberStep(
     UnitLowerer& unit_lowerer, mir::Block& block, const hir::Type& aggregate,
     base::ComponentIndex index, mir::TypeId part_type) -> DescentStep {
@@ -316,7 +315,7 @@ auto BuildTagTest(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
     const RequiredTag& tag) -> mir::ExprId {
   auto& unit = unit_lowerer.Unit();
-  // The tag is the most significant run of the union's own vector (LRM 7.3.2),
+  // The tag is the most significant bits of the union's own vector (LRM 7.3.2),
   // so where it starts and the state domain it is read in are the union's.
   const mir::TypeId union_type = block.exprs.Get(base).type;
   const std::uint64_t union_bits =
@@ -325,7 +324,7 @@ auto BuildTagTest(
       unit.types.Get(union_type).PackedShape().state_kind;
   const mir::TypeId tag_type =
       mir::PackedVectorOf(unit.types, tag.tag_bits, state_kind);
-  const mir::ExprId carried = block.exprs.Add(BuildPackedRunRead(
+  const mir::ExprId carried = block.exprs.Add(BuildPackedBitsRead(
       unit_lowerer, block, base, union_bits - tag.tag_bits, tag.tag_bits,
       tag_type));
   const mir::ExprId named =
@@ -500,7 +499,7 @@ auto ElementStep(
   const PositionMap map = PositionMapOf(unit, value_type);
   const mir::ExprId position = WrapIndexAsPosition(unit, block, map, idx_id, 0);
   if (unit.types.Get(value_type).IsIntegralPacked()) {
-    return RunStep(position, static_cast<std::uint64_t>(map.step), part_type);
+    return SliceStep(position, static_cast<std::uint64_t>(map.step), part_type);
   }
   return DescentStep{
       .value_entry = support::BuiltinFn::kElement,
@@ -519,12 +518,12 @@ auto BuildElementAccessCallExpr(
   return StepRead(unit_lowerer.Unit(), block, step, base_id);
 }
 
-auto BuildPackedRunRead(
+auto BuildPackedBitsRead(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
     std::uint64_t bit_offset, std::uint64_t bit_width, mir::TypeId result_type)
     -> mir::Expr {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const DescentStep step = RunStep(
+  const DescentStep step = SliceStep(
       BuildConstantPosition(unit, block, static_cast<std::int64_t>(bit_offset)),
       bit_width, result_type);
   return OwnedValue(unit, block, StepRead(unit, block, step, base));
@@ -598,7 +597,7 @@ auto LowerHirElementSelectExpr(
   const auto& exprs = lowerer.HirExprs();
   const hir::Expr& base_expr = exprs.Get(sel.base_value);
   // An element of a queue may be indexed from the queue's own last index (LRM
-  // 7.10.1), so the queue is evaluated once in a run of steps, where the
+  // 7.10.1), so the queue is evaluated once in a block of steps, where the
   // select is written, and the read is what those steps yield.
   if (unit_lowerer.Hir().types.Get(base_expr.type).Is<hir::QueueType>()) {
     BlockBuilder steps(frame);
@@ -644,7 +643,7 @@ auto LowerHirRangeSelectExpr(
   const hir::Expr& base_expr = lowerer.HirExprs().Get(sel.base_value);
   // A queue's slice works both of its ends out from one base, and either may
   // be counted from the queue's own last index (LRM 7.10.1), so the queue and
-  // that base are each evaluated once in a run of steps, where the select is
+  // that base are each evaluated once in a block of steps, where the select is
   // written, and the read is what those steps yield.
   if (unit_lowerer.Hir().types.Get(base_expr.type).Is<hir::QueueType>()) {
     BlockBuilder steps(frame);
@@ -678,7 +677,7 @@ auto LowerHirMemberAccessExpr(
   const hir::Type& aggregate = unit_lowerer.Hir().types.Get(base_expr.type);
   // A member behind a tag is read by naming its aggregate twice, to test the
   // tag and to take the member, so the aggregate is evaluated once into a
-  // local of a run of steps, and the read is what those steps yield.
+  // local of a block of steps, and the read is what those steps yield.
   std::optional<BlockBuilder> steps;
   if (CarriesATag(unit_lowerer, aggregate)) {
     steps.emplace(frame);

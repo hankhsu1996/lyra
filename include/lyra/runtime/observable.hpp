@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -42,10 +41,9 @@ class Observable {
 
   void Subscribe(
       CoroutineHandle handle, Observation observation,
-      std::uint64_t lsb_bit_offset, std::uint64_t bit_width) {
+      value::BitPositions reads) {
     Registration& reg = handle->Park(waiters_);
-    reg.lsb_bit_offset = lsb_bit_offset;
-    reg.bit_width = bit_width;
+    reg.reads = reads;
     reg.observation = std::move(observation);
   }
 
@@ -59,7 +57,7 @@ class Observable {
       -> std::vector<CoroutineHandle> {
     std::vector<CoroutineHandle> woken;
     waiters_.ForEach([&](Registration& reg) {
-      if (change.LeftAlone(reg.lsb_bit_offset, reg.bit_width)) {
+      if (change.KnownUnchanged(reg.reads)) {
         return;
       }
       if (!reg.FiresNow()) {

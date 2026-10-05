@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <optional>
 
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
@@ -31,9 +32,9 @@ struct ErasedDesignation {
 //
 // Which wrapper it is, and the value the write lands on as it was before, are
 // the bracket's own business and held inside it. So one object serves every
-// wrapper and every value, and what it costs is what the bracket costs: a copy
-// of the part landed on, only where something reads the answer and no step has
-// given it already.
+// wrapper and every value, and what it costs is what the bracket costs: what is
+// kept of the part landed on, only where something reads the answer and no step
+// has given it already.
 class OpenWrite {
  public:
   template <MutationSink Sink>
@@ -68,11 +69,21 @@ class OpenWrite {
     bracket_of_->moved(bracket_.data());
   }
 
+  // Whether what a write lands on is worth keeping from before it; and the
+  // bits a write moved, told by a write into some bits of a packed value, which
+  // keeps and compares those bits itself.
+  [[nodiscard]] auto Undecided() -> bool {
+    return bracket_of_->undecided(bracket_.data());
+  }
+  void Landed(const Change& change) {
+    bracket_of_->landed(bracket_.data(), change);
+  }
+
   // The write lands on `part`, whose value from before the write is kept where
   // the answer is still wanted.
   template <typename Part>
   void Land(Part& part) {
-    if (!bracket_of_->undecided(bracket_.data())) {
+    if (!Undecided()) {
       return;
     }
     std::construct_at(Landing<PartLanding<Part>>(landing_.data()), part);
@@ -83,7 +94,7 @@ class OpenWrite {
   // component of a tuple is bytes of the tuple holding it -- so the part is the
   // tuple's bytes, and its value from before the write is a tuple of its own.
   void LandTuple(void* part) {
-    if (!bracket_of_->undecided(bracket_.data())) {
+    if (!Undecided()) {
       return;
     }
     std::construct_at(Landing<TupleLanding>(landing_.data()), part);
@@ -95,8 +106,9 @@ class OpenWrite {
   // to its storage, what the write has learned, and a copy of the storage for
   // a write the wrapper turns away to land in.
   static constexpr std::size_t kBracketCapacity = 160;
-  // Room for the largest part a write lands on, beside where it lies.
-  static constexpr std::size_t kLandingCapacity = 112;
+  // Room for what a write keeps of the largest part it lands on, beside where
+  // the part lies.
+  static constexpr std::size_t kLandingCapacity = 128;
 
   // What the room holds, asked of the bracket one wrapper opened there.
   struct BracketOf {
@@ -139,13 +151,13 @@ class OpenWrite {
             std::destroy_at(bracket);
           }};
 
-  // The part a write landed on, and its value from before the write.
+  // The part a write landed on, and what it keeps of it from before the write.
   template <typename Part>
   struct PartLanding {
-    explicit PartLanding(Part& landed) : part(&landed), before(landed) {
+    explicit PartLanding(Part& landed) : part(&landed), kept(landed) {
     }
     Part* part;
-    Part before;
+    KeptPart<Part> kept;
   };
 
   struct TupleLanding {
@@ -173,9 +185,9 @@ class OpenWrite {
   static constexpr LandingOf kLandingOf{
       .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
         auto* landing = Landing<PartLanding<Part>>(room);
-        if (!landing->before.IsBitIdentical(*landing->part)) {
-          bracket_of.landed(
-              bracket, LandedChange(landing->before, *landing->part));
+        if (const std::optional<Change> change =
+                landing->kept.ChangeTo(*landing->part)) {
+          bracket_of.landed(bracket, *change);
         }
         std::destroy_at(landing);
       }};

@@ -3044,24 +3044,27 @@ auto FunctionLowerer::LowerSliceUpdate(
   const lir::TypeId slice_type =
       unit_->TranslateType(block.exprs.Get(target).type);
   // A slice of what a write in progress designates is written within that
-  // write, which hears whether an element moved. Nothing reads it first: an
-  // assignment operator applies to an integral or real operand (LRM 11.4.1),
-  // and a slice is neither.
+  // write, which hears what moved; an assignment operator combining bits of a
+  // packed value reads those bits through the write first (LRM 11.4.1).
   if (const auto* designated = receiver_ty.As<mir::DesignationType>()) {
     auto designation = LowerExpr(block, receiver);
     if (!designation) {
       return std::unexpected(std::move(designation.error()));
     }
+    const lir::TypeId container = unit_->TranslateType(designated->value);
     return WriteSlice(
-        block, slice, change, *std::move(designation), slice_type,
+        block, slice, change, *designation, slice_type,
         lir::OpenWriteTarget{
-            .op = lir::OpenWriteTarget::Op::kAssignSlice,
-            .value = unit_->TranslateType(designated->value)},
-        [](const std::vector<lir::Operand>&) -> diag::Result<lir::Operand> {
-          throw InternalError(
-              "mir_to_lir: a slice holds no value an assignment operator "
-              "applies to (LRM 11.4.1), so nothing reads one it writes -- "
-              "please report this as a bug");
+            .op = lir::OpenWriteTarget::Op::kAssignSlice, .value = container},
+        [&](const std::vector<lir::Operand>& bounds)
+            -> diag::Result<lir::Operand> {
+          std::vector<lir::Operand> args{*designation};
+          args.insert(args.end(), bounds.begin(), bounds.end());
+          return EmitCallTo(
+              lir::OpenWriteTarget{
+                  .op = lir::OpenWriteTarget::Op::kReadSlice,
+                  .value = container},
+              std::move(args), slice_type);
         });
   }
   auto place = LowerPlace(block, receiver, Reach::kInto);
@@ -3206,8 +3209,11 @@ auto FunctionLowerer::LowerMutatingCall(
         unit_->TranslateType(type));
   };
 
-  // A receiver that is storage is changed where it lies.
-  if (!ReachesViewedPart(block, *receiver)) {
+  // A receiver that is storage is changed where it lies. A slice designated
+  // within a write has no address -- the write reads and writes it -- so it is
+  // read out, changed, and written back within the write, as a view is.
+  if (!ReachesViewedPart(block, *receiver) &&
+      StorageSlice(block, *receiver) == nullptr) {
     auto place = LowerPlace(block, *receiver, Reach::kInto);
     if (!place) {
       return std::unexpected(std::move(place.error()));
@@ -3216,8 +3222,8 @@ auto FunctionLowerer::LowerMutatingCall(
         *std::move(place),
         unit_->TranslateType(block.exprs.Get(*receiver).type)));
   }
-  // A receiver that is a view of its whole is read out, changed, and written
-  // back as any write to a view is.
+  // Any other receiver is read out, changed, and written back as any write to
+  // a view is.
   std::optional<lir::Operand> result;
   auto updated = UpdateTarget(
       block, *receiver,

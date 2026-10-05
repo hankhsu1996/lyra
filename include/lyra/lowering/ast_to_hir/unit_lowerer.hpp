@@ -276,20 +276,20 @@ struct ScopePublicationRecord {
       -> std::optional<hir::PublishedCallableId>;
 };
 
-// A contiguous run of positions kept out of one dimension, counted the way that
+// Adjacent positions kept out of one dimension, counted the way that
 // dimension's declared range counts positions. It names no dimension of its
 // own: a part select is written before the walk that reads it knows what the
-// path lands on, and keeping every position is the run spanning the whole of
-// whatever that turns out to be.
+// path lands on, and keeping every position is the positions spanning the
+// whole of whatever that turns out to be.
 struct KeptPositions {
   std::uint32_t first;
   std::uint32_t count;
 };
 
-// One dimension of a declaration standing for objects, and the run of its
-// positions in play (LRM 23.3.3.4, 23.3.3.5). So a port that binds every object
-// it stands for and a name that selected a part of one are the same statement
-// at two widths.
+// One dimension of a declaration standing for objects, and which of its
+// positions are in play (LRM 23.3.3.4, 23.3.3.5). So a port that binds every
+// object it stands for and a name that selected a part of one are the same
+// statement at two widths.
 //
 // LRM 23.3.3.5 pairs two such dimensions left index to left index, which is a
 // statement about ends rather than about coordinates. So the conversion between

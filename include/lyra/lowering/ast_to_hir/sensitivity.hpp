@@ -36,9 +36,9 @@ struct SelectedParts {
   std::vector<const slang::ast::Expression*> prefixes;
 };
 
-// A run of the symbol's flat-bit encoding, first and last bit, that no select
-// in the analyzed node names.
-struct BitRunPart {
+// Bits of the symbol's flat-bit encoding, first and last bit, that no select in
+// the analyzed node names.
+struct UnselectedBits {
   std::uint64_t first = 0;
   std::uint64_t last = 0;
 };
@@ -55,7 +55,7 @@ struct BitRunPart {
 // the access was put together without a text to take them from.
 struct AccessedPart {
   const slang::ast::ValueSymbol* symbol = nullptr;
-  std::variant<WholePart, SelectedParts, BitRunPart> part;
+  std::variant<WholePart, SelectedParts, UnselectedBits> part;
   std::vector<const slang::ast::Expression*> reached_by;
 };
 

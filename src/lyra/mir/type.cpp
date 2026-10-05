@@ -253,7 +253,7 @@ auto Type::IsRuntimeStoredValue() const -> bool {
   return Visit(
       Overloaded{
           // The simulation values, every one of which the runtime builds and
-          // keeps: one vector of bits however it is named, a run of values
+          // keeps: one vector of bits however it is named, a sequence of values
           // however it is sized and indexed, the ones held all at once or one
           // at a time, and the single quantities whose representation the
           // library still decides.
@@ -389,12 +389,16 @@ auto Type::PartsAreStorage() const -> bool {
           [](const VoidType&) { return false; }});
 }
 
+auto Type::BitsAreWrittenInPlace() const -> bool {
+  return Is<PackedArrayType>();
+}
+
 auto Type::ContainerElementType() const -> std::optional<TypeId> {
   using Element = std::optional<TypeId>;
   return Visit(
       Overloaded{
-          // The four a declaration names as holding a run of values, however
-          // the run is sized and however it is indexed.
+          // The four a declaration names as holding a sequence of values,
+          // however the sequence is sized and however it is indexed.
           [](const UnpackedArrayType& t) -> Element { return t.element_type; },
           [](const DynamicArrayType& t) -> Element { return t.element_type; },
           [](const QueueType& t) -> Element { return t.element_type; },
@@ -402,19 +406,19 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
             return t.element_type;
           },
 
-          // These hold a run of values too and are still not containers: a
+          // These hold a sequence of values too and are still not containers: a
           // lowering builds them to carry something, where a container is a
           // type a declaration named.
           [](const MachineArrayType&) -> Element { return std::nullopt; },
           [](const VectorType&) -> Element { return std::nullopt; },
 
           // One vector of bits, under a set of names or not: what looks like
-          // an element is a run of that vector rather than a value held beside
+          // an element is bits of that vector rather than a value held beside
           // the others.
           [](const PackedArrayType&) -> Element { return std::nullopt; },
           [](const EnumType&) -> Element { return std::nullopt; },
 
-          // Held all at once, or one at a time, but never as a run of one
+          // Held all at once, or one at a time, but never as a sequence of one
           // type.
           [](const TupleType&) -> Element { return std::nullopt; },
           [](const StructType&) -> Element { return std::nullopt; },
@@ -436,7 +440,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const VoidType&) -> Element { return std::nullopt; },
 
           // A cell keeps one value, whatever it publishes about changes to it;
-          // the run, where there is one, belongs to the value it keeps.
+          // the sequence, where there is one, belongs to the value it keeps.
           [](const ObservableType&) -> Element { return std::nullopt; },
           [](const ResolvedType&) -> Element { return std::nullopt; },
           [](const DriverType&) -> Element { return std::nullopt; },
@@ -456,7 +460,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const MachineFunctionType&) -> Element { return std::nullopt; },
 
           // An object and a closure are declarations, and a declaration is not
-          // a run of anything.
+          // a sequence of anything.
           [](const ObjectType&) -> Element { return std::nullopt; },
           [](const RuntimeClassType&) -> Element { return std::nullopt; },
           [](const ClosureType&) -> Element { return std::nullopt; },

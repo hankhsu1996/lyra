@@ -1,6 +1,7 @@
 #include "lyra/runtime/var.hpp"
 
 #include <iterator>
+#include <optional>
 #include <span>
 #include <variant>
 #include <vector>
@@ -16,6 +17,7 @@
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/wait.hpp"
+#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
@@ -127,9 +129,39 @@ class RecollectingEventWait : public EventControlWait {
 
 }  // namespace
 
-template auto LandedChange<value::PackedArray>(
-    const value::PackedArray& before, const value::PackedArray& after)
-    -> Change;
+auto WriteBits(
+    value::PackedArrayRef& bits, const value::PackedArray& value, bool watched)
+    -> std::optional<Change> {
+  const std::optional<value::BitPositions> reached =
+      watched ? bits.Reached() : std::nullopt;
+  if (!reached.has_value()) {
+    bits = value;
+    return std::nullopt;
+  }
+  KeptPart<value::PackedArray> kept(bits.Root(), *reached);
+  bits = value;
+  return kept.ChangeTo(bits.Root());
+}
+
+KeptPart<value::PackedArray>::KeptPart(const value::PackedArray& part)
+    : KeptPart(part, {.lsb = 0, .width = part.BitWidth()}) {
+}
+
+KeptPart<value::PackedArray>::KeptPart(
+    const value::PackedArray& storage, value::BitPositions reached)
+    : reached_(Change::Reaching(storage, reached)) {
+}
+
+KeptPart<value::PackedArray>::~KeptPart() = default;
+
+auto KeptPart<value::PackedArray>::ChangeTo(const value::PackedArray& part)
+    -> std::optional<Change> {
+  reached_.SetAfter(part);
+  if (reached_.Unmoved()) {
+    return std::nullopt;
+  }
+  return reached_;
+}
 
 RareWriteState::~RareWriteState() = default;
 
@@ -190,8 +222,7 @@ void SubscribeToLeaves(
     if (trigger.observable == nullptr) {
       continue;
     }
-    trigger.observable->Subscribe(
-        frame, trigger.observation, trigger.lsb_bit_offset, trigger.bit_width);
+    trigger.observable->Subscribe(frame, trigger.observation, trigger.reads);
   }
 }
 

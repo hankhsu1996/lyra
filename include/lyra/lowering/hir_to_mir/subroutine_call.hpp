@@ -48,10 +48,10 @@ auto LowerSubroutineCall(
 
 // The one call above that is not an expression: a function that writes back to
 // its actuals and settles no value of its own. The writes are the whole of what
-// it does, so what the source wrote lowers to a run of statements, and there is
-// no value for an enclosing expression to have wanted -- the frontend admits
-// such a call in statement position alone. Returns nullopt for every other
-// call, which the expression form lowers.
+// it does, so what the source wrote lowers to a sequence of statements, and
+// there is no value for an enclosing expression to have wanted -- the frontend
+// admits such a call in statement position alone. Returns nullopt for every
+// other call, which the expression form lowers.
 auto LowerSubroutineCallStmtForm(
     ProcessLowerer& lowerer, WalkFrame frame,
     const std::optional<std::string>& label, const hir::CallExpr& call,

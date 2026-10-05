@@ -28,7 +28,7 @@ namespace lyra::mir {
 // A constant a class holds: plain machine data of type `type`, whose value is
 // `initializer` -- an expression over nothing that runs, only names, addresses
 // and literals -- so a target states it as data. The runtime library reads such
-// a constant as one of its own structures or as a run of them.
+// a constant as one of its own structures or as an array of them.
 struct ClassConstantDecl {
   TypeId type;
   ValueBuild initializer;

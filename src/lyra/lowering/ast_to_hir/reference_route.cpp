@@ -1556,7 +1556,7 @@ auto UnitLowerer::SensitivityEntriesOf(
                   }
                   return parts;
                 },
-                [](const BitRunPart& bits)
+                [](const UnselectedBits& bits)
                     -> diag::Result<std::vector<hir::WatchedPart>> {
                   return std::vector<hir::WatchedPart>{
                       hir::WatchedBits{.first = bits.first, .last = bits.last}};

@@ -66,7 +66,7 @@ struct UnpackTarget {
 // targets are filled from the stream's most significant end in the order the
 // source wrote them. Where the stream carries more bits than the targets need,
 // the surplus is at its least significant end and is dropped -- which is why
-// the usable run is taken before the re-ordering rather than after.
+// the usable bits are taken before the re-ordering rather than after.
 //
 // The shape follows the LRM 11.4.12 destructuring: the source is
 // snapshotted once and distributed, so a target appearing on both sides reads
@@ -127,7 +127,7 @@ auto LowerStreamingUnpackAssign(
       mir::PackedVectorOf(unit.types, targets_width, source.state_kind);
   const mir::ExprId distributable_id = BuildReorderedStream(
       unit, wrapper,
-      wrapper.exprs.Add(BuildPackedRunRead(
+      wrapper.exprs.Add(BuildPackedBitsRead(
           process.Owner(), wrapper, source_id,
           source.BitWidth() - targets_width, targets_width, stream_type)),
       lhs_stream.block_bits);
@@ -148,7 +148,7 @@ auto LowerStreamingUnpackAssign(
     }
     const mir::TypeId segment_type =
         mir::PackedVectorOf(unit.types, target.width, source.state_kind);
-    const mir::ExprId segment_id = wrapper.exprs.Add(BuildPackedRunRead(
+    const mir::ExprId segment_id = wrapper.exprs.Add(BuildPackedBitsRead(
         process.Owner(), wrapper,
         wrapper.exprs.Add(mir::MakeLocalRefExpr(stream_var, stream_type)),
         targets_width - consumed - target.width, target.width, segment_type));

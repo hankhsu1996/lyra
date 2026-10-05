@@ -163,7 +163,7 @@ void DpiOpenArray::WriteLeaf(const PackedArray& value, std::size_t position) {
 auto DpiOpenArray::ReadLeaf(
     const PackedArray& prototype, std::size_t position) const -> PackedArray {
   // Annex H.7.3 gives a packed element one canonical representation, a flat
-  // vector of the element's own width, so what comes back is that run of bits
+  // vector of the element's own width, so what comes back is those bits
   // read at the element's width, signedness and state domain.
   const PackedType shape{
       std::array{PackedRange{

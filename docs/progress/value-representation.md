@@ -19,7 +19,7 @@ cycle.
 - [x] A runtime facility that acts on a value of any type -- formatting, DPI conversion, file and
       memory-image reading and writing, sampled history, a wait's comparison -- is handed the
       functions the compiler generated for that type, and the erased any-value form goes.
-- [ ] A write reports the range it reached, and a wait decided at the write tests that range against
+- [x] A write reports the range it reached, and a wait decided at the write tests that range against
       what it watches on the words, without materializing either side.
 - [x] On the execution backend, a queue, a dynamic array, an associative array and a fixed-size
       array hold their elements as raw storage acted on through the element type's generated
@@ -29,7 +29,8 @@ cycle.
 ## Phase 2: a packed value is its words
 
 - [ ] A packed value is its value words, followed by its unknown words when four-state, in one
-      contiguous run of bits; a type is identified by its exact width, signedness and state domain.
+      contiguous sequence of bits; a type is identified by its exact width, signedness and state
+      domain.
 - [ ] Every operation on a packed value is generated for its type: inline up to 64 bits, a loop over
       a fixed word count above, a call taking the words only for the long algorithms.
 - [ ] An element or a member at a run-time index is reached by bit addressing at the cost of the

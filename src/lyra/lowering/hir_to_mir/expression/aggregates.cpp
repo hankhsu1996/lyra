@@ -62,9 +62,9 @@ auto BuildsFromAnElementList(const mir::Type& ty) -> bool {
          ty.Is<mir::QueueType>();
 }
 
-// The value a run repeated `count_id` times denotes, landing in the type given
-// (LRM 11.4.12). What the run is made of -- bits or characters -- is the
-// entry's own question, so the same call serves both.
+// The value a sequence repeated `count_id` times denotes, landing in the type
+// given (LRM 11.4.12). What the sequence is made of -- bits or characters -- is
+// the entry's own question, so the same call serves both.
 auto BuildReplicateCall(
     mir::ExprId run, mir::ExprId count_id, mir::TypeId result_type)
     -> mir::Expr {

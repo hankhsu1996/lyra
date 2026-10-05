@@ -13,7 +13,7 @@ namespace lyra::value {
 // {7, 0}] (2D, each outer element is `bit [7:0]`).
 //
 // This carries SystemVerilog's declared bounds, which are what turns a
-// position written in the source into the run of bits it names. Where a value's
+// position written in the source into the bits it names. Where a value's
 // bits live is a separate question and this states nothing about it.
 struct PackedRange {
   std::int64_t left;

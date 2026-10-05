@@ -49,7 +49,8 @@ struct DescentStep {
   // position, a key. A deferred write freezes these where the statement is
   // reached (LRM 10.4.2).
   std::vector<mir::ExprId> operands;
-  // How many parts a run takes, where the step reaches a run. The part's type
+  // How many parts the step takes, where it reaches several in a row -- bits of
+  // a packed value, or a slice of an unpacked array. The part's type
   // fixes it, so it is a number rather than a value the program computes, and
   // nothing freezes it.
   std::optional<std::uint64_t> count;
@@ -91,10 +92,10 @@ using PathOwner = std::variant<mir::ExprId, ObjectProperty>;
 // nowhere and is its owner's own place.
 //
 // This is the lowering's own shape and reaches no layer below. What MIR carries
-// is what the descent lowers to -- a run of ordinary calls, each naming its own
-// entry, composed through the receiver -- because a consumer that met the
-// descent itself would have to decide which operation each step is, which is
-// the decision this layer is here to make.
+// is what the descent lowers to -- a sequence of ordinary calls, each naming
+// its own entry, composed through the receiver -- because a consumer that met
+// the descent itself would have to decide which operation each step is, which
+// is the decision this layer is here to make.
 struct AccessPath {
   PathOwner owner;
   std::vector<DescentStep> descent;
@@ -230,9 +231,9 @@ struct SettledPath {
 
 // `settled` as a path whose nodes are named in `to`. A node belongs to the
 // block it was added to, so a block nested under the one a path was settled in
-// -- a loop's body, a run of steps -- names the path's nodes afresh to read
-// through it; they evaluate nothing, so the path named again reaches the same
-// part.
+// -- a loop's body, a sequence of steps -- names the path's nodes afresh to
+// read through it; they evaluate nothing, so the path named again reaches the
+// same part.
 [[nodiscard]] auto NamedIn(const SettledPath& settled, mir::Block& to)
     -> AccessPath;
 
@@ -254,18 +255,18 @@ struct ReadThenWritten {
 // Which bits of the owner's packed value a path names: the lowest bit, counted
 // from the value's least significant bit in the position type, and how many
 // bits the part spans.
-struct PathRun {
+struct PathBits {
   mir::ExprId first;
   std::uint64_t width = 0;
 };
 
-// The run a path names within its owner (LRM 7.2.1, 11.5.1). Every step into a
-// packed value is a run of it, so the part starts at the sum of where the steps
-// start, and that sum stays an expression because a step's position may be a
-// value the program or a construction supplies.
-[[nodiscard]] auto RunWithinOwner(
+// The bits a path names within its owner (LRM 7.2.1, 11.5.1). Every step into
+// a packed value names some of its bits, so the part starts at the sum of where
+// the steps start, and that sum stays an expression because a step's position
+// may be a value the program or a construction supplies.
+[[nodiscard]] auto BitsWithinOwner(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
-    -> PathRun;
+    -> PathBits;
 
 // What an assignment applies to the value its target holds (LRM 11.4.1): an
 // operator the target language applies to two values of one type, or the

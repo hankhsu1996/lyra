@@ -112,16 +112,16 @@ struct ConditionalExpr {
   ExprId else_value;
 };
 
-// A run of statements followed by the value the whole yields. It is the one
-// node that puts a statement sequence in value position, which is how an
+// A sequence of statements followed by the value the whole yields. It is the
+// one node that puts a statement sequence in value position, which is how an
 // evaluation of several steps stands where only an expression may: the steps
 // run in order, where the expression is written, and the last one names what it
 // evaluates to. Every statement form becomes value-producing by standing inside
 // one, so this is the only node that lifts statements into value position.
 //
-// `value` names an expression of `scope`, and is always present: a run of steps
-// that settles no value is a statement, which is what a block statement over
-// the same scope says.
+// `value` names an expression of `scope`, and is always present: a sequence of
+// steps that settles no value is a statement, which is what a block statement
+// over the same scope says.
 //
 // It sequences and nothing else. It is not a callable boundary, so a local
 // declared among the steps belongs to the enclosing body and a reference out of
@@ -150,11 +150,11 @@ struct BlockExpr {
 // property of the one target expression, whichever shape the assignment took.
 //
 // `target` is a place, whose write is a store, or a part of a value reached by
-// a run of calls, whose write leaves the owner holding an updated whole. What
-// settles that a write is meant is this position, not what the target is. A
-// join in target position (LRM 11.4.12 destructuring LHS) is desugared upstream
-// into a snapshot + per-part assignment sequence, so render does not encounter
-// it.
+// a sequence of calls, whose write leaves the owner holding an updated whole.
+// What settles that a write is meant is this position, not what the target is.
+// A join in target position (LRM 11.4.12 destructuring LHS) is desugared
+// upstream into a snapshot + per-part assignment sequence, so render does not
+// encounter it.
 struct AssignExpr {
   ExprId target;
   std::optional<BinaryOp> compound_op = std::nullopt;
@@ -961,7 +961,7 @@ struct Expr {
 // 10.11). `other` is a borrowed pointer to the net on the other side, since
 // what crosses is that net itself and not its value; the positions are counted
 // from each value's least significant one. A connection naming a whole net on
-// each side states the run that covers it, which is why there is no second
+// each side states every position of it, which is why there is no second
 // shape for one. The two sides are interchangeable, with their positions:
 // a connection that states this states no direction.
 [[nodiscard]] inline auto MakeNetJoinCallExpr(

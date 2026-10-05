@@ -104,15 +104,15 @@ what the construct means.
   effect is stated, rather than by relying on a target language to run code at scope exit. No basic
   blocks at this layer.
 - A primitive expression set: literals, references, unary / binary / conditional operators, calls,
-  conversions, closures, the block expression -- a run of statements and the value it ends with,
-  which is how an evaluation of several steps stands where only an expression may, sequencing alone:
-  it is not a callable boundary, so its steps belong to the enclosing body and capture nothing, and
-  it has no control-flow effect, so control never leaves from among its steps -- member access
-  through an explicit receiver expression, and value-build primitives for the literals that spell an
-  aggregate. Reaching a part of a value is not among them: it is an ordinary call, so a descent of
-  any depth is calls composed through the receiver and no node names a part. The set is closed under
-  what a generic programming-language AST needs to express; it does not grow to model a particular
-  backend's storage realization or runtime library shape.
+  conversions, closures, the block expression -- a sequence of statements and the value it ends
+  with, which is how an evaluation of several steps stands where only an expression may, sequencing
+  alone: it is not a callable boundary, so its steps belong to the enclosing body and capture
+  nothing, and it has no control-flow effect, so control never leaves from among its steps -- member
+  access through an explicit receiver expression, and value-build primitives for the literals that
+  spell an aggregate. Reaching a part of a value is not among them: it is an ordinary call, so a
+  descent of any depth is calls composed through the receiver and no node names a part. The set is
+  closed under what a generic programming-language AST needs to express; it does not grow to model a
+  particular backend's storage realization or runtime library shape.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is

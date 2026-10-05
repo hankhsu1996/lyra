@@ -246,11 +246,11 @@ auto Type::IsValueChangeObservable() const -> bool {
 auto Type::ContainerElementType() const -> std::optional<TypeId> {
   using Element = std::optional<TypeId>;
   // One arm per HIR type and no catch-all, so a type added later fails to
-  // compile here until it says whether it holds a run of values.
+  // compile here until it says whether it holds a sequence of values.
   return Visit(
       Overloaded{
-          // The four a declaration names as holding a run of values, however
-          // the run is sized and however it is indexed.
+          // The four a declaration names as holding a sequence of values,
+          // however the sequence is sized and however it is indexed.
           [](const UnpackedArrayType& t) -> Element { return t.element_type; },
           [](const DynamicArrayType& t) -> Element { return t.element_type; },
           [](const QueueType& t) -> Element { return t.element_type; },
@@ -259,8 +259,9 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           },
 
           // A packed array names an element type and a packed aggregate names
-          // members, and neither is a run of values: the whole of such a type
-          // is one vector of bits, so reaching into it selects a run of that
+          // members, and neither is a sequence of values: the whole of such a
+          // type is one vector of bits, so reaching into it selects bits of
+          // that
           // vector rather than reading a value held beside the others.
           [](const PackedArrayType&) -> Element { return std::nullopt; },
           [](const PackedStructType&) -> Element { return std::nullopt; },

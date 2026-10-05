@@ -210,6 +210,25 @@ class CellRareState final : public RareWriteState {
 template <value::LyraValue T>
 CellRareState<T>::~CellRareState() = default;
 
+// Replaces the whole of `storage` by `overwrite`, a write already known to
+// change it, and answers what its waits are told. Of a packed value the change
+// keeps its words from before, so a wait reading bits the new value leaves as
+// they were is passed over; of any other value nothing but that it changed can
+// be shown, so nothing is kept.
+template <class T, class Overwrite>
+auto ReplaceWhole(const T& storage, Overwrite overwrite) -> Change {
+  if constexpr (std::same_as<T, value::PackedArray>) {
+    Change change =
+        Change::Reaching(storage, {.lsb = 0, .width = storage.BitWidth()});
+    overwrite();
+    change.SetAfter(storage);
+    return change;
+  } else {
+    overwrite();
+    return Change::Whole();
+  }
+}
+
 template <value::LyraValue T>
 class Var : public VariableCell, public ValueStorageCore<T> {
  public:
@@ -320,7 +339,7 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // a whole value can be checked for -- a partial write lands a part and never
   // restates the whole. The value arriving is compared with the one it would
   // replace before anything is written, so telling whoever waits keeps no copy
-  // of the old value, except the old bits a packed value's waits are passed
+  // of the old value, except the old words a packed value's waits are passed
   // over by.
   void Store(const T& new_val) {
     if constexpr (std::same_as<T, value::PackedArray>) {
@@ -339,14 +358,8 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     if (this->Get().IsBitIdentical(new_val)) {
       return;
     }
-    if constexpr (std::same_as<T, value::PackedArray>) {
-      const T before = this->Get();
-      this->Overwrite(new_val);
-      PublishTransition(Change::Between(before, this->Get()));
-    } else {
-      this->Overwrite(new_val);
-      PublishTransition(Change::Whole());
-    }
+    PublishTransition(
+        ReplaceWhole(this->Get(), [&] { this->Overwrite(new_val); }));
   }
 
   // Whether a procedural continuous assignment shows through the cell (LRM
@@ -370,22 +383,55 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   }
 };
 
-// Which bits of a part landed on a change between the two values left alone:
-// a packed value's by position, and nothing that can be shown of any other.
+// What a write keeps of the part it lands on, to tell afterwards what it did
+// to it: a copy, of which nothing but whether it moved can be shown.
 template <class Part>
-auto LandedChange(const Part& before, const Part& after) -> Change {
-  if constexpr (std::same_as<Part, value::PackedArray>) {
-    return Change::Between(before, after);
-  } else {
+class KeptPart {
+ public:
+  explicit KeptPart(const Part& part) : before_(part) {
+  }
+
+  // What the write did to `part`, none where it left it as it was.
+  [[nodiscard]] auto ChangeTo(const Part& part) -> std::optional<Change> {
+    if (before_.IsBitIdentical(part)) {
+      return std::nullopt;
+    }
     return Change::Whole();
   }
-}
 
-// A packed part is what no design shapes, so it is compiled once, in the
+ private:
+  Part before_;
+};
+
+// Writes `value` into the bits `bits` names (LRM 11.5.1) and answers what the
+// write did to the bits of its value it reached, kept only where `watched` says
+// something reads the answer: none where it moved none.
+auto WriteBits(
+    value::PackedArrayRef& bits, const value::PackedArray& value, bool watched)
+    -> std::optional<Change>;
+
+// A packed part keeps only the words it lies in, as a change reaching its
+// bits, so a wait is compared on them by position. Some of a packed value's
+// bits are a part a write lands on as well, kept as the words of the value
+// they lie in. No design shapes a packed part, so this is compiled once, in the
 // library.
-extern template auto LandedChange<value::PackedArray>(
-    const value::PackedArray& before, const value::PackedArray& after)
-    -> Change;
+template <>
+class KeptPart<value::PackedArray> {
+ public:
+  explicit KeptPart(const value::PackedArray& part);
+  KeptPart(const value::PackedArray& storage, value::BitPositions reached);
+  KeptPart(const KeptPart&) = delete;
+  auto operator=(const KeptPart&) -> KeptPart& = delete;
+  KeptPart(KeptPart&&) = delete;
+  auto operator=(KeptPart&&) -> KeptPart& = delete;
+  ~KeptPart();
+
+  [[nodiscard]] auto ChangeTo(const value::PackedArray& part)
+      -> std::optional<Change>;
+
+ private:
+  Change reached_;
+};
 
 // Writes `value` into storage a reference names, at the representation the
 // storage already has; the first write into a packed value nothing has written
@@ -521,9 +567,8 @@ class Ref {
     if (Storage().IsBitIdentical(new_val)) {
       return;
     }
-    const T before = Storage();
-    StoreInto(Storage(), new_val);
-    erased_.Report(LandedChange(before, Storage()));
+    erased_.Report(
+        ReplaceWhole(Storage(), [&] { StoreInto(Storage(), new_val); }));
   }
 
   // Opens a write into the referenced storage, as an observable cell itself
@@ -817,8 +862,8 @@ class WriteBracket {
   }
 
   // The part landed on is not what it was, and `change` says which of its bits
-  // moved. A packed value has no parts that are storage of their own, so a
-  // write into one lands on the whole and the bits it moved are the whole's;
+  // moved. A write into a packed value lands on the whole or on some of its
+  // bits, and either way `change` names bits of the whole by their position;
   // the waits on any other value are not bit-addressed.
   void Landed(const Change& change) {
     if (!Open()) {
@@ -872,6 +917,9 @@ class WriteBracket {
 template <class Sink, class Slice>
 class DesignatedSlice;
 
+template <class Sink>
+class DesignatedBits;
+
 // A place designated within a write: the whole of what the write was opened
 // on, or a part of it reached by the steps below. It borrows the write. The
 // steps reach the parts that are storage of their own (LRM 13.5.2) -- an
@@ -892,8 +940,11 @@ class Designation {
   auto operator=(Designation&&) -> Designation& = delete;
 
   ~Designation() {
-    if (before_.has_value() && !before_->IsBitIdentical(*part_)) {
-      write_->Landed(LandedChange(*before_, *part_));
+    if (!kept_.has_value()) {
+      return;
+    }
+    if (const std::optional<Change> change = kept_->ChangeTo(*part_)) {
+      write_->Landed(*change);
     }
   }
 
@@ -913,15 +964,21 @@ class Designation {
         *write_, component};
   }
 
+  // Bits of a packed value lie in the value's own words, so they are a place
+  // the write lands on; a slice of any other value is several elements.
   template <typename... Bounds>
   auto SliceRef(const Bounds&... bounds) {
-    auto slice = part_->SliceRef(bounds...);
-    return DesignatedSlice<Sink, decltype(slice)>{*write_, std::move(slice)};
+    if constexpr (std::same_as<Part, value::PackedArray>) {
+      return DesignatedBits<Sink>{*write_, part_->SliceRef(bounds...)};
+    } else {
+      auto slice = part_->SliceRef(bounds...);
+      return DesignatedSlice<Sink, decltype(slice)>{*write_, std::move(slice)};
+    }
   }
 
   auto operator*() -> Part& {
     if (write_->Undecided()) {
-      before_.emplace(*part_);
+      kept_.emplace(*part_);
     }
     return *part_;
   }
@@ -935,7 +992,7 @@ class Designation {
  private:
   WriteBracket<Sink>* write_;
   Part* part_;
-  std::optional<Part> before_;
+  std::optional<KeptPart<Part>> kept_;
 };
 
 // A slice of elements designated within a write (LRM 7.6). It is several
@@ -969,6 +1026,54 @@ class DesignatedSlice {
  private:
   WriteBracket<Sink>* write_;
   Slice slice_;
+};
+
+// Bits of a packed value designated within a write (LRM 11.5.1). They lie in
+// the value's own words, so the write lands on them where they are, and each
+// assignment through them keeps what they held, writes them, and tells the
+// write which bits it reached.
+template <class Sink>
+class DesignatedBits : public value::AssignmentOperators<DesignatedBits<Sink>> {
+ public:
+  DesignatedBits(WriteBracket<Sink>& write, value::PackedArrayRef bits)
+      : write_(&write), bits_(std::move(bits)) {
+  }
+
+  DesignatedBits(const DesignatedBits&) = delete;
+  auto operator=(const DesignatedBits&) -> DesignatedBits& = delete;
+  DesignatedBits(DesignatedBits&&) noexcept = default;
+  auto operator=(DesignatedBits&&) -> DesignatedBits& = delete;
+  ~DesignatedBits() = default;
+
+  auto operator*() -> DesignatedBits& {
+    return *this;
+  }
+  auto operator->() -> DesignatedBits* {
+    return this;
+  }
+
+  auto operator=(const value::PackedArray& value) -> DesignatedBits& {
+    if (const std::optional<Change> change =
+            WriteBits(bits_, value, write_->Undecided())) {
+      write_->Landed(*change);
+    }
+    return *this;
+  }
+
+  [[nodiscard]] auto ToOwned() const -> value::PackedArray {
+    return bits_.ToOwned();
+  }
+
+  // Bits within these, written within the same write.
+  [[nodiscard]] auto SliceRef(
+      const value::PackedArray& position, std::int64_t width) const
+      -> DesignatedBits {
+    return DesignatedBits{*write_, bits_.SliceRef(position, width)};
+  }
+
+ private:
+  WriteBracket<Sink>* write_;
+  value::PackedArrayRef bits_;
 };
 
 // A write opened in the full-expression that writes, and ended with it, which

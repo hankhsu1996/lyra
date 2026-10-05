@@ -35,9 +35,9 @@ auto CarrierValue(const IntegralConstant& value, const PackedArrayType& shape)
   return static_cast<std::int64_t>(bits);
 }
 
-// One plane of a constant's bits, as the run of machine words a factory reads
-// it out of. An entry's planes are already the length its type calls for, so
-// this hands them on as they stand -- including the empty run a two-state
+// One plane of a constant's bits, as the machine words a factory reads it out
+// of. An entry's planes are already the length its type calls for, so this
+// hands them on as they stand -- including the empty plane a two-state
 // value's unknown plane is, which the factory refuses to receive as anything
 // else.
 auto WordPlane(

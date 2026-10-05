@@ -1,8 +1,7 @@
 #pragma once
 
-#include <cstdint>
-
 #include "lyra/runtime/observation.hpp"
+#include "lyra/value/packed.hpp"
 
 namespace lyra::runtime {
 
@@ -42,8 +41,7 @@ struct Registration {
   // Which bits of this observable the wait reads. It bounds what a change here
   // could do to the wait, so a change confined outside it needs no further
   // question asked; a width of zero is "the whole of it", which bounds nothing.
-  std::uint64_t lsb_bit_offset = 0;
-  std::uint64_t bit_width = 0;
+  value::BitPositions reads;
 
   // What decides whether reaching this membership is an event for the wait it
   // serves (LRM 9.4.2): reaching it is a candidacy, and this decides. It holds

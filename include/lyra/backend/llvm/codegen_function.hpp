@@ -132,7 +132,7 @@ class CodeGenFunction {
       std::string_view symbol, lir::TypeId result,
       std::span<llvm::Value* const> args) -> llvm::FunctionCallee;
   // A {pointer, length} view over a scratch buffer of `element` this function
-  // fills with `values`, for an entry that takes a run of them.
+  // fills with `values`, for an entry that takes a sequence of them.
   auto SpanOver(std::span<llvm::Value* const> values, llvm::Type* element)
       -> llvm::Value*;
   auto LowerArray(const lir::ArrayInstr& array, lir::TypeId result_type)

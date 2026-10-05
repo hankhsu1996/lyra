@@ -136,8 +136,9 @@ auto PeelPortExpression(const slang::ast::Expression& expr)
   }
 }
 
-// How many positions a declaration has, in the terms a connection lays one run
-// over another in: an integral declaration has one per bit (LRM 10.11 states an
+// How many positions a declaration has, in the terms a connection lays
+// positions over each other in: an integral declaration has one per bit (LRM
+// 10.11 states an
 // alias over "bits within a net"), and every other kind has one indivisible
 // position, since nothing names a part of one.
 auto PositionsOfDeclaration(const slang::ast::ValueSymbol& base)
@@ -151,14 +152,14 @@ auto PositionsOfDeclaration(const slang::ast::ValueSymbol& base)
 
 // Which of the declaration's own positions the part a port stands for covers.
 // A port written as a plain name covers all of them; one written as a select
-// covers the run the front end folded that select to. A select into a
-// declaration whose positions are not bits reaches a part that is no run of
+// covers the positions the front end folded that select to. A select into a
+// declaration whose positions are not bits reaches a part that is none of
 // them, which is what the absent answer says.
-auto RunOfPortExpression(
+auto PositionsOfPortExpression(
     const slang::ast::ValueSymbol& base, const slang::ast::Expression* written)
-    -> std::optional<hir::PublishedRun> {
+    -> std::optional<hir::PublishedPositions> {
   if (written == nullptr) {
-    return hir::PublishedRun{
+    return hir::PublishedPositions{
         .position = 0, .width = PositionsOfDeclaration(base)};
   }
   if (!base.getType().isIntegral()) {
@@ -169,7 +170,7 @@ auto RunOfPortExpression(
   if (path.lsp != written) {
     return std::nullopt;
   }
-  return hir::PublishedRun{
+  return hir::PublishedPositions{
       .position = static_cast<std::uint32_t>(path.lspBounds.first),
       .width = static_cast<std::uint32_t>(
           path.lspBounds.second - path.lspBounds.first + 1)};
@@ -455,7 +456,8 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
             hir::MemberProjection{
                 .member = member_of(*peeled->base),
                 .path = *std::move(path),
-                .run = RunOfPortExpression(*peeled->base, written)})}};
+                .positions =
+                    PositionsOfPortExpression(*peeled->base, written)})}};
   };
 
   // The ports are read before the members are given their storage, because a
@@ -758,7 +760,8 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
           hir::MemberProjection{
               .member = *id,
               .path = *std::move(path),
-              .run = RunOfPortExpression(*peeled->base, written_part)});
+              .positions =
+                  PositionsOfPortExpression(*peeled->base, written_part)});
     }
     return parts;
   };

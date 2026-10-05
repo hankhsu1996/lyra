@@ -849,7 +849,7 @@ auto StructuralScopeLowerer::PopulateNetAliasMember(
       owner_->SourceMapper().PointSpanOf(alias.location);
   std::vector<hir::NetSide> sides;
   for (const slang::ast::Expression* member : alias.getNetReferences()) {
-    auto side = NetRunsOfLvalue(
+    auto side = NetPositionsOfLvalue(
         *this, slang_scope_->asSymbol(), *member, span,
         diag::DiagCode::kUnsupportedStructuralMember, frame);
     if (!side) return std::unexpected(std::move(side.error()));

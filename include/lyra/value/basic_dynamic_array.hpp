@@ -25,7 +25,7 @@ namespace lyra::value {
 // library, with the element type's table, for the execution backend. Every
 // element is handed in and out by its address.
 //
-// The elements are one contiguous run per generation, each at its index times
+// The elements are one contiguous array per generation, each at its index times
 // the element's size from the start, so an element is one address computation
 // away. An index names the same storage for the generation's whole life, and an
 // ordering method permutes the values the elements hold rather than the

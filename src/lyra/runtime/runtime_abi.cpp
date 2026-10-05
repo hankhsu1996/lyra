@@ -660,10 +660,10 @@ auto ElementHandles(const Container& array) -> std::vector<const void*> {
   return ElementHandles(&array, value::LibraryTypeOf<Container>());
 }
 
-// A run of values of one kind, each crossing as the opaque handle every value
-// crosses as. What the run points at is the whole of what the two sides must
-// agree on, the signature saying only that a run crosses, so it is read in one
-// place whatever kind of value the run holds.
+// A sequence of values of one kind, each crossing as the opaque handle every
+// value crosses as. What the sequence points at is the whole of what the two
+// sides must agree on, the signature saying only that a sequence crosses, so it
+// is read in one place whatever kind of value it holds.
 template <typename T>
 auto ValuesOf(LyraSpan values) -> std::vector<T> {
   const std::span<const void* const> raw(
@@ -6342,6 +6342,29 @@ void lyra_rt_unpackedarray_assign_slice(
   AssignDesignatedSlice<RuntimeUnpackedArray>(
       designation, start, count,
       lyra::runtime::ElementHandles(Read<RuntimeUnpackedArray>(replacement)));
+}
+
+void lyra_rt_packed_assign_slice(
+    const void* designation, const void* start, std::int64_t count,
+    const void* replacement) {
+  const ErasedDesignation& within = DesignationAt(designation);
+  lyra::value::PackedArrayRef bits =
+      static_cast<PackedArray*>(within.part)
+          ->SliceRef(Read<PackedArray>(start), count);
+  if (const std::optional<lyra::runtime::Change> change =
+          lyra::runtime::WriteBits(
+              bits, Read<PackedArray>(replacement),
+              within.write->Undecided())) {
+    within.write->Landed(*change);
+  }
+}
+
+auto lyra_rt_packed_read_slice(
+    const void* designation, const void* start, std::int64_t count, void* out)
+    -> void* {
+  return Emplace(
+      out, static_cast<const PackedArray*>(DesignationAt(designation).part)
+               ->Slice(Read<PackedArray>(start), count));
 }
 
 auto lyra_rt_packed_land(const void* designation) noexcept -> void* {

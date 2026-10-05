@@ -31,7 +31,7 @@ namespace lyra::lowering::hir_to_mir {
 // steps yield, at `result_type`. Binding the completion and writing the index
 // back are statements while a traversal sits where an expression does (the
 // canonical `do ... while (m.next(idx))` idiom, the header of a loop over the
-// keys), which is why it is a run of steps.
+// keys), which is why it is a sequence of steps.
 [[nodiscard]] auto BuildAssociativeTraversal(
     UnitLowerer& unit_lowerer, BlockBuilder& steps, support::BuiltinFn method,
     mir::ExprId array, AccessPath index, mir::TypeId key_type,

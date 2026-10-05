@@ -101,8 +101,8 @@ total width convert into each other without either naming the other's members.
       most significant.
   - [ ] A cast where either side's bit count is only known while the program runs, which includes
         LRM 6.24.3's greedy rule for a dynamically sized destination. It waits on the same thing the
-        streaming operator's dynamic form does -- a type naming a run of bits whose length the
-        program fixes -- and on nothing of its own, so the two close together.
+        streaming operator's dynamic form does -- a type naming bits whose number the program fixes
+        -- and on nothing of its own, so the two close together.
   - [ ] A cast whose operand or casting type is a union, or a class. Both wait on the value layer
         carrying a bit stream for those at all, which is also what `$bits` of one waits on; neither
         is specific to casting.

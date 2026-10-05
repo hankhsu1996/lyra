@@ -120,22 +120,22 @@ This workstream reasons from these and does not restate them:
       dominating type per pair of nets and that relation does not extend to the set a chain joins,
       so the program is reported rather than answered. What a net type states carries no width, so
       two nets of unequal width state the same one.
-- [x] N10 -- A bidirectional connection reaches a run of a net rather than always the whole of it
-      (LRM 23.3.3.7, 10.11): a connection naming a part select or a single-bit select of a net puts
-      those positions, and no others, in one resolution with the child's port net. The positions a
-      connection does not reach go on resolving over their own drivers, and a driver of either side
-      meets the others only where the run overlaps it. An instance array distributing a packed
-      actual across its elements (LRM 23.3.3.5) is this with no select written anywhere in the
-      source, which is how a design meets it without asking for it. A connection naming a whole net
-      is the run that covers it, so it needs no path of its own.
-- [x] N11 -- Each side of a bidirectional connection is a sequence of runs, and what the connection
-      states is the two laid over one another (LRM 10.11's bit overlay rules, which LRM 23.3.3 gives
-      a port connection too). An actual naming a concatenation of nets contributes one run per
-      operand; a port standing for part of one of its own declarations contributes the run that part
-      covers, which the declaring unit answers for because only its own source says which part its
-      port is. The two sides correspond position-wise from the most significant end and their runs
-      need not fall at the same boundaries, so the overlay is taken in the pieces both sides have
-      whole.
+- [x] N10 -- A bidirectional connection reaches some positions of a net rather than always the whole
+      of it (LRM 23.3.3.7, 10.11): a connection naming a part select or a single-bit select of a net
+      puts those positions, and no others, in one resolution with the child's port net. The
+      positions a connection does not reach go on resolving over their own drivers, and a driver of
+      either side meets the others only where the connected positions overlap it. An instance array
+      distributing a packed actual across its elements (LRM 23.3.3.5) is this with no select written
+      anywhere in the source, which is how a design meets it without asking for it. A connection
+      naming a whole net covers every position of it, so it needs no path of its own.
+- [x] N11 -- Each side of a bidirectional connection is a sequence of net positions, and what the
+      connection states is the two laid over one another (LRM 10.11's bit overlay rules, which LRM
+      23.3.3 gives a port connection too). An actual naming a concatenation of nets contributes each
+      operand's positions; a port standing for part of one of its own declarations contributes the
+      positions that part covers, which the declaring unit answers for because only its own source
+      says which part its port is. The two sides correspond position-wise from the most significant
+      end and their operands need not fall at the same boundaries, so the overlay is taken in the
+      pieces both sides have whole.
 - [x] N12 -- An `alias` statement (LRM 10.11) is the same overlay with no port: each member is one
       side, sharing positions is transitive so stating it between each member and the next states it
       among all of them, and several statements accumulate. A member may itself be a concatenation,
@@ -143,16 +143,16 @@ This workstream reasons from these and does not restate them:
       standard's own byte-swap example. What the standard requires of the members is decided over
       the elaborated design and reported there: one net type across the list, sides of equal width,
       no variable and no hierarchical reference, and no pair stated twice.
-- [x] N13 -- What resolves together is a run of positions that every name reaching it covers
-      entirely, so a declared net reaches one per run of its own positions rather than exactly one.
-      A connection cuts the runs its own ends fall inside, which is what lets two positions of one
-      name take part in two resolutions -- and a name no connection reached is the single run that
-      covers it.
+- [x] N13 -- What resolves together is a set of adjacent positions that every name reaching it
+      covers entirely, so a declared net reaches one per range of its own positions rather than
+      exactly one. A connection cuts the ranges its own ends fall inside, which is what lets two
+      positions of one name take part in two resolutions -- and a name no connection reached is the
+      single range that covers it.
 - [ ] N14 -- A bidirectional connection or an `alias` reaching a net whose data type is an unpacked
       aggregate (N3a), whether it names the whole net (`alias a = b` over two `wire [2]` arrays) or
       one element (`wire u [4]` joined through `u[e]`). Such a net resolves per bit but keeps no
-      runs of positions for another net to join. Refused by name; it used to stop the run with an
-      internal error, or produce C++ that did not compile.
+      positions for another net to join. Refused by name; it used to stop the run with an internal
+      error, or produce C++ that did not compile.
 
 ## Out of scope
 

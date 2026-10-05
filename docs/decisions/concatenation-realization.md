@@ -51,9 +51,9 @@ render, which `mir.md` requires to be a stated call.
    _literal_ is the opposite case and stays a node -- Rust and C++ both have one, because a literal
    spells a value rather than operating on values that already exist.
 
-2. **A join carries two or more runs.** A source-level join of one operand is that operand seen at
-   the join's own type, which LRM 11.8.1 fixes as unsigned however the operand was declared -- a
-   conversion, not a join. HIR-to-MIR states it as one, so the degenerate case exists in one place
+2. **A join carries two or more operands.** A source-level join of one operand is that operand seen
+   at the join's own type, which LRM 11.8.1 fixes as unsigned however the operand was declared -- a
+   conversion, not a join. HIR-to-MIR states it as one, so the one-operand case exists in one place
    instead of at every consumer.
 
 3. **A replication's multiplier reaches the entry as a machine count.** The multiplier is lowered as
@@ -73,13 +73,13 @@ render, which `mir.md` requires to be a stated call.
    list of arbitrary length: a C ABI has no such entry, and neither does the runtime's C++ surface.
    So an N-operand source join is stated as the left-to-right chain of two-operand calls it stands
    for. Composing is associative over both the bit plane and the state domain -- total width is a
-   sum, the result holds x and z when any run does, and each run lands at the same offset either way
-   -- so the chain and the single N-operand call hold the same value.
+   sum, the result holds x and z when any operand does, and each operand lands at the same offset
+   either way -- so the chain and the single N-operand call hold the same value.
 
    The fold happens where the join is built, because arity is not one target's fact: every entry
    that performs the operation takes two operands. A backend that folded instead would be deciding,
    in a value-emission entry, how many operations one node stands for -- the render-side defect this
-   record opened with, reached from the other end. Each step's type follows from the runs it has
+   record opened with, reached from the other end. Each step's type follows from the operands it has
    joined so far, so the entry that performs the join is what fixes it and no caller states it.
 
 5. **One entry, one call shape across value families.** Which realization a join reaches follows the
@@ -124,10 +124,10 @@ rejected alternative predicted it would.
   while the other took an argument list. Making the join a call deletes all of it -- the existing
   builtin-call render already names the entry.
 
-- **Collect the runs into a sequence value and pass one span.** This is how the variadic runtime
+- **Collect the operands into a sequence value and pass one span.** This is how the variadic runtime
   entries that already exist take their operands, and it needs no fold. It does not fit a join: a
-  sequence is homogeneous and a join's runs have different widths, so the sequence's element type
-  would have to name one of them and be wrong about the rest.
+  sequence is homogeneous and a join's operands have different widths, so the sequence's element
+  type would have to name one of them and be wrong about the rest.
 
 - **Leave the fold to each backend.** Rejected, and it is what this record first decided, on the
   ground that the arity limit is one target's property so it should be paid where that target is.
@@ -151,7 +151,7 @@ rejected alternative predicted it would.
 - One runtime entry serves each operator across value domains, because the domain a call's operands
   name is what selects the realization -- the identity rule `builtin-call-identity.md` already
   states, now reaching a value-build.
-- A consumer that meets a join reads two or more runs and never a degenerate one.
+- A consumer that meets a join reads two or more operands and never a one-operand join.
 
 ## Cross-references
 

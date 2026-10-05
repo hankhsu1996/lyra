@@ -37,7 +37,7 @@ struct WatchedSelect {
   auto operator==(const WatchedSelect&) const -> bool = default;
 };
 
-// A leaf reads a run of its cell's packed encoding, first and last bit, that no
+// A leaf reads bits of its cell's packed encoding, first and last bit, that no
 // prefix in the source spells: a read inside a called function, or what is left
 // of one once the procedure's own writes are excluded (LRM 9.2.2.2.1).
 struct WatchedBits {

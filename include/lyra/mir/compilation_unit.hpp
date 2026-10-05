@@ -182,8 +182,8 @@ struct BuiltinMirTypes {
   // that narrower type rather than by an entry of its own.
   TypeId machine_int64;
   // The machine word a packed value's storage is laid out in. A literal too
-  // wide for one integer carrier states its bits as a run of these, which is
-  // the same word the runtime's own planes are made of.
+  // wide for one integer carrier states its bits as a sequence of these, which
+  // is the same word the runtime's own planes are made of.
   TypeId machine_word;
   // The two machine floats a real-family value wraps: single precision for a
   // `shortreal`, double for a `real` or a `realtime` (LRM 6.12).

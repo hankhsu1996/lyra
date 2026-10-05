@@ -60,6 +60,14 @@ enum class FourStateBit : std::uint8_t {
   return ((words[index] >> (position % 64U)) & 1U) != 0U;
 }
 
+// Where some of a packed value's bits lie: `width` of them from `lsb`, counted
+// from the value's least significant bit rather than by the indices its
+// declaration gives them.
+struct BitPositions {
+  std::uint64_t lsb = 0;
+  std::uint64_t width = 0;
+};
+
 // Clears every position of the top word that lies above `bit_width`. It runs
 // after nearly every operation writes a result, so it is defined where each of
 // them can see it; only the report of a width no value has is a call.
@@ -78,28 +86,28 @@ auto SetAllValidBits(std::span<std::uint64_t> words, std::uint64_t bit_width)
 
 // Moves `count` bits out of `src` beginning at `src_offset` into `dst`
 // beginning at `dst_offset`, a destination word at a time. Every bit of `dst`
-// outside the run is left as it stands, and a position `src` does not reach
-// moves as a clear bit -- which is what settles the plane a two-state value
-// does not carry when it is written into four-state storage.
+// outside those moved is left as it stands, and a position `src` does not
+// reach moves as a clear bit -- which is what settles the plane a two-state
+// value does not carry when it is written into four-state storage.
 //
-// Neither offset is word-aligned, because a run of bits the design named
-// starts where the design said it did. The destination holds the whole run:
-// the caller works the overlap out before saying what to move, so checking it
-// here would compare a bound against the arithmetic that produced it.
-auto MoveBitRun(
+// Neither offset is word-aligned, because bits the design named start where
+// the design said they did. The destination holds every bit moved: the caller
+// works the overlap out before saying what to move, so checking it here would
+// compare a bound against the arithmetic that produced it.
+auto MoveBits(
     std::span<const std::uint64_t> src, std::uint64_t src_offset,
     std::span<std::uint64_t> dst, std::uint64_t dst_offset, std::uint64_t count)
     -> void;
 
-// Whether two planes hold the same bits over the run of `count` positions
-// beginning at `offset`, read where they lie. A position a plane does not reach
-// reads as clear, as it does for `MoveBitRun`.
-auto BitRunsEqual(
+// Whether two planes hold the same `count` bits beginning at `offset`, read
+// where they lie. A position a plane does not reach reads as clear, as it does
+// for a move.
+auto BitsEqual(
     std::span<const std::uint64_t> lhs, std::span<const std::uint64_t> rhs,
     std::uint64_t offset, std::uint64_t count) -> bool;
 
-// Every position of the run set, and nothing outside it.
-auto SetBitRun(
+// The `count` bits from `offset` set, and nothing else.
+auto SetBits(
     std::span<std::uint64_t> dst, std::uint64_t offset, std::uint64_t count)
     -> void;
 

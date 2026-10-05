@@ -312,7 +312,7 @@ auto Renderer::UnpackedMember(
   return Named(frame, field.name, Render(frame, member, field.type));
 }
 
-// Reads the run the member occupies rather than the member the source named:
+// Reads the bits the member occupies rather than the member the source named:
 // the rendering has already settled which member it is printing -- every one
 // of a structure's, the first of a union's, the one a tag names -- so the
 // check LRM 11.9 puts on a written access would be this operation asking again
@@ -323,15 +323,15 @@ auto Renderer::PackedMember(
     base::ComponentIndex index) -> mir::ExprId {
   // LRM 7.3.2 allows a tagged union member declared `void`, which is all
   // information in the tag: the name is the whole of what there is to print,
-  // and the member occupies no run to read.
+  // and the member occupies no bits to read.
   if (HirType(field.type).Is<hir::VoidType>()) {
     return Text(frame, field.name);
   }
   mir::Block& block = *frame.current_block;
-  const ProjectedMember& run = projection.members.at(index.value);
+  const ProjectedMember& projected = projection.members.at(index.value);
   const mir::ExprId subject = Read(frame, value, mir_type);
-  const mir::ExprId member = block.exprs.Add(BuildPackedRunRead(
-      Owner(), block, subject, run.bit_offset, run.bit_width,
+  const mir::ExprId member = block.exprs.Add(BuildPackedBitsRead(
+      Owner(), block, subject, projected.bit_offset, projected.bit_width,
       Owner().TranslateType(field.type)));
   return Named(frame, field.name, Render(frame, member, field.type));
 }

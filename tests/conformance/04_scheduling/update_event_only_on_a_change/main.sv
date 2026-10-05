@@ -31,6 +31,10 @@ module Top;
   int recs_seen;
   int recs_runs;
 
+  record_t rec;
+  int rec_seen;
+  int rec_runs;
+
   int lookup [string];
   int lookup_seen;
   int lookup_runs;
@@ -59,6 +63,11 @@ module Top;
   always_comb begin
     recs_runs = recs_runs + 1;
     recs_seen = recs[idx].vals[idx];
+  end
+
+  always_comb begin
+    rec_runs = rec_runs + 1;
+    rec_seen = rec.tag;
   end
 
   always_comb begin
@@ -144,6 +153,16 @@ module Top;
     base = recs_runs;
     recs[1].vals[2] = 8;
     #1 expect_runs("a nested member changed", recs_runs - base, 1);
+
+    rec = '{3, '{1, 2, 3, 4}};
+    #1 base = rec_runs;
+    rec = '{3, '{1, 2, 3, 4}};
+    #1 expect_runs("a structure written whole with its own value",
+                   rec_runs - base, 0);
+    base = rec_runs;
+    rec = '{4, '{1, 2, 3, 4}};
+    #1 expect_runs("a structure written whole with the member read changed",
+                   rec_runs - base, 1);
 
     base = lookup_runs;
     lookup["fresh"] = 0;

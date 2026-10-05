@@ -12,9 +12,10 @@
 // element at a position.
 namespace lyra::value::detail {
 
-// LRM 11.4.5: a run of element comparisons answers in the state class an
-// element's own equality does, read off the element default so an empty run
-// has no case of its own and a size mismatch answers in the same class.
+// LRM 11.4.5: a sequence of element comparisons answers in the state class an
+// element's own equality does, read off the element default so an empty
+// sequence has no case of its own and a size mismatch answers in the same
+// class.
 template <typename Seq>
 [[nodiscard]] auto ElementsAreFourState(const Seq& seq) -> bool {
   const auto& elem = seq.Element();

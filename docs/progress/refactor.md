@@ -2038,12 +2038,12 @@ enough to warrant its own focused review.
       reaching an object of it through a hierarchical name compiles against it rather than asking
       the declaring scope by name. No entry is read and found hollow.
 
-- [x] R128 -- A run of bits moves between two packed values a word at a time. Taking a run out of a
-      value and writing one back used to be a loop over the run's bits, each iteration dividing,
-      taking a remainder, shifting twice and writing one bit. Both now step a destination word at a
-      time, reading the source shifted by the difference between the two offsets and merging under
-      one mask, so neither end has to sit on a word boundary -- which is the word-wise path R91
-      recorded as missing and unneeded.
+- [x] R128 -- Bits move between two packed values a word at a time. Taking bits out of a value and
+      writing them back used to be a loop over those bits, each iteration dividing, taking a
+      remainder, shifting twice and writing one bit. Both now step a destination word at a time,
+      reading the source shifted by the difference between the two offsets and merging under one
+      mask, so neither end has to sit on a word boundary -- which is the word-wise path R91 recorded
+      as missing and unneeded.
 
       This was the same defect R91 removed from width and domain conversion, in the two functions a
       page away from it that were not looked at. R91's own text asserted these paths did their word
@@ -2592,22 +2592,22 @@ enough to warrant its own focused review.
       needs. Not blocked.
 
 - [ ] R159 -- What a body reads reaches the lowering as bits and is turned back into the selects the
-      source wrote by matching. The front end's flow analysis reports each read as a run of a
+      source wrote by matching. The front end's flow analysis reports each read as some of a
       variable's bits; a body shared by many constructions needs the select instead, so the lowering
-      collects every select written in the body and matches their bits against each reported run,
-      naming the run where they cover it exactly. The producer knew which expression it read and
+      collects every select written in the body and matches their bits against each reported read,
+      naming the read where they cover it exactly. The producer knew which expression it read and
       handed over only where it landed, and every miss of the matching costs sharing: a read inside
       a called function is not matched at all, and a constant select that lands outside its object
       at one index reaches no bit and so is not reported there, which keeps a loop's blocks apart
       when one of them is that index. Matching function bodies too was tried and shares the body,
-      but watches one run as every select that makes it up, which raised a real design's watched
-      entries by an eighth. Target: the analysis reports each read as the select it read, with the
-      bits beside it where exclusion needs them, and the lowering matches nothing except for what is
-      left of a read once the procedure's own writes are taken out, which only bits can say. The
-      front end merges adjacent reads into one run before it reports them and its own tests hold
-      that, so this is a change to what its sensitivity list is, or a second list beside it, and
-      wants a design of its own. Copying how it keeps writes does not serve: a write another write
-      covers is dropped, and a read dropped that way differs between constructions.
+      but watches the same bits as every select that makes them up, which raised a real design's
+      watched entries by an eighth. Target: the analysis reports each read as the select it read,
+      with the bits beside it where exclusion needs them, and the lowering matches nothing except
+      for what is left of a read once the procedure's own writes are taken out, which only bits can
+      say. The front end merges adjacent reads into one before it reports them and its own tests
+      hold that, so this is a change to what its sensitivity list is, or a second list beside it,
+      and wants a design of its own. Copying how it keeps writes does not serve: a write another
+      write covers is dropped, and a read dropped that way differs between constructions.
 
 - [ ] R160 -- HIR's own check, run as a unit is produced, holds one rule: an expression is held by
       one construct. It does not yet hold that a reference names a declaration in scope where it

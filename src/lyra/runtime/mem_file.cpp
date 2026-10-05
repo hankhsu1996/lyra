@@ -290,8 +290,9 @@ void WriteMemAssoc(
       });
 }
 
-// The grid a run of declared ranges describes: the addressed dimension read in
-// ascending address, and how many leaves each of its addresses expands to.
+// The grid a sequence of declared ranges describes: the addressed dimension
+// read in ascending address, and how many leaves each of its addresses expands
+// to.
 struct MemoryGrid {
   std::int64_t lo;
   std::int64_t hi;

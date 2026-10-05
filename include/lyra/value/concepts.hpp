@@ -213,7 +213,7 @@ concept AssocIndexable = requires(T& t, const K& key) {
   { t.ElementRef(key) };
 };
 
-// Sliceable: a run of `count` parts starting at a position (LRM 11.5.1 for the
+// Sliceable: `count` parts in a row starting at a position (LRM 11.5.1 for the
 // bits of a packed value, 7.4.5 for the elements of an unpacked one). The
 // count is fixed by the type the select produces, so it arrives as a number;
 // the start arrives as a position, an integral value that may also name no
@@ -223,7 +223,7 @@ concept AssocIndexable = requires(T& t, const K& key) {
 //
 // A queue's slice is bounded by two positions that the running program can
 // move (LRM 7.10.1), and a string slices by `Substr(i, j)` (LRM 6.16.8);
-// neither is a run of a fixed count, so neither claims this.
+// neither is a fixed count of parts, so neither claims this.
 template <typename T>
 concept Sliceable =
     requires(const T& t, const PackedArray& start, std::int64_t count) {

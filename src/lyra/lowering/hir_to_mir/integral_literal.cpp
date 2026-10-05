@@ -17,7 +17,7 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // One plane sized and masked the way `width` declares it. A caller may have
-// written a short run of words, or left the sign bits above the width set.
+// written too few words, or left the sign bits above the width set.
 auto CanonicalPlane(
     const std::vector<std::uint64_t>& words, std::uint64_t width)
     -> std::vector<std::uint64_t> {
@@ -32,7 +32,7 @@ auto CanonicalPlane(
 }
 
 // The plane an unknown state is carried in. A two-state type is handed no plane
-// at all rather than a run of zeros: the runtime refuses one, because a plane
+// at all rather than words of zeros: the runtime refuses one, because a plane
 // there would be storage its shape says it does not have.
 auto CanonicalStatePlane(
     const std::vector<std::uint64_t>& words, std::uint64_t width,

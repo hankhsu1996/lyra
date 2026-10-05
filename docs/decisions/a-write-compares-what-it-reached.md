@@ -59,9 +59,18 @@ part tells the write what forming it did.**
   Measured 2026-09-28 on the clocked 4096-entry memory, `--release`: 0.42 s on the execution backend
   and 0.26 s on the C++ backend.
 - **Otherwise the part landed on is compared with its value from before the write.** That value is
-  kept only where something reads the answer and no step has given it already. A packed variable has
-  no parts that are storage, so a write into one lands on the whole, and its waits go on being
-  passed over by the bits they read.
+  kept only where something reads the answer and no step has given it already.
+- **Bits of a packed value are a slice designated within the write** (revised 2026-10-05). The bits
+  of a packed value lie contiguously (LRM 7.4.1) and some of them are reached where they lie, at the
+  cost of those bits ([a-value-is-its-machine-data](a-value-is-its-machine-data.md) D4, D7), so a
+  bit-select, a part-select or a packed member a write names is designated within the write, and the
+  write lands on those bits rather than on the whole. It keeps only the words they lie in, and it
+  tells the waits which bits it reached and what they held: a wait reading none of them is passed
+  over without a comparison, and one reading some compares only those it shares with the write. A
+  whole-value store into a packed variable reaches every bit and keeps its words the same way. This
+  revises the earlier rule that a packed variable, having no parts that are storage, is landed on
+  whole: that rule kept a copy of the whole value for any write into it, which designating the bits
+  removes.
 - **Every way a write reaches its part is a landing.** An assignment, a compound assignment or an
   increment, and a method changing its receiver in place each land the write before anything is
   written, and each reaches the part the way a write does, so an element a write would form is
@@ -72,7 +81,7 @@ part tells the write what forming it did.**
   whether or not that write changes it: nothing in the slot has changed the variable before its
   first write, so what it holds then is that value.
 - **A net driver hears which of its positions a write moved.** Its net resolves again only over the
-  runs whose contribution moved (LRM 6.5).
+  positions whose contribution moved (LRM 6.5).
 
 ## Rejected
 

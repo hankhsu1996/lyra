@@ -395,8 +395,8 @@ auto BuildDefaultValueExpr(
           },
 
           // The machine vocabulary a lowering builds to carry a value: a count,
-          // a flag, a host string, a run of operands, the address of a body.
-          // Each is built where it is used, out of what it is built from.
+          // a flag, a host string, a sequence of operands, the address of a
+          // body. Each is built where it is used, out of what it is built from.
           [&](const mir::MachineIntType&) -> mir::Expr {
             return holds_no_declared_value("a machine integer");
           },

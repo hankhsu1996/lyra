@@ -18,7 +18,7 @@ namespace lyra::mir {
 // Word layout is LSB-first and 4-state encoding is (v=0,s=0)=0, (v=1,s=0)=1,
 // (v=0,s=1)=Z, (v=1,s=1)=X. Nothing else is promised here: this is what a
 // caller hands over, and a caller with one word in hand for a narrower type
-// writes one word. What the run of words has to look like to be an entry of a
+// writes one word. What the words have to look like to be an entry of a
 // unit's pool is on the entry below, which is where it is established.
 struct IntegralConstant {
   std::vector<std::uint64_t> value_words;

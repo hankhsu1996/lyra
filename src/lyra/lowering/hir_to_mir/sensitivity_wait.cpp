@@ -196,43 +196,45 @@ auto BuildObservablePtrExpr(
 // registration takes (LRM 9.4.2 / 9.4.2.2 / 9.4.3). A read of the whole of it
 // is width 0, which is also what a named event and an object carry, having no
 // bits at all.
-struct WatchedRun {
+struct WatchedBitPositions {
   mir::ExprId first;
   mir::ExprId width;
 };
 
-auto WholeRun(const mir::CompilationUnit& unit, mir::Block& block)
-    -> WatchedRun {
-  return WatchedRun{
+auto AllBits(const mir::CompilationUnit& unit, mir::Block& block)
+    -> WatchedBitPositions {
+  return WatchedBitPositions{
       .first = BuildIntLiteral(unit, block, 0),
       .width = BuildIntLiteral(unit, block, 0)};
 }
 
 template <typename Lowerer>
-auto WatchedRunOf(
+auto WatchedBitPositionsOf(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::WatchedPart& part)
-    -> diag::Result<WatchedRun> {
+    -> diag::Result<WatchedBitPositions> {
   const auto int_literal = [&](std::uint64_t value) {
     return BuildIntLiteral(unit, block, static_cast<std::int64_t>(value));
   };
   return std::visit(
       Overloaded{
-          [&](const hir::WatchedWhole&) -> diag::Result<WatchedRun> {
-            return WholeRun(unit, block);
+          [&](const hir::WatchedWhole&) -> diag::Result<WatchedBitPositions> {
+            return AllBits(unit, block);
           },
-          [&](const hir::WatchedSelect& select) -> diag::Result<WatchedRun> {
+          [&](const hir::WatchedSelect& select)
+              -> diag::Result<WatchedBitPositions> {
             auto part = lowerer.LowerAccessPath(
                 lowerer.HirExprs().Get(select.prefix), frame.WithBlock(&block));
             if (!part) return std::unexpected(std::move(part.error()));
-            const PathRun run = RunWithinOwner(unit, block, *part);
-            return WatchedRun{
+            const PathBits named = BitsWithinOwner(unit, block, *part);
+            return WatchedBitPositions{
                 .first = ConvertToType(
-                    unit, block, run.first, unit.builtins.int_type),
-                .width = int_literal(run.width)};
+                    unit, block, named.first, unit.builtins.int_type),
+                .width = int_literal(named.width)};
           },
-          [&](const hir::WatchedBits& bits) -> diag::Result<WatchedRun> {
-            return WatchedRun{
+          [&](const hir::WatchedBits& bits)
+              -> diag::Result<WatchedBitPositions> {
+            return WatchedBitPositions{
                 .first = int_literal(bits.first),
                 .width = int_literal(bits.last - bits.first + 1)};
           },
@@ -249,8 +251,8 @@ auto BuildTriggerExpr(
     mir::LocalId observation) -> diag::Result<mir::ExprId> {
   const mir::ExprId observable_ptr =
       BuildObservablePtrExpr(block, frame, unit, lowerer, entry);
-  auto run = WatchedRunOf(block, frame, unit, lowerer, entry.part);
-  if (!run) return std::unexpected(std::move(run.error()));
+  auto watched = WatchedBitPositionsOf(block, frame, unit, lowerer, entry.part);
+  if (!watched) return std::unexpected(std::move(watched.error()));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -261,7 +263,7 @@ auto BuildTriggerExpr(
                        block.exprs.Add(
                            mir::MakeLocalRefExpr(
                                observation, unit.builtins.observation)),
-                       run->first, run->width}},
+                       watched->first, watched->width}},
           .type = unit.builtins.trigger});
 }
 
@@ -287,9 +289,10 @@ auto ReportCell(
   mir::Block& block = *frame.current_block;
   const mir::ExprId place =
       BuildObservablePtrExpr(block, frame, unit, lowerer, cell);
-  auto run = WatchedRunOf(block, frame, unit, lowerer, cell.part);
-  if (!run) return std::unexpected(std::move(run.error()));
-  ActOnReport(unit, block, report, entry, {place, run->first, run->width});
+  auto watched = WatchedBitPositionsOf(block, frame, unit, lowerer, cell.part);
+  if (!watched) return std::unexpected(std::move(watched.error()));
+  ActOnReport(
+      unit, block, report, entry, {place, watched->first, watched->width});
   return {};
 }
 
@@ -298,10 +301,10 @@ auto ReportCell(
 // interface holds -- and which bits of it are read.
 void ReportThroughHandle(
     const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
-    mir::ExprId place, WatchedRun run) {
+    mir::ExprId place, WatchedBitPositions watched) {
   ActOnReport(
       unit, block, report, support::BuiltinFn::kReadReportAddThroughHandle,
-      {place, run.first, run.width});
+      {place, watched.first, watched.width});
 }
 
 // Appends `if (holds(local)) { fill(inner) }` to `frame`'s block: what reaches
@@ -344,7 +347,7 @@ auto ReportObjectThenHops(
   mir::Block& block = *frame.current_block;
   ReportThroughHandle(
       unit, block, report, ObjectEventSourceOf(unit, block, object()),
-      WholeRun(unit, block));
+      AllBits(unit, block));
   if (hops.empty()) return {};
   const hir::ObjectChain::Hop& hop = hops.front();
   const mir::TypeId next_type = lowerer.Owner().TranslateType(hop.handle_type);
@@ -405,7 +408,7 @@ auto ReportLeaf(
                   if (!place) return std::unexpected(std::move(place.error()));
                   ReportThroughHandle(
                       unit, *inner.current_block, report, *place,
-                      WholeRun(unit, *inner.current_block));
+                      AllBits(unit, *inner.current_block));
                   return {};
                 });
           },
@@ -461,7 +464,7 @@ auto Reported(
   const mir::ExprId held = EvaluatedOnce(frame, value);
   ReportThroughHandle(
       unit, block, *frame.reports_reached_to, place_of(held),
-      WholeRun(unit, block));
+      AllBits(unit, block));
   return held;
 }
 

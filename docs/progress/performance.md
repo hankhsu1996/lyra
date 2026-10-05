@@ -53,9 +53,8 @@ dense one, 2,568 array passes/s on the packed-slice read, 367,261 iterations/s o
 case, and 1,636 table passes/s on the representative block.
 
 The wide bitwise case has moved since, to **469,661 iterations/s**, which is the entry below on
-moving a run of bits a word at a time. Its ratio read 2,683x on the same run -- but the reference
-column also moved between the two readings, so the ratio is not what says the case got faster and
-the rate is.
+moving bits a word at a time. Its ratio read 2,683x on the same run -- but the reference column also
+moved between the two readings, so the ratio is not what says the case got faster and the rate is.
 
 One figure this paragraph used to carry widened and has since come back: the subscription scan that
 fires nothing read 15x, then 114x, and reads 21x today. Nothing landed in that window could widen a
@@ -98,8 +97,8 @@ retaken since, because retaking it needs the design.
 
 **Retaken over the corpus instead, on 2026-09-23, and the result is that there is no single top.**
 Two cases profiled under callgrind on the compiled program, both `--release`. On the wide bitwise
-case -- the only one outside the band -- taking a run of bits out of a value was 23.3% of the run's
-instructions on its own and writing one back a further 6.6%, because both moved a run one bit at a
+case -- the only one outside the band -- taking bits out of a value was 23.3% of the run's
+instructions on its own and writing them back a further 6.6%, because both moved them one bit at a
 time; that was [refactor.md](refactor.md) R128, now closed, and it took the case from 367,261 to
 469,661 iterations/s. On the representative block those same two are 3.4% together and the top is
 **making a value at all**: blanking one 12.4%, zeroing its words 5.7%, its constructor 4.3%,
@@ -269,7 +268,7 @@ closed below.
 - [x] Making a value no longer pays for its planes twice, and the runtime no longer calls its own
       functions as though another library might replace them. A four-state value that fits one word
       held each plane in a sequence of its own, each with its own length and room; both planes now
-      share one run of words that holds them in place, and the value is 48 bytes rather than 64.
+      share one array of words that holds them in place, and the value is 48 bytes rather than 64.
       Clearing the bits above the width after an operation, one instruction of work, had been a call
       into another file; it is now in view of every operation that ends with it.
 
@@ -441,7 +440,7 @@ specializations, not with instance count.
       and is not listed, so that block differs from its neighbours, and one block differing keeps
       every block apart. And a read inside a function the procedure calls (`return a[i];`), which is
       stated as the bits it reached and not as the select written there. Naming it by that select
-      was tried: it shares the body, and it also watches one run of bits as every select that makes
+      was tried: it shares the body, and it also watches the same bits as every select that makes
       it up, which on Ibex raised the watched entries from 1838 to 2071.
 
       **A body waiting on two or more variables of its own used to fall outside them as well, for

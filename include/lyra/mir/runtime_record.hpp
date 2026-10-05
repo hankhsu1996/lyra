@@ -57,9 +57,9 @@ class RuntimeRecordBuilder {
             .type = unit_->builtins.machine_int64});
   }
 
-  // A contiguous run of already-built records, as the aggregate a runtime
+  // A contiguous array of already-built records, as the aggregate a runtime
   // record reads one of. The element type is a parameter rather than read off
-  // the elements, so a run with none still has one.
+  // the elements, so an array with none still has one.
   auto MachineArray(TypeId element, std::vector<ExprId> elements) -> ExprId {
     const auto size = static_cast<std::uint32_t>(elements.size());
     return Add(

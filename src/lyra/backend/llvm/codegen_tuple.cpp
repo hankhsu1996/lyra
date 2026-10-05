@@ -60,7 +60,7 @@ static_assert(offsetof(value::TupleComponent, type) == sizeof(void*));
 // of which is asked of a structure: it has no relational or arithmetic
 // operator to order, test or fold by, an associative array indexed by one is
 // refused where it is declared, and its parts are components named by position
-// in its type rather than a run of one type.
+// in its type rather than a sequence of one type.
 struct NoStructureAnswers {};
 
 // Where the virtual function `member` lies in its class's table, counted in

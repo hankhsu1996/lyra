@@ -95,8 +95,8 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
           },
           // A call in target position names a place through the object it
           // dispatches on. A join stands for the destructuring LHS it came
-          // from, which writes each run through that run's own root, so the
-          // whole outlives the update exactly when every run does.
+          // from, which writes each operand through that operand's own root, so
+          // the whole outlives the update exactly when every operand does.
           [&](const mir::CallExpr& c) {
             const std::optional<mir::ExprId> receiver =
                 mir::CalleeReceiver(c.callee);
@@ -360,7 +360,7 @@ auto Destructure(
       return std::unexpected(std::move(part_lhs_or.error()));
     }
     const mir::TypeId part_type = process.Owner().TranslateType(part.type);
-    const mir::ExprId share = block.exprs.Add(BuildPackedRunRead(
+    const mir::ExprId share = block.exprs.Add(BuildPackedBitsRead(
         process.Owner(), block, read_bound(), offset, w,
         mir::PackedVectorOf(unit.types, w, state_kind)));
     parts.push_back(

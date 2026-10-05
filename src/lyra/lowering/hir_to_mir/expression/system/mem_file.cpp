@@ -246,10 +246,10 @@ auto LowerMemFileSystemSubroutineCallStmt(
   operands.push_back(
       BuildIntLiteral(unit, body, static_cast<std::int64_t>(info.base)));
 
-  // The run starts where the source said, or at the memory's lowest address
-  // where it said nothing -- which is the same run the clause's no-address form
-  // describes, so the two need no separate entry. A finish makes it the other
-  // request.
+  // The addresses start where the source said, or at the memory's lowest
+  // address where it said nothing -- which is the same addresses the clause's
+  // no-address form describes, so the two need no separate entry. A finish
+  // makes it the other request.
   const std::optional<hir::ExprId> start = OptionalOperand(call, 2);
   const std::optional<hir::ExprId> finish = OptionalOperand(call, 3);
   if (start.has_value()) {

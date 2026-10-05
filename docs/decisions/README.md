@@ -24,8 +24,8 @@ the detail lives in the entry itself.
   position. Widening a pattern's keys to a common type, reading an element's shape off the first
   element, and carrying a wildcard index's comparison on the keys are rejected.
 - [a-value-is-its-machine-data](a-value-is-its-machine-data.md) -- a value is held as the machine
-  holds data of its size and its type is the compiler's to know: a packed value is its words in one
-  contiguous run, a type is its exact width, signedness and state domain, operations are generated
+  holds data of its size and its type is the compiler's to know: a packed value is its words, laid
+  out contiguously, a type is its exact width, signedness and state domain, operations are generated
   for the type, and the runtime is handed generated functions rather than a description of a type.
   Each choice is justified by what its cost scales with for any input. Supersedes the runtime-shape
   halves of the four entries below it.
@@ -385,7 +385,7 @@ the detail lives in the entry itself.
   machinery, refcounting each slot, and a stable-element library container are rejected.
 - [array-element-storage](array-element-storage.md) -- a fixed and a dynamic array give each index a
   persistent slot and a reference binds the slot, so ordering methods permute values among existing
-  slots, and a dynamic array generation is a contiguous run that resize replaces whole, retaining
+  slots, and a dynamic array generation is a contiguous block that resize replaces whole, retaining
   the old generation while a reference into it lives. The discriminator against the queue and the
   associative array is single-element removal, which only those two have. Element identity for
   arrays, per-element slots for the dynamic array, per-element detachment, and splitting the two
@@ -647,8 +647,8 @@ the detail lives in the entry itself.
   whether an assignment the two declared types would not otherwise allow is valid for a particular
   value is answered by whoever fixes the values the destination accepts: the type where its
   declaration fixes them, and the object where the classes extending one are open across compilation
-  units. The construct is a run of steps ending in the answer, and the reporting spelling is those
-  steps plus a report. Its object half is superseded by
+  units. The construct is a sequence of steps ending in the answer, and the reporting spelling is
+  those steps plus a report. Its object half is superseded by
   [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where the cast
   forms the view through the class's type descriptor and its presence is the answer. One
   checked-cast node dispatched on the type pair, a per-class table of the subclasses a destination

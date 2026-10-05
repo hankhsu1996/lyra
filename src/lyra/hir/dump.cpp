@@ -1960,13 +1960,14 @@ class HirDumper {
       std::string sides;
       for (const NetSide& side : join.sides) {
         if (!sides.empty()) sides += " = ";
-        std::string runs;
-        for (const NetRun& run : side) {
-          if (!runs.empty()) runs += ", ";
-          runs += std::format(
-              "Expr[{}][{}+:{}]", run.part.value, run.offset, run.width);
+        std::string operands;
+        for (const NetPositions& operand : side) {
+          if (!operands.empty()) operands += ", ";
+          operands += std::format(
+              "Expr[{}][{}+:{}]", operand.part.value, operand.offset,
+              operand.width);
         }
-        sides += std::format("{{{}}}", runs);
+        sides += std::format("{{{}}}", operands);
       }
       Line(std::format("NetJoin {}", sides));
     }

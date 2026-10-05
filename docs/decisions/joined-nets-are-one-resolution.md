@@ -129,22 +129,22 @@ The standard names the object outright and this record quoted the sentence witho
 "whose bits share the same physical nets". `tran` is the same object again -- 28.13 gives it the
 same "shall not affect signal strength" the port connection has.
 
-### F8. A composed run is expressible only as a position, which settles where the rebase happens
+### F8. Composed positions are expressible only as positions, which settles where the rebase happens
 
 `selector-coordinate-resolution.md` D2 puts the rebase from a declared coordinate to a storage
 position "inside the value", and D3 makes that position private -- "never a coordinate that flows
-between runtime components". A run carries positions and so reverses both, which is argued rather
-than assumed.
+between runtime components". A connection carries positions and so reverses both, which is argued
+rather than assumed.
 
 The falsification is that the coordinate-facing form cannot express what this needs. Connectivity
-composes: joining `a` to `b` and `b` to `c` puts a run of `a` and a run of `c` in one resolution,
-and where they meet is a selector of neither net -- the two may be declared in opposite directions
-(`[3:0]` against `[0:3]`), so there is no source-level select of `a` that names it. Composition has
-meaning only in positions.
+composes: joining `a` to `b` and `b` to `c` puts positions of `a` and positions of `c` in one
+resolution, and where they meet is a selector of neither net -- the two may be declared in opposite
+directions (`[3:0]` against `[0:3]`), so there is no source-level select of `a` that names it.
+Composition has meaning only in positions.
 
 What makes the reversal safe is that D2's two stated defects cannot occur here. Both name a _runtime
 selector_: a narrow rebase wrapping an out-of-range index, and a four-state selector against a
-two-state bound. A connection's run is a constant the front end folded and range-checked, and
+two-state bound. A connection's positions are constants the front end folded and range-checked, and
 nothing selects while the simulation runs. And D4 of that same record already draws this line --
 whole-value movement "is position-wise and range-agnostic (LRM 7.6) ... Only element and slice
 selection consult the range" -- which is what a connection is: LRM 10.11 gives it a packed union's
@@ -164,11 +164,12 @@ demand that A's base be B's plus 24 and also plus 8, so no widening, permutation
 coordinates satisfies them. The same shape arrives without a concatenation, from two aliases between
 part selects of one pair of names.
 
-What removes it is not a bigger node but a smaller one: **a node is a run that every name in it
-covers entirely**, so a name reaches one node per run of its positions and a connection cuts the
-runs its ends fall inside before relating them. A node then needs no width of its own beyond the
-run, no alignment per name beyond the offset among that name's positions, and nothing is ever
-rebased -- which is the property the one-node-per-name shape was chosen for and did not have.
+What removes it is not a bigger node but a smaller one: **a node is a set of adjacent positions that
+every name in it covers entirely**, so a name reaches one node per range of its positions and a
+connection cuts the ranges its ends fall inside before relating them. A node then needs no width of
+its own beyond its positions, no alignment per name beyond the offset among that name's positions,
+and nothing is ever rebased -- which is the property the one-node-per-name shape was chosen for and
+did not have.
 
 **The example is how this was found; the reason it had to come out this way is one clause earlier,
 and it makes the cut predictable instead of surprising.** The standard's own unit of resolution is
@@ -176,30 +177,30 @@ the bit: LRM 6.7.1 makes a net "composed entirely of 4-state bits", LRM 6.5 make
 packed type an independent element, and LRM 6.6.7 names it -- an _atomic net_ is one "whose value is
 updated and resolved as a whole", and "a `logic` vector net is not an atomic net as each `logic`
 element is resolved and updated independently", each atomic net describing "a single connection
-point in the design". So the object this record builds is not a new idea; it is one object per
-**run** of atomic nets that share a connection point, which is the bit-wise model compressed.
+point in the design". So the object this record builds is not a new idea; it is one object per **set
+of adjacent** atomic nets that share a connection point, which is the bit-wise model compressed.
 
-Read that way the rule writes itself. A run means "these positions are connected identically", so it
-has to be maximal with respect to that, and a connection reaching part of one destroys the property
--- the cut is what restores it. One node per _name_ asserts something else entirely, that positions
-belong together because one declaration named them, which the language never says and which the
-byte-swap example is simply the smallest program to disprove. Anything that keeps a whole name at
-one alignment fails the same way, however its coordinates are chosen.
+Read that way the rule writes itself. Such a set means "these positions are connected identically",
+so it has to be maximal with respect to that, and a connection reaching part of one destroys the
+property -- the cut is what restores it. One node per _name_ asserts something else entirely, that
+positions belong together because one declaration named them, which the language never says and
+which the byte-swap example is simply the smallest program to disprove. Anything that keeps a whole
+name at one alignment fails the same way, however its coordinates are chosen.
 
 ## The decision
 
 1. **What resolves is the physical net (LRM 10.11, 23.3.3.7): a set of positions that resolve
    together, which the connectivity of the elaborated design forms and which exists as an object of
-   its own.** A declared net is a name that reaches a run of one; a net no connection reaches is the
-   one name of a node covering it exactly, which is the same walk over one member. There is no
-   separate single-net path, and no case for "not joined". "Domain" is deliberately not used for any
-   of this, since this codebase already spends that word on the representation a value is realized
-   in.
+   its own.** A declared net is a name that reaches some positions of one; a net no connection
+   reaches is the one name of a node covering it exactly, which is the same walk over one member.
+   There is no separate single-net path, and no case for "not joined". "Domain" is deliberately not
+   used for any of this, since this codebase already spends that word on the representation a value
+   is realized in.
 
    A node is a space of positions with names placed in it, rather than a set of names each carrying
-   a range. **A name reaches one node per run of its own positions**, which is what lets a
-   connection permuting runs state what it does -- LRM 10.11's byte-swap example relates four runs
-   of one name to four of another at four alignments, and one node per name cannot hold that
+   a range. **A name reaches one node per range of its own positions**, which is what lets a
+   connection permuting ranges state what it does -- LRM 10.11's byte-swap example relates four
+   bytes of one name to four of another at four alignments, and one node per name cannot hold that
    whatever its coordinates are, since a name at one base in one space cannot satisfy two alignments
    at once. F9 has the falsification; this clause first said joining never has to split anything,
    which held of every join that existed when it was written and of none that reaches part of a
@@ -226,13 +227,13 @@ one alignment fails the same way, however its coordinates are chosen.
    statement in the parent's resolve body, beside the `ref` port's bind and in place of the reactive
    process the two directional ports install. It attaches no driver and registers no process.
 
-6. **What resolves is a node the connectivity forms, and a declared net is a name that reaches a run
-   of it.** The node holds what a resolution needs and a name does not: the fold, the contribution
-   the net type makes to its own resolution, and any procedural continuous assignment in force over
-   the positions. A name holds what belongs to it: its own contributions, its own observers, and a
-   copy of what the node produced over the positions it reaches. Reading a net therefore reaches its
-   own storage directly and never follows a pointer to get there, and reading, waiting, sampling,
-   forcing and reaching by a hierarchical name are unchanged by collapse.
+6. **What resolves is a node the connectivity forms, and a declared net is a name that reaches some
+   positions of it.** The node holds what a resolution needs and a name does not: the fold, the
+   contribution the net type makes to its own resolution, and any procedural continuous assignment
+   in force over the positions. A name holds what belongs to it: its own contributions, its own
+   observers, and a copy of what the node produced over the positions it reaches. Reading a net
+   therefore reaches its own storage directly and never follows a pointer to get there, and reading,
+   waiting, sampling, forcing and reaching by a hierarchical name are unchanged by collapse.
 
    A node exists only while the design runs, because which names reach it is the connectivity of the
    elaborated design. Nothing compiles against one, no name's storage moves or changes layout, and
@@ -241,31 +242,31 @@ one alignment fails the same way, however its coordinates are chosen.
    Transitivity is a property of the object rather than something maintained: a chain of connections
    leaves every name it passes through in one node, so nothing is closed, composed, or rebuilt.
 
-7. **A run is a position, and the declared range that named it is read once, where the source wrote
-   the select.** What a connection states is a position-wise overlay -- LRM 10.11 gives it "the bit
-   overlay rules ... for a packed union with the same member types", and LRM 7.6 makes whole-value
-   correspondence positional rather than range-relative -- so below the lowering that reads the
-   source, no layer needs the range a net names its own positions by.
+7. **What a connection reaches is positions, and the declared range that named them is read once,
+   where the source wrote the select.** What a connection states is a position-wise overlay -- LRM
+   10.11 gives it "the bit overlay rules ... for a packed union with the same member types", and LRM
+   7.6 makes whole-value correspondence positional rather than range-relative -- so below the
+   lowering that reads the source, no layer needs the range a net names its own positions by.
 
-8. **Each side of a connection is a sequence of runs, and what the connection states is the two laid
-   over one another.** LRM 10.11 gives an overlay the bit overlay rules of a packed union, so
-   correspondence runs position-wise from the most significant end; the two sides' runs need not
-   fall at the same boundaries, so the statement is taken in the pieces both sides have whole, each
-   as wide as the shorter of the two it stands between. An actual naming one net is the case where
-   its side has one run, and needs no path of its own.
+8. **Each side of a connection is a sequence of net positions, and what the connection states is the
+   two laid over one another.** LRM 10.11 gives an overlay the bit overlay rules of a packed union,
+   so correspondence goes position-wise from the most significant end; the two sides' operands need
+   not fall at the same boundaries, so the statement is taken in the pieces both sides have whole,
+   each as wide as the shorter of the two it stands between. An actual naming one net is the case
+   where its side has one operand, and needs no path of its own.
 
-   Which runs a side names is answered where that side's source is: the connecting unit reads its
-   own actual, and the declaring unit publishes the run its port stands for, because the descent it
-   publishes is in coordinates only that unit's declarations give meaning to. A consumer that had to
-   turn those into positions would be deriving what the producer already knew.
+   Which positions a side names is answered where that side's source is: the connecting unit reads
+   its own actual, and the declaring unit publishes the positions its port stands for, because the
+   descent it publishes is in coordinates only that unit's declarations give meaning to. A consumer
+   that had to turn those into positions would be deriving what the producer already knew.
 
-9. **What resolves is a run every name reaching it covers entirely, and a name reaches one per run
-   of its own positions.** A connection cuts the runs its ends fall inside -- on both sides, and for
-   every name already sharing them -- and then makes one resolution of two runs that now cover the
-   same number of positions. So a name is never at two alignments in one resolution, nothing is ever
-   rebased, and two positions of one name can take part in two resolutions, which is what LRM
-   23.3.3.7 requires of a name whose bits meet different net types. A name no connection reached is
-   the single run that covers it.
+9. **What resolves is a set of adjacent positions every name reaching it covers entirely, and a name
+   reaches one per range of its own positions.** A connection cuts the ranges its ends fall inside
+   -- on both sides, and for every name already sharing them -- and then makes one resolution of two
+   ranges that now cover the same number of positions. So a name is never at two alignments in one
+   resolution, nothing is ever rebased, and two positions of one name can take part in two
+   resolutions, which is what LRM 23.3.3.7 requires of a name whose bits meet different net types. A
+   name no connection reached is the single range that covers it.
 
 ## Consequences
 

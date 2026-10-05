@@ -1004,10 +1004,10 @@ auto lyra_rt_packed_reduction_nand(const void* value, void* out) -> void*;
 auto lyra_rt_packed_reduction_nor(const void* value, void* out) -> void*;
 auto lyra_rt_packed_reduction_xnor(const void* value, void* out) -> void*;
 auto lyra_rt_packed_to_owned(const void* value, void* out) -> void*;
-// A run of `width` bits from `position` (LRM 11.5.1): `slice` copies it out,
-// and `with_slice` returns a copy with it replaced -- the functional write the
+// `width` bits from `position` (LRM 11.5.1): `slice` copies them out, and
+// `with_slice` returns a copy with them replaced -- the functional write the
 // execution backend uses because it cannot mutate a packed value in place. A
-// bit-select and a packed aggregate's member are the same run, one bit or one
+// bit-select and a packed aggregate's member are the same bits, one bit or one
 // member wide.
 auto lyra_rt_packed_slice(
     const void* value, const void* position, std::int64_t width, void* out)
@@ -1448,13 +1448,13 @@ auto lyra_rt_unpackedarray_value_cell_load(void* cell) noexcept -> void*;
 // source driving part of a net updates part of and leaves the rest of at high
 // impedance (LRM 6.6.1).
 //
-// `net_join` states that a run of one net's positions and an equally wide run
-// of another's are one physical net, whose contributions resolve together (LRM
+// `net_join` states that some positions of one net and as many positions of
+// another are one physical net, whose contributions resolve together (LRM
 // 23.3.3.7, 10.11). It takes the other net rather than a value, the position
-// each run starts at in its own net, and how many positions it covers; it
-// states no direction, and both nets then answer over the run with what that
-// one resolution produces. A connection between two whole nets states the run
-// covering them.
+// each side starts at in its own net, and how many positions they cover; it
+// states no direction, and both nets then answer over those positions with what
+// that one resolution produces. A connection between two whole nets states
+// every position of them.
 //
 // LRM 6.7.1 fixes which domains these exist for: a 4-state integral net, and a
 // fixed-size unpacked array, struct, or union whose elements are themselves
@@ -1885,9 +1885,9 @@ void lyra_rt_queue_reverse(void* receiver);
 
 // LRM 21.4 / 21.5 memory load and dump. The memory names the entry, since what
 // an address means is its own: an unpacked memory reads the declared bounds of
-// every dimension, which ride as a run of packed values with the addressed one
-// first; a dynamic array or queue is the dense space its current size spans;
-// and an associative memory is addressed by key, so a load takes a key
+// every dimension, which ride as a sequence of packed values with the addressed
+// one first; a dynamic array or queue is the dense space its current size
+// spans; and an associative memory is addressed by key, so a load takes a key
 // prototype to build each key at the width an ordinary access uses. Running
 // upward from an address and running within a window are two requests, so each
 // is its own entry. A load answers through its completion, because a word the
@@ -2243,6 +2243,16 @@ void lyra_rt_dynarray_assign_slice(
 void lyra_rt_unpackedarray_assign_slice(
     const void* designation, const void* start, std::int64_t count,
     const void* replacement);
+// Bits of a packed value a write designates, written where they lie, telling
+// the write which bits it reached and what they held (LRM 11.5.1); and those
+// bits as they stand, which an assignment operator combines before the write
+// (LRM 11.4.1), built in `out`.
+void lyra_rt_packed_assign_slice(
+    const void* designation, const void* start, std::int64_t count,
+    const void* replacement);
+auto lyra_rt_packed_read_slice(
+    const void* designation, const void* start, std::int64_t count, void* out)
+    -> void*;
 // Where a write in progress lands: the part a designation names, whose value
 // from before the write the write keeps where anything will ask whether the
 // write changed what it was opened on (LRM 4.3). Answers with where the part
