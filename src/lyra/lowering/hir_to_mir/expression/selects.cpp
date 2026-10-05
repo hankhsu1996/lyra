@@ -790,7 +790,7 @@ auto PropertyPath(
       .owner =
           ObjectProperty{
               .object = ReportedObject(lowerer.Owner().Unit(), frame, receiver),
-              .property = PropertyNameOf(lowerer, frame, target),
+              .property = PropertyNameOf(lowerer, target),
               .type = result_type},
       .descent = {}};
 }

@@ -15,6 +15,7 @@
 
 namespace slang::ast {
 class Expression;
+class ProceduralBlockSymbol;
 class SubroutineSymbol;
 }  // namespace slang::ast
 
@@ -35,6 +36,15 @@ auto CellsOfWaitedExpression(
 auto ReadsOfFunctionBody(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::SubroutineSymbol& function, diag::SourceSpan span)
+    -> diag::Result<hir::Reads>;
+
+// The implicit list of an `always_comb` / `always_latch` (LRM 9.2.2.2.1): what
+// its own text reads and writes, and each function call it makes, which
+// reports what that function reads and writes once, ahead of the first run,
+// where the call reaches it -- wherever the function is declared.
+auto ReadsOfProcedure(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::ProceduralBlockSymbol& procedure, diag::SourceSpan span)
     -> diag::Result<hir::Reads>;
 
 }  // namespace lyra::lowering::ast_to_hir

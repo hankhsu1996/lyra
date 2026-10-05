@@ -25,6 +25,11 @@ behavior it reaches, each with a body that converts its own part to the introduc
 entry takes the object rather than the handle, and that each target spells the entry its own way,
 stand.
 
+**The premise of this entry is reversed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).** It
+rested on no signature carrying a class a design element declares; the element now publishes that
+class, so a referrer names it, and the settled operations and the class's by-name tables are gone.
+
 ## Why this decision matters
 
 A class a module or an interface declares is a type of that element's instance (LRM 6.22), so no

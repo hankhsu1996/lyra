@@ -19,6 +19,13 @@ stand, except that D2's virtual behavior coordinate is superseded by
 reached this way settles to a body, and for a virtual one that body makes the virtual call, so the
 object still answers which override runs.
 
+**The premise of this entry is reversed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).** It
+rested on no signature carrying a class a design element declares; such a class's shape is one per
+unit, and the element now publishes it, so a referrer reaches the property or behavior with a class
+view of its own. The coordinates formed at elaboration and D4's by-name table on a class's record
+are gone.
+
 ## Why this decision matters
 
 A unit compiles once per specialization, and a name reaching past another unit's signature resolves

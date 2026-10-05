@@ -1,10 +1,9 @@
 // A hierarchical name reaches a declaration of the named scope whatever its
 // type is (LRM 23.8), so it reaches a variable holding a handle to an object of
-// a class that scope declares (LRM 8.3). The name reaches the variable, never
-// the class: what a reader may do with the handle it read is hold it, compare
-// it against another handle of the same type, and compare it against null
-// (LRM 8.4). That holds in both directions of the hierarchy, since a downward
-// name and an upward one differ only in how the head is found.
+// a class that scope declares (LRM 8.3). This case holds the handle it read,
+// compares it against another handle of the same type, and compares it
+// against null (LRM 8.4), in both directions of the hierarchy, since a
+// downward name and an upward one differ only in how the head is found.
 module Child;
   class Token;
     int tag;

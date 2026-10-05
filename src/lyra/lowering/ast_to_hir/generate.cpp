@@ -11,9 +11,7 @@
 #include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/types/Type.h>
-#include <slang/numeric/SVInt.h>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -60,6 +58,18 @@ auto BlockIndexParameter(const slang::ast::GenerateBlockSymbol& block)
   return nullptr;
 }
 
+// The values the loop's index stood at, one per block it counted out, in the
+// order it counted them.
+auto IndexValuesOf(const slang::ast::GenerateBlockArraySymbol& array)
+    -> std::vector<std::int64_t> {
+  std::vector<std::int64_t> values;
+  values.reserve(array.entries.size());
+  for (const slang::ast::GenerateBlockSymbol* entry : array.entries) {
+    values.push_back(LoopIndexOf(*entry));
+  }
+  return values;
+}
+
 // Whether the loop the source wrote survived elaboration as something a
 // construction can run: it counts out at least one block, the block declares
 // the index it is built with, it is named, and it has the three expressions
@@ -97,7 +107,7 @@ auto BuildTheLoop(
               .type = *index_type,
               .kind = hir::StructuralGenvarDecl{}});
   unit_lowerer.MapStructuralDataObjectBinding(
-      loop_variable, lowerer.Frame(), variable, *index_type);
+      loop_variable, lowerer.Frame(), variable);
 
   const auto lower =
       [&](const slang::ast::Expression& expr) -> diag::Result<hir::ExprId> {
@@ -135,12 +145,7 @@ auto BuildRepeatedGenerate(
       frame.current_structural_scope->structural_data_objects.Get(
           counting->variable);
   auto index_ref = unit_lowerer.MakeRoutedValueRef(
-      *array.loopVariable, lowerer.Frame(),
-      ScopeRoute{
-          .head = hir::InUnitHead{.hops = {}},
-          .steps = {},
-          .unit_name = std::nullopt,
-          .open = {}});
+      *array.loopVariable, lowerer.Frame(), ScopeRoute::Enclosing({}));
   if (!index_ref) return std::unexpected(std::move(index_ref.error()));
   const hir::ExprId index_read = frame.Exprs().Add(
       hir::MakeRefExpr(
@@ -157,23 +162,17 @@ auto BuildRepeatedGenerate(
 }
 
 // A loop whose blocks disagree: each is a child in its own right, and the
-// hierarchy index it was elaborated at is what tells it from the others --
-// which is why the index is stamped on only here, once the blocks have been
-// compared without it. Each receives the value its own index holds.
+// hierarchy index it was elaborated at is what tells it from the others. Each
+// receives the value its own index holds.
 auto BuildStandAloneGenerate(
     UnitLowerer& unit_lowerer,
     const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame,
     std::vector<hir::StructuralScope> blocks) -> diag::Result<hir::Generate> {
-  hir::Generate gen{};
+  hir::Generate gen{
+      .blocks = {},
+      .counting = hir::BlocksStandAlone{.indices = IndexValuesOf(array)}};
   for (std::size_t at = 0; at < blocks.size(); ++at) {
     const slang::ast::GenerateBlockSymbol& entry = *array.entries[at];
-    const slang::SVInt* array_index = entry.getArrayIndex();
-    if (array_index == nullptr) {
-      throw InternalError(
-          "BuildStandAloneGenerate: loop iteration entry carries no array "
-          "index");
-    }
-    blocks[at].index = array_index->as<std::int64_t>().value_or(0);
     std::vector<hir::ExprId> arguments;
     if (const slang::ast::ParameterSymbol* index = BlockIndexParameter(entry)) {
       const auto span =

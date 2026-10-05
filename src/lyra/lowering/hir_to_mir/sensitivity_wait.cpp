@@ -276,12 +276,31 @@ void ActOnReport(
               unit.builtins.void_type)});
 }
 
-// Records the place `place` points at, and which bits of it are read.
-void ReportPlace(
+// Records the cell `cell` names and which bits of it, read or written as
+// `entry` says.
+template <typename Lowerer>
+auto ReportCell(
+    Lowerer& lowerer, const WalkFrame& frame, mir::LocalId report,
+    const hir::SensitivityEntry& cell, support::BuiltinFn entry)
+    -> diag::Result<void> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId place =
+      BuildObservablePtrExpr(block, frame, unit, lowerer, cell);
+  auto run = WatchedRunOf(block, frame, unit, lowerer, cell.part);
+  if (!run) return std::unexpected(std::move(run.error()));
+  ActOnReport(unit, block, report, entry, {place, run->first, run->width});
+  return {};
+}
+
+// Records a place reached through a handle -- an object a chain passes
+// through, by its event source, or a variable of the instance a virtual
+// interface holds -- and which bits of it are read.
+void ReportThroughHandle(
     const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
     mir::ExprId place, WatchedRun run) {
   ActOnReport(
-      unit, block, report, support::BuiltinFn::kReadReportAdd,
+      unit, block, report, support::BuiltinFn::kReadReportAddThroughHandle,
       {place, run.first, run.width});
 }
 
@@ -323,7 +342,7 @@ auto ReportObjectThenHops(
     -> diag::Result<void> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Block& block = *frame.current_block;
-  ReportPlace(
+  ReportThroughHandle(
       unit, block, report, ObjectEventSourceOf(unit, block, object()),
       WholeRun(unit, block));
   if (hops.empty()) return {};
@@ -364,13 +383,10 @@ auto ReportLeaf(
   mir::Block& block = *frame.current_block;
   return std::visit(
       Overloaded{
-          [&](const hir::SensitivityEntry& entry) -> diag::Result<void> {
-            const mir::ExprId place =
-                BuildObservablePtrExpr(block, frame, unit, lowerer, entry);
-            auto run = WatchedRunOf(block, frame, unit, lowerer, entry.part);
-            if (!run) return std::unexpected(std::move(run.error()));
-            ReportPlace(unit, block, report, place, *run);
-            return {};
+          [&](const hir::SensitivityEntry& cell) -> diag::Result<void> {
+            return ReportCell(
+                lowerer, frame, report, cell,
+                support::BuiltinFn::kReadReportAdd);
           },
           // A variable of the instance a virtual interface holds (LRM 25.9),
           // whose address the instance answers with.
@@ -387,7 +403,7 @@ auto ReportLeaf(
                 [&](const WalkFrame& inner) -> diag::Result<void> {
                   auto place = HeldInterfaceMember(lowerer, inner, held);
                   if (!place) return std::unexpected(std::move(place.error()));
-                  ReportPlace(
+                  ReportThroughHandle(
                       unit, *inner.current_block, report, *place,
                       WholeRun(unit, *inner.current_block));
                   return {};
@@ -443,7 +459,7 @@ auto Reported(
   }
   mir::Block& block = *frame.current_block;
   const mir::ExprId held = EvaluatedOnce(frame, value);
-  ReportPlace(
+  ReportThroughHandle(
       unit, block, *frame.reports_reached_to, place_of(held),
       WholeRun(unit, block));
   return held;
@@ -484,6 +500,11 @@ auto ReportReads(
     auto reported = ReportLeaf(lowerer, frame, report, leaf);
     if (!reported) return std::unexpected(std::move(reported.error()));
   }
+  for (const hir::SensitivityEntry& write : reads.writes) {
+    auto reported = ReportCell(
+        lowerer, frame, report, write, support::BuiltinFn::kReadReportAddWrite);
+    if (!reported) return std::unexpected(std::move(reported.error()));
+  }
   for (const hir::ReportingCall& call : reads.calls) {
     auto made = EmitReportingCall(lowerer, frame, call, report);
     if (!made) return std::unexpected(std::move(made.error()));
@@ -502,6 +523,27 @@ auto DeclareObservation(
               mir::Direct{.target = entry}, std::move(arguments),
               unit.builtins.observation)));
 }
+
+namespace {
+
+// The wait registering through `entry`, which reads the engine handle and then
+// `operand` -- what the wait watches -- built in `block`.
+auto WaitThrough(
+    const UnitLowerer& unit_lowerer, mir::Block& block,
+    support::BuiltinFn entry, mir::ExprId operand) -> mir::Stmt {
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  const mir::ExprId call_id = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Direct{.target = entry},
+                  .arguments = {runtime_id, operand}},
+          .type = unit_lowerer.Unit().builtins.machine_bool});
+  return BuildWaitStmt(unit_lowerer, block, call_id);
+}
+
+}  // namespace
 
 template <typename Lowerer>
 auto BuildWaitStmt(
@@ -523,18 +565,69 @@ auto BuildWaitStmt(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(triggers)},
           .type = triggers_type});
+  return WaitThrough(lowerer.Owner(), target_block, entry, triggers_id);
+}
 
-  const mir::ExprId runtime_id =
-      target_block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  const mir::ExprId call_id = target_block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Direct{.target = entry},
-                  .arguments = {runtime_id, triggers_id}},
-          .type = unit.builtins.machine_bool});
+namespace {
 
-  return BuildWaitStmt(lowerer.Owner(), target_block, call_id);
+// An empty report in a local of `frame`'s block, everything `reads` names
+// recorded in it, and the local holding a pointer to it.
+template <typename Lowerer>
+auto ReportInto(
+    const WalkFrame& frame, Lowerer& lowerer, const hir::Reads& reads)
+    -> diag::Result<mir::LocalId> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const mir::LocalId report =
+      frame.bindings->DeclareAnonymous(unit.builtins.read_report);
+  block.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = report,
+          .init = block.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Direct{
+                                  .target =
+                                      support::BuiltinFn::kReadReportEmpty},
+                          .arguments = {}},
+                  .type = unit.builtins.read_report})});
+  const mir::LocalId pointer = DeclareLocal(
+      frame,
+      block.exprs.Add(
+          mir::MakeAddressOfExpr(
+              block.exprs.Add(
+                  mir::MakeLocalRefExpr(report, unit.builtins.read_report)),
+              unit.builtins.read_report_ptr)));
+  auto reported = ReportReads(lowerer, frame, reads, pointer);
+  if (!reported) return std::unexpected(std::move(reported.error()));
+  return pointer;
+}
+
+}  // namespace
+
+auto CollectImplicitList(
+    const WalkFrame& frame, ProcessLowerer& lowerer, const hir::Reads& reads)
+    -> diag::Result<mir::LocalId> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  auto pointer = ReportInto(frame, lowerer, reads);
+  if (!pointer) return std::unexpected(std::move(pointer.error()));
+  ActOnReport(
+      unit, block, *pointer,
+      support::BuiltinFn::kReadReportSettleAsImplicitList, {});
+  return *pointer;
+}
+
+auto BuildImplicitListWaitStmt(
+    mir::Block& block, const UnitLowerer& unit_lowerer, mir::LocalId report)
+    -> mir::Stmt {
+  return WaitThrough(
+      unit_lowerer, block, support::BuiltinFn::kWaitOnReport,
+      block.exprs.Add(
+          mir::MakeLocalRefExpr(
+              report, unit_lowerer.Unit().builtins.read_report_ptr)));
 }
 
 template <typename Lowerer>

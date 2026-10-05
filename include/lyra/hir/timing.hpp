@@ -132,12 +132,18 @@ struct ReportingCall {
 // makes, each of which reports what it reads in turn. A report is made instead
 // of running the body, so what it evaluates is its own, ahead of the body.
 //
+// `writes` is the storage outside it the evaluation writes, where a read of
+// the same storage compares with it exactly. A procedure's implicit list
+// leaves out what the procedure or a function it calls writes (LRM 9.2.2.2.1
+// b), and takes it out where the list is settled.
+//
 // `unreportable` says why a report cannot be made, where the evaluation reads
 // something no leaf yet watches. A function body is compiled whether or not a
 // wait ever calls it, so that is not an error of the body's; it is raised when
 // a wait asks.
 struct Reads {
   std::vector<WaitLeaf> leaves;
+  std::vector<SensitivityEntry> writes;
   std::vector<ReportingCall> calls;
   std::optional<std::string> unreportable;
 

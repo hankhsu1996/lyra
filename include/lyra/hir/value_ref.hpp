@@ -2,7 +2,6 @@
 
 #include <compare>
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <variant>
 
@@ -21,14 +20,14 @@ namespace lyra::hir {
 // the tree, in this unit or another (LRM 23.6, 23.8). Where the target stands
 // is the route -- how many scopes out, then which scopes down -- and the
 // reader's own scope is the route that goes nowhere. The route lives in the
-// owning scope's table for the use the name is put to, keyed by the id here;
-// intra-unit and cross-unit routes differ only in how each segment is
-// navigated (typed member access vs by-name runtime lookup).
+// owning scope's table for the use the name is put to, keyed by the id here.
+// Every segment is a typed member access: a scope of this unit by its own
+// declaration, a scope of another unit by what that unit published of it.
 //
 // What a name is used for decides what it may reach, and the source's position
 // decides the use (LRM 23.6, 9.6.2), so each use is a reference of its own:
 // a value read, written or waited on, which ends at data; the object a call is
-// made on; a subroutine reached by name; and what a `disable` ends.
+// made on; and what a `disable` ends.
 struct RoutedValueRefId {
   std::uint32_t value = base::kUnassignedId;
 
@@ -57,19 +56,11 @@ struct RoutedObjectRef {
       -> std::strong_ordering = default;
 };
 
-struct RoutedCallableRefId {
-  std::uint32_t value = base::kUnassignedId;
-
-  auto operator<=>(const RoutedCallableRefId&) const
-      -> std::strong_ordering = default;
-};
-
-struct RoutedCallableRef {
-  RoutedCallableRefId id;
-
-  auto operator<=>(const RoutedCallableRef&) const
-      -> std::strong_ordering = default;
-};
+// How a body reaches the instance a class belongs to (LRM 6.22), where a
+// structural scope declares the class: `hops` scopes out of the body's own,
+// where this unit lays the declaring scope out, and otherwise the route to that
+// scope's object in another instance.
+using DeclaringInstanceReach = std::variant<StructuralHops, RoutedObjectRef>;
 
 struct RoutedDisableTargetRefId {
   std::uint32_t value = base::kUnassignedId;
@@ -106,6 +97,21 @@ struct ClassPropertyRef {
   auto operator==(const ClassPropertyRef&) const -> bool = default;
 };
 
+// A static property (LRM 8.9) of a class a structural scope of this unit
+// declares: the property, and how far out of the body's own structural scope
+// the instance keeping its cell sits.
+struct InstanceStaticPropertyTarget {
+  LocalStaticPropertyTarget property;
+  StructuralHops hops;
+
+  auto operator<=>(const InstanceStaticPropertyTarget&) const
+      -> std::strong_ordering = default;
+};
+
+using StaticPropertyTarget = std::variant<
+    InstanceStaticPropertyTarget, LocalStaticPropertyTarget,
+    ExternalStaticPropertyTarget>;
+
 // A reference to a class static property (LRM 8.9). `target` names the
 // declaring class and the slot within its static-property arena. A static
 // property is one cell owned by the type, not a member replicated into each
@@ -114,19 +120,18 @@ struct ClassPropertyRef {
 // `p.prop` where the resolved target happens to be static all resolve to the
 // same cell and the same reference shape. Under inheritance,
 // `Derived::inherited_prop` still names the base class -- the property lives
-// on the base's arena. The external arm is used when the declaring class
-// lives in another compilation unit.
+// on the base's arena.
 //
 // How many such cells exist follows from how many times the class declaration
-// is replicated. `declaring_scope_hops` is how far out of this body's own
-// structural scope the scope that declares the class sits, present exactly
-// where one does: each instance with a type declared inside it has a type of
-// its own (LRM 6.22), so it has that type's cell of its own, reached through
-// that instance. Absent for a class a namespace unit declares, whose one cell
-// is the program's.
+// is replicated, which is what the arms of `target` tell apart. A class a
+// namespace unit declares has one cell, the program's, named by the class --
+// this unit's own, or another unit's by name. A class a structural scope of
+// this unit declares is a type of each instance of that scope (LRM 6.22), so
+// each instance has that type's cell of its own, reached through the instance.
+// One another design element declares is a cell of that element's instance,
+// which a route reaches rather than this reference.
 struct StaticPropertyRef {
   StaticPropertyTarget target;
-  std::optional<StructuralHops> declaring_scope_hops;
   // The cell's own type. It rides on the reference rather than on an
   // expression built from one because a change observation reaches the cell
   // with no expression standing anywhere, and because the declaring class may

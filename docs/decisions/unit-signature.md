@@ -9,6 +9,12 @@
 Accepted. Widens the segment classifier of `hierarchical-reference-routing.md` D2 and
 `front-end-semantic-boundary.md` D3; neither is reversed.
 
+**D1 and D5 are reversed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).**
+What a module publishes is every declaration a hierarchical name may reach (LRM 23.6), not what an
+instantiator needs, so no name lies past a signature and none resolves by name. D6, the signature
+derived from declarations alone, stands and is what that entry relies on.
+
 ## Why this decision matters
 
 A unit compiles against what the units it references promise. That promise was written as "name and

@@ -63,17 +63,10 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
             return CrossUnitClassRef{
                 .unit_name = c.unit_name, .class_name = c.class_name};
           },
-          // An object this unit carries no class identity for: one reached
-          // past another unit's signature, one the runtime library defines,
-          // and one another unit's design element declares.
-          [&](const OpaqueObjectType&) {
-            return refers_to_no_class("an object with no class to name");
-          },
+          // A class the runtime library defines: a symbol is its whole
+          // identity, so no declaration of this unit stands behind it.
           [&](const RuntimeClassType&) {
             return refers_to_no_class("an object of a runtime class");
-          },
-          [&](const ExternalUnitObjectType&) {
-            return refers_to_no_class("another unit's object");
           },
           [&](const PackedArrayType&) { return not_an_object(); },
           [&](const EnumType&) { return not_an_object(); },

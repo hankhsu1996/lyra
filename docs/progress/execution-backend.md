@@ -548,13 +548,12 @@ each meets the same lifetime question above.
       value is a call into the runtime library, which is compiled apart from the module and cannot
       be inlined into it. Optimizing across that boundary is what the next saving waits on.
 - [x] **An array of owned children.** A child scope -- a module instance, a generate block, a
-      procedural block scope -- is constructed, reached by name and per-axis index, and reports its
-      hierarchical name, whether it stands alone or is one of an array. Each element is its own
-      child, told apart by the index its hierarchy segment carries, which is what a lookup by index
-      matches against and what `%m` renders in brackets; what the declaring scope keeps is one
-      member holding the sequence of handles on them, built once and read by coordinate. An index is
-      an ordinary value of the design and reaches the runtime as the handle every value reaches it
-      as.
+      procedural block scope -- is constructed, reached through the member holding it and per-axis
+      index, and reports its hierarchical name, whether it stands alone or is one of an array. Each
+      element is its own child, told apart by the index its hierarchy segment carries, which is what
+      `%m` renders in brackets; what the declaring scope keeps is one member holding the sequence of
+      handles on them, built once and read by coordinate. An index is an ordinary value of the
+      design and reaches the runtime as the handle every value reaches it as.
 - [x] **Driving a net.** A net's value is the resolution of its drivers, so a driver attaches to a
       resolution node and updates a contribution rather than writing a cell, and a net-bearing
       design runs here. A net is storage of its own: it fixes its declared type and its fold once,

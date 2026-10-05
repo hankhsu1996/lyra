@@ -195,7 +195,9 @@ the detail lives in the entry itself.
   value.
 - [read-set-inference](read-set-inference.md) -- read-set inference via slang flow analysis, asked
   to rule no path out by a constant: what a body waits on is what its text reads, so every
-  construction of one body waits alike and wakes on a read its constants exclude.
+  construction of one body waits alike and wakes on a read its constants exclude. **How an implicit
+  list takes in what its called functions read is revised by
+  [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md).**
 - [runtime-effects-as-generic-calls](runtime-effects-as-generic-calls.md) -- runtime effects lower
   to ordinary `CallExpr` with the engine handle as one argument.
 - [ambient-runtime-services](ambient-runtime-services.md) -- generated code reaches the runtime
@@ -261,14 +263,25 @@ the detail lives in the entry itself.
 
 ### References and construction
 
+- [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) --
+  every scope a name can step into publishes every declaration a name can reach, as a class the
+  referrer reaches by typed steps, offsets and direct calls; an upward name starts at the enclosing
+  instance of the class it landed on, which tells the unit apart; a loop's blocks keep their own
+  names over shared code; nothing resolves a hierarchical name while the design runs. Resolving by
+  name at elaboration, handing over the size, a dispatched base class, a behaviors-only promise, and
+  keying by the climb's path are rejected.
 - [hierarchical-reference-routing](hierarchical-reference-routing.md) -- one semantic shape per
   hierarchical reference; per-segment classification by layout visibility; sealed endpoint on the
-  hot path.
+  hot path. **Its D2 is reversed by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).**
 - [hierarchical-callable-dispatch](hierarchical-callable-dispatch.md) -- a subroutine a hierarchical
   name enables is the route to the declaring scope plus whatever answers the name there; a module
   publishing its subroutines is excluded because the dependency graph must stay acyclic, so its
   subroutines are answered by the scope itself. What a `disable` names is the same route ending at
-  the scope's own activity, which no unit publishes and which needs no name.
+  the scope's own activity, which no unit publishes and which needs no name. **Its D3, D4 and D5's
+  second leaf are reversed by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+  where a module publishes its subroutines and its named blocks' disable targets.
 - [binding-graph-resolution](binding-graph-resolution.md) -- resolution and sealing respect
   dependencies between references; forwarding chains collapse end-to-end.
 - [hierarchical-reference-resolution](hierarchical-reference-resolution.md) (superseded) -- the
@@ -436,6 +449,12 @@ the detail lives in the entry itself.
   handle or an interface and by handing its report to each call. Guarding the watch against
   re-entry, having the process decide every wait, and evaluating at the change as the waiter are
   rejected.
+- [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md) -- an
+  `always_comb` / `always_latch` states what its own text reads and writes, and each function call
+  it makes reports what that function reads and writes once, ahead of the first run, where the call
+  reaches it, wherever the function is declared; the writes are taken out, each place is listed
+  once, and the list is waited on from then on. Reading the callee's body in the procedure's unit, a
+  summary in the signature, and collecting again at every wait are rejected.
 - [event-source-has-two-realizations](event-source-has-two-realizations.md) -- what a source costs
   to have, settled by counting rather than by intuition: a declared variable's source is provisioned
   because 83% of a design's cells are genuinely subscribed to, while a class object's is
@@ -536,7 +555,9 @@ the detail lives in the entry itself.
   scope-tree fold decides which named begin/ends materialize as runtime hierarchy children and where
   each static's storage physically lives; lexical owner and physical owner are distinct so an
   unnamed scope nested in a named one places its statics in the named scope's class without exposing
-  them to cross-unit by-name lookup.
+  them to cross-unit by-name lookup. **Its by-name registration and lookup are removed by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+  where a static of a named block is published with the blocks it sits in.
 - [elaboration-lifecycle-phases](elaboration-lifecycle-phases.md) -- a generated constructor only
   allocates; elaboration is a staged build / resolve / initialize / activate protocol.
 - [net-driver-resolution](net-driver-resolution.md) -- a net is a resolution node with node-owned
@@ -559,7 +580,11 @@ the detail lives in the entry itself.
   and sensitivity extraction; Lyra translates resolved facts to executable route and endpoint
   capability; sensitivity uses the correct per-consumer slang surface and never reclassifies from
   `ValueSymbol + global table + HopsTo`; reading, writing and observing one target consult the one
-  translation instead of each recomputing it, so an assignment's target is validated nowhere.
+  translation instead of each recomputing it, so an assignment's target is validated nowhere. **Its
+  by-name segment is reversed by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+  and an `always_comb`'s list is revised by
+  [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md).
 - [a-real-destination-widens-a-shortreal-operation](a-real-destination-widens-a-shortreal-operation.md)
   -- the standard does not say whether `real` against `shortreal` is a type or a size, so whether a
   `real` destination widens a product of two `shortreal` operands is open and tools split on it.
@@ -593,7 +618,10 @@ the detail lives in the entry itself.
   endpoint class, and relying on the two sides' representations agreeing are rejected. Its virtual
   behavior coordinate is superseded by
   [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where a
-  behavior reached this way settles to a body that makes the virtual call.
+  behavior reached this way settles to a body that makes the virtual call. **Its premise is reversed
+  by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+  where the element publishes such a class.
 - [a-settled-access-is-ordinary-operations](a-settled-access-is-ordinary-operations.md) -- a class
   answers a name it declares no dispatch position for with the body itself, and every access whose
   class no signature publishes is written out of the operations it is -- a runtime call, a
@@ -606,7 +634,10 @@ the detail lives in the entry itself.
   are rejected. Superseded in part by
   [an-object-model-fixed-at-compile-time](an-object-model-fixed-at-compile-time.md), where a virtual
   behavior is answered by name with a body that makes the virtual call, and a body is entered on the
-  part of the object the handle reaches rather than on the most-derived object.
+  part of the object the handle reaches rather than on the most-derived object. **Its premise is
+  reversed by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+  where the element publishes such a class, so the settled operations and the name tables are gone.
 - [a-dynamic-cast-asks-the-type-or-the-object](a-dynamic-cast-asks-the-type-or-the-object.md) --
   whether an assignment the two declared types would not otherwise allow is valid for a particular
   value is answered by whoever fixes the values the destination accepts: the type where its
@@ -650,6 +681,9 @@ the detail lives in the entry itself.
   constant per class, emitted by the declaring unit; and an instance of the design hierarchy is
   built by its class's own constructor, entered typed. A name reaching a method of a class the
   referrer cannot name is settled to a body while the design elaborates, a virtual one included.
+  **That last decision is reversed by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+  where the element publishes such a class and no class carries a table of names.
 - [jit-value-realization](jit-value-realization.md) -- the JIT represents every runtime value as an
   opaque handle into the runtime library (the baseline realization), and a `GeneratedCallScope` owns
   the transient values one generated entry creates -- the JIT counterpart of C++ stack/RAII.
@@ -798,7 +832,10 @@ the detail lives in the entry itself.
 - [unit-signature](unit-signature.md) -- what each unit kind publishes and how that set is known to
   be complete; a signature member is named where the referrer compiles, a name past a signature
   resolves at elaboration; the signature is an artifact separate from code, and that split decides
-  what a change recompiles.
+  what a change recompiles. **Its D1 and D5 are reversed by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+  where a module publishes every declaration a hierarchical name may reach and nothing lies past a
+  signature.
 - [rendered-text-is-written-once](rendered-text-is-written-once.md) -- a render entry writes into
   the artifact it is producing and answers with no text, so a byte is not copied once per level of
   nesting above it and no format description is read while the program runs. A name and a type are
@@ -892,13 +929,19 @@ the detail lives in the entry itself.
   position on the reference, handing signatures to a lower pass, and a by-name lookup are rejected.
   **Its D1 and D5 are reversed by
   [a-referrer-calls-rather-than-navigates](a-referrer-calls-rather-than-navigates.md)**, which
-  removes the position rather than deciding where it is computed.
+  removes the position rather than deciding where it is computed. **That reversal is itself reversed
+  by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+  where the published members lead the object again and a referrer reads one at its offset.
 - [a-referrer-calls-rather-than-navigates](a-referrer-calls-rather-than-navigates.md) -- a unit
   promises what it offers and never how it is laid out: its promise is a class with no storage and
   one behavior per published member, subroutine and entry, which the unit's object realizes, so a
   referrer calls and never navigates and what a unit kept to itself cannot move what a referrer
   compiles against. A promise carrying the published storage, an interface class, a per-member
-  offset, a by-name lookup, and free entries over an opaque handle are rejected.
+  offset, a by-name lookup, and free entries over an opaque handle are rejected. **Its D1 to D4 are
+  reversed by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+  where a referrer reads a published member at its offset and calls a published subroutine directly.
 - [publishing-part-of-a-member](publishing-part-of-a-member.md) -- a connection point names a
   projection of a published member, a folded value, or nothing; a signature carries a closed
   selector path and never an expression, an interface publishes its modports, and the referrer
@@ -912,14 +955,18 @@ the detail lives in the entry itself.
   where the view admits a write, and the subroutine evaluating it where it does not, so every
   assignment form the language allows reaches it with no arm per form. Defining each failing form in
   terms of a subroutine pair, publishing both representations, reading the internal symbol off the
-  frontend, and flattening the interface are rejected.
+  frontend, and flattening the interface are rejected. Since
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) a
+  path descending through a module reaches a view's name too.
 - [publishing-an-owned-instance](publishing-an-owned-instance.md) -- an interface publishes the
   interfaces it instantiates, so a name continues past a port into one; continuing through a
   published member is the step form of ending on one, and every route to a published name becomes
   typed at once. Carrying the inner unit's members inline, recording its object eagerly, walking
   bodies to bound the read set, and letting the reach fall to a by-name lookup are rejected. Its D3,
   bounding what a lowering may read, is superseded by
-  [reaching-past-a-published-class](reaching-past-a-published-class.md).
+  [reaching-past-a-published-class](reaching-past-a-published-class.md). **Its D1 is generalized by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**
+  from interfaces to every design element.
 - [identity-is-not-a-rendering](identity-is-not-a-rendering.md) -- what must distinguish is stored
   as its parts and composed into a name only by whoever knows the spelling rules; an identity splits
   exactly where the layer below it splits; naming another unit's object and holding what it
@@ -938,12 +985,17 @@ the detail lives in the entry itself.
   needed; whether such a method takes a receiver is its declaration, carried down rather than
   re-derived below. Naming the instance the frontend resolved to, a callable endpoint category, and
   a by-name lookup for a published name are rejected. How that fact is carried is superseded by
-  [call-receiver-on-the-callee](call-receiver-on-the-callee.md).
+  [call-receiver-on-the-callee](call-receiver-on-the-callee.md). **Its by-name arm for a module's
+  subroutine is reversed by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+  where a module publishes its subroutines too.
 - [interface-port-binding](interface-port-binding.md) -- an interface port's declared type names the
   unit whose instance belongs there, by name, so it crosses a signature; the member holds a borrowed
   reference the parent binds once during elaboration, a fourth published storage kind; an interface
   publishes every net and variable it declares; and which interface a port carries feeds the
   module's specialization identity, without which two differently bound modules collide on one name.
+  **Its rule that a module publishes only its ports is reversed by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).**
 - [a-virtual-interface-holds-which-instance](a-virtual-interface-holds-which-instance.md) -- a
   virtual interface's type fixes the interface and every position reached through it, so only the
   instance is chosen at run time; its value is which instance it holds, the runtime's
@@ -993,7 +1045,10 @@ the detail lives in the entry itself.
   elaborate at that index -- for why stating which indices share an alternative is a prediction
   rather than a record, and for why a route into one names the position the source wrote it at and
   never what it compiled to. It withdraws the entry above's consequence that a `generate if` needs
-  nothing, which is true outside a loop and false inside one.
+  nothing, which is true outside a loop and false inside one. **Its rejection of one member covering
+  every alternative is reversed by
+  [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+  where every generate construct holds one entry a step views as the block it names.
 - [an-elaboration-time-value-is-an-input](an-elaboration-time-value-is-an-input.md) -- the rule both
   entries above turned out to be cases of. The front end evaluates whatever it can, so an already
   computed answer sits beside nearly every expression, and taking one decides where that value

@@ -199,8 +199,11 @@ what the frontend happened to do.
    stable, and it widens what may share one artifact; it is never a precondition for lowering a
    program correctly.
 4. **Code-shape-affecting inputs are exactly those that change generated code.** Packed bit widths
-   used in types, type substitutions for `parameter type`, and structural decisions that change the
-   set of emitted instructions are code-shape-affecting. Nothing else.
+   used in types, type substitutions for `parameter type`, structural decisions that change the set
+   of emitted instructions, and the class each upward hierarchical name's search lands on (LRM 23.8
+   resolves one per instance, so two instances may reach classes of different types) are
+   code-shape-affecting. Nothing else -- in particular not where the instance sits, which is the
+   path or length of the climb rather than the class it lands on.
 5. **Constructor/config inputs do not fork the specialization.** Initial values, counts that only
    steer runtime state, enable/disable flags that do not change generated code, and values consumed
    only by the runtime constructor flow through as inputs. They do not produce additional

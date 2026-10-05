@@ -180,10 +180,10 @@ auto ExternalFieldName(
       mir::FindExternalClass(unit.external_classes, t.unit_name, t.class_name);
   if (declaring == nullptr || t.slot.value >= declaring->fields.size()) {
     throw InternalError(
-        "backend::cpp: a property access names a slot no consumed promise "
+        "backend::cpp: a property access names a slot no consumed signature "
         "describes");
   }
-  return CppFieldNameOf(t.slot, declaring->fields.Get(t.slot).name);
+  return CppFieldName(declaring->named_fields, t.slot);
 }
 
 void RenderFieldAccessExpr(

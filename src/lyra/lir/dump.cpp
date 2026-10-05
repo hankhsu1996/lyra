@@ -41,9 +41,6 @@ class LirDumper {
       Line(std::format("[{}] {}", id.value, DescribeType(id)));
     }
     Dedent();
-    for (const ExternalUnitObjectId id : unit_->external_unit_objects.Ids()) {
-      DumpExternalUnitObject(id);
-    }
     for (const ExternalClass& cls : unit_->external_classes) {
       DumpExternalClass(cls);
     }
@@ -78,14 +75,6 @@ class LirDumper {
   }
 
  private:
-  void DumpExternalUnitObject(ExternalUnitObjectId id) {
-    const ExternalUnitObject& object = unit_->external_unit_objects.Get(id);
-    Line(
-        std::format(
-            "ExternalUnitObject \"{}.{}\" (#{})", object.unit_name,
-            object.class_name, id.value));
-  }
-
   void DumpStruct(StructId id) {
     const Struct& declared = unit_->structs.Get(id);
     Line(std::format(R"(Struct "{}" (#{}))", declared.name, id.value));
@@ -252,6 +241,9 @@ class LirDumper {
             "fn \"{}\"({}) -> {}", fn.name, params,
             FormatType(fn.result_type)));
     Indent();
+    for (const std::string& alias : fn.aliases) {
+      Line(std::format("alias \"{}\"", alias));
+    }
     for (std::size_t v = 0; v < fn.variables.size(); ++v) {
       Line(std::format("var {}: {}", v, FormatType(fn.variables[v])));
     }

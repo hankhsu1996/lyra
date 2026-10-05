@@ -266,9 +266,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_shared_pointer_deref", &lyra_rt_shared_pointer_deref);
   add("lyra_rt_handle_view", &lyra_rt_handle_view);
   add("lyra_rt_handle_with_view", &lyra_rt_handle_with_view);
-  add("lyra_rt_class_find_property", &lyra_rt_class_find_property);
-  add("lyra_rt_class_find_behavior_body", &lyra_rt_class_find_behavior_body);
-  add("lyra_rt_property_at", &lyra_rt_property_at);
   add("lyra_rt_view_of", &lyra_rt_view_of);
   add("lyra_rt_self_handle", &lyra_rt_self_handle);
   add("lyra_rt_object_event_source", &lyra_rt_object_event_source);
@@ -301,10 +298,20 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
   add("lyra_rt_wait_recollecting", &lyra_rt_wait_recollecting);
   add("lyra_rt_wait_until", &lyra_rt_wait_until);
+  add("lyra_rt_wait_on_report", &lyra_rt_wait_on_report);
   add("lyra_rt_read_report_empty", &lyra_rt_read_report_empty);
   add("lyra_rt_read_report_add", &lyra_rt_read_report_add);
+  add("lyra_rt_read_report_add_through_handle",
+      &lyra_rt_read_report_add_through_handle);
+  add("lyra_rt_read_report_enter_call_on_handle",
+      &lyra_rt_read_report_enter_call_on_handle);
+  add("lyra_rt_read_report_leave_call_on_handle",
+      &lyra_rt_read_report_leave_call_on_handle);
   add("lyra_rt_read_report_add_every_object",
       &lyra_rt_read_report_add_every_object);
+  add("lyra_rt_read_report_add_write", &lyra_rt_read_report_add_write);
+  add("lyra_rt_read_report_settle_as_implicit_list",
+      &lyra_rt_read_report_settle_as_implicit_list);
   add("lyra_rt_read_report_enter", &lyra_rt_read_report_enter);
   add("lyra_rt_read_report_leave", &lyra_rt_read_report_leave);
   add("lyra_rt_read_report_runs_the_body", &lyra_rt_read_report_runs_the_body);
@@ -349,14 +356,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_sequence_make", &lyra_rt_sequence_make);
   add("lyra_rt_sequence_extend", &lyra_rt_sequence_extend);
   add("lyra_rt_sequence_element", &lyra_rt_sequence_element);
-  add("lyra_rt_register_signal", &lyra_rt_register_signal);
-  add("lyra_rt_find_signal", &lyra_rt_find_signal);
-  add("lyra_rt_find_subroutine", &lyra_rt_find_subroutine);
-  add("lyra_rt_find_class", &lyra_rt_find_class);
-  add("lyra_rt_register_disable_target", &lyra_rt_register_disable_target);
-  add("lyra_rt_find_disable_target", &lyra_rt_find_disable_target);
-  add("lyra_rt_resolve_visible_child", &lyra_rt_resolve_visible_child);
-  add("lyra_rt_find_child", &lyra_rt_find_child);
+  add("lyra_rt_enclosing_instance", &lyra_rt_enclosing_instance);
   add("lyra_rt_run_program", &lyra_rt_run_program);
 }
 
@@ -458,7 +458,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_packed_cell_sampled_load", &lyra_rt_packed_cell_sampled_load);
   add("lyra_rt_refer_storage", &lyra_rt_refer_storage);
   add("lyra_rt_refer_property", &lyra_rt_refer_property);
-  add("lyra_rt_refer_property_at", &lyra_rt_refer_property_at);
   add("lyra_rt_reference_reports_to", &lyra_rt_reference_reports_to);
   add("lyra_rt_packed_cell_refer", &lyra_rt_packed_cell_refer);
   add("lyra_rt_string_cell_refer", &lyra_rt_string_cell_refer);

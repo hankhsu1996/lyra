@@ -14,27 +14,10 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/runtime_class.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-auto BorrowedPointerTo(mir::CompilationUnit& unit, mir::TypeId pointee)
-    -> mir::TypeId {
-  return unit.types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = pointee,
-          .ownership = mir::PointerOwnership::kBorrowed,
-          .mutability = mir::Mutability::kMutable}});
-}
-
-// The root every object shares, as the type of what reaches it.
-auto ObjectRoot(mir::CompilationUnit& unit) -> mir::TypeId {
-  return unit.types.Intern(
-      mir::Type{
-          mir::RuntimeClassType{.which = support::RuntimeClass::kObject}});
-}
 
 // A call to an entry acting on an object, which is the first of `arguments`:
 // whatever reaches the object, as the source reached it.
@@ -72,47 +55,22 @@ auto PropertyStorage(
           [&](const mir::CrossUnitClassFieldTarget& field) {
             return mir::MakeFieldAccessExpr(
                 BuildObjectDeref(unit, block, object), field, type);
-          },
-          // The class answers with the address, and the address is read as the
-          // type the access already knows the property has.
-          [&](const PropertyCoordinate& coordinate) {
-            const mir::ExprId address = Call(
-                block, support::BuiltinFn::kPropertyAt, std::nullopt,
-                {object, coordinate.at}, mir::ErasedPointer(unit.types));
-            const mir::ExprId typed = block.exprs.Add(
-                mir::Expr{
-                    .data = mir::CastExpr{.operand = address},
-                    .type = BorrowedPointerTo(unit, type)});
-            return mir::MakeDerefExpr(typed, type);
           }},
       property);
 }
 
 auto OpenObjectWrite(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId receiver,
-    const PropertyName& property) -> mir::ExprId {
-  // A property named by its class is reached as a member of that class; one
-  // reached by a coordinate is reached on the root every object shares, which
-  // is all applying a coordinate needs.
-  const mir::TypeId reached_as = std::visit(
-      Overloaded{
-          [&](const mir::ClassFieldTarget&) {
-            return mir::ObjectReachedThrough(
-                unit.types, block.exprs.Get(receiver).type);
-          },
-          [&](const mir::CrossUnitClassFieldTarget&) {
-            return mir::ObjectReachedThrough(
-                unit.types, block.exprs.Get(receiver).type);
-          },
-          [&](const PropertyCoordinate&) { return ObjectRoot(unit); }},
-      property);
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId receiver)
+    -> mir::ExprId {
   return block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Construct{}, .arguments = {receiver}},
           .type = unit.types.Intern(
-              mir::Type{mir::ObjectWriteType{.object = reached_as}})});
+              mir::Type{mir::ObjectWriteType{
+                  .object = mir::ObjectReachedThrough(
+                      unit.types, block.exprs.Get(receiver).type)}})});
 }
 
 auto PropertyReference(
@@ -132,11 +90,6 @@ auto PropertyReference(
             return Call(
                 block, support::BuiltinFn::kReferProperty, field, {receiver},
                 reference);
-          },
-          [&](const PropertyCoordinate& coordinate) {
-            return Call(
-                block, support::BuiltinFn::kReferPropertyAt, std::nullopt,
-                {receiver, coordinate.at}, reference);
           }},
       property);
 }

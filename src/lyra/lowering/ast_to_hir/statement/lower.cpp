@@ -167,11 +167,7 @@ auto LowerExpressionStmt(
       .label = std::nullopt, .data = hir::ExprStmt{.expr = id}, .span = span};
 }
 
-// LRM 9.6.2 `disable <named block or task>`. A scope's identity indexes the
-// registry of the declaration scope that declared it, so a target this body
-// shares that scope with is named outright. Anything else is somewhere else on
-// the hierarchy and is reached the way every other name that leaves this scope
-// is (LRM 23.6).
+// LRM 9.6.2 `disable <named block or task>`.
 auto LowerDisableStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::DisableStatement& dis, diag::SourceSpan span)
@@ -182,25 +178,13 @@ auto LowerDisableStmt(
     throw InternalError(
         "LowerDisableStmt: a disable target is not a symbol reference");
   }
-  const slang::ast::Symbol& target =
-      *dis.target.as<slang::ast::ArbitrarySymbolExpression>().symbol;
-
-  const auto minted = proc.Owner().LookupMintedProceduralScope(target);
-  if (minted.has_value() && minted->owner == &frame.ProceduralScopeOwner()) {
-    return hir::Stmt{
-        .label = std::nullopt,
-        .data =
-            hir::DisableStmt{
-                .target = hir::DirectDisableTarget{.scope = minted->scope}},
-        .span = span};
-  }
-  auto routed = proc.Owner().MakeRoutedDisableTargetRef(frame, target, span);
-  if (!routed) return std::unexpected(std::move(routed.error()));
+  const auto& named = dis.target.as<slang::ast::ArbitrarySymbolExpression>();
+  auto target =
+      proc.Owner().DisableTargetOf(frame, *named.symbol, named.hierRef, span);
+  if (!target) return std::unexpected(std::move(target.error()));
   return hir::Stmt{
       .label = std::nullopt,
-      .data =
-          hir::DisableStmt{
-              .target = hir::RoutedDisableTarget{.target = *routed}},
+      .data = hir::DisableStmt{.target = *std::move(target)},
       .span = span};
 }
 
@@ -227,7 +211,7 @@ auto LowerProceduralContinuousAssignStmt(
   if (!source_or) return std::unexpected(std::move(source_or.error()));
   const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
       assign.right(), proc.ContainingSymbol());
-  auto sensitivity = proc.Owner().TranslateSensitivityReads(proc, reads, frame);
+  auto sensitivity = proc.Owner().SensitivityEntriesOf(proc, reads, frame);
   if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
   return hir::Stmt{
       .label = std::nullopt,

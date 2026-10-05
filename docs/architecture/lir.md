@@ -65,8 +65,9 @@ below LIR, at LIR-to-LLVM.
 - Logical storage topology: which local, member, element, or referent a place names, and the logical
   identity of every class member and callable a node refers to. A member step reaches a class this
   unit compiles or a class another unit published, both member-bearing objects of this unit's own
-  graph, and only what the artifact emits distinguishes them. Nothing of another unit's object is
-  reached this way: what that unit promised of it is behaviors, and a behavior is a call.
+  graph, and only what the artifact emits distinguishes them. A step into another unit's object
+  reaches only a member its scope published, which leads that object's storage in the order the
+  publication states; what lowering added to the object is reached by no step from outside it.
 - Each class's relations as MIR stated them -- what it extends, what it introduces into dispatch and
   overrides, the interface classes it names and which behavior answers each behavior of every
   interface class a value of it is also a value of -- and the contents of the constant the library

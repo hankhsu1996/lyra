@@ -72,12 +72,12 @@ auto MergeChoices(
   return merged;
 }
 
-// One construct that selects nothing, as two blocks left it: a loop, or blocks
-// standing on their own. Both state the same scopes in the same positions,
-// counted out and supplied the same way, so each scope is merged with the one
-// standing where it does. A selection can sit at any depth beneath them, which
-// is why agreeing here is asked of what the scopes hold rather than of the
-// scopes whole.
+// One construct that selects nothing, as two blocks left it: a loop, blocks
+// standing on their own, or a single block. Both state the same scopes in the
+// same positions, counted out and supplied the same way, so each scope is
+// merged with the one standing where it does. A selection can sit at any depth
+// beneath them, which is why agreeing here is asked of what the scopes hold
+// rather than of the scopes whole.
 auto MergeBlockForBlock(const hir::Generate& a, const hir::Generate& b)
     -> std::optional<hir::Generate> {
   if (a.counting != b.counting || a.blocks.size() != b.blocks.size()) {
@@ -101,7 +101,6 @@ auto MergeBlockForBlock(const hir::Generate& a, const hir::Generate& b)
 
 auto MergeGenerates(const hir::Generate& a, const hir::Generate& b)
     -> std::optional<hir::Generate> {
-  if (a == b) return a;
   return std::visit(
       Overloaded{
           [&](const hir::BlocksChoose& chosen_a)
@@ -115,23 +114,35 @@ auto MergeGenerates(const hir::Generate& a, const hir::Generate& b)
           },
           [&](const hir::BlocksStandAlone&) -> std::optional<hir::Generate> {
             return MergeBlockForBlock(a, b);
+          },
+          [&](const hir::SingleBlock&) -> std::optional<hir::Generate> {
+            return MergeBlockForBlock(a, b);
           }},
       a.counting);
 }
 
 auto MergeBlocks(const hir::StructuralScope& a, const hir::StructuralScope& b)
     -> std::optional<hir::StructuralScope> {
-  if (a == b) return a;
   if (a.generates.size() != b.generates.size()) return std::nullopt;
 
   // A selection sits in a generate construct or beneath one, so the generates
-  // are the one part allowed to differ. Reading one block with the other's in
-  // place of its own says whether anything else did, over every field there is
-  // rather than over a list someone has to keep up to date.
+  // are one part allowed to differ; what the two blocks published is the
+  // other, since each block's class and the blocks below it have names of their
+  // own, and everything else it states follows from the declarations compared
+  // here. Reading one block with the other's in place of its own says whether
+  // anything else did, over every field there is rather than over a list
+  // someone has to keep up to date.
   hir::StructuralScope merged = a;
   merged.generates = b.generates;
+  merged.published = b.published;
   if (!(merged == b)) return std::nullopt;
 
+  // The one scope stands for both blocks, so it answers to the names of each.
+  merged.published = a.published;
+  merged.published.aliases.push_back(b.published.signature.class_name);
+  merged.published.aliases.insert(
+      merged.published.aliases.end(), b.published.aliases.begin(),
+      b.published.aliases.end());
   base::Registry<hir::Generate, hir::GenerateId> generates;
   for (const hir::GenerateId id : a.generates.Ids()) {
     auto one = MergeGenerates(a.generates.Get(id), b.generates.Get(id));

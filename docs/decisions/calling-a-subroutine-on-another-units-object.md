@@ -11,6 +11,12 @@ answers `hierarchical-reference-routing.md` D5 for the callable target it named 
 reverses neither. D6 is superseded by [call-receiver-on-the-callee](call-receiver-on-the-callee.md),
 which carries the same fact on the callee instead of in the target.
 
+**D1's exclusion of a module's subroutines, D3's by-name segment and D5 are reversed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).**
+Every design element publishes its subroutines' signatures, so a subroutine a module declares is
+called on its object through the route D2 describes, and no callable is reached by name. D2, D4,
+D6's fact and D1 for an interface stand.
+
 ## Why this decision matters
 
 An interface exists to be written against, and LRM 25.7 puts its tasks and functions on that

@@ -44,18 +44,18 @@ to a C++-specific syntactic mode dependency that a LIR / LLVM-IR backend would h
 **MIR has exactly one shape for construction-time work: statements in `constructor.body.root_stmts`.
 For every value-assignable member, HIR-to-MIR inserts an
 `AssignExpr(MemberAccess(self, var), value)` statement at the position the variable is declared in
-source order, before the same scope registers a signal, builds a child, or creates a process. The
-value is the user-supplied expression when present, otherwise the LRM Table 6-7 type default; the
-statement shape is uniform either way. The `mir::MemberDecl.initializer` field is removed; a member
-declaration carries name and type only.**
+source order, before the same scope builds a child or creates a process. The value is the
+user-supplied expression when present, otherwise the LRM Table 6-7 type default; the statement shape
+is uniform either way. The `mir::MemberDecl.initializer` field is removed; a member declaration
+carries name and type only.**
 
 Vars whose type has no value-assignment semantics -- owned children (pointer, vector), borrowed
 handles to objects, cross-instance reference slots (borrowed pointers filled in Resolve), and named
 events -- do not receive an init statement. Their declaration shape itself fixes the field at
 construction:
 
-- Pointer / vector / object / external-unit-object fields default to their C++ default (null
-  pointer, empty container).
+- Pointer / vector / object fields, of this unit's classes or another's, default to their C++
+  default (null pointer, empty container).
 - A cross-instance reference slot is a borrowed pointer left null at construction and filled in the
   Resolve phase by the route the reference names (`hierarchical-reference-routing.md`).
 - A `NamedEvent` field is default-constructed; the event identity is fixed for the lifetime of the
@@ -80,8 +80,6 @@ Test(Scope* parent, std::string name, RuntimeServices& services)
 static void init(Test* self) {
   self->a.Set(self->Services(), PackedArray::Int(1));
   self->b.Set(self->Services(), self->a.Get() + PackedArray::Int(1));
-  self->RegisterSignal("a", &self->a);
-  self->RegisterSignal("b", &self->b);
 }
 ```
 
@@ -136,8 +134,8 @@ Owned children, cross-instance reference slots, and named events have no value-a
 The HIR-side declaration for these types is the equivalent of "this field exists with its
 construction-time identity"; there is no later "set its value" semantic to encode. Emitting an
 `AssignExpr` for them would either fail to compile (events) or invent a no-op write (containers,
-pointers). The filter is structural: any var whose MIR type is in the set
-`{Pointer, Vector, Object, ExternalUnitObject, Event}` does not get an init statement.
+pointers). The filter is structural: any var whose MIR type is a pointer, a vector, an object of a
+class of this or another unit, or an event does not get an init statement.
 
 ## Rejected alternatives
 

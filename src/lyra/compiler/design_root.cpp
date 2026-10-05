@@ -4,10 +4,14 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/external_unit_object.hpp"
+#include "lyra/hir/external_scope_class.hpp"
+#include "lyra/hir/published_member.hpp"
+#include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
@@ -28,21 +32,54 @@ auto BuildDesignRootHir(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures) -> hir::CompilationUnit {
   hir::CompilationUnit root{std::string{kDesignRootUnitName}};
+  // Like any module, its object is published under the unit's class name, and
+  // what it publishes is every instance it builds (LRM 23.6).
+  hir::ScopeClassSignature published{
+      .class_name = hir::InstanceClassName(kDesignRootUnitName),
+      .members = {},
+      .callables = {},
+      .generates = {},
+      .disable_targets = {},
+      .modports = {}};
+  std::vector<hir::PublishedDecl> instances;
   for (const lowering::ast_to_hir::TopLevelUnit& top : tops) {
     // The root reaches a top the way any parent reaches a child it builds:
-    // through its own record of the object that unit's signature promised. A
+    // through its own record of the class that unit's signature published. A
     // top is handed nothing, since nothing instantiates it.
-    const hir::ExternalUnitObjectId object = root.external_unit_objects.Add(
-        hir::ImportExternalUnitObject(
-            signatures.Instantiated(top.unit_name), root.types));
+    const hir::UnitSignature& signature =
+        signatures.Instantiated(top.unit_name);
+    const hir::ScopeClassSignature& instance_class =
+        hir::DesignElementOf(signature).instance_class;
+    const hir::ExternalScopeClassId scope_class =
+        root.external_scope_classes.Add(
+            hir::ImportExternalScopeClass(
+                signature, instance_class, root.types));
+    const hir::InstanceMemberId instance =
+        root.root_scope.instance_members.Declare();
     root.root_scope.instance_members.Define(
-        root.root_scope.instance_members.Declare(),
-        hir::InstanceMemberDecl{
-            .instance_name = top.instance_name,
-            .object = object,
-            .array_dims = {},
-            .arguments = {}});
+        instance, hir::InstanceMemberDecl{
+                      .instance_name = top.instance_name,
+                      .scope_class = scope_class,
+                      .array_dims = {},
+                      .arguments = {}});
+    published.members.Add(
+        hir::PublishedMember{
+            .name = top.instance_name,
+            .within = {},
+            .type = root.types.Intern(
+                hir::Type{hir::UnitObjectType{
+                    .unit_name = top.unit_name,
+                    .class_name = instance_class.class_name}}),
+            .storage = hir::BorrowedObjectStorage{}});
+    instances.emplace_back(instance);
   }
+  root.root_scope.published = hir::ScopePublication{
+      .signature = std::move(published),
+      .aliases = {},
+      .members = {instances.size(), std::move(instances)},
+      .generates = {},
+      .disable_targets = {},
+      .callables = {}};
   return root;
 }
 

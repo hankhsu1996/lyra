@@ -59,23 +59,6 @@ struct NamedField {
   return std::nullopt;
 }
 
-// A member another unit's promise describes -- the identifier it published and
-// the type of the storage behind it. Its position is counted out of the
-// published order by both sides, and what that position reaches is the record
-// holding the member rather than anything stated here: which of a unit's
-// behaviors answers with it, or the slot a class gave it among its own.
-//
-// The name sits on the member rather than in a relation because a promise has
-// no member that answers to none: a unit publishes what its source declared and
-// never what its own lowering synthesized. The declaring unit's arena needs the
-// relation for the opposite reason -- it also holds the cells its bodies keep
-// -- and putting one here would oblige every consumer to handle an absence that
-// cannot arise.
-struct PromisedField {
-  std::string name;
-  TypeId type;
-};
-
 // One field of a construction: which field (`target`, a stable `FieldId`)
 // receives which value (`value`). The vocabulary every field-bearing
 // construction states its initializers in. The value is a pure read of an

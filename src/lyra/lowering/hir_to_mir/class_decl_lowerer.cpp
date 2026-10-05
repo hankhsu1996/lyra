@@ -13,7 +13,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_ref.hpp"
-#include "lyra/hir/external_class.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
@@ -129,119 +128,6 @@ auto BehaviorSlot(
       behavior);
 }
 
-// Appends the interface class `iface`, then every interface class it extends
-// (LRM 8.26.2), skipping one already in `reached`, since an interface class is
-// one however many ways it is arrived at (LRM 8.26.6.3). What each extends is
-// read where that class states it.
-void ReachInterface(
-    const UnitLowerer& unit_lowerer, const hir::ClassRef& iface,
-    std::vector<hir::ClassRef>& reached) {
-  if (std::ranges::find(reached, iface) != reached.end()) {
-    return;
-  }
-  reached.push_back(iface);
-  std::visit(
-      Overloaded{
-          [&](const hir::LocalClassRef& local) {
-            for (const hir::ClassRef& extended :
-                 unit_lowerer.Hir().classes.Get(local.class_id).implements) {
-              ReachInterface(unit_lowerer, extended, reached);
-            }
-          },
-          [&](const hir::ExternalClassRef& external) {
-            const hir::ExternalClass* published = hir::FindExternalClass(
-                unit_lowerer.Hir().external_classes, external.unit_name,
-                external.class_name);
-            if (published == nullptr) {
-              throw InternalError(
-                  "ReachInterface: an interface class was named without its "
-                  "signature being read -- please report this as a bug");
-            }
-            for (const hir::ExternalClassRef& extended :
-                 published->implements) {
-              ReachInterface(unit_lowerer, hir::ClassRef{extended}, reached);
-            }
-          }},
-      iface);
-}
-
-// Every behavior an interface class `cls` extends introduced (LRM 8.26.2),
-// with what a body answering it takes and completes with: read off the
-// declaration where this unit declares the introducer, and off the promise its
-// unit made where another does. A class reaches none, since implementing an
-// interface class inherits nothing of it and a class states every behavior of
-// one it implements itself (LRM 8.26.7).
-auto InheritedBehaviorsOf(UnitLowerer& unit_lowerer, const hir::ClassDecl& cls)
-    -> std::vector<InheritedBehavior> {
-  std::vector<InheritedBehavior> inherited;
-  if (!cls.is_interface_class) {
-    return inherited;
-  }
-  std::vector<hir::ClassRef> extended;
-  for (const hir::ClassRef& named : cls.implements) {
-    ReachInterface(unit_lowerer, named, extended);
-  }
-  for (const hir::ClassRef& reached : extended) {
-    std::visit(
-        Overloaded{
-            [&](const hir::LocalClassRef& local) {
-              const hir::ClassDecl& introducer =
-                  unit_lowerer.Hir().classes.Get(local.class_id);
-              for (const hir::MethodId id : introducer.methods.Ids()) {
-                const hir::SubroutineDecl& method = introducer.methods.Get(id);
-                if (!method.is_virtual || method.overrides.has_value()) {
-                  continue;
-                }
-                inherited.push_back(
-                    InheritedBehavior{
-                        .name = method.name,
-                        .slot = BehaviorSlot(
-                            unit_lowerer,
-                            hir::LocalClassMethodTarget{
-                                .owner = local.class_id, .method = id}),
-                        .params = ParamTypesOf(unit_lowerer, method),
-                        .result = SubroutineCallTypeOf(unit_lowerer, method)});
-              }
-            },
-            [&](const hir::ExternalClassRef& external) {
-              const hir::ExternalClass* introducer = hir::FindExternalClass(
-                  unit_lowerer.Hir().external_classes, external.unit_name,
-                  external.class_name);
-              if (introducer == nullptr) {
-                throw InternalError(
-                    "InheritedBehaviorsOf: an interface class this one "
-                    "extends was named without its promise being read -- "
-                    "please report this as a bug");
-              }
-              hir::PublishedBehaviorId ordinal{0};
-              for (const hir::PublishedMethod& method : introducer->methods) {
-                if (!std::holds_alternative<hir::IntroducesVirtual>(
-                        method.dispatch)) {
-                  continue;
-                }
-                const hir::PublishedCallable& prototype = method.prototype;
-                inherited.push_back(
-                    InheritedBehavior{
-                        .name = prototype.name,
-                        .slot = BehaviorSlot(
-                            unit_lowerer,
-                            hir::ExternalDispatchSlot{
-                                .unit_name = external.unit_name,
-                                .class_name = external.class_name,
-                                .behavior = ordinal}),
-                        .params =
-                            ParamTypesOf(unit_lowerer, prototype.interface),
-                        .result = SubroutineCallTypeOf(
-                            unit_lowerer, prototype.interface,
-                            prototype.result_type)});
-                ++ordinal.value;
-              }
-            }},
-        reached);
-  }
-  return inherited;
-}
-
 // One body of the class and the static-lifetime locals it declared, paired so
 // the bring-up can apply each initializer in the arena the expression was
 // written in.
@@ -343,8 +229,9 @@ auto LowerStaticStorageInto(
 
 }  // namespace
 
-auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
-    -> diag::Result<void> {
+auto ClassDeclLowerer::DeclareShape(
+    ClassShape* declaring_shape,
+    std::span<const PlacedProperty> published_statics) -> diag::Result<void> {
   UnitLowerer& unit_lowerer = *owner_;
   const hir::ClassDecl& hir_class = *hir_class_;
 
@@ -371,6 +258,7 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
 
   ClassShape shape{
       .name = unit_lowerer.Hir().classes.NameOf(hir_class_id_),
+      .aliases = {},
       .base = base_ref,
       .implements = std::move(implements),
       .self_pointer_type = self_pointer_type,
@@ -385,21 +273,8 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
       .field_translation = {},
       .static_property_translation = {},
       .contained = {},
-      .declares = {},
       .is_final = false,
       .is_interface_class = hir_class.is_interface_class};
-
-  // The instance this class's objects belong to (LRM 6.22), recorded ahead of
-  // every source property so a property's position never moves with it. It is
-  // a borrow: the instance is built during elaboration and outlives every
-  // object of the class, so nothing here owns it. Construction is where it
-  // arrives, which is why the constructor takes it as a parameter. An interface
-  // class holds no storage and runs no body (LRM 8.26), so it records none.
-  if (declaring_shape != nullptr && !hir_class.is_interface_class) {
-    const mir::TypeId instance_type = declaring_shape->self_pointer_type;
-    shape.declaring_instance = DeclaringInstance{
-        .type = instance_type, .member = shape.AddField(instance_type)};
-  }
 
   // A property (LRM 8.4) becomes one field of the class, so where a property
   // lands is a fact only this loop knows. It is recorded as the loop goes;
@@ -429,6 +304,18 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
     shape.field_translation.Append(id);
   }
 
+  // The instance this class's objects belong to (LRM 6.22), placed after every
+  // property, since nothing outside the unit declaring the class reads it and
+  // what another unit counts a property's position out of is the properties
+  // alone. It is a borrow: the instance is built during elaboration and
+  // outlives every object of the class, so nothing here owns it. Construction
+  // is where it arrives, which is why the constructor takes it as a parameter.
+  if (hir_class.takes_declaring_instance) {
+    const mir::TypeId instance_type = unit_lowerer.Unit().builtins.scope_ptr;
+    shape.declaring_instance = DeclaringInstance{
+        .type = instance_type, .member = shape.AddField(instance_type)};
+  }
+
   // Everything the class keeps for itself rather than per object goes to one
   // pool, chosen by what replicates the class declaration (LRM 6.22, 8.9): a
   // class a namespace unit declares owns its cells, and one a structural scope
@@ -438,10 +325,12 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   // its blocks invalidates all take the same answer, because the question is
   // the same one.
   const StaticStorageOwner class_storage =
-      declaring_shape != nullptr
-          ? StaticStorageOwner{InstanceStorage{.shape = declaring_shape}}
-          : StaticStorageOwner{
-                ClassStorage{.owner = class_id_, .shape = &shape}};
+      declaring_shape != nullptr ? StaticStorageOwner{InstanceStorage{
+                                       .owner = declaring_scope_->ClassId(),
+                                       .shape = declaring_shape,
+                                       .placed = {}}}
+                                 : StaticStorageOwner{ClassStorage{
+                                       .owner = class_id_, .shape = &shape}};
 
   // Static properties (LRM 8.9) take their cells in declaration order, recorded
   // as the loop goes. That pool also takes what the class's bodies keep, so a
@@ -455,10 +344,16 @@ auto ClassDeclLowerer::DeclareShape(ClassShape* declaring_shape)
   shape.static_property_translation =
       base::Translation<hir::StaticPropertyId, StaticStorageHome>{
           hir_class.static_properties.size()};
-  for (const auto& sp : hir_class.static_properties) {
+  for (const hir::StaticPropertyId id : hir_class.static_properties.Ids()) {
+    const hir::ClassStaticProperty& sp = hir_class.static_properties.Get(id);
     const mir::TypeId cell_type = mir::ObservableCellOf(
         unit_lowerer.Unit().types, unit_lowerer.TranslateType(sp.type));
-    const StaticStorageHome home = DeclareStaticCell(class_storage, cell_type);
+    const auto published =
+        std::ranges::find(published_statics, id, &PlacedProperty::property);
+    const StaticStorageHome home =
+        published != published_statics.end()
+            ? StaticStorageHome{InstanceFieldHome{.field = published->field}}
+            : DeclareStaticCell(class_storage, cell_type);
     // The class answers the identifier the source declared only where the class
     // owns the cell. Where a structural scope replicates the class the cell is
     // storage of that scope's instance, reached as the field it is, and the
@@ -585,8 +480,13 @@ auto ClassDeclLowerer::PopulateBodies(
 
   if (const std::optional<DeclaringInstance>& instance =
           shape.declaring_instance) {
-    const mir::ExprId value = BuildEnclosingScopeReceiver(
-        frame, unit_lowerer.Unit(), mir::EnclosingHops{});
+    const mir::ExprId value = ctor_block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::CastExpr{
+                    .operand = BuildEnclosingScopeReceiver(
+                        frame, unit_lowerer.Unit(), mir::EnclosingHops{})},
+            .type = instance->type});
     const mir::ExprId target = ctor_block.exprs.Add(
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(
@@ -618,12 +518,9 @@ auto ClassDeclLowerer::PopulateBodies(
   if (hir_class.base.has_value()) {
     // A base belonging to an instance leads its arguments with that instance,
     // which encloses the one this class belongs to.
-    if (const std::optional<ImplicitInstanceArgument> instance =
-            ImplicitInstanceArgumentOf(
-                unit_lowerer.DeclaringInstanceOf(*hir_class.base),
-                hir_class.base_call.declaring_scope_hops)) {
-      base_args.push_back(
-          BuildImplicitInstanceArgument(frame, unit_lowerer.Unit(), *instance));
+    if (hir_class.base_call.declaring_instance.has_value()) {
+      base_args.push_back(BuildImplicitInstanceArgument(
+          ctor_lowerer, frame, *hir_class.base_call.declaring_instance));
     }
     for (const hir::ExprId arg : hir_class.base_call.arguments) {
       auto arg_or = ctor_lowerer.LowerExpr(ctor.body.exprs.Get(arg), frame);
@@ -789,15 +686,7 @@ auto ClassDeclLowerer::PopulateBodies(
     return std::unexpected(std::move(r.error()));
   }
 
-  // Only a class a design element declares is reached by name, since any other
-  // class is named by every referrer.
-  if (declaring_scope_ != nullptr) {
-    StateNameReachedDefinition(
-        unit_lowerer.Unit(), class_id_, mir_class,
-        InheritedBehaviorsOf(unit_lowerer, hir_class));
-  } else {
-    StateNamedClassDefinition(unit_lowerer.Unit(), class_id_, mir_class);
-  }
+  StateNamedClassDefinition(unit_lowerer.Unit(), mir_class);
   unit_lowerer.Unit().DefineClass(class_id_, std::move(mir_class));
   return {};
 }

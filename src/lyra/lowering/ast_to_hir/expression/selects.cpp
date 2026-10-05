@@ -232,12 +232,12 @@ auto LowerMemberAccessExpr(
       auto property =
           lowerer.Owner().ResolveStaticPropertyTarget(frame, prop, span);
       if (!property) return std::unexpected(std::move(property.error()));
-      return hir::MakeRefExpr(*property, *type_id, span);
+      return hir::MakeValueTargetRefExpr(*property, *type_id, span);
     }
     const auto& declaring_class =
         prop.getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto target = lowerer.Owner().MakeClassPropertyTarget(
-        frame, declaring_class, prop, span);
+    auto target =
+        lowerer.Owner().MakeClassPropertyTarget(declaring_class, prop, span);
     if (!target) {
       return std::unexpected(std::move(target.error()));
     }

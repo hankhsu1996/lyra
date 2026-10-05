@@ -102,14 +102,18 @@ struct ConformingBehavior {
 };
 
 struct Class {
-  // The identifier the source declared this class under, absent where the
-  // source declared no class at all -- a scope of the design hierarchy is one
-  // the lowering builds, and nothing outside this unit ever names it. Where it
-  // is present it is also the class's cross-unit identity (LRM 8.3), which is
-  // why it sits here rather than in a relation: a name a referrer resolves and
-  // a name a backend spells are the same string only because the source wrote
-  // it.
+  // The name another unit reaches this class by, absent where nothing outside
+  // this unit ever names it -- a class the lowering builds for its own use.
+  // Present for a class the source declared (LRM 8.3) and for what a scope of
+  // the design hierarchy published, which a hierarchical name reaches (LRM
+  // 23.6). It is the class's cross-unit identity, which is why it sits here
+  // rather than in a relation: a name a referrer resolves and a name a backend
+  // spells are the same string.
   std::optional<std::string> name;
+  // Further names another unit reaches this same class by: a loop whose blocks
+  // compiled to one scope publishes that scope once per block (LRM 27.4), each
+  // block under a name of its own, and a referrer names the block it reached.
+  std::vector<std::string> aliases;
   std::optional<ClassRef> base;
   // The interfaces the class's declaration names, in the order written. A
   // value of the class is also a value of each, of every interface those
@@ -172,32 +176,21 @@ struct Class {
   std::vector<NamedStaticProperty> named_static_properties;
   // The names this class answers and which body each reaches (LRM 8.3, one
   // name space over a class's members). A method the source declared is here
-  // because a call site outside this unit spells it; a body the compiler
+  // because its symbol is spelled from that name, the one a call site outside
+  // this unit spells where this is the class it names; a body the compiler
   // synthesized is not, because nothing spells one.
   std::vector<NamedCallable> named_callables;
-  // The classes this scope declares (LRM 23.9). Such a class is a type of this
-  // scope's instance (LRM 6.22) and is nameable only inside it, so a referrer
-  // outside has no name for it and reaches it by asking this scope -- which is
-  // what makes the list a relation the scope holds rather than a property of
-  // any class in it. Empty for a class, which declares none.
-  std::vector<ClassId> declares;
-  // The read-only tables the class's record below points at -- each a list of
-  // names with the member or body a name reaches. Nothing outside the class
-  // names one.
+  // The read-only tables the class's record below points at. Nothing outside
+  // the class names one.
   base::Arena<ClassConstantDecl, ClassConstantId> constants;
   // The value of the class's record: the one constant every object of the class
   // points at, which the runtime library reads to answer what cannot be asked
-  // where the asker is compiled -- what the class extends, and which member or
-  // body a name reaches. Other units name it by the class, which is why it is
-  // not among `constants`, and its type is the same for every class, which is
-  // why only its value is here.
-  //
-  // What it lists follows from who has to ask by name. A class every referrer
-  // can name lists nothing. A class a referrer reaches only by name (LRM 6.22,
-  // 23.9) lists where each property is and which body each method name runs. A
-  // class an instance of the design hierarchy is built of lists the
-  // subroutines a hierarchical name spells (LRM 23.6), its DPI-C exports (LRM
-  // 35.4), and the classes it declares.
+  // where the asker is compiled -- what the class extends, and, for a class an
+  // instance of the design hierarchy is built of, its timescale and the DPI-C
+  // exports its instances answer (LRM 35.4), whose names the foreign side
+  // spells. Other units name it by the class, which is why it is not among
+  // `constants`, and its type is the same for every class, which is why only
+  // its value is here.
   ValueBuild object_definition_initializer;
 
   // Which of the dispatch positions this class introduces (LRM 8.20)

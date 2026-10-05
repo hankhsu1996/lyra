@@ -2,7 +2,6 @@
 
 #include <variant>
 
-#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -22,35 +21,10 @@ namespace lyra::lowering::hir_to_mir {
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object)
     -> mir::ExprId;
 
-// Where a property lies on an object of a class the referrer can count no
-// position for (LRM 23.9): the coordinate that class answers while the design
-// elaborates, applied to whichever object the access reaches.
-struct PropertyCoordinate {
-  mir::ExprId at;
-};
-
-// Which property of an object an access reaches: the class declaring it and
-// the slot it has there, or a coordinate where no slot can be counted.
-using PropertyName = std::variant<
-    mir::ClassFieldTarget, mir::CrossUnitClassFieldTarget, PropertyCoordinate>;
-
-// `property` with the expression its coordinate is read from replaced by what
-// `map` makes of it. A property its class names reads nothing.
-template <typename Map>
-auto CoordinateMapped(const PropertyName& property, Map map) -> PropertyName {
-  return std::visit(
-      Overloaded{
-          [](const mir::ClassFieldTarget& field) -> PropertyName {
-            return field;
-          },
-          [](const mir::CrossUnitClassFieldTarget& field) -> PropertyName {
-            return field;
-          },
-          [&](const PropertyCoordinate& coordinate) -> PropertyName {
-            return PropertyCoordinate{.at = map(coordinate.at)};
-          }},
-      property);
-}
+// Which property of an object an access reaches: the class declaring it, this
+// unit's or one another unit published, and the slot it has there.
+using PropertyName =
+    std::variant<mir::ClassFieldTarget, mir::CrossUnitClassFieldTarget>;
 
 // The storage `property`, holding a value of `type`, occupies on the object
 // `object` reaches (LRM 8.4). `object` is a class handle, the running method's
@@ -60,13 +34,13 @@ auto CoordinateMapped(const PropertyName& property, Map map) -> PropertyName {
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object,
     const PropertyName& property, mir::TypeId type) -> mir::Expr;
 
-// A write opened on the object `receiver` reaches, alone, for a write to
-// `property`: it lasts as long as the full-expression that writes the property
-// and ending it tells the object (LRM 9.4.2), and it is dereferenced to the
-// object as the class the property is reached through.
+// A write opened on the object `receiver` reaches, alone, for a write to one of
+// its properties: it lasts as long as the full-expression that writes the
+// property and ending it tells the object (LRM 9.4.2), and it is dereferenced
+// to the object as the class the property is reached through.
 [[nodiscard]] auto OpenObjectWrite(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId receiver,
-    const PropertyName& property) -> mir::ExprId;
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId receiver)
+    -> mir::ExprId;
 
 // A reference to `property`, holding a value of `type`, of the object
 // `receiver` reaches (LRM 13.5.2): a step taken on the object, so the object

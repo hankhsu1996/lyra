@@ -151,7 +151,7 @@ before every unit's bodies. The same asymmetry, read at two scopes.
 
 ### Rename example
 
-A variable is renamed inside one callable of one compilation unit:
+An automatic variable is renamed inside one callable of one compilation unit:
 
 - The callable's key is unchanged, because ownership is unchanged.
 - The callable's fingerprint is unchanged, because the semantics are unchanged; only the name
@@ -170,5 +170,7 @@ details and violates this contract.
 | A declaration U publishes        | U's stages, and the post-barrier stages of every consumer of U's signature |
 | A declaration U does not publish | U's stages only; no consumer names it, so none depends on it               |
 
-The third row is what the signature buys, and it is the common edit. A unit's internals change far
-more often than what it promises.
+The first and third rows are what the signature buys, and the first is the common edit. A design
+element publishes every declaration a hierarchical name may reach, so what it keeps to itself is
+mostly what no name reaches -- an automatic variable, a declaration in an unnamed block -- while its
+bodies change far more often than any declaration.

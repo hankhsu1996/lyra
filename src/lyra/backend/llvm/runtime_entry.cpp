@@ -214,9 +214,6 @@ auto MemberSlotRoleOf(const lir::TypeDeclaration& declaration)
   return std::visit(
       Overloaded{
           [](const lir::ObjectType&) { return MemberSlotRole::kVariable; },
-          [](const lir::ExternalUnitObjectType&) {
-            return MemberSlotRole::kVariable;
-          },
           [](const lir::CrossUnitClassType&) {
             return MemberSlotRole::kVariable;
           },
@@ -318,10 +315,6 @@ auto MemberStorageKindOf(
               case lir::RuntimeLibraryKind::kPackedType:
               case lir::RuntimeLibraryKind::kUnpackedRange:
               case lir::RuntimeLibraryKind::kEnumeration:
-              // A coordinate is settled once for the whole run and read by
-              // every access afterwards, so a member naming one points at
-              // storage that outlives it rather than owning a copy.
-              case lir::RuntimeLibraryKind::kPropertyCoordinate:
               // A class's definition is one per class for the whole run and
               // every object of it shares it, so a member naming one points at
               // storage outliving it for the same reason.
@@ -353,11 +346,8 @@ auto MemberStorageKindOf(
               case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kControlEffect:
               // What a constant is made of, which no member holds.
-              case lir::RuntimeLibraryKind::kResolvedProperty:
-              case lir::RuntimeLibraryKind::kDeclaredBody:
               case lir::RuntimeLibraryKind::kScopeInfo:
               case lir::RuntimeLibraryKind::kScopeCallable:
-              case lir::RuntimeLibraryKind::kScopeClass:
                 return std::nullopt;
             }
             throw InternalError("llvm codegen: unknown runtime library kind");
@@ -405,9 +395,7 @@ auto MemberStorageKindOf(
           [&](const lir::MachineArrayType& t) { return none(t); },
           [&](const lir::VoidType& t) { return none(t); },
           [&](const lir::ObjectType& t) { return none(t); },
-          [&](const lir::ExternalUnitObjectType& t) { return none(t); },
           [&](const lir::CrossUnitClassType& t) { return none(t); },
-          [&](const lir::OpaqueObjectType& t) { return none(t); },
           [&](const lir::RuntimeClassType& t) { return none(t); },
           [&](const lir::ClosureType& t) { return none(t); },
           [&](const lir::RuntimeEffectsType& t) { return none(t); },
@@ -847,9 +835,15 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kWaitAny:
     case support::BuiltinFn::kWaitRecollecting:
     case support::BuiltinFn::kWaitUntil:
+    case support::BuiltinFn::kWaitOnReport:
     case support::BuiltinFn::kReadReportEmpty:
     case support::BuiltinFn::kReadReportAdd:
+    case support::BuiltinFn::kReadReportAddThroughHandle:
+    case support::BuiltinFn::kReadReportEnterCallOnHandle:
+    case support::BuiltinFn::kReadReportLeaveCallOnHandle:
     case support::BuiltinFn::kReadReportAddEveryObject:
+    case support::BuiltinFn::kReadReportAddWrite:
+    case support::BuiltinFn::kReadReportSettleAsImplicitList:
     case support::BuiltinFn::kReadReportEnter:
     case support::BuiltinFn::kReadReportLeave:
     case support::BuiltinFn::kReadReportRunsTheBody:
@@ -870,24 +864,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDistErlang:
     case support::BuiltinFn::kFinish:
     case support::BuiltinFn::kStop:
-    case support::BuiltinFn::kResolveRoot:
-    case support::BuiltinFn::kResolveVisibleChild:
-    case support::BuiltinFn::kRegisterSignal:
+    case support::BuiltinFn::kEnclosingInstance:
     case support::BuiltinFn::kAddOwnedChild:
     case support::BuiltinFn::kExtendSequence:
-    case support::BuiltinFn::kRegisterDisableTarget:
-    case support::BuiltinFn::kFindSignal:
-    case support::BuiltinFn::kFindSubroutine:
-    case support::BuiltinFn::kFindChild:
-    case support::BuiltinFn::kFindDisableTarget:
-    case support::BuiltinFn::kFindClass:
-    case support::BuiltinFn::kClassFindProperty:
-    case support::BuiltinFn::kClassFindBehaviorBody:
-    // Applying a settled position, and recovering the object a handle names or
-    // a handle naming the object a body runs on. Each is one library function
-    // serving every class, so the operation's own name is the whole of what a
-    // symbol needs.
-    case support::BuiltinFn::kPropertyAt:
+    // Recovering the object a handle names, or a handle naming the object a
+    // body runs on. Each is one library function serving every class, so the
+    // operation's own name is the whole of what a symbol needs.
     case support::BuiltinFn::kViewOf:
     case support::BuiltinFn::kSelfHandle:
     // What reports a change to an object's properties, one library function
@@ -899,7 +881,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // serves every property's type; and what any reference reports to is a
     // fact of the reference, whatever it names.
     case support::BuiltinFn::kReferProperty:
-    case support::BuiltinFn::kReferPropertyAt:
     case support::BuiltinFn::kReferenceReportsTo:
     // What an enumeration's member list answers about a value. One routine
     // serves every enumeration, because the list is the receiver and every

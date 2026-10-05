@@ -13,8 +13,8 @@ Define what a compilation unit is, what it owns, and the rules that make it self
 - The signature a unit publishes across the compilation boundary: the declarations other units may
   name, produced by the unit from its own contents and consumed by other units by name. What a
   signature contains follows the unit's kind.
-- The rule that a reference into another unit is either a name on that unit's signature or a name it
-  never published, and that the two resolve at different times.
+- The rule that a reference into another unit resolves against what that unit published, where the
+  referrer compiles, and that a name it did not publish is refused there.
 - The rule that a signature's content is fixed by what its consumers read, not by an enumerated
   list.
 - The shape of instance records: minimal, structural, and free of semantic content that belongs
@@ -45,24 +45,29 @@ Define what a compilation unit is, what it owns, and the rules that make it self
    expansion does not drive compilation, and compile-time identity does not depend on instance
    enumeration.
 8. A unit's only cross-boundary surface is its signature: the set of declarations it publishes,
-   whose content follows the unit's kind -- a module publishes its ports, a package its
-   declarations, an interface its ports and its members. A class a package publishes is promised
-   with its declaration whole -- the type of each property it keeps to itself included and unnamed,
-   and every method with its prototype -- so a class of another unit extending it is laid out at
-   compile time and a call to one of its methods reads the callee there. The unit produces its
-   signature from its own contents, so nothing it publishes can contradict what it is. A unit that
-   instantiates or references another depends only on that signature, identified by name, never on
-   the other unit's body or internal ids. Units compile independently and in any order and are
-   combined by matching names; they share no identifier space and exchange no internal state.
+   whose content follows the unit's kind -- a package publishes its declarations, and a module or an
+   interface publishes every declaration a hierarchical name may reach (LRM 23.6): its data objects
+   and ports, its child instances, the statics of its named blocks and subroutines and its named
+   blocks' disable targets, each stated with the named blocks and subroutines it sits in, the
+   classes it declares, whole, for an interface its views and the names each defines, its
+   subroutines' signatures, and per generate construct the class each block was published as. Each
+   generate block it elaborates publishes a class of its own the same way. A class a package
+   publishes is published with its declaration whole -- the type of each property it keeps to itself
+   included and unnamed, and every method with its prototype -- so a class of another unit extending
+   it is laid out at compile time and a call to one of its methods reads the callee there. The unit
+   produces its signature from its own contents, so nothing it publishes can contradict what it is.
+   A unit that instantiates or references another depends only on that signature, identified by
+   name, never on the other unit's body or internal ids. Units compile independently and in any
+   order and are combined by matching names; they share no identifier space and exchange no internal
+   state.
 9. A signature names each class it publishes, and names which of them a referrer instantiates. A
    unit's name, the name of a class it declares, and where a backend places the emitted code are
    three separate facts; none substitutes for another, and a published class is never identified by
    name equality with its unit or by its position in a list.
-10. A reference into another unit takes one of exactly two forms, decided by whether the target
-    published the name. A name on the signature resolves against that signature where the referrer
-    compiles, and reaches the target's own access protocol. A name the target never published has no
-    signature to compile against and resolves by name during elaboration. There is no third form,
-    and no consumer chooses between them by inspecting the target.
+10. A reference into another unit takes one form: a name on the target's signature resolves against
+    that signature where the referrer compiles, and reaches the target's own access protocol. A name
+    the target did not publish has nothing to compile against and is refused there; it is never
+    resolved by name while the design elaborates or runs.
 11. A unit's emission is a function of its own contents and the signatures it consumes, and of
     nothing else. This is what makes a signature's content decidable: a fact absent from every
     signature cannot have reached a referrer, so it cannot invalidate one. A lowering that reaches a
@@ -86,8 +91,8 @@ Define what a compilation unit is, what it owns, and the rules that make it self
   elaboration hints; it does not define what a compilation unit is or which compilation units exist.
 - The runtime constructor consumes compile-time artifacts and per-instance records to build the
   object graph.
-- `reference_resolution.md` defines how the cross-unit access named here is resolved: at
-  construction, once, into a stored direct reference.
+- `reference_resolution.md` defines how the cross-unit access named here is resolved: checked where
+  the referrer compiles, and executed as typed steps.
 - `incremental_build.md` owns when a signature is derived relative to the bodies that consume it,
   and the parallelism that ordering permits. This doc owns what a signature contains and who may
   name it; that doc owns the order the units' work runs in.
@@ -110,9 +115,12 @@ Define what a compilation unit is, what it owns, and the rules that make it self
 - A field admitted to a signature because a reader thought of it rather than because a lowering
   reads it about another unit, and a lowering that reads such a fact through any path other than the
   signature. The two are the same defect from opposite ends.
-- A run-time by-name lookup standing in for a name the target unit published. The signature is what
-  a referrer compiles against; resolving a published name at run time discards the check the
-  signature exists to give, and pays for an independence the declared dependency has already spent.
+- A hierarchical name resolved by its text while the design elaborates or runs, for any name at all.
+  The signature is what a referrer compiles against; resolving a name at run time discards the check
+  the signature exists to give, surfaces a type that differs between instances (LRM 23.8) at run
+  time or not at all, and pays for an independence the declared dependency has already spent.
+- A signature that publishes only what an instantiator needs. What a referrer may name is LRM 23.6's
+  set, so a signature narrower than that leaves a legal name nothing to compile against.
 - A unit that knows or enumerates the units that reference it: a consumer/referrer list, a back-edge
   from a member to the references that read it, or code that resolves a reference on a referrer's
   behalf by pushing its own member outward. A unit produces only its own signature from its own
@@ -168,15 +176,13 @@ and receiving `Child`'s must reach one identity, not two -- so the consumer's st
 identity by structure. Without that, which identity a construct carries would depend on the route it
 arrived by, which is a difference between two things that are the same type.
 
-**A module header is the source-level shape of a signature, and not the same set.** LRM 23.2.1 says
-a module header defines the module's name, its port list, each port's direction and size, the type
-of data passed through each port, the module's parameter constants, its package import list, and the
-default lifetime of subroutines defined within it. Two of those face inward -- the import list
-decides how names resolve inside the body, and the default lifetime governs subroutines defined
-within the module -- and the parameter constants are consumed by specialization, since distinct
-bindings are distinct specializations with distinct identities. What remains is the name and, per
-port, its direction, size, and data type. The header is the right way to explain a signature to a
-SystemVerilog reader; it is not a definition of one.
+**A module header is not the shape of a module's signature.** LRM 23.2.1 says a module header
+defines the module's name, its port list, each port's direction and size, the type of data passed
+through each port, the module's parameter constants, its package import list, and the default
+lifetime of subroutines defined within it. That is what an instantiator needs. A hierarchical name
+may reach far more (LRM 23.6): any variable, net, event, static of a named block or subroutine,
+task, function, named block, generate block or instance, to read, write, trigger, call or disable.
+The signature is that set, derived from the module's own declarations before any body lowers.
 
 The term "compilation unit" here is the compiler's own: a module, package, or interface. It is not
 the LRM's "compilation unit" (LRM 3.12.1), which names the `$unit` file-set scope that holds

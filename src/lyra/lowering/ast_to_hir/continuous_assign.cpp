@@ -25,10 +25,9 @@ namespace {
 auto BuildContinuousAssign(
     StructuralScopeLowerer& scope, WalkFrame frame, diag::SourceSpan span,
     hir::Expr lhs, hir::Expr rhs, support::StrengthLevel strength,
-    const std::vector<SensitivityRead>& reads)
+    const std::vector<AccessedPart>& reads)
     -> diag::Result<hir::ContinuousAssign> {
-  auto sensitivity =
-      scope.Owner().TranslateSensitivityReads(scope, reads, frame);
+  auto sensitivity = scope.Owner().SensitivityEntriesOf(scope, reads, frame);
   if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
   const hir::ExprId lhs_id = frame.Exprs().Add(std::move(lhs));
   const hir::ExprId rhs_id = frame.Exprs().Add(std::move(rhs));

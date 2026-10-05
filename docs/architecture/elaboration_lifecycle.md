@@ -45,7 +45,7 @@ upward reference, input/output initial-value visibility) is a symptom of that co
 
 - The shape of the object tree and the faithfulness of generate expansion (see
   `hierarchy_and_generate.md`). Build constructs that tree; this doc owns only the phase ordering.
-- What a cross-unit reference resolves into and the by-name resolution mechanism (see
+- What a cross-unit reference resolves into and the typed steps it takes (see
   `reference_resolution.md`). Resolve is _when_; that doc is _into what_ and _how_.
 - Parameter and specialization strategy (see `specialization_model.md`). Baking versus flowing in is
   orthogonal to the lifecycle; this doc only requires structural parameters to be available by
@@ -93,10 +93,11 @@ another instance, does.
 ### Resolve
 
 With the full shell graph in existence and every connection fact recorded, execute each reference's
-route. Each route uses typed navigation through layout-visible segments and the runtime SDK across
-unit boundaries; each route produces a **candidate endpoint**. A route whose execution requires
-another reference's sealed endpoint waits for that reference's resolution first; the order respects
-those dependencies, however they are realized.
+route. Each route is typed navigation through the classes the referrer compiled against -- its own,
+and those other scopes published -- with one runtime query only where an upward name finds its
+anchor; nothing is looked up by name. Each route produces a **candidate endpoint**. A route whose
+execution requires another reference's sealed endpoint waits for that reference's resolution first;
+the order respects those dependencies, however they are realized.
 
 Resolve produces candidates, not committed final endpoints. A candidate may still be a forwarding
 link, and a candidate may yet fail validation. Sealing those is the next phase.
@@ -174,10 +175,10 @@ this phase.
   simulation boundary the language already draws.
 - **`runtime_model.md`** defines the constructor / simulation execution-context split. This doc
   refines that split into the five phases.
-- **`reference_resolution.md`** owns _what_ a route segment classifies as and what its endpoint
-  becomes. This doc owns _when_: every cross-instance reference resolves in Resolve, seals in Seal,
-  and is read on the hot path after Activate; a reference that only climbs to an enclosing scope of
-  the same instance resolves in no phase, being walked where it is used.
+- **`reference_resolution.md`** owns _what_ a route's steps are and what its endpoint becomes. This
+  doc owns _when_: every cross-instance reference resolves in Resolve, seals in Seal, and is read on
+  the hot path after Activate; a reference that only climbs to an enclosing scope of the same
+  instance resolves in no phase, being walked where it is used.
 - **`hierarchy_and_generate.md`** owns the object tree this lifecycle builds; generate is
   Build-phase constructor-time logic.
 - **`specialization_model.md`** owns parameter strategy, orthogonal to the lifecycle.
@@ -195,17 +196,21 @@ this phase.
   Seal.
 - A per-scope walk that pretends to seal. Seal is a global property of the elaborated design;
   per-scope sealing cannot model cross-scope forwarding.
-- Resolution dispatched on the frontend's lexical-form classification or on source order. The
-  mechanism follows the route's segment layout visibility, not the form that named the target.
+- Resolution dispatched on the frontend's lexical-form classification or on source order. Every
+  route is the same typed steps whatever form named the target.
+- A scope registering its declarations or children under their names during any phase, so that
+  Resolve can find a target by its text. A hierarchical name's target is fixed where the referrer
+  compiles; registering names costs every instance a record per declaration and turns a compile-time
+  check into an elaboration-time failure.
 - Realizing an input or output port as anything other than a parent-owned reactive process, or
   relocating that process into the child.
 - Realizing a `ref` port as a persistent cross-unit slot or a value-cell access path. A `ref` port
   is a forwarding link resolved away during Seal; it owns no child-side cell and needs no
   simulation-time reach from the parent.
 - Letting "when the C++ constructor returns" determine any SystemVerilog-observable ordering.
-- Reading a route's endpoint on the simulation hot path via descent, a crossing into another
-  instance, or by-name lookup. Every such read consumes a sealed endpoint; whatever resolution
-  mechanism produced it exists only across elaboration.
+- Reading a route's endpoint on the simulation hot path via descent or a crossing into another
+  instance. Every such read consumes a sealed endpoint; whatever resolution mechanism produced it
+  exists only across elaboration.
 
 ## Notes / Examples
 
@@ -228,9 +233,8 @@ endmodule
 
 Build records two reference facts: `Mid.r` (alias of the parent's connected cell) and `Mid.c.r`
 (alias of `Mid.r`). `Mid.c.r` resolves after `Mid.r` because it requires `Mid.r`'s sealed endpoint;
-Seal collapses both to the final cell `Mid.r` ultimately aliases. The hazard that existed when
-`Mid`'s constructor built `Leaf` before `Mid.r` was bound does not arise: binding is not a
-constructor step.
+Seal collapses both to the final cell `Mid.r` ultimately aliases. Binding is not a constructor step,
+so `Mid`'s constructor building `Leaf` before `Mid.r` is bound observes nothing unbound.
 
 **An initializer that reads a port.**
 
@@ -242,7 +246,7 @@ endmodule
 
 `x = r` runs in Initialize, after `r` is sealed in Seal, so it reads the aliased cell's value. In a
 recursive-constructor model this read would execute during `Child`'s construction, before the parent
-bound `r` -- the bug this lifecycle removes.
+bound `r`.
 
 **A sibling-of-sibling hierarchical reference.**
 
@@ -253,7 +257,7 @@ module Top;
 endmodule
 ```
 
-Both `a.bx` and `b.ax` are references recorded in Top's elaborated design. Build constructs `a` and
+Both `b.bx` and `a.ax` are references recorded in Top's elaborated design. Build constructs `a` and
 `b` in either order; both produce reference records. Resolve walks each route through the typed
 parent edge into Top and the typed member access into the sibling's class; neither route depends on
 the other's resolution. Seal commits each reference's endpoint. `always_comb` bodies read sealed

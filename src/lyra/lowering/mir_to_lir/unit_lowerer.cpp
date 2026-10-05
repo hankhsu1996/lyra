@@ -47,21 +47,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   class_identities_ = {mir_->classes.size(), std::move(classes)};
 
-  // Which unit and class each unit this one references promised of its object,
-  // taken before any body lowers, since a body naming one resolves against an
-  // identity that has to exist by then. A record names no other, so each is
-  // minted carrying its value.
-  external_unit_object_identities_ =
-      base::Translation<mir::ExternalUnitObjectId, lir::ExternalUnitObjectId>{
-          mir_->external_unit_objects.size()};
-  for (const mir::ExternalUnitObjectId id : mir_->external_unit_objects.Ids()) {
-    const mir::ExternalUnitObject& object = mir_->external_unit_objects.Get(id);
-    external_unit_object_identities_.Append(out_.external_unit_objects.Add(
-        lir::ExternalUnitObject{
-            .unit_name = object.unit_name, .class_name = object.class_name}));
-  }
-
-  // What each class of another unit promised, taken whole: a property step on
+  // What each class of another unit published, taken whole: a property step on
   // one names a slot counted out of the published list, and a class extending
   // one is placed after all of its storage and fills its table from all of its
   // bodies. A body of it is reached by the symbol its unit emits it under,
@@ -92,11 +78,11 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
           cls.unit_name, lir::SymbolPart::Name(cls.class_name),
           lir::SymbolPart::Name(method));
     };
-    for (const mir::PromisedBehavior& behavior : cls.behaviors) {
+    for (const mir::PublishedBehavior& behavior : cls.behaviors) {
       record.dispatch.introduces.push_back(
           behavior.is_pure ? std::nullopt : std::optional{body(behavior.name)});
     }
-    for (const mir::PromisedOverride& overriding : cls.overrides) {
+    for (const mir::PublishedOverride& overriding : cls.overrides) {
       record.dispatch.overrides.push_back(
           lir::Override{
               .behavior = ExternalMethodRef(
@@ -368,10 +354,10 @@ auto UnitLowerer::BaseType(const mir::ClassRef& base) -> lir::TypeId {
 }
 
 auto UnitLowerer::ClassBodySymbol(
-    mir::ClassId owner, const mir::Class& cls, mir::CallableId id) const
+    lir::SymbolPart class_part, const mir::Class& cls, mir::CallableId id) const
     -> std::string {
   return lir::ClassCallableSymbol(
-      mir_->name, lir::SymbolPartOf(cls.name, owner.value),
+      mir_->name, std::move(class_part),
       lir::SymbolPartOf(mir::NameOf(cls.named_callables, id), id.value));
 }
 
@@ -448,12 +434,21 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     if (!body.has_value()) {
       continue;
     }
-    auto fn = FunctionLowerer(
-                  *this, cls.callables.Get(cid).code,
-                  ClassBodySymbol(owner, cls, cid))
-                  .Run();
+    auto fn =
+        FunctionLowerer(
+            *this, cls.callables.Get(cid).code,
+            ClassBodySymbol(lir::SymbolPartOf(cls.name, owner.value), cls, cid))
+            .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
+    }
+    // A referrer names a body by the class it reached and the name the body
+    // answers to, so only a named body answers under the class's other names.
+    if (mir::NameOf(cls.named_callables, cid).has_value()) {
+      for (const std::string& alias : cls.aliases) {
+        fn->aliases.push_back(
+            ClassBodySymbol(lir::SymbolPart::Name(alias), cls, cid));
+      }
     }
     out_.functions.Define(*body, *std::move(fn));
   }
@@ -700,7 +695,8 @@ auto UnitLowerer::LowerDispatch(mir::ClassId owner, const mir::Class& cls)
     // naming one by it is naming the function.
     const std::optional<std::string> body =
         class_identities_.Get(owner).methods.Get(cid).has_value()
-            ? std::optional{ClassBodySymbol(owner, cls, cid)}
+            ? std::optional{ClassBodySymbol(
+                  lir::SymbolPartOf(cls.name, owner.value), cls, cid)}
             : std::nullopt;
     const auto override_with_body = [&](lir::StatedDispatchRef behavior) {
       // Overriding a behavior without a body leaves it as the lineage already

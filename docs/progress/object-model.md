@@ -156,11 +156,11 @@ each stage establishes, not how.
       way a task of the scope does. Which copy it reaches follows from each instance with a type
       declared inside it creating a unique type: an object belongs to the one instance it was
       created in, records it, and reaches that instance and no other -- so two instances of one
-      module carry two unrelated sets of objects. Construction is where the instance is supplied.
-      Constructing such a class from another compilation unit is refused, since what crosses a unit
-      boundary is that unit's signature and no instance of a scope inside it is on one. A class a
-      package or the `$unit` scope declares reaches that scope's declarations the same way, there
-      being one copy rather than one per instance.
+      module carry two unrelated sets of objects. Construction is where the instance is supplied,
+      including a construction written in another module, such as `new` assigned to a handle that
+      module reaches by a hierarchical name: the object belongs to the instance the handle's class
+      belongs to. A class a package or the `$unit` scope declares reaches that scope's declarations
+      the same way, there being one copy rather than one per instance.
 
 - [x] A class names a class its own declaring scope declares (LRM 8.27). A forward typedef lets a
       class variable be declared before the class itself is, so two classes in one scope each hold a
@@ -303,35 +303,27 @@ this list is what remembers.
       it when the runtime cadence allows; MIR-side consumers already treat the three as one.
 
 - [x] A reference to an object whose class another design element declares. Such a class is a
-      distinct type per instance of that element (LRM 6.22) and is nameable only inside the scope
-      declaring it (LRM 23.9), so a referrer outside has no name for it and none could be published.
-      The reference is still a complete static type stating that values of it are objects, and every
-      operation that reads nothing the class holds -- testing against null, comparing identity,
-      copying, assigning, being retained -- is defined on it, on both backends and in both
-      directions of the hierarchy. An object's identity is what those operations read, and it is the
-      same through a view naming an ancestor, a view naming a contract the class conforms to, and no
-      view at all.
+      distinct type per instance of that element (LRM 6.22), but every instance of one unit declares
+      it alike, so the element publishes it and a referrer outside names it as it names a package's
+      class. Every operation on the reference -- testing against null, comparing identity, copying,
+      assigning, being retained -- is defined on it, on both backends and in both directions of the
+      hierarchy. An object's identity is what those operations read, and it is the same through a
+      view naming an ancestor and a view naming a contract the class conforms to.
 
-- [x] Reaching a property or entering a behavior through such a reference. The name resolves where
-      the instance is known: the walk reaches the scope declaring the class, that scope answers
-      which class the name means, and the class answers where the name lands on it -- all of it
-      once, while the design elaborates, so an access applies what was settled and looks nothing up.
-      Reading a property, writing one, entering a behavior that is not overridden and dispatching
-      one that is all work, in both directions of the hierarchy, and a class the reader cannot name
-      may still declare a property under a name its base already used without the reader reaching
-      the wrong one. **Which class an access lands on belongs to the instance and not to the
-      artifact**: one compiled body serves instances whose accesses reach classes with different
-      layouts, which is what rules out settling any of it where the body is compiled. Both backends
-      realize it, the one that otherwise reaches a member by writing its name in the target language
-      included: what a class answered has no such name, so the access applies the answer rather than
-      spelling anything.
+- [x] Reaching a property or entering a behavior through such a reference. The access compiles
+      against the class the reached handle was declared with, so a misspelt name is refused where
+      the referrer compiles. Reading a property, writing one, entering a behavior that is not
+      overridden and dispatching one that is all work, in both directions of the hierarchy, and a
+      derived class may declare a property under a name its base already used without the reader
+      reaching the wrong one (LRM 8.14). Where two instances' upward names land on scopes declaring
+      different classes, the two compile as different units, so no compiled body serves two layouts.
 
-- [ ] Reaching a class's type-associated storage through such a reference (LRM 8.9, 8.10). A static
+- [x] Reaching a class's type-associated storage through such a reference (LRM 8.9, 8.10). A static
       property needs no object, so it is not reached through the handle at all (LRM 8.3): the cell
       belongs to whatever replicates the class declaration, which for a class a design element
-      declares is that element's instance. Reaching it is therefore the separate question of reading
-      another unit's instance storage by a name no signature carries, not the coordinate above, and
-      it is refused.
+      declares is that element's instance. The element publishes the cell, so a static property is
+      read and written, and a static method called, in the instance the class belongs to -- two
+      instances of the element keep two cells.
 
 - [ ] A class one namespace declares extending a class another namespace declares aborts as a
       compiler bug on a legal program (LRM 8.13). A design element's class extending a namespace's
@@ -346,11 +338,10 @@ this list is what remembers.
       sees the bases it extends and not who extends back.
 
 - [x] A collection of such handles -- an unpacked array or a queue of them -- reached through such a
-      reference. The coordinate side needed nothing new, since what follows a value with no class
-      view is decided by the operation and not by the syntax that produced the value. What blocked
-      it was that a handle was not a value either backend could hold as an element, which stopped
-      the construct with no hierarchical name anywhere in sight and is settled in
-      `../decisions/a-handle-is-a-value.md`.
+      reference. The access side needed nothing new, since what follows a handle is decided by the
+      operation and not by the syntax that produced the value. What blocked it was that a handle was
+      not a value either backend could hold as an element, which stopped the construct with no
+      hierarchical name anywhere in sight and is settled in `../decisions/a-handle-is-a-value.md`.
 
 - [x] An instance is built as a value of its own class on both backends, its storage laid out at
       compile time, and the runtime only begins the part every scope shares.

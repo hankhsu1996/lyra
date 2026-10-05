@@ -52,19 +52,13 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
       Overloaded{
           [&](const ObjectType& object) -> std::optional<MemberList> {
             const Class& cls = unit.classes.Get(object.class_id);
-            // A scope of the design hierarchy answers to no identifier, so what
-            // a reader can be told about a bad step is the kind, as for a
-            // closure.
+            // A class the lowering built for its own use answers to no
+            // identifier, so what a reader can be told about a bad step is the
+            // kind, as for a closure.
             return MemberList{
                 .members = cls.members,
                 .owner = cls.name.has_value() ? std::string_view{*cls.name}
-                                              : "a scope of the hierarchy"};
-          },
-          // What another unit published of its object is reached by performing
-          // a behavior of the promise, so no step names a member of one and
-          // this side holds no list to name one out of.
-          [](const ExternalUnitObjectType&) -> std::optional<MemberList> {
-            return std::nullopt;
+                                              : "a class the lowering built"};
           },
           [&](const CrossUnitClassType& cls) -> std::optional<MemberList> {
             const ExternalClass* record =

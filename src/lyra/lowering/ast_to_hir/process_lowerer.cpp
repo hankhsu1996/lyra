@@ -4,7 +4,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
@@ -19,36 +18,12 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/lowering/ast_to_hir/lifetime_extension.hpp"
-#include "lyra/lowering/ast_to_hir/sensitivity.hpp"
+#include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
 namespace lyra::lowering::ast_to_hir {
-
-namespace {
-
-auto FromSlangProceduralBlockKind(slang::ast::ProceduralBlockKind kind)
-    -> hir::ProcessKind {
-  switch (kind) {
-    case slang::ast::ProceduralBlockKind::Initial:
-      return hir::ProcessKind::kInitial;
-    case slang::ast::ProceduralBlockKind::Final:
-      return hir::ProcessKind::kFinal;
-    case slang::ast::ProceduralBlockKind::Always:
-      return hir::ProcessKind::kAlways;
-    case slang::ast::ProceduralBlockKind::AlwaysComb:
-      return hir::ProcessKind::kAlwaysComb;
-    case slang::ast::ProceduralBlockKind::AlwaysLatch:
-      return hir::ProcessKind::kAlwaysLatch;
-    case slang::ast::ProceduralBlockKind::AlwaysFF:
-      return hir::ProcessKind::kAlwaysFf;
-  }
-  throw InternalError(
-      "FromSlangProceduralBlockKind: unknown ProceduralBlockKind");
-}
-
-}  // namespace
 
 void ProcessLowerer::AnalyzeLifetimeExtended(
     const slang::ast::Statement& body) {
@@ -81,28 +56,49 @@ auto ProcessLowerer::Run(
   if (!root_stmt_or) return std::unexpected(std::move(root_stmt_or.error()));
   const hir::StmtId root_stmt = body.stmts.Add(*std::move(root_stmt_or));
 
-  // LRM 9.2.2.2.1 / 9.2.2.3: an always_comb / always_latch wakes on the reads
-  // of its whole procedure, including reads inside any function it calls -- the
-  // procedure-level sensitivity, not the reads of the body node, which reflect
-  // only call arguments across a function boundary. What it watches is
-  // stated in the body, so it is stated while the body is still open.
-  const auto kind = FromSlangProceduralBlockKind(proc.procedureKind);
-  std::vector<hir::SensitivityEntry> implicit_sensitivity;
-  if (kind == hir::ProcessKind::kAlwaysComb ||
-      kind == hir::ProcessKind::kAlwaysLatch) {
-    auto sensitivity = owner_->TranslateSensitivityReads(
-        *this, owner_->Sensitivity().AnalyzeProcedureSensitivity(proc), frame);
-    if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
-    implicit_sensitivity = *std::move(sensitivity);
-  }
+  // LRM 9.2.2.2.1 / 9.2.2.3: an always_comb / always_latch wakes on what its
+  // whole procedure reads, including what any function it calls reads, less
+  // what either writes. What it watches is stated in the body, so it is stated
+  // while the body is still open.
+  const diag::SourceSpan span =
+      owner_->SourceMapper().PointSpanOf(proc.location);
+  auto kind = KindOf(proc, frame, span);
+  if (!kind) return std::unexpected(std::move(kind.error()));
   body.root_scope = parent_frame.SealScope(std::move(root));
 
   return hir::Process{
-      .kind = kind,
-      .span = owner_->SourceMapper().PointSpanOf(proc.location),
+      .kind = *std::move(kind),
+      .span = span,
       .body = std::move(body),
-      .root_stmt = root_stmt,
-      .implicit_sensitivity_list = std::move(implicit_sensitivity)};
+      .root_stmt = root_stmt};
+}
+
+auto ProcessLowerer::KindOf(
+    const slang::ast::ProceduralBlockSymbol& proc, const WalkFrame& frame,
+    diag::SourceSpan span) -> diag::Result<hir::ProcessKind> {
+  switch (proc.procedureKind) {
+    case slang::ast::ProceduralBlockKind::Initial:
+      return hir::ProcessKind{hir::InitialProcess{}};
+    case slang::ast::ProceduralBlockKind::Final:
+      return hir::ProcessKind{hir::FinalProcess{}};
+    case slang::ast::ProceduralBlockKind::Always:
+      return hir::ProcessKind{hir::AlwaysProcess{}};
+    case slang::ast::ProceduralBlockKind::AlwaysFF:
+      return hir::ProcessKind{hir::AlwaysFfProcess{}};
+    case slang::ast::ProceduralBlockKind::AlwaysComb: {
+      auto reads = ReadsOfProcedure(*this, frame, proc, span);
+      if (!reads) return std::unexpected(std::move(reads.error()));
+      return hir::ProcessKind{
+          hir::AlwaysCombProcess{.implicit_reads = *std::move(reads)}};
+    }
+    case slang::ast::ProceduralBlockKind::AlwaysLatch: {
+      auto reads = ReadsOfProcedure(*this, frame, proc, span);
+      if (!reads) return std::unexpected(std::move(reads.error()));
+      return hir::ProcessKind{
+          hir::AlwaysLatchProcess{.implicit_reads = *std::move(reads)}};
+    }
+  }
+  throw InternalError("ProcessLowerer::KindOf: unknown ProceduralBlockKind");
 }
 
 auto ProcessLowerer::RunConcurrentAssertion(

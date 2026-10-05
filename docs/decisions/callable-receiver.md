@@ -103,10 +103,9 @@ render is mechanical: it reads the unique-pointer result type and emits
 `std::make_unique<Child>(self, HierarchySegment{...}, services, structural_args...)`. After the
 construction returns its `unique_ptr<Child>` -- assigned to the slot for a scalar member, pushed
 into the vector for an array element -- an explicit `AttachChild` call wires the parent edge.
-Identity rides on the child (its segment is the single source of `%m`, by-name lookup, and debug
-output); the parent never re-states the label or indices. Neither the receiver triple nor the attach
-call lives in any stmt-kind dispatch; both are ordinary `CallExpr` nodes, and every backend reads
-them the same way.
+Identity rides on the child (its segment is the single source of `%m` and debug output); the parent
+never re-states the label or indices. Neither the receiver triple nor the attach call lives in any
+stmt-kind dispatch; both are ordinary `CallExpr` nodes, and every backend reads them the same way.
 
 ### Why always include `self`, not derive from "body touches class state"
 

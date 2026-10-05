@@ -36,8 +36,8 @@ Read top to bottom on first pass:
     the language layer under a cancellation library
 16. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
 17. `hierarchy_and_generate.md` -- hierarchy and generate ownership
-18. `reference_resolution.md` -- references as routes from origin to typed endpoint; per-segment
-    classification by layout visibility; sealed endpoint on the hot path
+18. `reference_resolution.md` -- references as routes from origin to typed endpoint; every step
+    typed against what a scope published; sealed endpoint on the hot path
 19. `net_resolution.md` -- a net's value as the resolution of its driver contributions; net vs
     variable; drivers attached along the reference route
 20. `binding_and_capture.md` -- the lexical reference axis: logical binding identity, per-body
@@ -46,7 +46,7 @@ Read top to bottom on first pass:
     concrete callable value) and the lifted local (its own cell, held through a shared pointer),
     capture forms
 22. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes each
-    route segment by visibility (typed for layout-owned, SDK for opaque)
+    route step against the class a scope published
 23. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
     emission; what a backend may and may not name in render
 24. `identity_and_ownership.md` -- identity rules and forbidden shapes
@@ -70,10 +70,10 @@ If you are looking for a concept, this table points to the canonical doc.
 | Elaboration phases (build / resolve / seal / initialize / activate); ctor scope          | `elaboration_lifecycle.md`      |
 | Generate as constructor-time logic; object graph shape                                   | `hierarchy_and_generate.md`     |
 | Instance array as a data type; multiplicity vs generate axes                             | `hierarchy_and_generate.md`     |
-| Reference routes; per-segment classification by layout visibility; sealed endpoints      | `reference_resolution.md`       |
+| Reference routes; typed steps against what a scope published; sealed endpoints           | `reference_resolution.md`       |
 | Net value as the resolution of driver contributions; net vs variable; drivers            | `net_resolution.md`             |
 | Logical binding identity; per-body materialization; capture forwarding; carrier/view     | `binding_and_capture.md`        |
-| Per-unit artifact emission; cross-unit realization via the SDK; no wiring                | `emission_model.md`             |
+| Per-unit artifact emission; a scope's published part and realization; no wiring          | `emission_model.md`             |
 | Per-node within-artifact render; type mapping vs value emission                          | `backend_contract.md`           |
 | Parameter values, specialization keys, per-specialization artifacts                      | `specialization_model.md`       |
 | Identity rules; ownership; forbidden identity shapes                                     | `identity_and_ownership.md`     |
@@ -85,8 +85,8 @@ If you are looking for a concept, this table points to the canonical doc.
 | Callable model; code vs value; captures; references as a field type                      | `callable.md`                   |
 | Closure (`ClosureType`) vs lifted local (a cell held by `Shared<>`); captures            | `compiler_generated_storage.md` |
 | Object model; nominal object types; inheritance; dispatch; handles                       | `object_model.md`               |
-| Object identity vs a reference's static view; a reference that names no class            | `object_model.md`               |
-| Coordinates; structural access through a reference with no class view                    | `reference_resolution.md`       |
+| Object identity vs a reference's static view                                             | `object_model.md`               |
+| Access continuing past an object reference; upward-name anchors                          | `reference_resolution.md`       |
 | Storage identity; what a reference may bind; access path vs retained identity            | `storage.md`                    |
 | Aggregate components; whole-aggregate assignment; container element identity             | `storage.md`                    |
 | Lifetime regimes; when a value's storage ends and who ends it                            | `lifetime.md`                   |

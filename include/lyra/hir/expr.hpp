@@ -17,10 +17,10 @@
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/range_bounds.hpp"
-#include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/hir/unary_op.hpp"
+#include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
 
@@ -268,18 +268,17 @@ struct DynamicArrayNewExpr {
 // elsewhere. `Expr::type` is the class handle type. `arguments` are the
 // constructor actuals (LRM 8.7), empty for the default `new`.
 //
-// `declaring_scope_hops` is how far out of this body's own structural scope the
-// scope that declares the class sits: a class declared in a structural scope is
-// a type of that scope's instance (LRM 6.22), so the object records which
-// instance it belongs to and construction is where that is supplied. Absent
-// where the class is declared by a namespace unit, which no instance
-// replicates. How far out that scope sits is known only where the construction
-// is written, which is why it travels on the expression; whether the class
-// takes an instance at all is the class's own to say, and the two must agree.
+// `declaring_instance` is how this body reaches the instance of the scope that
+// declares the class: a class declared in a structural scope is a type of that
+// scope's instance (LRM 6.22), so the object records which instance it belongs
+// to and construction is where that is supplied. How that instance is reached
+// is known only where the construction is written, which is why it travels on
+// the expression; it is present exactly where the class takes the instance,
+// which is the class's own declaration to say.
 struct ClassNewExpr {
   ClassRef class_ref;
   std::vector<ExprId> arguments;
-  std::optional<StructuralHops> declaring_scope_hops;
+  std::optional<DeclaringInstanceReach> declaring_instance;
 
   auto operator==(const ClassNewExpr&) const -> bool = default;
 };

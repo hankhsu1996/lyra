@@ -23,6 +23,7 @@
 #include <slang/ast/ValuePath.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
@@ -109,6 +110,19 @@ auto DeclarationsOf(const Node& node) -> NodeDeclarations {
   return declarations;
 }
 
+// Whether the node brings `symbol` into being: a temporary it introduces, or a
+// declaration of a scope it opens.
+auto IsDeclaredInside(
+    const slang::ast::Symbol& symbol, const NodeDeclarations& declarations)
+    -> bool {
+  if (std::ranges::contains(declarations.temporaries, &symbol)) return true;
+  for (const slang::ast::Scope* scope = symbol.getParentScope();
+       scope != nullptr; scope = scope->asSymbol().getParentScope()) {
+    if (std::ranges::contains(declarations.scopes, scope)) return true;
+  }
+  return false;
+}
+
 // Whether a read of `symbol` inside a node is a read of state that is there
 // before the node runs. What is declared outside is; so is a static variable
 // the source declares inside, which lives from time zero (LRM 6.21). An
@@ -118,13 +132,7 @@ auto IsStateOutside(
     const slang::ast::Symbol& symbol, const NodeDeclarations& declarations)
     -> bool {
   if (std::ranges::contains(declarations.temporaries, &symbol)) return false;
-  bool declared_inside = false;
-  for (const slang::ast::Scope* scope = symbol.getParentScope();
-       scope != nullptr && !declared_inside;
-       scope = scope->asSymbol().getParentScope()) {
-    declared_inside = std::ranges::contains(declarations.scopes, scope);
-  }
-  if (!declared_inside) return true;
+  if (!IsDeclaredInside(symbol, declarations)) return true;
   if (symbol.kind != slang::ast::SymbolKind::Variable) return false;
   const auto& variable = symbol.as<slang::ast::VariableSymbol>();
   return variable.lifetime == slang::ast::VariableLifetime::Static &&
@@ -135,12 +143,12 @@ auto IsStateOutside(
 // `paths` rooted at it whose bits lie inside the range, one per distinct run of
 // bits, where together they leave none of it out -- and the run itself where
 // they do not.
-auto PartRead(
+auto PartReached(
     const slang::ast::ValueSymbol& symbol,
     std::pair<std::uint64_t, std::uint64_t> range,
     std::span<const slang::ast::ValuePath> paths)
-    -> std::variant<ReadOfWhole, ReadOfSelects, ReadOfBits> {
-  const ReadOfBits unnamed{.first = range.first, .last = range.second};
+    -> std::variant<WholePart, SelectedParts, BitRunPart> {
+  const BitRunPart unnamed{.first = range.first, .last = range.second};
   std::vector<const slang::ast::ValuePath*> inside;
   for (const slang::ast::ValuePath& path : paths) {
     if (path.lsp == nullptr || path.rootSymbol() != &symbol) continue;
@@ -162,7 +170,7 @@ auto PartRead(
     next = std::max(next, path->lspBounds.second + 1);
   }
   if (next <= range.second) return unnamed;
-  ReadOfSelects named;
+  SelectedParts named;
   named.prefixes.reserve(inside.size());
   for (const slang::ast::ValuePath* path : inside) {
     named.prefixes.push_back(path->lsp);
@@ -197,16 +205,44 @@ auto NamesReaching(
 // whatever a later step builds from them, one read at a time, is built alike.
 auto FlattenReadSet(
     const slang::analysis::DFAResults::ReadSet& reads,
-    std::span<const slang::ast::ValuePath> paths)
-    -> std::vector<SensitivityRead> {
-  std::vector<SensitivityRead> out;
+    std::span<const slang::ast::ValuePath> paths) -> std::vector<AccessedPart> {
+  std::vector<AccessedPart> out;
   for (const auto& [symbol, bitmap] : reads) {
     const std::vector<const slang::ast::Expression*> names =
         NamesReaching(*symbol, paths);
     for (auto it = bitmap.begin(); it != bitmap.end(); ++it) {
       out.push_back(
           {.symbol = symbol,
-           .part = PartRead(*symbol, it.bounds(), paths),
+           .part = PartReached(*symbol, it.bounds(), paths),
+           .reached_by = names});
+    }
+  }
+  return out;
+}
+
+// What `lvalues` write, one write per run of a symbol's bits assigned, each
+// named by the prefixes in `paths` that make it up, as a read is.
+auto FlattenWrites(
+    std::span<const slang::analysis::DFAResults::LValueSymbol> lvalues,
+    std::span<const slang::ast::ValuePath> paths) -> std::vector<AccessedPart> {
+  std::vector<AccessedPart> out;
+  for (const auto& lvalue : lvalues) {
+    const slang::ast::ValueSymbol& symbol = *lvalue.symbol;
+    const slang::ast::Type& type = symbol.getType();
+    // A write is taken out of a read only where the two compare exactly. A
+    // packed value's bits do, so a run of them is stated; anything else is
+    // watched whole, so only a write of the whole of it is stated, and a write
+    // of part of one is left out rather than taking the whole away.
+    const bool bit_addressed = type.isIntegral() && !type.isEnum();
+    const std::uint64_t width = type.getSelectableWidth();
+    const std::vector<const slang::ast::Expression*> names =
+        NamesReaching(symbol, paths);
+    for (auto it = lvalue.assigned.begin(); it != lvalue.assigned.end(); ++it) {
+      const auto [first, last] = it.bounds();
+      if (!bit_addressed && (first != 0 || last + 1 < width)) continue;
+      out.push_back(
+          {.symbol = &symbol,
+           .part = PartReached(symbol, it.bounds(), paths),
            .reached_by = names});
     }
   }
@@ -226,94 +262,26 @@ auto PathsOf(const Node& node, const slang::ast::Symbol& containing_symbol)
 }
 
 // Runs slang's `DefaultDFA` on a single AST node and harvests the state it
-// reads from outside itself, given what the node declares.
+// reads and writes from outside itself, given what the node declares.
 template <typename Node>
 auto RunDfa(
     slang::analysis::AnalysisContext& context,
     const slang::ast::Symbol& containing_symbol, const Node& node,
-    const NodeDeclarations& declarations) -> std::vector<SensitivityRead> {
+    const NodeDeclarations& declarations) -> NodeAccesses {
   slang::analysis::DefaultDFA dfa(context, containing_symbol, false);
   dfa.slang::analysis::AbstractFlowAnalysis<
       slang::analysis::DefaultDFA, slang::analysis::DataFlowState>::run(node);
-  std::vector<SensitivityRead> reads =
-      FlattenReadSet(dfa.getRValues(), PathsOf(node, containing_symbol));
-  std::erase_if(reads, [&](const SensitivityRead& read) {
-    return !IsStateOutside(*read.symbol, declarations);
-  });
-  return reads;
-}
-
-// Every subroutine with a body that `node` calls, and that those call in turn.
-// A procedure's implicit list includes what such a function reads (LRM
-// 9.2.2.2.1), and that read is named in the function's own text.
-class CalledSubroutines
-    : public slang::ast::ASTVisitor<
-          CalledSubroutines, slang::ast::VisitFlags::AllGood> {
- public:
-  explicit CalledSubroutines(
-      std::vector<const slang::ast::SubroutineSymbol*>& called)
-      : called_(&called) {
-  }
-
-  void handle(const slang::ast::CallExpression& call) {
-    visitDefault(call);
-    const auto* const* named =
-        std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
-    if (named == nullptr || std::ranges::contains(*called_, *named)) return;
-    const slang::ast::SubroutineSymbol& subroutine = **named;
-    // A foreign function has no body here to read (LRM 35.4).
-    if (subroutine.flags.has(slang::ast::MethodFlags::DPIImport)) return;
-    called_->push_back(&subroutine);
-    subroutine.getBody().visit(*this);
-  }
-
- private:
-  std::vector<const slang::ast::SubroutineSymbol*>* called_;
-};
-
-// The value paths in the bodies of the subroutines `proc` calls.
-auto PathsOfCalledBodies(const slang::ast::ProceduralBlockSymbol& proc)
-    -> std::vector<slang::ast::ValuePath> {
-  std::vector<const slang::ast::SubroutineSymbol*> called;
-  CalledSubroutines collector(called);
-  proc.visit(collector);
-  std::vector<slang::ast::ValuePath> paths;
-  for (const slang::ast::SubroutineSymbol* subroutine : called) {
-    slang::ast::EvalContext eval_context(*subroutine);
-    PathCollector in_body(eval_context, paths);
-    subroutine->getBody().visit(in_body);
-  }
-  return paths;
-}
-
-// Flattens slang's procedure-level sensitivity list (LRM 9.2.2.2.1) into the
-// same shape as a node's reads. slang has already narrowed each entry's bit
-// range to the bits that wake the procedure and excluded the procedure's locals
-// and self-driven bits.
-//
-// A read is named as a select only where the procedure's own text selects it,
-// so `paths` is that text's. The names reaching it are also taken from
-// `called_paths`, because a read the list holds may be one a called function
-// makes.
-auto FlattenSensitivityList(
-    const slang::analysis::AnalyzedProcedure& analyzed,
-    std::span<const slang::ast::ValuePath> paths,
-    std::span<const slang::ast::ValuePath> called_paths)
-    -> std::vector<SensitivityRead> {
-  std::vector<SensitivityRead> out;
-  for (const auto& read : analyzed.getSensitivityList().reads) {
-    std::vector<const slang::ast::Expression*> names =
-        NamesReaching(*read.symbol, paths);
-    for (const slang::ast::Expression* name :
-         NamesReaching(*read.symbol, called_paths)) {
-      names.push_back(name);
-    }
-    out.push_back(
-        {.symbol = read.symbol,
-         .part = PartRead(*read.symbol, read.bitRange, paths),
-         .reached_by = std::move(names)});
-  }
-  return out;
+  const std::vector<slang::ast::ValuePath> paths =
+      PathsOf(node, containing_symbol);
+  NodeAccesses accesses{
+      .reads = FlattenReadSet(dfa.getRValues(), paths),
+      .writes = FlattenWrites(dfa.getLValues(), paths)};
+  const auto inside = [&](const AccessedPart& access) {
+    return !IsStateOutside(*access.symbol, declarations);
+  };
+  std::erase_if(accesses.reads, inside);
+  std::erase_if(accesses.writes, inside);
+  return accesses;
 }
 
 }  // namespace
@@ -336,32 +304,33 @@ auto SensitivityAnalyzer::operator=(SensitivityAnalyzer&&) noexcept
 auto SensitivityAnalyzer::AnalyzeReads(
     const slang::ast::Expression& expr,
     const slang::ast::Symbol& containing_symbol)
-    -> const std::vector<SensitivityRead>& {
+    -> const std::vector<AccessedPart>& {
   if (const auto it = expression_cache_.find(&expr);
       it != expression_cache_.end()) {
     return it->second;
   }
   auto [inserted_it, _] = expression_cache_.emplace(
-      &expr, RunDfa(*context_, containing_symbol, expr, DeclarationsOf(expr)));
+      &expr,
+      RunDfa(*context_, containing_symbol, expr, DeclarationsOf(expr)).reads);
   return inserted_it->second;
 }
 
 auto SensitivityAnalyzer::AnalyzeReads(
     const slang::ast::Statement& stmt,
     const slang::ast::Symbol& containing_symbol)
-    -> const std::vector<SensitivityRead>& {
+    -> const std::vector<AccessedPart>& {
   if (const auto it = statement_cache_.find(&stmt);
       it != statement_cache_.end()) {
     return it->second;
   }
   auto [inserted_it, _] = statement_cache_.emplace(
-      &stmt, RunDfa(*context_, containing_symbol, stmt, DeclarationsOf(stmt)));
+      &stmt,
+      RunDfa(*context_, containing_symbol, stmt, DeclarationsOf(stmt)).reads);
   return inserted_it->second;
 }
 
-auto SensitivityAnalyzer::AnalyzeReads(
-    const slang::ast::SubroutineSymbol& subroutine)
-    -> const std::vector<SensitivityRead>& {
+auto SensitivityAnalyzer::AnalyzeAccesses(
+    const slang::ast::SubroutineSymbol& subroutine) -> const NodeAccesses& {
   if (const auto it = subroutine_cache_.find(&subroutine);
       it != subroutine_cache_.end()) {
     return it->second;
@@ -381,20 +350,30 @@ auto HoldsStateBeforeItRuns(
       symbol, NodeDeclarations{.scopes = {&subroutine}, .temporaries = {}});
 }
 
-auto SensitivityAnalyzer::AnalyzeProcedureSensitivity(
-    const slang::ast::ProceduralBlockSymbol& proc)
-    -> const std::vector<SensitivityRead>& {
-  if (const auto it = procedure_cache_.find(&proc);
-      it != procedure_cache_.end()) {
+auto HoldsStateBeforeItRuns(
+    const slang::ast::Symbol& symbol,
+    const slang::ast::ProceduralBlockSymbol& proc) -> bool {
+  return IsStateOutside(symbol, DeclarationsOf(proc.getBody()));
+}
+
+auto SensitivityAnalyzer::AnalyzeProcedureText(
+    const slang::ast::ProceduralBlockSymbol& proc) -> const NodeAccesses& {
+  if (const auto it = procedure_text_cache_.find(&proc);
+      it != procedure_text_cache_.end()) {
     return it->second;
   }
-  slang::analysis::DefaultDFA dfa(*context_, proc, false);
-  dfa.run();
-  const slang::analysis::AnalyzedProcedure analyzed(
-      *context_, proc, nullptr, dfa);
-  auto [inserted_it, _] = procedure_cache_.emplace(
-      &proc, FlattenSensitivityList(
-                 analyzed, PathsOf(proc, proc), PathsOfCalledBodies(proc)));
+  const slang::ast::Statement& body = proc.getBody();
+  const NodeDeclarations declarations = DeclarationsOf(body);
+  NodeAccesses accesses = RunDfa(*context_, proc, body, declarations);
+  // The list leaves out every variable the procedure declares, static ones
+  // too, where a wait inside it reads a static one as state (LRM 9.2.2.2.1 a).
+  const auto declared = [&](const AccessedPart& access) {
+    return IsDeclaredInside(*access.symbol, declarations);
+  };
+  std::erase_if(accesses.reads, declared);
+  std::erase_if(accesses.writes, declared);
+  auto [inserted_it, _] =
+      procedure_text_cache_.emplace(&proc, std::move(accesses));
   return inserted_it->second;
 }
 

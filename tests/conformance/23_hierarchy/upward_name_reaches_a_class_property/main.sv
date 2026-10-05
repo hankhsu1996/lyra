@@ -1,9 +1,7 @@
 // A class handle is a declaration kind a hierarchical name reaches, and its
 // property is reached through the handle the path lands on (LRM 8.4, 23.7).
-// A downward path reaches one today; an upward path names a class the
-// enclosing module declares, which is a type the child's own artifact was
-// never given -- a module publishes its parameters and ports and nothing else
-// -- so this direction owes an answer the downward one already has.
+// An upward path reaches one as a downward path does, though the class it
+// names is one the enclosing module declares.
 module Child;
   int saw = 0;
 

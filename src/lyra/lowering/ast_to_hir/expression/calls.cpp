@@ -30,7 +30,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr_builders.hpp"
-#include "lyra/hir/external_unit_object.hpp"
+#include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/sampled_history.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
@@ -140,9 +140,9 @@ auto RecordSampledCells(
   }
   const auto& reads = unit_lowerer.Sensitivity().AnalyzeReads(
       *call.arguments()[0], frame.reader_scope->asSymbol());
-  std::vector<SensitivityRead> armed;
+  std::vector<AccessedPart> armed;
   SampledOperandReads counted;
-  for (const SensitivityRead& read : reads) {
+  for (const AccessedPart& read : reads) {
     const auto* var = read.symbol->as_if<slang::ast::VariableSymbol>();
     if (var != nullptr &&
         var->flags.has(slang::ast::VariableFlags::RefStatic)) {
@@ -571,15 +571,14 @@ auto DeclaringUnitOfSubroutine(const slang::ast::SubroutineSymbol& sym)
   return &owner;
 }
 
-// Enables a subroutine another unit declares, on one instance of it (LRM 25.7,
-// 23.6). The route to that object is the same walk a read of a declaration
-// there takes; what the declaring unit promised decides only what answers the
-// name at the end of it. An interface promises its whole declared surface, so
-// the name resolves against that promise; a module promises its ports, so the
-// name is answered by the scope itself while the design elaborates.
+// Enables a subroutine of another instance, or of a generate block inside one
+// (LRM 25.7, 23.6), reached from `origin`, where the call's name started. The
+// route to that scope is the same walk a read of a declaration there takes,
+// and the scope published every subroutine it declares, so the call is made on
+// what the route lands on and what it passes and awaits is counted out of that
+// publication.
 auto LowerObjectSubroutineCall(
-    UnitLowerer& unit_lowerer, WalkFrame frame,
-    const slang::ast::CallExpression& call,
+    UnitLowerer& unit_lowerer, WalkFrame frame, RouteOrigin origin,
     const slang::ast::SubroutineSymbol& sym,
     std::vector<std::optional<hir::ExprId>> arguments, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
@@ -592,79 +591,36 @@ auto LowerObjectSubroutineCall(
     return refuse(
         "a subroutine declared in this scope kind is not yet supported");
   }
-  // A unit's own body is the one scope a promise can be about, so it is the
-  // one whose route is read from how the name reached the instance -- through
-  // a port, or by a walk on the hierarchy. A subroutine declared deeper, in a
-  // generate block of that unit, is reached by walking to the block: no
-  // signature mentions it either way, so nothing about it distinguishes a port.
-  const auto* body = owner->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
-  auto walked = body != nullptr
-                    ? unit_lowerer.RouteToUnitObject(
-                          frame, *body, call.lookupInfo.hierRef, span)
-                    : unit_lowerer.RouteToDeclaringScope(frame, *owner, span);
+  auto walked =
+      unit_lowerer.RouteToScopeOrRefuse(frame, *owner, std::move(origin), span);
   if (!walked) return std::unexpected(std::move(walked.error()));
   ScopeRoute route = *std::move(walked);
-
-  // Reaching an object is what declares the dependency on the unit it belongs
-  // to, so a unit this one never declared has no record here and nothing was
-  // promised to compile against. Where a record does exist, the name still has
-  // to be on it: an interface promises its whole declared surface, a module
-  // promises its ports.
-  if (body != nullptr) {
-    const std::string unit_name =
-        CompilationUnitName(*body, unit_lowerer.Specialization());
-    if (unit_lowerer.Signatures().Find(unit_name) != nullptr) {
-      const hir::ExternalUnitObjectId object =
-          unit_lowerer.ExternalUnitObjectOf(unit_name);
-      const hir::ExternalUnitObject& promised =
-          unit_lowerer.Unit().external_unit_objects.Get(object);
-      if (const auto callable = promised.FindCallable(sym.name)) {
-        const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-            hir::Type{hir::UnitObjectType{.unit_name = unit_name}});
-        const hir::RoutedObjectRef receiver = unit_lowerer.MakeRoutedObjectRef(
-            frame.Current(), std::move(route), object_type);
-        return hir::Expr{
-            .type = promised.callables.Get(*callable).result_type,
-            .data =
-                hir::CallExpr{
-                    .callee =
-                        hir::ExternalUnitMethodRef{
-                            .receiver = receiver,
-                            .object = object,
-                            .callable = *callable},
-                    .arguments = std::move(arguments)},
-            .span = span,
-        };
-      }
-    }
-  }
-
-  // Nothing was promised, so the name is all that crosses: the route reaches
-  // the object and the scope answers the name with its own entry while the
-  // design elaborates (LRM 23.6, 23.8.1). What the call passes and awaits comes
-  // from the callee's declaration, which is also what the entry is generated
-  // from.
-  auto interface = unit_lowerer.MakeExternalCalleeInterface(sym, span);
-  if (!interface) return std::unexpected(std::move(interface.error()));
-  auto result_type = unit_lowerer.InternType(sym.getReturnType(), span);
-  if (!result_type) return std::unexpected(std::move(result_type.error()));
-
-  const hir::TypeId scope_type =
-      unit_lowerer.Unit().types.Intern(hir::Type{hir::OpaqueScopeType{}});
-  const ScopeRoute entry_route = route;
+  const auto unsupported = [&] {
+    return refuse(
+        "a subroutine of another instance reached this way is not yet "
+        "supported");
+  };
+  const auto* on = std::get_if<InExternalScope>(&route.place);
+  if (on == nullptr || !on->within.empty()) return unsupported();
+  const hir::ExternalScopeClassId scope_class = on->scope_class;
+  const hir::ScopeClassSignature& published =
+      unit_lowerer.Unit().external_scope_classes.Get(scope_class).signature;
+  const auto callable = published.FindCallable(sym.name);
+  if (!callable.has_value()) return unsupported();
+  const hir::TypeId result_type =
+      published.callables.Get(*callable).result_type;
   const hir::RoutedObjectRef receiver = unit_lowerer.MakeRoutedObjectRef(
-      frame.Current(), std::move(route), scope_type);
-  const hir::RoutedCallableRef entry = unit_lowerer.MakeRoutedCallableRef(
-      frame.Current(), entry_route, std::string{sym.name}, *interface);
+      frame.Current(), std::move(route),
+      unit_lowerer.ScopeClassTypeOf(scope_class));
   return hir::Expr{
-      .type = *result_type,
+      .type = result_type,
       .data =
           hir::CallExpr{
               .callee =
-                  hir::OpaqueUnitMethodRef{
+                  hir::ExternalUnitMethodRef{
                       .receiver = receiver,
-                      .entry = entry,
-                      .interface = *std::move(interface)},
+                      .scope_class = scope_class,
+                      .callable = *callable},
               .arguments = std::move(arguments)},
       .span = span,
   };
@@ -690,22 +646,24 @@ auto LowerHeldInterfaceCall(
       unit_lowerer, frame.Exprs().Add(*std::move(handle)), handle_type,
       *sym.getParentScope(), span);
   if (!descent) return std::unexpected(std::move(descent.error()));
-  const hir::ExternalUnitObject& promised =
-      unit_lowerer.Unit().external_unit_objects.Get(descent->landed);
-  const auto callable = promised.FindCallable(sym.name);
+  const hir::ScopeClassSignature& published =
+      unit_lowerer.Unit()
+          .external_scope_classes.Get(descent->place.scope_class)
+          .signature;
+  const auto callable = published.FindCallable(sym.name);
   if (!callable.has_value()) {
     throw InternalError(
-        "LowerHeldInterfaceCall: an interface promises every subroutine it "
-        "declares, and this one is not on its promise");
+        "LowerHeldInterfaceCall: a scope publishes every subroutine it "
+        "declares, and this one is not among them");
   }
   return hir::Expr{
-      .type = promised.callables.Get(*callable).result_type,
+      .type = published.callables.Get(*callable).result_type,
       .data =
           hir::CallExpr{
               .callee =
                   hir::ExternalUnitMethodRef{
                       .receiver = std::move(descent->instance),
-                      .object = descent->landed,
+                      .scope_class = descent->place.scope_class,
                       .callable = *callable},
               .arguments = std::move(arguments)},
       .span = span};
@@ -1096,17 +1054,16 @@ auto LowerSubroutineCall(
   if (is_type_associated) {
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    auto callee = unit_lowerer.MakeMethodCallee(
-        frame, declaring_class, declaring_class, *sym, span);
+    auto callee = unit_lowerer.MakeMethodCallee(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
     auto static_result_type = unit_lowerer.InternType(*call.type, span);
     if (!static_result_type) {
       return std::unexpected(std::move(static_result_type.error()));
     }
-    auto declaring_hops =
-        unit_lowerer.DeclaringScopeHopsFrom(declaring_class, frame, span);
-    if (!declaring_hops) {
-      return std::unexpected(std::move(declaring_hops.error()));
+    auto declaring_instance =
+        unit_lowerer.DeclaringInstanceFrom(declaring_class, frame, span);
+    if (!declaring_instance) {
+      return std::unexpected(std::move(declaring_instance.error()));
     }
     return hir::Expr{
         .type = *static_result_type,
@@ -1115,7 +1072,7 @@ auto LowerSubroutineCall(
                 .callee =
                     hir::StaticMethodCallRef{
                         .callee = *std::move(callee),
-                        .declaring_scope_hops = *declaring_hops},
+                        .declaring_instance = *std::move(declaring_instance)},
                 .arguments = std::move(arg_ids),
             },
         .span = span,
@@ -1144,13 +1101,7 @@ auto LowerSubroutineCall(
     if (!receiver_or) return std::unexpected(std::move(receiver_or.error()));
     const auto& declaring_class =
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
-    const slang::ast::Expression* receiver = call.thisClass();
-    auto callee = unit_lowerer.MakeMethodCallee(
-        frame, declaring_class,
-        receiver != nullptr
-            ? receiver->type->getCanonicalType().as<slang::ast::ClassType>()
-            : declaring_class,
-        *sym, span);
+    auto callee = unit_lowerer.MakeMethodCallee(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
     auto method_result_type = unit_lowerer.InternType(*call.type, span);
     if (!method_result_type) {
@@ -1236,15 +1187,23 @@ auto LowerSubroutineCall(
     };
   }
 
-  const auto binding = unit_lowerer.LookupSubroutineBinding(*sym);
+  // A name leaving the caller's instance starts where it lands or at the port
+  // it went through (LRM 23.8, 25.3), whatever declaration the front end
+  // resolved it to in the instance being lowered: in another instance of this
+  // unit the same text reaches another object. Only a name that stays inside
+  // the instance may enable a subroutine this unit declares as its own.
+  auto start = unit_lowerer.StartOf(frame, call.lookupInfo.hierRef, span);
+  if (!start) return std::unexpected(std::move(start.error()));
+  const auto binding = std::holds_alternative<FromReader>(*start)
+                           ? unit_lowerer.LookupSubroutineBinding(*sym)
+                           : std::nullopt;
   // What is left is a subroutine another instance declares -- one an interface
   // offers across a port (LRM 25.7), or one a hierarchical name enables (LRM
-  // 23.6). The frontend resolved the name to that instance's own declaration
-  // and kept no path, so the object to enable it on is the one whose body
-  // declares it, and the route to that object is the caller's own.
+  // 23.6) -- and the route to the object it is enabled on starts where the name
+  // does.
   if (!binding.has_value()) {
     return LowerObjectSubroutineCall(
-        unit_lowerer, frame, call, *sym, std::move(arg_ids), span);
+        unit_lowerer, frame, *std::move(start), *sym, std::move(arg_ids), span);
   }
   // The scope that declares the callee, reached the way a reference to a
   // declaration in that same scope is: a climb to the nearest scope enclosing

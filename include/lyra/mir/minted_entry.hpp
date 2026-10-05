@@ -18,7 +18,7 @@ namespace lyra::mir {
 // nothing, then `kInitializeStorage` runs each value initializer through its
 // cell (LRM 10.5). A unit whose instances are a tree publishes the third, which
 // makes one of those objects for a referrer that cannot -- it consumed what
-// that unit promised, and a promise states what may be reached and never how
+// that unit published, and a signature states what may be reached and never how
 // much storage an object takes.
 enum class MintedEntry : std::uint8_t {
   kInstallStorage,

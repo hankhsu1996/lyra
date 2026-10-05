@@ -155,8 +155,8 @@ Nothing blocked. The remaining PK3 increment checkboxes are the actionable follo
   package is a compilation unit whose signature is its declarations),
   `../architecture/object_model.md` (a namespace is the type-associated member scope, here standing
   alone as a unit root rather than attached to an object type),
-  `../architecture/reference_resolution.md` and `../architecture/emission_model.md` (by-name
-  cross-unit resolution and per-unit emission), `../architecture/north_star.md` (the cross-unit
-  dependency is explicitly declared, per the incremental / parallel constraints).
+  `../architecture/reference_resolution.md` and `../architecture/emission_model.md` (cross-unit
+  resolution against a signature and per-unit emission), `../architecture/north_star.md` (the
+  cross-unit dependency is explicitly declared, per the incremental / parallel constraints).
 - Unblocks: `ibex.md` (the Ibex design leans on `ibex_pkg`), `dpi.md` (the package / `$unit`-scoped
   side of both DPI directions hangs off the package unit and callable established here).

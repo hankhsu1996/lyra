@@ -65,9 +65,12 @@ enum class CallableForm : std::uint8_t {
   kConstructor,
 };
 
-// The instance of the structural scope that declares a class (LRM 6.22): the
-// pointer type that reaches it, and the member each object records it in for
-// the object's methods to read.
+// The instance of the structural scope that declares a class (LRM 6.22), as a
+// class this unit declares keeps it: the type a construction or a
+// type-associated body of the class is handed it as, and the member each object
+// records it in for the object's methods to read. It is held as the base every
+// scope extends because the class is published, and what it publishes may name
+// no class the scope keeps to itself.
 struct DeclaringInstance {
   mir::TypeId type;
   mir::FieldId member;
@@ -82,9 +85,10 @@ struct DeclaringInstance {
 // None of this outlives the lowering. A finished unit holds one fully composed
 // class per identity, so nothing downstream pairs two views of one class.
 struct ClassShape {
-  // Absent for a scope of the design hierarchy, which the source never declared
-  // as a class and nothing outside this unit names.
+  // Absent for a class nothing outside this unit names.
   std::optional<std::string> name;
+  // The further names the same class is published under.
+  std::vector<std::string> aliases;
   std::optional<mir::ClassRef> base;
   // Interface class contracts (LRM 8.26) this class commits to satisfying.
   // Populated from the source `implements` clause of a regular class or the
@@ -95,12 +99,10 @@ struct ClassShape {
   // instance storage.
   std::vector<mir::DeclaredClassRef> implements;
   mir::TypeId self_pointer_type;
-  // The instance this class belongs to, present exactly where a structural
-  // scope declares the class (LRM 6.22), and the one place that is stated: what
-  // each body of the class is handed, and what each construction and
-  // type-associated call of it passes, both follow from it. Absent for a class
-  // a namespace unit declares and for a scope of the design hierarchy, neither
-  // of which is a type of any instance.
+  // The instance this class belongs to, present exactly where the class's
+  // declaration says it takes one (LRM 6.22): what each body of the class is
+  // handed follows from it. Absent for a scope of the design hierarchy, which
+  // is a type of no instance.
   std::optional<DeclaringInstance> declaring_instance;
   TimeResolution time_resolution;
   base::Arena<mir::ParamDecl, mir::ParamId> ctor_prefix_params;
@@ -129,11 +131,9 @@ struct ClassShape {
   base::Translation<hir::StaticPropertyId, StaticStorageHome>
       static_property_translation;
   std::vector<mir::ClassId> contained;
-  // The classes this scope declares (LRM 23.9), which it answers a name with
-  // for a referrer that has none of its own.
-  std::vector<mir::ClassId> declares;
-  // Whether the class is final (LRM 8.13). A structural class always is; an SV
-  // class carries the source-declared value.
+  // Whether the class is final (LRM 8.13). A scope's own class is; the class
+  // its unit published of it is extended by that one, and an SV class carries
+  // the source-declared value.
   bool is_final = false;
   // Whether this class is an `interface class` declaration (LRM 8.26): its body
   // carries only pure virtual method contracts, no instance storage and no

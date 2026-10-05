@@ -23,17 +23,16 @@ This workstream reasons from these architecture docs and does not restate them:
 - `../architecture/compilation_unit_model.md` -- an interface is a compilation-unit kind alongside
   module and package, compiled from its own contents and reached by other units only through its
   interface of name and signature.
-- `../architecture/reference_resolution.md` -- a reference is a route of segments, each classified
-  by whether the emitting artifact owns its layout; ports, hierarchical references, and
-  cross-instance sensitivity share one route mechanism.
+- `../architecture/reference_resolution.md` -- a reference is a route of typed steps against what
+  the referrer compiles against; ports, hierarchical references, and cross-instance sensitivity
+  share one route mechanism.
 - `../architecture/elaboration_lifecycle.md` -- connections are declarative facts at Build, routes
   execute at Resolve, endpoints commit at Seal, and nothing before Seal observes a binding.
 - `../architecture/object_model.md` -- one nominal object type serves a module instance, a generate
   scope, and a class; the reference reaching an instance carries its lifetime, orthogonal to the
   object's category.
 - `../decisions/hierarchical-reference-routing.md` -- one semantic shape for every hierarchical
-  reference, per-segment classification, and the open target-category family this workstream
-  extends.
+  reference, and the open target-category family this workstream extends.
 - `../decisions/reference-as-data-type.md` -- a `ref` is a direction at HIR and an aliasing data
   type at MIR, filled once at Resolve, with one storage and no propagation delay.
 - `../decisions/unit-signature.md` -- an interface publishes its members, so reaching one through a
@@ -41,9 +40,9 @@ This workstream reasons from these architecture docs and does not restate them:
   design elaborates.
 - `../decisions/interface-port-binding.md` -- what the port's declared type names, what its member
   holds, and why the interface a port carries is part of the module's specialization identity.
-- `../decisions/a-referrer-calls-rather-than-navigates.md` -- a published member is reached by
-  performing what the promise states for it, counted out of the order the signature published, so
-  how many of those positions one member occupies is settled there rather than here.
+- `../decisions/a-design-element-publishes-its-declarations.md` -- every scope a name can step into
+  publishes what a name can reach, a published member sits where the order of the publication puts
+  it, and a referrer reaches it by typed steps only.
 - `../decisions/publishing-part-of-a-member.md` -- what a connection point names when it is not a
   whole declaration, why an interface publishes its views, and why a signature carries a closed
   descent rather than an expression.
@@ -123,14 +122,14 @@ B  The interface port
 - [x] B2 -- Every member access through the port is one reference whose route begins at that handle:
       the typed step to the port member, then the member at the position the interface's signature
       gave it, so a member renamed in the interface fails where the module compiles rather than
-      while the design elaborates. A name continuing past what the interface published -- LRM 23.9
-      puts a task and a named block inside the instance on the path -- carries on down that same
-      route with the step past the promise answered by the instance while the design elaborates,
-      which is what a name into any other unit's body already does: the port says where the descent
-      starts and never how far it may go. Reads, writes, and change observation ride that route, so
-      a process in the module re-triggers when an interface member changes, and a write through the
-      port is immediately the interface's value. What a body waits on rides it too, in every form a
-      body waits in -- an event control, `always_comb` and `@*`, a `wait`, a function the procedure
+      while the design elaborates. A name continuing deeper -- LRM 23.9 puts a task and a named
+      block inside the instance on the path -- carries on down that same route to the static or
+      disable target the interface published with the blocks and subroutines it sits in, which is
+      what a name into any other unit's body does: the port says where the descent starts and never
+      how far it may go. Reads, writes, and change observation ride that route, so a process in the
+      module re-triggers when an interface member changes, and a write through the port is
+      immediately the interface's value. What a body waits on rides it too, in every form a body
+      waits in -- an event control, `always_comb` and `@*`, a `wait`, a function the procedure
       calls, a continuous assignment, a connection to a child's port, a sampled value -- so two
       instances of one module bound to two interface instances each wake on their own. That used to
       hold for the first instance only: a wait was routed from where the read landed in the instance
@@ -166,9 +165,10 @@ B  The interface port
       inner declaration standing for several instances is selected by position like any other
       interface array, and a process reading such a name re-triggers when it changes. The interface
       publishes what it instantiates, so a name reaching one from the scope that owns the outer
-      instance resolves against that promise as well, rather than by a name answered while the
-      design elaborates. A name continuing through a generate block the interface declares is
-      refused: the block is a scope of the interface itself rather than an object it publishes.
+      instance resolves against that promise as well. A name through the port also continues into a
+      generate block the interface elaborates -- a loop's block selected by its index value, a
+      chosen block by its label (LRM 27.4, 27.5) -- and into its tasks and named blocks, to read and
+      write what they declare.
 - [x] B9 -- Two instantiations of one module whose interface ports carry different interfaces
       compile to distinct units, at any multiplicity. What a port carries is settled by the
       connection (LRM 25.3), so a port declared with a range settles it exactly as one without a
@@ -225,22 +225,21 @@ B  The interface port
       a property of the interface's declaration, so a scope that declares the instance itself names
       the view on it directly -- reading, writing and waiting all work there as they do through a
       port, under as many views of the one instance as the source writes. Which of the two reaches a
-      use takes is the reference's own statement, and a read, which states no path, is taken through
-      a port of the reading scope where that scope carries the view on one and by a route to the
-      instance where it does not.
+      use takes is the reference's own statement: a read or a wait is reached from where the name
+      started -- through the port, down the path, or from where a name climbing out of the reading
+      scope's instance lands (LRM 23.8, 25.3) -- and so is a port connected by such a name.
 
       A view offering a name that reaches nothing inside its interface is legal and is refused where
       the name is used rather than where the view is declared, so an interface declaring one still
-      compiles. Waiting on a name whose view the reading scope carries on more than one of its own
-      ports is refused -- a read states no path, so which port it came through is not recoverable
-      there. Taking over part of a target with `force` is refused for any target, not only one a
-      view names.
+      compiles. Waiting on such a name through a reach that stands for several instances is refused,
+      since the read states no select to say which of them changed. Taking over part of a target
+      with `force` is refused for any target, not only one a view names.
 
-  - [ ] A name a view offers on an interface instance reached past another unit's signature -- a
-        hierarchical path descending into a module, which publishes no child of its own (LRM 25.10
-        gives that only to an interface). What the name means comes out of the interface's published
-        modport record, which a referrer can only read where it compiles against that interface, so
-        this waits on what a module publishes rather than on anything about views.
+  - [x] A name a view offers on an interface instance reached through a hierarchical path descending
+        into a module. The module publishes the instance, so the path reaches it typed and the name
+        means what the interface's published view says: reading a computed name evaluates it and
+        re-runs a process reading it when what it reads changes, and a write to a designated part
+        lands in the declaration.
 
 ### Stage D -- Subroutines across the boundary
 
@@ -251,12 +250,9 @@ declares the subroutine: D1 is a call this module makes on the interface, and D2
 the interface makes on a module connected to it, which is why the second half does not follow from
 the first.
 
-A subroutine a hierarchical name enables (LRM 23.6) does not follow from it either, and the reason
-is the unit boundary rather than the call: an interface promises its whole declared surface, so a
-name on one is resolved where the caller compiles, while a module promises only its ports, so a
-subroutine of one is reached by a name the runtime answers while the design elaborates. That form is
-carried with the hierarchical-reference target forms in `hierarchy.md` rather than here, and the
-asymmetry is the whole of what separates the two.
+A subroutine a hierarchical name enables (LRM 23.6) is carried with the hierarchical-reference
+target forms in `hierarchy.md` rather than here. A module publishes its subroutines as an interface
+does, so a call on either is resolved where the caller compiles and nothing separates the two.
 
 - [x] D1 -- A modport `import` makes an interface subroutine callable through the port, so a call on
       the port identifier enables that task or function on the bound interface instance (LRM 25.7).
@@ -312,25 +308,6 @@ asymmetry is the whole of what separates the two.
       interface (LRM 25.9). It is never a port, an interface item, or a union member.
 
 ## Open questions
-
-- A module that only passes an interface on, never reaching into it, binds objects of a unit it has
-  recorded nothing about, and the C++ backend writes a store it cannot type: the value is the
-  untyped pointer that unit's absence leaves, the target is the child's own field, and the emitted
-  project does not compile. The execution backend runs every one of these correctly, because nothing
-  there depends on a pointee's spelling. The corpus does not see it -- the case that forwards a
-  published instance also reads a member of it, which is exactly the condition that records the unit
-  and hides the defect -- so a reduction has to forward and do nothing else.
-
-  **What is missing is a way to name another unit's object without its layout.** A referrer holds
-  what it reaches through and deliberately holds nothing about a pointer it only passes along, which
-  is right: importing the pointee's promise to bind one pointer would grow a referrer's dependencies
-  with nesting depth. But the only two things that can be said today are the whole published surface
-  or nothing at all, and "nothing at all" is spelled as an untyped pointer -- so the fact that both
-  sides of the store are the same unit, which is what makes the connection legal and which the
-  connection does know, is dropped on the way down. A middle that names the unit and promises no
-  layout is what both ends need, and picking a representation for it is the same question a
-  reference whose static class is not nameable is waiting on; settling it here would settle it there
-  by accident.
 
 - The reference model leaves its set of sealed-endpoint target categories open and requires a
   decision entry per category (`../decisions/hierarchical-reference-routing.md`, D5). Neither Stage

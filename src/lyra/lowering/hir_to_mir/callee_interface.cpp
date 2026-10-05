@@ -154,42 +154,6 @@ auto SubroutineCallTypeOf(
       CalleeFormalsOf(unit_lowerer, interface));
 }
 
-auto ParamTypesOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
-    -> std::vector<mir::TypeId> {
-  std::vector<mir::TypeId> params;
-  params.reserve(decl.params.size());
-  for (const hir::SubroutineParam& formal : decl.params) {
-    if (const std::optional<mir::TypeId> param = ParamTypeOf(
-            unit_lowerer, decl.body.procedural_vars.Get(formal.var).type,
-            formal.direction)) {
-      params.push_back(*param);
-    }
-  }
-  if (const std::optional<mir::TypeId> report =
-          ReportParamTypeOf(unit_lowerer.Unit(), decl.kind)) {
-    params.push_back(*report);
-  }
-  return params;
-}
-
-auto ParamTypesOf(
-    UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface)
-    -> std::vector<mir::TypeId> {
-  std::vector<mir::TypeId> params;
-  params.reserve(interface.params.size());
-  for (const hir::ExternalCalleeParam& formal : interface.params) {
-    if (const std::optional<mir::TypeId> param =
-            ParamTypeOf(unit_lowerer, formal.type, formal.direction)) {
-      params.push_back(*param);
-    }
-  }
-  if (const std::optional<mir::TypeId> report =
-          ReportParamTypeOf(unit_lowerer.Unit(), interface.kind)) {
-    params.push_back(*report);
-  }
-  return params;
-}
-
 auto ProjectCompletionComponent(
     mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,
     base::ComponentIndex index, mir::TypeId component_type) -> mir::ExprId {

@@ -150,14 +150,4 @@ auto SubroutineCallTypeOf(
     UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface,
     hir::TypeId result_type) -> mir::TypeId;
 
-// What a body answering `decl` takes after its receiver: one parameter per
-// formal that is one, then the report parameter where it takes one.
-auto ParamTypesOf(UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl)
-    -> std::vector<mir::TypeId>;
-
-// The same, for a callee this unit has no declaration of.
-auto ParamTypesOf(
-    UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface)
-    -> std::vector<mir::TypeId>;
-
 }  // namespace lyra::lowering::hir_to_mir

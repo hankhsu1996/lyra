@@ -6,7 +6,8 @@
 
 ## Status
 
-Accepted
+Accepted. How a procedure's own implicit list takes in what the functions it calls read is revised
+by [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md).
 
 ## Why this decision matters
 
@@ -180,8 +181,13 @@ walker now forces a second migration later when the residual case starts matteri
 All read-set inference is driven by slang's existing flow-analysis framework, through one analyzer
 the lowering owns. We do not write a subclass; we do not write a hand walker.
 
-- **A procedure's own sensitivity** (`always_comb` / `always_latch`, LRM 9.2.2.2.1) is slang's
-  `AnalyzedProcedure::getSensitivityList()`, built from a `DefaultDFA` run over the procedure.
+- **A procedure's own sensitivity** (`always_comb` / `always_latch`, LRM 9.2.2.2.1) is a
+  `DefaultDFA` run over the procedure's own text, less what it declares and the bits it writes; what
+  a function it calls reads is that function's report, as
+  [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md) records.
+  This record first took slang's `AnalyzedProcedure::getSensitivityList()`, which reads every called
+  function's body wherever it is declared -- a dependency on another unit's body this record did not
+  weigh.
 - **Any other node** -- an expression a wait or a sampled value function or a continuous assignment
   reads, a statement an `@*` gates, a subroutine's body a wait asks about -- is analyzed by running
   a fresh `DefaultDFA` on that node through `AbstractFlowAnalysis::run`. Feeding a wait's condition
@@ -241,17 +247,17 @@ here sorts them.
 in the instance analyzed, and that is not where the same text lands in another instance: a name
 through an interface port reaches whatever the port is bound to (LRM 25.3). Routing a wait from the
 symbol made every instance of a unit watch the first instance's interface. So each read carries the
-expression every name reaching it starts at, taken from the value paths of the analyzed text and,
-for a procedure's implicit list, of the bodies of the functions it calls; a name through a port is
-watched through the port, exactly as an expression through one is read, and any other name from
-where the symbol sits. Searching the reader's ports for the one bound to the symbol's interface
-guesses the name from the landing, and is wrong where two ports carry one instance or the text named
-it another way.
+expression every name reaching it starts at, taken from the value paths of the analyzed text; what a
+called function reads arrives as that function's report, already stated where the call reaches it. A
+name through a port is watched through the port, exactly as an expression through one is read, and
+any other name from where it starts. Searching the reader's ports for the one bound to the symbol's
+interface guesses the name from the landing, and is wrong where two ports carry one instance or the
+text named it another way.
 
-The project-owned code is the analyzer: the flattening of `getRValues()` into
-`vector<SensitivityRead>` (mirrors `AnalyzedProcedure.cpp:223-227`), the collection of what a node
-declares, and a cache per node. No subclass, no state type, no hook overrides, no use of slang's
-`detail::` namespace.
+The project-owned code is the analyzer: the flattening of `getRValues()` into a flat list of the
+parts read (mirrors `AnalyzedProcedure.cpp:223-227`), the collection of what a node declares, and a
+cache per node. No subclass, no state type, no hook overrides, no use of slang's `detail::`
+namespace.
 
 ## Rejected alternatives
 
@@ -317,7 +323,7 @@ contribute upstream, the project-owned analyzer shrinks to a few lines of API tr
   `ExpressionReadCollector`) and `src/lyra/lowering/ast_to_hir/statement/lower.cpp` (the
   `WaitCondReadCollector`) are deleted.
 - Wait-statement and continuous-assignment lowering switch from walker invocation to asking the
-  analyzer, symmetric with how always_comb asks for its procedure's list.
+  analyzer, symmetric with how `always_comb` asks for its procedure's list.
 - Continuous assignment gains correctness it did not have before: function calls with output
   arguments in the RHS, embedded assignments, and compound expressions are now read-set-correct.
 - Wait cond inherits the same correctness.

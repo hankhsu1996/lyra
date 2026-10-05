@@ -243,6 +243,11 @@ auto WaitRecollecting(
       services, std::span<const Trigger>{leaves}, observations);
 }
 
+auto WaitAny(RuntimeEffects& services, const ReadReport* report) -> bool {
+  return services.CurrentProcess().ParkOn<EventControlWait>(
+      services, report->ImplicitList());
+}
+
 auto WaitUntil(RuntimeEffects& services, std::span<ReadReport* const> reports)
     -> bool {
   const std::vector<Trigger> leaves = CollectedLeaves(reports);

@@ -2,18 +2,19 @@
 
 ## Purpose
 
-Define how a reference reaches its target. A route from referrer to target is a sequence of
-segments; each segment's realization follows whether the referrer has a declaration to compile
-against for that step. The same resolution serves both accessing the target's value and observing
-its changes.
+Define how a reference reaches its target. A route from referrer to target is an anchor, a sequence
+of typed steps and a leaf, each compiled against a declaration the referrer has for it. The same
+resolution serves both accessing the target's value and observing its changes.
 
 ## Owns
 
-- The decomposition of a reference's route into segments and the rule that each segment is
-  classified independently by whether the referrer has a declaration for its target.
-- The rule that a declared segment realizes as typed navigation -- through an in-artifact member
-  identity, or through a signature member's name resolved at the referrer's compile time -- and that
-  an opaque segment realizes as a runtime-SDK by-name lookup.
+- The decomposition of a reference's route into an anchor, steps and a leaf, and the rule that every
+  step and leaf is compiled against a declaration the referrer has for its target.
+- The rule that a step realizes as typed navigation -- through an in-artifact member identity, or
+  through a member the target scope published, resolved at the referrer's compile time -- and that a
+  name the target scope did not publish is refused where the referrer compiles.
+- The anchor of an upward name: the enclosing instance of the class the front end's search landed
+  on.
 - The contract that route execution is total: a route that fails to seal is either a
   user-diagnosable elaboration error (a non-constructed target, a forwarding cycle with no storage
   root) or a compiler-invariant violation, never a runtime fallback.
@@ -23,8 +24,8 @@ its changes.
 - The contract that a sealed endpoint serves both value access and change observation through one
   stored reference.
 - The rule that a route whose leaf is an object reference seals how to reach the target rather than
-  where the target is, and the resolution of a source name against the class an instance turned out
-  to have.
+  where the target is, and that a name continuing past it is an access compiled against the class
+  the reached storage was declared with.
 - The rule that connectivity is linkage between objects and never alters what an object owns.
 
 ## Does Not Own
@@ -32,9 +33,9 @@ its changes.
 - The shape of the object graph, the construction order, and the graph's faithfulness to the
   frontend's elaboration (see `hierarchy_and_generate.md`). This doc relies on that faithfulness but
   does not establish it.
-- What each unit kind publishes, which is what decides whether a segment is declared (see
-  `compilation_unit_model.md`).
-- The compile-time identity kinds used to thread route segments (see `identity_and_ownership.md`,
+- What each unit kind and each scope publishes, which is what decides which names a referrer may
+  reach (see `compilation_unit_model.md`).
+- The compile-time identity kinds used to thread route steps (see `identity_and_ownership.md`,
   `hir.md`, `mir.md`).
 - The lexical axis of reference: how a value reference names a binding in its own callable body, and
   how a binding crosses a closure boundary by capture (see `binding_and_capture.md`). This doc owns
@@ -49,21 +50,26 @@ its changes.
 
 ## Core Invariants
 
-1. Every reference is a route from a structural origin to an endpoint. The route is a sequence of
-   segments; the endpoint is the canonical access point for every read, write, and observation
-   against the reference.
-2. Each segment is classified by whether the referrer has a declaration to compile against for that
-   step. A **declared** segment's target is one the referrer already compiles against -- a class its
-   own artifact owns, or a member on a signature it consumes -- and its realization is typed
-   navigation, with no string lookup and no SDK call at simulation or elaboration time. An
-   **opaque** segment reaches past a unit's signature, where the referrer has no declaration; its
-   realization is a runtime-SDK by-name lookup. A single route may alternate segments freely.
+1. Every reference is a route from a structural origin to an endpoint. The route is an anchor, a
+   sequence of steps and a leaf; the endpoint is the canonical access point for every read, write,
+   and observation against the reference.
+2. Every step and every leaf is compiled against a declaration the referrer has for its target: a
+   class its own artifact owns, or a member the target scope published. Its realization is typed
+   navigation, with no string lookup and no runtime call naming the target at simulation or
+   elaboration time, and no part of a route carries a string. A step is one element of the path the
+   source wrote (LRM 23.6), the declaration it names and the selects written beside that name, so
+   every kind of step selects the same way. A step onto an instance is the published member holding
+   it, selected; a step into a loop's block is the construct's published entry, selected by the
+   block's position; a step into a block a conditional chose is the construct's entry, which holds
+   at most one object and takes no select. Either block step views what it reached as that block's
+   published class. A leaf is a published member, a published disable target, or a direct call to a
+   published subroutine.
 
-   A declared segment's identity comes from one of two places, which changes nothing about its cost
-   or its realization: an in-artifact member identity when the emitting artifact owns both classes,
-   and the member's name resolved against the consumed signature at the referrer's compile time when
-   it does not. The second is not a weaker identity -- a name checked by the compiler that consumes
-   it and a name looked up in a run-time registry share a spelling and nothing else.
+   A step's identity comes from one of two places, which changes nothing about its cost or its
+   realization: an in-artifact member identity when the emitting artifact owns both classes, and the
+   member's name resolved against the target's publication at the referrer's compile time when it
+   does not. A name the target scope did not publish has no declaration to compile against and is
+   refused there, as a compile error and never as a run-time failure.
 
 3. A route that descends into a scope or crosses into another instance executes once during the
    binding-graph phase, producing a candidate endpoint; the endpoint is committed at the sealing
@@ -75,7 +81,7 @@ its changes.
    validates every reference, and the constructed object graph is faithful to that elaboration (see
    `hierarchy_and_generate.md`). A reference to a non-constructed runtime target (a non-selected
    conditional-generate arm, an out-of-range instance-array element) is rejected at the sealing
-   barrier with a user diagnostic; a route whose segments cannot otherwise execute is an
+   barrier with a user diagnostic; a route whose steps cannot otherwise execute is an
    `InternalError`.
 5. Port connections, hierarchical references, and cross-instance trigger subscriptions share one
    route mechanism. There is no parallel resolution path per reference kind, per direction, or per
@@ -90,25 +96,28 @@ its changes.
    surface reached through a sealed direct path.
 8. A route whose leaf is an object reference seals **how to reach** the target, not **where** the
    target is. The reference's value is a value the design computes and overwrites, so no address
-   survives sealing; what the route commits is the object reference itself, plus -- where the source
-   continues into a property or a behavior -- the resolution of that name into a coordinate: what
-   the access reaches, stated independently of which object it is applied to. The body applies it to
-   whichever object the reference holds at each access. The class the name resolves against is the
-   one the reached storage was **declared** with, never the one an object turns out to be: a
-   reference commonly names no object at all when its route seals, and which property an access
-   reaches is fixed by the class the access names rather than by what it runs on.
-9. Resolving a name against a class is not choosing which override runs. A coordinate for a property
-   is complete at sealing, and a behavior resolves to a body. For a virtual behavior that body is
-   one the declaring unit synthesizes to make the virtual call on the object it is handed, so which
-   override finally runs is still the object's own answer at the moment of the call, and no route
-   commits it. _Consequence: a reference without a class view is not a reference whose view is
-   chosen at run time -- every legality question is settled before lowering, and what the referrer
-   lacks is a name for the class rather than knowledge of it._
+   survives sealing; what the route commits is the storage holding the object reference. Where the
+   source continues into a property or a behavior, the body reads the reference at each access and
+   applies an ordinary member access to whichever object it holds. The class that access is compiled
+   against is the one the reached storage was **declared** with, which the declaring scope
+   published, never the one an object turns out to be: a reference commonly names no object at all
+   when its route seals, and which property an access reaches is fixed by the class the access names
+   rather than by what it runs on.
+9. Resolving a name against a class is not choosing which override runs. A property resolves to its
+   member and a behavior to a body. For a virtual behavior that is the virtual call on the object
+   the reference holds, so which override finally runs is still the object's own answer at the
+   moment of the call, and no route commits it.
+10. An upward name (LRM 23.8) is anchored at the nearest enclosing instance of the class the front
+    end's search landed on -- or, past the topmost, a top-level instance of it -- reached by one
+    runtime query and a static downcast to that class. Which class the search lands on is part of
+    what tells a referrer's unit apart (LRM 23.8 resolves an upward name per instance, so two
+    instances of one definition may land on different declarations of different types), and a route
+    never carries a type that differs between the instances sharing its code.
 
 ## Boundary to Adjacent Layers
 
 - `compilation_unit_model.md` owns the signature each unit kind publishes, which is what decides
-  whether a segment is declared to a given artifact.
+  which names a referrer outside the unit may reach.
 - `hierarchy_and_generate.md` owns the object graph the routes navigate and the faithfulness of that
   graph to the frontend's elaboration that makes route execution total.
 - `runtime_model.md` places route execution in the constructor context (the binding-graph phases at
@@ -116,33 +125,34 @@ its changes.
 - `elaboration_lifecycle.md` owns _when_ a route executes and seals. A route that descends or
   crosses an instance executes in Resolve and its endpoint commits in Seal; one of parent edges is
   walked where it is used.
-- `identity_and_ownership.md` owns the identity rules that route segments thread.
+- `identity_and_ownership.md` owns the identity rules that route steps thread.
 - `scheduling.md` owns the wakeup that fires when a sealed endpoint's underlying cell changes.
 
 ## Forbidden Shapes
 
-- Compiled body code that bakes another unit's layout to realize an opaque segment at compile time.
-  An opaque segment is by-name through the SDK by definition; baking the target's layout is the
-  canonical artifact-boundary violation.
-- Route mechanism dispatched on the frontend's lexical-form classification or on source order. The
-  mechanism follows whether each segment is declared to the referrer; the form that named the target
-  is not visible past the AST-to-HIR boundary.
-- An opaque segment used for a name the target unit published. A published name has a declaration to
-  compile against, so routing it through the SDK converts a compile-time check into an elaboration
-  failure and leaves an unchecked cast where the check belonged.
+- Compiled body code that depends on another unit's layout beyond what that unit published. The
+  published part is what a referrer compiles against; reaching into what the realization adds is the
+  canonical artifact-boundary violation, since lowering moves it with every body edit.
+- Route mechanism dispatched on the frontend's lexical-form classification or on source order. Every
+  step is the same kind of typed step whatever form named the target, and the form is not visible
+  past the AST-to-HIR boundary.
+- Resolving a hierarchical name by its text while the design elaborates or runs: a scope registering
+  its signals, statics or disable targets under their names, a search of child scopes by name, a
+  scope or class carrying a table of subroutine or member names, or a route carrying a string for
+  the runtime to match. A name resolved that way surfaces a misspelling or a type that differs
+  between instances at run time or not at all, leaves an unchecked cast where a compile-time check
+  belonged, and makes every instance pay a registration per declaration. A scope's hierarchy segment
+  for `%m` and a class's DPI-C export table are not this: neither resolves a hierarchical name.
 - A reference shape per direction or per lexical form (as separate species). One semantic shape; one
   route decomposition.
 - Resolution driven from the target's side: the referenced unit wiring, pushing, or storing its own
   member into the units that reference it. A unit compiles against its own signature and cannot know
   who references it, so it never drives resolution for a consumer and never carries a list of its
-  referrers. Every route's opaque segment is driven by the referrer, which reaches the target by
-  name at Resolve; the target only answers by-name queries about its own declarations.
-- A typed segment naming a declaration the target unit did not publish -- an internal member, an
-  internal type, a child whose name it kept to itself. What decides is publication and never
-  ownership: an interface publishes the interfaces it instantiates (LRM 25.10) while a module
-  publishes no child at all, so one unit kind's owned child is a typed segment and the other's is
-  not. A typed segment stops at what the referrer compiles against; the step that reaches past a
-  signature is opaque by contract.
+  referrers. Every route is driven by the referrer, through what the target published.
+- A typed step naming a declaration the target scope did not publish -- something lowering added to
+  its realization, such as a route's slot, process state or a closure's home. What decides is
+  publication: a name reaching a declaration that is not published is refused where the referrer
+  compiles, and never falls back to another way of reaching it.
 - A resolution path for ports that is distinct from the one for hierarchical references. Two
   mechanisms for cross-instance access is the canonical violation.
 - Resolution by flattened symbol-name lookup or a design-global path table that mirrors the object
@@ -155,19 +165,19 @@ its changes.
   reference's value is the design's to change, so such an endpoint is correct only until the first
   assignment and silently wrong afterwards.
 - A source name carried into a body to be resolved against an object there. The name is resolved
-  where the instance is known; what crosses into the body is the coordinate.
-- Elaboration choosing which override a virtual behavior runs. It settles the name to a body that
-  makes the virtual call, and the object answers which override that call reaches.
-- A coordinate formed against a class the referrer assumed rather than the class the bound instance
-  has. A position read off the wrong class addresses whatever sits at that position in another
-  class's layout, with nothing to catch it.
-- Reaching past a signature by arranging for the two sides' representations to agree, rather than by
-  an operation both sides state. Agreement in layout is a target language's choice and holds for
-  some shapes and not others, so what it produces is a failure confined to the shapes where it does
-  not hold.
-- A specialization forked so that an endpoint's class becomes a compile-time fact of the body. The
-  class of a target reached past a signature belongs to the instance; making it an artifact fact
-  requires keying the artifact on where the instance sits.
+  where the referrer compiles, against the class the storage was declared with.
+- Elaboration choosing which override a virtual behavior runs. The access makes the virtual call,
+  and the object answers which override that call reaches.
+- An access compiled against a class the referrer assumed rather than the class the reached storage
+  was declared with. A position read off the wrong class addresses whatever sits at that position in
+  another class's layout, with nothing to catch it.
+- Reaching another unit's declaration by arranging for the two sides' representations to agree,
+  rather than through the class both compile against. Agreement in layout is a target language's
+  choice and holds for some shapes and not others, so what it produces is a failure confined to the
+  shapes where it does not hold.
+- A referrer's unit told apart by where an instance sits -- the length or path of an upward name's
+  climb. It splits units that compile to the same code; the class the climb lands on is what changes
+  the code, and it is what tells the unit apart.
 - A route keyed or resolved by a design-global coordinate, ordinal, or instance id.
 - A reference whose sealing failure is silently swallowed at runtime. A user-diagnosable failure
   (non-constructed target, forwarding cycle without storage root) surfaces a user diagnostic; an
@@ -186,60 +196,60 @@ its changes.
 ## Notes / Examples
 
 **Same-unit sibling reference.** `always_comb from_b = b.bx;` inside generate block `a` of `Top`,
-where `b` is a sibling generate of `a`. The route has two segments: `a -> Top` (the typed parent
-edge) and `Top -> b -> bx` (typed member access into the sibling generate's class then into its
-variable). Both segments are declared: `Top`'s artifact owns `a`'s class, `b`'s class, and the `bx`
-member. The route executes the typed chain once and seals to the variable's cell. The mechanism does
-not depend on whether `a` is declared before or after `b`.
+where `b` is a sibling generate of `a`. The route has two parts: `a -> Top` (the typed parent edge)
+and `Top -> b -> bx` (typed member access into the sibling generate's class then into its variable).
+Both are typed against classes the referrer's own artifact holds: `Top`'s artifact owns `a`'s class,
+`b`'s class, and the `bx` member. The route executes the typed chain once and seals to the
+variable's cell. The mechanism does not depend on whether `a` is declared before or after `b`.
 
-**The same cross-unit reference splits by what the child published.** `always_comb r = c.p;` and
+**A port and an internal variable are reached alike.** `always_comb r = c.p;` and
 `always_comb r = c.x;` inside a parent module, where `c` is a child module instance, `p` is one of
-its ports, and `x` is an internal variable. Both routes begin with the same declared segment
-`parent -> c`, reached through the `c` member's pointer type the parent's artifact owns. They differ
-at the second step, and the child decides which: `c -> p` is declared, because `p` is on the
-module's signature and the parent already compiles against it, so a renamed port fails where the
-parent compiles; `c -> x` is opaque, because the child published nothing to compile against, so the
-name resolves through the SDK at Resolve and a renamed `x` fails at elaboration. Both seal to a
-cell, and the body and its sensitivity read the sealed endpoint either way.
+its ports, and `x` is an internal variable. Both routes begin with the same step `parent -> c`,
+reached through the `c` member's pointer type the parent's artifact owns, and both end at a member
+of `c`'s published class: the child publishes every data object a hierarchical name may reach, not
+only its ports. A renamed `p` or `x` fails where the parent compiles, and a name the child never
+declared is refused there too. Both seal to a cell, and the body and its sensitivity read the sealed
+endpoint.
 
-**Multi-segment mixed route.** In `top.gen.child.x`, `top.gen` is declared (the generate scope
-belongs to top's unit), `gen.child` is declared (`child` is a member of `gen`'s class in the same
-unit), and `child.x` is opaque (`x` is not on `child`'s signature). The route alternates two typed
-segments and one opaque segment; the SDK is reached only where the route passes a signature.
+**A route through generate blocks and another unit.** In `top.gen[2].child.x`, `top -> gen[2]` is
+the loop construct's published entry selected at the block's position and viewed as the block's
+published class, `gen[2] -> child` is the published member holding the child instance, and
+`child -> x` is a member of `child`'s published class. Every step is typed, whether its class
+belongs to the referrer's own artifact or another unit published it.
 
 ```mermaid
 flowchart LR
-  O["origin"] -->|"declared: this artifact owns the class"| G["gen"]
-  G -->|"declared: same"| C["child"]
-  C -->|"opaque: x is on no signature this referrer consumes"| X["x"]
+  O["top"] -->|"generate entry, index 2, as the block's class"| G["gen[2]"]
+  G -->|"published member: the child instance"| C["child"]
+  C -->|"published member of child's class"| X["x"]
 ```
 
-Each arrow is classified on its own. Where a segment's target sits on a signature the referrer
-consumes, the same arrow is declared rather than opaque, and the route's shape does not change --
-`child.p` for a port `p` is the same three-hop route with its last arrow typed. Nothing about a
-route is decided by how many units it crosses, by how deep it goes, or by the syntax that named the
-target; every arrow asks the one question and the answers compose.
+Nothing about a route is decided by how many units it crosses, by how deep it goes, or by the syntax
+that named the target; every step is the same kind of typed step.
+
+**An upward name.** `always_comb y = Top.g;` inside a module instantiated somewhere below `Top`. The
+front end's search lands on `Top`'s class; the route's anchor is the nearest enclosing instance of
+that class, found by one runtime query and a static downcast, and `g` is a member of `Top`'s
+published class. Another instance of the same module whose search landed on a different class is a
+different unit, so neither carries a type the other would need.
 
 **A route that continues past an object reference.** `holder.h.tag`, where `h` is a class-typed
-variable of another unit and the class is declared inside that unit's design element. The segment
-reaching `h` is opaque, like any name past a signature. What follows is not another segment of the
-same kind: `tag` is a property of an object, and which object is a value `holder` overwrites
-whenever it likes. So the route seals two things -- the reference, and `tag` resolved against the
-class that instance declared `h` with. The body dereferences whichever object the reference holds
-and applies the coordinate. Replacing `tag` with a virtual behavior changes only what the name
-settles to, which is then a body making the virtual call instead of a storage position, with the
-object still answering which override that call reaches. `holder.q[0].tag` is the same picture with
-a collection in the middle -- what decides the shape is that a structural operation follows a value
-with no class view, never the syntax that produced the value.
+variable of another unit and the class is declared inside that unit's design element. The step
+reaching `h` is a published member like any other, and the class `h` is declared with is published
+by that element. What follows is not another step of the same kind: `tag` is a property of an
+object, and which object is a value `holder` overwrites whenever it likes. So the route seals the
+storage holding the reference, and the body reads the reference and applies an ordinary member
+access for `tag` to whichever object it holds. Replacing `tag` with a virtual behavior makes the
+access a virtual call, with the object still answering which override that call reaches.
+`holder.q[0].tag` is the same picture with a collection in the middle.
 
 **Port connections share the routing.** An input or output port is a continuous-assignment edge
 between the two objects' own storage (LRM 23.3.3); the cross-unit side reaches the partner cell
-through one route, whose final segment is declared because a port is on the module's signature. A
-`ref` port (LRM 23.3.3.2) is a forwarding link that resolves to the connected cell at sealing. An
-`inout` port reaches the child's net through the same route and then joins it to the parent's into
-one resolution (`net_resolution.md`), which is a fact about the two nets rather than a second way of
-reaching one. Every form whose cross-instance reach passes through Resolve shares the one route
-mechanism.
+through one route, whose leaf is a member of the module's published class. A `ref` port (LRM
+23.3.3.2) is a forwarding link that resolves to the connected cell at sealing. An `inout` port
+reaches the child's net through the same route and then joins it to the parent's into one resolution
+(`net_resolution.md`), which is a fact about the two nets rather than a second way of reaching one.
+Every form whose cross-instance reach passes through Resolve shares the one route mechanism.
 
 **Routing is deferred to Resolve, not dynamic.** The deferral keeps each unit independently and
 incrementally compilable; it carries no semantic uncertainty. The frontend has already proven every

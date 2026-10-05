@@ -89,7 +89,7 @@ class DeclaredDesign {
   // Declares every unit of `front_end`. A unit whose declarations fail is
   // reported and the rest declare anyway, so one run accounts for every unit;
   // nothing comes back after any such failure, because a body resolves names
-  // against what the units published and would fail for want of a promise
+  // against what the units published and would fail for want of a publication
   // nobody made, burying the account this step exists to give.
   //
   // A top is where the design begins, so nothing instantiates it and its ports

@@ -13,6 +13,7 @@
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
+#include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/mir/behavior_ordinal.hpp"
@@ -203,12 +204,13 @@ class UnitLowerer {
   [[nodiscard]] auto TakeClassIdentities(const mir::Class& cls)
       -> ClassIdentities;
 
-  // The symbol one body of `cls` is emitted and linked under. Which body it is
-  // decides that: a body the source declared is reached by its name, and one
-  // the compiler synthesized by which body it is.
+  // The symbol one body of `cls` is emitted and linked under, as a body of the
+  // class `class_part` names. Which body it is decides the rest: a body the
+  // source declared is reached by its name, and one the compiler synthesized
+  // by which body it is.
   [[nodiscard]] auto ClassBodySymbol(
-      mir::ClassId owner, const mir::Class& cls, mir::CallableId id) const
-      -> std::string;
+      lir::SymbolPart class_part, const mir::Class& cls,
+      mir::CallableId id) const -> std::string;
 
   auto TranslateType(const mir::Type& ty) -> lir::Type;
   static auto TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
@@ -233,8 +235,6 @@ class UnitLowerer {
   lir::CompilationUnit out_;
   std::unordered_map<mir::TypeId, lir::TypeId> type_memo_;
   base::Translation<mir::ClassId, ClassIdentities> class_identities_;
-  base::Translation<mir::ExternalUnitObjectId, lir::ExternalUnitObjectId>
-      external_unit_object_identities_;
   base::Translation<mir::ClosureId, ClosureIdentities> closure_identities_;
   base::Translation<mir::StructId, lir::StructId> struct_identities_;
 };

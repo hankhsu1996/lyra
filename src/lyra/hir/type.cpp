@@ -140,14 +140,13 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             return Combine(seed, static_cast<std::size_t>(t.klass));
           },
           [seed](const UnitObjectType& t) {
-            return Combine(seed, t.unit_name);
+            return Combine(Combine(seed, t.unit_name), t.class_name);
           },
           [seed](const VirtualInterfaceType& t) {
             return Combine(seed, t.unit_name);
           },
           // A type carrying nothing beyond being itself is separated by its arm
           // alone, which the seed already holds.
-          [seed](const OpaqueScopeType&) { return seed; },
           [seed](const WildcardIndexType&) { return seed; },
           [seed](const StringType&) { return seed; },
           [seed](const EventType&) { return seed; },
@@ -155,7 +154,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [seed](const ShortRealType&) { return seed; },
           [seed](const RealTimeType&) { return seed; },
           [seed](const ChandleType&) { return seed; },
-          [seed](const OpaqueObjectHandleType&) { return seed; },
           [seed](const NullType&) { return seed; },
           [seed](const VoidType&) { return seed; }});
 }
@@ -184,11 +182,9 @@ auto Type::IsIntegral() const -> bool {
           [](const RealTimeType&) { return false; },
           [](const ChandleType&) { return false; },
           [](const ClassHandleType&) { return false; },
-          [](const OpaqueObjectHandleType&) { return false; },
           [](const ImportedClassHandleType&) { return false; },
           [](const UnitObjectType&) { return false; },
           [](const VirtualInterfaceType&) { return false; },
-          [](const OpaqueScopeType&) { return false; },
           [](const NullType&) { return false; },
           [](const VoidType&) { return false; },
       });
@@ -219,7 +215,6 @@ auto Type::IsValueChangeObservable() const -> bool {
           // it holds is not what it held before. It separates that from a wait
           // on a property of the object, which the object answers.
           [](const ClassHandleType&) { return true; },
-          [](const OpaqueObjectHandleType&) { return true; },
           [](const ImportedClassHandleType&) { return true; },
           [](const ChandleType&) { return true; },
           // Which instance a virtual interface holds is a value it is compared
@@ -228,7 +223,6 @@ auto Type::IsValueChangeObservable() const -> bool {
           [](const WildcardIndexType&) { return false; },
           [](const EventType&) { return false; },
           [](const UnitObjectType&) { return false; },
-          [](const OpaqueScopeType&) { return false; },
           [](const NullType&) { return false; },
           [](const VoidType&) { return false; },
       });
@@ -274,13 +268,11 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const EventType&) -> Element { return std::nullopt; },
           [](const ChandleType&) -> Element { return std::nullopt; },
           [](const ClassHandleType&) -> Element { return std::nullopt; },
-          [](const OpaqueObjectHandleType&) -> Element { return std::nullopt; },
           [](const ImportedClassHandleType&) -> Element {
             return std::nullopt;
           },
           [](const UnitObjectType&) -> Element { return std::nullopt; },
           [](const VirtualInterfaceType&) -> Element { return std::nullopt; },
-          [](const OpaqueScopeType&) -> Element { return std::nullopt; },
           [](const NullType&) -> Element { return std::nullopt; },
           [](const VoidType&) -> Element { return std::nullopt; },
       });

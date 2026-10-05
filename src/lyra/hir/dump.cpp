@@ -19,6 +19,8 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/external_scope_ref.hpp"
+#include "lyra/hir/owned_child_ref.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -208,10 +210,6 @@ auto FormatClassPropertyTarget(const ClassPropertyTarget& target)
             return std::format(
                 "Class[external={}::{}].{}", t.unit_name, t.class_name,
                 t.property.value);
-          },
-          [](const UnpublishedClassPropertyTarget& t) -> std::string {
-            return std::format(
-                "Class[unpublished].coordinate={}", t.coordinate.value);
           }},
       target);
 }
@@ -220,6 +218,11 @@ auto FormatStaticPropertyTarget(const StaticPropertyTarget& target)
     -> std::string {
   return std::visit(
       Overloaded{
+          [](const InstanceStaticPropertyTarget& t) -> std::string {
+            return std::format(
+                "Class[{}].{} of instance hops:{}", t.property.owner.value,
+                t.property.prop.value, t.hops.value);
+          },
           [](const LocalStaticPropertyTarget& t) -> std::string {
             return std::format("Class[{}].{}", t.owner.value, t.prop.value);
           },
@@ -274,12 +277,6 @@ auto FormatMethodCallee(const MethodCallee& callee) -> std::string {
                     ? std::format(
                           " virtual={}", FormatExternalDispatchSlot(*c.slot))
                     : "");
-          },
-          [](const SettledMethodCallee& c) {
-            return std::format(
-                "SettledBody[{}] {}", c.body.body.value,
-                c.interface.kind == SubroutineKind::kTask ? "task"
-                                                          : "function");
           }},
       callee);
 }
@@ -443,19 +440,15 @@ class HirDumper {
               return std::format(
                   "ClassHandleType(class={})", FormatClassRef(c.class_ref));
             },
-            [](const OpaqueObjectHandleType&) -> std::string {
-              return "OpaqueObjectHandleType";
-            },
             [](const ImportedClassHandleType& c) -> std::string {
               return std::format(
                   "ImportedClassHandleType(class={})",
                   support::ImportedRuntimeClassName(c.klass));
             },
-            [](const OpaqueScopeType&) -> std::string {
-              return "OpaqueScopeType";
-            },
             [](const UnitObjectType& u) -> std::string {
-              return std::format("UnitObjectType(unit={})", u.unit_name);
+              return std::format(
+                  "UnitObjectType(unit={}, class={})", u.unit_name,
+                  u.class_name);
             },
             [](const VirtualInterfaceType& v) -> std::string {
               return std::format("VirtualInterfaceType(unit={})", v.unit_name);
@@ -739,6 +732,11 @@ class HirDumper {
       if (i != 0) out += ", ";
       out += std::format("{{{}}}", FormatWaitLeaf(reads.leaves[i]));
     }
+    out += "] writes=[";
+    for (std::size_t i = 0; i < reads.writes.size(); ++i) {
+      if (i != 0) out += ", ";
+      out += std::format("{{{}}}", FormatSensitivityEntry(reads.writes[i]));
+    }
     out += "] calls=[";
     for (std::size_t i = 0; i < reads.calls.size(); ++i) {
       if (i != 0) out += ", ";
@@ -960,16 +958,10 @@ class HirDumper {
               const StructuralScope* owner = &ResolveScope(u.hops);
               std::string descent;
               for (const OwnedChildStep& step : u.descent) {
-                const auto* generate =
-                    std::get_if<GenerateChildRef>(&step.child);
-                if (generate == nullptr) break;
                 descent += std::format(
-                    " . Generate[{}].Block[{}]{}", generate->generate.value,
-                    FormatNamedBlock(generate->block),
-                    FormatIndices(step.indices));
-                const Generate& gen = owner->generates.Get(generate->generate);
-                owner =
-                    &gen.blocks.Get(ChildScopeOf(gen, generate->block)).scope;
+                    " . {}{}", FormatOwnedChild(step.names),
+                    FormatIndices(step.selects));
+                owner = &BlockScopeAt(*owner, step);
               }
               const auto& decl =
                   owner->structural_subroutines.Get(u.subroutine);
@@ -994,7 +986,8 @@ class HirDumper {
             },
             [](const StaticMethodCallRef& s) -> std::string {
               return std::format(
-                  "StaticMethod target={}", FormatMethodCallee(s.callee));
+                  "StaticMethod target={} {}", FormatMethodCallee(s.callee),
+                  FormatDeclaringInstance(s.declaring_instance));
             },
             [](const SystemSubroutineRef& s) -> std::string {
               const auto& desc = support::LookupSystemSubroutine(s.id);
@@ -1038,10 +1031,10 @@ class HirDumper {
                   e.unit_name, e.subroutine_name);
             },
             [this](const ExternalUnitMethodRef& e) -> std::string {
-              const ExternalUnitObject& promised =
-                  unit_->external_unit_objects.Get(e.object);
+              const ScopeClassSignature& published =
+                  unit_->external_scope_classes.Get(e.scope_class).signature;
               const PublishedCallable& callable =
-                  promised.callables.Get(e.callable);
+                  published.callables.Get(e.callable);
               const std::string receiver = std::visit(
                   Overloaded{
                       [](const RoutedObjectRef& r) -> std::string {
@@ -1057,15 +1050,7 @@ class HirDumper {
                   "ExternalUnitMethod {} \"{}::{}\" recv={}",
                   callable.interface.kind == SubroutineKind::kTask ? "task"
                                                                    : "function",
-                  promised.class_name, callable.name, receiver);
-            },
-            [](const OpaqueUnitMethodRef& e) -> std::string {
-              return std::format(
-                  "OpaqueUnitMethod {} recv=RoutedObjectRef[{}] "
-                  "entry=RoutedCallableRef[{}]",
-                  e.interface.kind == SubroutineKind::kTask ? "task"
-                                                            : "function",
-                  e.receiver.id.value, e.entry.id.value);
+                  published.class_name, callable.name, receiver);
             },
         },
         callee);
@@ -1282,17 +1267,18 @@ class HirDumper {
                   "InterfaceInstanceAccessExpr handle=Expr[{}] interface={} "
                   "steps={}",
                   sel.handle.value,
-                  unit_->external_unit_objects.Get(sel.object).unit_name,
+                  unit_->external_scope_classes.Get(sel.scope_class).unit_name,
                   sel.steps.size());
             },
             [this](const InterfaceMemberAccessExpr& sel) -> std::string {
               return std::format(
                   "InterfaceMemberAccessExpr handle=Expr[{}] interface={} "
-                  "steps={} member[{}]",
+                  "steps={} ExternalScopeClass[{}].member[{}]",
                   sel.instance.handle.value,
-                  unit_->external_unit_objects.Get(sel.instance.object)
+                  unit_->external_scope_classes.Get(sel.instance.scope_class)
                       .unit_name,
-                  sel.instance.steps.size(), sel.member.value);
+                  sel.instance.steps.size(), sel.scope_class.value,
+                  sel.member.value);
             },
             [](const ConcatExpr& c) -> std::string {
               std::string operands;
@@ -1378,8 +1364,9 @@ class HirDumper {
                 args += std::format("Expr[{}]", n.arguments[i].value);
               }
               return std::format(
-                  "ClassNewExpr class={} args=[{}]",
-                  FormatClassRef(n.class_ref), args);
+                  "ClassNewExpr class={} args=[{}] {}",
+                  FormatClassRef(n.class_ref), args,
+                  FormatDeclaringInstance(n.declaring_instance));
             },
             [](const AssociativeAssignmentPatternExpr& a) -> std::string {
               std::string entries;
@@ -1459,17 +1446,20 @@ class HirDumper {
       Dedent();
     }
 
-    if (!u.external_unit_objects.empty()) {
-      Line("ExternalUnitObjects:");
+    if (!u.external_scope_classes.empty()) {
+      Line("ExternalScopeClasses:");
       Indent();
-      for (const ExternalUnitObjectId id : u.external_unit_objects.Ids()) {
-        const ExternalUnitObject& object = u.external_unit_objects.Get(id);
+      for (const ExternalScopeClassId id : u.external_scope_classes.Ids()) {
+        const ExternalScopeClass& record = u.external_scope_classes.Get(id);
         Line(
             std::format(
-                "[{}] {}::{}", id.value, object.unit_name, object.class_name));
+                "[{}] {}::{}", id.value, record.unit_name,
+                record.signature.class_name));
         Indent();
-        for (const PublishedMemberId member_id : object.members.Ids()) {
-          const PublishedMember& member = object.members.Get(member_id);
+        for (const PublishedMemberId member_id :
+             record.signature.members.Ids()) {
+          const PublishedMember& member =
+              record.signature.members.Get(member_id);
           Line(
               std::format(
                   "[{}] \"{}\" : Type[{}]{}", member_id.value, member.name,
@@ -1503,6 +1493,9 @@ class HirDumper {
     const std::string kind = c.is_interface_class ? "interface class" : "class";
     Line(std::format("[{}] {} \"{}\"", id.value, kind, name));
     Indent();
+    if (c.takes_declaring_instance) {
+      Line("Takes: the instance it belongs to");
+    }
     if (c.base.has_value()) {
       Line(std::format("Extends: {}", FormatClassRef(*c.base)));
     }
@@ -1541,15 +1534,25 @@ class HirDumper {
       Line(
           std::format(
               "BaseCall: {} ({})",
-              c.base_call.declaring_scope_hops.has_value()
-                  ? std::format(
-                        "declaring_scope=hops:{}",
-                        c.base_call.declaring_scope_hops->value)
-                  : "declaring_scope=none",
-              args));
+              FormatDeclaringInstance(c.base_call.declaring_instance), args));
     }
     Dedent();
     scope_stack_ = outer;
+  }
+
+  static auto FormatDeclaringInstance(
+      const std::optional<DeclaringInstanceReach>& reach) -> std::string {
+    if (!reach.has_value()) return "declaring_instance=none";
+    return std::visit(
+        Overloaded{
+            [](StructuralHops hops) {
+              return std::format("declaring_instance=hops:{}", hops.value);
+            },
+            [](const RoutedObjectRef& routed) {
+              return std::format(
+                  "declaring_instance=RoutedObjectRef[{}]", routed.id.value);
+            }},
+        *reach);
   }
 
   static auto FormatIndices(const std::vector<std::uint32_t>& indices)
@@ -1561,15 +1564,124 @@ class HirDumper {
     return out;
   }
 
-  static auto FormatNamedBlock(const NamedBlock& block) -> std::string {
+  static auto FormatPublication(const ScopePublication& published)
+      -> std::string {
+    std::string positions;
+    const auto add = [&](std::string position) {
+      if (!positions.empty()) positions += ", ";
+      positions += position;
+    };
+    add(std::format("as \"{}\"", published.signature.class_name));
+    for (const std::string& alias : published.aliases) {
+      add(std::format("also as \"{}\"", alias));
+    }
+    for (const PublishedDecl& decl : published.members) {
+      add(std::visit(
+          Overloaded{
+              [](const StructuralDataObjectId& id) {
+                return std::format("StructuralDataObject[{}]", id.value);
+              },
+              [](const PublishedStatic& local) {
+                return std::format(
+                    "Static[{}] of {}", local.var.value,
+                    std::visit(
+                        Overloaded{
+                            [](ProcessId id) {
+                              return std::format("Process[{}]", id.value);
+                            },
+                            [](StructuralSubroutineId id) {
+                              return std::format(
+                                  "StructuralSubroutine[{}]", id.value);
+                            }},
+                        local.body));
+              },
+              [](const LocalStaticPropertyTarget& property) {
+                return std::format(
+                    "StaticProperty[{}] of Class[{}]", property.prop.value,
+                    property.owner.value);
+              },
+              [](const InstanceMemberId& id) {
+                return std::format("InstanceMember[{}]", id.value);
+              },
+              [](const InterfacePortId& id) {
+                return std::format("InterfacePort[{}]", id.value);
+              }},
+          decl));
+    }
+    for (const GenerateId id : published.generates) {
+      add(std::format("Generate[{}]", id.value));
+    }
+    for (const ProceduralScopeId id : published.disable_targets) {
+      add(std::format("DisableTarget[ProceduralScope[{}]]", id.value));
+    }
+    for (const StructuralSubroutineId id : published.callables) {
+      add(std::format("Method[StructuralSubroutine[{}]]", id.value));
+    }
+    return positions;
+  }
+
+  static auto FormatOwnedChild(const OwnedChildRef& names) -> std::string {
     return std::visit(
         Overloaded{
-            [](const BlockAtIndex& at) { return std::format("{}", at.index); },
-            [](const BlockAsAlternative& as) {
-              return std::format("alt{}", as.position);
+            [](const InstanceMemberId& id) {
+              return std::format("InstanceMember[{}]", id.value);
+            },
+            [](const GenerateLoopRef& loop) {
+              return std::format("Generate[{}]", loop.generate.value);
+            },
+            [](const GenerateBlockRef& block) {
+              return std::format(
+                  "Generate[{}].alt{}", block.generate.value,
+                  block.alternative);
             },
         },
-        block);
+        names);
+  }
+
+  static auto FormatExternalScopeRef(const ExternalScopeRef& names)
+      -> std::string {
+    return std::visit(
+        Overloaded{
+            [](const ExternalMemberRef& member) {
+              return std::format(
+                  "ExternalScopeClass[{}].member[{}] as ExternalScopeClass[{}]",
+                  member.scope_class.value, member.member.value,
+                  member.result_class.value);
+            },
+            [](const ExternalGenerateRef& generate) {
+              return std::format(
+                  "ExternalScopeClass[{}].generate[{}] as "
+                  "ExternalScopeClass[{}]",
+                  generate.scope_class.value, generate.generate.value,
+                  generate.result_class.value);
+            },
+        },
+        names);
+  }
+
+  // The scope a descent element names a block of `owner` lands in. A
+  // subroutine's descent stays inside its own unit, so it names no instance.
+  static auto BlockScopeAt(
+      const StructuralScope& owner, const OwnedChildStep& step)
+      -> const StructuralScope& {
+    return std::visit(
+        Overloaded{
+            [](const InstanceMemberId&) -> const StructuralScope& {
+              throw InternalError(
+                  "HirDumper::BlockScopeAt: a descent names an instance of "
+                  "another unit");
+            },
+            [&](const GenerateLoopRef& loop) -> const StructuralScope& {
+              const Generate& gen = owner.generates.Get(loop.generate);
+              return gen.blocks.Get(LoopBlockScopeOf(gen, step.selects)).scope;
+            },
+            [&](const GenerateBlockRef& block) -> const StructuralScope& {
+              const Generate& gen = owner.generates.Get(block.generate);
+              return gen.blocks.Get(ChosenBlockScopeOf(gen, block.alternative))
+                  .scope;
+            },
+        },
+        step.names);
   }
 
   static auto FormatSelectionChoice(
@@ -1592,55 +1704,32 @@ class HirDumper {
   }
 
   static auto FormatRouteWalk(
-      const RouteHead& head, const std::vector<PathStep>& steps)
+      const RouteBase& base, const std::vector<PathStep>& steps)
       -> std::string {
     std::string out = std::visit(
         Overloaded{
-            [](const InUnitHead& h) {
-              return std::format("self^{}", h.hops.value);
+            [](const InUnitBase& b) {
+              return std::format("self^{}", b.hops.value);
             },
-            [](const RootHead&) { return std::string{"$root"}; },
-            [](const VisibleChildHead& h) {
+            [](const EnclosingInstanceBase& b) {
               return std::format(
-                  "visible \"{}\"{}", h.head_name,
-                  FormatIndices(h.head_indices));
+                  "enclosing ExternalScopeClass[{}]", b.scope_class.value);
             }},
-        head);
-    for (const auto& step : steps) {
-      out += std::visit(
+        base);
+    for (const PathStep& step : steps) {
+      const std::string names = std::visit(
           Overloaded{
-              [](const OwnedChildStep& owned) {
-                return std::visit(
-                    Overloaded{
-                        [&](const InstanceMemberId& id) {
-                          return std::format(
-                              " . InstanceMember[{}]{}", id.value,
-                              FormatIndices(owned.indices));
-                        },
-                        [&](const GenerateChildRef& g) {
-                          return std::format(
-                              " . Generate[{}].Block[{}]{}", g.generate.value,
-                              FormatNamedBlock(g.block),
-                              FormatIndices(owned.indices));
-                        }},
-                    owned.child);
+              [](const OwnedChildRef& owned) {
+                return FormatOwnedChild(owned);
               },
-              [](const InterfacePortStep& port) {
-                return std::format(
-                    " . InterfacePort[{}]{}", port.port.value,
-                    FormatIndices(port.indices));
+              [](const InterfacePortId& port) {
+                return std::format("InterfacePort[{}]", port.value);
               },
-              [](const SignatureMemberStep& member) {
-                return std::format(
-                    " . ExternalUnitObject[{}].member[{}]{}",
-                    member.object.value, member.member.value,
-                    FormatIndices(member.indices));
-              },
-              [](const OpaqueStep& opaque) {
-                return std::format(
-                    " . \"{}\"{}", opaque.name, FormatIndices(opaque.indices));
+              [](const ExternalScopeRef& published) {
+                return FormatExternalScopeRef(published);
               }},
-          step);
+          step.names);
+      out += std::format(" . {}{}", names, FormatIndices(step.selects));
     }
     return out;
   }
@@ -1664,13 +1753,10 @@ class HirDumper {
                   l.body);
               return std::format(" . {}.ProceduralVar[{}]", body, l.var.value);
             },
-            [](const SignatureMemberLeaf& l) {
+            [](const ExternalMemberLeaf& l) {
               return std::format(
-                  " . ExternalUnitObject[{}].member[{}]", l.object.value,
+                  " . ExternalScopeClass[{}].member[{}]", l.scope_class.value,
                   l.member.value);
-            },
-            [](const OpaqueLeaf& l) {
-              return std::format(" . \"{}\"", l.name);
             }},
         leaf);
     const DataCell cell = CellOf(leaf);
@@ -1683,10 +1769,6 @@ class HirDumper {
     return std::format(" : Type[{}] object", leaf.type.value);
   }
 
-  static auto FormatLeaf(const OpaqueCallableLeaf& leaf) -> std::string {
-    return std::format(" . \"{}\"() : entry", leaf.name);
-  }
-
   static auto FormatLeaf(const DisableLeaf& leaf) -> std::string {
     return std::visit(
         Overloaded{
@@ -1694,29 +1776,17 @@ class HirDumper {
               return std::format(
                   " . ProceduralScope[{}] : disable target", l.scope.value);
             },
-            [](const OpaqueDisableTargetLeaf&) {
-              return std::string{" : disable target"};
+            [](const ExternalDisableTargetLeaf& l) {
+              return std::format(
+                  " . ExternalScopeClass[{}].disable_target[{}]",
+                  l.scope_class.value, l.target.value);
             }},
         leaf);
   }
 
-  static auto FormatMember(const ClassMemberName& m, std::string_view answers)
-      -> std::string {
-    return std::format(
-        R"( . class "{}" . "{}" : {})", m.class_name, m.name, answers);
-  }
-
-  static auto FormatLeaf(const PropertyCoordinateLeaf& leaf) -> std::string {
-    return FormatMember(leaf.member, "property coordinate");
-  }
-
-  static auto FormatLeaf(const BehaviorBodyLeaf& leaf) -> std::string {
-    return FormatMember(leaf.member, "behavior body");
-  }
-
   template <typename Leaf>
   static auto FormatRoute(const Route<Leaf>& r) -> std::string {
-    return FormatRouteWalk(r.head, r.steps) + FormatLeaf(r.leaf);
+    return FormatRouteWalk(r.base, r.steps) + FormatLeaf(r.leaf);
   }
 
   template <typename Walk, typename Id>
@@ -1743,28 +1813,10 @@ class HirDumper {
       const auto& port = s.interface_ports.Get(id);
       Line(
           std::format(
-              "InterfacePort[{}] \"{}\" : ExternalUnitObject[{}]", id.value,
-              port.name, port.object.value));
+              "InterfacePort[{}] \"{}\" : ExternalScopeClass[{}]", id.value,
+              port.name, port.scope_class.value));
     }
-    if (!s.published_members.empty()) {
-      std::string positions;
-      for (const PublishedDecl& decl : s.published_members) {
-        if (!positions.empty()) positions += ", ";
-        positions += std::visit(
-            Overloaded{
-                [](const StructuralDataObjectId& id) {
-                  return std::format("StructuralDataObject[{}]", id.value);
-                },
-                [](const InstanceMemberId& id) {
-                  return std::format("InstanceMember[{}]", id.value);
-                },
-                [](const InterfacePortId& id) {
-                  return std::format("InterfacePort[{}]", id.value);
-                }},
-            decl);
-      }
-      Line(std::format("Published: {}", positions));
-    }
+    Line(std::format("Published: {}", FormatPublication(s.published)));
     for (const StructuralSubroutineId id : s.structural_subroutines.Ids()) {
       DumpSubroutine(
           "StructuralSubroutine", id.value, s.structural_subroutines.Get(id),
@@ -1810,16 +1862,13 @@ class HirDumper {
       }
       Line(
           std::format(
-              "InstanceMember[{}] \"{}\"{} : ExternalUnitObject[{}] {}",
-              id.value, im.instance_name, array_suffix, im.object.value,
+              "InstanceMember[{}] \"{}\"{} : ExternalScopeClass[{}] {}",
+              id.value, im.instance_name, array_suffix, im.scope_class.value,
               FormatArguments(im.arguments)));
     }
     DumpTable("RoutedValueRef", s.routes.values);
     DumpTable("RoutedObjectRef", s.routes.objects);
-    DumpTable("RoutedCallableRef", s.routes.callables);
     DumpTable("RoutedDisableTargetRef", s.routes.disable_targets);
-    DumpTable("PropertyCoordinate", s.routes.property_coordinates);
-    DumpTable("BehaviorBody", s.routes.behavior_bodies);
     for (const PortConnectionId id : s.port_connections.Ids()) {
       const auto& pc = s.port_connections.Get(id);
       const std::string body = std::visit(
@@ -1962,35 +2011,26 @@ class HirDumper {
   void DumpProcess(
       const Process& p,
       const base::Registry<ProceduralScopeDecl, ProceduralScopeId>& scopes) {
-    switch (p.kind) {
-      case ProcessKind::kInitial:
-        Line("Process (Initial)");
-        break;
-      case ProcessKind::kFinal:
-        Line("Process (Final)");
-        break;
-      case ProcessKind::kAlways:
-        Line("Process (Always)");
-        break;
-      case ProcessKind::kAlwaysComb:
-        Line("Process (AlwaysComb)");
-        break;
-      case ProcessKind::kAlwaysLatch:
-        Line("Process (AlwaysLatch)");
-        break;
-      case ProcessKind::kAlwaysFf:
-        Line("Process (AlwaysFf)");
-        break;
-    }
+    std::visit(
+        Overloaded{
+            [&](const InitialProcess&) { Line("Process (Initial)"); },
+            [&](const FinalProcess&) { Line("Process (Final)"); },
+            [&](const AlwaysProcess&) { Line("Process (Always)"); },
+            [&](const AlwaysFfProcess&) { Line("Process (AlwaysFf)"); },
+            [&](const AlwaysCombProcess& comb) {
+              Line(
+                  std::format(
+                      "Process (AlwaysComb) implicit {}",
+                      FormatReads(comb.implicit_reads)));
+            },
+            [&](const AlwaysLatchProcess& latch) {
+              Line(
+                  std::format(
+                      "Process (AlwaysLatch) implicit {}",
+                      FormatReads(latch.implicit_reads)));
+            }},
+        p.kind);
     Indent();
-    if (!p.implicit_sensitivity_list.empty()) {
-      Line("ImplicitSensitivityList:");
-      Indent();
-      for (const auto& r : p.implicit_sensitivity_list) {
-        Line(FormatSensitivityEntry(r));
-      }
-      Dedent();
-    }
     DumpProceduralBody(p.body, p.root_stmt, scopes);
     Dedent();
   }
@@ -2681,10 +2721,25 @@ class HirDumper {
         s.data);
   }
 
+  // The values a loop's index stood at, in the order it counted them out.
+  static auto FormatIndexValues(std::span<const std::int64_t> values)
+      -> std::string {
+    std::string out;
+    for (const std::int64_t value : values) {
+      out += out.empty() ? "" : ",";
+      out += std::to_string(value);
+    }
+    return out;
+  }
+
   void DumpGenerate(const Generate& g) {
     const std::string form = std::visit(
         Overloaded{
-            [](const BlocksStandAlone&) { return std::string{"each"}; },
+            [](const SingleBlock&) { return std::string{"single"}; },
+            [](const BlocksStandAlone& s) {
+              return std::format(
+                  "each indices=[{}]", FormatIndexValues(s.indices));
+            },
             [](const BlocksRepeat& r) {
               return std::format(
                   "repeated var=StructuralDataObject[{}] initial=Expr[{}] "
@@ -2708,12 +2763,9 @@ class HirDumper {
     Line(std::format("Generate blocks={} {}", g.blocks.size(), form));
     Indent();
     for (const auto& block : g.blocks) {
-      const StructuralScope& scope = block.scope;
-      const std::string idx =
-          scope.index.has_value() ? std::format("[{}]", *scope.index) : "[-]";
-      Line(std::format("{} {}:", idx, FormatArguments(block.arguments)));
+      Line(std::format("{}:", FormatArguments(block.arguments)));
       Indent();
-      DumpScope(scope);
+      DumpScope(block.scope);
       Dedent();
     }
     Dedent();

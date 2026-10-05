@@ -16,12 +16,16 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The endpoint a member of type `member_type` gives wherever it is. A `ref`
-// port's internal name owns no cell: it stands for the connected variable's
-// storage (LRM 23.3.3.2). Every other member is the cell.
-auto EndpointAt(
-    const mir::CompilationUnit& unit, MemberPlace place,
-    mir::TypeId member_type) -> BoundEndpoint {
+// The endpoint a member gives wherever it is. A `ref` port's internal name owns
+// no cell: it stands for the connected variable's storage (LRM 23.3.3.2). Every
+// other member is the cell.
+auto EndpointAt(const mir::CompilationUnit& unit, MemberPlace place)
+    -> BoundEndpoint {
+  const mir::TypeId member_type = std::visit(
+      Overloaded{
+          [](const MemberAtHops& at) { return at.member_type; },
+          [](const MemberThroughSlot& through) { return through.member_type; }},
+      place);
   return BoundEndpoint{
       .place = place,
       .kind = unit.types.Get(member_type).Is<mir::RefType>()
@@ -30,19 +34,19 @@ auto EndpointAt(
 }
 
 // The endpoint a route of parent edges gives: the member it ends at, reached
-// in the class it climbed to. Such a route never leaves this unit, so it never
-// ends at data another unit declares.
+// on the object it climbed to. Such a route never leaves this unit, so it
+// never ends at data another unit declares.
 auto ClimbedEndpoint(
-    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
-    const ClimbedRoute& climbed, const hir::DataLeaf& leaf) -> BoundEndpoint {
+    const StructuralScopeLowerer& lowerer, const ClimbedRoute& climbed,
+    const hir::DataLeaf& leaf) -> BoundEndpoint {
   const StructuralScopeLowerer& declaring =
       lowerer.EnclosingScopeAtHops(climbed.hops);
-  const auto not_this_unit = []() -> mir::FieldId {
+  const auto not_this_unit = []() -> mir::ClassFieldTarget {
     throw InternalError(
         "ClimbedEndpoint: a route of parent edges stays in this unit, so it "
         "cannot end at data another unit declares");
   };
-  const mir::FieldId field = std::visit(
+  const mir::ClassFieldTarget field = std::visit(
       Overloaded{
           [&](const hir::StructuralDataObjectLeaf& l) {
             return declaring.TranslateStructuralDataObject(
@@ -51,13 +55,14 @@ auto ClimbedEndpoint(
           [&](const hir::ProceduralStaticLeaf& l) {
             return declaring.ProceduralStaticField(l.body, l.var);
           },
-          [&](const hir::SignatureMemberLeaf&) { return not_this_unit(); },
-          [&](const hir::OpaqueLeaf&) { return not_this_unit(); }},
+          [&](const hir::ExternalMemberLeaf&) { return not_this_unit(); }},
       leaf);
-  const mir::EnclosingHops hops{climbed.hops.value};
   return EndpointAt(
-      lowerer.Owner().Unit(), MemberAtHops{.hops = hops, .field = field},
-      frame.EnclosingClassAtHops(hops).cls->fields.Get(field).type);
+      lowerer.Owner().Unit(),
+      MemberAtHops{
+          .hops = mir::EnclosingHops{climbed.hops.value},
+          .field = field,
+          .member_type = FieldTypeOf(lowerer.Owner(), field)});
 }
 
 // The member itself, as an lvalue: named where it sits, or reached by opening
@@ -70,7 +75,7 @@ auto MemberExpr(
       Overloaded{
           [&](const MemberAtHops& at) {
             return BuildStructuralFieldAccessExpr(
-                frame, unit, at.hops, at.field);
+                frame, unit, at.hops, at.field, at.member_type);
           },
           [&](const MemberThroughSlot& through) {
             const mir::ExprId pointer =
@@ -93,7 +98,7 @@ auto BindEndpoint(
       Overloaded{
           [&](const ClimbedRoute& climbed) -> BoundEndpoint {
             return ClimbedEndpoint(
-                lowerer, frame, climbed,
+                lowerer, climbed,
                 lowerer.HirScope().routes.values.Get(reference.id).leaf);
           },
           // The slot is a pointer to the member, so what its type points at
@@ -103,13 +108,12 @@ auto BindEndpoint(
                 frame.EnclosingClassAtHops(mir::EnclosingHops{0})
                     .cls->fields.Get(stored.slot)
                     .type;
-            const mir::TypeId member_type =
-                unit.types.Get(slot_type).Get<mir::PointerType>().pointee;
             return EndpointAt(
-                unit,
-                MemberThroughSlot{
-                    .slot = stored.slot, .member_type = member_type},
-                member_type);
+                unit, MemberThroughSlot{
+                          .slot = stored.slot,
+                          .member_type = unit.types.Get(slot_type)
+                                             .Get<mir::PointerType>()
+                                             .pointee});
           }},
       lowerer.ReachOf(reference.id));
 }

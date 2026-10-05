@@ -3,6 +3,7 @@
 #include <expected>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/HierarchicalReference.h>
@@ -23,32 +24,25 @@ auto MemberOnInstance(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const ViewNameOnInstance& view_name, hir::PublishedMemberId id,
     diag::SourceSpan span) -> hir::Expr {
-  const hir::PublishedMember member =
-      unit_lowerer.Unit()
-          .external_unit_objects.Get(view_name.object)
-          .members.Get(id);
+  const hir::ExternalMemberLeaf leaf =
+      unit_lowerer.ExternalMemberLeafOf(view_name.scope_class, id);
   return std::visit(
       Overloaded{
           [&](const ScopeRoute& route) {
             return unit_lowerer.MakeRoutedMemberRef(
                 frame.Current(),
                 hir::ValueRoute{
-                    .head = route.head,
-                    .steps = route.steps,
-                    .leaf =
-                        hir::SignatureMemberLeaf{
-                            .object = view_name.object,
-                            .member = id,
-                            .storage = member.storage,
-                            .type = member.type}},
+                    .base = route.base, .steps = route.steps, .leaf = leaf},
                 span);
           },
           [&](const hir::InterfaceInstanceAccessExpr& held) {
             return hir::Expr{
-                .type = member.type,
+                .type = leaf.type,
                 .data =
                     hir::InterfaceMemberAccessExpr{
-                        .instance = held, .member = id},
+                        .instance = held,
+                        .scope_class = view_name.scope_class,
+                        .member = id},
                 .span = span};
           }},
       view_name.instance);
@@ -61,12 +55,8 @@ auto InstanceAsReceiver(
   return std::visit(
       Overloaded{
           [&](const ScopeRoute& route) -> hir::UnitObjectReceiver {
-            const hir::TypeId object_type = unit_lowerer.Unit().types.Intern(
-                hir::Type{hir::UnitObjectType{
-                    .unit_name =
-                        unit_lowerer.Unit()
-                            .external_unit_objects.Get(view_name.object)
-                            .unit_name}});
+            const hir::TypeId object_type =
+                unit_lowerer.ScopeClassTypeOf(view_name.scope_class);
             return unit_lowerer.MakeRoutedObjectRef(
                 frame.Current(), route, object_type);
           },
@@ -118,36 +108,41 @@ auto ResolveRoutedViewName(
   const auto& selected =
       hve.symbol.getParentScope()->asSymbol().as<slang::ast::ModportSymbol>();
   // The object the view sits on is reached the way this unit reaches that
-  // interface instance -- through the port a connection bound it to, or by a
-  // route down to an instance the design declares inside this unit. Which of
-  // the two is a fact about the object and not about the name, so it is the
-  // same question a name reaching an ordinary member of that instance asks.
-  auto through =
-      hve.ref.isViaIfacePort()
-          ? unit_lowerer.ReachOneThroughInterfacePort(frame, hve.ref)
-          : unit_lowerer.RouteToScope(frame, *selected.getParentScope());
-  if (!through.has_value() || !through->unit_name.has_value()) {
+  // interface instance -- through the port a connection bound it to, upward
+  // where the name's search landed above this instance, or down to an instance
+  // declared here. Which of those is a fact about the object and not about the
+  // name, so it is the same question a name reaching an ordinary member of that
+  // instance asks.
+  auto start = unit_lowerer.StartOf(frame, hve.ref, span);
+  if (!start) return std::unexpected(std::move(start.error()));
+  auto through = unit_lowerer.RouteToScope(
+      frame, *selected.getParentScope(), *std::move(start));
+  const auto* on = through.has_value()
+                       ? std::get_if<InExternalScope>(&through->place)
+                       : nullptr;
+  if (on == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "a name a view offers, reached past what the interface promised, is "
-        "not yet supported");
+        "a name a view offers, reached this way, is not yet supported");
   }
-  const hir::ExternalUnitObjectId object =
-      unit_lowerer.ExternalUnitObjectOf(*through->unit_name);
+  const hir::ExternalScopeClassId scope_class = on->scope_class;
   return ViewNameOnInstance{
       .instance = *std::move(through),
-      .object = object,
+      .scope_class = scope_class,
       .meaning = PublishedViewNameMeaning(
-          unit_lowerer, object, selected.name, hve.symbol.name)};
+          unit_lowerer, scope_class, selected.name, hve.symbol.name)};
 }
 
 }  // namespace
 
 auto PublishedViewNameMeaning(
-    const UnitLowerer& unit_lowerer, hir::ExternalUnitObjectId object,
+    const UnitLowerer& unit_lowerer, hir::ExternalScopeClassId scope_class,
     std::string_view modport, std::string_view name) -> hir::ViewDefinedName {
   const hir::PublishedModport* view = hir::FindModport(
-      unit_lowerer.Unit().external_unit_objects.Get(object).modports, modport);
+      unit_lowerer.Unit()
+          .external_scope_classes.Get(scope_class)
+          .signature.modports,
+      modport);
   const hir::PublishedModportPort* published =
       view == nullptr ? nullptr : view->Find(name);
   if (published == nullptr) {
@@ -172,15 +167,15 @@ auto LowerViewNameOnInstance(
                 InstanceAsReceiver(unit_lowerer, frame, view_name);
             return hir::Expr{
                 .type = unit_lowerer.Unit()
-                            .external_unit_objects.Get(view_name.object)
-                            .callables.Get(computed.evaluate)
+                            .external_scope_classes.Get(view_name.scope_class)
+                            .signature.callables.Get(computed.evaluate)
                             .result_type,
                 .data =
                     hir::CallExpr{
                         .callee =
                             hir::ExternalUnitMethodRef{
                                 .receiver = std::move(receiver),
-                                .object = view_name.object,
+                                .scope_class = view_name.scope_class,
                                 .callable = computed.evaluate},
                         .arguments = {}},
                 .span = span};

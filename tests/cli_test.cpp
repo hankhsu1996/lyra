@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -20,6 +21,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "lyra/support/subprocess.hpp"
@@ -60,29 +62,69 @@ TEST(LyraEmit, ReEmitIntoSameDirectorySucceeds) {
       std::filesystem::exists(out_dir / "runtime/lib/libcpp_runtime.a"));
 }
 
-// A parent and the child it instantiates. `kept` is a declaration the child
-// never publishes, and `ports_reversed` swaps the order it publishes its two
-// ports in -- the two axes a referrer's dependency on the child is judged on.
-auto WriteParentAndChild(
-    const std::filesystem::path& path, bool kept, bool ports_reversed) -> void {
+// What a variant of the child changes: nothing, only what its bodies do, a
+// declaration it adds, or the order it declares its two ports in -- the axes a
+// referrer's dependency on the child is judged on.
+enum class ChildEdit : std::uint8_t {
+  kNone,
+  kBodies,
+  kDeclaration,
+  kPortOrder,
+};
+
+// The parts of the child's text an edit chooses: its port list, what it
+// declares beside its ports, and its bodies.
+struct ChildText {
+  std::string_view ports;
+  std::string_view declarations;
+  std::string_view bodies;
+};
+
+auto ChildTextOf(ChildEdit edit) -> ChildText {
+  constexpr std::string_view kPorts =
+      "    input  logic [31:0] a,\n"
+      "    output logic [31:0] y\n";
+  constexpr std::string_view kBodies =
+      "  always_comb begin\n"
+      "    y = a + 32'd1;\n"
+      "  end\n";
+  switch (edit) {
+    case ChildEdit::kNone:
+      return ChildText{.ports = kPorts, .declarations = "", .bodies = kBodies};
+    case ChildEdit::kBodies:
+      return ChildText{
+          .ports = kPorts,
+          .declarations = "",
+          .bodies =
+              "  always_comb begin\n"
+              "    y = a + 32'd2;\n"
+              "  end\n"
+              "  initial #1 $display(\"y=%0d\", y);\n"};
+    case ChildEdit::kDeclaration:
+      return ChildText{
+          .ports = kPorts,
+          .declarations = "  logic [6:0] added;\n",
+          .bodies = kBodies};
+    case ChildEdit::kPortOrder:
+      return ChildText{
+          .ports =
+              "    output logic [31:0] y,\n"
+              "    input  logic [31:0] a\n",
+          .declarations = "",
+          .bodies = kBodies};
+  }
+  std::unreachable();
+}
+
+// A parent and the child it instantiates, the child edited as `edit` says.
+auto WriteParentAndChild(const std::filesystem::path& path, ChildEdit edit)
+    -> void {
+  const ChildText child = ChildTextOf(edit);
   std::ofstream out(path);
-  out << "module Leaf (\n";
-  out
-      << (ports_reversed ? "    output logic [31:0] y,\n"
-                           "    input  logic [31:0] a\n"
-                         : "    input  logic [31:0] a,\n"
-                           "    output logic [31:0] y\n");
-  out << ");\n";
-  if (kept) {
-    out << "  logic [6:0] kept;\n";
-  }
-  out << "  always_comb begin\n";
-  if (kept) {
-    out << "    kept = 7'd3;\n";
-  }
-  out << "    y = a + 32'd1;\n"
-      << "  end\n"
-      << "endmodule\n"
+  out << "module Leaf (\n"
+      << child.ports << ");\n"
+      << child.declarations << child.bodies;
+  out << "endmodule\n"
       << "module Test;\n"
       << "  logic [31:0] src;\n"
       << "  logic [31:0] dst;\n"
@@ -125,14 +167,14 @@ auto ReadDeclarationsOf(const std::filesystem::path& dir, std::string_view unit)
 }
 
 // Emits one variant of that design into its own directory and answers with
-// everything the child promised.
+// everything the child published.
 auto EmitChildSignature(
     const std::filesystem::path& lyra, const std::filesystem::path& root,
-    std::string_view variant, bool kept, bool ports_reversed) -> std::string {
+    std::string_view variant, ChildEdit edit) -> std::string {
   const auto dir = root / variant;
   std::filesystem::create_directories(dir);
   const auto src = dir / "test.sv";
-  WriteParentAndChild(src, kept, ports_reversed);
+  WriteParentAndChild(src, edit);
   const auto out_dir = dir / "out";
   const std::vector<std::string> args = {
       "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
@@ -143,23 +185,30 @@ auto EmitChildSignature(
   return ReadDeclarationsOf(out_dir, "Leaf");
 }
 
-// What a unit's referrers compile against is what that unit promised. A
-// declaration the unit kept to itself must move none of it, and a change to
-// what it published must.
-TEST(LyraEmit, TheSignatureCarriesWhatTheUnitPromisedAndNothingElse) {
+// What a unit's referrers compile against is what that unit declares, every
+// named declaration being reachable by name (LRM 23.6). An edit confined to its
+// bodies must move none of it, even where the bodies keep more state than
+// before, and a change to what it declares must.
+TEST(LyraEmit, TheSignatureCarriesWhatTheUnitDeclaresAndNothingElse) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
 
   auto tmp_or = MakeScratchDir();
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
 
-  const std::string promised =
-      EmitChildSignature(lyra, *tmp_or, "promised", false, false);
-  ASSERT_FALSE(promised.empty());
+  const std::string declared =
+      EmitChildSignature(lyra, *tmp_or, "declared", ChildEdit::kNone);
+  ASSERT_FALSE(declared.empty());
 
-  EXPECT_EQ(promised, EmitChildSignature(lyra, *tmp_or, "kept", true, false));
+  EXPECT_EQ(
+      declared,
+      EmitChildSignature(lyra, *tmp_or, "bodies", ChildEdit::kBodies));
   EXPECT_NE(
-      promised, EmitChildSignature(lyra, *tmp_or, "reordered", false, true));
+      declared,
+      EmitChildSignature(lyra, *tmp_or, "added", ChildEdit::kDeclaration));
+  EXPECT_NE(
+      declared,
+      EmitChildSignature(lyra, *tmp_or, "reordered", ChildEdit::kPortOrder));
 }
 
 // One package holding two classes with nothing to do with each other, and two

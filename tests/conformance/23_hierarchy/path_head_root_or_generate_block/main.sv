@@ -5,17 +5,21 @@
 // found by searching outward from the reference, since a generate block name
 // is one of the forms a head may take (LRM 23.8). Either head reaches an
 // object declared on the head itself and carries on past it into an instance
-// below, and either may be written through as well as read.
+// below, and either may be written through as well as read. A head naming a
+// loop generate selects one of its blocks by the value its index stood at
+// (LRM 27.4).
 module Leaf;
   int from_root;
   int on_block;
   int past_block;
   int through_block;
+  int on_lane;
 
   always_comb from_root = $root.Top.g;
   always_comb on_block = blk.bg;
   always_comb past_block = blk.m.ms;
   always_comb through_block = $root.Top.blk.bg;
+  always_comb on_lane = lane[1].lg;
 
   initial begin
     #3;
@@ -36,6 +40,11 @@ module Top;
   int snap_on_block;
   int snap_past_block;
   int snap_through_block;
+  int snap_on_lane;
+
+  for (genvar i = 0; i < 2; i++) begin : lane
+    int lg = 20 + i;
+  end
 
   if (1) begin : blk
     int bg;
@@ -50,6 +59,7 @@ module Top;
     snap_on_block = blk.m.l.on_block;
     snap_past_block = blk.m.l.past_block;
     snap_through_block = blk.m.l.through_block;
+    snap_on_lane = blk.m.l.on_lane;
   end
 
   final begin
@@ -61,6 +71,8 @@ module Top;
       $fatal(1, "snap_past_block was %0d, expected 3", snap_past_block);
     if (snap_through_block !== 5)
       $fatal(1, "snap_through_block was %0d, expected 5", snap_through_block);
+    if (snap_on_lane !== 21)
+      $fatal(1, "snap_on_lane was %0d, expected 21", snap_on_lane);
     if (blk.bg !== 9) $fatal(1, "blk.bg was %0d, expected 9", blk.bg);
     $display("All checks passed");
   end

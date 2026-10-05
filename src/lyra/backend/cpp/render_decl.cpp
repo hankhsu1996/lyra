@@ -293,10 +293,10 @@ void AppendClassInDependencyOrder(
         rests_on);
   }
   const TargetText::Section defined(text.definitions);
-  if (mir::IsPromised(unit, id)) {
-    PromisedClass promised{.id = id, .text = TargetText{}};
-    RenderClass(unit, refusals, id, cls, promised.text, text.definitions);
-    text.promised.push_back(std::move(promised));
+  if (mir::IsPublished(unit, id)) {
+    PublishedClass published{.id = id, .text = TargetText{}};
+    RenderClass(unit, refusals, id, cls, published.text, text.definitions);
+    text.published.push_back(std::move(published));
     return;
   }
   const TargetText::Section declared(text.internal);
@@ -497,8 +497,13 @@ auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
     -> UnitText {
   UnitText text;
   for (const mir::ClassId id : unit.classes.Ids()) {
-    TargetText& out = mir::IsPromised(unit, id) ? text.signature : text.code;
-    Write(out, "class ", CppClassName(unit.GetClass(id), id), ";\n");
+    const mir::Class& cls = unit.GetClass(id);
+    const CppName name = CppClassName(cls, id);
+    TargetText& out = mir::IsPublished(unit, id) ? text.signature : text.code;
+    Write(out, "class ", name, ";\n");
+    for (const std::string& alias : cls.aliases) {
+      Write(out, "using ", ToCppName(alias), " = ", name, ";\n");
+    }
   }
   return text;
 }
@@ -652,16 +657,6 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText {
                        .name = name});
   }
   return text;
-}
-
-void RenderExternalObjectDeclarations(
-    const mir::CompilationUnit& unit, TargetText& out) {
-  for (const mir::ExternalUnitObjectId id : unit.external_unit_objects.Ids()) {
-    const mir::ExternalUnitObject& object = unit.external_unit_objects.Get(id);
-    OpenNamespace(out, UnitNamespaceOf(object.unit_name));
-    Write(out, "class ", ToCppName(object.class_name), ";\n");
-    CloseNamespace(out, UnitNamespaceOf(object.unit_name));
-  }
 }
 
 // Every unit declaring the same foreign scope writes the same definition, so it

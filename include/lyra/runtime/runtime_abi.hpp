@@ -289,26 +289,9 @@ auto lyra_rt_handle_view(const void* handle) -> void*;
 auto lyra_rt_handle_with_view(const void* handle, void* view, void* out)
     -> void*;
 
-// What a name reaches on a class, for a referrer with no name for that class
-// and so no way to count a position out of it. Both run while a reference to
-// such a class resolves and neither is reached from the simulation path. A
-// property answers with a coordinate the object then applies, because what an
-// access reaches still depends on the object; a method answers with the body
-// itself (LRM 8.14), which for a virtual one makes the call the object decides
-// (LRM 8.20).
-auto lyra_rt_class_find_property(const void* definition, const void* name)
-    -> const void*;
-auto lyra_rt_class_find_behavior_body(const void* definition, const void* name)
-    -> LyraMethodEntry;
-
-// Applying a property coordinate to an object, given as the root every object
-// shares.
-auto lyra_rt_property_at(void* object, const void* coordinate) -> void*;
-
 // The part of the object a class handle reaches it through (LRM 8.3), which is
-// what a member access is applied to and what a body settled against a class
-// this artifact cannot name is entered with. Which object that is, is a fact
-// the handle holds rather than is, so reaching it is an operation; a handle
+// what a member access is applied to. Which object that is, is a fact the
+// handle holds rather than is, so reaching it is an operation; a handle
 // referring to no object fails the run here rather than further in.
 auto lyra_rt_view_of(const void* handle) -> void*;
 
@@ -446,16 +429,32 @@ auto lyra_rt_wait_recollecting(
     void* runtime, LyraSpan reports, LyraSpan observations) -> bool;
 auto lyra_rt_wait_until(void* runtime, LyraSpan reports) -> bool;
 
-// What an evaluation states the places it reached in: an empty report, a place
-// read and the bits of it read, every object at once, the bracket a function
-// reporting into it takes, which answers one or zero for whether it goes on,
-// and one or zero for whether the function then runs. A function meeting a
-// read no leaf watches yet refuses the report, and the design fails there.
+// The wait of a procedure whose implicit list was collected once into a report
+// (LRM 9.2.2.2.1).
+auto lyra_rt_wait_on_report(void* runtime, const void* report) -> bool;
+
+// What an evaluation states the places it reached in: an empty report; a place
+// read and the bits of it read; a place reached through a handle; every object
+// at once; the bracket around a call made on a handle; a place written;
+// settling it as a procedure's implicit list once all is reported; the bracket
+// a function reporting into it takes, which answers one or zero for whether it
+// goes on; and one or zero for whether the function then runs. A function
+// meeting a read no leaf watches yet refuses the report, and the design fails
+// there.
 auto lyra_rt_read_report_empty(void* out) -> void*;
 void lyra_rt_read_report_add(
     void* report, void* place, const void* lsb_bit_offset,
     const void* bit_width);
+void lyra_rt_read_report_add_through_handle(
+    void* report, void* place, const void* lsb_bit_offset,
+    const void* bit_width);
+void lyra_rt_read_report_enter_call_on_handle(void* report);
+void lyra_rt_read_report_leave_call_on_handle(void* report);
 void lyra_rt_read_report_add_every_object(void* report);
+void lyra_rt_read_report_add_write(
+    void* report, void* place, const void* lsb_bit_offset,
+    const void* bit_width);
+void lyra_rt_read_report_settle_as_implicit_list(void* report);
 auto lyra_rt_read_report_enter(void* report) -> std::int64_t;
 void lyra_rt_read_report_leave(void* report);
 auto lyra_rt_read_report_runs_the_body(const void* report) -> std::int64_t;
@@ -618,16 +617,10 @@ auto lyra_rt_parent(void* self) -> void*;
 // runtime tree; returns the child as a borrowed scope handle.
 auto lyra_rt_add_owned_child(void* parent, void* child) -> void*;
 
-// Walks the scope tree a hierarchical reference names (LRM 23.6 / 23.8): the
-// nearest enclosing child a name matches, then a descent by name from there. A
-// name crosses as a plain C string, since it is fixed where the reference is
-// compiled, and its per-axis indices as a span of machine integers, since one
-// name may stand for an array of instances. A step matching nothing fails the
-// run, naming the scope and the name.
-auto lyra_rt_resolve_visible_child(
-    void* self, const void* head_name, LyraSpan head_indices) -> void*;
-auto lyra_rt_find_child(void* self, const void* name, LyraSpan indices)
-    -> void*;
+// Where a hierarchical name leaving the instance `self` stands in starts (LRM
+// 23.6 / 23.8): the nearest scope above it of the class `definition` describes,
+// or past the topmost a top-level instance of it.
+auto lyra_rt_enclosing_instance(void* self, const void* definition) -> void*;
 
 // The sequence of handles a declaration standing for several objects builds,
 // in the order its coordinates count, and the handle at a position in one. A
@@ -641,27 +634,6 @@ auto lyra_rt_sequence_make(LyraSpan handles) -> void*;
 auto lyra_rt_sequence_extend(void* sequence, void* element) -> void*;
 auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
     -> void*;
-
-// Publishes a member cell under its source-level name for by-name navigation,
-// and reads one back. The read answers an untyped address because the reader is
-// the artifact a hierarchical reference is written in, which does not know the
-// layout of the body the name lives in (LRM 23.6). Both names cross as a plain
-// C string, since a source-level name is fixed at compile time.
-void lyra_rt_register_signal(void* self, const void* name, void* cell);
-auto lyra_rt_find_signal(void* self, const void* name) -> void*;
-
-// Reads back the entry a scope answers a subroutine name with (LRM 23.8.1).
-// It answers a code address rather than a data one, which the language does not
-// guarantee to be interconvertible, so the two lookups cannot share a return
-// type. What a caller does with the answer is restore it to the prototype its
-// own call site was compiled against.
-auto lyra_rt_find_subroutine(void* self, const void* name) -> LyraMethodEntry;
-auto lyra_rt_find_class(void* self, const void* name) -> const void*;
-
-// Publishes what a `disable` naming this scope terminates, and reads it back
-// (LRM 9.6.2). Neither carries a name, a scope having exactly one.
-void lyra_rt_register_disable_target(void* self, void* target);
-auto lyra_rt_find_disable_target(void* self) -> void*;
 
 // Where a program starts, answering its exit status: the arguments it was
 // started with, the entry its design root's unit builds its object through --
@@ -681,14 +653,11 @@ auto lyra_rt_run_program(
 // variable's cell names the whole of it, and is named by the domain the cell
 // holds since where the value lies inside the cell is the cell's type's to
 // say; one over storage nothing is told about is handed the value's handle and
-// names nothing; and one over a class property is held by the object, given
-// the property's storage where the caller places it and its coordinate where
-// the class places it. A property reached through a handle naming no object
+// names nothing; and one over a class property is held by the object and given
+// the property's storage. A property reached through a handle naming no object
 // is the design's own failure (LRM 8.4).
 auto lyra_rt_refer_storage(void* storage, void* out) -> void*;
 auto lyra_rt_refer_property(void* object, void* storage, void* out) -> void*;
-auto lyra_rt_refer_property_at(void* object, const void* coordinate, void* out)
-    -> void*;
 // What a wait on the storage a reference names registers on: the variable or
 // the object's event source, and null for storage nothing is told about.
 auto lyra_rt_reference_reports_to(const void* reference) -> void*;

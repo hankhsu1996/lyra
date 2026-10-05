@@ -9,7 +9,7 @@
 #include "lyra/hir/enum_method.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/external_callee.hpp"
-#include "lyra/hir/external_unit_object.hpp"
+#include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/interface_member_access.hpp"
 #include "lyra/hir/owned_child_ref.hpp"
@@ -115,23 +115,11 @@ struct ExternalMethodCallee {
   auto operator==(const ExternalMethodCallee&) const -> bool = default;
 };
 
-// A method reached through the body the design settled, which is how a call
-// reaches a method through a handle of a class a design element declares. It
-// names no class and no method, since the referrer can name neither, so what it
-// carries is where the body was landed on and the shape the call was made in.
-struct SettledMethodCallee {
-  UnpublishedBehaviorBody body;
-  ExternalCalleeInterface interface;
-
-  auto operator==(const SettledMethodCallee&) const -> bool = default;
-};
-
 // The method a call reaches. Intra-unit it is a slot in a class's own method
 // arena, and everything the call needs follows from the declaration that slot
 // resolves to; cross-unit there is no such declaration to reach, so the callee
 // carries what the call would have read off one.
-using MethodCallee = std::variant<
-    LocalClassMethodTarget, ExternalMethodCallee, SettledMethodCallee>;
+using MethodCallee = std::variant<LocalClassMethodTarget, ExternalMethodCallee>;
 
 // Calls an instance method (LRM 8.6). `receiver` states which object the call
 // runs against, whichever source form named it.
@@ -229,41 +217,21 @@ struct ExternalUnitSubroutineRef {
 using UnitObjectReceiver =
     std::variant<RoutedObjectRef, InterfaceInstanceAccessExpr>;
 
-// Calls a subroutine another compilation unit declares in its own body, enabled
-// on one instance of that unit (LRM 25.7): an interface's task or function,
-// reached through a port bound to the instance, through a hierarchical name
-// that reaches it, or through a virtual interface holding it. `receiver` is how
-// that object is reached, and it is passed as the callable's first argument.
-// `object` is this unit's record of what the other unit published, and
-// `callable` the entry the name resolved to, so what the call passes and what
-// it awaits come from the promise rather than from the declaration behind it.
+// Calls a subroutine another compilation unit declares in one of its scopes --
+// its own body or a generate block in it -- enabled on one object of that scope
+// (LRM 23.6, 25.7): reached through a port bound to an instance, through a
+// hierarchical name, or through a virtual interface holding one. `receiver` is
+// how that object is reached, and it is passed as the callable's first
+// argument. `scope_class` is this unit's record of what the other unit
+// published of the scope, and `callable` the entry the name resolved to, so
+// what the call passes and what it awaits come from what was published rather
+// than from the declaration behind it.
 struct ExternalUnitMethodRef {
   UnitObjectReceiver receiver;
-  ExternalUnitObjectId object;
+  ExternalScopeClassId scope_class;
   PublishedCallableId callable;
 
   auto operator==(const ExternalUnitMethodRef&) const -> bool = default;
-};
-
-// Calls a subroutine another compilation unit declares in its own body, on one
-// instance of that unit reached by a hierarchical name the declaring unit never
-// promised (LRM 23.6, 23.8.1). A module's signature is its parameters and its
-// ports, so a subroutine of one was promised to nobody and there is nothing to
-// compile against; what crosses is the name, and the scope answers it with its
-// own entry.
-//
-// Two routes, one walk: `receiver` reaches the object and `entry` reaches the
-// callable on it, so both are reached once and the call itself walks nothing.
-// `interface` is what the call passes and awaits, recomputed from the
-// callee's declaration -- the same declaration the entry is generated from,
-// which is what lets a prototype be erased between them without either side
-// being able to disagree about it.
-struct OpaqueUnitMethodRef {
-  RoutedObjectRef receiver;
-  RoutedCallableRef entry;
-  ExternalCalleeInterface interface;
-
-  auto operator==(const OpaqueUnitMethodRef&) const -> bool = default;
 };
 
 // Calls a static class method (LRM 8.10). Distinct from `MethodCallRef`
@@ -273,16 +241,15 @@ struct OpaqueUnitMethodRef {
 // Under inheritance, `Derived::inherited_static()` still names the base -- the
 // method lives on the base's arena -- mirroring the owner-qualified rule for
 // inherited instance access.
-// `declaring_scope_hops` is how far out of this body's own structural scope the
-// scope that declares the class sits, present exactly where one does. A class a
-// structural scope declares is a type of that scope's instance (LRM 6.22), so
-// what it keeps for itself is that instance's; a receiver-less method reaching
-// any of it is handed the instance, since it has no object to reach one
-// through. Absent for a class a namespace unit declares, which no instance
-// replicates.
+// `declaring_instance` is how this body reaches the instance of the scope that
+// declares the class. A class a structural scope declares is a type of that
+// scope's instance (LRM 6.22), so what it keeps for itself is that instance's;
+// a receiver-less method reaching any of it is handed the instance, since it
+// has no object to reach one through. Present exactly where the class takes
+// the instance, which is the class's own declaration to say.
 struct StaticMethodCallRef {
   MethodCallee callee;
-  std::optional<StructuralHops> declaring_scope_hops;
+  std::optional<DeclaringInstanceReach> declaring_instance;
 
   auto operator==(const StaticMethodCallRef&) const -> bool = default;
 };
@@ -291,6 +258,6 @@ using SubroutineRef = std::variant<
     StructuralSubroutineRef, MethodCallRef, StaticMethodCallRef,
     SystemSubroutineRef, BuiltinMethodRef, EnumMethodRef, PastValueRef,
     ValueChangeRef, ForeignImportRef, ExternalUnitSubroutineRef,
-    ExternalUnitMethodRef, OpaqueUnitMethodRef>;
+    ExternalUnitMethodRef>;
 
 }  // namespace lyra::hir

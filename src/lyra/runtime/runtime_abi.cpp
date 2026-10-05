@@ -52,7 +52,6 @@
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/scope.hpp"
-#include "lyra/runtime/scope_info.hpp"
 #include "lyra/runtime/shared_pointer.hpp"
 #include "lyra/runtime/sim_time.hpp"
 #include "lyra/runtime/simulation_entry.hpp"
@@ -573,16 +572,6 @@ auto ReferToProperty(void* object, void* storage, void* out) -> void* {
                .holder = static_cast<GcObject*>(object), .storage = storage});
 }
 
-auto ReferToPropertyAt(void* object, const void* coordinate, void* out)
-    -> void* {
-  return ReferToProperty(
-      object,
-      PropertyAt(
-          static_cast<GcObject*>(object),
-          static_cast<const PropertyCoordinate*>(coordinate)),
-      out);
-}
-
 // The steps a reference takes into a part of what it names, each over the
 // value the reference names; they do what a reference's own methods do where
 // the value's type is known.
@@ -916,7 +905,6 @@ using lyra::runtime::EvaluationAttempts;
 using lyra::runtime::EventSourceOf;
 using lyra::runtime::FileTable;
 using lyra::runtime::FindExportEntry;
-using lyra::runtime::FindProperty;
 using lyra::runtime::ForkWaitAll;
 using lyra::runtime::ForkWaitFirst;
 using lyra::runtime::GcObject;
@@ -948,8 +936,6 @@ using lyra::runtime::ProcessSelf;
 using lyra::runtime::ProcessStatus;
 using lyra::runtime::ProcessSuspend;
 using lyra::runtime::ProgramLifetime;
-using lyra::runtime::PropertyAt;
-using lyra::runtime::PropertyCoordinate;
 using lyra::runtime::RaiseDeclinedDeparture;
 using lyra::runtime::Read;
 using lyra::runtime::ReadReport;
@@ -959,14 +945,12 @@ using lyra::runtime::RefArmSampling;
 using lyra::runtime::ReferElement;
 using lyra::runtime::ReferToCell;
 using lyra::runtime::ReferToProperty;
-using lyra::runtime::ReferToPropertyAt;
 using lyra::runtime::ReferToStorage;
 using lyra::runtime::ReferToTupleCell;
 using lyra::runtime::RefGet;
 using lyra::runtime::RefSampledLoad;
 using lyra::runtime::RefSet;
 using lyra::runtime::RefuseReport;
-using lyra::runtime::Region;
 using lyra::runtime::ReportHandles;
 using lyra::runtime::ResolvedNet;
 using lyra::runtime::ResumeInNbaRegion;
@@ -982,7 +966,6 @@ using lyra::runtime::SharedPointer;
 using lyra::runtime::SimTimeInUnit;
 using lyra::runtime::SpawnAll;
 using lyra::runtime::STimeInUnit;
-using lyra::runtime::SubscribeToLeaves;
 using lyra::runtime::TakeBranches;
 using lyra::runtime::TakeClosure;
 using lyra::runtime::TakeEvaluator;
@@ -1579,6 +1562,12 @@ auto lyra_rt_wait_until(void* runtime, LyraSpan reports) -> bool {
       *static_cast<RuntimeEffects*>(runtime), ReportHandles(reports));
 }
 
+auto lyra_rt_wait_on_report(void* runtime, const void* report) -> bool {
+  return WaitAny(
+      *static_cast<RuntimeEffects*>(runtime),
+      static_cast<const ReadReport*>(report));
+}
+
 auto lyra_rt_read_report_empty(void* out) -> void* {
   return Emplace(out, ReadReport::Empty());
 }
@@ -1591,8 +1580,36 @@ void lyra_rt_read_report_add(
       Read<PackedArray>(bit_width));
 }
 
+void lyra_rt_read_report_add_through_handle(
+    void* report, void* place, const void* lsb_bit_offset,
+    const void* bit_width) {
+  static_cast<ReadReport*>(report)->AddThroughHandle(
+      static_cast<Observable*>(place), Read<PackedArray>(lsb_bit_offset),
+      Read<PackedArray>(bit_width));
+}
+
+void lyra_rt_read_report_enter_call_on_handle(void* report) {
+  static_cast<ReadReport*>(report)->EnterCallOnHandle();
+}
+
+void lyra_rt_read_report_leave_call_on_handle(void* report) {
+  static_cast<ReadReport*>(report)->LeaveCallOnHandle();
+}
+
 void lyra_rt_read_report_add_every_object(void* report) {
   static_cast<ReadReport*>(report)->AddEveryObject();
+}
+
+void lyra_rt_read_report_add_write(
+    void* report, void* place, const void* lsb_bit_offset,
+    const void* bit_width) {
+  static_cast<ReadReport*>(report)->AddWrite(
+      static_cast<Observable*>(place), Read<PackedArray>(lsb_bit_offset),
+      Read<PackedArray>(bit_width));
+}
+
+void lyra_rt_read_report_settle_as_implicit_list(void* report) {
+  static_cast<ReadReport*>(report)->SettleAsImplicitList();
 }
 
 auto lyra_rt_read_report_enter(void* report) -> std::int64_t {
@@ -1963,16 +1980,9 @@ auto lyra_rt_add_owned_child(void* parent, void* child) -> void* {
       std::unique_ptr<Scope>(static_cast<Scope*>(child)));
 }
 
-auto lyra_rt_resolve_visible_child(
-    void* self, const void* head_name, LyraSpan head_indices) -> void* {
-  return static_cast<Scope*>(self)->ResolveVisibleChild(
-      static_cast<const char*>(head_name), ValuesOf<PackedArray>(head_indices));
-}
-
-auto lyra_rt_find_child(void* self, const void* name, LyraSpan indices)
-    -> void* {
-  return static_cast<Scope*>(self)->FindChild(
-      static_cast<const char*>(name), ValuesOf<PackedArray>(indices));
+auto lyra_rt_enclosing_instance(void* self, const void* definition) -> void* {
+  return static_cast<Scope*>(self)->EnclosingInstance(
+      static_cast<const ObjectDefinition*>(definition));
 }
 
 auto lyra_rt_sequence_make(LyraSpan handles) -> void* {
@@ -2007,20 +2017,6 @@ auto lyra_rt_handle_with_view(const void* handle, void* view, void* out)
   return Emplace(
       out, view == nullptr ? ObjectRef{}
                            : ObjectRef(Read<ObjectRef>(handle).Handle(), view));
-}
-
-auto lyra_rt_class_find_property(const void* definition, const void* name)
-    -> const void* {
-  return FindProperty(
-      static_cast<const ObjectDefinition*>(definition),
-      static_cast<const char*>(name));
-}
-
-auto lyra_rt_class_find_behavior_body(const void* definition, const void* name)
-    -> LyraMethodEntry {
-  return FindBehaviorBody(
-      static_cast<const ObjectDefinition*>(definition),
-      static_cast<const char*>(name));
 }
 
 auto lyra_rt_view_of(const void* handle) -> void* {
@@ -2071,39 +2067,6 @@ auto lyra_rt_enumeration_prev(
                .Prev(Read<PackedArray>(value), Read<PackedArray>(count)));
 }
 
-auto lyra_rt_property_at(void* object, const void* coordinate) -> void* {
-  return PropertyAt(
-      static_cast<GcObject*>(object),
-      static_cast<const PropertyCoordinate*>(coordinate));
-}
-
-void lyra_rt_register_signal(void* self, const void* name, void* cell) {
-  static_cast<Scope*>(self)->RegisterSignal(
-      static_cast<const char*>(name), cell);
-}
-
-auto lyra_rt_find_signal(void* self, const void* name) -> void* {
-  return static_cast<Scope*>(self)->FindSignal(static_cast<const char*>(name));
-}
-
-auto lyra_rt_find_class(void* self, const void* name) -> const void* {
-  return static_cast<Scope*>(self)->FindClass(static_cast<const char*>(name));
-}
-
-auto lyra_rt_find_subroutine(void* self, const void* name) -> LyraMethodEntry {
-  return static_cast<Scope*>(self)->FindSubroutine(
-      static_cast<const char*>(name));
-}
-
-void lyra_rt_register_disable_target(void* self, void* target) {
-  static_cast<Scope*>(self)->RegisterDisableTarget(
-      static_cast<CancellationTarget*>(target));
-}
-
-auto lyra_rt_find_disable_target(void* self) -> void* {
-  return static_cast<Scope*>(self)->FindDisableTarget();
-}
-
 auto lyra_rt_run_program(
     std::int32_t argc, char** argv, void* (*make)(void*, const void*),
     const void* name) -> std::int32_t {
@@ -2143,11 +2106,6 @@ auto lyra_rt_refer_storage(void* storage, void* out) -> void* {
 
 auto lyra_rt_refer_property(void* object, void* storage, void* out) -> void* {
   return ReferToProperty(object, storage, out);
-}
-
-auto lyra_rt_refer_property_at(void* object, const void* coordinate, void* out)
-    -> void* {
-  return ReferToPropertyAt(object, coordinate, out);
 }
 
 auto lyra_rt_reference_reports_to(const void* reference) -> void* {

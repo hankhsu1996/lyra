@@ -57,21 +57,22 @@ what the construct means.
   runtime record reads as raw storage, and every value that crosses a foreign-call boundary is one
   of these.
 - The type system: value types (integral, real, string, event, ...); object types in two forms -- an
-  intra-unit object (a class of this unit) and an external-unit object (another compilation unit,
-  named); two composing wrappers, pointer and vector, a pointer stating its ownership -- unique,
-  shared or borrowed, the last two written `Shared<T>` and `Borrowed<T>` in these docs; and four
-  categories: the **tuple**, the structural product (positional; interned by its components, so two
-  with the same components are one type); the **struct**, the nominal product (positional like the
-  tuple, but its identity is its declaration, so two with the same components are two types); the
-  **closure**, an anonymous concrete callable value (capture fields plus one invoke body, a distinct
-  type per site); and the **object** (`mir::Class`), the rich nominal object with methods and
-  dispatch. The tuple and the struct are the two products, and a component of either is reached the
-  same way: by its position, with an operation on the value, whether the value is stored, computed
-  or behind a pointer. The closure and the object share a **field substrate** -- a field
-  declaration, a field id keyed within one declaration, and one access node -- while staying
-  distinct types; an access names the declaration it reaches into, so what the substrate shares is
-  the vocabulary and never the identity. Structural versus nominal, and storage versus callable, are
-  the ordinary generic-language distinctions (C++/Rust/LLVM carry them).
+  intra-unit object (a class of this unit) and an external-unit object (a class another compilation
+  unit published, named by that unit and the class); two composing wrappers, pointer and vector, a
+  pointer stating its ownership -- unique, shared or borrowed, the last two written `Shared<T>` and
+  `Borrowed<T>` in these docs; and four categories: the **tuple**, the structural product
+  (positional; interned by its components, so two with the same components are one type); the
+  **struct**, the nominal product (positional like the tuple, but its identity is its declaration,
+  so two with the same components are two types); the **closure**, an anonymous concrete callable
+  value (capture fields plus one invoke body, a distinct type per site); and the **object**
+  (`mir::Class`), the rich nominal object with methods and dispatch. The tuple and the struct are
+  the two products, and a component of either is reached the same way: by its position, with an
+  operation on the value, whether the value is stored, computed or behind a pointer. The closure and
+  the object share a **field substrate** -- a field declaration, a field id keyed within one
+  declaration, and one access node -- while staying distinct types; an access names the declaration
+  it reaches into, so what the substrate shares is the vocabulary and never the identity. Structural
+  versus nominal, and storage versus callable, are the ordinary generic-language distinctions
+  (C++/Rust/LLVM carry them).
 - A struct is an unpacked structure the source declared (LRM 7.2). It carries the name another unit
   reaches it by and a method for each operation the language defines on its whole value, which every
   unit naming it calls through the declaration; another unit holds it by that name. A local a scope
@@ -162,10 +163,10 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
    system carries every fact about a member; no parallel discriminator exists, and no name has to be
    invented for a declaration the source did not write._
 8. An object type is exactly one of two forms: intra-unit, naming a class of this unit, or
-   external-unit, naming another compilation unit. This single distinction is the owned child's
-   runtime scope kind -- a named generate scope versus a module instance. Nothing else encodes scope
-   kind. _Programming-language consequence: a class reference is either local to this translation
-   unit or names an external one; there is no third kind._
+   external-unit, naming a class another compilation unit published. This single distinction is the
+   owned child's runtime scope kind -- a named generate scope versus a module instance. Nothing else
+   encodes scope kind. _Programming-language consequence: a class reference is either local to this
+   translation unit or names an external one; there is no third kind._
 9. Instance multiplicity is the vector wrapper, a property of the member's type, and is orthogonal
    to whether the owned object is an intra-unit scope or an external unit. The same wrapper composes
    over either object form and to any depth. _Programming-language consequence: cardinality and kind
@@ -211,10 +212,10 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     reference._
 
 13. A nonlocal reference's runtime endpoint seals before any read observes it, and is read directly
-    thereafter. The act of reaching across an instance boundary -- traversing the object graph,
-    matching a name, running by-name lookup -- happens once during elaboration; the hot path reads
-    the sealed endpoint without traversing. _Programming-language consequence: in the same way a
-    Rust binding once initialized refers to its target by address rather than re-locating it on
+    thereafter. The act of reaching across an instance boundary -- traversing the object graph
+    through typed steps -- happens once during elaboration, and no step matches a name; the hot path
+    reads the sealed endpoint without traversing. _Programming-language consequence: in the same way
+    a Rust binding once initialized refers to its target by address rather than re-locating it on
     every use, a MIR reference's runtime cost is paid at sealing, not at access._
 
 14. A capability wrapper's place and the storage it represents are distinct places, told apart by
@@ -337,9 +338,8 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   stands for a destination obliges every other consumer to decode it back into that destination. A
   write is not this shape: it is an operation on the wrapper and names its destination among its
   operands, so it yields nothing to decode. Nor is a call that answers with a typed pointer an
-  ordinary dereference consumes -- reaching what another unit published is one, since only the unit
-  owning the storage knows where it sits: nothing has to recognize that result, because its type
-  already says what it is. (Invariant 14.)
+  ordinary dereference consumes: nothing has to recognize that result, because its type already says
+  what it is. (Invariant 14.)
 - A runtime helper invocation that wraps a primitive operator family as an opaque call to recover
   source-level shape (e.g., `Inside(lhs, items)`, `CaseMatch(sel, labels)`). Sugar collapses to
   primitives in MIR; readability of generated backend source is not recovered by reintroducing
@@ -406,17 +406,16 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
 - An IR-level vocabulary item modeling a particular runtime library's resolver shape -- a wrapper
   type for "the cross-tree upward resolver", a named-method family for one runtime API's bind state.
   Runtime library shapes belong to the runtime; IR vocabulary names only the reference, its route
-  segments, and its sealed endpoint, and runtime library calls appear through the existing call
+  steps, and its sealed endpoint, and runtime library calls appear through the existing call
   vocabulary.
 - A reference whose mechanism is selected by a frontend-supplied lexical-form discriminator at MIR
   consumption time. The form that produced a reference is consumed at AST-to-HIR; no MIR consumer
   reads it.
-- An identity for a route segment inside the emitting artifact that is a textual name. A segment
-  whose source and target classes the artifact both owns has a stable in-artifact identity. A name
-  is the right identity in exactly two other places, and they are not the same place: a member on
-  another unit's signature, where producer and consumer derive the same name independently and the
-  referrer's compiler checks it, and a target past a signature, where the by-name SDK consumes it at
-  Resolve because nothing was published to check against.
+- An identity for a route step inside the emitting artifact that is a textual name. A step whose
+  source and target classes the artifact both owns has a stable in-artifact identity. A name is the
+  right identity in exactly one other place: a member another unit's scope published, where producer
+  and consumer derive the same name independently and the referrer's compiler checks it. No step
+  carries a name for the runtime to match.
 - A MIR shape that decides a sealed reference's storage placement at this layer. Whether a sealed
   endpoint is materialized as a stored member, hoisted into a local, or rematerialized at each use
   is a layout choice owned by LIR; MIR states the reference's identity, its route, and the protocol

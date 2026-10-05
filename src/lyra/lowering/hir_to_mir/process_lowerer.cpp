@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 
 #include <expected>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -185,13 +186,15 @@ auto LowerStraightLineProcess(ProcessLowerer& process)
   return code;
 }
 
-// Wraps the body in a `forever` loop. `implicit_sensitivity`, if present, is
-// materialised into a value-change wait appended after the lowered body -- the
-// always_comb / always_latch (LRM 9.2.2.2.1) tail. `always` / `always_ff` pass
-// nullptr because the body itself carries any timing.
-auto LowerForeverProcess(
-    ProcessLowerer& process,
-    const std::vector<hir::SensitivityEntry>* implicit_sensitivity)
+// What follows a forever process's body each time round, appended to the
+// body's block.
+using AfterBody = std::function<void(mir::Block&)>;
+
+// Wraps the body in a `forever` loop. `ahead` adds what the process does once,
+// before the loop, to the block the frame it is handed is writing, and
+// answers what follows the body each time round.
+template <typename Ahead>
+auto LowerForeverProcess(ProcessLowerer& process, Ahead ahead)
     -> diag::Result<mir::CallableCode> {
   const WalkFrame& parent = process.OwnerCtorFrame();
   mir::CallableCode code = mir::CallableCode::Defined();
@@ -199,22 +202,19 @@ auto LowerForeverProcess(
   const mir::LocalId self_id = bindings.Declare(
       BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
   code.params = {self_id};
+  const WalkFrame entry_frame =
+      parent.WithBlock(&code.Body())
+          .WithBindings(&bindings)
+          .WithScopeNameBorrowedHandle(
+              process.RootScope().NameBorrowedHandle());
+  diag::Result<AfterBody> after_body = ahead(entry_frame);
+  if (!after_body) return std::unexpected(std::move(after_body.error()));
   mir::Block body_block;
   {
-    const WalkFrame body_frame =
-        parent.WithBlock(&body_block)
-            .WithBindings(&bindings)
-            .WithScopeNameBorrowedHandle(
-                process.RootScope().NameBorrowedHandle());
+    const WalkFrame body_frame = entry_frame.WithBlock(&body_block);
     auto lowered = LowerStraightLineBodyInto(process, body_frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    if (implicit_sensitivity != nullptr) {
-      auto waited = BuildValueChangeWaitStmt(
-          body_block, body_frame, process, *implicit_sensitivity,
-          support::BuiltinFn::kWaitAny);
-      if (!waited) return std::unexpected(std::move(waited.error()));
-      body_block.AppendStmt(*std::move(waited));
-    }
+    (*after_body)(body_block);
   }
 
   const mir::BlockId body_scope_id =
@@ -228,6 +228,31 @@ auto LowerForeverProcess(
   code.Body().AppendStmt(mir::ReturnStmt{.value = std::nullopt});
   code.result_type = process.Owner().Unit().builtins.coroutine_void;
   return code;
+}
+
+// An `always` / `always_ff`: the body carries whatever timing it has, so
+// nothing follows it.
+auto LowerAlwaysProcess(ProcessLowerer& process)
+    -> diag::Result<mir::CallableCode> {
+  return LowerForeverProcess(
+      process, [](const WalkFrame&) -> diag::Result<AfterBody> {
+        return AfterBody{[](mir::Block&) {}};
+      });
+}
+
+// An `always_comb` / `always_latch` (LRM 9.2.2.2.1): its list is collected
+// once, ahead of the loop, and waited on after the body each time round.
+auto LowerImplicitListProcess(ProcessLowerer& process, const hir::Reads& reads)
+    -> diag::Result<mir::CallableCode> {
+  return LowerForeverProcess(
+      process, [&](const WalkFrame& entry_frame) -> diag::Result<AfterBody> {
+        auto report = CollectImplicitList(entry_frame, process, reads);
+        if (!report) return std::unexpected(std::move(report.error()));
+        return AfterBody{[&process, report = *report](mir::Block& body) {
+          body.AppendStmt(
+              BuildImplicitListWaitStmt(body, process.Owner(), report));
+        }};
+      });
 }
 
 // A variable that starts at its type's default value (LRM Table 6-7 for a
@@ -290,18 +315,25 @@ auto CanWait(hir::SubroutineKind kind) -> bool {
 auto ProcessLowerer::Run(const hir::Process& src)
     -> diag::Result<mir::CallableCode> {
   const diag::FailureContext at(src.span);
-  switch (src.kind) {
-    case hir::ProcessKind::kInitial:
-    case hir::ProcessKind::kFinal:
-      return LowerStraightLineProcess(*this);
-    case hir::ProcessKind::kAlways:
-    case hir::ProcessKind::kAlwaysFf:
-      return LowerForeverProcess(*this, nullptr);
-    case hir::ProcessKind::kAlwaysComb:
-    case hir::ProcessKind::kAlwaysLatch:
-      return LowerForeverProcess(*this, &src.implicit_sensitivity_list);
-  }
-  throw InternalError("ProcessLowerer::Run: unknown HIR ProcessKind");
+  return std::visit(
+      Overloaded{
+          [&](const hir::InitialProcess&) {
+            return LowerStraightLineProcess(*this);
+          },
+          [&](const hir::FinalProcess&) {
+            return LowerStraightLineProcess(*this);
+          },
+          [&](const hir::AlwaysProcess&) { return LowerAlwaysProcess(*this); },
+          [&](const hir::AlwaysFfProcess&) {
+            return LowerAlwaysProcess(*this);
+          },
+          [&](const hir::AlwaysCombProcess& comb) {
+            return LowerImplicitListProcess(*this, comb.implicit_reads);
+          },
+          [&](const hir::AlwaysLatchProcess& latch) {
+            return LowerImplicitListProcess(*this, latch.implicit_reads);
+          }},
+      src.kind);
 }
 
 auto ProcessLowerer::Run(const hir::SubroutineDecl& src)

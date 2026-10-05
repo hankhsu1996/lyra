@@ -14,7 +14,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/time.hpp"
-#include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observable.hpp"
@@ -507,20 +506,6 @@ class Ref {
   explicit Ref(T& storage) : erased_{.holder = {}, .storage = &storage} {
   }
   explicit Ref(const ErasedReference& erased) : erased_(erased) {
-  }
-
-  // A reference to the property `at` places on an object, held by the object so
-  // a write through it tells the object as it lands (LRM 9.4.2, 13.5.2), for a
-  // referrer whose class declares no position it can count for the property.
-  // The object is given by whatever reaches it.
-  [[nodiscard]] static auto AtProperty(
-      GcObject* object, const PropertyCoordinate* at) -> Ref {
-    return Ref{
-        ErasedReference{.holder = object, .storage = PropertyAt(object, at)}};
-  }
-  [[nodiscard]] static auto AtProperty(
-      const value::ObjectRef& handle, const PropertyCoordinate* at) -> Ref {
-    return AtProperty(ObjectRootOf(handle), at);
   }
 
   [[nodiscard]] auto Erased() const -> const ErasedReference& {

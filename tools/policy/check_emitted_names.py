@@ -58,13 +58,14 @@ MAPPERS = [
     "CppUnitScope",
     "UnitSignatureFileOf",
     "UnitOpeningFileOf",
+    "UnitForwardFileOf",
     "UnitClassFileOf",
     "UnitCodeFileOf",
     "UnitTypesFileOf",
     "CppStructName",
     "CppClassCallableName",
     "CppExternalBehaviorName",
-    "CppFieldNameOf",
+    "CppFieldName",
     "CppMintedEntryName",
     "CppUnitCallableName",
     "CppForeignSymbolName",
@@ -110,7 +111,7 @@ MAPPER_CALL = re.compile(rf"\b(?:{'|'.join(MAPPERS)})\s*\(")
 # it, which is what a name may be read for without being spelled.
 LOOKUPS: dict[str, str] = {
     "FindExternalClass": (
-        "resolves a consumed promise by the unit and class it names, so the "
+        "resolves a consumed signature by the unit and class it names, so the "
         "name is a key rather than a spelling"
     ),
 }

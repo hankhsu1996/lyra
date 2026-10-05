@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -18,10 +19,10 @@ namespace lyra::hir {
 //
 // A unit is found by name, which is the identity a reference carries across the
 // boundary; there is no shared table of ids to match on. Which units a unit
-// ends up depending on is exactly the set of promises it read, so reading is
+// ends up depending on is exactly the set of signatures it read, so reading is
 // the act that records a dependency -- a set decided in advance would be an
 // approximation, and it cannot be one: a class first named inside a body is
-// reached after any such set was fixed, and a name is on a promise or not
+// reached after any such set was fixed, and a name is on a signature or not
 // whether or not the reader declared anything.
 class UnitSignatures {
  public:
@@ -61,21 +62,15 @@ class UnitSignatures {
     return *signature;
   }
 
-  // The object an instance of `unit_name` is.
-  [[nodiscard]] auto InstantiatedClass(const std::string& unit_name) const
-      -> const InstanceClassSignature& {
-    return InstanceClassOf(Instantiated(unit_name));
-  }
-
   // The units of the design that root no object, in name order. A namespace is
   // exactly such a unit (LRM 26.2), and a signature says which it is, so the
   // one artifact that has to bring every namespace up reads the set off the
-  // promises it already consumes. Sorted because the set is walked to emit
+  // signatures it already consumes. Sorted because the set is walked to emit
   // calls, and a design compiles to the same program each time.
   [[nodiscard]] auto NamespaceUnitNames() const -> std::vector<std::string> {
     std::vector<std::string> names;
     for (const auto& [name, signature] : by_name_) {
-      if (!signature.IsDesignElement()) {
+      if (std::holds_alternative<PublishedNamespace>(signature.unit)) {
         names.push_back(name);
       }
     }

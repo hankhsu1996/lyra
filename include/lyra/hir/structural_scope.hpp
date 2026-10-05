@@ -3,7 +3,9 @@
 #include <compare>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -13,21 +15,23 @@
 #include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/base/time.hpp"
-#include "lyra/hir/class_coordinate_id.hpp"
+#include "lyra/base/translation.hpp"
 #include "lyra/hir/class_id.hpp"
+#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/external_callee.hpp"
-#include "lyra/hir/external_unit_object.hpp"
+#include "lyra/hir/external_scope_class.hpp"
+#include "lyra/hir/external_scope_ref.hpp"
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/owned_child_ref.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/port_direction.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/process.hpp"
+#include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
+#include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/sampled_history.hpp"
-#include "lyra/hir/signature_member_step.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -44,89 +48,63 @@ struct InterfacePortId {
       -> std::strong_ordering = default;
 };
 
-// A declaration a unit published, named the way the scope that holds it names
-// it. Which arena it lives in is what says how its storage is built: a data
-// object owns a cell the scope installs, an instance member stands for an
-// object the scope builds and owns, and an interface port stands for one the
-// scope neither owns nor builds. The last two promise the same thing -- a
-// borrowed pointer to another unit's object -- and differ only in what this
-// scope does with it.
-using PublishedDecl =
-    std::variant<StructuralDataObjectId, InstanceMemberId, InterfacePortId>;
+// What one element of a route names: a child of this unit, an interface port
+// of a scope on the path (LRM 25.3) -- a borrowed reference the parent bound
+// during elaboration, past which everything belongs to the unit the port names
+// -- or something a scope of another unit published.
+using StepTarget =
+    std::variant<OwnedChildRef, InterfacePortId, ExternalScopeRef>;
 
-// One navigation step past this compilation unit's layout, into an object
-// whose declaration another unit owns. The canonical hierarchical name is the
-// only identity that crosses the boundary, so the step carries it verbatim for
-// the runtime to resolve.
-struct OpaqueStep {
-  std::string name;
-  std::vector<std::uint32_t> indices;
+using PathStep = PathElement<StepTarget>;
 
-  auto operator==(const OpaqueStep&) const -> bool = default;
-};
+// An element naming a child of this unit, or something another unit
+// published, as an element of a route.
+template <typename Names>
+[[nodiscard]] auto AsPathStep(PathElement<Names> step) -> PathStep {
+  return PathStep{
+      .names = StepTarget{std::move(step.names)},
+      .selects = std::move(step.selects)};
+}
 
-// One navigation step through an interface port of a scope on the path (LRM
-// 25.3). The scope holds a borrowed reference the parent bound during
-// elaboration, so the step is typed member navigation like an owned child's;
-// what differs is that everything past it belongs to the unit the port names,
-// which is why a leaf past this step is counted out of that unit's signature.
-// `indices` are the element coordinates within the port, one per declared
-// dimension: a port carrying a range is one member standing for every instance
-// bound to it, so the coordinates pick one out of it. They are positions --
-// the range the port declared is spent where the name resolves.
-struct InterfacePortStep {
-  InterfacePortId port;
-  std::vector<std::uint32_t> indices;
-
-  auto operator==(const InterfacePortStep&) const -> bool = default;
-};
-
-using PathStep = std::variant<
-    OwnedChildStep, InterfacePortStep, SignatureMemberStep, OpaqueStep>;
-
-// Where a route starts. `InUnitHead` anchors at a structural scope of this
+// Where a route starts. `InUnitBase` anchors at a structural scope of this
 // unit, `hops` typed parent edges out from the referrer (0 being the
 // referrer's own scope); every step from there begins inside this unit's
-// layout. `RootHead` anchors at the parent-less topmost scope named by
-// `$root` (LRM 23.6). `VisibleChildHead` anchors at the scope an upward climb
-// finds by name (LRM 23.8), which the referrer's unit does not declare and so
-// cannot locate by a compile-time offset. Both climbing anchors leave the
-// unit's layout, so everything past them is opaque.
-struct InUnitHead {
+// layout.
+struct InUnitBase {
   StructuralHops hops;
 
-  auto operator==(const InUnitHead&) const -> bool = default;
+  auto operator==(const InUnitBase&) const -> bool = default;
 };
 
-struct RootHead {
-  auto operator==(const RootHead&) const -> bool = default;
+// The route leaves the referrer's instance and starts at the enclosing instance
+// of the class `scope_class` records: the nearest instance enclosing the
+// referrer that is of that class, or past the topmost of them a top-level
+// instance of it -- the scope a name searched upward lands in (LRM 23.8), or
+// the top-level instance a path from the top names (LRM 23.6). Which instance
+// that is depends on where the referrer's instance stands, so the class is what
+// the route states and the instance is found where it resolves.
+struct EnclosingInstanceBase {
+  ExternalScopeClassId scope_class;
+
+  auto operator==(const EnclosingInstanceBase&) const -> bool = default;
 };
 
-struct VisibleChildHead {
-  std::string head_name;
-  std::vector<std::uint32_t> head_indices;
-
-  auto operator==(const VisibleChildHead&) const -> bool = default;
-};
-
-using RouteHead = std::variant<InUnitHead, RootHead, VisibleChildHead>;
+using RouteBase = std::variant<InUnitBase, EnclosingInstanceBase>;
 
 // What a route ends at, grouped by the use the name is put to, since the use
-// decides what the name may reach. Within a use, the end is named in as many
-// of three ways as that use has: by this unit's own declaration, by the
-// position another unit's signature gave it, or by a name the runtime answers.
+// decides what the name may reach. Within a use, the end is named in one of
+// two ways: by this unit's own declaration, or by the position another unit's
+// signature gave it.
 //
 // A value ends at data: a data object declared by the scope the steps land on,
 // or a static-lifetime local of one of that scope's bodies, which a named block
 // or a subroutine puts on the hierarchical path (LRM 23.9) -- every such scope
 // between is part of where the storage sits, not a step of its own, so the leaf
-// identity fixes the whole procedural descent. A leaf in another unit takes one
-// of the forms below instead: against that unit's signature when it published
-// the name, and against the runtime when it did not. Each states the storage
-// its target holds and the data type behind it, because no consumer below can
-// recover either: the declaration is in a scope the route walks to rather than
-// one the reader can index, and past a signature there is no declaration at
-// all.
+// identity fixes the whole procedural descent. A leaf in another unit is named
+// against that unit's signature instead, which published every such
+// declaration. Each states the storage its target holds and the data type
+// behind it, because no consumer below can recover either: the declaration is
+// in a scope the route walks to rather than one the reader can index.
 struct StructuralDataObjectLeaf {
   StructuralDataObjectId object;
   PublishedStorage storage;
@@ -148,32 +126,63 @@ struct ProceduralStaticLeaf {
   auto operator==(const ProceduralStaticLeaf&) const -> bool = default;
 };
 
+// A static-lifetime local a scope published: the body declaring it, and its
+// identity there.
+struct PublishedStatic {
+  ProceduralBodyRef body;
+  ProceduralVarId var;
+
+  auto operator==(const PublishedStatic&) const -> bool = default;
+};
+
+// A declaration a scope published, named the way the scope that holds it names
+// it. Which arena it lives in is what says how its storage is built: a data
+// object owns a cell the scope installs, a static-lifetime local owns one the
+// scope holds for the body declaring it, a static property of a class the scope
+// declares owns one the scope holds for that class (LRM 6.22, 8.9), an instance
+// member stands for an object the scope builds and owns, and an interface port
+// stands for one the scope neither owns nor builds. The last two publish the
+// same thing -- a borrowed pointer to another unit's object -- and differ only
+// in what this scope does with it.
+using PublishedDecl = std::variant<
+    StructuralDataObjectId, PublishedStatic, LocalStaticPropertyTarget,
+    InstanceMemberId, InterfacePortId>;
+
+// What a scope published: `signature` is the class the unit's signature states
+// for it, in this unit's own types, which is what the scope's published class
+// is laid out from on this side and every referrer's side alike; and each of
+// its entries is the scope's own declaration, keyed by its position there. The
+// subroutines are the class's methods.
+//
+// The signature's class name is the one a referrer reaches the class by. A
+// scope standing for several blocks of a loop stands for each of them, so it
+// answers to the name of each, the others being its `aliases`.
+struct ScopePublication {
+  ScopeClassSignature signature;
+  std::vector<std::string> aliases;
+  base::Translation<PublishedMemberId, PublishedDecl> members;
+  base::Translation<PublishedGenerateId, GenerateId> generates;
+  base::Translation<PublishedDisableTargetId, ProceduralScopeId>
+      disable_targets;
+  base::Translation<PublishedCallableId, StructuralSubroutineId> callables;
+
+  auto operator==(const ScopePublication&) const -> bool = default;
+};
+
 // The route ends at a member another unit published, at the position that
 // unit's signature gave it. The name was resolved where this unit compiles, so
 // a renamed member fails there rather than while the design elaborates.
-struct SignatureMemberLeaf {
-  ExternalUnitObjectId object;
+struct ExternalMemberLeaf {
+  ExternalScopeClassId scope_class;
   PublishedMemberId member;
   PublishedStorage storage;
   TypeId type;
 
-  auto operator==(const SignatureMemberLeaf&) const -> bool = default;
-};
-
-// The route ends past a signature, at a declaration no unit promised. Nothing
-// was published to compile against, so the name is all that crosses and the
-// runtime answers it while the design elaborates (LRM 23.6).
-struct OpaqueLeaf {
-  std::string name;
-  PublishedStorage storage;
-  TypeId type;
-
-  auto operator==(const OpaqueLeaf&) const -> bool = default;
+  auto operator==(const ExternalMemberLeaf&) const -> bool = default;
 };
 
 using DataLeaf = std::variant<
-    StructuralDataObjectLeaf, ProceduralStaticLeaf, SignatureMemberLeaf,
-    OpaqueLeaf>;
+    StructuralDataObjectLeaf, ProceduralStaticLeaf, ExternalMemberLeaf>;
 
 // A cell of the storage the declaring unit says a data end is, holding a value
 // of `type`.
@@ -193,10 +202,7 @@ struct DataCell {
           [](const ProceduralStaticLeaf& l) {
             return DataCell{.storage = VariableStorage{}, .type = l.type};
           },
-          [](const SignatureMemberLeaf& l) {
-            return DataCell{.storage = l.storage, .type = l.type};
-          },
-          [](const OpaqueLeaf& l) {
+          [](const ExternalMemberLeaf& l) {
             return DataCell{.storage = l.storage, .type = l.type};
           }},
       leaf);
@@ -211,21 +217,6 @@ struct ScopeLeaf {
   auto operator==(const ScopeLeaf&) const -> bool = default;
 };
 
-// The route ends past a signature too, at a subroutine no unit promised: a
-// hierarchical name reaches a module's task or function (LRM 23.6, 23.8.1), and
-// a module's signature is its ports. The name is all that crosses, and the
-// scope answers it with an entry the way it answers one with a cell.
-// `interface` is what the call passes and awaits, recomputed from the callee's
-// declaration: nothing was published to shape the call, and the entry the scope
-// publishes is generated from that same declaration, so the two cannot
-// disagree.
-struct OpaqueCallableLeaf {
-  std::string name;
-  ExternalCalleeInterface interface;
-
-  auto operator==(const OpaqueCallableLeaf&) const -> bool = default;
-};
-
 // The route ends at what a `disable` naming a block or task terminates (LRM
 // 9.6.2), where this artifact lays out the scope that declares it. The scope's
 // identity indexes the registry of the structural scope the steps land on, so
@@ -238,17 +229,18 @@ struct DisableTargetLeaf {
   auto operator==(const DisableTargetLeaf&) const -> bool = default;
 };
 
-// The route ends at the same thing past a signature. No unit publishes what a
-// `disable` terminates, so the steps reach the block's own node on the object
-// tree and that node answers for the target it carries (LRM 23.9). It needs no
-// name, because a scope has exactly one and the route already reached it.
-struct OpaqueDisableTargetLeaf {
-  auto operator==(const OpaqueDisableTargetLeaf&) const -> bool = default;
+// The route ends at the same thing in a scope another unit published, at the
+// position its signature gave that disable target among the scope's own.
+struct ExternalDisableTargetLeaf {
+  ExternalScopeClassId scope_class;
+  PublishedDisableTargetId target;
+
+  auto operator==(const ExternalDisableTargetLeaf&) const -> bool = default;
 };
 
-using DisableLeaf = std::variant<DisableTargetLeaf, OpaqueDisableTargetLeaf>;
+using DisableLeaf = std::variant<DisableTargetLeaf, ExternalDisableTargetLeaf>;
 
-// How to navigate from a scope to what a name reaches: `head` is where
+// How to navigate from a scope to what a name reaches: `base` is where
 // navigation starts, `steps` carries the descent from there, and `leaf` is
 // what it ends at, of the kinds the name's use allows. The path is one shape
 // for every use; only the end differs. Whether the route is kept in a slot of
@@ -256,7 +248,7 @@ using DisableLeaf = std::variant<DisableTargetLeaf, OpaqueDisableTargetLeaf>;
 // and not a property of the route.
 template <typename Leaf>
 struct Route {
-  RouteHead head;
+  RouteBase base;
   std::vector<PathStep> steps;
   Leaf leaf;
 
@@ -265,54 +257,14 @@ struct Route {
 
 using ValueRoute = Route<DataLeaf>;
 using ObjectRoute = Route<ScopeLeaf>;
-using CallableRoute = Route<OpaqueCallableLeaf>;
 using DisableTargetRoute = Route<DisableLeaf>;
-
-// A member name on a class this artifact cannot name. Such a class is nameable
-// only inside the scope declaring it (LRM 23.9) and is a distinct type per
-// instance of the element declaring it (LRM 6.22), so which class an access
-// reaches is a fact of the instance and never of this artifact: one body serves
-// every instance, and two of them may land on classes with different layouts.
-// So the class is reached the way everything else past a signature is reached
-// -- the steps land on the declaring scope, which answers `class_name` with its
-// class, and the class answers where `name` lands.
-struct ClassMemberName {
-  std::string class_name;
-  std::string name;
-
-  auto operator==(const ClassMemberName&) const -> bool = default;
-};
-
-// The route ends at where a property name lands: storage among the declaring
-// class's own properties.
-struct PropertyCoordinateLeaf {
-  ClassMemberName member;
-
-  auto operator==(const PropertyCoordinateLeaf&) const -> bool = default;
-};
-
-// The route ends at the body a method's name reaches on the class the access
-// names (LRM 8.14). For a virtual method (LRM 8.20) that body makes the call
-// the object decides, so the body is the answer either way.
-struct BehaviorBodyLeaf {
-  ClassMemberName member;
-
-  auto operator==(const BehaviorBodyLeaf&) const -> bool = default;
-};
-
-using PropertyCoordinateRoute = Route<PropertyCoordinateLeaf>;
-using BehaviorBodyRoute = Route<BehaviorBodyLeaf>;
 
 // Every walk one scope's names take, gathered while its bodies are lowered and
 // handed to the scope whole, a table per use a name is put to.
 struct ScopeRoutes {
   base::Arena<ValueRoute, RoutedValueRefId> values;
   base::Arena<ObjectRoute, RoutedObjectRefId> objects;
-  base::Arena<CallableRoute, RoutedCallableRefId> callables;
   base::Arena<DisableTargetRoute, RoutedDisableTargetRefId> disable_targets;
-  base::Arena<PropertyCoordinateRoute, PropertyCoordinateId>
-      property_coordinates;
-  base::Arena<BehaviorBodyRoute, BehaviorBodyId> behavior_bodies;
 
   auto operator==(const ScopeRoutes&) const -> bool = default;
 };
@@ -350,7 +302,7 @@ struct ConcurrentAssertionDecl {
 };
 
 // A child built from another compilation unit, standing on this unit's record
-// of the object that unit's instances are. `array_dims` is empty for a scalar
+// of the class that unit's instances are. `array_dims` is empty for a scalar
 // instance and holds one element count per dimension, outermost first, for an
 // instance array (`Child c[2][3]` is `{2, 3}`).
 //
@@ -362,7 +314,7 @@ struct ConcurrentAssertionDecl {
 // for each of them.
 struct InstanceMemberDecl {
   std::string instance_name;
-  ExternalUnitObjectId object;
+  ExternalScopeClassId scope_class;
   std::vector<std::uint32_t> array_dims;
   std::vector<ExprId> arguments;
 
@@ -372,15 +324,15 @@ struct InstanceMemberDecl {
 // An interface port's internal name (LRM 25.3). The scope names instances of
 // another unit that it neither owns nor builds; the parent binds them during
 // elaboration, the way it binds a `ref` port's internal name to the connected
-// variable. `object` is this unit's record of what that unit published, so a
-// name reached through the port is counted out of the order its signature
+// variable. `scope_class` is this unit's record of what that unit published,
+// so a name reached through the port is counted out of the order its signature
 // states. `array_dims` is empty for a port standing for one instance and holds
 // one element count per dimension, outermost first, for a port carrying a
 // range: the port is one member however many instances it stands for, holding a
 // handle on each.
 struct InterfacePortDecl {
   std::string name;
-  ExternalUnitObjectId object;
+  ExternalScopeClassId scope_class;
   std::vector<std::uint32_t> array_dims;
 
   auto operator==(const InterfacePortDecl&) const -> bool = default;
@@ -490,13 +442,23 @@ struct NetJoin {
   auto operator==(const NetJoin&) const -> bool = default;
 };
 
-// Each scope stands for one instantiated block and is built once: a bare
-// block, and a loop whose blocks did not lower alike. Every scope is lowered
-// from its own elaborated body -- its own types and slice widths -- and the
-// index reaches it as a value its construction supplies here too, because that
-// is what leaves two blocks differing in nothing else with nothing to differ
-// in.
+// One block that no loop and no conditional produced (LRM 27.3), built once.
+struct SingleBlock {
+  auto operator==(const SingleBlock&) const -> bool = default;
+};
+
+// Each scope stands for one block of a loop whose blocks did not lower alike,
+// and is built once. Every scope is lowered from its own elaborated body -- its
+// own types and slice widths -- and the index reaches it as a value its
+// construction supplies here too, because that is what leaves two blocks
+// differing in nothing else with nothing to differ in.
+//
+// `indices` are the values the index stood at, one per scope in the order the
+// scopes are listed, which is the order the loop counted them out. The index
+// and the source label together are each block's hierarchy segment (LRM 27.4).
 struct BlocksStandAlone {
+  std::vector<std::int64_t> indices;
+
   auto operator==(const BlocksStandAlone&) const -> bool = default;
 };
 
@@ -616,80 +578,70 @@ struct GenerateBlock;
 // how many objects a scope stands for is what `counting` says.
 struct Generate {
   base::Arena<GenerateBlock, StructuralScopeId> blocks;
-  std::variant<BlocksStandAlone, BlocksRepeat, BlocksChoose> counting =
-      BlocksStandAlone{};
+  std::variant<SingleBlock, BlocksStandAlone, BlocksRepeat, BlocksChoose>
+      counting = SingleBlock{};
 
   auto operator==(const Generate&) const -> bool = default;
 };
 
-// Which compiled scope a route naming one of a generate's blocks reaches.
-// Every consumer of a route asks this and nothing else about a generate, so
-// the answer is stated once here rather than re-derived at each of them.
+// Which compiled scope a path naming one of a generate's blocks reaches. Every
+// consumer of a path asks this and nothing else about a generate, so the
+// answer is stated once here rather than re-derived at each of them.
 //
-// How a name identifies a block and how many scopes the construct compiled to
-// are settled independently, so the two are paired here: a repeated structure
-// compiles its indices to one scope, a conditional compiles each alternative
-// it holds to one, and a construct that neither repeats nor chooses compiles
-// its blocks one for one. A pairing the language does not have is a name that
-// was resolved against a different construct than the one it reached.
-[[nodiscard]] inline auto ChildScopeOf(
-    const Generate& gen, const NamedBlock& block) -> StructuralScopeId {
+// How a path names a block and how many scopes the construct compiled to are
+// settled independently, so the two are paired here. A loop whose blocks agree
+// compiles them to one scope and one whose blocks disagree compiles each to
+// its own, so `selects` -- the block the path picked -- decides only the
+// second. A pairing the language does not have is a name that was resolved
+// against a different construct than the one it reached.
+[[nodiscard]] inline auto LoopBlockScopeOf(
+    const Generate& gen, std::span<const std::uint32_t> selects)
+    -> StructuralScopeId {
+  const auto not_a_loop = [] -> StructuralScopeId {
+    throw InternalError(
+        "hir::LoopBlockScopeOf: a construct that counts out no blocks is "
+        "named as a loop");
+  };
   return std::visit(
       Overloaded{
-          [&](const BlockAtIndex& at) {
-            return std::visit(
-                Overloaded{
-                    [&](const BlocksStandAlone&) {
-                      return StructuralScopeId{at.index};
-                    },
-                    [](const BlocksRepeat&) { return StructuralScopeId{0}; },
-                    [](const BlocksChoose&) -> StructuralScopeId {
-                      throw InternalError(
-                          "hir::ChildScopeOf: a conditional's block is named "
-                          "by an index");
-                    },
-                },
-                gen.counting);
-          },
-          [&](const BlockAsAlternative& as) -> StructuralScopeId {
-            const auto* chosen = std::get_if<BlocksChoose>(&gen.counting);
-            if (chosen == nullptr ||
-                as.position >= chosen->alternatives.size()) {
+          [&](const SingleBlock&) { return not_a_loop(); },
+          [&](const BlocksChoose&) { return not_a_loop(); },
+          [&](const BlocksStandAlone&) {
+            if (selects.size() != 1) {
               throw InternalError(
-                  "hir::ChildScopeOf: a block of a construct that chooses "
-                  "nothing is named as one of its alternatives");
+                  "hir::LoopBlockScopeOf: a block of a loop is reached by one "
+                  "select");
             }
-            const std::optional<StructuralScopeId> block =
-                chosen->alternatives[as.position];
-            if (!block.has_value()) {
-              throw InternalError(
-                  "hir::ChildScopeOf: a name reached an alternative no "
-                  "elaboration of the construct selected");
-            }
-            return *block;
+            return StructuralScopeId{selects.front()};
           },
+          [](const BlocksRepeat&) { return StructuralScopeId{0}; },
       },
-      block);
+      gen.counting);
 }
 
-// Which object of that scope the same name reaches, where the scope stands for
-// more than one. Only a repeated structure does: its blocks are one scope built
-// at every index, so the index the name carried survives as a coordinate on it.
-// Every other form compiles a block to a scope of its own and leaves nothing to
-// coordinate.
-[[nodiscard]] inline auto ChildElementOf(
-    const Generate& gen, const NamedBlock& block)
-    -> std::optional<std::uint32_t> {
-  const auto* at = std::get_if<BlockAtIndex>(&block);
-  if (at == nullptr) return std::nullopt;
+// The same for the one block a construct building at most one holds: a block
+// standing on its own is its one scope, and a conditional compiles each
+// alternative it holds to one.
+[[nodiscard]] inline auto ChosenBlockScopeOf(
+    const Generate& gen, std::uint32_t alternative) -> StructuralScopeId {
+  const auto a_loop = [] -> StructuralScopeId {
+    throw InternalError(
+        "hir::ChosenBlockScopeOf: a loop's blocks are named by a select, not "
+        "as an alternative");
+  };
   return std::visit(
       Overloaded{
-          [](const BlocksStandAlone&) {
-            return std::optional<std::uint32_t>{};
-          },
-          [](const BlocksChoose&) { return std::optional<std::uint32_t>{}; },
-          [&](const BlocksRepeat&) {
-            return std::optional<std::uint32_t>{at->index};
+          [](const SingleBlock&) { return StructuralScopeId{0}; },
+          [&](const BlocksStandAlone&) { return a_loop(); },
+          [&](const BlocksRepeat&) { return a_loop(); },
+          [&](const BlocksChoose& chosen) -> StructuralScopeId {
+            if (alternative >= chosen.alternatives.size() ||
+                !chosen.alternatives[alternative].has_value()) {
+              throw InternalError(
+                  "hir::ChosenBlockScopeOf: a name reached an alternative no "
+                  "elaboration of the construct selected");
+            }
+            return *chosen.alternatives[alternative];
           },
       },
       gen.counting);
@@ -699,29 +651,13 @@ struct StructuralScope {
   // LRM source name of a generate child (label, or `genblk<n>` when unnamed,
   // LRM 27.6); empty for other scopes.
   std::string source_name;
-  // The elaborated hierarchy index a generate loop iteration carries (LRM
-  // 27.4); absent for an `if` / `case` arm, a bare block, and every scope no
-  // generate produced. The index and the source label together are this
-  // scope's whole hierarchy segment, which the scope carries itself rather
-  // than leaving in a table its parent keeps about it.
-  std::optional<std::int64_t> index;
   TimeResolution time_resolution;
-  base::Arena<StructuralDataObjectDecl, StructuralDataObjectId>
+  base::Registry<StructuralDataObjectDecl, StructuralDataObjectId>
       structural_data_objects;
-  // The declarations this unit published, in the order its signature states
-  // them -- which is the order the promise states a behavior for each of them
-  // in, since a referrer counts which behavior it wants out of that same order.
-  // Empty for a scope no other unit names, which is every scope but the one a
-  // unit's instances are.
-  std::vector<PublishedDecl> published_members;
-  // The subroutines this unit published, by the identifier its signature states
-  // each under and in that same order, which continues the order above: a
-  // promise states a behavior per published member and then one per published
-  // subroutine. A name is what crosses because a name is what the signature
-  // carries, and the scope answers it from its own subroutines -- an identifier
-  // the signature minted for a view being one of those like any other. Empty on
-  // the same scopes the list above is.
-  std::vector<std::string> published_callables;
+  // What this scope published. Every scope a name can step into publishes --
+  // a unit's instance and each generate block inside it (LRM 23.6) -- and a
+  // namespace unit's root scope, which no name steps into, publishes nothing.
+  ScopePublication published;
   base::Arena<Expr, ExprId> exprs;
   base::Arena<Pattern, PatternId> patterns;
   base::Registry<Process, ProcessId> processes;
@@ -774,13 +710,8 @@ struct StructuralScope {
   // front and the body pass fills the contents when it reaches the scope.
   base::Registry<ProceduralScopeDecl, ProceduralScopeId> procedural_scopes;
 
-  // Two scopes are equal when everything they state is equal, `index`
-  // included -- which is why a block carries none until whether it is one body
-  // with its siblings has been settled. It is the one thing a loop's blocks
-  // differ in by definition, so stamping it before the comparison would answer
-  // "not the same" about every loop there is.
-  //
-  // Derived rather than written. A field added to any node below is compared
+  // Two scopes are equal when everything they state is equal. Derived rather
+  // than written. A field added to any node below is compared
   // without anyone remembering to, and a field that cannot be compared breaks
   // the build rather than being silently left out -- which is the direction
   // this has to fail in, because a comparison that misses something answers

@@ -146,6 +146,13 @@ class ProcessLowerer {
       -> diag::Result<hir::Stmt>;
 
  private:
+  // Which procedure `proc` is (LRM 9.2), with the implicit list an
+  // `always_comb` or `always_latch` waits on, stated in `frame`, the frame its
+  // body lowered in.
+  auto KindOf(
+      const slang::ast::ProceduralBlockSymbol& proc, const WalkFrame& frame,
+      diag::SourceSpan span) -> diag::Result<hir::ProcessKind>;
+
   UnitLowerer* owner_;
   const slang::ast::Symbol* containing_symbol_;
   ConsumedBodyExpressions consumed_body_exprs_;

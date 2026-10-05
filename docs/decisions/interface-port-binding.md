@@ -9,6 +9,13 @@
 Accepted. Extends `published-member-placement.md` D4 with a fourth storage kind and widens the input
 `specialization-identity.md` names; reverses neither.
 
+**D3's second half, that a module publishes only its ports, and the consequence that a name
+continuing past a published member is answered by the instance while the design elaborates, are
+reversed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).** A
+module and an interface each publish every declaration a hierarchical name may reach, so every step
+of a name through the port is resolved where the module compiles. The other decisions stand.
+
 ## Why this decision matters
 
 An interface exists to be written against. A module names `b.data`, and the interface instance the

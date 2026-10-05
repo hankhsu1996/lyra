@@ -13,6 +13,14 @@ position for either side to compute. D2, D3 and D4 stand -- what a referrer reco
 unit's object, which layer reads a signature, and how a member's type crosses the boundary are
 unaffected. Read that entry before applying anything here to a published member's placement.
 
+**That supersession is itself reversed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
+whose D2 has a scope's published part hold its published members first, in the order the publication
+states, and a referrer read one at its offset there. The rule D1 and D5 state -- the published
+members lead the object in signature order, and both sides compute the position from the same
+declarations -- holds again, as does the consequence that a change confined to unpublished
+declarations moves no published member.
+
 Realized `unit-signature.md` D4 and `emission_model.md` invariant 8 on the machine-code path;
 reversed nothing.
 
@@ -184,8 +192,7 @@ signature, so the promise and the placement cannot describe different objects.
 - `unit-signature.md` -- D4 names a signature member where the referrer compiles; the placement rule
   and the forbidden design-wide numbering are stated there and applied here.
 - `../architecture/emission_model.md` -- invariant 2 states the inputs a unit's emission may depend
-  on, which is what D2 keeps true below the consuming pass. Invariant 8 carried the prefix rule and
-  now states what replaced it.
+  on, which is what D2 keeps true below the consuming pass. Invariant 8 carries the prefix rule.
 - `../architecture/lir.md` -- a place names storage by logical identity with physical layout derived
   below it, which is why the name becomes a position at MIR-to-LIR and not later.
 - `member-slot-storage.md` -- a member is a logical place realized per backend; this entry says how

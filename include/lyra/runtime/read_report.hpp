@@ -25,6 +25,18 @@ class RuntimeEffects;
 // Every member is defined in the library: a unit stating a wait builds and
 // destroys these, and a definition written here would be compiled again by
 // each such unit.
+//
+// What is reached through a handle -- a class object, a variable of the
+// interface instance a virtual interface holds, and whatever a call made on
+// either reads -- is kept apart from what is read directly. A wait watches
+// both (LRM 9.4.2).
+//
+// The implicit list of an `always_comb` or `always_latch` is collected into one
+// too, once, before the procedure first runs (LRM 9.2.2.2.1), and is told what
+// is written as well as what is read. That list takes nothing reached through a
+// handle -- the clause adds nothing for a class object or a call made on one,
+// and a list collected once cannot follow a handle that changes -- and leaves
+// out what the procedure or its functions write.
 class ReadReport {
  public:
   // A report nothing has been stated into yet.
@@ -37,14 +49,42 @@ class ReadReport {
   ~ReadReport();
 
   // A place the expression reads, and which bits of its flat-bit encoding, as
-  // a trigger reads them.
+  // a trigger reads them; reached through a handle where a call made on one
+  // is reporting.
   void Add(
+      Observable* place, const value::PackedArray& lsb_bit_offset,
+      const value::PackedArray& bit_width);
+
+  // A place reached through a handle: an object a chain of reads passes
+  // through, whose event source `place` is, or a variable of the instance a
+  // virtual interface holds.
+  void AddThroughHandle(
       Observable* place, const value::PackedArray& lsb_bit_offset,
       const value::PackedArray& bit_width);
 
   // Every object at once, for a read that reaches one along no chain a report
   // could follow.
   void AddEveryObject();
+
+  // The bracket around a call made on an object or through a virtual
+  // interface, while which everything reported is reached through a handle.
+  void EnterCallOnHandle();
+  void LeaveCallOnHandle();
+
+  // A place the evaluation writes, and which bits of it, as a read names them.
+  // Only an implicit list reads these, and it leaves them out.
+  void AddWrite(
+      Observable* place, const value::PackedArray& lsb_bit_offset,
+      const value::PackedArray& bit_width);
+
+  // Makes what was reported a procedure's implicit list (LRM 9.2.2.2.1), once
+  // everything is reported: nothing reached through a handle is in it, what
+  // was written is taken out of what was read, and each place is listed once.
+  // A write of a whole place takes every read of it; a write of some bits
+  // takes those bits out of a read naming its bits, and leaves a read of the
+  // whole place alone, since what is left of a whole is not known here -- a
+  // wake more, never one fewer.
+  void SettleAsImplicitList();
 
   // Whether a function handed this report goes on to report into it: one or
   // zero, the carrier a machine answer crosses as. Reports nest as deep as the
@@ -61,15 +101,34 @@ class ReadReport {
   // stands in for a body that does not run.
   [[nodiscard]] auto RunsTheBody() const -> std::int64_t;
 
-  // What was stated, handed to the wait that parks on it and leaving the report
-  // empty for the evaluation after.
+  // What was stated, read directly and through handles alike, handed to the
+  // wait that parks on it and leaving the report empty for the evaluation
+  // after.
   [[nodiscard]] auto TakeTriggers() -> std::vector<Trigger>;
 
+  // The implicit list, once settled.
+  [[nodiscard]] auto ImplicitList() const -> std::span<const Trigger> {
+    return read_directly_;
+  }
+
  private:
+  // Bits of a place the evaluation writes, which no wait watches.
+  struct Written {
+    Observable* place = nullptr;
+    std::uint64_t lsb_bit_offset = 0;
+    std::uint64_t bit_width = 0;
+  };
+
   ReadReport();
 
-  std::vector<Trigger> triggers_;
+  void Reach(Trigger trigger);
+
+  std::vector<Trigger> read_directly_;
+  std::vector<Trigger> through_handles_;
+  std::vector<Written> writes_;
   std::int64_t depth_ = 0;
+  // How many calls made on a handle are reporting now.
+  std::int64_t calls_on_handles_ = 0;
 };
 
 // A function reporting what a call of it reads meets a read no leaf watches
@@ -90,5 +149,9 @@ auto WaitRecollecting(
 // 9.4.3).
 auto WaitUntil(RuntimeEffects& services, std::span<ReadReport* const> reports)
     -> bool;
+
+// A procedure's implicit list, collected once into `report`: the wait each time
+// the procedure finishes its body, watching the same leaves every time.
+auto WaitAny(RuntimeEffects& services, const ReadReport* report) -> bool;
 
 }  // namespace lyra::runtime

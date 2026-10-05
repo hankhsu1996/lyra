@@ -6,7 +6,12 @@
 
 ## Status
 
-Accepted
+Accepted. **Every by-name mechanism this entry describes is removed by
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**:
+D5's signal registration and by-name lookup, D7's runtime walk for a cross-unit descent, and D8's
+indexed by-name lookup for an array element. A static of a named block is published with the named
+blocks it sits in, and an array element is reached through the member or generate entry that holds
+it, selected. The rest stands.
 
 ## Why this decision matters
 

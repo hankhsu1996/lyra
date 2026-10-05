@@ -1,7 +1,7 @@
 #include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 
-#include <algorithm>
 #include <expected>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -18,7 +18,6 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/lowering/ast_to_hir/expression/view_names.hpp"
-#include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -67,7 +66,7 @@ auto ReachThroughHandle(
       return HeldViewName{
           .instance = std::move(held->instance),
           .meaning = PublishedViewNameMeaning(
-              unit_lowerer, held->landed,
+              unit_lowerer, held->place.scope_class,
               port->getParentScope()->asSymbol().name, port->name)};
     }
     item = port->internalSymbol;
@@ -87,9 +86,10 @@ auto ReachThroughHandle(
             SpecializationName(*instance, unit_lowerer.Specialization())};
   }
 
-  const hir::ExternalUnitObject& promised =
-      unit_lowerer.Unit().external_unit_objects.Get(descent->landed);
-  const auto published = promised.FindMember(item->name);
+  const hir::ExternalScopeClassId scope_class = descent->place.scope_class;
+  const hir::ScopeClassSignature& scope =
+      unit_lowerer.Unit().external_scope_classes.Get(scope_class).signature;
+  const auto published = scope.FindMember(item->name, descent->place.within);
   if (!published.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -99,73 +99,39 @@ auto ReachThroughHandle(
   return HeldMember{
       .access =
           hir::InterfaceMemberAccessExpr{
-              .instance = std::move(descent->instance), .member = *published},
-      .type = promised.members.Get(*published).type};
+              .instance = std::move(descent->instance),
+              .scope_class = scope_class,
+              .member = *published},
+      .type = scope.members.Get(*published).type};
 }
 
 }  // namespace
-
-auto InterfaceObjectOf(
-    UnitLowerer& unit_lowerer, const slang::ast::InstanceSymbol& instance)
-    -> hir::ExternalUnitObjectId {
-  const std::string unit_name =
-      SpecializationName(instance, unit_lowerer.Specialization());
-  if (unit_lowerer.Signatures().Find(unit_name) == nullptr) {
-    throw InternalError(
-        "InterfaceObjectOf: every interface a declared type names or an "
-        "instance declares is collected as a unit, so its promise exists");
-  }
-  return unit_lowerer.ExternalUnitObjectOf(unit_name);
-}
 
 auto DescendThroughHandle(
     UnitLowerer& unit_lowerer, hir::ExprId handle,
     const slang::ast::VirtualInterfaceType& handle_type,
     const slang::ast::Scope& scope, diag::SourceSpan span)
     -> diag::Result<HeldDescent> {
-  // The interfaces between the instance the handle holds and `scope`,
-  // outermost first. Each is an instance its enclosing interface declares, and
-  // so a member that interface published.
-  std::vector<const slang::ast::InstanceSymbol*> nested;
-  for (const slang::ast::Scope* at = &scope; at != &handle_type.iface.body;) {
-    const auto* body =
-        at == nullptr ? nullptr
-                      : at->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
-    if (body == nullptr || body->parentInstance == nullptr) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "a name declared inside a generate block of an interface is not yet "
-          "reachable through a virtual interface (LRM 25.9)");
-    }
-    nested.push_back(body->parentInstance);
-    at = OwnerOfInstance(*body->parentInstance).getParentScope();
+  // Every scope between the instance the handle holds and `scope` -- an
+  // interface it instantiates, a generate block, a named block or subroutine --
+  // is one that instance's interface published (LRM 23.6), stepped through the
+  // way a hierarchical name steps through the scope classes it reaches.
+  const hir::ExternalScopeClassId held =
+      unit_lowerer.ScopeClassOfInstance(handle_type.iface);
+  std::optional<PublishedDescent> descended =
+      unit_lowerer.DescendPublished(held, handle_type.iface.body, scope);
+  if (!descended.has_value()) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedExpressionForm,
+        "this name is not yet reachable through a virtual interface (LRM "
+        "25.9)");
   }
-  std::ranges::reverse(nested);
-
-  const hir::ExternalUnitObjectId held =
-      InterfaceObjectOf(unit_lowerer, handle_type.iface);
-  HeldDescent descent{
-      .instance = {.handle = handle, .object = held, .steps = {}},
-      .landed = held};
-  descent.instance.steps.reserve(nested.size());
-  for (const slang::ast::InstanceSymbol* instance : nested) {
-    const auto member_id = unit_lowerer.Unit()
-                               .external_unit_objects.Get(descent.landed)
-                               .FindMember(OwnerOfInstance(*instance).name);
-    if (!member_id.has_value()) {
-      throw InternalError(
-          "DescendThroughHandle: an interface promises every instance it "
-          "declares");
-    }
-    descent.instance.steps.push_back(
-        hir::SignatureMemberStep{
-            .object = descent.landed,
-            .member = *member_id,
-            .indices = {
-                instance->arrayPath.begin(), instance->arrayPath.end()}});
-    descent.landed = InterfaceObjectOf(unit_lowerer, *instance);
-  }
-  return descent;
+  return HeldDescent{
+      .instance =
+          {.handle = handle,
+           .scope_class = held,
+           .steps = std::move(descended->steps)},
+      .place = std::move(descended->place)};
 }
 
 auto LowerVirtualInterfaceMember(
@@ -179,12 +145,13 @@ auto LowerVirtualInterfaceMember(
   return std::visit(
       Overloaded{
           [&](HeldViewName& view) {
-            const hir::ExternalUnitObjectId object = view.instance.object;
+            const hir::ExternalScopeClassId scope_class =
+                view.instance.scope_class;
             return LowerViewNameOnInstance(
                 unit_lowerer, frame,
                 ViewNameOnInstance{
                     .instance = std::move(view.instance),
-                    .object = object,
+                    .scope_class = scope_class,
                     .meaning = std::move(view.meaning)},
                 span);
           },
@@ -222,7 +189,9 @@ auto WatchedThroughHandle(
                  hir::WatchedMembers(view.meaning)) {
               watched.push_back(
                   hir::InterfaceMemberAccessExpr{
-                      .instance = view.instance, .member = id});
+                      .instance = view.instance,
+                      .scope_class = view.instance.scope_class,
+                      .member = id});
             }
             return watched;
           },

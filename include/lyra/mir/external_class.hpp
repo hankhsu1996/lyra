@@ -16,14 +16,14 @@ namespace lyra::mir {
 // One behavior a class of another unit introduces, and whether it is pure: one
 // that is has no body for a class of this unit extending it to name in its own
 // table.
-struct PromisedBehavior {
+struct PublishedBehavior {
   std::string name;
   bool is_pure = false;
 };
 
 // A method of a class of another unit that overrides a behavior one of its
 // ancestors introduced (LRM 8.20), and that behavior.
-struct PromisedOverride {
+struct PublishedOverride {
   std::string method;
   OverridesExternalSlot behavior;
 };
@@ -35,10 +35,11 @@ struct PromisedOverride {
 // fields are a prefix of the class's own storage, so a slot counted here is
 // the slot the declaring unit gave.
 //
-// What a unit promised of its own object is such a class too. It lists no
-// fields, because what it published is reached by performing a behavior
-// rather than by a slot, and every behavior on it is pure, because a referrer
-// holds the object only as what it answers and never a body of it.
+// What a unit published of the class one of its scopes is -- an instance, or
+// a generate block inside one -- is such a class too. Its fields are what the
+// scope published, in the order it published them, and its published
+// subroutines are methods a referrer calls directly; it names no behavior,
+// because none of its methods dispatches.
 //
 // This unit compiles none of it, which is why it sits apart from the classes
 // this unit declares: a walk that emits those cannot reach one, and so cannot
@@ -57,17 +58,24 @@ struct ExternalClass {
   bool is_interface_class = false;
   // The interfaces its declaration names, in the order written.
   std::vector<CrossUnitClassRef> implements;
-  base::Arena<PromisedField, FieldId> fields;
+  // The fields it published, in the order it published them, each counted to
+  // the same position by both sides; and which of them answer to an
+  // identifier. A scope's published class also holds what a name steps through
+  // or ends at without spelling an identifier of its own -- what a generate
+  // construct built, what a `disable` of a block ends -- so not every field
+  // answers to one.
+  base::Arena<FieldDecl, FieldId> fields;
+  std::vector<NamedField> named_fields;
   // The types of the fields no other unit may name, placed after `fields`.
   // Nothing here reaches one; a class extending it places its own after them.
   std::vector<TypeId> private_field_types;
-  std::vector<PromisedBehavior> behaviors;
-  std::vector<PromisedOverride> overrides;
+  std::vector<PublishedBehavior> behaviors;
+  std::vector<PublishedOverride> overrides;
 };
 
 // The record kept of the class `class_name` of unit `unit_name`, or nothing
-// where this unit holds no promise about it -- a class no signature the design
-// compiles carries.
+// where this unit holds no published record of it -- a class no signature the
+// design compiles carries.
 [[nodiscard]] inline auto FindExternalClass(
     std::span<const ExternalClass> records, std::string_view unit_name,
     std::string_view class_name) -> const ExternalClass* {

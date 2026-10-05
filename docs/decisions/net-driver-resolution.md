@@ -57,9 +57,9 @@ compile-time list the net's unit gathers.
 
 ### F3. Runtime attachment along the reference route already exists
 
-A `ref` port already, during the Resolve phase, navigates the owned child by name along the
-cross-unit route and binds a handle (a reference) into the child. Attaching a driver to a net is the
-same shape: navigate the route, attach a handle. The cross-unit route, the Resolve-phase attach, the
+A `ref` port already, during the Resolve phase, navigates the owned child along the cross-unit route
+and binds a handle (a reference) into the child. Attaching a driver to a net is the same shape:
+navigate the route, attach a handle. The cross-unit route, the Resolve-phase attach, the
 per-connection update process, and the observable cell that publishes only on a real change
 (`mir.md`, `reference_resolution.md`, `elaboration_lifecycle.md`) are all reused.
 
