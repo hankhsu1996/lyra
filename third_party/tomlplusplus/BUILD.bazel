@@ -1,0 +1,3 @@
+# Applied to the toml++ module from the registry; see MODULE.bazel.
+
+exports_files(["system_include.patch"])
