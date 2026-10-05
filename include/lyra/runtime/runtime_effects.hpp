@@ -61,11 +61,10 @@ class RuntimeEffects {
 
   // Something has happened at `observable` -- a cell took a new value, a named
   // event was triggered. Every activation waiting there that it is an event for
-  // becomes runnable, and the rest stay parked. `unchanged` bounds what the
-  // occurrence could have reached, and answers `false` throughout where it has
-  // no bits to speak of.
-  void WakeWaitersOf(
-      Observable& observable, const ProjectionUnchanged& unchanged);
+  // becomes runnable, and the rest stay parked. `change` bounds which bits the
+  // occurrence could have reached, and bounds nothing where it has no bits to
+  // speak of.
+  void WakeWaitersOf(Observable& observable, const Change& change);
 
   // What every object's change also reaches: a wait whose expression reads an
   // object no report could follow is reevaluated whenever a property of any

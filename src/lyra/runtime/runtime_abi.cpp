@@ -341,7 +341,7 @@ void TupleRefSet(void* reference, const void* value) {
     return;
   }
   value::RuntimeTuple::AssignAt(lent.storage, value);
-  lent.Report(MakeWholeValueProjectionTest());
+  lent.Report(Change::Whole());
 }
 
 void TupleRefArmSampling(void* reference) {
@@ -429,8 +429,8 @@ class TupleReference {
   [[nodiscard]] auto Watched() const -> bool {
     return lent_.Watched();
   }
-  void PublishTransition(const ProjectionUnchanged& unchanged) const {
-    lent_.Report(unchanged);
+  void PublishTransition(const Change& change) const {
+    lent_.Report(change);
   }
 
  private:

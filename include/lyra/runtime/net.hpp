@@ -507,18 +507,17 @@ class ResolvedNet : public Observable {
   void UpdateContribution(
       RuntimeEffects& runtime, std::size_t index, const T& value) {
     ContributionOf(index).value = value;
-    ReresolveJoint(runtime, MakeWholeValueProjectionTest());
+    ReresolveJoint(runtime, Change::Whole());
   }
 
   // A driver writes wherever this net's own positions are, so every resolution
   // a run of it takes part in recomputes -- except a run whose positions
-  // `unchanged` shows the driver's write left alone, where a contribution that
+  // `change` shows the driver's write left alone, where a contribution that
   // did not move leaves the resolution over it where it was. A net no
   // connection split reaches one run, which is the same walk over one.
-  void ReresolveJoint(
-      RuntimeEffects& runtime, const ProjectionUnchanged& unchanged) {
+  void ReresolveJoint(RuntimeEffects& runtime, const Change& change) {
     for (const NetReach<T>& reach : reaches_) {
-      if (unchanged(reach.net_offset, reach.width)) {
+      if (change.LeftAlone(reach.net_offset, reach.width)) {
         continue;
       }
       reach.physical->Reresolve(runtime);
@@ -547,14 +546,13 @@ class ResolvedNet : public Observable {
       const bool changed = !resolved_.IsBitIdentical(next);
       resolved_ = std::move(next);
       if (changed) {
-        runtime.WakeWaitersOf(
-            *this, MakePackedProjectionTest(old_val, resolved_));
+        runtime.WakeWaitersOf(*this, Change::Between(old_val, resolved_));
       }
     } else {
       const bool changed = !resolved_.IsBitIdentical(next);
       resolved_ = std::move(next);
       if (changed) {
-        runtime.WakeWaitersOf(*this, MakeWholeValueProjectionTest());
+        runtime.WakeWaitersOf(*this, Change::Whole());
       }
     }
   }
@@ -797,8 +795,8 @@ class Driver {
   [[nodiscard]] static auto Watched() -> bool {
     return true;
   }
-  void PublishTransition(const ProjectionUnchanged& unchanged) const {
-    Net().ReresolveJoint(current_runtime(), unchanged);
+  void PublishTransition(const Change& change) const {
+    Net().ReresolveJoint(current_runtime(), change);
   }
 
  private:

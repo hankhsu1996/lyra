@@ -104,7 +104,7 @@ class OpenWrite {
     bool (*undecided)(void* room);
     void (*formed)(void* room, value::Formation formed);
     void (*moved)(void* room);
-    void (*landed)(void* room, const ProjectionUnchanged& unchanged);
+    void (*landed)(void* room, const Change& change);
     void (*end)(void* room);
   };
 
@@ -129,8 +129,8 @@ class OpenWrite {
           },
       .moved = [](void* room) { Bracket<Sink>(room)->Moved(); },
       .landed =
-          [](void* room, const ProjectionUnchanged& unchanged) {
-            Bracket<Sink>(room)->Landed(unchanged);
+          [](void* room, const Change& change) {
+            Bracket<Sink>(room)->Landed(change);
           },
       .end =
           [](void* room) {
@@ -185,7 +185,7 @@ class OpenWrite {
         auto* landing = Landing<TupleLanding>(room);
         if (!value::RuntimeTuple::BitIdentical(
                 landing->before.Bytes(), landing->part)) {
-          bracket_of.landed(bracket, MakeWholeValueProjectionTest());
+          bracket_of.landed(bracket, Change::Whole());
         }
         std::destroy_at(landing);
       }};

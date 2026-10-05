@@ -55,11 +55,11 @@ class Observable {
   // whose evaluation only reads storage by what its expression is worth now,
   // and every other wait by having been reached at all, its process deciding
   // once it runs (LRM 4.5, 9.2.2.2.1, 9.4.2, 15.5.1).
-  [[nodiscard]] auto TakeFiringWaiters(const ProjectionUnchanged& unchanged)
+  [[nodiscard]] auto TakeFiringWaiters(const Change& change)
       -> std::vector<CoroutineHandle> {
     std::vector<CoroutineHandle> woken;
     waiters_.ForEach([&](Registration& reg) {
-      if (reg.bit_width != 0 && unchanged(reg.lsb_bit_offset, reg.bit_width)) {
+      if (change.LeftAlone(reg.lsb_bit_offset, reg.bit_width)) {
         return;
       }
       if (!reg.FiresNow()) {
@@ -74,9 +74,5 @@ class Observable {
  private:
   RegistrationList waiters_;
 };
-
-// The answer for a change whose parts are not bit ranges: nothing about a
-// leaf's bits can be shown untouched, so every wait on it is asked.
-auto MakeWholeValueProjectionTest() -> ProjectionUnchanged;
 
 }  // namespace lyra::runtime

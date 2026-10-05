@@ -231,8 +231,8 @@ void RuntimeEffects::SubmitDeferredFinal(OwnedCall action) {
 }
 
 void RuntimeEffects::WakeWaitersOf(
-    Observable& observable, const ProjectionUnchanged& unchanged) {
-  for (CoroutineHandle handle : observable.TakeFiringWaiters(unchanged)) {
+    Observable& observable, const Change& change) {
+  for (CoroutineHandle handle : observable.TakeFiringWaiters(change)) {
     Wake(handle);
   }
 }

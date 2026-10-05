@@ -1,6 +1,5 @@
 #include "lyra/runtime/var.hpp"
 
-#include <cstdint>
 #include <iterator>
 #include <span>
 #include <variant>
@@ -17,7 +16,6 @@
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/wait.hpp"
-#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
@@ -129,31 +127,21 @@ class RecollectingEventWait : public EventControlWait {
 
 }  // namespace
 
-auto MakePackedProjectionTest(
-    const value::PackedArray& old_val, const value::PackedArray& new_val)
-    -> ProjectionUnchanged {
-  return [&old_val, &new_val](std::uint64_t lsb, std::uint64_t width) -> bool {
-    const auto start = static_cast<std::int64_t>(lsb);
-    return old_val.ExtractRun(start, width)
-        .IsBitIdentical(new_val.ExtractRun(start, width));
-  };
-}
-
 template auto LandedChange<value::PackedArray>(
     const value::PackedArray& before, const value::PackedArray& after)
-    -> ProjectionUnchanged;
+    -> Change;
 
 RareWriteState::~RareWriteState() = default;
 
 VariableCell::VariableCell() = default;
 VariableCell::~VariableCell() = default;
 
-void ErasedReference::Report(const ProjectionUnchanged& unchanged) const {
+void ErasedReference::Report(const Change& change) const {
   std::visit(
       Overloaded{
           [](std::monostate) {},
           [&](VariableCell* variable) {
-            current_runtime().WakeWaitersOf(*variable, unchanged);
+            current_runtime().WakeWaitersOf(*variable, change);
           },
           [](GcObject* object) { object->PublishChange(); }},
       holder);
@@ -185,7 +173,7 @@ auto ErasedReference::Part(void* part, value::Formation formed) const
       return {.holder = holder, .storage = part};
     case value::Formation::kMade:
       if (Watched()) {
-        Report(MakeWholeValueProjectionTest());
+        Report(Change::Whole());
       }
       return {.holder = holder, .storage = part};
     case value::Formation::kNowhere:

@@ -11,7 +11,7 @@ NamedEvent::~NamedEvent() = default;
 
 void NamedEvent::Trigger(RuntimeEffects& runtime) {
   last_triggered_at_ = runtime.Now();
-  runtime.WakeWaitersOf(*this, MakeWholeValueProjectionTest());
+  runtime.WakeWaitersOf(*this, Change::Whole());
 }
 
 auto NamedEvent::Triggered(RuntimeEffects& runtime) const

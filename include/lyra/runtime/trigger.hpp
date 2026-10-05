@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
+#include <span>
 
 #include "lyra/runtime/observation.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -48,15 +48,40 @@ struct Trigger {
       const value::PackedArray& bit_width);
 };
 
-// Whether a change left one leaf's bits exactly as they were. The producer of
-// the change captures the values it moved between, so an observable stays
-// agnostic to what it holds.
+// What a write that changed an observable did to it, as far as a wait on some
+// of its bits can be told. Where the observable is a packed value, the change
+// borrows its planes from before and after the write, for as long as the change
+// is being told, and a leaf's bits are compared where they lie; where it is
+// not, nothing about its bits can be shown untouched and every wait is asked.
 //
-// It answers only in the negative direction: `true` means this leaf cannot have
-// been affected and the wait need not be consulted, while `false` means it may
-// have been. Where a value has no bit projection to speak of, answering `false`
-// throughout is correct and simply consults every wait.
-using ProjectionUnchanged =
-    std::function<bool(std::uint64_t lsb, std::uint64_t width)>;
+// It is only ever made for a write that changed the observable, so a leaf
+// covering every bit is moved without being compared.
+class Change {
+ public:
+  // A change whose parts are not bit runs.
+  [[nodiscard]] static auto Whole() -> Change;
+
+  // A change between two values of one packed shape.
+  [[nodiscard]] static auto Between(
+      const value::PackedArray& before, const value::PackedArray& after)
+      -> Change;
+
+  // Whether the `bit_width` bits from `lsb_bit_offset` are as they were, a
+  // width of zero reading the whole of it as a leaf's does. It answers only in
+  // the negative direction: `true` means a wait reading only those bits need
+  // not be asked, and `false` that it may have been affected.
+  [[nodiscard]] auto LeftAlone(
+      std::uint64_t lsb_bit_offset, std::uint64_t bit_width) const -> bool;
+
+ private:
+  Change();
+
+  std::span<const std::uint64_t> before_value_;
+  std::span<const std::uint64_t> before_unknown_;
+  std::span<const std::uint64_t> after_value_;
+  std::span<const std::uint64_t> after_unknown_;
+  // Zero for a change whose parts are not bit runs.
+  std::uint64_t bit_width_ = 0;
+};
 
 }  // namespace lyra::runtime

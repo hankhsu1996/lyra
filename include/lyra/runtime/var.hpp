@@ -59,12 +59,12 @@ namespace lyra::runtime {
 // names the handle in its own partial-write entry's return type and checking
 // the constraint there would depend on the sink being complete.
 template <class S>
-concept MutationSink = requires(S sink, const ProjectionUnchanged& unchanged) {
+concept MutationSink = requires(S sink, const Change& change) {
   typename S::ValueType;
   { sink.AdmitsWrite() } -> std::same_as<bool>;
   { sink.MutationStorage() } -> std::same_as<typename S::ValueType&>;
   { sink.Watched() } -> std::same_as<bool>;
-  sink.PublishTransition(unchanged);
+  sink.PublishTransition(change);
 };
 
 template <class Sink>
@@ -72,13 +72,6 @@ class ScopedMutation;
 
 template <value::LyraValue T>
 class Ref;
-
-// Reads one leaf's bits out of the values a change moved between, so a wait
-// that reads only bits this change left alone is passed over. Defined in the
-// library: a unit writing a packed cell reaches it, and no design shapes it.
-[[nodiscard]] auto MakePackedProjectionTest(
-    const value::PackedArray& old_val, const value::PackedArray& new_val)
-    -> ProjectionUnchanged;
 
 // What only a variable something samples or takes over has to do before a
 // write lands in it: keep its value from before the time slot's first change
@@ -308,9 +301,9 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   }
 
   // Tells whoever waits here that a write changed the cell (LRM 4.3), passing
-  // over a wait whose bits `unchanged` shows the write left alone.
-  void PublishTransition(const ProjectionUnchanged& unchanged) {
-    current_runtime().WakeWaitersOf(*this, unchanged);
+  // over a wait whose bits `change` shows the write left alone.
+  void PublishTransition(const Change& change) {
+    current_runtime().WakeWaitersOf(*this, change);
   }
 
   // Opens a write into the cell for the full-expression that writes. The cell's
@@ -349,10 +342,10 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     if constexpr (std::same_as<T, value::PackedArray>) {
       const T before = this->Get();
       this->Overwrite(new_val);
-      PublishTransition(MakePackedProjectionTest(before, this->Get()));
+      PublishTransition(Change::Between(before, this->Get()));
     } else {
       this->Overwrite(new_val);
-      PublishTransition(MakeWholeValueProjectionTest());
+      PublishTransition(Change::Whole());
     }
   }
 
@@ -380,12 +373,11 @@ class Var : public VariableCell, public ValueStorageCore<T> {
 // Which bits of a part landed on a change between the two values left alone:
 // a packed value's by position, and nothing that can be shown of any other.
 template <class Part>
-auto LandedChange(const Part& before, const Part& after)
-    -> ProjectionUnchanged {
+auto LandedChange(const Part& before, const Part& after) -> Change {
   if constexpr (std::same_as<Part, value::PackedArray>) {
-    return MakePackedProjectionTest(before, after);
+    return Change::Between(before, after);
   } else {
-    return MakeWholeValueProjectionTest();
+    return Change::Whole();
   }
 }
 
@@ -393,7 +385,7 @@ auto LandedChange(const Part& before, const Part& after)
 // library.
 extern template auto LandedChange<value::PackedArray>(
     const value::PackedArray& before, const value::PackedArray& after)
-    -> ProjectionUnchanged;
+    -> Change;
 
 // Writes `value` into storage a reference names, at the representation the
 // storage already has; the first write into a packed value nothing has written
@@ -456,7 +448,7 @@ struct ErasedReference {
   // reference changed it (LRM 4.3). A wait on an object reevaluates the
   // expression that reached it, which decides whether the write was an event,
   // so it is told nothing about which bits moved.
-  void Report(const ProjectionUnchanged& unchanged) const;
+  void Report(const Change& change) const;
 
   // A step can form what it reaches, which is a write into the variable, so
   // the variable admits it first.
@@ -602,8 +594,8 @@ class Ref {
         erased_.holder);
   }
 
-  void PublishTransition(const ProjectionUnchanged& unchanged) const {
-    erased_.Report(unchanged);
+  void PublishTransition(const Change& change) const {
+    erased_.Report(change);
   }
 
  private:
@@ -824,19 +816,19 @@ class WriteBracket {
     }
   }
 
-  // The part landed on is not what it was, and `unchanged` says which of its
-  // bits moved. A packed value has no parts that are storage of their own, so
-  // a write into one lands on the whole and the bits it moved are the whole's;
+  // The part landed on is not what it was, and `change` says which of its bits
+  // moved. A packed value has no parts that are storage of their own, so a
+  // write into one lands on the whole and the bits it moved are the whole's;
   // the waits on any other value are not bit-addressed.
-  void Landed(const ProjectionUnchanged& unchanged) {
+  void Landed(const Change& change) {
     if (!Open()) {
       return;
     }
     outcome_ = Outcome::kSettled;
     if constexpr (std::same_as<ValueType, value::PackedArray>) {
-      sink_.PublishTransition(unchanged);
+      sink_.PublishTransition(change);
     } else {
-      sink_.PublishTransition(MakeWholeValueProjectionTest());
+      sink_.PublishTransition(Change::Whole());
     }
   }
 
@@ -848,7 +840,7 @@ class WriteBracket {
         return;
       case Outcome::kChanged:
         if (watched_) {
-          sink_.PublishTransition(MakeWholeValueProjectionTest());
+          sink_.PublishTransition(Change::Whole());
         }
         return;
     }

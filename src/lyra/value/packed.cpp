@@ -77,6 +77,20 @@ auto MoveBitRun(
   }
 }
 
+auto BitRunsEqual(
+    std::span<const std::uint64_t> lhs, std::span<const std::uint64_t> rhs,
+    std::uint64_t offset, std::uint64_t count) -> bool {
+  for (std::uint64_t compared = 0U; compared < count;) {
+    const RunStep step = StepAt(offset + compared, count - compared);
+    const std::uint64_t at = offset + compared;
+    if (BitsAt(lhs, at, step.count) != BitsAt(rhs, at, step.count)) {
+      return false;
+    }
+    compared += step.count;
+  }
+  return true;
+}
+
 auto SetBitRun(
     std::span<std::uint64_t> dst, std::uint64_t offset, std::uint64_t count)
     -> void {

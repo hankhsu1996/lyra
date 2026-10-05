@@ -91,6 +91,13 @@ auto MoveBitRun(
     std::span<std::uint64_t> dst, std::uint64_t dst_offset, std::uint64_t count)
     -> void;
 
+// Whether two planes hold the same bits over the run of `count` positions
+// beginning at `offset`, read where they lie. A position a plane does not reach
+// reads as clear, as it does for `MoveBitRun`.
+auto BitRunsEqual(
+    std::span<const std::uint64_t> lhs, std::span<const std::uint64_t> rhs,
+    std::uint64_t offset, std::uint64_t count) -> bool;
+
 // Every position of the run set, and nothing outside it.
 auto SetBitRun(
     std::span<std::uint64_t> dst, std::uint64_t offset, std::uint64_t count)
