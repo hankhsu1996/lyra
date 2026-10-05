@@ -23,14 +23,26 @@ the detail lives in the entry itself.
   guaranteed to have it, and a type fixing no representation is still realized as what reaches its
   position. Widening a pattern's keys to a common type, reading an element's shape off the first
   element, and carrying a wildcard index's comparison on the keys are rejected.
+- [a-value-is-its-machine-data](a-value-is-its-machine-data.md) -- a value is held as the machine
+  holds data of its size and its type is the compiler's to know: a packed value is its words in one
+  contiguous run, a type is its exact width, signedness and state domain, operations are generated
+  for the type, and the runtime is handed generated functions rather than a description of a type.
+  Each choice is justified by what its cost scales with for any input. Supersedes the runtime-shape
+  halves of the four entries below it.
+- [a-port-shares-its-sources-storage](a-port-shares-its-sources-storage.md) -- a variable port
+  connected to a whole variable of an equivalent type is a reference to the source's storage, so a
+  write to one element costs the element through any hierarchy; every other connection moves only
+  the range a write reached, and a force on a sink retargets its reference.
 - [integral-representation](integral-representation.md) -- one fat `PackedArray` carries integral
-  shape as runtime fields, not C++ template parameters.
+  shape as runtime fields, not C++ template parameters. Decisions 1 and 4 superseded by
+  a-value-is-its-machine-data.
 - [value-store-discipline](value-store-discipline.md) -- a value is pure; preserving the
   destination's declared type across assignment lives at the store boundary, not the value.
 - [value-type-concepts](value-type-concepts.md) -- the `lyra::value` operator surface is a lattice
   of composable C++ concepts, one per LRM operator family.
 - [runtime-shape-and-default-value](runtime-shape-and-default-value.md) -- runtime shape lives on
   `PackedArray`; one OOB shield slot is both the canonical default and the out-of-bounds discard.
+  Decision 1 superseded by a-value-is-its-machine-data.
 - [string-packed-conversion](string-packed-conversion.md) -- a `value::String` holds no NUL;
   packed-to-string strips NUL, `%s` formats bits without a string value.
 - [enum-representation](enum-representation.md) -- an enum's semantic type identity is separate from

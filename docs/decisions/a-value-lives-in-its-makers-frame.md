@@ -2,7 +2,10 @@
 
 Date: 2026-09-24 (revised 2026-09-30) Status: accepted. Supersedes the lifetime half of
 [jit-value-realization](jit-value-realization.md) and the transient half of
-[activation-frame-and-transient-scope](activation-frame-and-transient-scope.md).
+[activation-frame-and-transient-scope](activation-frame-and-transient-scope.md). Its premise that
+every value domain realizes one runtime type, so one size serves every value, is superseded
+2026-10-04 by [a-value-is-its-machine-data](a-value-is-its-machine-data.md): a value's size follows
+its type. Where a value lives and when it ends are unchanged.
 
 ## Context
 

@@ -6,7 +6,10 @@
 
 ## Status
 
-Accepted
+Accepted; decisions 1 and 4 superseded 2026-10-04 by
+[a-value-is-its-machine-data](a-value-is-its-machine-data.md), which keeps one integral concept in
+MIR and no bridges in emitted code and makes the width, signedness and state domain the type's
+rather than the value's.
 
 ## Why this decision matters
 

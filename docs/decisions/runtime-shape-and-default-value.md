@@ -1,6 +1,10 @@
 # Packed Array runtime shape and collection default value
 
-Date: 2026-06-03 (revised 2026-06-22, 2026-09-28) Status: accepted
+Date: 2026-06-03 (revised 2026-06-22, 2026-09-28) Status: accepted; decision 1 (shape stays a
+runtime property of the value) superseded 2026-10-04 by
+[a-value-is-its-machine-data](a-value-is-its-machine-data.md), which lifts width, signedness and
+state domain to the type -- the question this record's first question asked and answered the other
+way.
 
 The 2026-06-22 revision splits the container's single `mutable` default slot into two fields -- an
 immutable canonical default and a separate write-discard sink -- so the read path is genuinely
