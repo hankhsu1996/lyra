@@ -1,7 +1,6 @@
 #pragma once
 
 #include <compare>
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -302,20 +301,6 @@ struct ConcurrentAssertionDecl {
   auto operator==(const ConcurrentAssertionDecl&) const -> bool = default;
 };
 
-// The position `coords`, one per dimension, name among the objects of a
-// declaration with element counts `dims`, outermost first, counted in row-major
-// order. A declaration standing for one object has no dimensions and its one
-// object at position 0.
-[[nodiscard]] inline auto RowMajorPosition(
-    std::span<const std::uint32_t> dims, std::span<const std::uint32_t> coords)
-    -> std::size_t {
-  std::size_t position = 0;
-  for (std::size_t d = 0; d < dims.size(); ++d) {
-    position = position * dims[d] + coords[d];
-  }
-  return position;
-}
-
 // One way the objects of an instance declaration are built: the unit they are
 // instances of, standing on this unit's record of the class that unit's
 // instances are, and what each is passed at construction, one per parameter
@@ -351,15 +336,13 @@ struct InstanceMemberDecl {
 // An interface port's internal name (LRM 25.3). The scope names instances of
 // another unit that it neither owns nor builds; the parent binds them during
 // elaboration, the way it binds a `ref` port's internal name to the connected
-// variable. `scope_class` is this unit's record of what that unit published,
-// so a name reached through the port is counted out of the order its signature
-// states. `array_dims` is empty for a port standing for one instance and holds
-// one element count per dimension, outermost first, for a port carrying a
-// range: the port is one member however many instances it stands for, holding a
-// handle on each.
+// variable. `array_dims` is empty for a port standing for one instance and
+// holds one element count per dimension, outermost first, for a port carrying
+// a range: the port is one member however many instances it stands for,
+// holding a handle on each. Which kind of instance is bound at each position
+// is what the type this scope published for the port states.
 struct InterfacePortDecl {
   std::string name;
-  ExternalScopeClassId scope_class;
   std::vector<std::uint32_t> array_dims;
 
   auto operator==(const InterfacePortDecl&) const -> bool = default;

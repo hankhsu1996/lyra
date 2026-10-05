@@ -16,6 +16,12 @@ reversed by
 module and an interface each publish every declaration a hierarchical name may reach, so every step
 of a name through the port is resolved where the module compiles. The other decisions stand.
 
+**D1 is widened from "names a unit" to "names the unit at each position".** It was derived where
+every instance a port carrying a range is bound to was one unit; a `defparam` or a configuration
+rule may reach one element of the connected array (LRM 23.10.1, 33.4), so the instances are a set
+whose elements are described one by one. The reasoning D1 gives -- a name is the only identity a
+signature can carry -- holds for each position.
+
 ## Why this decision matters
 
 An interface exists to be written against. A module names `b.data`, and the interface instance the
@@ -45,13 +51,20 @@ and the two have to be the same interface without either restating the other.
 
 ## Decisions
 
-### D1. The port's declared type names a unit, by name, and nothing else
+### D1. The port's declared type names the unit at each position, by name, and nothing else
 
-The type of an interface port is the object an instance of the named unit is. There is no local form
-of it, the way a class reference has one: an interface port always names another unit, so a variant
-whose second arm can never be taken would be a case that exists only to be unreachable. The name is
-the identity from everywhere, so the type crosses a signature unchanged and the import that carries
-it is the identity function.
+The type of an interface port is the set of objects the instances bound to it are: its range, and
+for each position the unit whose instance stands there, each read off that instance. A port standing
+for one instance is the set of one. There is no local form of it, the way a class reference has one:
+an interface port always names another unit, so a variant whose second arm can never be taken would
+be a case that exists only to be unreachable. The name is the identity from everywhere, so the type
+crosses a signature unchanged and the import that carries it is the identity function.
+
+The instances of one connected array take the one assignment their instantiation wrote, but
+something written elsewhere may reach one of them, so the type does not name "the" unit of the set:
+it names the kinds the positions turned out to be and which kind each position takes. A name through
+the port selects a position by constants (LRM 23.6), so the unit it reaches is the one at that
+position, settled where the module compiles.
 
 The referrer resolves that name against its own record of the objects it compiled against, which it
 made when it consumed the interface's signature. Reaching another unit's object is what declares the
@@ -221,7 +234,7 @@ is what it reaches -- read at the member level.
 - `published-member-placement.md` -- how a published member's position is computed on both sides; D2
   here adds the fourth storage kind its D4 maps to a cell.
 - `instance-array-multiplicity.md` -- what D1's type names when the header gives the port a range:
-  one member still, with the multiplicity standing over the unit it names.
+  one member still, with the multiplicity and the kind at each position stated by the set.
 - `specialization-identity.md` -- the identity function D4 widens, and the reason producer and
   consumer can compute it independently.
 - `reference-as-data-type.md` -- the `ref` port's fill-once-at-Resolve lifecycle, which the

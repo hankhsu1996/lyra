@@ -90,10 +90,10 @@ Unlocks the runtime side of `instantiation/param_slots`.
       or setting parameters (LRM 33.4.1.6, 33.4.3), also where the instance sits under a parent
       instantiated more than once. A value a `defparam` or a configuration gives is held the way the
       instantiation's own assignment is.
-- [ ] B9 -- An interface array an override made differ in its elements, reached through a port
-      carrying a range or through an interface holding it (LRM 25.3): what a port's type publishes
-      still names one unit for every element, so the execution backend fails to compile the design
-      and the C++ backend reads the wrong width.
+- [x] B9 -- An interface array an override made differ in its elements reaches each element as its
+      own elaboration made it (LRM 25.3, 23.3.3.5): through a port carrying a range, that port
+      handed on to another, a part of the array connected to a port, a port and an array declared in
+      opposite directions, and an array an interface holds reached through a port.
 - [ ] B10 -- A `defparam` on a `parameter` a named block, task or function declares (LRM 23.10.2) is
       refused by the front end, which makes such a parameter a `localparam`; LRM 6.20.1 makes only a
       generate block's, a package's, a compilation-unit scope's and a class's parameter local.

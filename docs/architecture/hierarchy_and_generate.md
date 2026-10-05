@@ -79,6 +79,17 @@ shared by all consumers: external references, child routing, and construction.
     object whose declaration exists at compile time but whose runtime object is absent in the
     elaborated design. The reference is rejected at the sealing barrier; route execution does not
     silently substitute a null, a default, or an alternate target.
+12. A set of objects the source writes under one name -- an instance array, the instances an
+    interface port carrying a range is bound to, the blocks a loop generate counts out -- is
+    described object by object, each from its own elaboration, and what its objects share is found
+    by comparing those descriptions. Every element takes what its instantiation wrote (LRM 23.3.2),
+    but a `defparam`, a `bind` or a configuration rule may reach one of them (LRM 23.10.1, 23.11,
+    33.4), so nothing about the set can be read off one element. What this serves is that
+    correctness does not depend on sharing (`north_star.md` invariant 3): a description of the set
+    that starts from a representative has to predict that the rest agree, and the element it
+    predicted wrong is then lowered as another one. The set is still one declaration, stating which
+    kind stands at each position, so artifacts follow the distinct kinds and never the element count
+    (invariant 2 there).
 
 ## Boundary to Adjacent Layers
 
@@ -119,6 +130,9 @@ shared by all consumers: external references, child routing, and construction.
   construction. The two axes must not be conflated or made to subsume each other.
 - A parameter read only as a value used as part of compile-time identity, which forks artifacts per
   value and fails `north_star.md` invariant 2 for no correctness gain.
+- Describing a set of objects by one of its elements -- the first element's unit standing for an
+  array's, one class standing for the instances a port is bound to -- which fails `north_star.md`
+  invariant 3 wherever an override elsewhere made an element differ (invariant 12 above).
 - Splitting a child's hierarchy identity between the child and a parent-side registry -- the child
   carrying only an un-indexed label while bracketed indices live in a parent table that consumers
   reverse-search to recover the full name. The child carries its complete `(base, indices)` segment;
@@ -188,7 +202,10 @@ own scope without lengthening any hierarchical name.
 `bank` array, and one entry per generate construct: `g`'s entry lists each block's class keyed by
 its index, and `genblk2`'s keys its one block by that label. So `mid.g[1].leaf` is a typed step into
 the entry at index 1, viewed as that block's class, and then a published member. Where `g[0]` and
-`g[1]` compile to one class, each still goes by its own name, an alias of that class.
+`g[1]` compile to one class, each still goes by its own name, an alias of that class. `bank` is
+published the same way as a set: its range, and which kind of object stands at each position, so
+`mid.bank[1]` reaches the kind its own elaboration made it even where a `defparam` made it differ
+from `bank[0]`.
 
 If resolving a hierarchical reference requires a lookup through a table that mirrors the object
 tree, the table is redundant: the tree itself is the authority.

@@ -20,7 +20,12 @@ namespace lyra::lowering::ast_to_hir {
 // A port declared with a range names as many instances as the range has
 // elements. They take the one assignment their instantiation wrote (LRM
 // 23.3.2), but something written elsewhere may reach one of them (LRM 23.10.1),
-// so each is its own.
+// so each is its own. Their order needs no correction: what a connection
+// resolves to is already rebased onto the range the port declared, matched
+// left index to left index (LRM 23.3.3.5), so the position each takes here is
+// the port's own position for it. The unit publishing the port and the parent
+// binding it both read the instances from here, so the two count the port's
+// positions alike.
 //
 // The connection is passed in rather than looked up, because which one applies
 // is the caller's question: a parent deducing what it fixed for a child reads

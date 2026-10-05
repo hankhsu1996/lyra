@@ -272,20 +272,80 @@ struct UnitObjectType {
   auto operator==(const UnitObjectType&) const -> bool = default;
 };
 
-// The objects at the positions of one declaration standing for several, where
-// they are not all of one class: every element takes what its instantiation
-// wrote (LRM 23.3.2), but something written elsewhere may reach one of them
-// (LRM 23.10.1, 23.11, 33.4). It is the element type of the arrays the
-// declaration's ranges wrap it in, and `taken` says which of `alternatives`
-// the object at each of their positions is, one entry per position in
-// row-major order. A name selects one position by constants (LRM 23.6), so
-// which class it reaches is known where it compiles.
-struct UnitObjectByPositionType {
-  std::vector<UnitObjectType> alternatives;
+// The objects one declaration stands for -- an instance or an instance array a
+// scope builds (LRM 23.3.2), the interface instances a port is bound to (LRM
+// 25.3) -- stated as a set: the range of each dimension, outermost first, none
+// where it stands for one; the kinds of object in it; and which kind stands at
+// each position, one entry per position in row-major order. Every element
+// takes what its instantiation wrote, but something written elsewhere may
+// reach one of them (LRM 23.10.1, 23.11, 33.4), so each element is read on its
+// own and the kinds are what comparing them found. A name selects one position
+// by constants (LRM 23.6), so which kind it reaches is known where it
+// compiles, and what it reaches is one object of that kind.
+struct UnitObjectsType {
+  std::vector<UnpackedRange> ranges;
+  std::vector<UnitObjectType> kinds;
   std::vector<std::uint32_t> taken;
 
-  auto operator==(const UnitObjectByPositionType&) const -> bool = default;
+  // How many objects the set holds. One where it declares no dimension, which
+  // is the same product over an empty list.
+  [[nodiscard]] auto ElementCount() const -> std::uint64_t {
+    std::uint64_t count = 1;
+    for (const UnpackedRange& range : ranges) {
+      count *= range.ElementCount();
+    }
+    return count;
+  }
+
+  // The kind of the object at `position`, counted in row-major order.
+  [[nodiscard]] auto KindAtPosition(std::size_t position) const
+      -> const UnitObjectType& {
+    return kinds.at(taken.at(position));
+  }
+
+  // The kind of the object `selects` pick out, a position in each dimension.
+  [[nodiscard]] auto KindAt(std::span<const std::uint32_t> selects) const
+      -> const UnitObjectType& {
+    if (selects.size() != ranges.size()) {
+      throw InternalError(
+          "hir::UnitObjectsType::KindAt: one object of a set is picked out "
+          "by a select of every dimension");
+    }
+    std::size_t position = 0;
+    for (std::size_t d = 0; d < selects.size(); ++d) {
+      position = position * ranges[d].ElementCount() + selects[d];
+    }
+    return KindAtPosition(position);
+  }
+
+  auto operator==(const UnitObjectsType&) const -> bool = default;
 };
+
+// The set whose object at each position, in row-major order, is of the kind
+// `per_position` gives it. Each position is described on its own and the kinds
+// are what comparing them found, in the order they are first met, so a set of
+// one kind and a set of several are the same reading.
+[[nodiscard]] inline auto ObjectsOf(
+    std::vector<UnpackedRange> ranges,
+    std::span<const UnitObjectType> per_position) -> UnitObjectsType {
+  UnitObjectsType objects{
+      .ranges = std::move(ranges), .kinds = {}, .taken = {}};
+  objects.taken.reserve(per_position.size());
+  for (const UnitObjectType& kind : per_position) {
+    std::size_t known = 0;
+    while (known < objects.kinds.size() && !(objects.kinds[known] == kind)) {
+      ++known;
+    }
+    if (known == objects.kinds.size()) objects.kinds.push_back(kind);
+    objects.taken.push_back(static_cast<std::uint32_t>(known));
+  }
+  if (objects.taken.size() != objects.ElementCount()) {
+    throw InternalError(
+        "hir::ObjectsOf: a set names the kind at every position its ranges "
+        "count, and no other");
+  }
+  return objects;
+}
 
 // LRM 25.9 virtual interface: a variable's type that holds an instance of the
 // interface unit `unit_name`, or null. The unit is fixed by the type, which
@@ -323,8 +383,8 @@ class Type {
       EnumType, UnpackedStructType, UnpackedUnionType, UnpackedArrayType,
       DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
       StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
-      ClassHandleType, ImportedClassHandleType, UnitObjectType,
-      UnitObjectByPositionType, VirtualInterfaceType, NullType, VoidType>;
+      ClassHandleType, ImportedClassHandleType, UnitObjectType, UnitObjectsType,
+      VirtualInterfaceType, NullType, VoidType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -441,60 +501,6 @@ struct UnpackedShape {
     shape.element_type = array->element_type;
   }
   return shape;
-}
-
-// The same reading, for a declaration that stands for objects of another unit
-// rather than for values. An interface's `Inner bank[2]()` publishes a member
-// of type `array[2] of object{Inner}`, and this answers: an `Inner` at the
-// bottom, belonging to unit `Inner`, under one declared range (LRM 23.2.2,
-// 25.3). Nothing where the bottom is a value -- a declaration no name descends
-// through and no connection binds objects to.
-//
-// A connection pairs these objects with a port's own left index to left index
-// (LRM 23.3.3.5), which each range's direction decides, so the nesting is
-// stated the way the declaration wrote it.
-//
-// The objects are of one class, or of the class each position takes where
-// something written elsewhere made them differ.
-struct ObjectsBehindType {
-  UnpackedShape shape;
-  std::span<const UnitObjectType> alternatives;
-  std::span<const std::uint32_t> taken;
-
-  // The class of the object `selects` pick out, one position per dimension.
-  [[nodiscard]] auto ClassAt(std::span<const std::uint32_t> selects) const
-      -> const UnitObjectType& {
-    if (alternatives.size() == 1) return alternatives.front();
-    if (selects.size() != shape.dims.size()) {
-      throw InternalError(
-          "hir::ObjectsBehindType::ClassAt: objects of several classes are "
-          "told apart only by a select of every dimension");
-    }
-    std::size_t position = 0;
-    for (std::size_t d = 0; d < selects.size(); ++d) {
-      position = position * shape.dims[d].ElementCount() + selects[d];
-    }
-    return alternatives[taken[position]];
-  }
-};
-
-[[nodiscard]] inline auto ObjectsBehind(const TypePool& types, TypeId type)
-    -> std::optional<ObjectsBehindType> {
-  UnpackedShape shape = UnpackedShapeOf(types, type);
-  const Type& element = types.Get(shape.element_type);
-  if (const auto* object = element.As<UnitObjectType>()) {
-    return ObjectsBehindType{
-        .shape = std::move(shape),
-        .alternatives = std::span{object, 1},
-        .taken = {}};
-  }
-  if (const auto* by_position = element.As<UnitObjectByPositionType>()) {
-    return ObjectsBehindType{
-        .shape = std::move(shape),
-        .alternatives = by_position->alternatives,
-        .taken = by_position->taken};
-  }
-  return std::nullopt;
 }
 
 }  // namespace lyra::hir

@@ -368,6 +368,11 @@ auto UnitLowerer::ResolveRouteTarget(
           // alike), that identity also says every such scope between the
           // static and its structural one describes where the storage sits
           // rather than a step the route takes.
+          // A value is a member of one object, so a walk standing on several
+          // has not reached one.
+          [&](const OnSeveralObjects&) -> diag::Result<hir::DataLeaf> {
+            return unsupported();
+          },
           [&](const InOwnScope&) -> diag::Result<hir::DataLeaf> {
             auto type = InternType(value.getType(), span);
             if (!type) return std::unexpected(std::move(type.error()));
@@ -498,9 +503,13 @@ auto UnitLowerer::StartOf(
     const auto& port =
         reference.path.front().symbol->as<slang::ast::InterfacePortSymbol>();
     PortReach reach = ReachOfPort(frame, port);
+    // The instance the name stands in is the one bound where its selects land:
+    // a port standing for one is bound to one, and the front end names the
+    // element a select picks out of one carrying a range.
     const auto connected = ConnectedInterfaceOf(port.getConnection()).instances;
     const slang::ast::InstanceSymbol* bound =
-        connected.empty() ? nullptr : connected.front();
+        reach.hop.dims.empty() && connected.size() == 1 ? connected[0]
+                                                        : nullptr;
     for (std::size_t at = 1; at < reference.path.size(); ++at) {
       // The front end lists a loop generate by its name, with no selector,
       // before the block its select picks, so the port's own selects end
@@ -526,6 +535,7 @@ auto UnitLowerer::StartOf(
           "a name through an interface port standing for several instances is "
           "not yet supported here");
     }
+    reach.hop.place = PlaceThroughPort(port, reach.hop.step.selects);
     return RouteOrigin{RouteStart{
         .below = &bound->body,
         .base = std::move(reach.base),
@@ -707,6 +717,10 @@ auto UnitLowerer::ReachThroughInterfacePort(
       break;
     }
   }
+  // What the port's hop stands on is settled by the selects the name wrote
+  // for it: the instance they pick out, or the several they leave.
+  auto& through_port = std::get<DeclaredHop>(hops.front());
+  through_port.place = PlaceThroughPort(*port, through_port.step.selects);
   if (!ClassifyDescent(route, hops)) return std::nullopt;
   auto open = NarrowOutermost(std::move(route.open), part);
   if (!open.has_value()) return std::nullopt;
@@ -715,7 +729,7 @@ auto UnitLowerer::ReachThroughInterfacePort(
 }
 
 auto UnitLowerer::ReachOfPort(
-    const WalkFrame& frame, const slang::ast::InterfacePortSymbol& port) const
+    const WalkFrame& frame, const slang::ast::InterfacePortSymbol& port)
     -> PortReach {
   const auto binding = LookupInterfacePortBinding(port);
   if (!binding.has_value()) {
@@ -731,15 +745,24 @@ auto UnitLowerer::ReachOfPort(
   }
   // The hop lands on the port itself, so every object it stands for is still
   // in play; a name that picks one out of them says so in a coordinate the
-  // caller adds to it.
+  // caller adds to it, and settles the place again once it has.
   return PortReach{
       .base = hir::InUnitBase{.hops = *hops},
       .hop = DeclaredHop{
           .step = hir::PathStep{.names = binding->port, .selects = {}},
-          .place =
-              InExternalScope{
-                  .scope_class = binding->scope_class, .within = {}},
-          .dims = InterfacePortDimensions(port)}};
+          .place = PlaceThroughPort(port, {}),
+          .dims = InterfacePortObjects(port).ranges}};
+}
+
+auto UnitLowerer::PlaceThroughPort(
+    const slang::ast::InterfacePortSymbol& port,
+    std::span<const std::uint32_t> selects) -> RoutePlace {
+  const hir::UnitObjectsType objects = InterfacePortObjects(port);
+  if (selects.size() != objects.ranges.size()) return OnSeveralObjects{};
+  const hir::UnitObjectType& kind = objects.KindAt(selects);
+  return InExternalScope{
+      .scope_class = ExternalScopeClassOf(kind.unit_name, kind.class_name),
+      .within = {}};
 }
 
 auto UnitLowerer::ReachOwnScope(
@@ -1009,19 +1032,21 @@ auto UnitLowerer::DescendPublishedFrom(
         unit_.external_scope_classes.Get(descended.place.scope_class).signature;
     const auto member = record.FindMember(instance.name);
     if (!member.has_value()) return false;
-    const auto behind =
-        hir::ObjectsBehind(unit_.types, record.members.Get(*member).type);
-    if (!behind.has_value()) return false;
-    // Which class the step lands on is the one at the position its selects
-    // name. Selects that leave a dimension open land on several objects, which
-    // are of one class only where every position is.
-    if (instance.indices.size() != behind->shape.dims.size() &&
-        behind->alternatives.size() != 1) {
-      return false;
-    }
-    const hir::UnitObjectType& lands_on = behind->ClassAt(instance.indices);
+    const auto* objects = unit_.types.Get(record.members.Get(*member).type)
+                              .As<hir::UnitObjectsType>();
+    if (objects == nullptr) return false;
+    // The step lands on the kind of object at the position its selects name.
+    // Selects leaving a dimension open name several objects, which only end a
+    // name -- a connection's actual is an instance, never a reference
+    // resolving through an arrayed one (LRM 25.3) -- so they land on one kind
+    // only where the set is of one. The kind is copied out, since naming its
+    // class below may add to the pool the set was read from.
+    const bool picks_one = instance.indices.size() == objects->ranges.size();
+    if (!picks_one && objects->kinds.size() != 1) return false;
+    const hir::UnitObjectType lands_on =
+        picks_one ? objects->KindAt(instance.indices) : objects->kinds.front();
     descended.open =
-        SettledDimensions(behind->shape.dims, instance.indices.size());
+        SettledDimensions(objects->ranges, instance.indices.size());
     const hir::ExternalScopeClassId result_class =
         ExternalScopeClassOf(lands_on.unit_name, lands_on.class_name);
     descended.steps.push_back(

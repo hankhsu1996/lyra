@@ -450,20 +450,28 @@ class HirDumper {
                   "UnitObjectType(unit={}, class={})", u.unit_name,
                   u.class_name);
             },
-            [](const UnitObjectByPositionType& u) -> std::string {
-              std::string alternatives;
-              for (const UnitObjectType& alternative : u.alternatives) {
-                alternatives += std::format(
-                    "{}{}::{}", alternatives.empty() ? "" : " | ",
-                    alternative.unit_name, alternative.class_name);
+            [](const UnitObjectsType& u) -> std::string {
+              std::string ranges;
+              for (const UnpackedRange& range : u.ranges) {
+                ranges += std::format("[{}:{}]", range.left, range.right);
               }
+              std::string kinds;
+              for (const UnitObjectType& kind : u.kinds) {
+                kinds += std::format(
+                    "{}{}::{}", kinds.empty() ? "" : " | ", kind.unit_name,
+                    kind.class_name);
+              }
+              // Which kind each position takes says nothing where there is one.
               std::string taken;
-              for (const std::uint32_t at : u.taken) {
-                taken += std::format("{}{}", taken.empty() ? "" : ",", at);
+              if (u.kinds.size() > 1) {
+                for (const std::uint32_t at : u.taken) {
+                  taken +=
+                      std::format("{}{}", taken.empty() ? " taken(" : ",", at);
+                }
+                taken += ')';
               }
               return std::format(
-                  "UnitObjectByPositionType({}; taken({}))", alternatives,
-                  taken);
+                  "UnitObjectsType{}({}){}", ranges, kinds, taken);
             },
             [](const VirtualInterfaceType& v) -> std::string {
               return std::format("VirtualInterfaceType(unit={})", v.unit_name);
@@ -1826,10 +1834,13 @@ class HirDumper {
     }
     for (const InterfacePortId id : s.interface_ports.Ids()) {
       const auto& port = s.interface_ports.Get(id);
+      std::string array_suffix;
+      for (const auto dim : port.array_dims) {
+        array_suffix += std::format("[{}]", dim);
+      }
       Line(
           std::format(
-              "InterfacePort[{}] \"{}\" : ExternalScopeClass[{}]", id.value,
-              port.name, port.scope_class.value));
+              "InterfacePort[{}] \"{}\"{}", id.value, port.name, array_suffix));
     }
     Line(std::format("Published: {}", FormatPublication(s.published)));
     for (const StructuralSubroutineId id : s.structural_subroutines.Ids()) {

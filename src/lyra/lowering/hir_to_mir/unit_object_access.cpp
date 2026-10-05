@@ -26,7 +26,10 @@ namespace {
 
 // The field of the scope class `scope_class` records, on the object `object`
 // points at, at the place `place_of` reads out of where this unit's record of
-// the class laid out what its scope published.
+// the class laid out what its scope published. The access names the class, so
+// the object is reached as one of it: a set whose objects are of several kinds
+// holds each as the scope every one of them is, and which kind this one is,
+// is what the route stated by naming the class here.
 template <typename PlaceOf>
 auto AccessPublishedSlot(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
@@ -34,9 +37,20 @@ auto AccessPublishedSlot(
   const ExternalScopeLayout& record =
       unit_lowerer.ExternalScopeLayoutOf(scope_class);
   const mir::FieldId slot = place_of(record.published);
+  const mir::TypeId as_class = unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit_lowerer.UnitObjectType(scope_class),
+          .ownership = mir::PointerOwnership::kBorrowed}});
+  const mir::ExprId of_class =
+      block.exprs.Get(object).type == as_class
+          ? object
+          : block.exprs.Add(
+                mir::Expr{
+                    .data = mir::CastExpr{.operand = object},
+                    .type = as_class});
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
-          BuildObjectDeref(unit_lowerer.Unit(), block, object),
+          BuildObjectDeref(unit_lowerer.Unit(), block, of_class),
           mir::CrossUnitClassFieldTarget{
               .unit_name = record.cls.unit_name,
               .class_name = record.cls.class_name,
@@ -97,29 +111,12 @@ auto StepThroughPublished(
   };
   return std::visit(
       Overloaded{
-          // A member's objects are held by their class where they are all of
-          // one, and by the scope every one of them is where something written
-          // elsewhere made them differ; the object the selects picked out is
-          // then viewed as the class of its position. Selects that leave a
-          // dimension open reach several objects and pick none out.
           [&](const hir::ExternalMemberRef& member) {
-            const mir::ExprId reached = selected(AccessPublishedSlot(
+            return selected(AccessPublishedSlot(
                 unit_lowerer, block, object, member.scope_class,
                 [&](const PublishedScopeLayout& layout) {
                   return layout.members.Get(member.member);
                 }));
-            const mir::TypeId held = block.exprs.Get(reached).type;
-            const mir::TypeId viewed = unit.types.Intern(
-                mir::Type{mir::PointerType{
-                    .pointee = unit_lowerer.UnitObjectType(member.result_class),
-                    .ownership = mir::PointerOwnership::kBorrowed}});
-            if (held == viewed ||
-                unit.types.Get(held).As<mir::PointerType>() == nullptr) {
-              return reached;
-            }
-            return block.exprs.Add(
-                mir::Expr{
-                    .data = mir::CastExpr{.operand = reached}, .type = viewed});
           },
           // What a generate construct built holds the base every block of it
           // extends, so the block reached is viewed as the class it was

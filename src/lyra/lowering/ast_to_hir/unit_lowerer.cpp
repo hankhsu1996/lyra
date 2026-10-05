@@ -734,11 +734,9 @@ void UnitLowerer::MapStructuralDataObjectBinding(
 
 void UnitLowerer::MapInterfacePortBinding(
     const slang::ast::InterfacePortSymbol& port, ScopeFrameId home_frame,
-    hir::InterfacePortId local, hir::ExternalScopeClassId scope_class) {
+    hir::InterfacePortId local) {
   const auto [_, inserted] = interface_port_bindings_.emplace(
-      &port,
-      InterfacePortBinding{
-          .home_frame = home_frame, .port = local, .scope_class = scope_class});
+      &port, InterfacePortBinding{.home_frame = home_frame, .port = local});
   if (!inserted) {
     throw InternalError(
         "UnitLowerer::MapInterfacePortBinding: interface port already mapped");

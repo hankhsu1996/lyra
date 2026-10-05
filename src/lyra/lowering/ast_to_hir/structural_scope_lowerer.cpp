@@ -509,8 +509,6 @@ auto StructuralScopeLowerer::PopulateVariableMember(
 auto StructuralScopeLowerer::PopulateInterfacePortMember(
     const slang::ast::InterfacePortSymbol& port, WalkFrame frame)
     -> diag::Result<void> {
-  const hir::ExternalScopeClassId scope_class =
-      owner_->ExternalScopeClassOf(owner_->InterfaceUnitOf(port));
   // How many instances the port stands for is the range it declares (LRM 25.3),
   // outermost first; a port standing for one declares none, which is the same
   // answer with nothing in it.
@@ -525,13 +523,20 @@ auto StructuralScopeLowerer::PopulateInterfacePortMember(
   for (const slang::ConstantRange& dim : *declared) {
     array_dims.push_back(dim.width());
   }
+  // The port holds an object of each kind bound to it, and the parent binding
+  // it holds them the same way, so the unit records every kind whether or not
+  // a name here reaches into one: what a published member holds is spelled
+  // alike where it is declared and where it is filled.
+  for (const hir::UnitObjectType& kind :
+       owner_->InterfacePortObjects(port).kinds) {
+    owner_->ExternalScopeClassOf(kind.unit_name, kind.class_name);
+  }
   const hir::InterfacePortId local =
       frame.current_structural_scope->interface_ports.Add(
           hir::InterfacePortDecl{
               .name = std::string{port.name},
-              .scope_class = scope_class,
               .array_dims = std::move(array_dims)});
-  owner_->MapInterfacePortBinding(port, frame_, local, scope_class);
+  owner_->MapInterfacePortBinding(port, frame_, local);
   return {};
 }
 

@@ -727,11 +727,9 @@ auto SelectedMember(
 // parent's handle on that child, selected. A child whose body is another
 // compilation unit is still reached by a typed pointer, but what it declares
 // is that unit's to state, so the route stops resolving names against a scope
-// of this one; where its objects are of several units, the one the selects
-// picked out is viewed as its own. One this artifact lowers keeps the route
-// inside it, and since the handle holds the base every block of a construct
-// extends, what it reached is viewed as the class of the scope the element
-// names.
+// of this one. One this artifact lowers keeps the route inside it, and since
+// the handle holds the base every block of a construct extends, what it
+// reached is viewed as the class of the scope the element names.
 auto StepToOwnedChild(
     UnitLowerer& unit_lowerer, mir::Block& block, const ReachedPlace& from,
     const hir::OwnedChildRef& names, std::span<const std::uint32_t> selects)
@@ -741,15 +739,7 @@ auto StepToOwnedChild(
   const mir::ExprId reached = SelectedMember(
       unit_lowerer, block, from, anchor.borrowed_handle, selects);
   if (anchor.target_scope == nullptr) {
-    const bool converts = anchor.viewed_as.has_value() &&
-                          *anchor.viewed_as != block.exprs.Get(reached).type;
-    return ReachedPlace{
-        .expr = converts ? block.exprs.Add(
-                               mir::Expr{
-                                   .data = mir::CastExpr{.operand = reached},
-                                   .type = *anchor.viewed_as})
-                         : reached,
-        .place = InExternalScope{}};
+    return ReachedPlace{.expr = reached, .place = InExternalScope{}};
   }
   return ReachedPlace{
       .expr = block.exprs.Add(
@@ -1037,37 +1027,38 @@ void WrapInScopeStaticInitExtent(
 }
 
 // Composes the value a port member takes from the handles its connection
-// supplies: the handle itself where the member stands for one object, and the
-// sequence of what the dimension below holds where it stands for several. The
-// shape is read off the child's own declared type, so how many the parent
-// supplies per dimension is what the child declares rather than a second count.
-// `next` walks the handles in the order the port's dimensions count them.
+// supplies: the handle itself where the member stands for one object, held the
+// way the member holds it, and the sequence of what the dimension below holds
+// where it stands for several. The ranges are the child's own published ones,
+// so how many the parent supplies per dimension is what the child declares
+// rather than a second count. `held` is what the member holds at this depth,
+// and `next` walks the handles in the order the port's dimensions count them.
 auto ComposeBoundObjects(
-    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId member_type,
+    UnitLowerer& unit_lowerer, mir::Block& block,
+    std::span<const hir::UnpackedRange> ranges, mir::TypeId held,
     std::span<const mir::ExprId> handles, std::size_t& next) -> mir::ExprId {
-  const auto* array =
-      unit_lowerer.Hir().types.Get(member_type).As<hir::UnpackedArrayType>();
-  if (array == nullptr) {
+  if (ranges.empty()) {
     if (next >= handles.size()) {
       throw InternalError(
           "ComposeBoundObjects: the connection supplies one instance per "
           "object the port stands for, which is checked where it is recorded");
     }
-    return handles[next++];
+    const mir::ExprId handle = handles[next++];
+    if (block.exprs.Get(handle).type == held) return handle;
+    return block.exprs.Add(
+        mir::Expr{.data = mir::CastExpr{.operand = handle}, .type = held});
   }
-  const std::uint64_t count = array->dim.ElementCount();
+  const mir::TypeId element =
+      unit_lowerer.Unit().types.Get(held).Get<mir::VectorType>().element;
+  const std::uint64_t count = ranges.front().ElementCount();
   std::vector<mir::ExprId> elements;
   elements.reserve(count);
   for (std::uint64_t i = 0; i < count; ++i) {
     elements.push_back(ComposeBoundObjects(
-        unit_lowerer, block, array->element_type, handles, next));
+        unit_lowerer, block, ranges.subspan(1), element, handles, next));
   }
   return block.exprs.Add(BuildSequenceConstructionCall(
-      unit_lowerer.Unit(), block,
-      unit_lowerer.MemberCellType(
-          unit_lowerer.TranslateType(member_type),
-          hir::BorrowedObjectStorage{}),
-      std::move(elements)));
+      unit_lowerer.Unit(), block, held, std::move(elements)));
 }
 
 // Binds a child's interface port to the interface instances the connection
@@ -1097,9 +1088,16 @@ void InstallInterfacePortConnection(
   for (const hir::ObjectRoute& peer : conn.peers) {
     handles.push_back(BuildRouteValue(lowerer, resolve_frame, peer));
   }
+  const auto* objects =
+      unit_lowerer.Hir().types.Get(port.type).As<hir::UnitObjectsType>();
+  if (objects == nullptr) {
+    throw InternalError(
+        "InstallInterfacePortConnection: an interface port's type is the set "
+        "of instances it stands for");
+  }
   std::size_t next = 0;
-  const mir::ExprId value =
-      ComposeBoundObjects(unit_lowerer, block, port.type, handles, next);
+  const mir::ExprId value = ComposeBoundObjects(
+      unit_lowerer, block, objects->ranges, member_type, handles, next);
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
@@ -2223,22 +2221,6 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       std::move(concurrent_assertion_fields)};
   instance_member_fields_ = {
       hir_scope.instance_members.size(), settled(instance_fields)};
-  // What an object of each alternative is reached by once a step has picked it
-  // out of the member, which holds it by the scope pointer where its objects
-  // are of several units.
-  std::vector<std::vector<mir::TypeId>> instance_pointers;
-  instance_pointers.reserve(hir_scope.instance_members.size());
-  for (const hir::InstanceMemberId id : hir_scope.instance_members.Ids()) {
-    const hir::InstanceMemberDecl& member = hir_scope.instance_members.Get(id);
-    std::vector<mir::TypeId>& pointers = instance_pointers.emplace_back();
-    pointers.reserve(member.alternatives.size());
-    for (const hir::InstanceAlternative& alternative : member.alternatives) {
-      pointers.push_back(MakeExternalUnitPointer(
-          unit_lowerer, alternative, mir::PointerOwnership::kBorrowed));
-    }
-  }
-  instance_member_pointers_ = {
-      hir_scope.instance_members.size(), std::move(instance_pointers)};
   interface_port_fields_ = {
       hir_scope.interface_ports.size(), settled(interface_port_fields)};
 
