@@ -37,8 +37,14 @@ auto Observation::OnReaching() -> Observation {
   return Observation{};
 }
 
-auto Observation::TookEvent() const -> bool {
-  return held_ == nullptr || held_->TookEvent();
+void Observation::Arm() const {
+  if (held_ != nullptr) {
+    held_->Arm();
+  }
+}
+
+auto Observation::Fires() const -> bool {
+  return held_ == nullptr || held_->Fires();
 }
 
 Observation::Observation(std::shared_ptr<ArmedObservation> held)

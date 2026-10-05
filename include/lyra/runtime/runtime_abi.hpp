@@ -408,19 +408,26 @@ auto lyra_rt_make_trigger(
 // halves, and one entry per combination of them, so the call states which form
 // it is building. A watched half is a closure answering what the event
 // expression is worth now together with the edge specifier written on it,
-// crossing as an opaque packed value like every scalar, and it is armed here
-// with what the expression is worth at this moment. A qualifying half is an
+// crossing as an opaque packed value like every scalar. A qualifying half is an
 // `iff` condition, answering as a one-bit value already reduced to LRM 12.4
 // truth (LRM 9.4.2.3). Watching nothing is what an implicit sensitivity carries
 // (LRM 9.2.2.2.1) and what an unqualified named-event wait carries, the trigger
 // there being the event itself (LRM 15.5.1). Like a trigger these are
 // transient, and the waits built from them hold them for as long as they last.
+//
+// Building one evaluates nothing. It is armed where the wait begins, with what
+// the expression is worth then, and asked by the waiting process where the
+// process decides -- the answer crossing as the machine integer every computed
+// answer crosses as, since a host `bool` here would say the call parks its
+// caller.
 auto lyra_rt_observation_on_reaching(void* out) -> void*;
 auto lyra_rt_observation_of_value(void* expression, const void* edge, void* out)
     -> void*;
 auto lyra_rt_observation_of_value_qualified(
     void* expression, const void* edge, void* condition, void* out) -> void*;
 auto lyra_rt_observation_qualified(void* condition, void* out) -> void*;
+void lyra_rt_observation_arm(const void* observation);
+auto lyra_rt_observation_fires(const void* observation) -> std::int64_t;
 
 // Waits for what happens at one of `triggers` to be an event for the wait (LRM
 // 9.4.2 / 9.4.2.2 / 15.5.2). An empty span means "never wake up". Which
@@ -428,35 +435,31 @@ auto lyra_rt_observation_qualified(void* condition, void* out) -> void*;
 // boundary. Answers whether the caller must give up control.
 auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool;
 
-// Waits for a condition the caller's own loop re-tests, watching the same
-// leaves (LRM 9.4.3). It is a separate entry from the one above because the two
-// part company where a stopped process is started again: this one lets the body
-// read the condition, and that one waits for the next occurrence (LRM 9.7).
-auto lyra_rt_wait_until(void* runtime, LyraSpan triggers) -> bool;
+// The waits on the places an evaluation the process made reached, one read
+// report per expression evaluated: an event control its process decides, with
+// the observations that decide it, and a `wait (cond)` whose loop tests the
+// condition (LRM 9.4.2, 9.4.3). The two part company where a stopped process is
+// started again: the condition is the loop's to read, while an event control
+// waits for the next occurrence (LRM 9.7). Each takes what its reports hold,
+// leaving them empty for the next evaluation.
+auto lyra_rt_wait_recollecting(
+    void* runtime, LyraSpan reports, LyraSpan observations) -> bool;
+auto lyra_rt_wait_until(void* runtime, LyraSpan reports) -> bool;
 
-// The waits whose leaves are collected where they stand, one read report per
-// event expression: an event control resuming on every candidacy, and a
-// `wait (cond)` whose loop collects them each time it tests the condition
-// (LRM 9.4.2, 9.4.3).
-auto lyra_rt_wait_recollecting(void* runtime, LyraSpan reports) -> bool;
-auto lyra_rt_wait_until_collected(void* runtime, LyraSpan reports) -> bool;
-
-// What a collecting wait records its leaves in: a report begun for one event
-// expression's observation, a place read and the bits of it read, every object
-// at once, and the bracket a function reporting into it takes, which answers
-// one or zero for whether it goes on. A function meeting a read no leaf watches
-// yet refuses the report, and the design fails there.
-auto lyra_rt_read_report_for(const void* observation, void* out) -> void*;
+// What an evaluation states the places it reached in: an empty report, a place
+// read and the bits of it read, every object at once, the bracket a function
+// reporting into it takes, which answers one or zero for whether it goes on,
+// and one or zero for whether the function then runs. A function meeting a
+// read no leaf watches yet refuses the report, and the design fails there.
+auto lyra_rt_read_report_empty(void* out) -> void*;
 void lyra_rt_read_report_add(
     void* report, void* place, const void* lsb_bit_offset,
     const void* bit_width);
 void lyra_rt_read_report_add_every_object(void* report);
 auto lyra_rt_read_report_enter(void* report) -> std::int64_t;
 void lyra_rt_read_report_leave(void* report);
+auto lyra_rt_read_report_runs_the_body(const void* report) -> std::int64_t;
 void lyra_rt_refuse_report(const void* why);
-// The answer crosses as the machine integer every computed answer crosses as;
-// a host `bool` here would say the call parks its caller.
-auto lyra_rt_observation_took_event(const void* observation) -> std::int64_t;
 
 // A named event (LRM 15.5). Triggering records the instant and ends the wait of
 // every process the trigger is an event for; waiting for one is an ordinary

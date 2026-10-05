@@ -25,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -610,8 +611,9 @@ template <typename Lowerer>
 auto BuildClassPropertyAccess(
     Lowerer& lowerer, const WalkFrame& frame, mir::ExprId receiver,
     const hir::ClassPropertyTarget& target, mir::TypeId reached) -> mir::Expr {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
   return PropertyStorage(
-      lowerer.Owner().Unit(), *frame.current_block, receiver,
+      unit, *frame.current_block, ReportedObject(unit, frame, receiver),
       PropertyNameOf(lowerer, frame, target), reached);
 }
 

@@ -340,13 +340,14 @@ struct EventTriggerStmt {
   auto operator==(const EventTriggerStmt&) const -> bool = default;
 };
 
-// LRM 9.4.3 level-sensitive `wait (cond) body`. `reads` is what `cond` can
-// read, including through the subroutines it calls, a change to any of which
-// is what can make the condition true.
+// LRM 9.4.3 level-sensitive `wait (cond) body`. `cells` is the storage
+// elaboration sealed that `cond` reads, a change to any of which is what can
+// make the condition true; what it reaches through a handle, an interface or a
+// call is found as each test of it reaches it.
 struct WaitStmt {
   ExprId cond;
   StmtId body;
-  Reads reads;
+  std::vector<SensitivityEntry> cells;
 
   auto operator==(const WaitStmt&) const -> bool = default;
 };

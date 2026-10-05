@@ -27,7 +27,8 @@ ClosureBuilder::ClosureBuilder(
           unit, closure_decl_, closure_id_, *enclosing.bindings, *outer_,
           std::move(policy)),
       frame_(enclosing.WithBlock(&closure_decl_.invoke.Body())
-                 .WithBindings(&bindings_)) {
+                 .WithBindings(&bindings_)
+                 .WithReportingReachedTo(std::nullopt)) {
 }
 
 auto ClosureBuilder::AddNamedParam(

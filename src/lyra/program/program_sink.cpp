@@ -296,18 +296,19 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_observation_of_value_qualified",
       &lyra_rt_observation_of_value_qualified);
   add("lyra_rt_observation_qualified", &lyra_rt_observation_qualified);
+  add("lyra_rt_observation_arm", &lyra_rt_observation_arm);
+  add("lyra_rt_observation_fires", &lyra_rt_observation_fires);
   add("lyra_rt_wait_any", &lyra_rt_wait_any);
-  add("lyra_rt_wait_until", &lyra_rt_wait_until);
   add("lyra_rt_wait_recollecting", &lyra_rt_wait_recollecting);
-  add("lyra_rt_wait_until_collected", &lyra_rt_wait_until_collected);
-  add("lyra_rt_read_report_for", &lyra_rt_read_report_for);
+  add("lyra_rt_wait_until", &lyra_rt_wait_until);
+  add("lyra_rt_read_report_empty", &lyra_rt_read_report_empty);
   add("lyra_rt_read_report_add", &lyra_rt_read_report_add);
   add("lyra_rt_read_report_add_every_object",
       &lyra_rt_read_report_add_every_object);
   add("lyra_rt_read_report_enter", &lyra_rt_read_report_enter);
   add("lyra_rt_read_report_leave", &lyra_rt_read_report_leave);
+  add("lyra_rt_read_report_runs_the_body", &lyra_rt_read_report_runs_the_body);
   add("lyra_rt_refuse_report", &lyra_rt_refuse_report);
-  add("lyra_rt_observation_took_event", &lyra_rt_observation_took_event);
   add("lyra_rt_triggered", &lyra_rt_triggered);
   add("lyra_rt_trigger", &lyra_rt_trigger);
   add("lyra_rt_enter_target", &lyra_rt_enter_target);

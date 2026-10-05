@@ -787,11 +787,15 @@ auto EmitSubroutineCall(
     }
   }
 
-  // An ordinary call has the function run, so it hands no report.
+  // A call an evaluation makes that states what it reaches hands that report
+  // on, and the function states what it reads before it runs (LRM 9.4.2); any
+  // other call hands none.
   if (const std::optional<mir::TypeId> report =
           ReportParamTypeOf(unit, plan.kind)) {
     call_args.push_back(block.exprs.Add(
-        mir::Expr{.data = mir::NullLiteral{}, .type = *report}));
+        frame.reports_reached_to.has_value()
+            ? mir::MakeLocalRefExpr(*frame.reports_reached_to, *report)
+            : mir::Expr{.data = mir::NullLiteral{}, .type = *report}));
   }
 
   return EmittedCall{

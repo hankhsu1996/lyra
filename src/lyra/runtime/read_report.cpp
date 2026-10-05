@@ -4,6 +4,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/observation.hpp"
@@ -22,29 +23,33 @@ constexpr std::int64_t kReportDepthBound = 64;
 
 }  // namespace
 
-ReadReport::ReadReport(Observation observation)
-    : observation_(std::move(observation)) {
-}
+ReadReport::ReadReport() = default;
 
-auto ReadReport::For(Observation observation) -> ReadReport {
-  return ReadReport{std::move(observation)};
+auto ReadReport::Empty() -> ReadReport {
+  return ReadReport{};
 }
 
 ReadReport::ReadReport(ReadReport&&) noexcept = default;
 auto ReadReport::operator=(ReadReport&&) noexcept -> ReadReport& = default;
 ReadReport::~ReadReport() = default;
 
+// A place is watched only for being reached: the process decides by its own
+// evaluation, so nothing is asked where the change happens.
 void ReadReport::Add(
     Observable* place, const value::PackedArray& lsb_bit_offset,
     const value::PackedArray& bit_width) {
-  triggers_.emplace_back(place, observation_, lsb_bit_offset, bit_width);
+  triggers_.emplace_back(
+      place, Observation::OnReaching(), lsb_bit_offset, bit_width);
 }
 
 void ReadReport::AddEveryObject() {
   Trigger trigger;
   trigger.observable = &current_runtime().EveryObject();
-  trigger.observation = observation_;
   triggers_.push_back(std::move(trigger));
+}
+
+auto ReadReport::TakeTriggers() -> std::vector<Trigger> {
+  return std::exchange(triggers_, {});
 }
 
 auto ReadReport::Enter() -> std::int64_t {
@@ -58,6 +63,12 @@ auto ReadReport::Enter() -> std::int64_t {
 
 void ReadReport::Leave() {
   --depth_;
+}
+
+// A report a function makes nests in the report of whatever called it, so the
+// call the evaluation made is the one that leaves nothing open.
+auto ReadReport::RunsTheBody() const -> std::int64_t {
+  return depth_ == 0 ? 1 : 0;
 }
 
 void RefuseReport(std::string_view why) {

@@ -14,21 +14,21 @@ namespace lyra::runtime {
 class Observable;
 class RuntimeEffects;
 
-// What a wait learns each time it collects its leaves about what one of its
-// event expressions can read (LRM 9.4.2): every place a leaf watches, decided
-// by that expression's observation. A function the expression calls is handed
-// it and reports into it instead of running, handing it on to the functions it
-// calls in turn, so what a call reads is stated by the unit that declares the
-// function and asked where the wait stands.
+// The places one evaluation of a waited expression reached (LRM 9.4.2), which
+// the process then waits on: reaching any of them is a candidacy, and the
+// process decides by evaluating again. A function the expression calls is
+// handed it and states what it reads before it runs, handing it on to the
+// functions it calls in turn, which state theirs instead of running; so what a
+// call reads is stated by the unit that declares the function and asked where
+// the wait stands.
 //
 // Every member is defined in the library: a unit stating a wait builds and
 // destroys these, and a definition written here would be compiled again by
 // each such unit.
 class ReadReport {
  public:
-  // The report for the event expression `observation` watches, begun empty
-  // each time the wait collects its leaves.
-  [[nodiscard]] static auto For(Observation observation) -> ReadReport;
+  // A report nothing has been stated into yet.
+  [[nodiscard]] static auto Empty() -> ReadReport;
 
   ReadReport(const ReadReport&) = delete;
   auto operator=(const ReadReport&) -> ReadReport& = delete;
@@ -55,14 +55,19 @@ class ReadReport {
   auto Enter() -> std::int64_t;
   void Leave();
 
-  [[nodiscard]] auto Triggers() const -> std::span<const Trigger> {
-    return triggers_;
-  }
+  // Whether a function that has just reported into this goes on to run its
+  // body, one or zero: the one the waited evaluation called does, the
+  // evaluation needing its value, while one another function's report called
+  // stands in for a body that does not run.
+  [[nodiscard]] auto RunsTheBody() const -> std::int64_t;
+
+  // What was stated, handed to the wait that parks on it and leaving the report
+  // empty for the evaluation after.
+  [[nodiscard]] auto TakeTriggers() -> std::vector<Trigger>;
 
  private:
-  explicit ReadReport(Observation observation);
+  ReadReport();
 
-  Observation observation_;
   std::vector<Trigger> triggers_;
   std::int64_t depth_ = 0;
 };
@@ -72,13 +77,17 @@ class ReadReport {
 // request fails here, where one does (LRM 9.4.2).
 [[noreturn]] void RefuseReport(std::string_view why);
 
-// An event control whose leaves are collected afresh on every candidacy: the
-// frame resumes on each, and the observations say whether it was an event.
+// An event control its process decides: the frame resumes on every candidacy
+// the reports' places see, and evaluates its observations again to learn
+// whether it was an event and what it reaches now. The observations are held
+// for a restart (LRM 9.7), which leaves them to be armed by that evaluation
+// rather than wherever the restart is asked for.
 auto WaitRecollecting(
-    RuntimeEffects& services, std::span<ReadReport* const> reports) -> bool;
+    RuntimeEffects& services, std::span<ReadReport* const> reports,
+    std::span<const Observation* const> observations) -> bool;
 
-// A `wait (cond)` whose leaves are collected afresh each time the condition is
-// tested (LRM 9.4.3).
+// A `wait (cond)` waiting on what the last test of its condition reached (LRM
+// 9.4.3).
 auto WaitUntil(RuntimeEffects& services, std::span<ReadReport* const> reports)
     -> bool;
 

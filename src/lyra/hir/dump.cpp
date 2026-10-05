@@ -689,6 +689,11 @@ class HirDumper {
     return out;
   }
 
+  static auto FormatCells(std::span<const SensitivityEntry> cells)
+      -> std::string {
+    return std::format("cells={}", FormatSensitivityList(cells));
+  }
+
   static auto FormatWaitLeaf(const WaitLeaf& leaf) -> std::string {
     return std::visit(
         Overloaded{
@@ -790,7 +795,7 @@ class HirDumper {
           "{{signal=Expr[{}] edge={}{} {}}}", e.triggers[i].signal.value,
           FormatEventEdge(e.triggers[i].edge),
           FormatCondition(e.triggers[i].condition),
-          FormatReads(e.triggers[i].reads));
+          FormatCells(e.triggers[i].cells));
     }
     out += "]";
     return out;
@@ -2625,7 +2630,7 @@ class HirDumper {
               Line(
                   std::format(
                       "Stmt[{}] WaitStmt cond=Expr[{}] {}", id.value,
-                      w.cond.value, FormatReads(w.reads)));
+                      w.cond.value, FormatCells(w.cells)));
               Indent();
               Line("body:");
               Indent();

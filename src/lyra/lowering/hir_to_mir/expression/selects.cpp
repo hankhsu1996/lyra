@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
+#include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -788,7 +789,7 @@ auto PropertyPath(
   return AccessPath{
       .owner =
           ObjectProperty{
-              .object = receiver,
+              .object = ReportedObject(lowerer.Owner().Unit(), frame, receiver),
               .property = PropertyNameOf(lowerer, frame, target),
               .type = result_type},
       .descent = {}};
@@ -810,13 +811,13 @@ template <ExprLowerer Lowerer>
 auto LowerHirInterfaceMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame,
     const hir::InterfaceMemberAccessExpr& sel) -> diag::Result<mir::Expr> {
-  auto storage = HeldInterfaceMember(lowerer, frame, sel);
-  if (!storage) return std::unexpected(std::move(storage.error()));
+  auto held = HeldInterfaceMember(lowerer, frame, sel);
+  if (!held) return std::unexpected(std::move(held.error()));
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::ExprId storage = ReportedPlace(unit, frame, *held);
   return mir::Expr{
-      .data = mir::DerefExpr{.pointer = *storage},
-      .type = lowerer.Owner()
-                  .Unit()
-                  .types.Get(frame.current_block->exprs.Get(*storage).type)
+      .data = mir::DerefExpr{.pointer = storage},
+      .type = unit.types.Get(frame.current_block->exprs.Get(storage).type)
                   .template Get<mir::PointerType>()
                   .pointee};
 }

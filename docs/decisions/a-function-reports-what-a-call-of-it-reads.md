@@ -25,15 +25,19 @@ Two conditions shape the answer:
   unit waiting on a call of it may read only what that unit published -- never its body, and never
   what a unit it does not reference published (north star 4 and 5; `unit-signature` D6). A package
   function calling another package's function is the ordinary case.
-- **A wait already collects its leaves where it stands, on every candidacy**, since #1281 made one
-  follow what its expression reaches through a handle. So what a call reads can arrive at run time,
-  with the handles it would be evaluated on in hand.
+- **A wait already learns at run time what its expression reaches through a handle**, since #1281.
+  So what a call reads can arrive at run time, with the handles it would be evaluated on in hand.
 
 ## Decision
 
 **Every function takes one more parameter, where to report what a call of it reads. An ordinary call
-hands none and the function runs; a wait collecting its leaves hands its report, and the function
-records what it reads and returns its type's default without running its body.**
+hands none and the function runs. The evaluation a waiting process makes of its expression hands its
+report to each call it makes, and the function records what it reads and then runs, since the
+evaluation needs its value. A function another function's report calls records what it reads and
+returns its type's default without running its body, standing in for a body nothing asked to run.**
+So a call the source wrote once is made once per evaluation, its arguments and the object it is made
+on evaluated once
+([the-waiting-process-evaluates-its-wait](the-waiting-process-evaluates-its-wait.md)).
 
 - **What a function reads is stated by the unit declaring it**, from its own body: the cells outside
   the body it reads, the objects a chain of property reads reaches from its object, a handle formal
@@ -73,7 +77,8 @@ records what it reads and returns its type's default without running its body.**
   reason; the Itanium ABI's D0/D1/D2 are siblings. Recalled, not read.)
 - **Recording every read while evaluating (MobX).** A check in every read of every variable and
   property, or a second compiled form of every body; either is a cost on all code for a rare
-  construct.
+  construct. The waited expression itself does state each object and interface variable it reaches
+  where it reaches it, but that expression is compiled for the wait alone, so no other code pays.
 - **Polling the expression every evaluation round (Verilator, `V3Timing.cpp`).** Lyra wakes only
   what a write reached, and a change undone within one process run is still an event a poll misses.
 
@@ -84,11 +89,11 @@ records what it reads and returns its type's default without running its body.**
   on the execution backend: `call-chain` (`--release`, 20,000 iterations of sixteen calls) ran
   1,037,860,839 instructions against 1,036,580,846, about four per call; Ibex's program text grew
   from 12,174,033 bytes to 12,333,457 (1.3%), and Ibex still reaches `$finish` at 26548.
-- **A wait whose expression calls a function collects its leaves on every candidacy**, as one
-  reaching through a handle does; a wait over cells alone registers them once, as before.
-- **One change can reach a wait through several places it watches**, now the common case, so an
-  observation latches that a candidacy was an event until it is armed again. Before, the second
-  place to ask compared the new value against itself and cleared the answer, which also left
-  `@(p.a + p.b)` waiting forever.
+- **A wait whose expression calls a function is decided by its process**, which evaluates the
+  expression on every candidacy, as one reaching through a handle is; a wait over cells alone
+  registers them once, as before.
+- **One change can reach a wait through several places it watches**, now the common case. The places
+  only wake the process, which evaluates once however many of them the change reached, so
+  `@(p.a + p.b)` compares one new value against the last one.
 - **A constructor called inside such a function is not followed**: what its own body reads is not
   reported.

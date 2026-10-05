@@ -22,8 +22,8 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
+#include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -47,6 +47,15 @@ auto IsClassHandle(const slang::ast::Type& type) -> bool {
 
 auto IsVirtualInterface(const slang::ast::Type& type) -> bool {
   return type.getCanonicalType().isVirtualInterface();
+}
+
+// A method the runtime library carries out, which no unit declares a body for.
+auto IsRuntimeLibraryMethod(const slang::ast::SubroutineSymbol& method)
+    -> bool {
+  const slang::ast::Scope* scope = method.getParentScope();
+  if (scope == nullptr) return false;
+  const auto* owner = scope->asSymbol().as_if<slang::ast::ClassType>();
+  return owner != nullptr && ImportedRuntimeClassOf(*owner).has_value();
 }
 
 auto IsFormalOf(
@@ -109,41 +118,28 @@ class ReportCanEvaluate
   bool evaluable_ = true;
 };
 
-// Where the reads are stated: where a wait stands, which can evaluate anything
-// the expression it watches does; or in a function's report, which can
-// evaluate only what the function holds before its body runs.
-struct AtTheWait {};
-struct InAReport {
-  const slang::ast::SubroutineSymbol* function;
-};
-using Standpoint = std::variant<AtTheWait, InAReport>;
-
+// Whether `function`'s report, which stands ahead of its body, can evaluate
+// `expr`.
 auto CanEvaluate(
-    const Standpoint& standpoint, const slang::ast::Expression& expr) -> bool {
-  return std::visit(
-      Overloaded{
-          [](const AtTheWait&) { return true; },
-          [&](const InAReport& report) {
-            ReportCanEvaluate check(*report.function);
-            expr.visit(check);
-            return check.Evaluable();
-          }},
-      standpoint);
+    const slang::ast::SubroutineSymbol& function,
+    const slang::ast::Expression& expr) -> bool {
+  ReportCanEvaluate check(function);
+  expr.visit(check);
+  return check.Evaluable();
 }
 
-// Walks an expression, or a function body's statements, for what it reaches
-// beyond the variables it names: the objects and interface variables found
-// through a handle, and the calls of functions whose reports say what they
-// read.
+// Walks a function body's statements for what it reaches beyond the variables
+// it names: the objects and interface variables found through a handle, and the
+// calls of functions whose reports say what they read.
 class ReadsCollector : public slang::ast::ASTVisitor<
                            ReadsCollector, slang::ast::VisitFlags::AllGood> {
  public:
   ReadsCollector(
-      ProcessLowerer& proc, WalkFrame frame, Standpoint standpoint,
-      diag::SourceSpan span)
+      ProcessLowerer& proc, WalkFrame frame,
+      const slang::ast::SubroutineSymbol& function, diag::SourceSpan span)
       : proc_(&proc),
         frame_(std::move(frame)),
-        standpoint_(standpoint),
+        function_(&function),
         span_(std::move(span)) {
   }
 
@@ -222,7 +218,7 @@ class ReadsCollector : public slang::ast::ASTVisitor<
     if (NamesCurrentInstance(root)) {
       return Root{hir::ReceiverObject{}};
     }
-    if (!CanEvaluate(standpoint_, root)) {
+    if (!CanEvaluate(*function_, root)) {
       return std::nullopt;
     }
     const std::optional<hir::ExprId> lowered = AddLowered(root);
@@ -288,7 +284,7 @@ class ReadsCollector : public slang::ast::ASTVisitor<
   // holds (LRM 25.9), which is that instance's as the handle is evaluated.
   void ReachThroughInterface(const slang::ast::MemberAccessExpression& access) {
     const slang::ast::Expression& handle = access.value();
-    if (!CanEvaluate(standpoint_, handle)) {
+    if (!CanEvaluate(*function_, handle)) {
       reads_.unreportable =
           "a variable of the interface instance a virtual interface holds, "
           "reached through what the function's own variables hold, is not yet "
@@ -317,13 +313,15 @@ class ReadsCollector : public slang::ast::ASTVisitor<
     if (call.isSystemCall()) return;
     const auto* callee =
         std::get<const slang::ast::SubroutineSymbol*>(call.subroutine);
-    // Foreign code reads nothing a wait can watch, and a task is never called
+    // Foreign code and a method of a class the runtime library defines (LRM
+    // 9.7 `process`) read nothing a wait can watch, and a task is never called
     // from an expression. A constructor answers with an object nothing else
     // names, so what is read through it is read through a variable of the
     // caller's own, which every object already covers where it is read.
     if (callee->flags.has(slang::ast::MethodFlags::DPIImport) ||
         callee->flags.has(slang::ast::MethodFlags::Constructor) ||
-        callee->subroutineKind != slang::ast::SubroutineKind::Function) {
+        callee->subroutineKind != slang::ast::SubroutineKind::Function ||
+        IsRuntimeLibraryMethod(*callee)) {
       return;
     }
     const std::optional<hir::ExprId> lowered = AddLowered(call);
@@ -331,7 +329,7 @@ class ReadsCollector : public slang::ast::ASTVisitor<
 
     const auto pass =
         [&](const slang::ast::Expression& actual) -> hir::ReportedArgument {
-      if (CanEvaluate(standpoint_, actual)) {
+      if (CanEvaluate(*function_, actual)) {
         return hir::ReportedArgument::kEvaluated;
       }
       if (IsClassHandle(*actual.type)) {
@@ -367,7 +365,7 @@ class ReadsCollector : public slang::ast::ASTVisitor<
     reporting.arguments.reserve(actuals.size());
     for (std::size_t i = 0; i < actuals.size(); ++i) {
       if (formals[i]->direction == slang::ast::ArgumentDirection::Ref &&
-          !CanEvaluate(standpoint_, *actuals[i])) {
+          !CanEvaluate(*function_, *actuals[i])) {
         reads_.unreportable =
             "a `ref` argument naming what the function's own variables hold "
             "is not yet followed";
@@ -379,7 +377,7 @@ class ReadsCollector : public slang::ast::ASTVisitor<
 
   ProcessLowerer* proc_;
   WalkFrame frame_;
-  Standpoint standpoint_;
+  const slang::ast::SubroutineSymbol* function_;
   diag::SourceSpan span_;
   hir::Reads reads_;
   std::optional<diag::Diagnostic> failure_;
@@ -396,25 +394,13 @@ void AddSealed(
 
 }  // namespace
 
-auto ReadsOfWaitedExpression(
-    ProcessLowerer& proc, WalkFrame frame, const slang::ast::Expression& expr,
-    diag::SourceSpan span) -> diag::Result<hir::Reads> {
-  ReadsCollector collector(proc, frame, AtTheWait{}, span);
-  expr.visit(collector);
-  auto reads = std::move(collector).TakeReads();
-  if (!reads) return std::unexpected(std::move(reads.error()));
-  if (reads->unreportable.has_value()) {
-    throw InternalError(
-        "ReadsOfWaitedExpression: where a wait stands, everything its "
-        "expression reads can be evaluated");
-  }
-  auto sealed = proc.Owner().TranslateSensitivityReads(
+auto CellsOfWaitedExpression(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::Expression& expr)
+    -> diag::Result<std::vector<hir::SensitivityEntry>> {
+  return proc.Owner().TranslateSensitivityReads(
       proc,
       proc.Owner().Sensitivity().AnalyzeReads(expr, proc.ContainingSymbol()),
       frame);
-  if (!sealed) return std::unexpected(std::move(sealed.error()));
-  AddSealed(reads->leaves, *std::move(sealed));
-  return reads;
 }
 
 auto ReadsOfFunctionBody(
@@ -429,7 +415,7 @@ auto ReadsOfFunctionBody(
         .calls = {},
         .unreportable = std::move(diagnostic.primary.message)};
   };
-  ReadsCollector collector(proc, frame, InAReport{.function = &function}, span);
+  ReadsCollector collector(proc, frame, function, span);
   function.getBody().visit(collector);
   auto reads = std::move(collector).TakeReads();
   if (!reads) return refused_when_asked(std::move(reads.error()));

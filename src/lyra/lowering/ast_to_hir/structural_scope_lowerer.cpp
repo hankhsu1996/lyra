@@ -42,6 +42,7 @@
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/strength.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
@@ -643,9 +644,16 @@ auto StructuralScopeLowerer::DefineEvaluator(
       hir::ProceduralVarDecl{.name = std::nullopt, .type = *result_type});
   root.declarations.push_back(result_var);
   ProcessLowerer lowerer(*owner_, holder);
-  auto value = lowerer.LowerExpr(
-      expr, frame.WithProceduralBody(&body).WithOpenScope(&root));
+  const WalkFrame body_frame =
+      frame.WithProceduralBody(&body).WithOpenScope(&root);
+  auto value = lowerer.LowerExpr(expr, body_frame);
   if (!value) return std::unexpected(std::move(value.error()));
+  // A wait on the value asks the evaluator what it reads (LRM 9.4.2), and an
+  // expression a scope evaluates reads that scope's own storage.
+  auto cells = CellsOfWaitedExpression(lowerer, body_frame, expr);
+  if (!cells) return std::unexpected(std::move(cells.error()));
+  hir::Reads reads;
+  reads.leaves.assign(cells->begin(), cells->end());
   const hir::StmtId root_stmt = body.stmts.Add(
       hir::Stmt{
           .label = std::nullopt,
@@ -665,7 +673,7 @@ auto StructuralScopeLowerer::DefineEvaluator(
                                        .is_prototype = false,
                                        .is_static = false,
                                        .overrides = std::nullopt,
-                                       .reads = {}});
+                                       .reads = std::move(reads)});
   return {};
 }
 

@@ -739,19 +739,14 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "observation_qualified",
           .declaration = StaticFactory{"Qualified"}};
-    case BuiltinFn::kObservationTookEvent:
-      return {
-          .name = "observation_took_event", .declaration = Method{"TookEvent"}};
+    case BuiltinFn::kObservationArm:
+      return {.name = "observation_arm", .declaration = Method{"Arm"}};
+    case BuiltinFn::kObservationFires:
+      return {.name = "observation_fires", .declaration = Method{"Fires"}};
     case BuiltinFn::kWaitAny:
       return {
           .name = "wait_any",
           .declaration = FreeFunction{"lyra::runtime::WaitAny"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
-    case BuiltinFn::kWaitUntil:
-      return {
-          .name = "wait_until",
-          .declaration = FreeFunction{"lyra::runtime::WaitUntil"},
           .takes_the_runtime_handle = true,
           .parks_the_caller = true};
     case BuiltinFn::kWaitRecollecting:
@@ -760,14 +755,15 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = FreeFunction{"lyra::runtime::WaitRecollecting"},
           .takes_the_runtime_handle = true,
           .parks_the_caller = true};
-    case BuiltinFn::kWaitUntilCollected:
+    case BuiltinFn::kWaitUntil:
       return {
-          .name = "wait_until_collected",
+          .name = "wait_until",
           .declaration = FreeFunction{"lyra::runtime::WaitUntil"},
           .takes_the_runtime_handle = true,
           .parks_the_caller = true};
-    case BuiltinFn::kReadReportFor:
-      return {.name = "read_report_for", .declaration = StaticFactory{"For"}};
+    case BuiltinFn::kReadReportEmpty:
+      return {
+          .name = "read_report_empty", .declaration = StaticFactory{"Empty"}};
     case BuiltinFn::kReadReportAdd:
       return {.name = "read_report_add", .declaration = Method{"Add"}};
     case BuiltinFn::kReadReportAddEveryObject:
@@ -778,6 +774,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {.name = "read_report_enter", .declaration = Method{"Enter"}};
     case BuiltinFn::kReadReportLeave:
       return {.name = "read_report_leave", .declaration = Method{"Leave"}};
+    case BuiltinFn::kReadReportRunsTheBody:
+      return {
+          .name = "read_report_runs_the_body",
+          .declaration = Method{"RunsTheBody"}};
     case BuiltinFn::kRefuseReport:
       return {
           .name = "refuse_report",

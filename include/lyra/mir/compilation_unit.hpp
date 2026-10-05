@@ -237,7 +237,7 @@ struct BuiltinMirTypes {
   TypeId observation;
   TypeId read_report;
   // What a function is handed where a call of it is to report what it reads
-  // (LRM 9.4.2), and null where it is to run.
+  // (LRM 9.4.2), and null where it only runs.
   TypeId read_report_ptr;
   TypeId coroutine_void;
   TypeId wildcard_index;
