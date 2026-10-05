@@ -142,6 +142,19 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [seed](const UnitObjectType& t) {
             return Combine(Combine(seed, t.unit_name), t.class_name);
           },
+          [seed](const UnitObjectsType& t) {
+            std::size_t h = seed;
+            for (const UnpackedRange& range : t.ranges) {
+              h = Combine(Combine(h, range.left), range.right);
+            }
+            for (const UnitObjectType& kind : t.kinds) {
+              h = Combine(Combine(h, kind.unit_name), kind.class_name);
+            }
+            for (const std::uint32_t taken : t.taken) {
+              h = Combine(h, static_cast<std::size_t>(taken));
+            }
+            return h;
+          },
           [seed](const VirtualInterfaceType& t) {
             return Combine(seed, t.unit_name);
           },
@@ -184,6 +197,7 @@ auto Type::IsIntegral() const -> bool {
           [](const ClassHandleType&) { return false; },
           [](const ImportedClassHandleType&) { return false; },
           [](const UnitObjectType&) { return false; },
+          [](const UnitObjectsType&) { return false; },
           [](const VirtualInterfaceType&) { return false; },
           [](const NullType&) { return false; },
           [](const VoidType&) { return false; },
@@ -223,6 +237,7 @@ auto Type::IsValueChangeObservable() const -> bool {
           [](const WildcardIndexType&) { return false; },
           [](const EventType&) { return false; },
           [](const UnitObjectType&) { return false; },
+          [](const UnitObjectsType&) { return false; },
           [](const NullType&) { return false; },
           [](const VoidType&) { return false; },
       });
@@ -272,6 +287,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
             return std::nullopt;
           },
           [](const UnitObjectType&) -> Element { return std::nullopt; },
+          [](const UnitObjectsType&) -> Element { return std::nullopt; },
           [](const VirtualInterfaceType&) -> Element { return std::nullopt; },
           [](const NullType&) -> Element { return std::nullopt; },
           [](const VoidType&) -> Element { return std::nullopt; },

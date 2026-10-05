@@ -126,7 +126,9 @@ auto BuildSampledHistoryExpr(
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(lowerer.Owner().Unit(), block, self),
-          mir::ClassFieldTarget{.owner = frame.current_class_id, .slot = field},
+          mir::ClassFieldTarget{
+              .owner = mir::IntraUnitClassRef{frame.current_class_id},
+              .slot = field},
           frame.current_class->fields.Get(field).type));
 }
 

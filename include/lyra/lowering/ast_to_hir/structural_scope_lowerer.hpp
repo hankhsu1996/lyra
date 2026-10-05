@@ -1,6 +1,9 @@
 #pragma once
 
+#include <cstdint>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <slang/ast/Expression.h>
@@ -70,9 +73,11 @@ class StructuralScopeLowerer {
   auto DeclareSettledValue(
       hir::StructuralScope& scope, const slang::ast::ValueSymbol& value,
       hir::StructuralDataObjectKind kind) -> diag::Result<void>;
-  auto LowerConstructorArguments(
-      const slang::ast::InstanceSymbol& child, WalkFrame frame)
-      -> diag::Result<std::vector<hir::Expr>>;
+  auto BuildInstanceMember(
+      std::string_view instance_name,
+      std::span<const slang::ast::InstanceSymbol* const> elements,
+      std::vector<std::uint32_t> dims, WalkFrame frame)
+      -> diag::Result<hir::InstanceMemberDecl>;
   auto PopulateMember(const slang::ast::Symbol& member, WalkFrame frame)
       -> diag::Result<void>;
   auto PopulateInterfacePortMember(

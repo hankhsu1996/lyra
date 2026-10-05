@@ -60,9 +60,6 @@ void WriteOne(TargetText& out, const OperationName& name) {
           [&](base::ComponentIndex position) { Write(out, position.value); },
           [&](const mir::ClassFieldTarget& property) {
             WriteMemberPointer(out, *name.unit, property);
-          },
-          [&](const mir::CrossUnitClassFieldTarget& property) {
-            WriteMemberPointer(out, *name.unit, property);
           }},
       *name.part);
   out += ">";

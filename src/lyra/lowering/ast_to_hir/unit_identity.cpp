@@ -32,6 +32,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
+#include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -216,23 +217,32 @@ auto ParameterInput(
 // that interface instantiates is. Everything reached through the port takes its
 // types and positions from there, so two instantiations bound to different
 // interfaces build different objects and are different units, exactly as two
-// parameter bindings are. A modport belongs to the same answer, and not merely
-// because it narrows: a view also names things of its own (LRM 25.5.4), and two
-// views may give one name different storage, so a unit bound through each
-// reaches a different place under the same spelling.
+// parameter bindings are. A port carrying a range carries one interface per
+// element, each its own, so the answer is which unit stands at each position.
+// A modport belongs to the same answer, and not merely because it narrows: a
+// view also names things of its own (LRM 25.5.4), and two views may give one
+// name different storage, so a unit bound through each reaches a different
+// place under the same spelling.
 auto InterfacePortInput(
     const slang::ast::PortConnection& connection,
     const SpecializationPolicy& policy) -> SpecializationInput {
-  const auto [instance, modport] =
+  const auto [instances, modport] =
       ConnectedInterfaceOf(connection.getIfaceConn());
+  FixedInterface fixed{
+      .units = {},
+      .taken = {},
+      .modport =
+          modport == nullptr ? std::string{} : std::string{modport->name}};
+  fixed.taken.reserve(instances.size());
+  for (const slang::ast::InstanceSymbol* instance : instances) {
+    std::string unit = SpecializationName(*instance, policy);
+    const auto known = std::ranges::find(fixed.units, unit);
+    fixed.taken.push_back(
+        static_cast<std::uint32_t>(known - fixed.units.begin()));
+    if (known == fixed.units.end()) fixed.units.push_back(std::move(unit));
+  }
   return SpecializationInput{
-      .name = std::string{connection.port.name},
-      .kind = FixedInterface{
-          .unit_name = instance == nullptr
-                           ? std::string{}
-                           : SpecializationName(*instance, policy),
-          .modport =
-              modport == nullptr ? std::string{} : std::string{modport->name}}};
+      .name = std::string{connection.port.name}, .kind = std::move(fixed)};
 }
 
 // Whether `symbol` is the scope a compilation unit is: a package (LRM 26), a
@@ -299,9 +309,16 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
             [](const FixedValue& v) { return v.value; },
             [](const FixedType& v) { return v.type; },
             [](const FixedInterface& v) {
-              return v.modport.empty()
-                         ? v.unit_name
-                         : std::format("{}.{}", v.unit_name, v.modport);
+              std::string at = "<";
+              for (const std::string& unit : v.units) {
+                at += unit;
+                at += ',';
+              }
+              at += '|';
+              for (const std::uint32_t taken : v.taken) {
+                at += std::format("{},", taken);
+              }
+              return std::format("{}|{}>", at, v.modport);
             },
             [](const SuppliedAtConstruction&) {
               return std::string{"<supplied>"};
@@ -314,6 +331,12 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
                 at += block;
               }
               return at + '>';
+            },
+            [](const BindInstantiation& v) {
+              return std::format("<bound by {}>", v.directive);
+            },
+            [](const BoundToCell& v) {
+              return std::format("<cell {}>", v.cell);
             }},
         input.kind);
     bytes += ';';
@@ -341,6 +364,91 @@ auto LandingOf(
     return LandsBack{.levels = *levels, .blocks = std::move(blocks)};
   }
   return LandsIn{.scope = ScopeClassName(scope, policy)};
+}
+
+// One instance as a path spells it: its name, or its array's name with the
+// element's indices (LRM 23.3.2).
+auto InstanceStep(const slang::ast::InstanceSymbol& inst) -> std::string {
+  std::string step{inst.getArrayName()};
+  for (const std::uint32_t at : inst.arrayPath) {
+    step += std::format("[{}]", at);
+  }
+  return step;
+}
+
+void AddEffectsBelow(
+    const slang::ast::Scope& scope, const std::string& prefix,
+    const SpecializationPolicy& policy, std::vector<SpecializationInput>& out);
+
+// What was written elsewhere about `inst`, which stands at `path` below the
+// instance being keyed, and about every instance below it.
+void AddEffectsAt(
+    const slang::ast::InstanceSymbol& inst, const std::string& path,
+    const SpecializationPolicy& policy, std::vector<SpecializationInput>& out) {
+  for (const OverrideEffect& effect : OverridesOn(inst)) {
+    std::visit(
+        Overloaded{
+            [&](const ParameterGivenElsewhere& given) {
+              SpecializationInput input =
+                  ParameterInput(*given.parameter, policy);
+              input.name = std::format("{}.{}", path, input.name);
+              out.push_back(std::move(input));
+            },
+            [&](const InsertedByBind& bound) {
+              out.push_back(
+                  SpecializationInput{
+                      .name = path,
+                      .kind = BindInstantiation{.directive = bound.directive}});
+            },
+            [&](const CellChosenByConfiguration& chosen) {
+              out.push_back(
+                  SpecializationInput{
+                      .name = path, .kind = BoundToCell{.cell = chosen.cell}});
+            }},
+        effect);
+  }
+  if (OverridesMayReachBelow(inst)) {
+    AddEffectsBelow(inst.body, path + ".", policy, out);
+  }
+}
+
+// An instance, or every element of an instance array, with what was written
+// elsewhere about each.
+void AddEffectsOfInstances(
+    const slang::ast::Symbol& symbol, const std::string& prefix,
+    const SpecializationPolicy& policy, std::vector<SpecializationInput>& out) {
+  if (const auto* inst = symbol.as_if<slang::ast::InstanceSymbol>()) {
+    AddEffectsAt(*inst, prefix + InstanceStep(*inst), policy, out);
+  } else if (
+      const auto* array = symbol.as_if<slang::ast::InstanceArraySymbol>()) {
+    for (const slang::ast::Symbol* element : array->elements) {
+      AddEffectsOfInstances(*element, prefix, policy, out);
+    }
+  }
+}
+
+// Every instance `scope` holds, through its generate blocks and arrays, with
+// what was written elsewhere about each.
+void AddEffectsBelow(
+    const slang::ast::Scope& scope, const std::string& prefix,
+    const SpecializationPolicy& policy, std::vector<SpecializationInput>& out) {
+  for (const auto& member : scope.members()) {
+    if (const auto* block = member.as_if<slang::ast::GenerateBlockSymbol>()) {
+      if (!block->isUninstantiated) {
+        AddEffectsBelow(
+            *block, prefix + GenerateBlockStep(*block) + ".", policy, out);
+      }
+    } else if (
+        const auto* blocks =
+            member.as_if<slang::ast::GenerateBlockArraySymbol>()) {
+      for (const slang::ast::GenerateBlockSymbol* entry : blocks->entries) {
+        AddEffectsBelow(
+            *entry, prefix + GenerateBlockStep(*entry) + ".", policy, out);
+      }
+    } else {
+      AddEffectsOfInstances(member, prefix, policy, out);
+    }
+  }
 }
 
 }  // namespace
@@ -398,6 +506,9 @@ auto SpecializationKeyOf(
             .kind = LandingOf(*climb.scope, policy)});
   }
   policy.LeaveNaming();
+  if (OverridesMayReachBelow(inst)) {
+    AddEffectsBelow(inst.body, "", policy, key.inputs);
+  }
   return key;
 }
 

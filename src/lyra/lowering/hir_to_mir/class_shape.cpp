@@ -8,6 +8,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
@@ -48,31 +49,29 @@ auto AsIntroducer(
     const mir::TypePool& types, mir::Block& block, mir::ExprId receiver,
     const mir::VirtualSlot& slot) -> mir::ExprId {
   const mir::TypeId introducer = types.Intern(
-      std::visit(
-          Overloaded{
-              [](const mir::LocalVirtualSlot& local) {
-                return mir::Type{
-                    mir::ObjectType{.class_id = local.owner_class}};
-              },
-              [](const mir::ExternalVirtualSlot& external) {
-                return mir::Type{mir::CrossUnitClassType{
-                    .unit_name = external.unit_name,
-                    .class_name = external.class_name}};
-              }},
-          slot));
+      mir::Type{mir::ObjectType{
+          .of = std::visit(
+              Overloaded{
+                  [](const mir::LocalVirtualSlot& local)
+                      -> mir::DeclaredClassRef {
+                    return mir::IntraUnitClassRef{local.owner_class};
+                  },
+                  [](const mir::ExternalVirtualSlot& external)
+                      -> mir::DeclaredClassRef {
+                    return mir::CrossUnitClassRef{
+                        .unit_name = external.unit_name,
+                        .class_name = external.class_name};
+                  }},
+              slot)}});
   const auto& held =
       types.Get(block.exprs.Get(receiver).type).Get<mir::PointerType>();
-  if (held.pointee == introducer) {
-    return receiver;
-  }
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = receiver},
-          .type = types.Intern(
-              mir::Type{mir::PointerType{
-                  .pointee = introducer,
-                  .ownership = held.ownership,
-                  .mutability = held.mutability}})});
+  return ObjectAs(
+      block, receiver,
+      types.Intern(
+          mir::Type{mir::PointerType{
+              .pointee = introducer,
+              .ownership = held.ownership,
+              .mutability = held.mutability}}));
 }
 
 auto ClassShape::AddNamedField(std::string name, mir::TypeId type)

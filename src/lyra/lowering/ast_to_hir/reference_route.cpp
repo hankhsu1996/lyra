@@ -368,6 +368,11 @@ auto UnitLowerer::ResolveRouteTarget(
           // alike), that identity also says every such scope between the
           // static and its structural one describes where the storage sits
           // rather than a step the route takes.
+          // A value is a member of one object, so a walk standing on several
+          // has not reached one.
+          [&](const OnSeveralObjects&) -> diag::Result<hir::DataLeaf> {
+            return unsupported();
+          },
           [&](const InOwnScope&) -> diag::Result<hir::DataLeaf> {
             auto type = InternType(value.getType(), span);
             if (!type) return std::unexpected(std::move(type.error()));
@@ -427,9 +432,8 @@ auto UnitLowerer::DisableTargetOf(
   // only its publication says anything about, whatever this unit minted for
   // the scope it resolved to here; only a name staying inside the instance
   // reaches a scope this unit minted.
-  auto origin = StartOf(frame, reference, span);
-  if (!origin) return std::unexpected(std::move(origin.error()));
-  const auto minted = std::holds_alternative<FromReader>(*origin)
+  RouteOrigin origin = StartOf(frame, reference);
+  const auto minted = std::holds_alternative<FromReader>(origin)
                           ? LookupMintedProceduralScope(target)
                           : std::nullopt;
   // A scope's identity indexes its declaring scope's registry, so one the
@@ -450,7 +454,7 @@ auto UnitLowerer::DisableTargetOf(
         "UnitLowerer::DisableTargetOf: a disable names a block or a task, each "
         "of which defines a scope");
   }
-  auto route = RouteToScope(frame, *walk_to, *std::move(origin));
+  auto route = RouteToScope(frame, *walk_to, std::move(origin));
   if (!route.has_value()) return refuse();
   std::optional<hir::DisableLeaf> leaf;
   if (minted.has_value()) {
@@ -485,8 +489,8 @@ auto UnitLowerer::ReaderInstance() const -> std::optional<ReaderClimbs> {
 }
 
 auto UnitLowerer::StartOf(
-    const WalkFrame& frame, const slang::ast::HierarchicalReference& reference,
-    diag::SourceSpan span) -> diag::Result<RouteOrigin> {
+    const WalkFrame& frame, const slang::ast::HierarchicalReference& reference)
+    -> RouteOrigin {
   const std::optional<ReaderClimbs> reader = ReaderInstance();
   if (!reader.has_value()) return RouteOrigin{FromReader{}};
 
@@ -498,8 +502,13 @@ auto UnitLowerer::StartOf(
     const auto& port =
         reference.path.front().symbol->as<slang::ast::InterfacePortSymbol>();
     PortReach reach = ReachOfPort(frame, port);
+    // The instance the name stands in is the one bound where its selects land:
+    // a port standing for one is bound to one, and the front end names the
+    // element a select picks out of one carrying a range.
+    const auto connected = ConnectedInterfaceOf(port.getConnection()).instances;
     const slang::ast::InstanceSymbol* bound =
-        ConnectedInterfaceOf(port.getConnection()).instance;
+        reach.hop.dims.empty() && connected.size() == 1 ? connected[0]
+                                                        : nullptr;
     for (std::size_t at = 1; at < reference.path.size(); ++at) {
       // The front end lists a loop generate by its name, with no selector,
       // before the block its select picks, so the port's own selects end
@@ -518,13 +527,15 @@ auto UnitLowerer::StartOf(
         bound = element;
       }
     }
+    // A name continuing through the port names a member of one instance, so
+    // it selects one in every dimension the port declares (LRM 23.6, 25.3).
     if (bound == nullptr ||
         reach.hop.step.selects.size() != reach.hop.dims.size()) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "a name through an interface port standing for several instances is "
-          "not yet supported here");
+      throw InternalError(
+          "UnitLowerer::StartOf: a name through an interface port picks one of "
+          "the instances it stands for -- please report this as a bug");
     }
+    reach.hop.place = PlaceThroughPort(port, reach.hop.step.selects);
     return RouteOrigin{RouteStart{
         .below = &bound->body,
         .base = std::move(reach.base),
@@ -542,8 +553,8 @@ auto UnitLowerer::StartOf(
 
 auto UnitLowerer::StartsOfNames(
     const WalkFrame& frame,
-    std::span<const slang::ast::Expression* const> names, diag::SourceSpan span)
-    -> diag::Result<std::vector<RouteOrigin>> {
+    std::span<const slang::ast::Expression* const> names)
+    -> std::vector<RouteOrigin> {
   std::vector<RouteOrigin> origins;
   bool from_reader = names.empty();
   for (const slang::ast::Expression* name : names) {
@@ -553,12 +564,11 @@ auto UnitLowerer::StartsOfNames(
       from_reader = true;
       continue;
     }
-    auto origin = StartOf(frame, hierarchical->ref, span);
-    if (!origin) return std::unexpected(std::move(origin.error()));
-    if (std::holds_alternative<FromReader>(*origin)) {
+    RouteOrigin origin = StartOf(frame, hierarchical->ref);
+    if (std::holds_alternative<FromReader>(origin)) {
       from_reader = true;
     } else {
-      origins.push_back(*std::move(origin));
+      origins.push_back(std::move(origin));
     }
   }
   if (from_reader) origins.emplace_back(FromReader{});
@@ -706,6 +716,10 @@ auto UnitLowerer::ReachThroughInterfacePort(
       break;
     }
   }
+  // What the port's hop stands on is settled by the selects the name wrote
+  // for it: the instance they pick out, or the several they leave.
+  auto& through_port = std::get<DeclaredHop>(hops.front());
+  through_port.place = PlaceThroughPort(*port, through_port.step.selects);
   if (!ClassifyDescent(route, hops)) return std::nullopt;
   auto open = NarrowOutermost(std::move(route.open), part);
   if (!open.has_value()) return std::nullopt;
@@ -714,7 +728,7 @@ auto UnitLowerer::ReachThroughInterfacePort(
 }
 
 auto UnitLowerer::ReachOfPort(
-    const WalkFrame& frame, const slang::ast::InterfacePortSymbol& port) const
+    const WalkFrame& frame, const slang::ast::InterfacePortSymbol& port)
     -> PortReach {
   const auto binding = LookupInterfacePortBinding(port);
   if (!binding.has_value()) {
@@ -730,15 +744,24 @@ auto UnitLowerer::ReachOfPort(
   }
   // The hop lands on the port itself, so every object it stands for is still
   // in play; a name that picks one out of them says so in a coordinate the
-  // caller adds to it.
+  // caller adds to it, and settles the place again once it has.
   return PortReach{
       .base = hir::InUnitBase{.hops = *hops},
       .hop = DeclaredHop{
           .step = hir::PathStep{.names = binding->port, .selects = {}},
-          .place =
-              InExternalScope{
-                  .scope_class = binding->scope_class, .within = {}},
-          .dims = InterfacePortDimensions(port)}};
+          .place = PlaceThroughPort(port, {}),
+          .dims = InterfacePortObjects(port).ranges}};
+}
+
+auto UnitLowerer::PlaceThroughPort(
+    const slang::ast::InterfacePortSymbol& port,
+    std::span<const std::uint32_t> selects) -> RoutePlace {
+  const hir::UnitObjectsType objects = InterfacePortObjects(port);
+  if (selects.size() != objects.ranges.size()) return OnSeveralObjects{};
+  const hir::UnitObjectType& kind = objects.KindAt(selects);
+  return InExternalScope{
+      .scope_class = ExternalScopeClassOf(kind.unit_name, kind.class_name),
+      .within = {}};
 }
 
 auto UnitLowerer::ReachOwnScope(
@@ -1001,39 +1024,51 @@ auto UnitLowerer::DescendPublishedFrom(
       .place = InExternalScope{.scope_class = standing, .within = {}},
       .open = {}};
   // A hop onto an instance, or a set of them, is a step onto the member the
-  // scope published for it; that member's type says which scope of which unit
-  // the step lands on and how many objects it stands for.
-  const auto onto_instance = [&](InstanceHop& instance) -> bool {
+  // scope published for it; that member's type says how many objects it
+  // stands for and which kind stands at each position. Selects naming one
+  // position land on the scope of the kind there; selects leaving a dimension
+  // open stand on several objects, past which no name resolves (LRM 23.6), and
+  // whoever picks one out of them reads its kind off the same set.
+  const auto onto_instance = [&](const InExternalScope& on,
+                                 InstanceHop& instance) -> bool {
     const hir::ScopeClassSignature& record =
-        unit_.external_scope_classes.Get(descended.place.scope_class).signature;
+        unit_.external_scope_classes.Get(on.scope_class).signature;
     const auto member = record.FindMember(instance.name);
     if (!member.has_value()) return false;
-    const auto behind =
-        hir::ObjectsBehind(unit_.types, record.members.Get(*member).type);
-    if (!behind.has_value()) return false;
-    const std::string unit_name{behind->unit_name};
-    const std::string class_name{behind->class_name};
+    const auto* objects = unit_.types.Get(record.members.Get(*member).type)
+                              .As<hir::UnitObjectsType>();
+    if (objects == nullptr) return false;
     descended.open =
-        SettledDimensions(behind->shape.dims, instance.indices.size());
-    const hir::ExternalScopeClassId result_class =
-        ExternalScopeClassOf(unit_name, class_name);
+        SettledDimensions(objects->ranges, instance.indices.size());
+    // Copied out, since naming the kind's class below may add to the pool the
+    // set was read from.
+    const std::optional<hir::UnitObjectType> lands_on =
+        instance.indices.size() == objects->ranges.size()
+            ? std::optional{objects->KindAt(instance.indices)}
+            : std::nullopt;
     descended.steps.push_back(
         hir::ExternalStep{
             .names =
                 hir::ExternalMemberRef{
-                    .scope_class = descended.place.scope_class,
-                    .member = *member,
-                    .result_class = result_class},
+                    .scope_class = on.scope_class, .member = *member},
             .selects = std::move(instance.indices)});
-    descended.place.scope_class = result_class;
+    if (!lands_on.has_value()) {
+      descended.place = OnSeveralObjects{};
+      return true;
+    }
+    descended.place = InExternalScope{
+        .scope_class =
+            ExternalScopeClassOf(lands_on->unit_name, lands_on->class_name),
+        .within = {}};
     return true;
   };
 
   // A hop into a generate block is a step through the construct the scope
   // published it under, onto the class that block was published as.
-  const auto into_block = [&](const auto& block) -> bool {
+  const auto into_block = [&](const InExternalScope& on,
+                              const auto& block) -> bool {
     const hir::ExternalScopeClass& record =
-        unit_.external_scope_classes.Get(descended.place.scope_class);
+        unit_.external_scope_classes.Get(on.scope_class);
     auto found = FindPublishedBlock(record.signature.generates, block);
     if (!found.has_value()) return false;
     const std::string unit_name = record.unit_name;
@@ -1044,31 +1079,34 @@ auto UnitLowerer::DescendPublishedFrom(
         hir::ExternalStep{
             .names =
                 hir::ExternalGenerateRef{
-                    .scope_class = descended.place.scope_class,
+                    .scope_class = on.scope_class,
                     .generate = found->generate,
                     .result_class = result_class},
             .selects = std::move(found->selects)});
-    descended.place.scope_class = result_class;
+    descended.place =
+        InExternalScope{.scope_class = result_class, .within = {}};
     return true;
   };
 
   // A named block or subroutine is no object, so nothing below one is either
-  // and no step follows it.
+  // and no step follows it. Nothing resolves past several objects either.
   for (NamedHop& hop : hops) {
-    const bool past_procedural = !descended.place.within.empty();
+    auto* on = std::get_if<InExternalScope>(&descended.place);
+    if (on == nullptr) return std::nullopt;
+    const bool past_procedural = !on->within.empty();
     const bool resolved = std::visit(
         Overloaded{
             [&](InstanceHop& instance) {
-              return !past_procedural && onto_instance(instance);
+              return !past_procedural && onto_instance(*on, instance);
             },
             [&](const LoopBlockHop& block) {
-              return !past_procedural && into_block(block);
+              return !past_procedural && into_block(*on, block);
             },
             [&](const LabeledBlockHop& block) {
-              return !past_procedural && into_block(block);
+              return !past_procedural && into_block(*on, block);
             },
             [&](ProceduralHop& procedural) {
-              descended.place.within.push_back(std::move(procedural.name));
+              on->within.push_back(std::move(procedural.name));
               return true;
             }},
         hop);
@@ -1408,9 +1446,7 @@ auto UnitLowerer::WatchedEntriesOf(
       case Referent::kViewDefinedName: {
         // Each name that reached it is watched from where that name started,
         // the way a variable read is below.
-        auto starts = StartsOfNames(frame, read.reached_by, span);
-        if (!starts) return std::unexpected(std::move(starts.error()));
-        for (RouteOrigin& origin : *starts) {
+        for (RouteOrigin& origin : StartsOfNames(frame, read.reached_by)) {
           auto entries = ObservedThroughModport(
               target.as<slang::ast::ModportPortSymbol>(), frame,
               std::move(origin));
@@ -1461,10 +1497,8 @@ auto UnitLowerer::WatchedEntriesOf(
       // same storage in every instance, which is where the symbol sits.
       case Referent::kVariableStorage:
       case Referent::kNetStorage: {
-        auto starts = StartsOfNames(frame, read.reached_by, span);
-        if (!starts) return std::unexpected(std::move(starts.error()));
         std::vector<hir::ValueTarget> cells;
-        for (RouteOrigin& origin : *starts) {
+        for (RouteOrigin& origin : StartsOfNames(frame, read.reached_by)) {
           auto cell =
               ResolveValueTarget(frame, target, std::move(origin), span);
           if (!cell) return std::unexpected(std::move(cell.error()));

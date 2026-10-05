@@ -113,10 +113,13 @@ comparable: two that differ in nothing else then lower to the same scope. Each f
 stops folding the index admits more bodies, and a place that goes on folding costs sharing and
 nothing else.
 
-**So every block is lowered, and the scopes are compared with each other.** All alike and the
-construct keeps one of them plus the loop that builds it at every index; otherwise each is a child
-in its own right. There is nothing to choose between beforehand, so nothing has to be right about
-the source in advance.
+**So every block is lowered, and the scopes are compared with each other.** The construct keeps the
+distinct bodies they make, and the loop builds, at every index, the body that index's block is: all
+alike is one body, and blocks of two shapes are two bodies however many indices take each. There is
+nothing to choose between beforehand, so nothing has to be right about the source in advance. This
+sentence used to end "otherwise each is a child in its own right", which kept a distinct class and
+member per index wherever any two blocks differed, so a loop whose widths alternated between two
+compiled one class per index.
 
 The requirement that selects this is that correctness does not depend on the sharing decision: a
 correct program is never refused because it could not be shared. A shape that has to predict the
@@ -172,8 +175,8 @@ duplication inside it costs 0.019s; the optimizer and code generation cost 4.2s 
 emitted target 16.8s. Duplication is free everywhere above the artifact, so lowering every block
 costs nothing worth weighing.
 
-**What this is not yet.** The semantic layer still states the elaborated blocks where they did not
-lower alike, rather than stating the loop the source wrote and letting a body that needs a fixed
+**What this is not yet.** The semantic layer still states each distinct body as lowered from one of
+its blocks, rather than stating the loop the source wrote once and letting a body that needs a fixed
 value fall back on its own. That is a further step and this one is what unblocked it: a name now
 reaches a block rather than a compiled scope, so which form the construct takes is no longer
 something any earlier pass has committed to.

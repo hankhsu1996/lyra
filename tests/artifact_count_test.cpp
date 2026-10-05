@@ -201,6 +201,24 @@ endmodule
       4U);
 }
 
+TEST(ArtifactCount, BlocksOfTwoShapesAreCompiledOncePerShape) {
+  // Sixteen blocks whose widths alternate between two: two bodies, each built
+  // at the indices that take it, so the count follows the shapes and not the
+  // indices.
+  EXPECT_EQ(
+      CompiledBlocksOfGenerate(
+          R"(
+module Top;
+  for (genvar i = 0; i < 16; i += 1) begin : g
+    logic [i % 2:0] wide;
+    initial wide = '0;
+  end
+endmodule
+)",
+          0),
+      2U);
+}
+
 TEST(ArtifactCount, BlocksDerivingAConstantFromTheIndexAreCompiledOnce) {
   // A block naming a constant it works out from its own index states that
   // derivation, so every block states the same thing and the count does not

@@ -309,7 +309,7 @@ TEST(MirVerifyTest, AFieldIsAccessedOnTheObjectAPointerReaches) {
               .expr = inner.exprs.Add(MakeFieldAccessExpr(
                   receiver,
                   ClassFieldTarget{
-                      .owner = ClassId{.value = 0},
+                      .owner = IntraUnitClassRef{ClassId{.value = 0}},
                       .slot = FieldId{.value = 0}},
                   u.builtins.int_type))});
       const BlockId scope = body.child_scopes.Add(std::move(inner));

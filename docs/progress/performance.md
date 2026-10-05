@@ -370,9 +370,9 @@ specializations, not with instance count.
       declared in the module writes from the module's parameter is folded, since a class's methods
       are not bodies of the unit's objects; and an elaboration-time message (`$info`, LRM 20.11)
       naming a parameter is formatted once by the front end, which keeps the text and not the
-      arguments, so its text differs per value. The instance a `bind` directive names is read by the
-      prediction, but `bind` is not yet supported, so no case has exercised it; it needs one once it
-      is.
+      arguments, so its text differs per value. An instantiation a `bind` directive inserts states
+      its connections in the directive and is told apart by the directive that inserted it, which a
+      case exercises.
 
 - [x] The generate axis of that same sharing. A `generate for` used to lower concretely: N
       iterations became N scope classes and N construction statements, so the artifact grew
@@ -391,7 +391,10 @@ specializations, not with instance count.
       1,064,336 and 765,273 before; the host compile of that emitted project goes from 16.8 seconds
       to 3.5. Where the index instead fixes something a class settles once -- a width, a
       specialization, which members exist -- separate compilation is the correct answer and stays,
-      which is `specialization_model.md` invariant 1.
+      which is `specialization_model.md` invariant 1. It is one class per distinct body rather than
+      per index: blocks whose widths alternate between two over sixteen indices compile to two
+      classes, and the loop builds at each index the one that index takes, where they used to
+      compile to sixteen.
       [../decisions/one-body-built-at-every-index.md](../decisions/one-body-built-at-every-index.md)
       holds how a body qualifies, why the question deciding that is checked rather than trusted, and
       what a scope's construction receives.

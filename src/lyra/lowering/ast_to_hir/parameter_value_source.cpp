@@ -58,6 +58,7 @@
 #include <slang/ast/types/DeclaredType.h>
 #include <slang/syntax/AllSyntax.h>
 
+#include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -119,15 +120,15 @@ struct EveryReference
     VisitSettledFrom(param.getInitializer());
   }
 
-  // What the child is handed, never what its body reads.
+  // What this body hands the child, never what the child's body reads.
   void handle(const slang::ast::InstanceSymbol& child) {
     child.visitExprs(*this);
     for (const auto* param : child.body.getParameters()) {
       const auto* value = param->symbol.as_if<slang::ast::ParameterSymbol>();
-      if (value != nullptr && value->isOverridden()) {
-        if (const slang::ast::Expression* given = value->getInitializer()) {
-          given->visit(*this);
-        }
+      if (value == nullptr) continue;
+      if (const slang::ast::Expression* given =
+              ValueWrittenAtInstantiation(child, *value)) {
+        given->visit(*this);
       }
     }
   }
@@ -467,7 +468,8 @@ struct EvaluatedPlaces
   void handle(const slang::ast::InstanceSymbol& child) const {
     for (const slang::ast::ParameterSymbol* param :
          policy->SuppliedParametersOf(child)) {
-      if (const slang::ast::Expression* given = param->getInitializer()) {
+      if (const slang::ast::Expression* given =
+              ValueWrittenAtInstantiation(child, *param)) {
         given->visit(*values);
       }
     }
@@ -505,20 +507,6 @@ auto TypeFollowsValue(const slang::ast::ParameterSymbol& param) -> bool {
     return false;
   }
   return syntax->as<slang::syntax::ImplicitTypeSyntax>().dimensions.empty();
-}
-
-// Whether a hierarchical override (LRM 23.10.1) or a command-line one reaches
-// `param`. Either takes precedence over what the instantiation wrote, so the
-// value the parent would hand over is not the value the parameter holds.
-auto OverriddenFromElsewhere(
-    const slang::ast::InstanceBodySymbol& body,
-    const slang::ast::ParameterSymbol& param) -> bool {
-  if (body.hierarchyOverrideNode == nullptr) {
-    return false;
-  }
-  const slang::syntax::SyntaxNode* syntax = param.getSyntax();
-  return syntax != nullptr &&
-         body.hierarchyOverrideNode->paramOverrides.contains(syntax);
 }
 
 // Each of a unit's parameters mapped to others of its parameters: the ones its
@@ -570,23 +558,24 @@ auto SuppliedOf(
     });
   };
   // A parameter decides what is compiled where it is read outside those
-  // places, where its type is the type of its value, or where an override from
-  // elsewhere replaces what the instantiation hands it; and what a deciding
+  // places, or where its type is the type of its value; and what a deciding
   // parameter is written from decides with it.
   ParameterSet roots;
   for (const slang::ast::ParameterSymbol* param : own) {
-    if (read_elsewhere(param) || TypeFollowsValue(*param) ||
-        OverriddenFromElsewhere(body, *param)) {
+    if (read_elsewhere(param) || TypeFollowsValue(*param)) {
       roots.insert(param);
     }
   }
   const ParameterSet decides =
       Reached(std::move(roots), written_from, [](const auto&) { return true; });
 
+  // A value given anywhere -- by the instantiation, a defparam, or a
+  // configuration (LRM 23.10) -- is one value the instance is handed.
   std::vector<const slang::ast::ParameterSymbol*> supplied;
   for (const auto& member : body.members()) {
     const auto* param = member.as_if<slang::ast::ParameterSymbol>();
-    if (param == nullptr || param->isLocalParam() || !param->isOverridden() ||
+    if (param == nullptr || param->isLocalParam() ||
+        !(param->isOverridden() || ValueSetElsewhere(body, *param)) ||
         decides.contains(param)) {
       continue;
     }
@@ -628,7 +617,9 @@ auto SpecializationPolicy::Classify(
       written_into.at(source).insert(param);
     }
   }
-  if (!kept_whole_.contains(&inst.getDefinition())) {
+  // A top-level instance is built by the design root, which hands nothing, and
+  // is the only instance of its unit, so a value it is given is compiled in.
+  if (!kept_whole_.contains(&inst.getDefinition()) && !inst.isTopLevel()) {
     out.supplied = SuppliedOf(body, own, written_from, *this);
   }
 
@@ -647,7 +638,7 @@ auto SpecializationPolicy::Classify(
   out.varying = Reached(
       std::move(roots), written_into,
       [&](const slang::ast::ParameterSymbol& param) {
-        return !param.isOverridden() && !OverriddenFromElsewhere(body, param);
+        return !param.isOverridden() && !ValueSetElsewhere(body, param);
       });
   return out;
 }

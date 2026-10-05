@@ -74,13 +74,11 @@ using StructuralDataObjectBindings = std::unordered_map<
     const slang::ast::ValueSymbol*, StructuralDataObjectBinding>;
 
 // Where an interface port stands, as its own unit reaches it: the scope that
-// declares it, its identity there, and this unit's record of the class of the
-// object bound to it. A name reached through the port is counted out of that
-// record.
+// declares it, and its identity there. Which kind of instance is bound at each
+// of its positions is what the port's type states.
 struct InterfacePortBinding {
   ScopeFrameId home_frame{};
   hir::InterfacePortId port{};
-  hir::ExternalScopeClassId scope_class{};
 };
 
 struct SubroutineBinding {
@@ -360,7 +358,13 @@ struct InExternalScope {
   std::vector<std::string> within;
 };
 
-using RoutePlace = std::variant<InOwnScope, InExternalScope>;
+// The walk stands on several objects of another unit: a set it stepped onto
+// with a dimension still unselected. It is no one scope, so no name resolves
+// past it until a select picks one object out (LRM 23.6); what it reaches is
+// the set, as a connection binding a port to several instances does.
+struct OnSeveralObjects {};
+
+using RoutePlace = std::variant<InOwnScope, InExternalScope, OnSeveralObjects>;
 
 // How a reader reaches a scope elsewhere on the elaborated hierarchy: where
 // navigation starts, the descent from there, and where that leaves it. What
@@ -446,10 +450,11 @@ struct Descent {
 };
 
 // The same for a descent through published scope classes alone, which steps
-// only through what each published and so always stands on one of them.
+// only through what each published: it stands on one of them, or on several
+// objects of a set it left a dimension of unselected.
 struct PublishedDescent {
   std::vector<hir::ExternalStep> steps;
-  InExternalScope place;
+  RoutePlace place;
   std::vector<OpenDimension> open;
 };
 
@@ -694,30 +699,20 @@ class UnitLowerer {
     return it->second;
   }
 
-  // The objects that port stands for, as its own type states them: which unit
-  // they belong to, and the declared range of each dimension.
+  // The objects that port stands for, as its own type states them: the
+  // declared range of each dimension, and which kind of instance is bound at
+  // each position. A copy, because the pool it is read from grows as a name
+  // through the port is resolved.
   [[nodiscard]] auto InterfacePortObjects(const slang::ast::Symbol& port) const
-      -> hir::ObjectsBehindType {
-    auto behind = hir::ObjectsBehind(unit_.types, InterfacePortType(port));
-    if (!behind.has_value()) {
+      -> hir::UnitObjectsType {
+    const auto* objects =
+        unit_.types.Get(InterfacePortType(port)).As<hir::UnitObjectsType>();
+    if (objects == nullptr) {
       throw InternalError(
           "UnitLowerer::InterfacePortObjects: an interface port stands for "
-          "instances of the unit its connection named");
+          "the instances its connection named");
     }
-    return *std::move(behind);
-  }
-
-  // How many instances that port stands for, as the declared range of each
-  // dimension, outermost first. Empty where it stands for one.
-  [[nodiscard]] auto InterfacePortDimensions(
-      const slang::ast::Symbol& port) const -> std::vector<hir::UnpackedRange> {
-    return InterfacePortObjects(port).shape.dims;
-  }
-
-  // Which unit's instances that port carries.
-  [[nodiscard]] auto InterfaceUnitOf(const slang::ast::Symbol& port) const
-      -> std::string {
-    return std::string{InterfacePortObjects(port).unit_name};
+    return *objects;
   }
 
   // Whether `internal` is the declaration a `ref` / `const ref` port reaches,
@@ -1021,7 +1016,7 @@ class UnitLowerer {
 
   void MapInterfacePortBinding(
       const slang::ast::InterfacePortSymbol& port, ScopeFrameId home_frame,
-      hir::InterfacePortId local, hir::ExternalScopeClassId scope_class);
+      hir::InterfacePortId local);
   [[nodiscard]] auto LookupInterfacePortBinding(const slang::ast::Symbol& port)
       const -> std::optional<InterfacePortBinding>;
 
@@ -1368,12 +1363,10 @@ class UnitLowerer {
   // or upward at the enclosing instance it landed in, where it leaves the
   // unit's instance, and at the reader for a name that never leaves and for
   // every name a namespace unit writes, since a namespace has no instance to
-  // leave. A name through a port that leaves several of the instances behind
-  // it in play has no one place to start, and is refused at `span`.
+  // leave.
   [[nodiscard]] auto StartOf(
       const WalkFrame& frame,
-      const slang::ast::HierarchicalReference& reference, diag::SourceSpan span)
-      -> diag::Result<RouteOrigin>;
+      const slang::ast::HierarchicalReference& reference) -> RouteOrigin;
 
   // Where a route to `target` starts when no name says so -- a scope reached
   // because a type belongs to it: at the reader where `target` stands in this
@@ -1495,8 +1488,15 @@ class UnitLowerer {
   // serves a name read through the port and a connection handing the port's
   // interface on.
   [[nodiscard]] auto ReachOfPort(
-      const WalkFrame& frame, const slang::ast::InterfacePortSymbol& port) const
+      const WalkFrame& frame, const slang::ast::InterfacePortSymbol& port)
       -> PortReach;
+
+  // Where a walk through `port` stands once `selects` are written after it:
+  // on the instance bound at the position they pick out, or on several where
+  // they leave a dimension of the port unselected.
+  [[nodiscard]] auto PlaceThroughPort(
+      const slang::ast::InterfacePortSymbol& port,
+      std::span<const std::uint32_t> selects) -> RoutePlace;
 
   // Fills `route` with the descent `hops` state, resolving each hop this unit
   // declares nothing about against what the scope standing above it published,
@@ -1535,8 +1535,8 @@ class UnitLowerer {
   // all.
   [[nodiscard]] auto StartsOfNames(
       const WalkFrame& frame,
-      std::span<const slang::ast::Expression* const> names,
-      diag::SourceSpan span) -> diag::Result<std::vector<RouteOrigin>>;
+      std::span<const slang::ast::Expression* const> names)
+      -> std::vector<RouteOrigin>;
 
   // The entries a set of reads watches, with `parts_of` saying which parts of
   // a bit vector a read of one watches and `declared_by` which variable of the

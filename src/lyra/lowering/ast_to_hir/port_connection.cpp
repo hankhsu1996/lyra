@@ -29,7 +29,7 @@
 #include "lyra/hir/published_target.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unit_signature.hpp"
-#include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 #include "lyra/lowering/ast_to_hir/published_projection.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
@@ -124,35 +124,6 @@ auto ConnectedProjection(
       target);
 }
 
-// Every interface instance a connection supplies, in the order the port's
-// coordinates count them (LRM 23.3.3.5). A connection to a port standing for
-// one instance supplies one, which is the no-dimension case of the same walk;
-// an array of interfaces contributes its elements, and a nested one its
-// elements' elements, so the walk flattens exactly as the coordinates do.
-// Element order needs no correction here: what a connection resolves to is
-// already rebased onto the range the port declared, matched left index to left
-// index, so the walk takes it as it stands. Nothing when the connection
-// resolves to something that is neither.
-auto CollectConnectedInstances(const slang::ast::Symbol& connected)
-    -> std::optional<std::vector<const slang::ast::InstanceSymbol*>> {
-  if (const auto* instance = connected.as_if<slang::ast::InstanceSymbol>()) {
-    return std::vector<const slang::ast::InstanceSymbol*>{instance};
-  }
-  const auto* array = connected.as_if<slang::ast::InstanceArraySymbol>();
-  if (array == nullptr) {
-    return std::nullopt;
-  }
-  std::vector<const slang::ast::InstanceSymbol*> instances;
-  for (const auto* element : array->elements) {
-    auto nested = CollectConnectedInstances(*element);
-    if (!nested.has_value()) {
-      return std::nullopt;
-    }
-    instances.insert(instances.end(), nested->begin(), nested->end());
-  }
-  return instances;
-}
-
 // The correspondence LRM 23.3.3.5 fixes between the positions a port stands for
 // and the objects an actual supplies. One side is what the child published and
 // the other is what this unit worked out from its own declarations, and a value
@@ -167,12 +138,12 @@ class PairedPositions {
   // already is -- a shape read off a signature, a reach built by a walk -- so
   // neither can be passed where the other belongs.
   [[nodiscard]] static auto Meet(
-      const hir::ObjectsBehindType& published, const ScopeRoute& reach)
+      const hir::UnitObjectsType& published, const ScopeRoute& reach)
       -> std::optional<PairedPositions> {
     // A port binds every object it stands for, so every position of every
     // dimension it declares is in play: the same statement the actual makes
     // about what it kept, at its own width.
-    std::vector<OpenDimension> port = WholeDimensions(published.shape.dims);
+    std::vector<OpenDimension> port = WholeDimensions(published.ranges);
     const auto kept_count = [](const OpenDimension& dim) {
       return dim.kept.count;
     };
@@ -220,13 +191,23 @@ class PairedPositions {
   std::vector<OpenDimension> actual_;
 };
 
+// What a route to the object at `position` of the port ends at: one object, of
+// the kind the child published for that position.
+auto PeerLeafAt(
+    const hir::TypePool& types, const hir::UnitObjectsType& port,
+    std::uint64_t position) -> hir::ScopeLeaf {
+  return hir::ScopeLeaf{
+      .type = types.Intern(hir::Type{port.KindAtPosition(position)})};
+}
+
 // One route per object the port stands for, pairing each of its positions with
 // one the actual left open (LRM 23.3.3.4, 23.3.3.5). A port standing for one
 // instance has no open coordinate and no position to pair, which is the same
 // walk over nothing rather than a case of its own.
 auto RoutesToPairedObjects(
-    const ScopeRoute& reach, const hir::ObjectsBehindType& behind,
-    diag::SourceSpan span) -> diag::Result<std::vector<hir::ObjectRoute>> {
+    const hir::TypePool& types, const ScopeRoute& reach,
+    const hir::UnitObjectsType& behind, diag::SourceSpan span)
+    -> diag::Result<std::vector<hir::ObjectRoute>> {
   if (reach.steps.empty()) {
     throw InternalError(
         "RoutesToPairedObjects: a reach through an interface port starts at "
@@ -257,7 +238,7 @@ auto RoutesToPairedObjects(
         hir::ObjectRoute{
             .base = reach.base,
             .steps = std::move(steps),
-            .leaf = hir::ScopeLeaf{.type = behind.shape.element_type}});
+            .leaf = PeerLeafAt(types, behind, position)});
   }
   return peers;
 }
@@ -273,8 +254,9 @@ auto RoutesToPairedObjects(
 // against it here, which is where the two independent counts sit side by side.
 auto InterfaceActualRoutes(
     UnitLowerer& unit_lowerer, const slang::ast::PortConnection& conn,
-    const hir::ObjectsBehindType& behind, diag::SourceSpan span,
-    WalkFrame frame) -> diag::Result<std::vector<hir::ObjectRoute>> {
+    const hir::UnitObjectsType& behind, diag::SourceSpan span, WalkFrame frame)
+    -> diag::Result<std::vector<hir::ObjectRoute>> {
+  const hir::TypePool& types = unit_lowerer.Unit().types;
   const slang::ast::Expression* actual = conn.getExpression();
   const auto* named =
       actual == nullptr
@@ -294,56 +276,51 @@ auto InterfaceActualRoutes(
           "an interface reached through another interface port by a path of "
           "this shape is not yet supported");
     }
-    return RoutesToPairedObjects(*through, behind, span);
+    return RoutesToPairedObjects(types, *through, behind, span);
   }
 
   // Which instance an element of an instance array is given is settled while
   // the design elaborates (LRM 23.3.3.5), so the connection states it; the
   // actual's own expression names the whole array the elements were cut from.
-  const slang::ast::Symbol* connected = conn.getIfaceConn().first;
-  const auto instances = connected == nullptr
-                             ? std::nullopt
-                             : CollectConnectedInstances(*connected);
-  if (!instances.has_value()) {
+  const std::vector<const slang::ast::InstanceSymbol*> instances =
+      ConnectedInterfaceOf(conn.getIfaceConn()).instances;
+  if (instances.empty()) {
     return PortConnectionUnsupported(
         span, "this interface port connection form is not yet supported");
   }
   // The actual is a name like any other, so where it starts -- here, or where
   // its search landed above this instance (LRM 23.8) -- is the name's own.
-  RouteOrigin origin = FromReader{};
-  if (named != nullptr) {
-    auto started = unit_lowerer.StartOf(frame, named->hierRef, span);
-    if (!started) return std::unexpected(std::move(started.error()));
-    origin = *std::move(started);
+  const RouteOrigin origin = named == nullptr
+                                 ? RouteOrigin{FromReader{}}
+                                 : unit_lowerer.StartOf(frame, named->hierRef);
+  // How many objects the member stands for is what the child published; how
+  // many this connection supplies is what the parent worked out from the
+  // frontend. Each side counted its own and they meet here -- a count taken
+  // from the other would agree with it whatever it said, and the two would then
+  // build different layouts with nothing able to report it.
+  if (instances.size() != behind.ElementCount()) {
+    return PortConnectionUnsupported(
+        span,
+        "an interface port bound to a number of interface instances other than "
+        "the number it stands for is not yet supported");
   }
   std::vector<hir::ObjectRoute> peers;
-  peers.reserve(instances->size());
-  for (const auto* instance : *instances) {
-    auto route = unit_lowerer.RouteToScope(frame, instance->body, origin);
+  peers.reserve(instances.size());
+  for (std::size_t position = 0; position < instances.size(); ++position) {
+    auto route =
+        unit_lowerer.RouteToScope(frame, instances[position]->body, origin);
     if (!route.has_value()) {
       return PortConnectionUnsupported(
           span,
           "an interface port connected to an instance this scope cannot name "
           "is not yet supported");
     }
-    // A route ends at one object, so what types a peer is the element the
-    // member stands for rather than the member's whole shape.
+    // A route ends at one object, of the kind the port's position takes.
     peers.push_back(
         hir::ObjectRoute{
             .base = std::move(route->base),
             .steps = std::move(route->steps),
-            .leaf = hir::ScopeLeaf{.type = behind.shape.element_type}});
-  }
-  // How many objects the member stands for is what the child published; how
-  // many this connection supplies is what the parent worked out from the
-  // frontend. Each side counted its own and they meet here -- a count taken
-  // from the other would agree with it whatever it said, and the two would then
-  // build different layouts with nothing able to report it.
-  if (peers.size() != behind.shape.ElementCount()) {
-    return PortConnectionUnsupported(
-        span,
-        "an interface port bound to a number of interface instances other than "
-        "the number it stands for is not yet supported");
+            .leaf = PeerLeafAt(types, behind, position)});
   }
   return peers;
 }
@@ -358,21 +335,23 @@ auto ConnectInterfacePort(
     const hir::InterfacePortPart& published,
     const slang::ast::PortConnection& conn, WalkFrame frame)
     -> diag::Result<void> {
-  // The type of what is bound is the child's own statement of which unit
-  // belongs there and how many of it, taken into this unit's pool, so the
-  // parent's record of the connection rests on what the child published rather
-  // than on a second reading of the frontend.
+  // The type of what is bound is the child's own statement of which kind of
+  // instance belongs at each position and how many there are, taken into this
+  // unit's pool, so the parent's record of the connection rests on what the
+  // child published rather than on a second reading of the frontend.
   hir::ExternalMemberLeaf member =
       unit_lowerer.ExternalMemberLeafOf(child.scope_class, published.member);
-  const auto behind =
-      hir::ObjectsBehind(unit_lowerer.Unit().types, member.type);
-  if (!behind.has_value()) {
+  // A copy, since recording the routes adds to the pool it is read from.
+  const auto* published_objects =
+      unit_lowerer.Unit().types.Get(member.type).As<hir::UnitObjectsType>();
+  if (published_objects == nullptr) {
     throw InternalError(
         "ConnectInterfacePort: an interface port's published type names the "
-        "unit whose instances belong there, which is what makes it one");
+        "instances that belong there, which is what makes it one");
   }
+  const hir::UnitObjectsType behind = *published_objects;
   auto peers =
-      InterfaceActualRoutes(unit_lowerer, conn, *behind, child.span, frame);
+      InterfaceActualRoutes(unit_lowerer, conn, behind, child.span, frame);
   if (!peers) return std::unexpected(std::move(peers.error()));
   frame.current_structural_scope->port_connections.Add(
       hir::PortConnection{
@@ -667,15 +646,17 @@ auto ConnectElementPorts(
 }
 
 // Walks an instance array's elements, extending `step` by one select per
-// dimension, and records each leaf element's port connections. slang
+// dimension, and records each leaf element's port connections against the
+// signature of the unit that element is -- one for every element, unless
+// something written elsewhere reached one of them (LRM 23.10.1, 33.4). slang
 // distributes the connection per element (LRM 23.3.3.5), so each element
 // carries its own already index-matched connection expressions; this only
 // routes each to the right cell.
 auto ConnectArrayElements(
     StructuralScopeLowerer& scope, UnitLowerer& unit_lowerer,
     const slang::ast::InstanceArraySymbol& array,
-    const hir::UnitSignature& child_signature, const hir::OwnedChildStep& step,
-    ScopeFrameId home_frame, WalkFrame frame) -> diag::Result<void> {
+    const hir::OwnedChildStep& step, ScopeFrameId home_frame, WalkFrame frame)
+    -> diag::Result<void> {
   for (std::uint32_t i = 0; i < array.elements.size(); ++i) {
     hir::OwnedChildStep element_step = step;
     element_step.selects.push_back(i);
@@ -683,13 +664,16 @@ auto ConnectArrayElements(
     if (element->kind == slang::ast::SymbolKind::InstanceArray) {
       auto r = ConnectArrayElements(
           scope, unit_lowerer, element->as<slang::ast::InstanceArraySymbol>(),
-          child_signature, element_step, home_frame, frame);
+          element_step, home_frame, frame);
       if (!r) return std::unexpected(std::move(r.error()));
       continue;
     }
+    const auto& inst = element->as<slang::ast::InstanceSymbol>();
     auto r = ConnectElementPorts(
-        scope, unit_lowerer, element->as<slang::ast::InstanceSymbol>(),
-        child_signature, std::move(element_step), home_frame, frame);
+        scope, unit_lowerer, inst,
+        unit_lowerer.Signatures().Instantiated(
+            SpecializationName(inst, unit_lowerer.Specialization())),
+        std::move(element_step), home_frame, frame);
     if (!r) return std::unexpected(std::move(r.error()));
   }
   return {};
@@ -723,22 +707,8 @@ auto StructuralScopeLowerer::PopulatePortConnections(
       if (!binding.has_value()) {
         continue;
       }
-      // Every element of an array is built from the one unit the array's shape
-      // names, so the dependency on that unit resolves once for the whole
-      // array. The shape is resolved through the same predicate the declaration
-      // pass used, so the unit named here and the member built there cannot
-      // drift.
-      const auto& array = member.as<slang::ast::InstanceArraySymbol>();
-      const auto shape = ResolveInstanceArrayShape(array);
-      if (!shape.has_value()) {
-        throw InternalError(
-            "PopulatePortConnections: an array with a bound member has a "
-            "shape, since the same predicate decided both");
-      }
       auto r = ConnectArrayElements(
-          *this, *owner_, array,
-          owner_->Signatures().Instantiated(
-              SpecializationName(*shape->leaf, owner_->Specialization())),
+          *this, *owner_, member.as<slang::ast::InstanceArraySymbol>(),
           binding->step, binding->home_frame, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     }

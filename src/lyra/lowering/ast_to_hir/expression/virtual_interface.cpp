@@ -126,12 +126,19 @@ auto DescendThroughHandle(
         "this name is not yet reachable through a virtual interface (LRM "
         "25.9)");
   }
+  // A descent to a scope selects one object at every step, since a scope is
+  // inside one of them.
+  auto* place = std::get_if<InExternalScope>(&descended->place);
+  if (place == nullptr) {
+    throw InternalError(
+        "DescendThroughHandle: a descent to a scope stands on one object");
+  }
   return HeldDescent{
       .instance =
           {.handle = handle,
            .scope_class = held,
            .steps = std::move(descended->steps)},
-      .place = std::move(descended->place)};
+      .place = std::move(*place)};
 }
 
 auto LowerVirtualInterfaceMember(

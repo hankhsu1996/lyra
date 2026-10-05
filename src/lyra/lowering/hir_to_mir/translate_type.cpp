@@ -36,14 +36,6 @@ auto TranslateSignedness(hir::Signedness s) -> mir::Signedness {
                                        : mir::Signedness::kUnsigned;
 }
 
-// What separates an array a declaration builds from an array a program computes
-// with, which the source spells the same way. Asked of the declared type rather
-// than of what it lowered to, because a referrer that never reaches inside such
-// an object carries no identity for it and so cannot be asked which unit it is.
-auto DeclaresObjects(const hir::TypePool& types, hir::TypeId type) -> bool {
-  return hir::ObjectsBehind(types, type).has_value();
-}
-
 // Projects a recursive HIR packed array onto MIR's flat single-vector shape
 // (LRM 7.4.1). A scalar-bit terminal contributes how many states its bits have
 // and this one dimension; any other element (a nested packed array, or a packed
@@ -221,18 +213,8 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
                 mir::TaggedUnionType{.members = std::move(members)}};
           },
           [&](const hir::UnpackedArrayType& src) -> mir::Type {
-            const mir::TypeId element = TranslateType(src.element_type);
-            // An array of objects is a sequence, never a value array: an object
-            // is reached by its address and has no value form, so there is
-            // nothing for a value array to hold. Which element a coordinate
-            // names is settled where the reference is built, which is what
-            // spends the declared range and leaves the sequence stating only
-            // that there are several.
-            if (DeclaresObjects(Hir().types, src.element_type)) {
-              return mir::Type{mir::VectorType{.element = element}};
-            }
             return mir::Type{mir::UnpackedArrayType{
-                .element_type = element,
+                .element_type = TranslateType(src.element_type),
                 .dim =
                     mir::UnpackedRange{
                         .left = src.dim.left, .right = src.dim.right},
@@ -299,8 +281,35 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             return mir::Type{mir::ManagedRefType{
                 .pointee = ImportedRuntimeObjectType(src.klass)}};
           },
+          // An object of another unit is named by its class whether or not
+          // this unit reaches into it, as a pointer to a class whose
+          // definition is unseen is still a pointer to that class: what this
+          // unit depends on that unit for is decided by what it reads, and the
+          // name alone reads nothing.
           [&](const hir::UnitObjectType& src) -> mir::Type {
-            return UnitObjectNamed(src.unit_name, src.class_name);
+            return mir::Type{mir::ObjectType{
+                .of = ClassIdentityOf(src.unit_name, src.class_name)}};
+          },
+          // A set of objects is a sequence per dimension, never a value array:
+          // an object is reached by its address and has no value form, and
+          // which one a select names is settled where the reference is built,
+          // which spends the declared range and leaves the sequence stating
+          // only that there are several. One kind is held as itself; several
+          // are held as the scope every one of them is, and a step viewing
+          // the one a select picks out names its kind.
+          [&](const hir::UnitObjectsType& src) -> mir::Type {
+            mir::Type held = src.kinds.size() == 1
+                                 ? mir::Type{mir::ObjectType{
+                                       .of = ClassIdentityOf(
+                                           src.kinds.front().unit_name,
+                                           src.kinds.front().class_name)}}
+                                 : mir::Type{mir::RuntimeClassType{
+                                       .which = support::RuntimeClass::kScope}};
+            for (std::size_t d = 0; d < src.ranges.size(); ++d) {
+              held = mir::Type{mir::VectorType{
+                  .element = unit_.types.Intern(std::move(held))}};
+            }
+            return held;
           },
           // What a virtual interface holds is which instance it names, or none
           // (LRM 25.9): a host pointer compared by identity and null until

@@ -11,4 +11,8 @@ instance arrays, and an instance array needs no generate. Neither subsumes the o
 
 **Usage notes.** Multiplicity is the vector wrapper alone, so the same recursion that binds a scalar
 child binds an array of any dimensionality without per-form branching. Construction fills the vector
-by replication over the element count; the child objects are identical except for their connections.
+by counting the elements out. Every element takes the one assignment its instantiation wrote (LRM
+23.3.2), so the child objects are alike except for their connections -- unless something written
+elsewhere (a `defparam`, a `bind`, a configuration rule) reached one of them, in which case that
+element is built as its own unit and the vector holds each element by the scope pointer every object
+converts to.

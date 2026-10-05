@@ -592,6 +592,11 @@ the detail lives in the entry itself.
   front end's fact and arrives indistinguishable from `real * int`; no conformance case asserts
   either reading. Undoing the conversions in the lowering, changing the front end, and recording the
   wider value as a defect are rejected.
+- [a-class-has-one-identity-in-a-unit](a-class-has-one-identity-in-a-unit.md) -- a class is named by
+  one identity, intra-unit or external-unit, and a class of this unit is intra-unit however the name
+  reaching it was written; what is known of a class is its own declaration or another unit's record;
+  fields are named alike while callables keep their two coordinate spaces; a loop generate's blocks
+  stay held as the scope every block is, since which blocks share a body is a fact of the bodies.
 - [cross-unit-class-translation](cross-unit-class-translation.md) -- AST-to-HIR splits class
   interning into a top-down `InternLocalClass` (never asks "which CU?") and a boundary
   `ResolveClassRef` (walks slang's parent chain only when a class is not already cached);

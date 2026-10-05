@@ -20,8 +20,10 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/struct_decl.hpp"
@@ -477,6 +479,38 @@ void VerifyClass(const CompilationUnit& unit, const Class& cls) {
   }
 }
 
+// A class of this unit has one identity here, its id, however the name
+// reaching it was written -- through another instance of this unit, or a
+// signature naming this unit. Naming it as another unit's class would give one
+// class two identities in one unit, which both backends would then have to
+// agree are one.
+void VerifyOwnClassesNamedAsOwn(const CompilationUnit& unit) {
+  const auto refuse = [&](std::string_view where) {
+    throw InternalError(
+        std::format(
+            "mir verify: unit '{}' names a class of its own as another unit's, "
+            "in {} -- please report this as a bug",
+            unit.name, where));
+  };
+  for (const Type& type : unit.types) {
+    const auto* object = type.As<ObjectType>();
+    if (object == nullptr) continue;
+    const auto* other = std::get_if<CrossUnitClassRef>(&object->of);
+    if (other != nullptr && other->unit_name == unit.name) refuse("a type");
+  }
+  for (const ExternalClass& record : unit.external_classes) {
+    if (record.unit_name == unit.name) {
+      refuse("its record of what a unit published");
+    }
+  }
+  for (const ConsumedSignature& consumed : unit.consumed_signatures) {
+    const auto* cls = std::get_if<ConsumedClass>(&consumed);
+    if (cls != nullptr && cls->unit_name == unit.name) {
+      refuse("what it consumed of a signature");
+    }
+  }
+}
+
 }  // namespace
 
 auto EvaluatesNothing(const Block& block, ExprId id) -> bool {
@@ -492,6 +526,7 @@ auto EvaluatesNothing(const Block& block, ExprId id) -> bool {
 }
 
 void Verify(const CompilationUnit& unit) {
+  VerifyOwnClassesNamedAsOwn(unit);
   for (const CallableId id : unit.callables.Ids()) {
     VerifyCode(unit, unit.callables.Get(id).code, [&] {
       return std::format(

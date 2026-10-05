@@ -172,7 +172,8 @@ auto RenderUnitFiles(
 
   // A pointer to an object of another unit's class needs only its declaration,
   // so the unit's declarations can point at objects of a unit whose own
-  // declarations point back.
+  // declarations point back. Every class this unit names is declared, whether
+  // the unit reads what that class published or only holds a pointer to one.
   TargetText opening;
   opening += "#pragma once\n";
   WriteInclude(opening, support::kRuntimePreludeHeader);
@@ -180,6 +181,13 @@ auto RenderUnitFiles(
   std::set<std::string> forward_files{UnitForwardFileOf(unit.name)};
   for (const mir::ExternalClass& object : unit.external_classes) {
     forward_files.insert(UnitForwardFileOf(object.unit_name));
+  }
+  for (const mir::Type& type : unit.types) {
+    const auto* object = type.As<mir::ObjectType>();
+    if (object == nullptr) continue;
+    if (const auto* named = std::get_if<mir::CrossUnitClassRef>(&object->of)) {
+      forward_files.insert(UnitForwardFileOf(named->unit_name));
+    }
   }
   for (const std::string& forward_file : forward_files) {
     WriteInclude(opening, forward_file);

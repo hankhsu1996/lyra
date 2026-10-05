@@ -345,7 +345,15 @@ auto BuildDefaultValueExpr(
                     mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
                 .type = type};
           },
-          [&](const mir::ObjectType&) -> mir::Expr {
+          // What a declaration holds for an object whose class this unit does
+          // not declare is a handle to it, and a handle starts out null; the
+          // object type itself is what that handle points at, which a
+          // construction brings into existence.
+          [&](const mir::ObjectType& o) -> mir::Expr {
+            if (std::holds_alternative<mir::CrossUnitClassRef>(o.of)) {
+              return holds_no_declared_value(
+                  "an object of another unit's class");
+            }
             return mir::Expr{
                 .data =
                     mir::CallExpr{.callee = mir::Construct{}, .arguments = {}},
@@ -408,13 +416,6 @@ auto BuildDefaultValueExpr(
             return holds_no_declared_value("a machine function address");
           },
 
-          // What a declaration holds for an object whose class this unit does
-          // not declare is a handle to it, and a handle starts out null; the
-          // object type itself is what that handle points at, which a
-          // construction brings into existence.
-          [&](const mir::CrossUnitClassType&) -> mir::Expr {
-            return holds_no_declared_value("an object of another unit's class");
-          },
           [&](const mir::RuntimeClassType&) -> mir::Expr {
             return holds_no_declared_value("an object of a runtime class");
           },
@@ -585,6 +586,7 @@ auto BuildDefaultValueFromHir(
             return type_default(t);
           },
           [&](const hir::UnitObjectType& t) { return type_default(t); },
+          [&](const hir::UnitObjectsType& t) { return type_default(t); },
           [&](const hir::VirtualInterfaceType& t) { return type_default(t); },
           [&](const hir::NullType& t) { return type_default(t); },
           [&](const hir::VoidType& t) { return type_default(t); },

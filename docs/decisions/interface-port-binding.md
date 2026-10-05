@@ -16,6 +16,18 @@ reversed by
 module and an interface each publish every declaration a hierarchical name may reach, so every step
 of a name through the port is resolved where the module compiles. The other decisions stand.
 
+**D1 is widened from "names a unit" to "names the unit at each position".** It was derived where
+every instance a port carrying a range is bound to was one unit; a `defparam` or a configuration
+rule may reach one element of the connected array (LRM 23.10.1, 33.4), so the instances are a set
+whose elements are described one by one. The reasoning D1 gives -- a name is the only identity a
+signature can carry -- holds for each position.
+
+**D6 is revised from "name the pointee only where the referrer reaches into it" to "name it
+everywhere, and depend on it only where the referrer reaches into it".** The earlier form tied
+naming a class to depending on it, which left a member's cell to depend on what each unit had
+recorded; separating the two keeps both what D6 was for and the purity
+[published-member-placement](published-member-placement.md) D4 requires.
+
 ## Why this decision matters
 
 An interface exists to be written against. A module names `b.data`, and the interface instance the
@@ -45,13 +57,20 @@ and the two have to be the same interface without either restating the other.
 
 ## Decisions
 
-### D1. The port's declared type names a unit, by name, and nothing else
+### D1. The port's declared type names the unit at each position, by name, and nothing else
 
-The type of an interface port is the object an instance of the named unit is. There is no local form
-of it, the way a class reference has one: an interface port always names another unit, so a variant
-whose second arm can never be taken would be a case that exists only to be unreachable. The name is
-the identity from everywhere, so the type crosses a signature unchanged and the import that carries
-it is the identity function.
+The type of an interface port is the set of objects the instances bound to it are: its range, and
+for each position the unit whose instance stands there, each read off that instance. A port standing
+for one instance is the set of one. There is no local form of it, the way a class reference has one:
+an interface port always names another unit, so a variant whose second arm can never be taken would
+be a case that exists only to be unreachable. The name is the identity from everywhere, so the type
+crosses a signature unchanged and the import that carries it is the identity function.
+
+The instances of one connected array take the one assignment their instantiation wrote, but
+something written elsewhere may reach one of them, so the type does not name "the" unit of the set:
+it names the kinds the positions turned out to be and which kind each position takes. A name through
+the port selects a position by constants (LRM 23.6), so the unit it reaches is the one at that
+position, settled where the module compiles.
 
 The referrer resolves that name against its own record of the objects it compiled against, which it
 made when it consumed the interface's signature. Reaching another unit's object is what declares the
@@ -131,18 +150,27 @@ It is a third thing: a member the scope declares, does not build, and is dotted 
 own arena, and the list fixing the order a unit published its members in names either kind, since an
 interface port is always published and always takes a place in that order.
 
-### D6. A referrer holds a published member's representation, and its identity only where it reaches through
+### D6. Every unit names the class a published member points at, and depends on that class only where it reaches through
 
-A unit that reaches a member on another unit's object holds what that unit published, which is what
-having consumed its signature means. A published member it never reaches through is different: what
-it needs from that member is the identifier and the place it takes in the published order, and for a
-port standing for an object that is all it ever needs, whatever the port points at.
+What a published member holds is computed from what was published alone, so the unit declaring the
+member and every unit filling or reading it build the same cell. A port standing for an object holds
+a pointer to the class of the kind bound there, in every one of those units, whether or not the unit
+reaches into it.
 
-So the object a pointer points at is named only where the referrer reaches into it. Naming it
-otherwise would declare a dependency the referrer's own output does not have: its artifact would
-pull one it never references, and a change to that unit would re-emit it while changing nothing it
-emits. This is the same rule the route already follows one level up -- what a unit compiles against
-is what it reaches -- read at the member level.
+Naming a class is not depending on it. A pointer to a class whose definition is never seen is still
+a pointer to that class -- C++ calls it a pointer to an incomplete type, which needs a declaration
+of the class and nothing else -- so a unit holding such a pointer needs to know only that the class
+exists. What a unit depends on another unit for is what it reads of that unit's signature: a unit
+reaching a member on the object consumes the class's record and its artifact pulls the class's
+definition, while a unit only holding the pointer reads nothing and pulls only the declaration. A
+change to the class then re-emits only the units that read what changed. This is the same rule the
+route follows one level up -- what a unit compiles against is what it reaches -- read at the member
+level.
+
+A unit that named the class only where it reached into it, and left the pointee unspecified
+elsewhere, would compute the cell from what it happened to have recorded rather than from the
+signature, so the declaring unit and a filling unit could spell one member two ways. A backend whose
+pointers carry no pointee does not notice; one whose pointers do refuses to compile it.
 
 ## Rejected alternatives
 
@@ -173,10 +201,16 @@ is what it reaches -- read at the member level.
   present the same types at the same positions, so one body serves both -- which is also where the
   frontend splits, so the two agree with no adjustment.
 
-- **Record every unit named by a published member of an object the referrer holds.** It is the short
-  fix for the alternative to D6, and it is what a transitive import does by default. Rejected
-  because it grows the referrer's dependencies with nesting depth, and every one of them is a
-  dependency its emitted artifact does not have.
+- **Record every unit named by a published member of an object the referrer holds.** It makes every
+  named class one the unit has recorded, so the cell is spelled alike everywhere, and it is what a
+  transitive import does by default. Rejected because recording a class is consuming it: the
+  referrer's dependencies grow with nesting depth, and every one of them is a dependency its emitted
+  artifact does not have. Naming the class without recording it gives the same cell with none of
+  those.
+- **Hold every published object as the scope every object is, naming the class only where an access
+  reaches in.** Also computed from the signature alone. Rejected because it discards a type the
+  signature states: every reach converts, where the one kind of a set is known before any reach
+  does.
 
 - **Treat an interface port as a data object with a handle type.** One arena, no new declaration
   kind. Rejected under D5: every consumer of that arena installs a cell, runs an initializer, or
@@ -221,7 +255,7 @@ is what it reaches -- read at the member level.
 - `published-member-placement.md` -- how a published member's position is computed on both sides; D2
   here adds the fourth storage kind its D4 maps to a cell.
 - `instance-array-multiplicity.md` -- what D1's type names when the header gives the port a range:
-  one member still, with the multiplicity standing over the unit it names.
+  one member still, with the multiplicity and the kind at each position stated by the set.
 - `specialization-identity.md` -- the identity function D4 widens, and the reason producer and
   consumer can compute it independently.
 - `reference-as-data-type.md` -- the `ref` port's fill-once-at-Resolve lifecycle, which the

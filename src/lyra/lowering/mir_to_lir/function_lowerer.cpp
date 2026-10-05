@@ -93,10 +93,7 @@ auto ComponentPartOf(const mir::Direct& direct)
     return std::visit(
         Overloaded{
             [](base::ComponentIndex position) { return position; },
-            [&](const mir::ClassFieldTarget&) { return names_a_property(); },
-            [&](const mir::CrossUnitClassFieldTarget&) {
-              return names_a_property();
-            }},
+            [&](const mir::ClassFieldTarget&) { return names_a_property(); }},
         part);
   });
 }
@@ -1657,15 +1654,21 @@ auto FunctionLowerer::MemberRefOf(const mir::FieldRef& field)
   return std::visit(
       Overloaded{
           [&](const mir::ClassFieldTarget& t) {
-            return at(unit_->ClassValueType(t.owner), t.slot);
+            return at(
+                std::visit(
+                    Overloaded{
+                        [&](const mir::IntraUnitClassRef& own) {
+                          return unit_->ClassValueType(own.class_id);
+                        },
+                        [&](const mir::CrossUnitClassRef& other) {
+                          return unit_->ExternalClassValueType(
+                              other.unit_name, other.class_name);
+                        }},
+                    t.owner),
+                t.slot);
           },
           [&](const mir::ClosureFieldTarget& t) {
             return at(unit_->ClosureValueType(t.owner), t.slot);
-          },
-          [&](const mir::CrossUnitClassFieldTarget& t) {
-            return at(
-                unit_->ExternalClassValueType(t.unit_name, t.class_name),
-                t.slot);
           }},
       field);
 }
@@ -2554,10 +2557,7 @@ auto FunctionLowerer::LowerPropertyReference(
                 "mir_to_lir: a reference to a property names a property, and "
                 "this one names a position -- please report this as a bug");
           },
-          [](const mir::ClassFieldTarget& t) -> mir::FieldRef { return t; },
-          [](const mir::CrossUnitClassFieldTarget& t) -> mir::FieldRef {
-            return t;
-          }},
+          [](const mir::ClassFieldTarget& t) -> mir::FieldRef { return t; }},
       *direct.part);
   // The object is reached once, as every entry acting on an object reaches it,
   // and both what holds the storage and where the storage is are read off it,

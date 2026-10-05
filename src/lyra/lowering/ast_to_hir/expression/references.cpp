@@ -598,10 +598,8 @@ auto LowerHierarchicalValue(
     case Referent::kNetStorage: {
       auto type_id = unit_lowerer.InternType(*hve.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
-      auto start = unit_lowerer.StartOf(frame, hve.ref, span);
-      if (!start) return std::unexpected(std::move(start.error()));
       auto reached = unit_lowerer.ResolveValueTarget(
-          frame, target, *std::move(start), span);
+          frame, target, unit_lowerer.StartOf(frame, hve.ref), span);
       if (!reached) return std::unexpected(std::move(reached.error()));
       return hir::MakeValueTargetRefExpr(*reached, *type_id, span);
     }
@@ -692,10 +690,9 @@ auto LowerInterfaceInstanceValue(
   // directly, through a port bound to it, or with a modport selected; a
   // modport narrows what is reached through the value and not which instance
   // it is.
-  auto start = unit_lowerer.StartOf(frame, named.hierRef, span);
-  if (!start) return std::unexpected(std::move(start.error()));
   auto route = unit_lowerer.RouteToScopeOrRefuse(
-      frame, handle_type->iface.body, *std::move(start), span);
+      frame, handle_type->iface.body,
+      unit_lowerer.StartOf(frame, named.hierRef), span);
   if (!route) return std::unexpected(std::move(route.error()));
   auto type_id = unit_lowerer.InternType(*named.type, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));

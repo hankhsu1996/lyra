@@ -146,10 +146,17 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const ShortRealType&) {},
           [](const ChandleType&) {},
           [](const VoidType&) {},
-          [&](const ObjectType& t) { HashField(seed, t.class_id.value); },
-          [&](const CrossUnitClassType& t) {
-            HashField(seed, t.unit_name);
-            HashField(seed, t.class_name);
+          [&](const ObjectType& t) {
+            std::visit(
+                Overloaded{
+                    [&](const IntraUnitClassRef& intra) {
+                      HashField(seed, intra.class_id.value);
+                    },
+                    [&](const CrossUnitClassRef& cross) {
+                      HashField(seed, cross.unit_name);
+                      HashField(seed, cross.class_name);
+                    }},
+                t.of);
           },
           [&](const RuntimeClassType& t) { HashEnum(seed, t.which); },
           [](const RuntimeEffectsType&) {},
@@ -294,7 +301,6 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           // An object and a closure are reached by their address for the same
           // reason.
           [](const ObjectType&) { return false; },
-          [](const CrossUnitClassType&) { return false; },
           [](const RuntimeClassType&) { return false; },
           [](const ClosureType&) { return false; },
 
@@ -364,7 +370,6 @@ auto Type::PartsAreStorage() const -> bool {
           [](const DriverType&) { return false; },
           [](const CoroutineType&) { return false; },
           [](const ObjectType&) { return false; },
-          [](const CrossUnitClassType&) { return false; },
           [](const RuntimeClassType&) { return false; },
           [](const ClosureType&) { return false; },
           [](const ObservableType&) { return false; },
@@ -453,7 +458,6 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // An object and a closure are declarations, and a declaration is not
           // a run of anything.
           [](const ObjectType&) -> Element { return std::nullopt; },
-          [](const CrossUnitClassType&) -> Element { return std::nullopt; },
           [](const RuntimeClassType&) -> Element { return std::nullopt; },
           [](const ClosureType&) -> Element { return std::nullopt; },
 

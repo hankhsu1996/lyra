@@ -545,33 +545,39 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
   };
 
   // What a member standing for instances of another unit is, as this unit's
-  // type: the unit `leaf` is an instance of, as many times as `ranges` has
-  // elements. The innermost dimension is wrapped first, so the range written
-  // leftmost ends up outermost.
-  const auto objects_type = [&](const slang::ast::InstanceSymbol& leaf,
-                                std::span<const slang::ConstantRange> ranges) {
-    const std::string instance_unit =
-        SpecializationName(leaf, Specialization());
-    hir::TypeId own = unit_.types.Intern(
-        hir::Type{hir::UnitObjectType{
-            .unit_name = instance_unit,
-            .class_name = hir::InstanceClassName(instance_unit)}});
-    for (const slang::ConstantRange& dim : std::views::reverse(ranges)) {
-      own = unit_.types.Intern(
-          hir::Type{hir::UnpackedArrayType{
-              .element_type = own,
-              .dim =
-                  hir::UnpackedRange{.left = dim.left, .right = dim.right}}});
-    }
-    return own;
-  };
+  // type: the set of the objects `elements` are, in row-major order of their
+  // positions, under the dimensions `ranges` declares, each element's kind
+  // read off that element (LRM 23.3.2, 23.10.1).
+  const auto objects_type =
+      [&](std::span<const slang::ast::InstanceSymbol* const> elements,
+          std::span<const slang::ConstantRange> ranges) {
+        std::vector<hir::UnitObjectType> per_position;
+        per_position.reserve(elements.size());
+        for (const slang::ast::InstanceSymbol* element : elements) {
+          std::string instance_unit =
+              SpecializationName(*element, Specialization());
+          std::string class_name = hir::InstanceClassName(instance_unit);
+          per_position.push_back(
+              hir::UnitObjectType{
+                  .unit_name = std::move(instance_unit),
+                  .class_name = std::move(class_name)});
+        }
+        std::vector<hir::UnpackedRange> declared;
+        declared.reserve(ranges.size());
+        for (const slang::ConstantRange& dim : ranges) {
+          declared.push_back(
+              hir::UnpackedRange{.left = dim.left, .right = dim.right});
+        }
+        return unit_.types.Intern(
+            hir::Type{hir::ObjectsOf(std::move(declared), per_position)});
+      };
 
   // A member standing for instances of another unit: an interface port, whose
   // instances the parent binds (LRM 25.3), or an instance this scope builds,
   // which a hierarchical name steps onto (LRM 23.6). From a referrer's side the
-  // two are one thing -- the unit whose instances belong there, how many, and a
-  // borrowed pointer to each -- and which side builds the instance is not a
-  // fact a referrer reads.
+  // two are one thing -- which kind of instance belongs at each position, how
+  // many, and a borrowed pointer to each -- and which side builds the instance
+  // is not a fact a referrer reads.
   const auto objects = [&](const slang::ast::Symbol& member, hir::TypeId own) {
     return hir::PublishedMember{
         .name = std::string{member.name},
@@ -580,11 +586,11 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
         .storage = hir::BorrowedObjectStorage{}};
   };
 
-  // An interface port names an instance of another unit that this one neither
+  // An interface port names instances of another unit that this one neither
   // owns nor builds (LRM 25.3). What the unit publishes about it is a type
-  // naming the unit whose instance belongs there -- which is what lets the
-  // parent's connection be checked where the parent compiles rather than while
-  // the design elaborates.
+  // naming which kind of instance belongs at each of its positions -- which is
+  // what lets the parent's connection be checked where the parent compiles
+  // rather than while the design elaborates.
   const auto interface_port = [&](const slang::ast::InterfacePortSymbol& port)
       -> diag::Result<hir::PublishedMember> {
     const auto span = SourceMapper().PointSpanOf(port.location);
@@ -607,15 +613,14 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
     // direction (LRM 25.5), which is settled where that referrer compiles; what
     // a connection binds is the whole interface instance under any of its
     // views, so the port publishes the same member whichever one names it.
-    const slang::ast::InstanceSymbol* instance =
-        ConnectedInterfaceOf(port.getConnection()).instance;
-    if (instance == nullptr) {
+    const auto connected = ConnectedInterfaceOf(port.getConnection()).instances;
+    if (connected.empty()) {
       return refuse("an unconnected interface port is not yet supported");
     }
     // A port carrying a range stands for as many instances as the range has
-    // elements (LRM 25.3), which is a fact about what the member is and so
-    // travels on its type.
-    const hir::TypeId own = objects_type(*instance, *declared);
+    // elements (LRM 25.3), each the one bound at its position, which is a fact
+    // about what the member is and so travels on its type.
+    const hir::TypeId own = objects_type(connected, *declared);
     interface_port_types_.emplace(&port, own);
     return objects(port, own);
   };
@@ -643,7 +648,7 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
                 -> diag::Result<hir::PublishedMember> {
               return objects(
                   *instance.symbol,
-                  objects_type(*instance.shape.leaf, instance.shape.ranges));
+                  objects_type(instance.shape.elements, instance.shape.ranges));
             },
             [&](const ScopePublicationRecord::InterfacePort& port) {
               return interface_port(*port.symbol);

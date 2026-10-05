@@ -26,21 +26,26 @@ namespace {
 
 // The field of the scope class `scope_class` records, on the object `object`
 // points at, at the place `place_of` reads out of where this unit's record of
-// the class laid out what its scope published.
+// the class laid out what its scope published. The access names the class, so
+// the object is reached as one of it: a set whose objects are of several kinds
+// holds each as the scope every one of them is, and which kind this one is,
+// is what the route stated by naming the class here.
 template <typename PlaceOf>
 auto AccessPublishedSlot(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
     hir::ExternalScopeClassId scope_class, PlaceOf place_of) -> mir::ExprId {
-  const ExternalScopeLayout& record =
-      unit_lowerer.ExternalScopeLayoutOf(scope_class);
+  const ScopeClassLayout& record = unit_lowerer.ScopeClassLayoutOf(scope_class);
   const mir::FieldId slot = place_of(record.published);
+  const mir::ExprId of_class = ObjectAs(
+      block, object,
+      unit_lowerer.Unit().types.Intern(
+          mir::Type{mir::PointerType{
+              .pointee = unit_lowerer.UnitObjectType(scope_class),
+              .ownership = mir::PointerOwnership::kBorrowed}}));
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
-          BuildObjectDeref(unit_lowerer.Unit(), block, object),
-          mir::CrossUnitClassFieldTarget{
-              .unit_name = record.cls.unit_name,
-              .class_name = record.cls.class_name,
-              .slot = slot},
+          BuildObjectDeref(unit_lowerer.Unit(), block, of_class),
+          mir::ClassFieldTarget{.owner = record.cls, .slot = slot},
           record.field_types[slot.value]));
 }
 
@@ -113,14 +118,13 @@ auto StepThroughPublished(
                 [&](const PublishedScopeLayout& layout) {
                   return layout.generates.Get(generate.generate);
                 });
-            return block.exprs.Add(
-                mir::Expr{
-                    .data = mir::CastExpr{.operand = selected(held)},
-                    .type = unit.types.Intern(
-                        mir::Type{mir::PointerType{
-                            .pointee = unit_lowerer.UnitObjectType(
-                                generate.result_class),
-                            .ownership = mir::PointerOwnership::kBorrowed}})});
+            return ObjectAs(
+                block, selected(held),
+                unit.types.Intern(
+                    mir::Type{mir::PointerType{
+                        .pointee =
+                            unit_lowerer.UnitObjectType(generate.result_class),
+                        .ownership = mir::PointerOwnership::kBorrowed}}));
           }},
       names);
 }

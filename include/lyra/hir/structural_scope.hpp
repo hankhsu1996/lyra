@@ -301,22 +301,34 @@ struct ConcurrentAssertionDecl {
   auto operator==(const ConcurrentAssertionDecl&) const -> bool = default;
 };
 
-// A child built from another compilation unit, standing on this unit's record
-// of the class that unit's instances are. `array_dims` is empty for a scalar
-// instance and holds one element count per dimension, outermost first, for an
-// instance array (`Child c[2][3]` is `{2, 3}`).
+// One way the objects of an instance declaration are built: the unit they are
+// instances of, standing on this unit's record of the class that unit's
+// instances are, and what each is passed at construction, one per parameter
+// the unit takes there, in the order it declares them -- the expression this
+// scope wrote (LRM 23.10.2), evaluated where the object is built, or the
+// constant a value given elsewhere settled to (LRM 23.10.1, 33.4.3).
+struct InstanceAlternative {
+  ExternalScopeClassId scope_class;
+  std::vector<ExprId> arguments;
+
+  auto operator==(const InstanceAlternative&) const -> bool = default;
+};
+
+// A child built from another compilation unit. `array_dims` is empty for a
+// scalar instance and holds one element count per dimension, outermost first,
+// for an instance array (`Child c[2][3]` is `{2, 3}`).
 //
-// `arguments` are what the instantiation passes the child's constructor, one
-// per parameter the child takes at construction, in the order the child
-// declares them -- the expression this scope wrote for it (LRM 23.10.2),
-// evaluated where the child is built, so instances handed different values are
-// one unit and, where nothing else differs, this scope states the same thing
-// for each of them.
+// Every element of an array takes what its instantiation wrote (LRM 23.3.2),
+// so its elements differ only where something written elsewhere reached one of
+// them. `alternatives` are the distinct ways its objects are built and `taken`
+// says which each object is, one entry per object in row-major order: alike
+// objects share one alternative, so instances handed different values by the
+// instantiation are one unit and this scope states the same thing for each.
 struct InstanceMemberDecl {
   std::string instance_name;
-  ExternalScopeClassId scope_class;
   std::vector<std::uint32_t> array_dims;
-  std::vector<ExprId> arguments;
+  std::vector<InstanceAlternative> alternatives;
+  std::vector<std::uint32_t> taken;
 
   auto operator==(const InstanceMemberDecl&) const -> bool = default;
 };
@@ -324,15 +336,13 @@ struct InstanceMemberDecl {
 // An interface port's internal name (LRM 25.3). The scope names instances of
 // another unit that it neither owns nor builds; the parent binds them during
 // elaboration, the way it binds a `ref` port's internal name to the connected
-// variable. `scope_class` is this unit's record of what that unit published,
-// so a name reached through the port is counted out of the order its signature
-// states. `array_dims` is empty for a port standing for one instance and holds
-// one element count per dimension, outermost first, for a port carrying a
-// range: the port is one member however many instances it stands for, holding a
-// handle on each.
+// variable. `array_dims` is empty for a port standing for one instance and
+// holds one element count per dimension, outermost first, for a port carrying
+// a range: the port is one member however many instances it stands for,
+// holding a handle on each. Which kind of instance is bound at each position
+// is what the type this scope published for the port states.
 struct InterfacePortDecl {
   std::string name;
-  ExternalScopeClassId scope_class;
   std::vector<std::uint32_t> array_dims;
 
   auto operator==(const InterfacePortDecl&) const -> bool = default;
@@ -447,11 +457,8 @@ struct SingleBlock {
   auto operator==(const SingleBlock&) const -> bool = default;
 };
 
-// Each scope stands for one block of a loop whose blocks did not lower alike,
-// and is built once. Every scope is lowered from its own elaborated body -- its
-// own types and slice widths -- and the index reaches it as a value its
-// construction supplies here too, because that is what leaves two blocks
-// differing in nothing else with nothing to differ in.
+// Each scope stands for one block of a loop that did not survive elaboration as
+// a loop a construction can run, and is built once.
 //
 // `indices` are the values the index stood at, one per scope in the order the
 // scopes are listed, which is the order the loop counted them out. The index
@@ -462,9 +469,14 @@ struct BlocksStandAlone {
   auto operator==(const BlocksStandAlone&) const -> bool = default;
 };
 
-// The one scope is built once at every index the loop counts out (LRM 27.4).
-// What makes one scope enough is that the index reaches the block as a value
-// construction supplies rather than as a constant folded into its body.
+// A body is built once at every index the loop counts out (LRM 27.4). What
+// makes one body serve many indices is that the index reaches the block as a
+// value construction supplies rather than as a constant folded into its body;
+// blocks that still lower apart -- a width their index fixes -- are distinct
+// bodies, and `taken` says which body the block at each index is, one entry
+// per index in the order the loop counts them out. Blocks that all lower alike
+// are one body every index takes.
+//
 // `variable` is the loop's index, declared by the scope holding the generate,
 // and the three expressions are the loop's own: where the index starts,
 // whether a block stands at it, and how it reaches the next one. The first two
@@ -476,6 +488,7 @@ struct BlocksRepeat {
   ExprId initial;
   ExprId condition;
   ExprId step;
+  std::vector<std::uint32_t> taken;
 
   auto operator==(const BlocksRepeat&) const -> bool = default;
 };
@@ -589,11 +602,12 @@ struct Generate {
 // answer is stated once here rather than re-derived at each of them.
 //
 // How a path names a block and how many scopes the construct compiled to are
-// settled independently, so the two are paired here. A loop whose blocks agree
-// compiles them to one scope and one whose blocks disagree compiles each to
-// its own, so `selects` -- the block the path picked -- decides only the
-// second. A pairing the language does not have is a name that was resolved
-// against a different construct than the one it reached.
+// settled independently, so the two are paired here. A loop a construction
+// runs compiles the block at each position to the body that position takes,
+// and one that did not survive elaboration compiles each block to its own, so
+// `selects` -- the block the path picked -- names the position either way. A
+// pairing the language does not have is a name that was resolved against a
+// different construct than the one it reached.
 [[nodiscard]] inline auto LoopBlockScopeOf(
     const Generate& gen, std::span<const std::uint32_t> selects)
     -> StructuralScopeId {
@@ -602,19 +616,23 @@ struct Generate {
         "hir::LoopBlockScopeOf: a construct that counts out no blocks is "
         "named as a loop");
   };
+  const auto position = [&] -> std::uint32_t {
+    if (selects.size() != 1) {
+      throw InternalError(
+          "hir::LoopBlockScopeOf: a block of a loop is reached by one select");
+    }
+    return selects.front();
+  };
   return std::visit(
       Overloaded{
           [&](const SingleBlock&) { return not_a_loop(); },
           [&](const BlocksChoose&) { return not_a_loop(); },
           [&](const BlocksStandAlone&) {
-            if (selects.size() != 1) {
-              throw InternalError(
-                  "hir::LoopBlockScopeOf: a block of a loop is reached by one "
-                  "select");
-            }
-            return StructuralScopeId{selects.front()};
+            return StructuralScopeId{position()};
           },
-          [](const BlocksRepeat&) { return StructuralScopeId{0}; },
+          [&](const BlocksRepeat& repeat) {
+            return StructuralScopeId{repeat.taken.at(position())};
+          },
       },
       gen.counting);
 }

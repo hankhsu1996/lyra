@@ -60,6 +60,26 @@ This is the same wrapper for an owned child and for a borrowed one. What differs
 instantiating four children and a module reaching four it does not own is which pointer the sequence
 is over, which is a fact the pointer already carries.
 
+Every element takes the one assignment its instantiation wrote (LRM 23.3.2), but something written
+elsewhere may reach one element -- a `defparam` naming it by index (LRM 23.10.1), a `bind` naming
+it, a configuration's instance rule -- so the elements are not always one unit. Each element is
+therefore described on its own, and what the elements share is what comparing those descriptions
+found. The type the unit publishes for the member is the set: its ranges, the kinds of object in it,
+and which kind stands at each position; one kind is the set of one. A name selects one position by
+constants (LRM 23.6), so the route states which kind it reaches where it compiles, and the access
+that reaches into the object names that kind's class. The sequence holds each object as its class
+where the set has one kind, and as the scope every one of them is where it has several, which is how
+a C++ array of objects of different classes is held: by their common base, each converted to its own
+class where a constant index has picked it. The member stays one member at one signature position.
+That is the shape a loop generate already publishes, one class named per block. The declaration
+states, beside that, the distinct ways its elements are built -- a kind and the arguments its
+construction passes -- and which way each position takes. The construction counts the positions out
+as before and builds, at each, the alternative it takes: equal neighbours form runs, so the code
+grows with the number of runs, which is bounded by the overrides written and never by the element
+count. One unit is one run and builds with no test. This is the loop generate's shape: one
+construct, built at every position, choosing per position among a few bodies
+([one-body-built-at-every-index](one-body-built-at-every-index.md)).
+
 ### D2. The element index is an operand, not part of a member's identity
 
 Because the multiplicity is in the type rather than in the member set, which element a reference
@@ -89,8 +109,10 @@ block sized once reads the length from the construction, not from the type.
 A module header may give an interface port a range, so the port stands for as many instances as the
 range has elements and selecting an element of the port reaches one of them. That is D1 with the
 sequence over a borrowed pointer to another unit's object, and it introduces no vocabulary of its
-own: the published member is one member at one signature position, its type is the sequence, and the
-declared range belongs to that type the way an unpacked range belongs to any type.
+own: the published member is one member at one signature position, its type is the set D1 states,
+and the declared range belongs to that type. The kind at each position is the one of the instance
+bound there, read off that instance, so an override reaching one element of the connected array
+reaches the port's position for it and no other.
 
 The connection supplies an array of that size, and each element is bound to its own instance during
 elaboration, which is the scalar port's binding performed once per element rather than a second kind

@@ -9,16 +9,16 @@
 
 namespace lyra::hir {
 
-// A member another unit published, whose type makes it an object of a third
-// unit (LRM 25.3): the same record and the same position counted out of the
-// same signature as the leaf ending on a published member, reaching a pointer
-// rather than a cell, and `result_class`, this unit's record of the class that
-// object is. The position is what crosses, never the name, because the name
-// was resolved where the referrer compiles.
+// A member another unit published, whose type makes it a set of objects of a
+// third unit (LRM 23.3.2, 25.3): the same record and the same position counted
+// out of the same signature as the leaf ending on a published member, reaching
+// pointers rather than a cell. Which kind of object a select reaches is what
+// the member's type states at that position, so the step does not restate it.
+// The position is what crosses, never the name, because the name was resolved
+// where the referrer compiles.
 struct ExternalMemberRef {
   ExternalScopeClassId scope_class;
   PublishedMemberId member;
-  ExternalScopeClassId result_class;
 
   auto operator==(const ExternalMemberRef&) const -> bool = default;
 };

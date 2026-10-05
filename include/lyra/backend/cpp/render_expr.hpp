@@ -45,9 +45,6 @@ void WriteMemberReceiver(
 void WriteMemberPointer(
     TargetText& out, const mir::CompilationUnit& unit,
     const mir::ClassFieldTarget& property);
-void WriteMemberPointer(
-    TargetText& out, const mir::CompilationUnit& unit,
-    const mir::CrossUnitClassFieldTarget& property);
 
 // One piece of a write that lists punctuation and what it wraps in the order
 // they are read. An expression id is rendered as a whole expression, an

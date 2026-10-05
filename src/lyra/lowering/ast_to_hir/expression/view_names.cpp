@@ -113,10 +113,8 @@ auto ResolveRoutedViewName(
   // declared here. Which of those is a fact about the object and not about the
   // name, so it is the same question a name reaching an ordinary member of that
   // instance asks.
-  auto start = unit_lowerer.StartOf(frame, hve.ref, span);
-  if (!start) return std::unexpected(std::move(start.error()));
   auto through = unit_lowerer.RouteToScope(
-      frame, *selected.getParentScope(), *std::move(start));
+      frame, *selected.getParentScope(), unit_lowerer.StartOf(frame, hve.ref));
   const auto* on = through.has_value()
                        ? std::get_if<InExternalScope>(&through->place)
                        : nullptr;

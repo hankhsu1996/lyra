@@ -58,6 +58,15 @@ auto BuildObjectDeref(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId reaches)
     -> mir::ExprId;
 
+// `object`, a pointer to an object, as `pointer`, a pointer to a class that
+// object is an object of: the operand unchanged when it already is one,
+// otherwise converted -- what C++ writes as a conversion between pointers to a
+// class and its base. Every object of the design hierarchy is a scope, so what
+// holds objects of several classes holds each as the scope it is, and a use
+// naming the class views it as that class.
+[[nodiscard]] auto ObjectAs(
+    mir::Block& block, mir::ExprId object, mir::TypeId pointer) -> mir::ExprId;
+
 // The receiver object that owns something at `hops` enclosing-class levels up.
 // At hops 0 it is the current body's `self`; above that the thing lives in an
 // enclosing class whose runtime object is this scope's ancestor, reached by

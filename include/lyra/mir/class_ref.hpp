@@ -7,32 +7,12 @@
 #include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/runtime_class.hpp"
 
 namespace lyra::mir {
-
-// A reference to a class in this compilation unit's own class registry, named
-// by its canonical local identity. The referred class is defined in this unit;
-// a consumer reads its declaration through the registry. Used when an SV
-// class extends another class of the same unit (LRM 8.13).
-struct IntraUnitClassRef {
-  ClassId class_id;
-
-  auto operator==(const IntraUnitClassRef&) const -> bool = default;
-};
-
-// A reference to a class another compilation unit declares, named the way every
-// cross-unit name is: by the declaring unit and the class's canonical name. The
-// pair is the identity; how it is spelled belongs to whichever target a backend
-// emits, so nothing here composes one.
-struct CrossUnitClassRef {
-  std::string unit_name;
-  std::string class_name;
-
-  auto operator==(const CrossUnitClassRef&) const -> bool = default;
-};
 
 // The root every object of the design hierarchy extends: extending it is what
 // roots an object in the runtime's tree (LRM 23.3). No compilation unit
@@ -62,13 +42,6 @@ struct ManagedObjectRootRef {
 using ClassRef = std::variant<
     IntraUnitClassRef, CrossUnitClassRef, ObjectTreeRootRef,
     ManagedObjectRootRef>;
-
-// A reference to a class some compilation unit declares: this one or another.
-// Only such a class has a declaration a unit states -- a definition the
-// declaring unit emits, a constructor an object is built through -- because the
-// two roots are the library's and there before any unit is. So whatever needs
-// one of those names a class this way.
-using DeclaredClassRef = std::variant<IntraUnitClassRef, CrossUnitClassRef>;
 
 [[nodiscard]] inline auto AsClassRef(const DeclaredClassRef& declared)
     -> ClassRef {

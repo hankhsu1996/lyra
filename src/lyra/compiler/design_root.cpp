@@ -1,5 +1,6 @@
 #include "lyra/compiler/design_root.hpp"
 
+#include <array>
 #include <expected>
 #include <span>
 #include <string>
@@ -59,17 +60,17 @@ auto BuildDesignRootHir(
     root.root_scope.instance_members.Define(
         instance, hir::InstanceMemberDecl{
                       .instance_name = top.instance_name,
-                      .scope_class = scope_class,
                       .array_dims = {},
-                      .arguments = {}});
+                      .alternatives = {hir::InstanceAlternative{
+                          .scope_class = scope_class, .arguments = {}}},
+                      .taken = {0}});
+    const std::array kind{hir::UnitObjectType{
+        .unit_name = top.unit_name, .class_name = instance_class.class_name}};
     published.members.Add(
         hir::PublishedMember{
             .name = top.instance_name,
             .within = {},
-            .type = root.types.Intern(
-                hir::Type{hir::UnitObjectType{
-                    .unit_name = top.unit_name,
-                    .class_name = instance_class.class_name}}),
+            .type = root.types.Intern(hir::Type{hir::ObjectsOf({}, kind)}),
             .storage = hir::BorrowedObjectStorage{}});
     instances.emplace_back(instance);
   }

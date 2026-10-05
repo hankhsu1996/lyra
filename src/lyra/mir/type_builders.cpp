@@ -117,7 +117,6 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const EventType&) { return bare(); },
           [&](const VoidType&) { return bare(); },
           [&](const ObjectType&) { return bare(); },
-          [&](const CrossUnitClassType&) { return bare(); },
           [&](const RuntimeClassType&) { return bare(); },
           [&](const RuntimeEffectsType&) { return bare(); },
           [&](const FilesType&) { return bare(); },

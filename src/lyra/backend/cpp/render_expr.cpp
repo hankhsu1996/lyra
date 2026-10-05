@@ -170,20 +170,34 @@ void RenderCastExpr(
       });
 }
 
-// A field of another unit's class, declared in that unit's header. Its name is
-// built from the slot and the field name that unit published, the same way
-// that unit built it.
-auto ExternalFieldName(
-    const mir::CompilationUnit& unit, const mir::CrossUnitClassFieldTarget& t)
-    -> MintedName {
-  const mir::ExternalClass* declaring =
-      mir::FindExternalClass(unit.external_classes, t.unit_name, t.class_name);
-  if (declaring == nullptr || t.slot.value >= declaring->fields.size()) {
-    throw InternalError(
-        "backend::cpp: a property access names a slot no consumed signature "
-        "describes");
-  }
-  return CppFieldName(declaring->named_fields, t.slot);
+// A field as the class declaring it names it, `C::x`. Its name is built from
+// the slot and the name the class gave the field: this unit's own declaration,
+// or what the declaring unit published, the same way that unit built it.
+void WriteQualifiedField(
+    TargetText& out, const mir::CompilationUnit& unit,
+    const mir::ClassFieldTarget& field) {
+  const std::vector<mir::NamedField>& names = std::visit(
+      Overloaded{
+          [&](const mir::IntraUnitClassRef& own)
+              -> const std::vector<mir::NamedField>& {
+            return unit.GetClass(own.class_id).named_fields;
+          },
+          [&](const mir::CrossUnitClassRef& other)
+              -> const std::vector<mir::NamedField>& {
+            const mir::ExternalClass* declaring = mir::FindExternalClass(
+                unit.external_classes, other.unit_name, other.class_name);
+            if (declaring == nullptr ||
+                field.slot.value >= declaring->fields.size()) {
+              throw InternalError(
+                  "backend::cpp: a property access names a slot no consumed "
+                  "signature describes");
+            }
+            return declaring->named_fields;
+          }},
+      field.owner);
+  Write(
+      out, CppClassRef(unit, field.owner),
+      "::", CppFieldName(names, field.slot));
 }
 
 void RenderFieldAccessExpr(
@@ -191,21 +205,15 @@ void RenderFieldAccessExpr(
   WriteMemberReceiver(view, out, m.receiver);
   std::visit(
       Overloaded{
+          // Qualified by the declaring class, `obj.Base::x`: a derived class
+          // may declare its own `x` beside the base's, and which one the
+          // access means was settled by the source, not by the receiver's
+          // type (LRM 8.14).
           [&](const mir::ClassFieldTarget& t) {
-            // Qualified by the declaring class, `obj.Base::x`: a derived class
-            // may declare its own `x` beside the base's, and which one the
-            // access means was settled by the source, not by the receiver's
-            // type (LRM 8.14).
-            const auto& cls = view.Unit().GetClass(t.owner);
-            Write(
-                out, CppClassName(cls, t.owner),
-                "::", CppFieldName(cls.named_fields, t.slot));
+            WriteQualifiedField(out, view.Unit(), t);
           },
           [&](const mir::ClosureFieldTarget& t) {
             Write(out, CppClosureCaptureName(t.slot));
-          },
-          [&](const mir::CrossUnitClassFieldTarget& t) {
-            Write(out, ExternalFieldName(view.Unit(), t));
           }},
       m.field);
 }
@@ -435,19 +443,8 @@ void WriteMemberReceiver(
 void WriteMemberPointer(
     TargetText& out, const mir::CompilationUnit& unit,
     const mir::ClassFieldTarget& property) {
-  const auto& cls = unit.GetClass(property.owner);
-  Write(
-      out, "&", CppClassName(cls, property.owner),
-      "::", CppFieldName(cls.named_fields, property.slot));
-}
-
-void WriteMemberPointer(
-    TargetText& out, const mir::CompilationUnit& unit,
-    const mir::CrossUnitClassFieldTarget& property) {
-  Write(
-      out, "&", CppUnitScope(property.unit_name),
-      "::", ToCppName(property.class_name),
-      "::", ExternalFieldName(unit, property));
+  out += "&";
+  WriteQualifiedField(out, unit, property);
 }
 
 void WriteCommaSeparated(

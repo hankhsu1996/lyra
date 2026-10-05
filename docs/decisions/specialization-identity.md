@@ -88,7 +88,28 @@ selections fixed at an instantiation, and a body elaborated under those selectio
 halves have to come from the same one. An identity computed from one instantiation over a body
 elaborated under another describes nothing that exists, however correct each half is on its own.
 
-### F6. Generic-language precedent points to injective mangling for a reason that does not bind us
+### F6. What the design fixes for an instance is more than its instantiation wrote
+
+A `defparam` changes a parameter of any instance it names by a hierarchical path, and takes
+precedence over the instantiation's own assignment (LRM 23.10, 23.10.1); a `bind` inserts an
+instantiation into the instances it names (LRM 23.11); a configuration chooses which cell an
+instance is and may set its parameters (LRM 33.4.1.6, 33.4.3). Each is written somewhere other than
+the instantiation it reaches, and each can reach one instance of a module and not another -- so two
+parents whose own instantiations agree build different children, and the parents differ too. A key
+read off the instantiation alone names those parents one unit, and the comparison every instance is
+held to then stops the build on a legal design.
+
+The effect is still read off the instance tree the parent already stands on, so F1 holds: nothing
+needs a child's compiled body. It is stated as the effect, under the path from the instance to where
+it lands, rather than as the name of the child it lands in. A child's name may depend on where its
+upward names land -- in an ancestor -- and an ancestor's name stated through its children's names
+would then depend on the child's; stating the effect needs neither name. slang and Verilator answer
+the same question by never sharing a body an override reaches, and the ancestors on its path with it
+(slang `InstanceCacheKey::isEligibleForCaching`; Verilator clones a module per instance path when a
+`defparam` lies beneath it). A content key keeps two instances overridden alike one unit, which a
+path cannot.
+
+### F7. Generic-language precedent points to injective mangling for a reason that does not bind us
 
 C++ (Itanium ABI) and Rust (v0) encode template / generic arguments into an injective mangled symbol
 name. They do so because the name must be demanglable for debuggers and must be self-contained for a
@@ -100,10 +121,16 @@ Rust cannot.
 
 ## The decision
 
-1. **The identity is a key: the definition, plus what the parent fixed -- its parameter bindings,
-   and the interface each of its interface ports carries.** The key holds those as its parts, each
-   named and each carrying the identity of what it was fixed to, and two keys are equal when their
-   parts are. Nothing compares keys through a rendering of them.
+1. **The identity is a key: the definition, plus what the design fixed for the instance -- its
+   parameter bindings, the interface each of its interface ports carries, and every effect written
+   elsewhere that lands below it (a parameter a `defparam` or a configuration sets, an instantiation
+   a `bind` inserts, a cell a configuration chose), each under its path from the instance (F6).**
+   The key holds those as its parts, each named and each carrying the identity of what it was fixed
+   to, and two keys are equal when their parts are. Nothing compares keys through a rendering of
+   them. An effect written inside the instance's own text is the same for every instance of it, so
+   stating it changes no sharing. A bound instance is named by the directive that inserted it -- the
+   declaration holding the directive and its position among that declaration's binds -- since its
+   connections are text of the directive.
 
    **The name is derived from the key** -- the definition's name, plus a content hash of the key
    when anything was fixed. The producer and the consumer both build the same key from the same
@@ -115,9 +142,10 @@ Rust cannot.
    is its structure, except a class and an unpacked structure, which SystemVerilog identifies by
    their declarations (LRM 8.3, 6.22.1) and which therefore carry the unit that declares them; an
    interface's is the name of the unit it instantiates, which is already how a unit is identified
-   across the boundary. All of it excludes arena ids, source spans, and any name that does not
-   participate in identity. Ordering is normalized so the result does not depend on traversal or
-   enumeration order (`specialization_model.md` inv 6).
+   across the boundary, and a port carrying a range holds the units its instances are and which of
+   them each position takes, never a list of them joined into one name. All of it excludes arena
+   ids, source spans, and any name that does not participate in identity. Ordering is normalized so
+   the result does not depend on traversal or enumeration order (`specialization_model.md` inv 6).
 
    **A value is held as one spelling that is both its identity and what the name is folded from.**
    The name is a hash of the key's bytes, so those bytes have to tell every two values apart
@@ -156,9 +184,9 @@ Rust cannot.
    collision-free, and degrades gracefully on bindings it cannot render. The hash is the
    load-bearing identity.
 
-6. **Every selection is read where the parent fixed it, and the frontend's own grouping is not read
-   at all.** Which instances the frontend elaborated into one body is a classification with a
-   different purpose, so it may inform how much work is done and never which artifact an instance
+6. **Every selection is read off the instance it was fixed for, and the frontend's own grouping is
+   not read at all.** Which instances the frontend elaborated into one body is a classification with
+   a different purpose, so it may inform how much work is done and never which artifact an instance
    belongs to. An instance whose key differs from the one an artifact was built from does not belong
    to that artifact, whatever the frontend grouped it with.
 

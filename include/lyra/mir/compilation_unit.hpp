@@ -490,11 +490,11 @@ struct CompilationUnit {
   // Records what this unit read of another's signature. Called from HIR-to-MIR
   // wherever a signature is read; the same part reached twice is one entry.
   //
-  // This unit is not a dependency of itself, and that is settled here because
-  // one caller cannot settle it: the design root realizes a plan of unit names
-  // it does not inspect, so it asks for every one of them and the set decides
-  // which are outside. A site that does read what it reaches names the position
-  // instead and never arrives here at all.
+  // This unit's namespace is not a dependency of itself, and that is settled
+  // here because one caller cannot settle it: the design root realizes a plan
+  // of unit names it does not inspect, so it asks for every one of them and the
+  // set decides which are outside. A site that does read what it reaches names
+  // the position instead and never arrives here at all.
   void ConsumeNamespaceOf(std::string unit_name) {
     if (unit_name == name) {
       return;
@@ -502,10 +502,9 @@ struct CompilationUnit {
     Consume(ConsumedNamespace{.unit_name = std::move(unit_name)});
   }
 
+  // A class of this unit is named by its id, so only another unit's class is
+  // ever consumed.
   void ConsumeClassOf(std::string unit_name, std::string class_name) {
-    if (unit_name == name) {
-      return;
-    }
     Consume(
         ConsumedClass{
             .unit_name = std::move(unit_name),

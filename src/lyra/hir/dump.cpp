@@ -450,6 +450,29 @@ class HirDumper {
                   "UnitObjectType(unit={}, class={})", u.unit_name,
                   u.class_name);
             },
+            [](const UnitObjectsType& u) -> std::string {
+              std::string ranges;
+              for (const UnpackedRange& range : u.ranges) {
+                ranges += std::format("[{}:{}]", range.left, range.right);
+              }
+              std::string kinds;
+              for (const UnitObjectType& kind : u.kinds) {
+                kinds += std::format(
+                    "{}{}::{}", kinds.empty() ? "" : " | ", kind.unit_name,
+                    kind.class_name);
+              }
+              // Which kind each position takes says nothing where there is one.
+              std::string taken;
+              if (u.kinds.size() > 1) {
+                for (const std::uint32_t at : u.taken) {
+                  taken +=
+                      std::format("{}{}", taken.empty() ? " taken(" : ",", at);
+                }
+                taken += ')';
+              }
+              return std::format(
+                  "UnitObjectsType{}({}){}", ranges, kinds, taken);
+            },
             [](const VirtualInterfaceType& v) -> std::string {
               return std::format("VirtualInterfaceType(unit={})", v.unit_name);
             },
@@ -1644,9 +1667,8 @@ class HirDumper {
         Overloaded{
             [](const ExternalMemberRef& member) {
               return std::format(
-                  "ExternalScopeClass[{}].member[{}] as ExternalScopeClass[{}]",
-                  member.scope_class.value, member.member.value,
-                  member.result_class.value);
+                  "ExternalScopeClass[{}].member[{}]", member.scope_class.value,
+                  member.member.value);
             },
             [](const ExternalGenerateRef& generate) {
               return std::format(
@@ -1811,10 +1833,13 @@ class HirDumper {
     }
     for (const InterfacePortId id : s.interface_ports.Ids()) {
       const auto& port = s.interface_ports.Get(id);
+      std::string array_suffix;
+      for (const auto dim : port.array_dims) {
+        array_suffix += std::format("[{}]", dim);
+      }
       Line(
           std::format(
-              "InterfacePort[{}] \"{}\" : ExternalScopeClass[{}]", id.value,
-              port.name, port.scope_class.value));
+              "InterfacePort[{}] \"{}\"{}", id.value, port.name, array_suffix));
     }
     Line(std::format("Published: {}", FormatPublication(s.published)));
     for (const StructuralSubroutineId id : s.structural_subroutines.Ids()) {
@@ -1860,11 +1885,25 @@ class HirDumper {
       for (const auto dim : im.array_dims) {
         array_suffix += std::format("[{}]", dim);
       }
+      std::string built_as;
+      for (const InstanceAlternative& alternative : im.alternatives) {
+        built_as += std::format(
+            "{}ExternalScopeClass[{}] {}", built_as.empty() ? "" : " | ",
+            alternative.scope_class.value,
+            FormatArguments(alternative.arguments));
+      }
+      std::string taken;
+      if (im.alternatives.size() > 1) {
+        for (const std::uint32_t alternative : im.taken) {
+          taken +=
+              std::format("{}{}", taken.empty() ? " taken(" : ",", alternative);
+        }
+        taken += ')';
+      }
       Line(
           std::format(
-              "InstanceMember[{}] \"{}\"{} : ExternalScopeClass[{}] {}",
-              id.value, im.instance_name, array_suffix, im.scope_class.value,
-              FormatArguments(im.arguments)));
+              "InstanceMember[{}] \"{}\"{} : {}{}", id.value, im.instance_name,
+              array_suffix, built_as, taken));
     }
     DumpTable("RoutedValueRef", s.routes.values);
     DumpTable("RoutedObjectRef", s.routes.objects);
@@ -2740,12 +2779,20 @@ class HirDumper {
               return std::format(
                   "each indices=[{}]", FormatIndexValues(s.indices));
             },
-            [](const BlocksRepeat& r) {
+            [&](const BlocksRepeat& r) {
+              std::string taken;
+              if (g.blocks.size() > 1) {
+                for (const std::uint32_t body : r.taken) {
+                  taken += std::format(
+                      "{}{}", taken.empty() ? " taken(" : ",", body);
+                }
+                taken += ')';
+              }
               return std::format(
                   "repeated var=StructuralDataObject[{}] initial=Expr[{}] "
-                  "condition=Expr[{}] step=Expr[{}]",
+                  "condition=Expr[{}] step=Expr[{}]{}",
                   r.variable.value, r.initial.value, r.condition.value,
-                  r.step.value);
+                  r.step.value, taken);
             },
             [](const BlocksChoose& c) {
               std::string chosen =

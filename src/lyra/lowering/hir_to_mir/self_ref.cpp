@@ -44,6 +44,13 @@ auto BuildObjectDeref(
                        unit.types, block.exprs.Get(reaches).type)));
 }
 
+auto ObjectAs(mir::Block& block, mir::ExprId object, mir::TypeId pointer)
+    -> mir::ExprId {
+  if (block.exprs.Get(object).type == pointer) return object;
+  return block.exprs.Add(
+      mir::Expr{.data = mir::CastExpr{.operand = object}, .type = pointer});
+}
+
 auto BindImplicitParameters(
     const WalkFrame& frame, const ClassShape& owner, CallableForm form)
     -> BoundImplicitParameters {
@@ -108,7 +115,9 @@ auto BuildEnclosingScopeReceiver(
                                 mir::MakeFieldAccessExpr(
                                     BuildObjectDeref(unit, block, self),
                                     mir::ClassFieldTarget{
-                                        .owner = frame.current_class_id,
+                                        .owner =
+                                            mir::IntraUnitClassRef{
+                                                frame.current_class_id},
                                         .slot = through.member},
                                     unit.builtins.scope_ptr))},
                     .type = frame.EnclosingClassAtHops(mir::EnclosingHops{0})
@@ -142,10 +151,8 @@ auto BuildEnclosingScopeReceiver(
                     .arguments = {}},
             .type = unit.builtins.scope_ptr});
   }
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = nav},
-          .type = frame.EnclosingClassAtHops(hops).cls->self_pointer_type});
+  return ObjectAs(
+      block, nav, frame.EnclosingClassAtHops(hops).cls->self_pointer_type);
 }
 
 auto BuildStructuralFieldAccessExpr(
@@ -153,7 +160,9 @@ auto BuildStructuralFieldAccessExpr(
     mir::EnclosingHops hops, mir::FieldId var) -> mir::Expr {
   const EnclosingClass owner = frame.EnclosingClassAtHops(hops);
   return BuildStructuralFieldAccessExpr(
-      frame, unit, hops, mir::ClassFieldTarget{.owner = owner.id, .slot = var},
+      frame, unit, hops,
+      mir::ClassFieldTarget{
+          .owner = mir::IntraUnitClassRef{owner.id}, .slot = var},
       owner.cls->fields.Get(var).type);
 }
 
