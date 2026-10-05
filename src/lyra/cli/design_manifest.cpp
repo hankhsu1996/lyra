@@ -10,13 +10,13 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <toml.hpp>
 #include <utility>
 #include <vector>
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/support/assertion_policy.hpp"
-#include "toml.hpp"
 
 namespace lyra::cli {
 

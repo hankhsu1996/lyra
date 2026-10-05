@@ -36,6 +36,19 @@ bazel_dep(name = "nlohmann_json", version = "3.11.3")
 # TOML parsing for a design's declaration
 bazel_dep(name = "tomlplusplus", version = "3.4.0")
 
+# The registry's build file states the header without an include directory, so
+# it is reached only through the repository root, which the compiler treats as
+# a directory of our own: the header is then compiled under Lyra's warning
+# policy, and a newer clang's deprecation of its literal operators fails the
+# build. Every other dependency states one, which makes its headers system
+# headers, answering to their own policy. Version `3.4.0.bcr.1`, submitted to
+# the registry, states one; depending on it makes this override unnecessary.
+single_version_override(
+    module_name = "tomlplusplus",
+    patch_strip = 1,
+    patches = ["//third_party/tomlplusplus:system_include.patch"],
+)
+
 # LLVM for code generation, as a library. The module also offers a hermetic
 # toolchain, which is not registered: only its `@llvm-project` is used.
 bazel_dep(name = "llvm", version = "0.8.23")
