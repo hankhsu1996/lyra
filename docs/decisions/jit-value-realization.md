@@ -1,6 +1,9 @@
 # JIT value realization: opaque handles plus a generated-call scope
 
-Date: 2026-07-07 Status: accepted; the lifetime half superseded 2026-09-24
+Date: 2026-07-07 Status: accepted; the lifetime half superseded 2026-09-24, and invariant 5 (a
+packed value is an opaque runtime handle) superseded 2026-10-04 by
+[a-value-is-its-machine-data](a-value-is-its-machine-data.md): the execution backend lays a value
+out from its type and generates its operations.
 
 **Superseded in part** by [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md).
 Its premise below -- "generated LLVM code cannot construct or own a runtime value object; it can

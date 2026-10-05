@@ -2,7 +2,10 @@
 
 Date: 2026-09-17 Status: accepted; D2's select half is superseded by
 [a-select-names-a-position](a-select-names-a-position.md): the declared shape is read where the
-select is lowered, and the access is handed a position and a width instead.
+select is lowered, and the access is handed a position and a width instead. Its rule that a value
+still describes its own width, signedness and state domain is superseded 2026-10-04 by
+[a-value-is-its-machine-data](a-value-is-its-machine-data.md), which takes this record's own
+direction -- shape to the type -- the rest of the way.
 
 Supersedes the packed clause of [selector-coordinate-resolution](selector-coordinate-resolution.md)
 decision 1 and the packed carve-out of
