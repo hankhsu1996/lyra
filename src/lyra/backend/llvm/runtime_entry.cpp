@@ -842,16 +842,17 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObservationOfValue:
     case support::BuiltinFn::kObservationOfValueQualified:
     case support::BuiltinFn::kObservationQualified:
-    case support::BuiltinFn::kObservationTookEvent:
+    case support::BuiltinFn::kObservationArm:
+    case support::BuiltinFn::kObservationFires:
     case support::BuiltinFn::kWaitAny:
-    case support::BuiltinFn::kWaitUntil:
     case support::BuiltinFn::kWaitRecollecting:
-    case support::BuiltinFn::kWaitUntilCollected:
-    case support::BuiltinFn::kReadReportFor:
+    case support::BuiltinFn::kWaitUntil:
+    case support::BuiltinFn::kReadReportEmpty:
     case support::BuiltinFn::kReadReportAdd:
     case support::BuiltinFn::kReadReportAddEveryObject:
     case support::BuiltinFn::kReadReportEnter:
     case support::BuiltinFn::kReadReportLeave:
+    case support::BuiltinFn::kReadReportRunsTheBody:
     case support::BuiltinFn::kRefuseReport:
     case support::BuiltinFn::kSimTime:
     case support::BuiltinFn::kSTime:

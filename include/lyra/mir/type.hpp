@@ -397,10 +397,9 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // the event and the value it had when the wait began. The leaves of one
   // event expression name one of these between them.
   kObservation,
-  // LRM 9.4.2 what a wait learns, each time it collects its leaves, about what
-  // one of its event expressions can read: `lyra::runtime::ReadReport`, into
-  // which the wait adds what it reaches and every function the expression
-  // calls reports what a call of it reads.
+  // LRM 9.4.2 what one evaluation a waiting process makes reached:
+  // `lyra::runtime::ReadReport`, into which the evaluation states what it
+  // reaches and every function it calls reports what a call of it reads.
   kReadReport,
   // LRM 23.3.3.5 / 27.6 elaborated hierarchy segment:
   // `lyra::runtime::HierarchySegment`, the per-scope structured identity each

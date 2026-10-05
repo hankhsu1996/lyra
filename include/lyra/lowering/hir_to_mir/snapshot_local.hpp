@@ -27,6 +27,11 @@ auto SnapshotExprToLocal(
     mir::TypeId type, mir::ExprId expr_id,
     std::optional<BindingOriginId> origin = std::nullopt) -> mir::LocalId;
 
+// A local of the body `frame` is lowering, declared in its block and starting
+// out as `init`.
+[[nodiscard]] auto DeclareLocal(const WalkFrame& frame, mir::ExprId init)
+    -> mir::LocalId;
+
 // `value` as a node that may stand at several places. A node that computes is
 // evaluated at every place that reaches it, so one is evaluated here, once, as
 // the initializer of a local of the enclosing body, and the result names that

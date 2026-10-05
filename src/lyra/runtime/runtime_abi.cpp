@@ -866,9 +866,17 @@ auto TriggerHandles(LyraSpan triggers) -> std::span<const Trigger* const> {
   return {static_cast<const Trigger* const*>(triggers.data), triggers.count};
 }
 
-// A collecting wait's reports cross the same way, one per event expression.
+// A collecting wait's reports cross the same way, one per event expression,
+// and so do the observations deciding it.
 auto ReportHandles(LyraSpan reports) -> std::span<ReadReport* const> {
   return {static_cast<ReadReport* const*>(reports.data), reports.count};
+}
+
+auto ObservationHandles(LyraSpan observations)
+    -> std::span<const Observation* const> {
+  return {
+      static_cast<const Observation* const*>(observations.data),
+      observations.count};
 }
 
 }  // namespace
@@ -925,6 +933,7 @@ using lyra::runtime::NetOf;
 using lyra::runtime::ObjectDefinition;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
+using lyra::runtime::ObservationHandles;
 using lyra::runtime::OpenCellWrite;
 using lyra::runtime::OpenDriverWrite;
 using lyra::runtime::OpenRefWrite;
@@ -1545,29 +1554,33 @@ auto lyra_rt_observation_qualified(void* condition, void* out) -> void* {
   return Emplace(out, Observation::Qualified(TakeEvaluator(condition)));
 }
 
+void lyra_rt_observation_arm(const void* observation) {
+  static_cast<const Observation*>(observation)->Arm();
+}
+
+auto lyra_rt_observation_fires(const void* observation) -> std::int64_t {
+  return static_cast<const Observation*>(observation)->Fires() ? 1 : 0;
+}
+
 auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool {
   return WaitAny(
       *static_cast<RuntimeEffects*>(runtime), TriggerHandles(triggers));
 }
 
-auto lyra_rt_wait_until(void* runtime, LyraSpan triggers) -> bool {
-  return WaitUntil(
-      *static_cast<RuntimeEffects*>(runtime), TriggerHandles(triggers));
-}
-
-auto lyra_rt_wait_recollecting(void* runtime, LyraSpan reports) -> bool {
+auto lyra_rt_wait_recollecting(
+    void* runtime, LyraSpan reports, LyraSpan observations) -> bool {
   return WaitRecollecting(
-      *static_cast<RuntimeEffects*>(runtime), ReportHandles(reports));
+      *static_cast<RuntimeEffects*>(runtime), ReportHandles(reports),
+      ObservationHandles(observations));
 }
 
-auto lyra_rt_wait_until_collected(void* runtime, LyraSpan reports) -> bool {
+auto lyra_rt_wait_until(void* runtime, LyraSpan reports) -> bool {
   return WaitUntil(
       *static_cast<RuntimeEffects*>(runtime), ReportHandles(reports));
 }
 
-auto lyra_rt_read_report_for(const void* observation, void* out) -> void* {
-  return Emplace(
-      out, ReadReport::For(*static_cast<const Observation*>(observation)));
+auto lyra_rt_read_report_empty(void* out) -> void* {
+  return Emplace(out, ReadReport::Empty());
 }
 
 void lyra_rt_read_report_add(
@@ -1590,12 +1603,12 @@ void lyra_rt_read_report_leave(void* report) {
   static_cast<ReadReport*>(report)->Leave();
 }
 
-void lyra_rt_refuse_report(const void* why) {
-  RefuseReport(static_cast<const char*>(why));
+auto lyra_rt_read_report_runs_the_body(const void* report) -> std::int64_t {
+  return static_cast<const ReadReport*>(report)->RunsTheBody();
 }
 
-auto lyra_rt_observation_took_event(const void* observation) -> std::int64_t {
-  return static_cast<const Observation*>(observation)->TookEvent() ? 1 : 0;
+void lyra_rt_refuse_report(const void* why) {
+  RefuseReport(static_cast<const char*>(why));
 }
 
 auto lyra_rt_resume_in_nba_region(void* runtime) -> bool {

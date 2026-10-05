@@ -1,6 +1,5 @@
 #pragma once
 
-#include <optional>
 #include <span>
 #include <vector>
 
@@ -38,12 +37,28 @@ template <typename Lowerer>
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::ValueTarget& cell) -> mir::ExprId;
 
-// The cells a wait over `reads` watches, where every one is a cell elaboration
-// sealed so the wait can register them once for good (LRM 9.4.2); absent where
-// a leaf is found through a handle or a call reports what it reads, and the
-// wait collects its leaves where it stands instead, each time it waits.
-[[nodiscard]] auto SealedCells(const hir::Reads& reads)
-    -> std::optional<std::vector<hir::SensitivityEntry>>;
+// What an evaluation reaches through `object` -- a class handle, or the running
+// method's own object -- to be read through: the same value, stated as reached
+// in the report the evaluation states the places it reaches in, where it has
+// one (LRM 9.4.2). One event source covers every property of an object, so the
+// object is what is stated. Stating it names the value a second time, so it is
+// evaluated once first.
+[[nodiscard]] auto ReportedObject(
+    mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId object)
+    -> mir::ExprId;
+
+// The same for `place`, a pointer to a variable an evaluation reaches through a
+// virtual interface (LRM 25.9).
+[[nodiscard]] auto ReportedPlace(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, mir::ExprId place)
+    -> mir::ExprId;
+
+// States each of `cells` as reached in the report `report` holds a pointer to,
+// appending to the block `frame` is writing.
+template <typename Lowerer>
+auto ReportCells(
+    Lowerer& lowerer, const WalkFrame& frame, mir::LocalId report,
+    std::span<const hir::SensitivityEntry> cells) -> diag::Result<void>;
 
 // Records in the report `report` holds a pointer to everything `reads` names,
 // appending to the block `frame` is writing: each cell and the bits read of
@@ -76,9 +91,8 @@ auto ReportReads(
 // runtime call taking one trigger per leaf -- `always_comb` / `always_latch`
 // (LRM 9.2.2.2.1), `@*` (LRM 9.4.2.2), `@(...)` (LRM 9.4.2), `@e` (LRM
 // 15.5.2), `wait (cond)` (LRM 9.4.3), and a continuous assignment -- differing
-// only in what decides that reaching a leaf is an event for them. A wait whose
-// leaves are collected where it stands hands it one read report per event
-// expression instead, holding the triggers collected for that expression.
+// only in what decides that reaching a leaf is an event for them. A wait its
+// process decides hands it the reports its last evaluation stated instead.
 //
 // Lowering picks the observable-pointer expression per leaf so a backend
 // forwards one stored expression rather than re-deriving the shape from the
@@ -99,25 +113,6 @@ template <typename Lowerer>
 auto BuildWaitStmt(
     mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
     std::span<const ObservedLeaf> leaves, support::BuiltinFn entry)
-    -> diag::Result<mir::Stmt>;
-
-// One expression a wait collecting its leaves watches: what it reads, and the
-// observation deciding whether reaching one of them is an event.
-struct CollectedExpression {
-  const hir::Reads* reads = nullptr;
-  mir::LocalId observation;
-};
-
-// A wait collecting its leaves where it stands (LRM 9.4.2): a report begun per
-// expression, everything each one reads recorded in its report, then the wait
-// on every report. `entry` is which of the two waits over reports this is --
-// an event control resuming on every candidacy, or a `wait (cond)` whose loop
-// tests the condition -- and every statement lands in the block `frame` is
-// writing, which a collecting wait runs afresh each time it waits.
-template <typename Lowerer>
-auto BuildCollectingWaitStmt(
-    const WalkFrame& frame, Lowerer& lowerer,
-    std::span<const CollectedExpression> expressions, support::BuiltinFn entry)
     -> diag::Result<mir::Stmt>;
 
 // The wait of a construct the standard makes sensitive to the variables it

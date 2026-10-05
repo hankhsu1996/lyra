@@ -122,6 +122,15 @@ struct WalkFrame {
   // nothing beside it.
   ReadsAsOf reads_as_of = ReadsAsOf::kNow;
 
+  // The report the evaluation being lowered states the places it reaches in --
+  // an object a property is read on, an interface variable read through a
+  // handle, a function called -- where a waiting process decides its wait by
+  // this evaluation (LRM 9.4.2). Each place is stated where the evaluation
+  // reaches it, from the value it reached it through, so the evaluation is the
+  // one the source wrote. Absent for every other evaluation; a callable
+  // boundary leaves it behind, since the report is a variable of this body.
+  std::optional<mir::LocalId> reports_reached_to;
+
   // Whether the body being lowered can wait. A function cannot (LRM 13.4.4),
   // and nothing else can reach one of its variables while it runs -- a branch
   // it forks outlives it and so holds what it names in storage of its own -- so
@@ -246,6 +255,13 @@ struct WalkFrame {
   [[nodiscard]] auto WithReadsAsOf(ReadsAsOf when) const -> WalkFrame {
     WalkFrame next = *this;
     next.reads_as_of = when;
+    return next;
+  }
+
+  [[nodiscard]] auto WithReportingReachedTo(
+      std::optional<mir::LocalId> report) const -> WalkFrame {
+    WalkFrame next = *this;
+    next.reports_reached_to = report;
     return next;
   }
 

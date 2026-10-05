@@ -323,8 +323,8 @@ auto RecordSampledHistory(
               "' counting ticks of a named event is not yet supported");
     }
     // The gate belongs to the event, and the event already carries a qualifier
-    // of exactly that shape -- the LRM 9.4.2.3 `iff`, read where the change
-    // happens -- so it composes with whatever the event stated rather than
+    // of exactly that shape -- the LRM 9.4.2.3 `iff`, read when what is watched
+    // moves -- so it composes with whatever the event stated rather than
     // needing a place of its own. A trigger the source already qualified admits
     // a tick only where both hold, and each trigger reads the gate for itself.
     if (gate != nullptr) {

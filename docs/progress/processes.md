@@ -187,6 +187,14 @@ under each item, and the conformance gaps at the end.
         and runs as before.
   - [ ] A constructor called inside such a function: what the constructor's own body reads is not
         followed.
+- [x] A wait's expression and its `iff` qualifier are evaluated by the waiting process (LRM 4.5):
+      once where the wait begins and once per change that reaches it, and a call in them runs as
+      that process -- `process::self()` there answers the waiter. What that evaluation writes is no
+      event for the waiting process, so a method whose call writes the object it waits on, a
+      qualifier writing what it gates and one triggering the event it qualifies all leave the wait
+      waiting; before this the first two overflowed the stack and the third ran once per nested
+      trigger, on both backends. A null handle the expression reads through fails as the waiting
+      process, after the write that nulled it has finished.
   - [ ] A value-change event control on any other operand whose change is not watched (LRM 9.4.2):
         an operand that is no value at all, and one whose value nothing yet compares.
   - [ ] A nested timing control inside an event-list entry: only signal events compose in a list

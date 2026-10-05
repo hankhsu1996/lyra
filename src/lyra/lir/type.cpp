@@ -579,7 +579,7 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
                 return LibraryObject::kTrigger;
               case RuntimeLibraryKind::kObservation:
                 return LibraryObject::kObservation;
-              // Held by the waiting frame while it collects its leaves.
+              // Held by the waiting frame across the waits it states into.
               case RuntimeLibraryKind::kReadReport:
                 return LibraryObject::kReadReport;
               // Held by the writer for as long as the write lasts; ending it

@@ -89,8 +89,8 @@ auto LowerSignalEventTrigger(
 
   // What the expression reads is what makes the wait a candidate; the edge
   // belongs to the expression, whose value decides.
-  auto reads = ReadsOfWaitedExpression(proc, frame, sig.expr, span);
-  if (!reads) return std::unexpected(std::move(reads.error()));
+  auto cells = CellsOfWaitedExpression(proc, frame, sig.expr);
+  if (!cells) return std::unexpected(std::move(cells.error()));
 
   auto condition = LowerEventCondition(proc, frame, sig);
   if (!condition) return std::unexpected(std::move(condition.error()));
@@ -98,7 +98,7 @@ auto LowerSignalEventTrigger(
   return hir::EventTrigger{
       .signal = frame.Exprs().Add(*std::move(expr_or)),
       .edge = edge_kind,
-      .reads = *std::move(reads),
+      .cells = *std::move(cells),
       .condition = AddEventCondition(frame, *std::move(condition)),
   };
 }
@@ -503,13 +503,13 @@ auto LowerWaitStmt(
   if (!body_or) return std::unexpected(std::move(body_or.error()));
   const hir::StmtId body_id =
       frame.current_procedural_body->stmts.Add(*std::move(body_or));
-  auto reads = ReadsOfWaitedExpression(proc, frame, w.cond, span);
-  if (!reads) return std::unexpected(std::move(reads.error()));
+  auto cells = CellsOfWaitedExpression(proc, frame, w.cond);
+  if (!cells) return std::unexpected(std::move(cells.error()));
   return hir::Stmt{
       .label = std::nullopt,
       .data =
           hir::WaitStmt{
-              .cond = cond_id, .body = body_id, .reads = *std::move(reads)},
+              .cond = cond_id, .body = body_id, .cells = *std::move(cells)},
       .span = span};
 }
 

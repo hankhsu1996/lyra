@@ -110,14 +110,13 @@ extern template auto Settled<value::Chandle>(value::Chandle)
 // fold it into the wake they perform; no unit calls it, so none compiles it.
 class ValueWatch {
  public:
-  // Armed from the outset: the baseline is what the expression is worth where
-  // the wait begins.
+  // Building the watch evaluates nothing: an evaluation belongs to whoever
+  // arms or asks it, which is what decides the process it runs in.
   template <std::invocable Evaluate>
   ValueWatch(Evaluate evaluate, support::EventEdge edge)
       : evaluate_([evaluate = std::move(evaluate)]() -> value::RuntimeValue {
           return Settled(evaluate());
         }),
-        baseline_(evaluate_()),
         edge_(edge) {
   }
 
@@ -128,7 +127,7 @@ class ValueWatch {
   ~ValueWatch();
 
   // Takes the expression's current value as the baseline every later comparison
-  // is against, for a wait that is being established again.
+  // is against.
   void Arm() {
     baseline_ = evaluate_();
   }
@@ -169,22 +168,29 @@ class ValueWatch {
 // procedure waits there. Two halves, each present exactly where the source put
 // one: an event control watches an expression's value, and a named event's
 // trigger is the event itself so it watches nothing; either may carry an `iff`
-// qualifier, which is read where the change happens and not when the qualifier
-// itself moves (LRM 9.4.2, 9.4.2.3, 15.5).
+// qualifier, which is read when what is watched moves and not when the
+// qualifier itself does (LRM 9.4.2, 9.4.2.3, 15.5).
 //
 // Both live no longer than the wait. A procedure that is not waiting at an
 // event control has no observation there, so a change while it is elsewhere is
 // not detected -- which is what the standard requires of a procedure that has
 // left and re-reached the control.
 //
+// Whoever asks runs the expression and the qualifier, so asking is done either
+// by the change -- for an evaluation that only reads storage, which nothing
+// can tell from the waiting process running it (LRM 4.7) -- or by the waiting
+// process, whose evaluation the change schedules (LRM 4.5); an evaluation that
+// can call, write or fail is only ever the waiting process's.
+//
 // As with a single watch, what a unit reaches is the constructors the
 // expression and the qualifier shape, and members defined in the library; what
 // only the engine asks is written here.
 class ArmedObservation {
  public:
-  // Built where execution reaches the event control, which is where the wait
-  // begins, so it is armed from the outset. `edge` arrives as a PackedArray
-  // literal, the way every compile-time scalar crosses into a runtime entry.
+  // Built where execution reaches the event control, unarmed: it has nothing
+  // to compare against until the expression is first evaluated. `edge` arrives
+  // as a PackedArray literal, the way every compile-time scalar crosses into a
+  // runtime entry.
   template <std::invocable Evaluate>
   ArmedObservation(Evaluate evaluate, const value::PackedArray& edge)
       : watch_(std::in_place, std::move(evaluate), EdgeOf(edge)) {
@@ -211,34 +217,38 @@ class ArmedObservation {
   auto operator=(ArmedObservation&&) -> ArmedObservation& = delete;
   ~ArmedObservation();
 
-  // Re-takes the baseline for a wait that is being established again.
+  // Takes what the expression is worth now as what later changes are measured
+  // from: where the wait begins, and again where a stopped process starts
+  // waiting afresh (LRM 9.7).
   void Arm() {
     if (watch_.has_value()) {
       watch_->Arm();
     }
-    took_event_ = false;
+    armed_ = true;
   }
 
-  // Whether the change that made this a candidate is an event for it.
+  // Leaves the observation with nothing to compare against, for a wait whose
+  // process re-arms it on its next evaluation rather than wherever the restart
+  // is asked for.
+  void Disarm() {
+    armed_ = false;
+  }
+
+  // Whether the candidacy being asked about is an event for this wait. An
+  // observation with nothing to compare against arms instead, which is no
+  // event: a change is measured from a value the wait has seen.
   //
   // The watched expression is read first and unconditionally, because the
   // qualifier gates the event and not the watching: a change it holds back is
   // still a change, and the baseline has to advance to it or the wait goes on
   // comparing against a value the design has left behind.
   [[nodiscard]] auto Fires() -> bool {
-    const bool fired = (!watch_.has_value() || watch_->TakeTransition()) &&
-                       (!condition_ || condition_());
-    took_event_ = took_event_ || fired;
-    return fired;
-  }
-
-  // Whether a candidacy since the wait was armed was an event for it, for a
-  // wait that resumes on every candidacy and asks afterwards. It holds once
-  // taken: one change can reach a wait through several places it watches, and
-  // each asks in turn, so the first to see the change moves the baseline and
-  // every later one compares the new value against itself.
-  [[nodiscard]] auto TookEvent() const -> bool {
-    return took_event_;
+    if (!armed_) {
+      Arm();
+      return false;
+    }
+    return (!watch_.has_value() || watch_->TakeTransition()) &&
+           (!condition_ || condition_());
   }
 
  private:
@@ -265,7 +275,7 @@ class ArmedObservation {
 
   std::optional<ValueWatch> watch_;
   std::move_only_function<bool()> condition_;
-  bool took_event_ = false;
+  bool armed_ = false;
 };
 
 // What a wait carries an observation as. One event expression has one
@@ -322,9 +332,14 @@ class Observation {
     return held_.get();
   }
 
-  // Whether the candidacy that last reached a wait watching through this was an
-  // event for it. Being reached is the whole condition where nothing is armed.
-  [[nodiscard]] auto TookEvent() const -> bool;
+  // Arms what this holds, where the wait begins. Being reached holds nothing to
+  // arm.
+  void Arm() const;
+
+  // Whether the candidacy that resumed the waiting process is an event for it,
+  // asked by that process: the evaluation is the process's own (LRM 4.5).
+  // Being reached is the whole condition where nothing is held.
+  [[nodiscard]] auto Fires() const -> bool;
 
  private:
   explicit Observation(std::shared_ptr<ArmedObservation> held);

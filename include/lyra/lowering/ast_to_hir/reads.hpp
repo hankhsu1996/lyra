@@ -1,8 +1,11 @@
 #pragma once
 
-// What an evaluation can read (LRM 9.4.2): the leaves a wait on an expression
-// watches, and what a call of a function reports to one. Both are stated here,
-// by one rule, because a wait learns what a function reads only by asking it.
+// What an evaluation can read (LRM 9.4.2): the storage elaboration sealed that
+// a waited expression reads, and what a call of a function reports to a wait.
+// What a waited expression reaches beyond that is its own nodes, found by the
+// evaluation that reaches them, and needs nothing stated here.
+
+#include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -17,13 +20,11 @@ class SubroutineSymbol;
 
 namespace lyra::lowering::ast_to_hir {
 
-// What a wait on `expr` watches: every cell it reads, every object and
-// interface variable it reaches through a handle, and every call of a function
-// it makes, which reports what it reads when the wait collects its leaves.
-// Everything here is evaluated where the wait stands.
-auto ReadsOfWaitedExpression(
-    ProcessLowerer& proc, WalkFrame frame, const slang::ast::Expression& expr,
-    diag::SourceSpan span) -> diag::Result<hir::Reads>;
+// The storage elaboration sealed that `expr` reads, which a wait on it watches
+// for as long as it lasts.
+auto CellsOfWaitedExpression(
+    ProcessLowerer& proc, WalkFrame frame, const slang::ast::Expression& expr)
+    -> diag::Result<std::vector<hir::SensitivityEntry>>;
 
 // What a call of `function` can read, stated so its own report can evaluate
 // it: over its formals, the object it runs on, and storage that exists before

@@ -35,15 +35,22 @@ auto SnapshotExprToLocal(
   return snap_var;
 }
 
+auto DeclareLocal(const WalkFrame& frame, mir::ExprId init) -> mir::LocalId {
+  mir::Block& block = *frame.current_block;
+  const mir::LocalId local =
+      frame.bindings->DeclareAnonymous(block.exprs.Get(init).type);
+  block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = init});
+  return local;
+}
+
 auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value) -> mir::ExprId {
   mir::Block& block = *frame.current_block;
   if (mir::EvaluatesNothing(block, value)) {
     return value;
   }
   const mir::TypeId type = block.exprs.Get(value).type;
-  const mir::LocalId held = frame.bindings->DeclareAnonymous(type);
-  block.AppendStmt(mir::LocalDeclStmt{.target = held, .init = value});
-  return block.exprs.Add(mir::MakeLocalRefExpr(held, type));
+  return block.exprs.Add(
+      mir::MakeLocalRefExpr(DeclareLocal(frame, value), type));
 }
 
 auto SnapshotIntoClosure(

@@ -392,7 +392,8 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   result_type_ = result_type;
 
   // A function is handed where to report what a call of it reads (LRM 9.4.2),
-  // after its formals. Handed one, it reports instead of running.
+  // after its formals. Handed one, it reports first, and runs only where the
+  // waited evaluation itself made the call.
   if (const std::optional<mir::TypeId> report_type =
           ReportParamTypeOf(owner_->Unit(), src.kind)) {
     const mir::LocalId report = bindings.DeclareAnonymous(*report_type);
@@ -515,10 +516,30 @@ auto ProcessLowerer::BuildReportPrologue(
             .then_scope = asked.child_scopes.Add(std::move(entered)),
             .else_scope = std::nullopt});
   }
-  // What the function would have settled is no part of a report, so it hands
-  // back the defaults its result and outputs start at.
+  // The function a waited evaluation called runs once it has reported, since
+  // the evaluation needs its value. One another function's report called
+  // stands in for a body that does not run, and what that body would have
+  // settled is no part of a report, so it hands back the defaults its result
+  // and outputs start at.
+  mir::Block stands_in;
+  stands_in.AppendStmt(
+      mir::ReturnStmt{.value = BuildReturnPayload(stands_in, std::nullopt)});
+  const mir::ExprId within_a_report = asked.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kEquality,
+                  .lhs = BuildReportCall(
+                      unit, asked, report,
+                      support::BuiltinFn::kReadReportRunsTheBody, {},
+                      unit.builtins.machine_int64),
+                  .rhs = BuildMachineIntLiteral(unit, asked, 0)},
+          .type = unit.builtins.machine_bool});
   asked.AppendStmt(
-      mir::ReturnStmt{.value = BuildReturnPayload(asked, std::nullopt)});
+      mir::IfStmt{
+          .condition = within_a_report,
+          .then_scope = asked.child_scopes.Add(std::move(stands_in)),
+          .else_scope = std::nullopt});
 
   const mir::ExprId handed = block.exprs.Add(
       mir::Expr{

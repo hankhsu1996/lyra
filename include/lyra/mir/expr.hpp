@@ -732,6 +732,16 @@ struct Expr {
 // else (direct call to a user method, indirect, construct) is false.
 [[nodiscard]] auto IsMutatingCallee(const Callee& callee) -> bool;
 
+// `callee(arguments...)`, answering `type`.
+[[nodiscard]] inline auto MakeCallExpr(
+    Callee callee, std::vector<ExprId> arguments, TypeId type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = std::move(callee), .arguments = std::move(arguments)},
+      .type = type};
+}
+
 // `lyra::runtime::current_runtime()` -- reaches the attached Runtime's
 // capability view through a thread-local pointer the Runtime publishes for
 // its lifetime. Zero-argument free function so every body kind -- module

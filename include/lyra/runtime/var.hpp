@@ -703,11 +703,6 @@ auto WaitAny(RuntimeEffects& services, std::span<const Trigger> triggers)
 auto WaitAny(RuntimeEffects& services, std::span<const Trigger* const> triggers)
     -> bool;
 
-auto WaitUntil(RuntimeEffects& services, std::span<const Trigger> triggers)
-    -> bool;
-auto WaitUntil(
-    RuntimeEffects& services, std::span<const Trigger* const> triggers) -> bool;
-
 // Defaulted here rather than where they are declared: a constructor or
 // destructor defaulted on its first declaration is not user-provided, so a unit
 // constructing a cell would define it itself with everything it reaches, and a

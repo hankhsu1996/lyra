@@ -172,12 +172,15 @@ the subscription must represent. A virtual interface is stricter -- LRM 25.9 mak
   is evaluated once. A `ref` bound to a property outlasts any full-expression, so it carries the
   object and each write through it reports as it lands, as one bound to a variable does (LRM
   13.5.2).
-- **Collecting the sources an evaluation reached (D3, D4) is done by the waiting process.** A wait
-  whose expression reaches anything through a handle resumes on every candidacy, evaluates the
-  handles again to find what it now reaches, and waits anew; before waiting it compares the
-  expression once more, so a change made while it was not subscribed is not lost. What a function
-  the expression calls reaches (D7) the function reports when the wait collects, stated by the unit
-  that declares it:
+- **Collecting the sources an evaluation reached (D3, D4) is done by the waiting process, in the
+  evaluation itself.** A wait whose expression reaches anything through a handle resumes on every
+  candidacy and evaluates the expression once: that evaluation compares against the last value and
+  states each object it reaches as it reaches it, and the process waits anew on those
+  ([the-waiting-process-evaluates-its-wait](the-waiting-process-evaluates-its-wait.md)). Revised
+  2026-10-04: the process used to evaluate the handles again apart from the value and compare once
+  more before waiting, which ran a call in a handle's operand once per pass. What a function the
+  expression calls reaches (D7) the function reports when it is called, stated by the unit that
+  declares it:
   [a-function-reports-what-a-call-of-it-reads](a-function-reports-what-a-call-of-it-reads.md). An
   object it reaches along no chain it can evaluate is covered by every object at once, which D5
   permits.

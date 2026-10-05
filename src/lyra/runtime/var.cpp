@@ -1,6 +1,7 @@
 #include "lyra/runtime/var.hpp"
 
 #include <cstdint>
+#include <iterator>
 #include <span>
 #include <variant>
 #include <vector>
@@ -69,11 +70,6 @@ class EventControlWait : public Wait {
     return true;
   }
 
- protected:
-  [[nodiscard]] auto Triggers() const -> std::span<const Trigger> {
-    return triggers_;
-  }
-
  private:
   std::vector<Trigger> triggers_;
 };
@@ -98,32 +94,37 @@ class LevelConditionWait : public EventControlWait {
   }
 };
 
-// Waiting for an event control whose leaves are collected where it stands --
-// found through a handle, or reported by a function its expression calls.
-// What the expression reaches can move while the process waits, so the process
-// resumes on every candidacy and collects its leaves again, asking afterwards
-// whether the candidacy was an event (LRM 9.4.2).
-// Nothing watches the expression between resuming and waiting again, so a wait
-// made afresh first compares the expression against what it last found, which
-// is what catches a change made in that gap.
+// Waiting for an event control its process decides: every place the last
+// evaluation reached wakes it, and the process evaluates again to learn whether
+// that was an event and what the expression reaches now (LRM 4.5, 9.4.2).
+// Starting again after the process was stopped measures from what the
+// expression is worth then, not from what it was worth before (LRM 9.7); that
+// is an evaluation, so it is left to the process, which arms the observations
+// on its next one.
 class RecollectingEventWait : public EventControlWait {
  public:
-  using EventControlWait::EventControlWait;
+  RecollectingEventWait(
+      std::span<const Trigger> triggers,
+      std::span<const Observation* const> observations)
+      : EventControlWait(triggers) {
+    observations_.reserve(observations.size());
+    for (const Observation* observation : observations) {
+      observations_.push_back(*observation);
+    }
+  }
 
-  auto Begin(RuntimeEffects& services, CoroutineHandle leaf)
-      -> WaitOutcome override {
-    for (const Trigger& trigger : Triggers()) {
-      if (ArmedObservation* observation = trigger.observation.Get();
-          observation != nullptr && observation->Fires()) {
-        return WaitOutcome::kSatisfied;
+  // NOLINTNEXTLINE(readability-named-parameter)
+  auto Again(RuntimeEffects&, CoroutineHandle) -> WaitOutcome override {
+    for (const Observation& observation : observations_) {
+      if (ArmedObservation* held = observation.Get()) {
+        held->Disarm();
       }
     }
-    return EventControlWait::Begin(services, leaf);
+    return WaitOutcome::kSatisfied;
   }
 
-  [[nodiscard]] auto ResumesOnEveryCandidacy() const -> bool override {
-    return true;
-  }
+ private:
+  std::vector<Observation> observations_;
 };
 
 }  // namespace
@@ -211,12 +212,6 @@ auto WaitAny(RuntimeEffects& services, std::span<const Trigger> triggers)
   return services.CurrentProcess().ParkOn<EventControlWait>(services, triggers);
 }
 
-auto WaitUntil(RuntimeEffects& services, std::span<const Trigger> triggers)
-    -> bool {
-  return services.CurrentProcess().ParkOn<LevelConditionWait>(
-      services, triggers);
-}
-
 auto WaitAny(RuntimeEffects& services, std::span<const Trigger* const> triggers)
     -> bool {
   return services.CurrentProcess().ParkOn<EventControlWait>(services, triggers);
@@ -224,13 +219,16 @@ auto WaitAny(RuntimeEffects& services, std::span<const Trigger* const> triggers)
 
 namespace {
 
-// Every leaf the reports collected, one wait's worth.
+// Every leaf the reports collected, one wait's worth, leaving each report empty
+// for the evaluation after.
 auto CollectedLeaves(std::span<ReadReport* const> reports)
     -> std::vector<Trigger> {
   std::vector<Trigger> leaves;
-  for (const ReadReport* report : reports) {
-    const std::span<const Trigger> reported = report->Triggers();
-    leaves.insert(leaves.end(), reported.begin(), reported.end());
+  for (ReadReport* report : reports) {
+    std::vector<Trigger> reported = report->TakeTriggers();
+    leaves.insert(
+        leaves.end(), std::make_move_iterator(reported.begin()),
+        std::make_move_iterator(reported.end()));
   }
   return leaves;
 }
@@ -238,10 +236,11 @@ auto CollectedLeaves(std::span<ReadReport* const> reports)
 }  // namespace
 
 auto WaitRecollecting(
-    RuntimeEffects& services, std::span<ReadReport* const> reports) -> bool {
+    RuntimeEffects& services, std::span<ReadReport* const> reports,
+    std::span<const Observation* const> observations) -> bool {
   const std::vector<Trigger> leaves = CollectedLeaves(reports);
   return services.CurrentProcess().ParkOn<RecollectingEventWait>(
-      services, std::span<const Trigger>{leaves});
+      services, std::span<const Trigger>{leaves}, observations);
 }
 
 auto WaitUntil(RuntimeEffects& services, std::span<ReadReport* const> reports)
@@ -249,13 +248,6 @@ auto WaitUntil(RuntimeEffects& services, std::span<ReadReport* const> reports)
   const std::vector<Trigger> leaves = CollectedLeaves(reports);
   return services.CurrentProcess().ParkOn<LevelConditionWait>(
       services, std::span<const Trigger>{leaves});
-}
-
-auto WaitUntil(
-    RuntimeEffects& services, std::span<const Trigger* const> triggers)
-    -> bool {
-  return services.CurrentProcess().ParkOn<LevelConditionWait>(
-      services, triggers);
 }
 
 }  // namespace lyra::runtime

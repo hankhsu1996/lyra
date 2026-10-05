@@ -46,11 +46,13 @@ namespace lyra::hir {
 namespace {
 
 // How a holder names an expression. An operand is what the holder evaluates,
-// and is a place the expression is reached at. A read set and a sensitivity
-// describe what a body reads or waits on in terms of expressions the body
-// already holds, so naming one there is no place it is evaluated at; it is
-// held only to naming an expression the arena has.
-enum class Slot : std::uint8_t { kOperand, kReadSet, kSensitivity };
+// and is a place the expression is reached at. A function's report and a
+// sensitivity describe what a body reads or waits on, often in terms of
+// expressions the body itself holds: the report evaluates what it names in an
+// evaluation of its own, ahead of the body, and a sensitivity evaluates
+// nothing, so naming one there is no place the body's evaluation reaches it;
+// it is held only to naming an expression the arena has.
+enum class Slot : std::uint8_t { kOperand, kReport, kSensitivity };
 
 void ReachSensitivityEntry(const SensitivityEntry& entry, const auto& reach) {
   std::visit(
@@ -78,12 +80,12 @@ void ReachReads(const Reads& reads, const auto& reach) {
               ReachSensitivityEntry(entry, reach);
             },
             [&](const InterfaceMemberAccessExpr& access) {
-              reach(access.instance.handle, Slot::kReadSet);
+              reach(access.instance.handle, Slot::kReport);
             },
             [&](const ObjectChain& chain) {
               std::visit(
                   Overloaded{
-                      [&](const ExprId& root) { reach(root, Slot::kReadSet); },
+                      [&](const ExprId& root) { reach(root, Slot::kReport); },
                       [](const ReceiverObject&) {}},
                   chain.root);
             },
@@ -91,14 +93,14 @@ void ReachReads(const Reads& reads, const auto& reach) {
         leaf);
   }
   for (const ReportingCall& call : reads.calls) {
-    reach(call.call, Slot::kReadSet);
+    reach(call.call, Slot::kReport);
   }
 }
 
 void ReachEventControl(const EventControl& control, const auto& reach) {
   for (const EventTrigger& trigger : control.triggers) {
     reach(trigger.signal, Slot::kOperand);
-    ReachReads(trigger.reads, reach);
+    ReachSensitivity(trigger.cells, reach);
     if (trigger.condition.has_value()) {
       reach(*trigger.condition, Slot::kOperand);
     }
@@ -404,7 +406,7 @@ void ForEachExpr(const StmtData& data, const auto& reach) {
           },
           [&](const WaitStmt& s) {
             operand(s.cond);
-            ReachReads(s.reads, reach);
+            ReachSensitivity(s.cells, reach);
           },
           [](const WaitForkStmt&) {},
           [](const DisableForkStmt&) {},
@@ -781,7 +783,7 @@ struct Reacher {
       return;
     }
     switch (slot) {
-      case Slot::kReadSet:
+      case Slot::kReport:
       case Slot::kSensitivity:
         return;
       case Slot::kOperand:
@@ -878,8 +880,8 @@ auto DescribePlace(const base::Arena<Expr, ExprId>& exprs, const Place& place)
   switch (place.slot) {
     case Slot::kOperand:
       return holder;
-    case Slot::kReadSet:
-      return std::format("the read set of {}", holder);
+    case Slot::kReport:
+      return std::format("the report of {}", holder);
     case Slot::kSensitivity:
       return std::format("the sensitivity of {}", holder);
   }
