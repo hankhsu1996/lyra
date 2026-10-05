@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <expected>
 #include <limits>
-#include <optional>
 #include <span>
 #include <utility>
 #include <variant>
@@ -221,8 +220,8 @@ auto LowerDistributionSystemSubroutineCall(
       seed_type);
   body.AppendStmt(
       mir::ExprStmt{
-          .expr = body.exprs.Add(BuildStoreExpr(
-              unit, body, seed.place, advanced, std::nullopt, seed_type))});
+          .expr = body.exprs.Add(
+              BuildStoreExpr(unit, body, seed.place, advanced))});
 
   return steps.Build(ProjectCompletionComponent(
       body, completion, payload_type, kDrawnValue, int_type));

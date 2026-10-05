@@ -268,44 +268,17 @@ void RenderReferenceExpr(
 }
 
 // `target = value` or `target op= value`. The target always renders as a C++
-// lvalue, and `op=` evaluates it once, as LRM 11.4.1 requires. An assignment
-// has the loosest precedence, so it is parenthesized wherever its value is used
-// as an operand.
+// lvalue, and `op=` evaluates it once, as LRM 11.4.1 requires. A write yields
+// nothing, so it stands only where a statement does and never needs
+// parentheses.
 void RenderAssignExpr(
-    const ScopeView& view, const mir::AssignExpr& a, Precedence at_least,
-    TargetText& out) {
-  const Enclosure enclosure(out, Precedence::kAssignment, at_least);
+    const ScopeView& view, const mir::AssignExpr& a, TargetText& out) {
   const Operand target{.expr = a.target, .at_least = Precedence::kPrefix};
   if (a.compound_op.has_value()) {
     Write(view, out, target, " ", BinaryOpToken(*a.compound_op), "= ", a.value);
     return;
   }
   Write(view, out, target, " = ", a.value);
-}
-
-void RenderIncDecExpr(
-    const ScopeView& view, const mir::IncDecExpr& inc, Precedence at_least,
-    TargetText& out) {
-  const Operand target{.expr = inc.target, .at_least = Precedence::kPostfix};
-  switch (inc.op) {
-    case mir::IncDecOp::kPreInc: {
-      const Enclosure enclosure(out, Precedence::kPrefix, at_least);
-      Write(view, out, "++", target);
-      return;
-    }
-    case mir::IncDecOp::kPostInc:
-      Write(view, out, target, "++");
-      return;
-    case mir::IncDecOp::kPreDec: {
-      const Enclosure enclosure(out, Precedence::kPrefix, at_least);
-      Write(view, out, "--", target);
-      return;
-    }
-    case mir::IncDecOp::kPostDec:
-      Write(view, out, target, "--");
-      return;
-  }
-  throw InternalError("RenderIncDecExpr: unknown IncDecOp");
 }
 
 // The value a closure construction gives one field. The values are listed in
@@ -552,12 +525,7 @@ void RenderExpr(
           [&](const mir::BlockExpr& b) {
             RenderBlockExpr(view, b, at_least, out);
           },
-          [&](const mir::AssignExpr& a) {
-            RenderAssignExpr(view, a, at_least, out);
-          },
-          [&](const mir::IncDecExpr& inc) {
-            RenderIncDecExpr(view, inc, at_least, out);
-          },
+          [&](const mir::AssignExpr& a) { RenderAssignExpr(view, a, out); },
           [&](const mir::CallExpr& call) {
             RenderCallExpr(view, call, expr.type, out);
           },

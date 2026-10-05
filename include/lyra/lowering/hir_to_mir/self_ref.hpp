@@ -1,6 +1,5 @@
 #pragma once
 
-#include <optional>
 #include <variant>
 #include <vector>
 
@@ -134,7 +133,7 @@ auto BuildReferenceArg(
 // closure's field-init placement share the reference-value construction but not
 // this store. Returns the store expression for the caller to sequence.
 auto BindReferenceSlot(
-    mir::Block& block, mir::ExprId ref_lvalue, mir::ExprId reference)
-    -> mir::ExprId;
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ref_lvalue,
+    mir::ExprId reference) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

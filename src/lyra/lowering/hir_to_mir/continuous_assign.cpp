@@ -126,10 +126,7 @@ auto LowerContinuousAssign(
       resolve_block.AppendStmt(
           mir::ExprStmt{
               .expr = resolve_block.exprs.Add(
-                  mir::Expr{
-                      .data =
-                          mir::AssignExpr{.target = handle, .value = attach},
-                      .type = driver_type})});
+                  mir::MakeAssignExpr(unit.builtins, handle, attach))});
     }
   }
 
@@ -138,16 +135,14 @@ auto LowerContinuousAssign(
     auto value_or = lowerer.LowerExpr(hir_rhs, frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::ExprId value = block.exprs.Add(*std::move(value_or));
-    const mir::TypeId value_type = block.exprs.Get(value).type;
     auto destination_or = lower_destination(frame);
     if (!destination_or) {
       return std::unexpected(std::move(destination_or.error()));
     }
     block.AppendStmt(
         mir::ExprStmt{
-            .expr = block.exprs.Add(BuildStoreExpr(
-                unit, block, *destination_or, value, std::nullopt,
-                value_type))});
+            .expr = block.exprs.Add(
+                BuildStoreExpr(unit, block, *destination_or, value))});
     return {};
   };
 

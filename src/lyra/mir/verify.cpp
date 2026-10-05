@@ -107,7 +107,6 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
             reach(e.target);
             reach(e.value);
           },
-          [&](const IncDecExpr& e) { reach(e.target); },
           [&](const CallExpr& e) {
             std::visit(
                 Overloaded{
@@ -208,7 +207,6 @@ auto ComputesNothingItself(const ExprData& data) -> bool {
           [](const ConditionalExpr&) { return false; },
           [](const BlockExpr&) { return false; },
           [](const AssignExpr&) { return false; },
-          [](const IncDecExpr&) { return false; },
           [](const CallExpr&) { return false; },
           [](const MoveExpr&) { return false; },
           [](const ClosureExpr&) { return false; },
@@ -247,9 +245,6 @@ auto Describe(const ExprData& data) -> std::string {
           [](const ConditionalExpr&) -> std::string { return "a conditional"; },
           [](const BlockExpr&) -> std::string { return "a block expression"; },
           [](const AssignExpr&) -> std::string { return "an assignment"; },
-          [](const IncDecExpr&) -> std::string {
-            return "an increment or decrement";
-          },
           [](const CallExpr& call) -> std::string {
             const auto entry = DirectBuiltinFn(call);
             return entry.has_value() ? std::format(

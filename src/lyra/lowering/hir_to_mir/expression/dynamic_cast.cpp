@@ -5,7 +5,6 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -128,9 +127,8 @@ auto LowerHirDynamicCastExpr(
   const AccessPath target = *std::move(target_or);
   taken.AppendStmt(
       mir::ExprStmt{
-          .expr = taken.exprs.Add(BuildStoreExpr(
-              unit, taken, target, read_value(taken), std::nullopt,
-              destination_type))});
+          .expr = taken.exprs.Add(
+              BuildStoreExpr(unit, taken, target, read_value(taken)))});
 
   std::optional<mir::BlockId> invalid_scope;
   if (c.on_invalid == hir::InvalidAssignmentHandling::kReported) {

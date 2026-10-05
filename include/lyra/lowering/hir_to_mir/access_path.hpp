@@ -282,10 +282,10 @@ using CompoundOperation = std::variant<mir::BinaryOp, support::BuiltinFn>;
 // so it is a call taking the wrapper as its destination; applying a
 // library-performed operator is a call on the place the path designates, which
 // updates what that place holds; every other write is a store into that place,
-// compound or not.
+// compound or not. Each yields nothing.
 [[nodiscard]] auto BuildStoreExpr(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
-    mir::ExprId rhs_id, std::optional<CompoundOperation> compound_op,
-    mir::TypeId result_type) -> mir::Expr;
+    mir::ExprId rhs_id,
+    std::optional<CompoundOperation> compound_op = std::nullopt) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

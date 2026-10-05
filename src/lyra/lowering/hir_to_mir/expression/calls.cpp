@@ -479,9 +479,8 @@ auto BuildAssociativeTraversal(
       body, completion, payload_type, kTraversalVisitedIndex, key_type);
   body.AppendStmt(
       mir::ExprStmt{
-          .expr = body.exprs.Add(BuildStoreExpr(
-              unit, body, visited_into.place, visited_id, std::nullopt,
-              key_type))});
+          .expr = body.exprs.Add(
+              BuildStoreExpr(unit, body, visited_into.place, visited_id))});
 
   return steps.Build(ProjectCompletionComponent(
       body, completion, payload_type, kTraversalFound, result_type));

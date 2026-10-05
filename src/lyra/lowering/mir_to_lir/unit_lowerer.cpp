@@ -653,7 +653,6 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
           },
           [&](const mir::BlockExpr&) { return not_data("a block"); },
           [&](const mir::AssignExpr&) { return not_data("an assignment"); },
-          [&](const mir::IncDecExpr&) { return not_data("an increment"); },
           [&](const mir::CallExpr&) { return not_data("a call"); },
           [&](const mir::DerefExpr&) { return not_data("a dereference"); },
           [&](const mir::MoveExpr&) { return not_data("a move"); },

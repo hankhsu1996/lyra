@@ -218,9 +218,10 @@ void BindPatternIdentifiers(
                 mir::ExprStmt{
                     .expr = assigned.exprs.Add(
                         mir::MakeAssignExpr(
+                            owner.Unit().builtins,
                             assigned.exprs.Add(
                                 mir::MakeLocalRefExpr(local, type)),
-                            Read(owner, assigned, subject), type))});
+                            Read(owner, assigned, subject)))});
           },
           [&](const hir::TaggedPattern& tagged) {
             if (!tagged.value_pattern.has_value()) return;

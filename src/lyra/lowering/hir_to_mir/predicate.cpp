@@ -129,8 +129,8 @@ auto BuildMergingSelection(
         mir::ExprStmt{
             .expr = evaluated.exprs.Add(
                 mir::MakeAssignExpr(
-                    ReadLocal(evaluated, local, result_type), *value_or,
-                    result_type))});
+                    unit.builtins, ReadLocal(evaluated, local, result_type),
+                    *value_or))});
     body.AppendStmt(
         mir::IfStmt{
             .condition = BuildLogicalNot(body, known(selects_other)),

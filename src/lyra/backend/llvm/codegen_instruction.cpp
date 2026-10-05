@@ -669,10 +669,9 @@ auto CodeGenFunction::LowerMachineUnary(const lir::UnaryInstr& unary)
   if (!operand) {
     return std::unexpected(std::move(operand.error()));
   }
-  // Signedness decides none of these: negation, complement and the successor
-  // and predecessor are one instruction whichever way the sign bit is read.
+  // Signedness decides none of these: negation and complement are one
+  // instruction whichever way the sign bit is read.
   llvm::Value* const zero = llvm::ConstantInt::get((*operand)->getType(), 0);
-  llvm::Value* const one = llvm::ConstantInt::get((*operand)->getType(), 1);
   switch (unary.op) {
     case lir::UnaryOp::kLogicalNot:
       return builder_.CreateICmpEQ(*operand, zero);
@@ -680,10 +679,6 @@ auto CodeGenFunction::LowerMachineUnary(const lir::UnaryInstr& unary)
       return builder_.CreateSub(zero, *operand);
     case lir::UnaryOp::kBitwiseNot:
       return builder_.CreateNot(*operand);
-    case lir::UnaryOp::kIncrement:
-      return builder_.CreateAdd(*operand, one);
-    case lir::UnaryOp::kDecrement:
-      return builder_.CreateSub(*operand, one);
   }
   throw InternalError("llvm codegen: unknown unary operator");
 }

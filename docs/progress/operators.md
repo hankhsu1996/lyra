@@ -18,7 +18,7 @@ Every numbered item is closed. What stays open is the forms recorded as rejected
 
 ## Sub-Steps
 
-The numeric IDs (W1..W15) imply execution order; where a cut is independent the text says so.
+The numeric IDs (W1..W18) imply execution order; where a cut is independent the text says so.
 
 ### Membership and equality
 
@@ -126,12 +126,13 @@ merged node.
         has no value-layer representation, so the product traversal every other aggregate shares
         does not reach it.
   - [ ] A streaming target on a continuous assignment, and a concatenation target anywhere but a
-        procedural assignment statement: a continuous assignment (`assign {a, b} = x;`), an `output`
-        or `inout` actual, a destination a system task stores into, a concatenation nested in
-        another. Each is rejected with a diagnostic naming the target. A join of destinations is not
-        one place, so it needs the distribution into several targets that the procedural form
-        performs. What it waits on is that distribution becoming one component the destructuring
-        assignment, the streaming unpack, and every other write all reach.
+        procedural assignment, written as a statement or inside an expression: a continuous
+        assignment (`assign {a, b} = x;`), an `output` or `inout` actual, a destination a system
+        task stores into, a concatenation nested in another. Each is rejected with a diagnostic
+        naming the target. A join of destinations is not one place, so it needs the distribution
+        into several targets that the procedural form performs. What it waits on is that
+        distribution becoming one component the destructuring assignment, the streaming unpack, and
+        every other write all reach.
   - [ ] An unpacked union anywhere in a stream. LRM 11.4.14.1 streams its first-declared member
         whatever member is live, and the front end already resolves that much. What blocks it is the
         union's own storage: this pipeline keeps only the active member and reports a read of any
@@ -162,6 +163,16 @@ merged node.
       a write of part of the member, an assignment operator, an increment and a nonblocking
       assignment. Before this a read ran it twice and every write three times; an unpacked tagged
       union was already right.
+- [x] W18 -- An assignment used as a value (LRM 11.3.6) yields what it stored: the right-hand side
+      cast to the target's type, held once, so a write the target drops (past the end of a queue)
+      still yields the value assigned. That holds for every target -- a whole variable of any type,
+      a part of a packed value, a class property, a function's own variable, and a concatenation,
+      which yields an unsigned value as wide as its operands together -- and for a compound
+      assignment, which yields the value it computed with its target evaluated once. An assignment
+      may stand wherever a value does: a condition of `if` or `while`, an operand, the right-hand
+      side of another assignment. Before this an assignment to a whole variable used as a value
+      aborted the execution backend and did not compile on the C++ backend, and one to a packed part
+      did not compile on the C++ backend.
 
 ### Evaluation order
 

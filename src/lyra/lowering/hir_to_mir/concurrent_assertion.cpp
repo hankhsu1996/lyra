@@ -66,12 +66,13 @@ auto Read(mir::Block& block, mir::LocalId local, mir::TypeId type)
 }
 
 void Assign(
-    mir::Block& block, mir::LocalId local, mir::TypeId type,
-    mir::ExprId value) {
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId local,
+    mir::TypeId type, mir::ExprId value) {
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
-              mir::MakeAssignExpr(Read(block, local, type), value, type))});
+              mir::MakeAssignExpr(
+                  unit.builtins, Read(block, local, type), value))});
 }
 
 // One position set as body locals, one per word of the automaton's width. A
@@ -112,11 +113,11 @@ auto AnyOf(
 
 // `words |= mask`, one word at a time.
 void OrInto(
-    mir::Block& block, mir::TypeId type, const std::vector<mir::LocalId>& words,
-    const PositionSet& mask) {
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
+    const std::vector<mir::LocalId>& words, const PositionSet& mask) {
   for (std::size_t word = 0; word < words.size(); ++word) {
     Assign(
-        block, words[word], type,
+        unit, block, words[word], type,
         Op(block, type, mir::BinaryOp::kBitwiseOr,
            Read(block, words[word], type), Word(block, type, mask[word])));
   }
@@ -384,7 +385,7 @@ auto LowerAdvance(
       DeclareWords(bindings, body, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     Assign(
-        body, need[word], word_type,
+        unit, body, need[word], word_type,
         call(
             body, support::BuiltinFn::kEvaluationAttemptsLiveWord,
             {Word(body, word_type, word)}, word_type));
@@ -394,7 +395,7 @@ auto LowerAdvance(
       continue;
     }
     mir::Block reached;
-    OrInto(reached, word_type, need, seed.consequent_start);
+    OrInto(unit, reached, word_type, need, seed.consequent_start);
     AppendIf(
         body, AnyOf(body, unit, need, seed.antecedent_last),
         std::move(reached));
@@ -421,7 +422,7 @@ auto LowerAdvance(
     // matches whatever the design does there, so its bit is set whenever it is
     // reached.
     mir::Block held;
-    OrInto(held, word_type, hold, at);
+    OrInto(unit, held, word_type, hold, at);
     AppendIf(reached, AllHold(unit, reached, conjuncts), std::move(held));
     AppendIf(body, AnyOf(body, unit, need, at), std::move(reached));
   }
@@ -442,7 +443,7 @@ auto LowerAdvance(
       DeclareWords(bindings, sweep, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     Assign(
-        sweep, bits[word], word_type,
+        unit, sweep, bits[word], word_type,
         call(
             sweep, support::BuiltinFn::kEvaluationAttemptsBitsAt,
             {Read(sweep, cursor, index_type), Word(sweep, word_type, word)},
@@ -452,7 +453,7 @@ auto LowerAdvance(
       DeclareWords(bindings, sweep, word_type, empty);
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     Assign(
-        sweep, matched[word], word_type,
+        unit, sweep, matched[word], word_type,
         Op(sweep, word_type, mir::BinaryOp::kBitwiseAnd,
            Read(sweep, bits[word], word_type),
            Read(sweep, hold[word], word_type)));
@@ -462,7 +463,7 @@ auto LowerAdvance(
   for (std::size_t position = 0; position < automaton.positions.size();
        ++position) {
     mir::Block advanced;
-    OrInto(advanced, word_type, next, automaton.follow[position]);
+    OrInto(unit, advanced, word_type, next, automaton.follow[position]);
     AppendIf(
         sweep, AnyOf(sweep, unit, matched, bit_at(position)),
         std::move(advanced));
@@ -497,7 +498,7 @@ auto LowerAdvance(
         std::move(seeded));
   }
   Assign(
-      sweep, cursor, index_type,
+      unit, sweep, cursor, index_type,
       call(
           sweep, support::BuiltinFn::kEvaluationAttemptsNextUnstepped, {},
           index_type));

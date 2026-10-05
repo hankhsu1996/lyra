@@ -411,8 +411,8 @@ auto LowerHirAssignmentPatternKeyedExpr(
             lowerer.Owner(), body, result_type, index_id, element_type));
     body.AppendStmt(
         mir::ExprStmt{
-            .expr = body.exprs.Add(BuildStoreExpr(
-                unit, body, target, value_id, std::nullopt, element_type))});
+            .expr =
+                body.exprs.Add(BuildStoreExpr(unit, body, target, value_id))});
   }
 
   return steps.Build(body.exprs.Add(mir::MakeLocalRefExpr(built, result_type)));

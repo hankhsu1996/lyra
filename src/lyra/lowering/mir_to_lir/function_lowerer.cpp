@@ -30,7 +30,6 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/inc_dec_op.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -890,17 +889,6 @@ void FunctionLowerer::EndSlotValue(lir::ValueId slot) {
 void FunctionLowerer::OpenScope(ScopeKind kind) {
   scopes_.push_back(
       UnwindScope{.kind = std::move(kind), .unwind_entry = std::nullopt});
-}
-
-auto FunctionLowerer::Kept(lir::Operand value) -> lir::Operand {
-  const std::optional<lir::TypeId> type = lir::OperandType(fn_, value);
-  if (!type.has_value() || !unit_->Types().Get(*type).IsOwnedValue() ||
-      OwesItsEnd(value)) {
-    return value;
-  }
-  return Emit(
-      *type, lir::CallInstr{
-                 .target = lir::CopyValueTarget{}, .args = {std::move(value)}});
 }
 
 auto FunctionLowerer::OwesItsEnd(const lir::Operand& value) const -> bool {
@@ -2295,12 +2283,7 @@ auto FunctionLowerer::LowerPlace(
           [&](const mir::BlockExpr&) {
             return names_no_place("the value a sequence of steps settles");
           },
-          [&](const mir::AssignExpr&) {
-            return names_no_place("the value an assignment yields");
-          },
-          [&](const mir::IncDecExpr&) {
-            return names_no_place("the value an increment yields");
-          },
+          [&](const mir::AssignExpr&) { return names_no_place("a write"); },
           [&](const mir::CallExpr&) {
             return names_no_place("a call's result");
           },
@@ -2923,11 +2906,7 @@ auto FunctionLowerer::LowerCompoundOperator(
 auto FunctionLowerer::LowerAssign(
     const mir::Block& block, const mir::AssignExpr& assign)
     -> diag::Result<lir::Operand> {
-  // The assignment's own value is what it wrote, which the target's update
-  // yields nothing of -- a write completes with void -- so it is kept here as
-  // the change runs.
-  std::optional<lir::Operand> assigned;
-  auto written = UpdateTarget(
+  return UpdateTarget(
       block, assign.target,
       [&](const ValueReader& read_old,
           lir::TypeId type) -> diag::Result<lir::Operand> {
@@ -2936,21 +2915,15 @@ auto FunctionLowerer::LowerAssign(
           return std::unexpected(std::move(rhs.error()));
         }
         if (!assign.compound_op.has_value()) {
-          assigned = *std::move(rhs);
-          return *assigned;
+          return *std::move(rhs);
         }
         auto old_value = read_old();
         if (!old_value) {
           return std::unexpected(std::move(old_value.error()));
         }
-        assigned = LowerCompoundOperator(
+        return LowerCompoundOperator(
             *assign.compound_op, *std::move(old_value), *std::move(rhs), type);
-        return *assigned;
       });
-  if (!written) {
-    return std::unexpected(std::move(written.error()));
-  }
-  return *assigned;
 }
 
 auto FunctionLowerer::UpdateTarget(
@@ -3268,40 +3241,6 @@ auto FunctionLowerer::LowerMutatingCall(
   return *result;
 }
 
-auto FunctionLowerer::LowerIncDec(
-    const mir::Block& block, const mir::IncDecExpr& inc_dec)
-    -> diag::Result<lir::Operand> {
-  const bool is_increment = inc_dec.op == mir::IncDecOp::kPreInc ||
-                            inc_dec.op == mir::IncDecOp::kPostInc;
-  const bool is_prefix = inc_dec.op == mir::IncDecOp::kPreInc ||
-                         inc_dec.op == mir::IncDecOp::kPreDec;
-  const lir::UnaryOp op =
-      is_increment ? lir::UnaryOp::kIncrement : lir::UnaryOp::kDecrement;
-
-  // Which of the two the statement's own value is (LRM 11.4.2) is settled after
-  // the step runs, so both are kept as it does.
-  std::optional<lir::Operand> old;
-  std::optional<lir::Operand> stepped;
-  auto written = UpdateTarget(
-      block, inc_dec.target,
-      [&](const ValueReader& read_old,
-          lir::TypeId type) -> diag::Result<lir::Operand> {
-        // The old value is what a postfix step answers with after the write,
-        // so it is kept rather than read where the write lands.
-        auto read = read_old();
-        if (!read) {
-          return std::unexpected(std::move(read.error()));
-        }
-        old = Kept(*std::move(read));
-        stepped = Emit(type, lir::UnaryInstr{.op = op, .operand = *old});
-        return *stepped;
-      });
-  if (!written) {
-    return std::unexpected(std::move(written.error()));
-  }
-  return is_prefix ? *stepped : *old;
-}
-
 auto FunctionLowerer::LowerConditional(
     const mir::Block& block, const mir::ConditionalExpr& cond, mir::TypeId type)
     -> diag::Result<lir::Operand> {
@@ -3539,9 +3478,6 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           },
           [&](const mir::AssignExpr& assign) -> diag::Result<lir::Operand> {
             return LowerAssign(block, assign);
-          },
-          [&](const mir::IncDecExpr& inc_dec) -> diag::Result<lir::Operand> {
-            return LowerIncDec(block, inc_dec);
           },
           [&](const mir::UnaryExpr& un) -> diag::Result<lir::Operand> {
             auto operand = LowerExpr(block, un.operand);

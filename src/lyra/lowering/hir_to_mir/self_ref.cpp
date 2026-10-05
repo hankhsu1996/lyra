@@ -196,12 +196,10 @@ auto BuildReferenceArg(
 }
 
 auto BindReferenceSlot(
-    mir::Block& block, mir::ExprId ref_lvalue, mir::ExprId reference)
-    -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ref_lvalue,
+    mir::ExprId reference) -> mir::ExprId {
   return block.exprs.Add(
-      mir::Expr{
-          .data = mir::AssignExpr{.target = ref_lvalue, .value = reference},
-          .type = block.exprs.Get(ref_lvalue).type});
+      mir::MakeAssignExpr(unit.builtins, ref_lvalue, reference));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

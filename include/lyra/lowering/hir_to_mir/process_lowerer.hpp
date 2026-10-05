@@ -154,6 +154,11 @@ class ProcessLowerer {
   auto LowerExpr(const hir::Expr& expr, WalkFrame frame)
       -> diag::Result<mir::Expr>;
 
+  // The same expression where nothing reads its value: a statement, a loop's
+  // initializer or step. A write is then the write alone.
+  auto LowerIgnoredExpr(const hir::Expr& expr, WalkFrame frame)
+      -> diag::Result<mir::Expr>;
+
   // Dispatcher for an expression named as a part rather than read: same
   // dispatch as `LowerExpr` but peeling rather than composing, so what comes
   // out is the place that owns the value and the descent that reaches the

@@ -52,10 +52,6 @@ auto UnaryOpName(UnaryOp op) -> std::string_view {
       return "not";
     case UnaryOp::kLogicalNot:
       return "logical_not";
-    case UnaryOp::kIncrement:
-      return "inc";
-    case UnaryOp::kDecrement:
-      return "dec";
   }
   throw InternalError("lir: unknown unary operator");
 }

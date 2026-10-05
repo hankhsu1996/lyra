@@ -136,6 +136,17 @@ exactly Rust's overloaded arm, reached for the same reason.
 Evaluate-once is untouched and is now the same sentence for both shapes: the target is one
 expression, reached once, whether the store applies the operator or the entry does.
 
+## Revised: the node is the write alone (2026-10-05)
+
+The reason given above -- MIR has no temporary vocabulary, so a read-op-write desugar would have to
+hoist every left-hand subscript -- no longer holds: a block expression holds locals, and a target
+can be settled once and then read and written. What keeps the node is the write nobody reads the
+value of, which it states in one node with its target reached once. A write now yields nothing, so
+where the source reads a compound assignment's value (LRM 11.3.6) the lowering does what Clang's
+CodeGen does: settle the target, compute the operator over what it holds, hold that, store it, and
+yield it. The value is the one computed, not the target read back, which differs where the write is
+dropped.
+
 ## Consequences
 
 - One runtime write-back proxy, `StringCharRef`: a string character has no in-place reference

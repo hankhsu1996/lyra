@@ -32,19 +32,15 @@ namespace {
 // An expression a loop evaluates once per iteration -- its condition, its step
 // -- lowered through steps of its own. Whatever lowering it binds is then bound
 // each time it is evaluated: a statement placed in the block the loop stands in
-// would run once, ahead of the loop, however many iterations follow. `finish`
-// settles the value the steps yield, in their block.
-template <typename Finish>
-auto LowerPerIteration(
-    ProcessLowerer& process, const WalkFrame& frame, hir::ExprId expr,
-    const Finish& finish) -> diag::Result<mir::Expr> {
+// would run once, ahead of the loop, however many iterations follow. `lower`
+// builds the value the steps yield, in their block.
+template <typename Lower>
+auto LowerPerIteration(const WalkFrame& frame, const Lower& lower)
+    -> diag::Result<mir::Expr> {
   BlockBuilder steps(frame);
-  auto lowered =
-      process.LowerExpr(process.HirBody().exprs.Get(expr), steps.Frame());
-  if (!lowered) return std::unexpected(std::move(lowered.error()));
-  mir::Block& body = steps.Body();
-  const mir::ExprId value = finish(body, body.exprs.Add(*std::move(lowered)));
-  return steps.Build(value);
+  auto value = lower(steps.Frame());
+  if (!value) return std::unexpected(std::move(value.error()));
+  return steps.Build(*value);
 }
 
 // A loop's condition, as the machine boolean the loop tests.
@@ -52,8 +48,26 @@ auto LowerLoopCondition(
     ProcessLowerer& process, const WalkFrame& frame, hir::ExprId condition)
     -> diag::Result<mir::Expr> {
   return LowerPerIteration(
-      process, frame, condition, [&](mir::Block& body, mir::ExprId value) {
-        return ReduceToCondition(process.Owner().Unit(), body, value);
+      frame, [&](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+        auto lowered =
+            process.LowerExpr(process.HirBody().exprs.Get(condition), at);
+        if (!lowered) return std::unexpected(std::move(lowered.error()));
+        mir::Block& body = *at.current_block;
+        return ReduceToCondition(
+            process.Owner().Unit(), body, body.exprs.Add(*std::move(lowered)));
+      });
+}
+
+// A loop's step, evaluated for its effect.
+auto LowerLoopStep(
+    ProcessLowerer& process, const WalkFrame& frame, hir::ExprId step)
+    -> diag::Result<mir::Expr> {
+  return LowerPerIteration(
+      frame, [&](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+        auto lowered =
+            process.LowerIgnoredExpr(process.HirBody().exprs.Get(step), at);
+        if (!lowered) return std::unexpected(std::move(lowered.error()));
+        return at.current_block->exprs.Add(*std::move(lowered));
       });
 }
 
@@ -77,7 +91,7 @@ auto LowerForStmt(
   std::vector<mir::ForInit> mir_init;
   mir_init.reserve(f.init.size());
   for (const hir::ExprId init : f.init) {
-    auto expr_or = process.LowerExpr(hir_proc.exprs.Get(init), frame);
+    auto expr_or = process.LowerIgnoredExpr(hir_proc.exprs.Get(init), frame);
     if (!expr_or) return std::unexpected(std::move(expr_or.error()));
     mir_init.emplace_back(
         mir::ForInitExpr{.expr = block.exprs.Add(*std::move(expr_or))});
@@ -95,9 +109,7 @@ auto LowerForStmt(
   std::vector<mir::ExprId> step_ids;
   step_ids.reserve(f.step.size());
   for (const hir::ExprId step_hid : f.step) {
-    auto step_or = LowerPerIteration(
-        process, frame, step_hid,
-        [](mir::Block&, mir::ExprId value) { return value; });
+    auto step_or = LowerLoopStep(process, frame, step_hid);
     if (!step_or) {
       return std::unexpected(std::move(step_or.error()));
     }
@@ -215,11 +227,9 @@ auto BuildStoredIndexLoopStmt(
     mir::ExprId first, mir::BinaryOp goes_on_while, mir::ExprId bound,
     mir::BinaryOp advance, mir::BlockId body_scope,
     std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
-  const mir::TypeId int_type = unit.builtins.int_type;
   const auto read = [&] { return PathValue(unit, block, index); };
   const auto write = [&](mir::ExprId value) {
-    return block.exprs.Add(
-        BuildStoreExpr(unit, block, index, value, std::nullopt, int_type));
+    return block.exprs.Add(BuildStoreExpr(unit, block, index, value));
   };
   return BuildIndexLoopStmt(
       unit, block, mir::ForInit{mir::ForInitExpr{.expr = write(first)}}, read,
@@ -252,10 +262,7 @@ auto BuildCountingLoopStmt(
     return block.exprs.Add(mir::MakeLocalRefExpr(position, int_type));
   };
   const auto write = [&](mir::ExprId value) {
-    return block.exprs.Add(
-        mir::Expr{
-            .data = mir::AssignExpr{.target = read(), .value = value},
-            .type = int_type});
+    return block.exprs.Add(mir::MakeAssignExpr(unit.builtins, read(), value));
   };
   return BuildIndexLoopStmt(
       unit, block,

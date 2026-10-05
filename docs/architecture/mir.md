@@ -465,14 +465,17 @@ first leaves the answer open: SystemVerilog's `a && b` is `a ? b : 0` over the o
 set skips an operand and no backend's own rules decide whether one runs. An arm is needed on two of
 the three outcomes, so it is evaluated once into a local on those and read from there, which keeps a
 chain of such selections linear in its length. Which shape a source-level conditional takes follows
-from its predicate's type and is settled at HIR-to-MIR, so no consumer derives it. A value-build
-primitive spells a value rather than operating on values that already exist -- a structured literal
-is one, and so is every peer language's array or aggregate literal. Select expressions are access
-primitives. Each of these stays in MIR for the same reason: removing it would require expanding into
-a statement-form rewrite that does not fit the expression context. Composing values that already
-exist is not this. A concatenation or a replication is an operation over its operands, which every
-peer reaches through a library call and none of them spells as a node, so it is a `CallExpr` against
-the entry that performs it.
+from its predicate's type and is settled at HIR-to-MIR, so no consumer derives it. A write yields
+nothing, as an assignment does in Rust's MIR: what an assignment yields where the source reads it
+(LRM 11.3.6) is what it stored, which the lowering holds in a local and reads, so no backend's own
+rule for the value of an assignment -- C++'s is the target itself -- decides it, and an increment is
+a compound write by one. A value-build primitive spells a value rather than operating on values that
+already exist -- a structured literal is one, and so is every peer language's array or aggregate
+literal. Select expressions are access primitives. Each of these stays in MIR for the same reason:
+removing it would require expanding into a statement-form rewrite that does not fit the expression
+context. Composing values that already exist is not this. A concatenation or a replication is an
+operation over its operands, which every peer reaches through a library call and none of them spells
+as a node, so it is a `CallExpr` against the entry that performs it.
 
 A callable is one concept: callable code (a signature, plus a body where the declaration defines it)
 and a callable value (code plus a bound environment). A closure is a callable value with a captured

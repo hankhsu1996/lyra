@@ -730,8 +730,7 @@ auto PopulateForeignImportBoundary(
     const mir::ExprId rhs_id = BuildBoundaryReadback(
         unit_lowerer, cframe, wb.carrier, temp_ref, wb.carrier_type,
         wb.sv_type);
-    const mir::Expr assign =
-        BuildStoreExpr(unit, body, wb.actual, rhs_id, std::nullopt, wb.sv_type);
+    const mir::Expr assign = BuildStoreExpr(unit, body, wb.actual, rhs_id);
     body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign)});
   }
 
@@ -867,13 +866,10 @@ auto LowerForeignImportSequenced(
   body.AppendStmt(
       mir::ExprStmt{
           .expr = body.exprs.Add(
-              mir::Expr{
-                  .data =
-                      mir::AssignExpr{
-                          .target = body.exprs.Add(
-                              mir::MakeLocalRefExpr(result, result_type)),
-                          .value = result_id},
-                  .type = result_type})});
+              mir::MakeAssignExpr(
+                  unit.builtins,
+                  body.exprs.Add(mir::MakeLocalRefExpr(result, result_type)),
+                  result_id))});
   CloseDpiScopeExtent(
       unit_lowerer, cframe, std::move(extent_body), declaring_scope);
   return steps.Build(
@@ -1419,7 +1415,7 @@ auto SynthesizeForeignExportEntry(
     body.AppendStmt(
         mir::ExprStmt{
             .expr = body.exprs.Add(
-                mir::MakeAssignExpr(place, carrier, void_type))});
+                mir::MakeAssignExpr(unit.builtins, place, carrier))});
   }
 
   if (!is_task && has_return) {

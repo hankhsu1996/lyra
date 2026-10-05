@@ -68,8 +68,9 @@ assignment, and no payload restating what the children already say. A backend re
 reading which node is at the target position; it never inspects a receiver's type kind to classify a
 step, and it never walks a chain to find where the place prefix ends.
 
-`AssignExpr.target` and `IncDecExpr.target` accept either form. Nothing else about those nodes
-changes: the single compound-assignment shape `{target, compound_op, value}` stands
+`AssignExpr.target` accepts either form, and so did an increment's target while MIR had an increment
+node (an increment is now a compound write by one). Nothing else about the node changes: the single
+compound-assignment shape `{target, compound_op, value}` stands
 ([compound-assignment-write-location](compound-assignment-write-location.md)).
 
 ### D2. The selector set is closed, coordinate-facing, and realized per value domain

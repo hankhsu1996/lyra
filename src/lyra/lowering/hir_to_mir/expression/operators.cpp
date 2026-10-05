@@ -128,20 +128,6 @@ auto LowerCompoundOperation(hir::BinaryOp op) -> CompoundOperation {
 
 namespace {
 
-auto LowerIncDecOp(hir::IncDecOp op) -> mir::IncDecOp {
-  switch (op) {
-    case hir::IncDecOp::kPreInc:
-      return mir::IncDecOp::kPreInc;
-    case hir::IncDecOp::kPostInc:
-      return mir::IncDecOp::kPostInc;
-    case hir::IncDecOp::kPreDec:
-      return mir::IncDecOp::kPreDec;
-    case hir::IncDecOp::kPostDec:
-      return mir::IncDecOp::kPostDec;
-  }
-  throw InternalError("LowerIncDecOp: unknown HIR IncDecOp");
-}
-
 auto MakeLibraryCall(
     support::BuiltinFn entry, mir::ExprId receiver,
     std::vector<mir::ExprId> arguments, mir::TypeId result_type) -> mir::Expr {
@@ -523,25 +509,6 @@ auto LowerHirConditionalExpr(
 }
 
 template <ExprLowerer Lowerer>
-auto LowerHirIncDecExpr(
-    Lowerer& lowerer, WalkFrame frame, const hir::IncDecExpr& inc,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  // An increment both reads and writes its target (LRM 11.4.2), so the target
-  // lowers as a write target and names the storage it reaches rather than the
-  // wrapper standing for it.
-  auto target_or =
-      lowerer.LowerLhsExpr(lowerer.HirExprs().Get(inc.target), frame);
-  if (!target_or) return std::unexpected(std::move(target_or.error()));
-  return mir::Expr{
-      .data =
-          mir::IncDecExpr{
-              .op = LowerIncDecOp(inc.op),
-              .target = PathPlace(
-                  lowerer.Owner().Unit(), *frame.current_block, *target_or)},
-      .type = result_type};
-}
-
-template <ExprLowerer Lowerer>
 auto LowerHirConversionExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConversionExpr& cv,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
@@ -595,12 +562,6 @@ template auto LowerHirUnaryExpr(
     -> diag::Result<mir::Expr>;
 template auto LowerHirUnaryExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::UnaryExpr&,
-    mir::TypeId) -> diag::Result<mir::Expr>;
-template auto LowerHirIncDecExpr(
-    ProcessLowerer&, WalkFrame, const hir::IncDecExpr&, mir::TypeId)
-    -> diag::Result<mir::Expr>;
-template auto LowerHirIncDecExpr(
-    const StructuralScopeLowerer&, WalkFrame, const hir::IncDecExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirBinaryExpr(
     ProcessLowerer&, WalkFrame, const hir::BinaryExpr&, mir::TypeId)

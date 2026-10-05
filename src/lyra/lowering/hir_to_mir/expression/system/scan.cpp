@@ -332,14 +332,11 @@ auto LowerScanSystemSubroutineCall(
   scan_body.AppendStmt(
       mir::ExprStmt{
           .expr = scan_body.exprs.Add(
-              mir::Expr{
-                  .data =
-                      mir::AssignExpr{
-                          .target = count_target,
-                          .value = ProjectCompletionComponent(
-                              scan_body, completion, payload_type, kScanMatched,
-                              integer_t)},
-                  .type = integer_t})});
+              mir::MakeAssignExpr(
+                  unit.builtins, count_target,
+                  ProjectCompletionComponent(
+                      scan_body, completion, payload_type, kScanMatched,
+                      integer_t)))});
 
   if (is_file) {
     const mir::ExprId runtime_after =
@@ -396,8 +393,8 @@ auto LowerScanSystemSubroutineCall(
     const mir::ExprId parsed_id = ProjectCompletionComponent(
         then_body, completion, payload_type, ScanParsedValue(k),
         target_types[k]);
-    const mir::Expr assign_expr = BuildStoreExpr(
-        unit, then_body, *lvalue_or, parsed_id, std::nullopt, target_types[k]);
+    const mir::Expr assign_expr =
+        BuildStoreExpr(unit, then_body, *lvalue_or, parsed_id);
     const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
     then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
 
