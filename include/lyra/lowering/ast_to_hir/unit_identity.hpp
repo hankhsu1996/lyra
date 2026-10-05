@@ -1,7 +1,7 @@
 #pragma once
 
 // How a compilation unit is identified and what it is called. A unit's identity
-// is its definition together with everything the parent fixed that changes what
+// is its definition together with everything the design fixed that changes what
 // gets compiled; a name is derived from that identity where a bounded
 // identifier is needed. The two are separate on purpose -- an identity has to
 // distinguish and may drop nothing, a name has to fit in an identifier -- so
@@ -200,14 +200,33 @@ struct LandsBack {
   auto operator==(const LandsBack&) const -> bool = default;
 };
 
+// An instantiation a bind directive inserted into the instance (LRM 23.11),
+// named by the directive. The bound instantiation's connections are text of
+// the directive, read from the target's point of view, so two targets bound by
+// one directive build alike and two directives may connect one name apart.
+struct BindInstantiation {
+  std::string directive;
+
+  auto operator==(const BindInstantiation&) const -> bool = default;
+};
+
+// The cell a configuration bound the instance to (LRM 33.4.1.6), where a rule
+// selected it rather than its instantiation's own name.
+struct BoundToCell {
+  std::string cell;
+
+  auto operator==(const BoundToCell&) const -> bool = default;
+};
+
 using SpecializationInputKind = std::variant<
     FixedValue, FixedType, FixedInterface, SuppliedAtConstruction, LandsIn,
-    LandsBack>;
+    LandsBack, BindInstantiation, BoundToCell>;
 
-// One thing a parent fixed at an instantiation site: what it named, and what it
-// fixed that to. Every input is named -- a parameter by its own name, an
-// interface port by the port's -- so the name sits here and the arms carry only
-// what differs between them.
+// One thing the design fixed for an instance: what it named, and what it fixed
+// that to. Every input is named -- a parameter by its own name, an interface
+// port by the port's, what reaches an instance below by that instance's path
+// from this one -- so the name sits here and the arms carry only what differs
+// between them.
 struct SpecializationInput {
   std::string name;
   SpecializationInputKind kind;
@@ -216,7 +235,7 @@ struct SpecializationInput {
 };
 
 // Which compiled artifact an instance belongs to: the definition it is built
-// from, and everything the parent fixed that changes what gets compiled. Two
+// from, and everything the design fixed that changes what gets compiled. Two
 // instances with equal keys compile alike and share one artifact; instance
 // count never affects how many keys exist. Equality is structural, so two keys
 // agree or differ on their parts and never on a rendering of them.
@@ -227,18 +246,22 @@ struct SpecializationKey {
   auto operator==(const SpecializationKey&) const -> bool = default;
 };
 
-// The key of the specialization `inst` is an application of, read off what its
-// parent fixed for it: its parameters (LRM 6.20, 23.10), the interface each of
-// its interface ports is connected to (LRM 25.3), and the scope each name its
-// body writes lands in once it leaves the instance (LRM 23.8). A parameter
-// fixed by the specialization enters with its value; one supplied at
-// construction enters only as being supplied, and one computed at construction
-// not at all, so instances supplied different values are one unit. Two
-// instances compile alike exactly when every part agrees.
+// The key of the specialization `inst` is an application of, read off what the
+// design fixed for it: its parameters (LRM 6.20, 23.10), the interface each of
+// its interface ports is connected to (LRM 25.3), the scope each name its body
+// writes lands in once it leaves the instance (LRM 23.8), and everything
+// written elsewhere that reaches an instance below it -- a parameter a
+// defparam or a configuration sets (LRM 23.10.1, 33.4.3), an instantiation a
+// bind inserts (LRM 23.11), a cell a configuration binds (LRM 33.4.1.6) --
+// each under its path from `inst`. A parameter fixed by the specialization
+// enters with its value; one supplied at construction enters only as being
+// supplied, and one computed at construction not at all, so instances supplied
+// different values are one unit. Two instances compile alike exactly when
+// every part agrees.
 //
-// Every part is read at the instantiation, which is where a parent fixed it and
-// the only place all of it is stated for one instance. What the frontend chose
-// to elaborate once serves a question about its own work and settles nothing
+// Every part is read off `inst` and what elaborated below it, which is where
+// the parent naming a child already stands. What the frontend chose to
+// elaborate once serves a question about its own work and settles nothing
 // here.
 auto SpecializationKeyOf(
     const slang::ast::InstanceSymbol& inst, const SpecializationPolicy& policy)

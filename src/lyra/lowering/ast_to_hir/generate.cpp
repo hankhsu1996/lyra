@@ -85,10 +85,11 @@ auto LoopSurvivedElaboration(const slang::ast::GenerateBlockArraySymbol& array)
          array.stopExpression != nullptr && array.iterExpression != nullptr;
 }
 
-// The loop itself, for a generate whose blocks turned out to be one body: the
-// index declared by the scope holding the generate, and the three expressions
-// that reach it the way any name reaches a declaration -- the condition reading
-// it, the step writing it.
+// The loop itself, for a generate a construction counts out: the index
+// declared by the scope holding the generate, and the three expressions that
+// reach it the way any name reaches a declaration -- the condition reading it,
+// the step writing it. Which body each block is gets filled in once the blocks
+// have been compared.
 auto BuildTheLoop(
     StructuralScopeLowerer& lowerer,
     const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
@@ -126,17 +127,18 @@ auto BuildTheLoop(
       .variable = variable,
       .initial = *initial,
       .condition = *condition,
-      .step = *step};
+      .step = *step,
+      .taken = {}};
 }
 
-// A loop whose blocks are one body: that body is built at every index the loop
-// counts out, and each time it receives the loop's index as it then stands. The
-// variable is the holding scope's own, so the read reaches it over the route
-// that climbs no edges.
+// A loop built at every index it counts out: the body the block at each index
+// is, receiving the loop's index as it then stands. The variable is the
+// holding scope's own, so the read reaches it over the route that climbs no
+// edges.
 auto BuildRepeatedGenerate(
     StructuralScopeLowerer& lowerer,
     const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame,
-    hir::StructuralScope one_body) -> diag::Result<hir::Generate> {
+    LoopBodies bodies) -> diag::Result<hir::Generate> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   auto counting = BuildTheLoop(lowerer, array, frame);
   if (!counting) return std::unexpected(std::move(counting.error()));
@@ -147,23 +149,29 @@ auto BuildRepeatedGenerate(
   auto index_ref = unit_lowerer.MakeRoutedValueRef(
       *array.loopVariable, lowerer.Frame(), ScopeRoute::Enclosing({}));
   if (!index_ref) return std::unexpected(std::move(index_ref.error()));
-  const hir::ExprId index_read = frame.Exprs().Add(
-      hir::MakeRefExpr(
-          *index_ref, variable.type,
-          unit_lowerer.SourceMapper().PointSpanOf(
-              array.loopVariable->location)));
 
+  // Each body is handed the index by a read of its own, since one expression
+  // stands in one place.
   hir::Generate gen{};
-  gen.blocks.Add(
-      hir::GenerateBlock{
-          .scope = std::move(one_body), .arguments = {index_read}});
+  for (hir::StructuralScope& body : bodies.bodies) {
+    const hir::ExprId index_read = frame.Exprs().Add(
+        hir::MakeRefExpr(
+            *index_ref, variable.type,
+            unit_lowerer.SourceMapper().PointSpanOf(
+                array.loopVariable->location)));
+    gen.blocks.Add(
+        hir::GenerateBlock{
+            .scope = std::move(body), .arguments = {index_read}});
+  }
+  counting->taken = std::move(bodies.taken);
   gen.counting = *std::move(counting);
   return gen;
 }
 
-// A loop whose blocks disagree: each is a child in its own right, and the
-// hierarchy index it was elaborated at is what tells it from the others. Each
-// receives the value its own index holds.
+// A loop that did not survive elaboration as one a construction can run: each
+// block is a child in its own right, and the hierarchy index it was elaborated
+// at is what tells it from the others. Each receives the value its own index
+// holds.
 auto BuildStandAloneGenerate(
     UnitLowerer& unit_lowerer,
     const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame,
@@ -198,9 +206,9 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
     -> diag::Result<hir::Generate> {
   // Every block is lowered, and the index reaches each one as a value its
   // construction supplies rather than as a constant folded into it. That is
-  // what makes one body possible at all, and it is also what makes the blocks
-  // comparable: two that differ in nothing else then lower to the same scope,
-  // and whether one scope serves them all is what the lowered scopes say.
+  // what lets one body serve many indices, and it is also what makes the
+  // blocks comparable: two that differ in nothing else then lower to the same
+  // scope, and which blocks one scope serves is what the lowered scopes say.
   std::vector<hir::StructuralScope> blocks;
   blocks.reserve(array.entries.size());
   for (const auto* entry : array.entries) {
@@ -210,9 +218,7 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
   }
 
   if (LoopSurvivedElaboration(array)) {
-    if (auto one_body = OneBodyOf(blocks)) {
-      return BuildRepeatedGenerate(*this, array, frame, *std::move(one_body));
-    }
+    return BuildRepeatedGenerate(*this, array, frame, BodiesOf(blocks));
   }
   return BuildStandAloneGenerate(*owner_, array, frame, std::move(blocks));
 }

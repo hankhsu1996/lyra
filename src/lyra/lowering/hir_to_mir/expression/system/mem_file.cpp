@@ -153,6 +153,7 @@ auto DescribeMemory(
           [&](const hir::ClassHandleType&) { return not_a_memory(); },
           [&](const hir::ImportedClassHandleType&) { return not_a_memory(); },
           [&](const hir::UnitObjectType&) { return not_a_memory(); },
+          [&](const hir::UnitObjectByPositionType&) { return not_a_memory(); },
           [&](const hir::VirtualInterfaceType&) { return not_a_memory(); },
           [&](const hir::NullType&) { return not_a_memory(); },
           [&](const hir::VoidType&) { return not_a_memory(); },

@@ -3,8 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -272,6 +272,21 @@ struct UnitObjectType {
   auto operator==(const UnitObjectType&) const -> bool = default;
 };
 
+// The objects at the positions of one declaration standing for several, where
+// they are not all of one class: every element takes what its instantiation
+// wrote (LRM 23.3.2), but something written elsewhere may reach one of them
+// (LRM 23.10.1, 23.11, 33.4). It is the element type of the arrays the
+// declaration's ranges wrap it in, and `taken` says which of `alternatives`
+// the object at each of their positions is, one entry per position in
+// row-major order. A name selects one position by constants (LRM 23.6), so
+// which class it reaches is known where it compiles.
+struct UnitObjectByPositionType {
+  std::vector<UnitObjectType> alternatives;
+  std::vector<std::uint32_t> taken;
+
+  auto operator==(const UnitObjectByPositionType&) const -> bool = default;
+};
+
 // LRM 25.9 virtual interface: a variable's type that holds an instance of the
 // interface unit `unit_name`, or null. The unit is fixed by the type, which
 // includes the interface's parameters, so what an access through it reaches is
@@ -309,7 +324,7 @@ class Type {
       DynamicArrayType, QueueType, AssociativeArrayType, WildcardIndexType,
       StringType, EventType, RealType, ShortRealType, RealTimeType, ChandleType,
       ClassHandleType, ImportedClassHandleType, UnitObjectType,
-      VirtualInterfaceType, NullType, VoidType>;
+      UnitObjectByPositionType, VirtualInterfaceType, NullType, VoidType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -438,23 +453,48 @@ struct UnpackedShape {
 // A connection pairs these objects with a port's own left index to left index
 // (LRM 23.3.3.5), which each range's direction decides, so the nesting is
 // stated the way the declaration wrote it.
+//
+// The objects are of one class, or of the class each position takes where
+// something written elsewhere made them differ.
 struct ObjectsBehindType {
   UnpackedShape shape;
-  std::string_view unit_name;
-  std::string_view class_name;
+  std::span<const UnitObjectType> alternatives;
+  std::span<const std::uint32_t> taken;
+
+  // The class of the object `selects` pick out, one position per dimension.
+  [[nodiscard]] auto ClassAt(std::span<const std::uint32_t> selects) const
+      -> const UnitObjectType& {
+    if (alternatives.size() == 1) return alternatives.front();
+    if (selects.size() != shape.dims.size()) {
+      throw InternalError(
+          "hir::ObjectsBehindType::ClassAt: objects of several classes are "
+          "told apart only by a select of every dimension");
+    }
+    std::size_t position = 0;
+    for (std::size_t d = 0; d < selects.size(); ++d) {
+      position = position * shape.dims[d].ElementCount() + selects[d];
+    }
+    return alternatives[taken[position]];
+  }
 };
 
 [[nodiscard]] inline auto ObjectsBehind(const TypePool& types, TypeId type)
     -> std::optional<ObjectsBehindType> {
   UnpackedShape shape = UnpackedShapeOf(types, type);
-  const auto* object = types.Get(shape.element_type).As<UnitObjectType>();
-  if (object == nullptr) {
-    return std::nullopt;
+  const Type& element = types.Get(shape.element_type);
+  if (const auto* object = element.As<UnitObjectType>()) {
+    return ObjectsBehindType{
+        .shape = std::move(shape),
+        .alternatives = std::span{object, 1},
+        .taken = {}};
   }
-  return ObjectsBehindType{
-      .shape = std::move(shape),
-      .unit_name = object->unit_name,
-      .class_name = object->class_name};
+  if (const auto* by_position = element.As<UnitObjectByPositionType>()) {
+    return ObjectsBehindType{
+        .shape = std::move(shape),
+        .alternatives = by_position->alternatives,
+        .taken = by_position->taken};
+  }
+  return std::nullopt;
 }
 
 }  // namespace lyra::hir

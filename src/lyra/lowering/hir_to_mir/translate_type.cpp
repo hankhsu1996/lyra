@@ -302,6 +302,12 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           [&](const hir::UnitObjectType& src) -> mir::Type {
             return UnitObjectNamed(src.unit_name, src.class_name);
           },
+          // Objects of several classes are held as the scope every one of them
+          // is, and a step viewing the one a select picks out names its class.
+          [](const hir::UnitObjectByPositionType&) -> mir::Type {
+            return mir::Type{
+                mir::RuntimeClassType{.which = support::RuntimeClass::kScope}};
+          },
           // What a virtual interface holds is which instance it names, or none
           // (LRM 25.9): a host pointer compared by identity and null until
           // assigned, which the instance's lifetime -- the simulation's --

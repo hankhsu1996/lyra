@@ -59,9 +59,10 @@ auto BuildDesignRootHir(
     root.root_scope.instance_members.Define(
         instance, hir::InstanceMemberDecl{
                       .instance_name = top.instance_name,
-                      .scope_class = scope_class,
                       .array_dims = {},
-                      .arguments = {}});
+                      .alternatives = {hir::InstanceAlternative{
+                          .scope_class = scope_class, .arguments = {}}},
+                      .taken = {0}});
     published.members.Add(
         hir::PublishedMember{
             .name = top.instance_name,

@@ -29,7 +29,6 @@
 #include "lyra/hir/published_target.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unit_signature.hpp"
-#include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 #include "lyra/lowering/ast_to_hir/published_projection.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
@@ -667,15 +666,17 @@ auto ConnectElementPorts(
 }
 
 // Walks an instance array's elements, extending `step` by one select per
-// dimension, and records each leaf element's port connections. slang
+// dimension, and records each leaf element's port connections against the
+// signature of the unit that element is -- one for every element, unless
+// something written elsewhere reached one of them (LRM 23.10.1, 33.4). slang
 // distributes the connection per element (LRM 23.3.3.5), so each element
 // carries its own already index-matched connection expressions; this only
 // routes each to the right cell.
 auto ConnectArrayElements(
     StructuralScopeLowerer& scope, UnitLowerer& unit_lowerer,
     const slang::ast::InstanceArraySymbol& array,
-    const hir::UnitSignature& child_signature, const hir::OwnedChildStep& step,
-    ScopeFrameId home_frame, WalkFrame frame) -> diag::Result<void> {
+    const hir::OwnedChildStep& step, ScopeFrameId home_frame, WalkFrame frame)
+    -> diag::Result<void> {
   for (std::uint32_t i = 0; i < array.elements.size(); ++i) {
     hir::OwnedChildStep element_step = step;
     element_step.selects.push_back(i);
@@ -683,13 +684,16 @@ auto ConnectArrayElements(
     if (element->kind == slang::ast::SymbolKind::InstanceArray) {
       auto r = ConnectArrayElements(
           scope, unit_lowerer, element->as<slang::ast::InstanceArraySymbol>(),
-          child_signature, element_step, home_frame, frame);
+          element_step, home_frame, frame);
       if (!r) return std::unexpected(std::move(r.error()));
       continue;
     }
+    const auto& inst = element->as<slang::ast::InstanceSymbol>();
     auto r = ConnectElementPorts(
-        scope, unit_lowerer, element->as<slang::ast::InstanceSymbol>(),
-        child_signature, std::move(element_step), home_frame, frame);
+        scope, unit_lowerer, inst,
+        unit_lowerer.Signatures().Instantiated(
+            SpecializationName(inst, unit_lowerer.Specialization())),
+        std::move(element_step), home_frame, frame);
     if (!r) return std::unexpected(std::move(r.error()));
   }
   return {};
@@ -723,22 +727,8 @@ auto StructuralScopeLowerer::PopulatePortConnections(
       if (!binding.has_value()) {
         continue;
       }
-      // Every element of an array is built from the one unit the array's shape
-      // names, so the dependency on that unit resolves once for the whole
-      // array. The shape is resolved through the same predicate the declaration
-      // pass used, so the unit named here and the member built there cannot
-      // drift.
-      const auto& array = member.as<slang::ast::InstanceArraySymbol>();
-      const auto shape = ResolveInstanceArrayShape(array);
-      if (!shape.has_value()) {
-        throw InternalError(
-            "PopulatePortConnections: an array with a bound member has a "
-            "shape, since the same predicate decided both");
-      }
       auto r = ConnectArrayElements(
-          *this, *owner_, array,
-          owner_->Signatures().Instantiated(
-              SpecializationName(*shape->leaf, owner_->Specialization())),
+          *this, *owner_, member.as<slang::ast::InstanceArraySymbol>(),
           binding->step, binding->home_frame, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     }

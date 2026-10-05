@@ -60,6 +60,22 @@ This is the same wrapper for an owned child and for a borrowed one. What differs
 instantiating four children and a module reaching four it does not own is which pointer the sequence
 is over, which is a fact the pointer already carries.
 
+Every element takes the one assignment its instantiation wrote (LRM 23.3.2), but something written
+elsewhere may reach one element -- a `defparam` naming it by index (LRM 23.10.1), a `bind` naming
+it, a configuration's instance rule -- so the elements are not always one unit. The declaration then
+states the distinct ways its elements are built and which way each position takes; the sequence is
+over the scope pointer every object converts to, and a step picking an element out converts it to
+its own unit's pointer, which the coordinate settles where the step is compiled (LRM 23.6). What
+the unit publishes for the member says the same: beside the ranges, its type names which class the
+object at each position is, so a referrer in another unit picks an element out and views it as its
+own class the way a step inside the unit does, and the member stays one member at one signature
+position. That is the shape a loop generate already publishes, one class named per block. The
+construction counts the positions out as before and builds, at each, the alternative it takes: equal
+neighbours form runs, so the code grows with the number of runs, which is bounded by the overrides
+written and never by the element count. One unit is one run and builds with no test. This is the
+loop generate's shape: one construct, built at every position, choosing per position among a few
+bodies ([one-body-built-at-every-index](one-body-built-at-every-index.md)).
+
 ### D2. The element index is an operand, not part of a member's identity
 
 Because the multiplicity is in the type rather than in the member set, which element a reference

@@ -40,9 +40,14 @@ shared by all consumers: external references, child routing, and construction.
    the adjacency list for its name.
 5. The same compilation unit compiled once serves every instance of that unit. Hierarchy does not
    fork the unit's compile-time artifacts.
-6. Parameters affect constructor-time construction, not compile-time identity. A parameter value
-   changes which children are constructed, how many, and with which sub-parameter bindings, but it
-   does not fork the unit's compile-time artifacts or its identity.
+6. A parameter value read only as a value is a constructor input: it changes which children are
+   constructed, how many, and with which sub-parameter bindings, and does not fork the unit's
+   compile-time artifacts or its identity. A value that decides what is compiled -- a type, a width
+   the lowering settles -- does fork them, because a compiled artifact cannot hold two answers to
+   one question; and so does anything written elsewhere that reaches an instance below the unit (a
+   `defparam`, a `bind`, a configuration rule), since the unit then builds different children. What
+   serves this is that artifacts scale with distinct specializations rather than instances
+   (`north_star.md` invariant 2), with each instance correct whatever is shared (its invariant 3).
 7. The constructed object tree is faithful to the frontend's elaboration. Every elaborated instance
    and named scope has a corresponding constructed object, and generate-produced objects preserve
    the elaborated index and identity. Reference resolution relies on this faithfulness (see
@@ -112,8 +117,8 @@ shared by all consumers: external references, child routing, and construction.
 - Treating an instance array as a generate construct, or modeling generate replication as an array
   type. Multiplicity is a property of a member's type; generate is constructor-time scope
   construction. The two axes must not be conflated or made to subsume each other.
-- Parameter values used as part of compile-time identity. Parameters are constructor inputs that
-  steer construction, not identity keys that fork compile-time artifacts.
+- A parameter read only as a value used as part of compile-time identity, which forks artifacts per
+  value and fails `north_star.md` invariant 2 for no correctness gain.
 - Splitting a child's hierarchy identity between the child and a parent-side registry -- the child
   carrying only an un-indexed label while bracketed indices live in a parent table that consumers
   reverse-search to recover the full name. The child carries its complete `(base, indices)` segment;

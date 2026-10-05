@@ -498,8 +498,9 @@ auto UnitLowerer::StartOf(
     const auto& port =
         reference.path.front().symbol->as<slang::ast::InterfacePortSymbol>();
     PortReach reach = ReachOfPort(frame, port);
+    const auto connected = ConnectedInterfaceOf(port.getConnection()).instances;
     const slang::ast::InstanceSymbol* bound =
-        ConnectedInterfaceOf(port.getConnection()).instance;
+        connected.empty() ? nullptr : connected.front();
     for (std::size_t at = 1; at < reference.path.size(); ++at) {
       // The front end lists a loop generate by its name, with no selector,
       // before the block its select picks, so the port's own selects end
@@ -1011,12 +1012,18 @@ auto UnitLowerer::DescendPublishedFrom(
     const auto behind =
         hir::ObjectsBehind(unit_.types, record.members.Get(*member).type);
     if (!behind.has_value()) return false;
-    const std::string unit_name{behind->unit_name};
-    const std::string class_name{behind->class_name};
+    // Which class the step lands on is the one at the position its selects
+    // name. Selects that leave a dimension open land on several objects, which
+    // are of one class only where every position is.
+    if (instance.indices.size() != behind->shape.dims.size() &&
+        behind->alternatives.size() != 1) {
+      return false;
+    }
+    const hir::UnitObjectType& lands_on = behind->ClassAt(instance.indices);
     descended.open =
         SettledDimensions(behind->shape.dims, instance.indices.size());
     const hir::ExternalScopeClassId result_class =
-        ExternalScopeClassOf(unit_name, class_name);
+        ExternalScopeClassOf(lands_on.unit_name, lands_on.class_name);
     descended.steps.push_back(
         hir::ExternalStep{
             .names =

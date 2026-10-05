@@ -155,9 +155,9 @@ flowchart TB
   S2 --> A2["artifact, compiling B's body"]
 ```
 
-Each occurrence has a body of its own, elaborated under what its own parent fixed. The heavy arrows
-are this model: an occurrence belongs to the specialization its arguments say it does, and the
-artifact for that specialization compiles a body elaborated for an occurrence in it.
+Each occurrence has a body of its own, elaborated under what the design fixed for it. The heavy
+arrows are this model: an occurrence belongs to the specialization its arguments say it does, and
+the artifact for that specialization compiles a body elaborated for an occurrence in it.
 
 The dotted arrow is drawn to be ignored. Whether the frontend sets it, and whether where it sets it
 coincides with where the heavy arrows meet, are both properties of the frontend's own traversal, and
@@ -215,7 +215,8 @@ what the frontend happened to do.
    code-shape-affecting inputs, the specialization key is fully determined. Keys do not depend on
    traversal order, instance enumeration, or the order in which instances are encountered.
 8. **A specialization is computed from occurrences, and the artifact compiles a body elaborated for
-   one of them.** Every argument is read where a parent fixed it, which is the occurrence. The body
+   one of them.** Every argument is read off the occurrence -- what its parent wrote, and what was
+   written elsewhere that reaches it or an occurrence below it (LRM 23.10.1, 23.11, 33.4). The body
    an artifact compiles is one elaborated under those same arguments, so what it was named for and
    what it compiles against are one application; a body elaborated for a different application
    states different types at the same positions. The frontend's record that two bodies duplicate

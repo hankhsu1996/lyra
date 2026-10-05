@@ -714,10 +714,10 @@ class UnitLowerer {
     return InterfacePortObjects(port).shape.dims;
   }
 
-  // Which unit's instances that port carries.
+  // Which unit's instances that port carries, which a port states one of.
   [[nodiscard]] auto InterfaceUnitOf(const slang::ast::Symbol& port) const
       -> std::string {
-    return std::string{InterfacePortObjects(port).unit_name};
+    return InterfacePortObjects(port).ClassAt({}).unit_name;
   }
 
   // Whether `internal` is the declaration a `ref` / `const ref` port reaches,

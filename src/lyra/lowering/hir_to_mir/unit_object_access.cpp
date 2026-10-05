@@ -97,12 +97,29 @@ auto StepThroughPublished(
   };
   return std::visit(
       Overloaded{
+          // A member's objects are held by their class where they are all of
+          // one, and by the scope every one of them is where something written
+          // elsewhere made them differ; the object the selects picked out is
+          // then viewed as the class of its position. Selects that leave a
+          // dimension open reach several objects and pick none out.
           [&](const hir::ExternalMemberRef& member) {
-            return selected(AccessPublishedSlot(
+            const mir::ExprId reached = selected(AccessPublishedSlot(
                 unit_lowerer, block, object, member.scope_class,
                 [&](const PublishedScopeLayout& layout) {
                   return layout.members.Get(member.member);
                 }));
+            const mir::TypeId held = block.exprs.Get(reached).type;
+            const mir::TypeId viewed = unit.types.Intern(
+                mir::Type{mir::PointerType{
+                    .pointee = unit_lowerer.UnitObjectType(member.result_class),
+                    .ownership = mir::PointerOwnership::kBorrowed}});
+            if (held == viewed ||
+                unit.types.Get(held).As<mir::PointerType>() == nullptr) {
+              return reached;
+            }
+            return block.exprs.Add(
+                mir::Expr{
+                    .data = mir::CastExpr{.operand = reached}, .type = viewed});
           },
           // What a generate construct built holds the base every block of it
           // extends, so the block reached is viewed as the class it was

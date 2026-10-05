@@ -1,8 +1,11 @@
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -34,8 +37,10 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
+#include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
@@ -51,31 +56,63 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-namespace {
-
-// The declaration of a child object, built from whichever unit `leaf` is an
-// instance of. What the child is comes off this unit's record of that unit's
-// object, never from the unit's own name; `dims` carries the element counts of
-// an array, a scalar instance being the empty case rather than a shape of its
-// own. The constructor arguments are stored among this scope's expressions,
-// which is where the construction reads them.
-auto BuildInstanceMember(
-    UnitLowerer& owner, WalkFrame frame, std::string_view instance_name,
-    const slang::ast::InstanceSymbol& leaf, std::vector<std::uint32_t> dims,
-    std::vector<hir::Expr> arguments) -> hir::InstanceMemberDecl {
-  std::vector<hir::ExprId> stored;
-  stored.reserve(arguments.size());
-  for (hir::Expr& value : arguments) {
-    stored.push_back(frame.Exprs().Add(std::move(value)));
-  }
-  return hir::InstanceMemberDecl{
+// The declaration of the child objects `elements` are, in row-major order of
+// their positions; `dims` carries the element counts of an array, a scalar
+// instance being the empty case rather than a shape of its own. What each is
+// comes off this unit's record of the class its unit's instances are, never
+// from the unit's own name.
+//
+// Two elements are one alternative where they are instances of one unit handed
+// the same thing. What the instantiation wrote is the same expression for every
+// element (LRM 23.3.2), so only a value given elsewhere can tell them apart,
+// and that one by the constant it settled to. Each alternative's arguments are
+// lowered once and stored among this scope's expressions, which is where the
+// construction reads them.
+auto StructuralScopeLowerer::BuildInstanceMember(
+    std::string_view instance_name,
+    std::span<const slang::ast::InstanceSymbol* const> elements,
+    std::vector<std::uint32_t> dims, WalkFrame frame)
+    -> diag::Result<hir::InstanceMemberDecl> {
+  hir::InstanceMemberDecl member{
       .instance_name = std::string{instance_name},
-      .scope_class = owner.ScopeClassOfInstance(leaf),
       .array_dims = std::move(dims),
-      .arguments = std::move(stored)};
+      .alternatives = {},
+      .taken = {}};
+  member.taken.reserve(elements.size());
+  std::vector<std::vector<std::string>> told_apart_by;
+  for (const slang::ast::InstanceSymbol* element : elements) {
+    std::vector<std::string> identity{
+        SpecializationName(*element, owner_->Specialization())};
+    for (const slang::ast::ParameterSymbol* param :
+         owner_->Specialization().SuppliedParametersOf(*element)) {
+      identity.push_back(
+          ValueWrittenAtInstantiation(*element, *param) != nullptr
+              ? std::string{}
+              : ValueIdentity(param->getValue()));
+    }
+    const auto known = std::ranges::find(told_apart_by, identity);
+    if (known != told_apart_by.end()) {
+      member.taken.push_back(
+          static_cast<std::uint32_t>(known - told_apart_by.begin()));
+      continue;
+    }
+    auto arguments = LowerConstructorArguments(*element, frame);
+    if (!arguments) return std::unexpected(std::move(arguments.error()));
+    std::vector<hir::ExprId> stored;
+    stored.reserve(arguments->size());
+    for (hir::Expr& value : *arguments) {
+      stored.push_back(frame.Exprs().Add(std::move(value)));
+    }
+    member.taken.push_back(
+        static_cast<std::uint32_t>(member.alternatives.size()));
+    member.alternatives.push_back(
+        hir::InstanceAlternative{
+            .scope_class = owner_->ScopeClassOfInstance(*element),
+            .arguments = std::move(stored)});
+    told_apart_by.push_back(std::move(identity));
+  }
+  return member;
 }
-
-}  // namespace
 
 auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     -> diag::Result<hir::StructuralScope> {
@@ -782,34 +819,40 @@ auto StructuralScopeLowerer::PopulateGenerateBlockMember(
 auto StructuralScopeLowerer::PopulateInstanceMember(
     const slang::ast::InstanceSymbol& inst, WalkFrame frame)
     -> diag::Result<void> {
-  auto arguments = LowerConstructorArguments(inst, frame);
-  if (!arguments) return std::unexpected(std::move(arguments.error()));
+  const std::array<const slang::ast::InstanceSymbol*, 1> one{&inst};
+  auto member = BuildInstanceMember(inst.name, one, {}, frame);
+  if (!member) return std::unexpected(std::move(member.error()));
   frame.current_structural_scope->instance_members.Define(
-      owner_->InstanceMemberIdOf(inst),
-      BuildInstanceMember(
-          *owner_, frame, inst.name, inst, {}, *std::move(arguments)));
+      owner_->InstanceMemberIdOf(inst), *std::move(member));
   return {};
 }
 
-// The arguments `child`'s constructor is passed: the expression this scope
-// wrote for each parameter the child takes at construction, in the child's own
-// order. The front end binds an override where the instantiation is written
-// (LRM 23.10.2), so it is lowered here, against this scope's names.
+// The arguments `child`'s constructor is passed, one per parameter the child
+// takes at construction, in the child's own order. The front end binds the
+// instantiation's own assignment where it is written (LRM 23.10.2), so that is
+// lowered here, against this scope's names. A value given elsewhere -- a
+// defparam, a configuration -- was written in another scope and is part of what
+// this unit is, so it is handed as the constant it settled to.
 auto StructuralScopeLowerer::LowerConstructorArguments(
     const slang::ast::InstanceSymbol& child, WalkFrame frame)
     -> diag::Result<std::vector<hir::Expr>> {
   std::vector<hir::Expr> arguments;
   for (const slang::ast::ParameterSymbol* param :
        owner_->Specialization().SuppliedParametersOf(child)) {
-    const slang::ast::Expression* given = param->getInitializer();
-    if (given == nullptr) {
-      throw InternalError(
-          "StructuralScopeLowerer::LowerConstructorArguments: a parameter the "
-          "instantiation supplies states no expression");
+    if (const slang::ast::Expression* given =
+            ValueWrittenAtInstantiation(child, *param)) {
+      auto lowered = LowerExpr(*given, frame);
+      if (!lowered) return std::unexpected(std::move(lowered.error()));
+      arguments.push_back(*std::move(lowered));
+      continue;
     }
-    auto lowered = LowerExpr(*given, frame);
-    if (!lowered) return std::unexpected(std::move(lowered.error()));
-    arguments.push_back(*std::move(lowered));
+    const auto span = owner_->SourceMapper().PointSpanOf(child.location);
+    auto type = owner_->InternType(param->getType(), span);
+    if (!type) return std::unexpected(std::move(type.error()));
+    auto value = MakeConstantValueExpr(
+        owner_->Unit(), frame, param->getValue(), *type, span);
+    if (!value) return std::unexpected(std::move(value.error()));
+    arguments.push_back(*std::move(value));
   }
   return arguments;
 }
@@ -828,16 +871,11 @@ auto StructuralScopeLowerer::PopulateInstanceArrayMember(
   for (const slang::ConstantRange& dim : shape->ranges) {
     counts.push_back(dim.width());
   }
-  // Every element is instantiated with the one parameter assignment the
-  // instantiation wrote (LRM 23.3.2), so the first one's constructor arguments
-  // are every element's.
-  auto arguments = LowerConstructorArguments(*shape->leaf, frame);
-  if (!arguments) return std::unexpected(std::move(arguments.error()));
+  auto member = BuildInstanceMember(
+      array.name, shape->elements, std::move(counts), frame);
+  if (!member) return std::unexpected(std::move(member.error()));
   frame.current_structural_scope->instance_members.Define(
-      owner_->InstanceMemberIdOf(array),
-      BuildInstanceMember(
-          *owner_, frame, array.name, *shape->leaf, std::move(counts),
-          *std::move(arguments)));
+      owner_->InstanceMemberIdOf(array), *std::move(member));
   return {};
 }
 

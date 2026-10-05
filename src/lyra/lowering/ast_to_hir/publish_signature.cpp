@@ -545,26 +545,46 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
   };
 
   // What a member standing for instances of another unit is, as this unit's
-  // type: the unit `leaf` is an instance of, as many times as `ranges` has
-  // elements. The innermost dimension is wrapped first, so the range written
-  // leftmost ends up outermost.
-  const auto objects_type = [&](const slang::ast::InstanceSymbol& leaf,
-                                std::span<const slang::ConstantRange> ranges) {
-    const std::string instance_unit =
-        SpecializationName(leaf, Specialization());
-    hir::TypeId own = unit_.types.Intern(
-        hir::Type{hir::UnitObjectType{
-            .unit_name = instance_unit,
-            .class_name = hir::InstanceClassName(instance_unit)}});
-    for (const slang::ConstantRange& dim : std::views::reverse(ranges)) {
-      own = unit_.types.Intern(
-          hir::Type{hir::UnpackedArrayType{
-              .element_type = own,
-              .dim =
-                  hir::UnpackedRange{.left = dim.left, .right = dim.right}}});
-    }
-    return own;
-  };
+  // type: the units `elements` are instances of, in row-major order of their
+  // positions, under the dimensions `ranges` declares. Every element takes
+  // what its instantiation wrote (LRM 23.3.2), so they are one unit unless
+  // something written elsewhere reached one of them, and the type then names
+  // the class at each position. The innermost dimension is wrapped first, so
+  // the range written leftmost ends up outermost.
+  const auto objects_type =
+      [&](std::span<const slang::ast::InstanceSymbol* const> elements,
+          std::span<const slang::ConstantRange> ranges) {
+        hir::UnitObjectByPositionType by_position;
+        by_position.taken.reserve(elements.size());
+        for (const slang::ast::InstanceSymbol* element : elements) {
+          const std::string instance_unit =
+              SpecializationName(*element, Specialization());
+          hir::UnitObjectType object{
+              .unit_name = instance_unit,
+              .class_name = hir::InstanceClassName(instance_unit)};
+          const auto known =
+              std::ranges::find(by_position.alternatives, object);
+          by_position.taken.push_back(
+              static_cast<std::uint32_t>(
+                  known - by_position.alternatives.begin()));
+          if (known == by_position.alternatives.end()) {
+            by_position.alternatives.push_back(std::move(object));
+          }
+        }
+        hir::TypeId own =
+            by_position.alternatives.size() == 1
+                ? unit_.types.Intern(
+                      hir::Type{std::move(by_position.alternatives.front())})
+                : unit_.types.Intern(hir::Type{std::move(by_position)});
+        for (const slang::ConstantRange& dim : std::views::reverse(ranges)) {
+          own = unit_.types.Intern(
+              hir::Type{hir::UnpackedArrayType{
+                  .element_type = own,
+                  .dim = hir::UnpackedRange{
+                      .left = dim.left, .right = dim.right}}});
+        }
+        return own;
+      };
 
   // A member standing for instances of another unit: an interface port, whose
   // instances the parent binds (LRM 25.3), or an instance this scope builds,
@@ -607,15 +627,15 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
     // direction (LRM 25.5), which is settled where that referrer compiles; what
     // a connection binds is the whole interface instance under any of its
     // views, so the port publishes the same member whichever one names it.
-    const slang::ast::InstanceSymbol* instance =
-        ConnectedInterfaceOf(port.getConnection()).instance;
-    if (instance == nullptr) {
+    const auto connected = ConnectedInterfaceOf(port.getConnection()).instances;
+    if (connected.empty()) {
       return refuse("an unconnected interface port is not yet supported");
     }
     // A port carrying a range stands for as many instances as the range has
     // elements (LRM 25.3), which is a fact about what the member is and so
     // travels on its type.
-    const hir::TypeId own = objects_type(*instance, *declared);
+    const hir::TypeId own =
+        objects_type(std::span{connected}.first(1), *declared);
     interface_port_types_.emplace(&port, own);
     return objects(port, own);
   };
@@ -643,7 +663,7 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
                 -> diag::Result<hir::PublishedMember> {
               return objects(
                   *instance.symbol,
-                  objects_type(*instance.shape.leaf, instance.shape.ranges));
+                  objects_type(instance.shape.elements, instance.shape.ranges));
             },
             [&](const ScopePublicationRecord::InterfacePort& port) {
               return interface_port(*port.symbol);

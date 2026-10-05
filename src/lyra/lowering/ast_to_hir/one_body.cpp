@@ -1,10 +1,12 @@
 #include "lyra/lowering/ast_to_hir/one_body.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
@@ -155,15 +157,24 @@ auto MergeBlocks(const hir::StructuralScope& a, const hir::StructuralScope& b)
 
 }  // namespace
 
-auto OneBodyOf(std::span<const hir::StructuralScope> blocks)
-    -> std::optional<hir::StructuralScope> {
-  if (blocks.empty()) return std::nullopt;
-  std::optional<hir::StructuralScope> body = blocks.front();
-  for (const hir::StructuralScope& block : blocks.subspan(1)) {
-    body = MergeBlocks(*body, block);
-    if (!body.has_value()) return std::nullopt;
+auto BodiesOf(std::span<const hir::StructuralScope> blocks) -> LoopBodies {
+  LoopBodies out;
+  out.taken.reserve(blocks.size());
+  for (const hir::StructuralScope& block : blocks) {
+    bool merged = false;
+    for (std::size_t at = 0; at < out.bodies.size() && !merged; ++at) {
+      if (auto body = MergeBlocks(out.bodies[at], block)) {
+        out.bodies[at] = *std::move(body);
+        out.taken.push_back(static_cast<std::uint32_t>(at));
+        merged = true;
+      }
+    }
+    if (!merged) {
+      out.taken.push_back(static_cast<std::uint32_t>(out.bodies.size()));
+      out.bodies.push_back(block);
+    }
   }
-  return body;
+  return out;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

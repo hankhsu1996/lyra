@@ -81,10 +81,17 @@ struct PublishedSubroutine {
 // child's body -- the handle then holds the base every scope extends, the step
 // views what it reached as that scope's class, and whatever the route names
 // next resolves against that scope -- and absent when the child is another
-// compilation unit, whose handle is typed as that unit's class already.
+// compilation unit.
+//
+// Such a child's handle holds each object by its unit's class where every
+// object is of one unit, and by the scope pointer every object converts to
+// where they are of several. `viewed_as` is the pointer the object the selects
+// pick out is reached by, and is absent where they leave a dimension open,
+// since several objects are reached then and none is picked out.
 struct OwnedChildAnchor {
   mir::ClassFieldTarget borrowed_handle{};
   const StructuralScopeLowerer* target_scope = nullptr;
+  std::optional<mir::TypeId> viewed_as;
 };
 
 // A route made only of parent edges within this unit, `hops` of them. Every
@@ -345,17 +352,28 @@ class StructuralScopeLowerer {
       const GenerateBinding& binding = generate_bindings_.Get(generate);
       return OwnedChildAnchor{
           .borrowed_handle = binding.handle,
-          .target_scope = binding.blocks.Get(scope).lowerer};
+          .target_scope = binding.blocks.Get(scope).lowerer,
+          .viewed_as = std::nullopt};
     };
     return std::visit(
         Overloaded{
             [&](const hir::InstanceMemberId& id) -> OwnedChildAnchor {
               // A module instance's body is another compilation unit, so this
               // artifact lowers no scope for it; what the object holds is
-              // reached through what that unit published.
+              // reached through what that unit published. The object the
+              // selects pick out is of the unit its position takes.
+              const hir::InstanceMemberDecl& member =
+                  HirScope().instance_members.Get(id);
+              std::optional<mir::TypeId> viewed_as;
+              if (selects.size() == member.array_dims.size()) {
+                viewed_as =
+                    instance_member_pointers_.Get(id).at(member.taken.at(
+                        hir::RowMajorPosition(member.array_dims, selects)));
+              }
               return OwnedChildAnchor{
                   .borrowed_handle = instance_member_fields_.Get(id),
-                  .target_scope = nullptr};
+                  .target_scope = nullptr,
+                  .viewed_as = viewed_as};
             },
             [&](const hir::GenerateLoopRef& loop) -> OwnedChildAnchor {
               return block_of(
@@ -469,6 +487,10 @@ class StructuralScopeLowerer {
   base::Translation<hir::GenerateId, GenerateBinding> generate_bindings_;
   base::Translation<hir::InstanceMemberId, mir::ClassFieldTarget>
       instance_member_fields_;
+  // The pointer each alternative of an instance member is reached by once a
+  // step picks one of its objects out.
+  base::Translation<hir::InstanceMemberId, std::vector<mir::TypeId>>
+      instance_member_pointers_;
   DeclaredScopes scopes_;
   base::Translation<hir::StructuralSubroutineId, DeclaredCallable>
       declared_subroutines_;

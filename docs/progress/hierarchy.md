@@ -81,11 +81,25 @@ Unlocks the runtime side of `instantiation/param_slots`.
       as part of the object tree.
 - [x] B6 -- An instance array (`Child c[3]()`) is one named member that expands to a vector of
       independent child objects.
-- [ ] B7 -- An instance array whose elements are elaborated differently -- a `defparam` reaching one
-      element (LRM 23.10.1), as in `defparam c[1].K = 9` -- builds each element as its own
-      elaboration describes. Today every element is built as the first one is, so the overridden
-      element reads the value the others hold: a wrong answer, not a refusal. The same override on a
-      single instance, or on one iteration's instance in a loop generate, is right.
+- [x] B7 -- An instance array whose elements are elaborated differently -- a `defparam` reaching one
+      element (LRM 23.10.1), as in `defparam c[1].K = 9`, or a `bind` or configuration rule naming
+      one -- builds each element as its own elaboration describes, in one or several dimensions.
+- [x] B8 -- An override written elsewhere reaches only the instance it names: a `defparam` through
+      any number of levels, a loop's block or an array of parents (LRM 23.10.1), a `bind` naming an
+      instance or listing several (LRM 23.11), and a configuration's instance rule choosing a cell
+      or setting parameters (LRM 33.4.1.6, 33.4.3), also where the instance sits under a parent
+      instantiated more than once. A value a `defparam` or a configuration gives is held the way the
+      instantiation's own assignment is.
+- [ ] B9 -- An interface array an override made differ in its elements, reached through a port
+      carrying a range or through an interface holding it (LRM 25.3): what a port's type publishes
+      still names one unit for every element, so the execution backend fails to compile the design
+      and the C++ backend reads the wrong width.
+- [ ] B10 -- A `defparam` on a `parameter` a named block, task or function declares (LRM 23.10.2) is
+      refused by the front end, which makes such a parameter a `localparam`; LRM 6.20.1 makes only a
+      generate block's, a package's, a compilation-unit scope's and a class's parameter local.
+- [ ] B11 -- Two cells of one name in different libraries, chosen between by a configuration, are
+      taken for one unit, and the build stops with an internal error: a unit's identity names a
+      definition without its library.
 
 Unlocks `instantiation/multiple_instances`, `instantiation/nested_hierarchy`,
 `instantiation/local_variables`, the runtime side of `instantiation/param_slots`, and
@@ -458,7 +472,6 @@ Unlocks the port-connection surface.
   which belong to the assertion domain, not the parameter-specialization path. The specialization
   identity already distinguishes such a binding from a numeric one; only the value's representation
   is missing. It waits for the assertion workstream rather than blocking this one.
-- Bind directives and configuration (`config` / `bind`).
 - Net resolution, including which nets a connection makes one resolution. A port connection's own
   structure is in scope here whichever direction it carries -- a directional one is a continuous
   assignment and a bidirectional one joins the two nets -- while what a net does with the drivers

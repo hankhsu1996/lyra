@@ -60,10 +60,20 @@ which is computed when the object is built -- and never where its value fixes a 
 range, a replication count, a range select's width. A reference anywhere else keeps it in the key: a
 generate condition or loop header, a port connection, an instance array's range, a place nobody
 listed. So does a parameter an instantiation may override written with no type (LRM 6.20.2: its type
-is the type of the value it is given), one a hierarchical or command-line override reaches (LRM
-23.10.1: its value is not the one the instantiation wrote), one handed on to a child parameter that
-decides something there, and one another deciding parameter is written from -- including one the
-module's blocks or subroutines declare.
+is the type of the value it is given), one handed on to a child parameter that decides something
+there, and one another deciding parameter is written from -- including one the module's blocks or
+subroutines declare.
+
+A value given elsewhere -- by a `defparam` (LRM 23.10.1) or a configuration (LRM 33.4.3) -- is
+classified the same way as the instantiation's own, since LRM 23.10 makes the three ways of altering
+a parameter one thing. What differs is only who writes the value the parent hands: the
+instantiation's expression is lowered where it is written, while a value given elsewhere was written
+in another scope, so the parent hands the constant it settled to, which its own key holds
+([specialization-identity](specialization-identity.md) decision 1). This record used to keep such a
+parameter in the key, on the ground that the value the parent would hand is not the one the
+parameter holds; that is true of the expression and not of the constant. A top-level instance is
+built by the design root, which hands nothing, and is the only instance of its unit, so every value
+it is given is compiled in.
 
 Some positions take a constant the front end settles while binding, so the value sits there with no
 reference left in the expression: a declared range -- wherever the type is written, including a
@@ -154,14 +164,14 @@ from the child's instantiation. The design's tops are handed nothing and keep th
 runtime calls.
 
 Every construction states its constructor arguments where the construction is written: for an
-instance, the values its instantiation overrides; for a loop's generate block, its index (LRM 27.4);
-for any other block, nothing, since a block has no parameter ports (Syntax 27-1). One expression per
-value the built scope receives, in the order it receives them, so the lowering below translates what
-was stated and never works out which value goes where. This is how a C++ front end holds a
-construction -- clang's `CXXConstructExpr` carries its arguments at the site and names the
-constructor whose declaration holds the parameters -- and it is the one shape for both kinds of
-scope, so the count a scope receives and the count its builder hands are each stated once, on their
-own side.
+instance, the values its instantiation overrides or that were given it elsewhere, the latter as
+constants; for a loop's generate block, its index (LRM 27.4); for any other block, nothing, since a
+block has no parameter ports (Syntax 27-1). One expression per value the built scope receives, in
+the order it receives them, so the lowering below translates what was stated and never works out
+which value goes where. This is how a C++ front end holds a construction -- clang's
+`CXXConstructExpr` carries its arguments at the site and names the constructor whose declaration
+holds the parameters -- and it is the one shape for both kinds of scope, so the count a scope
+receives and the count its builder hands are each stated once, on their own side.
 
 [one-body-built-at-every-index](one-body-built-at-every-index.md) D4 made a scope's entry take its
 values erased and counted, because the constructing site held only the definition and not the

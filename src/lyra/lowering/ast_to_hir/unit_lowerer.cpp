@@ -213,7 +213,8 @@ void UnitLowerer::DeclareMemberIdentities(
     case SymbolKind::Instance:
       declare_instance(
           InstanceArrayShape{
-              .ranges = {}, .leaf = &member.as<slang::ast::InstanceSymbol>()});
+              .ranges = {},
+              .elements = {&member.as<slang::ast::InstanceSymbol>()}});
       return;
     // A zero-element array (LRM 23.3.2) constructs nothing, so it is no member
     // and takes no id.

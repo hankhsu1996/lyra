@@ -288,6 +288,7 @@ auto Renderer::BuildBody(
           [&](const hir::ClassHandleType& t) { return none(t); },
           [&](const hir::ImportedClassHandleType& t) { return none(t); },
           [&](const hir::UnitObjectType& t) { return none(t); },
+          [&](const hir::UnitObjectByPositionType& t) { return none(t); },
           [&](const hir::VirtualInterfaceType& t) { return none(t); },
           [&](const hir::NullType& t) { return none(t); },
           [&](const hir::VoidType& t) { return none(t); },
@@ -795,6 +796,9 @@ auto PatternReadingOf(const hir::CompilationUnit& hir, hir::TypeId type)
           // is stored under, never a type a value has (LRM 7.8.1).
           [&](const hir::WildcardIndexType& t) { return not_a_value(t); },
           [&](const hir::UnitObjectType& t) { return not_a_value(t); },
+          [&](const hir::UnitObjectByPositionType& t) {
+            return not_a_value(t);
+          },
           [&](const hir::VoidType& t) { return not_a_value(t); },
       });
 }

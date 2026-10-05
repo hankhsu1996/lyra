@@ -1090,8 +1090,10 @@ void ReachFromConnections(ArenaReaches& reaches, const StructuralScope& scope) {
   const auto from_instance =
       ReachFrom(reaches, std::nullopt, "an instance's construction");
   for (const InstanceMemberDecl& instance : scope.instance_members) {
-    for (const ExprId argument : instance.arguments) {
-      from_instance(argument, Slot::kOperand);
+    for (const InstanceAlternative& alternative : instance.alternatives) {
+      for (const ExprId argument : alternative.arguments) {
+        from_instance(argument, Slot::kOperand);
+      }
     }
   }
   const auto from_port = ReachFrom(reaches, std::nullopt, "a port connection");
@@ -1122,6 +1124,57 @@ void ReachFromConnections(ArenaReaches& reaches, const StructuralScope& scope) {
   }
 }
 
+// Every object an instance declaration stands for is built one of the ways the
+// declaration states, so it names one of its alternatives, and there is one
+// such entry per object its dimensions count out.
+void VerifyInstanceMembers(
+    const StructuralScope& scope, const std::string& label,
+    std::vector<std::string>& lines) {
+  for (const InstanceMemberId id : scope.instance_members.Ids()) {
+    const InstanceMemberDecl& instance = scope.instance_members.Get(id);
+    std::size_t objects = 1;
+    for (const std::uint32_t count : instance.array_dims) {
+      objects *= count;
+    }
+    const bool every_one_built =
+        instance.taken.size() == objects &&
+        std::ranges::all_of(instance.taken, [&](std::uint32_t alternative) {
+          return alternative < instance.alternatives.size();
+        });
+    if (!every_one_built) {
+      lines.push_back(
+          std::format(
+              "hir verify: instance member '{}' of {} says how {} of its {} "
+              "objects are built, from {} alternatives",
+              instance.instance_name, label, instance.taken.size(), objects,
+              instance.alternatives.size()));
+    }
+  }
+}
+
+// Every block a repeated generate builds is one of the bodies the construct
+// holds.
+void VerifyRepeatedGenerates(
+    const StructuralScope& scope, const std::string& label,
+    std::vector<std::string>& lines) {
+  for (const Generate& generate : scope.generates) {
+    const auto* repeat = std::get_if<BlocksRepeat>(&generate.counting);
+    if (repeat == nullptr) continue;
+    const bool every_one_built =
+        !repeat->taken.empty() &&
+        std::ranges::all_of(repeat->taken, [&](std::uint32_t body) {
+          return body < generate.blocks.size();
+        });
+    if (!every_one_built) {
+      lines.push_back(
+          std::format(
+              "hir verify: a loop generate of {} says which of its {} bodies "
+              "{} blocks are",
+              label, generate.blocks.size(), repeat->taken.size()));
+    }
+  }
+}
+
 // `label` names the scope eagerly, unlike a body: a scope's name is part of
 // the name of every scope and body under it, and there are few scopes.
 void VerifyScope(
@@ -1148,6 +1201,8 @@ void VerifyScope(
     from_history(history.depth, Slot::kOperand);
   }
   Report(reaches, [&] { return label; }, lines);
+  VerifyInstanceMembers(scope, label, lines);
+  VerifyRepeatedGenerates(scope, label, lines);
 
   for (const ProcessId id : scope.processes.Ids()) {
     const Process& process = scope.processes.Get(id);
