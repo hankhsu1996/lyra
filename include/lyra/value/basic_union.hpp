@@ -154,8 +154,7 @@ class BasicUnion {
   // resolution starts from the first member (LRM 7.3).
   //
   // Two contributions both driving different members has no answer: LRM 7.3
-  // gives an unpacked union no required storage representation and, unlike a
-  // packed union, no reading back of a member written as another, so there is
+  // gives an unpacked union no required storage representation, so there is
   // no defined bit space the two overlay in. That is reported rather than
   // answered with an invented value.
   [[nodiscard]] static auto AcrossMembers(const Derived& a, const Derived& b)
@@ -186,6 +185,17 @@ class BasicUnion {
 
   Member live_;
 };
+
+// A read of an untagged union's member other than the live one. LRM 7.3
+// defines it where the members are structures sharing a common initial
+// sequence, whose part then reads what was written through the live member; a
+// union that stores only its live member has no such part to read.
+[[noreturn]] inline void RefuseReadOfAnotherMember() {
+  throw SimulationError(
+      "reading an unpacked-union member other than the one last written is "
+      "not yet supported on this backend; please open an issue asking for "
+      "support");
+}
 
 // The live member of a union whose members are the C++ types `Ts`, held as the
 // alternative of the member's index, since two members may share a type.

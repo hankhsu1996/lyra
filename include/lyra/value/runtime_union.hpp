@@ -49,10 +49,7 @@ class HeldMember {
   AnyValue value_;
 };
 
-// An untagged unpacked union (LRM 7.3) as the library holds one. Because only
-// the live member is stored, a read of another member -- undefined in SV (LRM
-// 7.3) -- has no value of that member's type to return; this backend does not
-// yet synthesize that member's default and reports the read instead.
+// An untagged unpacked union (LRM 7.3) as the library holds one.
 class RuntimeUnion : public BasicUnion<RuntimeUnion, HeldMember> {
  public:
   // Holds no member: storage before its declaration installs the first

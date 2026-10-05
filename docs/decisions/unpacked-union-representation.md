@@ -7,6 +7,16 @@ domain realizes them. The representation this entry settles, an active-member va
 The `Get` / `GetRef` spelling of point 4 is superseded by
 [a-part-is-named-by-how-it-is-selected](a-part-is-named-by-how-it-is-selected.md).
 
+Revised 2026-10-05: this entry was derived from the premise that every cross-member read is
+undefined, which LRM 7.3 does not say. Its "special provision" defines one: where the members are
+unpacked structures sharing a common initial sequence and the union holds one of them, the common
+initial part may be read through any of the others and reads what was written. An active-member
+value has no such part to read, so point 8 now refuses an inactive-member read on both backends
+rather than answering a default, and the overlay rejected below is what the provision needs. Its
+reason for rejection was that values are rich objects that cannot share storage, which is a state of
+the value layer rather than a condition of the problem, and
+[a-value-is-its-machine-data](a-value-is-its-machine-data.md) removes it.
+
 ## Why this decision matters
 
 HIR carries `UnpackedUnionType` (LRM 7.3) as a faithful source construct. HIR-to-MIR must give it a
@@ -22,8 +32,9 @@ problem." This entry settles it.
 - A single piece of storage accessed through one of the named member types; only one member is
   usable at a time.
 - No required representation for how members are stored.
-- Reading a member other than the one last written is a type loophole whose result is undefined (LRM
-  7.3). This is not relied upon.
+- Reading a member other than the one last written is defined only where the members are unpacked
+  structures sharing a common initial sequence: the common initial part then reads what was written
+  through the live member (LRM 7.3). Any other cross-member read has no meaning the standard gives.
 - Default value is the first member's Table 7-1 default.
 - Value semantics: a whole-union assignment copies, independent of its source (LRM 7.6, Table 7-1).
 - Union members cannot carry per-member initializers (LRM 7.2.2).
@@ -32,14 +43,14 @@ problem." This entry settles it.
 It is not a product: a product holds all members at once. It is not a sum: a sum is a tagged,
 type-checked variant read through tagged expressions and pattern matching (the tagged union, LRM
 7.3.2 / 11.9), a distinct concept. An untagged unpacked union is the C `union` -- N views over one
-storage, type-punned, with cross-view reads undefined.
+storage, with the same common-initial-sequence guarantee C11 6.5.2.3 gives.
 
-## The axis that decides it: one member at a time, cross-reads undefined
+## The axis that decides it: one member at a time
 
-Because a union holds one member at a time and a cross-member read is undefined, the well-defined
-content of a union value is exactly the pair "(active member, that member's value)". Nothing more is
-observable to a conformant program. That pair is the union's value-level semantic. A product's value
-is the full tuple "(v0, v1, ..., vN)"; the two value spaces are genuinely different, so the union is
+Because a union holds one member at a time, the content of a union value is the pair "(active
+member, that member's value)"; a common initial part read through another member is a view of that
+same value, not further content. That pair is the union's value-level semantic. A product's value is
+the full tuple "(v0, v1, ..., vN)"; the two value spaces are genuinely different, so the union is
 not a product with a different label.
 
 ## Decision
@@ -63,13 +74,13 @@ not a product with a different label.
 4. **Member access is a matched read / write access pair, named `Get` / `GetRef` like a struct
    member** (`std::get<I>` is the standard accessor for both the `std::tuple` and the `std::variant`
    that back struct and union). The read is `UnionGetExpr{union, index}` (yielding the active
-   member's value, the inactive-member default, point 8); the write is
-   `UnionGetRefExpr{union, index}` (a reference to the active member's storage). They are two access
-   forms, not one, because a union member's read realization (a value) differs from its write
-   realization (an activating reference) -- whereas a struct member's read and write are one `T&`,
-   so a struct collapses to a single `Get`. They are distinguished by index at compile time, so each
-   is a node rather than a callee. There is no union-specific reference concept: the write form is
-   an ordinary reference into the active member's storage.
+   member's value; point 8 for any other member); the write is `UnionGetRefExpr{union, index}` (a
+   reference to the active member's storage). They are two access forms, not one, because a union
+   member's read realization (a value) differs from its write realization (an activating reference)
+   -- whereas a struct member's read and write are one `T&`, so a struct collapses to a single
+   `Get`. They are distinguished by index at compile time, so each is a node rather than a callee.
+   There is no union-specific reference concept: the write form is an ordinary reference into the
+   active member's storage.
 
 5. **Member write and compound assignment are uniform with every other lvalue.** `u.f = v`,
    `u.f op= v`, and a nested `u.f.g = v` lower to `AssignExpr` over `UnionGetRefExpr`, exactly as an
@@ -90,16 +101,16 @@ not a product with a different label.
    index plus that member's value). It is not a byte overlay: the `lyra::value` types are rich C++
    objects -- `PackedArray` carries an X/Z plane (and a heap vector for wide values), `String` owns
    heap storage, `Real` is a `double` -- none can share one storage and be reinterpreted, so a
-   C-style overlay is unrealizable. The active-member realization is sufficient because cross-member
-   reads are undefined. It satisfies `LyraValue` by delegating to the active member: `==` / `!=` are
-   "same active index and equal active value", `IsBitIdentical` likewise, and `HasUnknown` delegates
-   to the active member; the default holds member 0. There is no cross-member equality or
-   conversion.
+   C-style overlay is unrealizable while they are. The active-member realization serves every
+   program that reads only the member it last wrote. It satisfies `LyraValue` by delegating to the
+   active member: `==` / `!=` are "same active index and equal active value", `IsBitIdentical`
+   likewise, and `HasUnknown` delegates to the active member; the default holds member 0. There is
+   no cross-member equality or conversion.
 
-8. **An inactive-member read returns that member's Table 6-7 default.** This is a deterministic Lyra
-   fallback for an operation SystemVerilog leaves undefined, not a guarantee. SV gives no reliable
-   semantics to a cross-member read, so compiler optimization, tests, and user programs must not
-   depend on the returned value.
+8. **An inactive-member read is refused as not yet supported**, on both backends. The one such read
+   the standard defines, a common initial sequence, needs the live member's bits where the other
+   member's view expects them, which an active-member value does not have; answering a default
+   instead would be a wrong value there, and refusing keeps the two backends one answer.
 
 ## Rejected alternatives
 
@@ -108,10 +119,8 @@ not a product with a different label.
   semantics (an independent slot write vs replacing the active member). A consumer reading a product
   could not tell them apart, violating `mir.md` invariant 7 (the type is the classification). It
   also contradicts the recorded struct decision ("the union does not share the struct
-  representation") and stores every member when only one is live. The observable contract for
-  conformant programs happens to coincide -- because cross-reads are undefined -- but the type
-  identity and the semantics differ, and conflating them is the inverse of the
-  type-is-classification invariant.
+  representation") and stores every member when only one is live. It would also give a common
+  initial part read through another member the default rather than what was written.
 
 - **A `tagged` flag on `UnionType`.** A tagged union is a sum type, a different generic-language
   concept. A flag beside the type that selects between two concepts is the forbidden "classification
@@ -119,8 +128,9 @@ not a product with a different label.
   type.
 
 - **A byte-overlay C union at runtime.** The `lyra::value` types are not POD bytes; they cannot
-  share storage and be reinterpreted. The active-member realization is the only workable one and is
-  sufficient under undefined cross-reads.
+  share storage and be reinterpreted. That is a state of the value layer, not of the problem: an
+  overlay laid out from the type is what LRM 7.3's common initial sequence needs, and it becomes
+  realizable once a value is its machine data.
 
 ## Consequences
 

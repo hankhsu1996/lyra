@@ -13,11 +13,7 @@ namespace lyra::value {
 
 // An untagged unpacked union (LRM 7.3) compiled with its members' C++ types:
 // holds one member at a time, identified by a declaration-order index, since a
-// union may declare two members of the same type. SystemVerilog gives no
-// reliable semantics to reading a member other than the one last written, so
-// the union stores only the live member; a read of another returns that
-// member's default -- a deterministic answer to an operation SV leaves
-// undefined, not a value any program may depend on.
+// union may declare two members of the same type.
 template <typename... Ts>
 class Union : public BasicUnion<Union<Ts...>, VariantMember<Ts...>> {
   using Base = BasicUnion<Union<Ts...>, VariantMember<Ts...>>;
@@ -37,16 +33,15 @@ class Union : public BasicUnion<Union<Ts...>, VariantMember<Ts...>> {
     return u;
   }
 
-  // Read component `I` (the read side of member access): the value where `I`
-  // is the live member, and that component's default otherwise.
+  // Read component `I` (the read side of member access), which must be the
+  // live member.
   template <std::size_t I>
   [[nodiscard]] auto Component() const
       -> std::variant_alternative_t<I, std::variant<Ts...>> {
-    using Alternative = std::variant_alternative_t<I, std::variant<Ts...>>;
     if (const auto* live = std::get_if<I>(&this->Live().Alternatives())) {
       return *live;
     }
-    return Alternative{};
+    RefuseReadOfAnotherMember();
   }
 
   // The writable location of component `I` (the write side of member access),

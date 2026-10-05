@@ -26,6 +26,11 @@ cycle.
       functions, a union holds its member with the member's type, and a value whose representation
       an entry cannot know crosses as itself and its type.
 
+Measured 2026-10-05 on Ibex, whole run under callgrind, `--release`, both programs ending at
+`$finish` at 26548 as the reference run did: the C++ backend 10.87 G instructions (819 K per cycle)
+and the execution backend 13.13 G (990 K per cycle), against 12.26 G and 14.96 G at the reference
+point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
+
 ## Phase 2: a packed value is its words
 
 - [ ] A packed value is its value words, followed by its unknown words when four-state, in one
@@ -41,6 +46,10 @@ cycle.
       compile-time constants on both backends. A tuple's bytes no longer open with its type: every
       holder of one -- a cell, a reference, a designated part, a net, a sampled history -- states
       the type of what it holds.
+- [ ] An unpacked union is one storage its members overlay, laid out from its type. A structure
+      member's common initial sequence then reads what was written through another member (LRM 7.3),
+      and a union streams its first-declared member whichever is live (LRM 11.4.14.1). Both are
+      refused today, since a union holds only its live member.
 - [ ] On the execution backend, an element of a queue or a dynamic array at an index is addressed
       without a call. It waits on the packed value being its words, since reading the index is a
       call while a packed value is a library object.

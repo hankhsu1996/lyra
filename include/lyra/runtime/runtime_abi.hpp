@@ -1249,9 +1249,8 @@ auto lyra_rt_tuple_value_cell_load(void* cell) noexcept -> void*;
 // The untagged-union domain (LRM 7.3), MIR's `UnionType`. An active-member
 // value carried behind an opaque handle: it stores the one live member and its
 // index. `make` builds it from an index and an erased member value;
-// `component` returns the member at `index`, which must be the live one -- a
-// cross-member read is undefined (LRM 7.3) and, since only the active member is
-// stored, reported rather than defaulted on this backend; `with_component`
+// `component` returns the member at `index`, which must be the live one;
+// `with_component`
 // returns a copy whose live member is `index` carrying the erased replacement.
 // All are value operations, never in-place writes.
 auto lyra_rt_union_make(

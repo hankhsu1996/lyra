@@ -338,6 +338,14 @@ closed below.
       whether to use it. It is the run-time half of the same axis `--release` already names, so it
       belongs to that flag's question rather than to a new one.
 
+- [ ] An array's `unique` and `unique_index` (LRM 7.12.1) compare each element against every
+      distinct one seen before it, so they cost the square of the element count. Two elements are
+      the same where they are bit-identical (`===`), and the relational order that `sort` uses is no
+      order over values carrying x or z, so it cannot stand in. The field keeps the keys seen in a
+      set: Verilator's queue holds them in an ordered set, which its two-state values make possible.
+      Here it needs a hash, or a total order, that agrees with `===` for every type an element or a
+      `with` clause can have, on both backends. Not blocked.
+
 ## Construction / compile-time performance
 
 The cost of producing compiled artifacts and of building the object graph at time zero. The primary

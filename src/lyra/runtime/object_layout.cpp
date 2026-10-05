@@ -30,6 +30,7 @@
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
 #include "lyra/value/empty.hpp"
@@ -68,177 +69,79 @@ constexpr auto Of() -> ObjectLayout {
       "domain -- please report this as a bug");
 }
 
-// Storage over the values of one domain. Each wrapper is one template over the
-// value type, so which domains it is realized for is which of them its switch
-// reaches: a value cell holds a variable of any domain but the empty one,
-// which is only ever a tagged union's payload (LRM 7.3.2).
-auto ValueCellOver(ValueDomain domain) -> ObjectLayout {
+// The class the library holds a value of `domain` as, handed to `f` as its
+// template argument. Every storage below is one template over that class, so
+// this is the one place a domain names its class, and what a storage admits is
+// asked of the class it is handed.
+template <typename F>
+auto WithValueClass(ValueDomain domain, F f) -> ObjectLayout {
   switch (domain) {
     case ValueDomain::kPacked:
-      return Of<ActivationValueCell<value::PackedArray>>();
+      return f.template operator()<value::PackedArray>();
     case ValueDomain::kString:
-      return Of<ActivationValueCell<value::String>>();
+      return f.template operator()<value::String>();
     case ValueDomain::kReal:
-      return Of<ActivationValueCell<value::Real>>();
+      return f.template operator()<value::Real>();
     case ValueDomain::kShortReal:
-      return Of<ActivationValueCell<value::ShortReal>>();
+      return f.template operator()<value::ShortReal>();
     case ValueDomain::kChandle:
-      return Of<ActivationValueCell<value::Chandle>>();
-    case ValueDomain::kTuple:
-      return Of<ActivationValueCell<value::RuntimeTuple>>();
-    case ValueDomain::kUnion:
-      return Of<ActivationValueCell<value::RuntimeUnion>>();
-    case ValueDomain::kTaggedUnion:
-      return Of<ActivationValueCell<value::RuntimeTaggedUnion>>();
-    case ValueDomain::kDynArray:
-      return Of<ActivationValueCell<value::RuntimeDynamicArray>>();
-    case ValueDomain::kUnpackedArray:
-      return Of<ActivationValueCell<value::RuntimeUnpackedArray>>();
-    case ValueDomain::kQueue:
-      return Of<ActivationValueCell<value::RuntimeQueue>>();
-    case ValueDomain::kAssocArray:
-      return Of<ActivationValueCell<value::RuntimeAssociativeArray>>();
-    case ValueDomain::kManagedRef:
-      return Of<ActivationValueCell<value::ObjectRef>>();
+      return f.template operator()<value::Chandle>();
     case ValueDomain::kEmpty:
-      return NotRealized();
+      return f.template operator()<value::Empty>();
+    case ValueDomain::kTuple:
+      return f.template operator()<value::RuntimeTuple>();
+    case ValueDomain::kUnion:
+      return f.template operator()<value::RuntimeUnion>();
+    case ValueDomain::kTaggedUnion:
+      return f.template operator()<value::RuntimeTaggedUnion>();
+    case ValueDomain::kDynArray:
+      return f.template operator()<value::RuntimeDynamicArray>();
+    case ValueDomain::kUnpackedArray:
+      return f.template operator()<value::RuntimeUnpackedArray>();
+    case ValueDomain::kQueue:
+      return f.template operator()<value::RuntimeQueue>();
+    case ValueDomain::kAssocArray:
+      return f.template operator()<value::RuntimeAssociativeArray>();
+    case ValueDomain::kManagedRef:
+      return f.template operator()<value::ObjectRef>();
   }
   throw InternalError("object layout: unknown value domain");
 }
 
-// A subscribable variable is kept over every domain a value cell is: one
-// naming an object or holding a pointer is waited on for what it holds
-// changing (LRM 9.4.2).
-auto CellOver(ValueDomain domain) -> ObjectLayout {
-  switch (domain) {
-    case ValueDomain::kPacked:
-      return Of<Var<value::PackedArray>>();
-    case ValueDomain::kString:
-      return Of<Var<value::String>>();
-    case ValueDomain::kReal:
-      return Of<Var<value::Real>>();
-    case ValueDomain::kShortReal:
-      return Of<Var<value::ShortReal>>();
-    case ValueDomain::kChandle:
-      return Of<Var<value::Chandle>>();
-    case ValueDomain::kTuple:
-      return Of<Var<value::RuntimeTuple>>();
-    case ValueDomain::kUnion:
-      return Of<Var<value::RuntimeUnion>>();
-    case ValueDomain::kTaggedUnion:
-      return Of<Var<value::RuntimeTaggedUnion>>();
-    case ValueDomain::kDynArray:
-      return Of<Var<value::RuntimeDynamicArray>>();
-    case ValueDomain::kUnpackedArray:
-      return Of<Var<value::RuntimeUnpackedArray>>();
-    case ValueDomain::kQueue:
-      return Of<Var<value::RuntimeQueue>>();
-    case ValueDomain::kAssocArray:
-      return Of<Var<value::RuntimeAssociativeArray>>();
-    case ValueDomain::kManagedRef:
-      return Of<Var<value::ObjectRef>>();
-    case ValueDomain::kEmpty:
-      return NotRealized();
-  }
-  throw InternalError("object layout: unknown value domain");
-}
+// A variable may be of every value class but the empty one, which is only ever
+// a tagged union's payload (LRM 7.3.2).
+template <typename T>
+struct AdmitsVariable : std::bool_constant<!std::is_same_v<T, value::Empty>> {};
 
-// A history is kept over every domain a value cell is but the chandle, whose
-// value is the pointer it carries (LRM 6.14), which no sampled read can answer
-// across.
-auto HistoryOver(ValueDomain domain) -> ObjectLayout {
-  switch (domain) {
-    case ValueDomain::kPacked:
-      return Of<SampledHistory<value::PackedArray>>();
-    case ValueDomain::kString:
-      return Of<SampledHistory<value::String>>();
-    case ValueDomain::kReal:
-      return Of<SampledHistory<value::Real>>();
-    case ValueDomain::kShortReal:
-      return Of<SampledHistory<value::ShortReal>>();
-    case ValueDomain::kTuple:
-      return Of<SampledHistory<value::RuntimeTuple>>();
-    case ValueDomain::kUnion:
-      return Of<SampledHistory<value::RuntimeUnion>>();
-    case ValueDomain::kTaggedUnion:
-      return Of<SampledHistory<value::RuntimeTaggedUnion>>();
-    case ValueDomain::kDynArray:
-      return Of<SampledHistory<value::RuntimeDynamicArray>>();
-    case ValueDomain::kUnpackedArray:
-      return Of<SampledHistory<value::RuntimeUnpackedArray>>();
-    case ValueDomain::kQueue:
-      return Of<SampledHistory<value::RuntimeQueue>>();
-    case ValueDomain::kAssocArray:
-      return Of<SampledHistory<value::RuntimeAssociativeArray>>();
-    case ValueDomain::kManagedRef:
-      return Of<SampledHistory<value::ObjectRef>>();
-    case ValueDomain::kChandle:
-    case ValueDomain::kEmpty:
-      return NotRealized();
-  }
-  throw InternalError("object layout: unknown value domain");
-}
+// A history is kept over every variable type but the chandle, whose value is
+// the pointer it carries (LRM 6.14), which no sampled read can answer across.
+template <typename T>
+struct AdmitsHistory
+    : std::bool_constant<
+          AdmitsVariable<T>::value && !std::is_same_v<T, value::Chandle>> {};
 
 // A net resolves only what LRM 6.7.1 admits as a net's data type.
-auto NetOver(ValueDomain domain) -> ObjectLayout {
-  switch (domain) {
-    case ValueDomain::kPacked:
-      return Of<ResolvedNet<value::PackedArray>>();
-    case ValueDomain::kTuple:
-      return Of<ResolvedNet<value::RuntimeTuple>>();
-    case ValueDomain::kUnion:
-      return Of<ResolvedNet<value::RuntimeUnion>>();
-    case ValueDomain::kUnpackedArray:
-      return Of<ResolvedNet<value::RuntimeUnpackedArray>>();
-    case ValueDomain::kString:
-    case ValueDomain::kReal:
-    case ValueDomain::kShortReal:
-    case ValueDomain::kChandle:
-    case ValueDomain::kEmpty:
-    case ValueDomain::kTaggedUnion:
-    case ValueDomain::kDynArray:
-    case ValueDomain::kQueue:
-    case ValueDomain::kAssocArray:
-    case ValueDomain::kManagedRef:
+template <typename T>
+struct AdmitsNet : std::bool_constant<value::NetResolvable<T>> {};
+
+// `Storage` over the value class of `domain`, where `Admits` holds of that
+// class.
+template <template <typename> class Storage, template <typename> class Admits>
+auto StorageOver(ValueDomain domain) -> ObjectLayout {
+  return WithValueClass(domain, []<typename T>() -> ObjectLayout {
+    if constexpr (Admits<T>::value) {
+      return Of<Storage<T>>();
+    } else {
       return NotRealized();
-  }
-  throw InternalError("object layout: unknown value domain");
+    }
+  });
 }
 
 }  // namespace
 
 auto LayoutOf(ValueDomain domain) -> ObjectLayout {
-  switch (domain) {
-    case ValueDomain::kPacked:
-      return Of<value::PackedArray>();
-    case ValueDomain::kString:
-      return Of<value::String>();
-    case ValueDomain::kReal:
-      return Of<value::Real>();
-    case ValueDomain::kShortReal:
-      return Of<value::ShortReal>();
-    case ValueDomain::kChandle:
-      return Of<value::Chandle>();
-    case ValueDomain::kEmpty:
-      return Of<value::Empty>();
-    case ValueDomain::kTuple:
-      return Of<value::RuntimeTuple>();
-    case ValueDomain::kUnion:
-      return Of<value::RuntimeUnion>();
-    case ValueDomain::kTaggedUnion:
-      return Of<value::RuntimeTaggedUnion>();
-    case ValueDomain::kDynArray:
-      return Of<value::RuntimeDynamicArray>();
-    case ValueDomain::kUnpackedArray:
-      return Of<value::RuntimeUnpackedArray>();
-    case ValueDomain::kQueue:
-      return Of<value::RuntimeQueue>();
-    case ValueDomain::kAssocArray:
-      return Of<value::RuntimeAssociativeArray>();
-    case ValueDomain::kManagedRef:
-      return Of<value::ObjectRef>();
-  }
-  throw InternalError("object layout: unknown value domain");
+  return WithValueClass(
+      domain, []<typename T>() -> ObjectLayout { return Of<T>(); });
 }
 
 auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
@@ -294,16 +197,15 @@ auto LayoutOf(const support::RuntimeObject& object) -> ObjectLayout {
 auto LayoutOf(support::DeclaredMemberStorage storage) -> ObjectLayout {
   switch (storage.kind) {
     case MemberStorageKind::kInlineValue:
-      return storage.domain == ValueDomain::kEmpty ? NotRealized()
-                                                   : LayoutOf(storage.domain);
+      return StorageOver<std::type_identity_t, AdmitsVariable>(storage.domain);
     case MemberStorageKind::kValueCell:
-      return ValueCellOver(storage.domain);
+      return StorageOver<ActivationValueCell, AdmitsVariable>(storage.domain);
     case MemberStorageKind::kObservableCell:
-      return CellOver(storage.domain);
+      return StorageOver<Var, AdmitsVariable>(storage.domain);
     case MemberStorageKind::kSampledHistory:
-      return HistoryOver(storage.domain);
+      return StorageOver<SampledHistory, AdmitsHistory>(storage.domain);
     case MemberStorageKind::kResolvedNet:
-      return NetOver(storage.domain);
+      return StorageOver<ResolvedNet, AdmitsNet>(storage.domain);
     case MemberStorageKind::kBorrowedHandle:
       return Of<void*>();
     case MemberStorageKind::kReference:

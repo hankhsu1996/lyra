@@ -2544,21 +2544,13 @@ enough to warrant its own focused review.
       last use, what of LIR's own end derivation moves up, and how the C++ backend renders a stated
       move. Its own subject, not blocked.
 
-- [ ] R154 -- On the execution backend a container and a union hold their elements boxed, each
-      tagged with its domain, and the runtime answers every operation on the whole value -- a
-      queue's `==`, a union's copy -- itself, reaching an element's through that tag; the C++
-      backend has the host compiler instantiate the same operations per element type. The operations
-      a container carries are defined by the standard for any element type, so they are
-      parameterized the way a template's members are, and the field's answer is to instantiate them
-      per element type where they are used -- clang's pending instantiations, rustc's
-      monomorphization -- with only the part that needs no element operation, such as growing
-      storage given a size, kept prebuilt, as rustc keeps `RawVecInner` apart from `RawVec<T>`. The
-      runtime's value holders -- a cell, a net and its drivers, a pending update, a sampled history
-      -- are type constructors over any value type in the same way. Once those take per-type code, a
-      structure's value needs no table, and a union carries its declaration as a structure does (LRM
-      6.22.1), since its operations then come from the unit declaring it. Measured on the way: a
-      structure's operations cost about 9.4 ms of unoptimized build each on the execution backend.
-      Its own subject, not blocked.
+- [x] R154 -- On the execution backend a container and a union no longer hold their elements boxed
+      and tagged with a domain: a container holds raw storage of its element type, a union holds its
+      member with the member's type, and the prebuilt runtime acts on either through the functions
+      the compiler generated for that type. Instantiating each container's algorithms per element
+      type, as clang does for the C++ backend's templates, was weighed and not taken
+      (`../decisions/a-value-is-its-machine-data.md`): the algorithms stay prebuilt, for containers
+      that live in testbenches rather than on the paths a design spends its time in.
 
 - [ ] R155 -- A small function the unit states in MIR comes out of the execution backend several
       times its size: a structure's `==` over two members opens a variables frame, installs each
@@ -2890,14 +2882,12 @@ enough to warrant its own focused review.
       Target: the field's word for the concept, at the lowering and at MIR's check alike, once it is
       settled whether MIR takes "operand" into its vocabulary. Not blocked.
 
-- [ ] R180 -- Which C++ class realizes each runtime value domain is written once per storage family:
-      the layout of a value, a value cell, a variable, a history and a net each restate the whole
-      domain-to-class list, the explicit instantiations restate it again per family, and a switch
-      beside them exists only to fail the build when the domain list changes. What differs between
-      the families -- which domains each one admits -- is a property of the value class (a net
-      admits what is resolvable as one, LRM 6.7.1), so it can be asked of the class rather than
-      listed. Target: the mapping stated once, as a visit from a domain to its value class, with
-      each family asking its admission of the class it is handed. Not blocked.
+- [x] R180 -- Which C++ class realizes each runtime value domain is stated once, as a visit from a
+      domain to its value class, and the layout of a value, a value cell, a variable, a history and
+      a net each ask the class they are handed whether they admit it (a net admits what is
+      resolvable as one, LRM 6.7.1). The explicit instantiations still list each family over the
+      classes, since C++ has no way to state an explicit instantiation over a list of types, and a
+      switch naming every domain beside them fails the build when that list changes.
 
 ## Out of Scope
 
