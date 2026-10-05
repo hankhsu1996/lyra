@@ -11,6 +11,7 @@
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
+#include "lyra/value/packed.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
@@ -69,37 +70,38 @@ void ReadReport::AddWrite(
   writes_.push_back(
       Written{
           .place = place,
-          .lsb_bit_offset =
-              static_cast<std::uint64_t>(lsb_bit_offset.ToInt64()),
-          .bit_width = static_cast<std::uint64_t>(bit_width.ToInt64())});
+          .bits = {
+              .lsb = static_cast<std::uint64_t>(lsb_bit_offset.ToInt64()),
+              .width = static_cast<std::uint64_t>(bit_width.ToInt64())}});
 }
 
 void ReadReport::SettleAsImplicitList() {
-  using Run = std::pair<std::uint64_t, std::uint64_t>;
-  // What the list watches at one place: all of it, or these half-open runs of
-  // its bits. A place is listed once however many reads reached it, since a
-  // write there is tested once per leaf.
+  // Bits `[first, end)` of a place.
+  using Interval = std::pair<std::uint64_t, std::uint64_t>;
+  // What the list watches at one place: all of it, or these intervals of its
+  // bits. A place is listed once however many reads reached it, since a write
+  // there is tested once per leaf.
   struct Watched {
     Observable* place = nullptr;
     bool whole = false;
-    std::vector<Run> runs;
+    std::vector<Interval> intervals;
   };
   std::vector<Watched> watched;
   for (const Trigger& read : read_directly_) {
-    std::vector<Run> runs{
-        {read.lsb_bit_offset, read.lsb_bit_offset + read.bit_width}};
+    std::vector<Interval> intervals{
+        {read.reads.lsb, read.reads.lsb + read.reads.width}};
     bool taken_whole = false;
     for (const Written& write : writes_) {
       if (write.place != read.observable) continue;
-      if (write.bit_width == 0) {
+      if (write.bits.width == 0) {
         taken_whole = true;
         break;
       }
-      if (read.bit_width == 0) continue;
-      const std::uint64_t first = write.lsb_bit_offset;
-      const std::uint64_t end = write.lsb_bit_offset + write.bit_width;
-      std::vector<Run> kept;
-      for (const auto& [lo, hi] : runs) {
+      if (read.reads.width == 0) continue;
+      const std::uint64_t first = write.bits.lsb;
+      const std::uint64_t end = write.bits.lsb + write.bits.width;
+      std::vector<Interval> kept;
+      for (const auto& [lo, hi] : intervals) {
         if (end <= lo || hi <= first) {
           kept.emplace_back(lo, hi);
           continue;
@@ -107,48 +109,47 @@ void ReadReport::SettleAsImplicitList() {
         if (lo < first) kept.emplace_back(lo, first);
         if (end < hi) kept.emplace_back(end, hi);
       }
-      runs = std::move(kept);
+      intervals = std::move(kept);
     }
     if (taken_whole) continue;
     auto at = std::ranges::find(watched, read.observable, &Watched::place);
     if (at == watched.end()) {
       at = watched.insert(
           watched.end(),
-          Watched{.place = read.observable, .whole = false, .runs = {}});
+          Watched{.place = read.observable, .whole = false, .intervals = {}});
     }
-    if (read.bit_width == 0) {
+    if (read.reads.width == 0) {
       at->whole = true;
     } else {
-      at->runs.insert(at->runs.end(), runs.begin(), runs.end());
+      at->intervals.insert(
+          at->intervals.end(), intervals.begin(), intervals.end());
     }
   }
 
   std::vector<Trigger> left;
-  const auto leaf = [&](Observable* place, std::uint64_t lsb,
-                        std::uint64_t width) {
+  const auto leaf = [&](Observable* place, value::BitPositions reads) {
     Trigger trigger;
     trigger.observable = place;
     trigger.observation = Observation::OnReaching();
-    trigger.lsb_bit_offset = lsb;
-    trigger.bit_width = width;
+    trigger.reads = reads;
     left.push_back(std::move(trigger));
   };
   for (Watched& place : watched) {
     if (place.whole) {
-      leaf(place.place, 0, 0);
+      leaf(place.place, {});
       continue;
     }
-    std::ranges::sort(place.runs);
-    std::vector<Run> merged;
-    for (const Run& run : place.runs) {
-      if (!merged.empty() && run.first <= merged.back().second) {
-        merged.back().second = std::max(merged.back().second, run.second);
+    std::ranges::sort(place.intervals);
+    std::vector<Interval> merged;
+    for (const Interval& interval : place.intervals) {
+      if (!merged.empty() && interval.first <= merged.back().second) {
+        merged.back().second = std::max(merged.back().second, interval.second);
       } else {
-        merged.push_back(run);
+        merged.push_back(interval);
       }
     }
     for (const auto& [lo, hi] : merged) {
-      leaf(place.place, lo, hi - lo);
+      leaf(place.place, {.lsb = lo, .width = hi - lo});
     }
   }
   read_directly_ = std::move(left);

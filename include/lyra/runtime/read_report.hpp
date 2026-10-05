@@ -7,6 +7,7 @@
 
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/trigger.hpp"
+#include "lyra/value/packed.hpp"
 #include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
@@ -115,8 +116,7 @@ class ReadReport {
   // Bits of a place the evaluation writes, which no wait watches.
   struct Written {
     Observable* place = nullptr;
-    std::uint64_t lsb_bit_offset = 0;
-    std::uint64_t bit_width = 0;
+    value::BitPositions bits;
   };
 
   ReadReport();
