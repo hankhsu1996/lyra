@@ -1,84 +1,47 @@
 #include "lyra/value/runtime_tagged_union.hpp"
 
 #include <cstddef>
+#include <format>
 #include <utility>
 
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/value/packed_array.hpp"
-#include "lyra/value/runtime_value.hpp"
+#include "lyra/value/any_value.hpp"
+#include "lyra/value/basic_union.hpp"
+#include "lyra/value/runtime_union.hpp"
 
 namespace lyra::value {
 
-RuntimeTaggedUnion::RuntimeTaggedUnion() : payload_(1) {
+RuntimeTaggedUnion::RuntimeTaggedUnion(std::size_t tag, AnyValue payload)
+    : BasicUnion(HeldMember(tag, std::move(payload))) {
 }
-RuntimeTaggedUnion::RuntimeTaggedUnion(
-    std::size_t tag_index, RuntimeValue payload)
-    : tag_index_(tag_index) {
-  payload_.push_back(std::move(payload));
+
+RuntimeTaggedUnion::RuntimeTaggedUnion(HeldMember live)
+    : BasicUnion(std::move(live)) {
 }
-RuntimeTaggedUnion::RuntimeTaggedUnion(const RuntimeTaggedUnion&) = default;
-RuntimeTaggedUnion::RuntimeTaggedUnion(RuntimeTaggedUnion&&) noexcept = default;
-auto RuntimeTaggedUnion::operator=(const RuntimeTaggedUnion&)
-    -> RuntimeTaggedUnion& = default;
-auto RuntimeTaggedUnion::operator=(RuntimeTaggedUnion&&) noexcept
-    -> RuntimeTaggedUnion& = default;
-RuntimeTaggedUnion::~RuntimeTaggedUnion() = default;
 
 auto RuntimeTaggedUnion::Tag() const -> std::size_t {
-  return tag_index_;
+  return Live().Index();
 }
 
-auto RuntimeTaggedUnion::Component(std::size_t index) const -> RuntimeValue {
-  if (index != tag_index_) {
+void RuntimeTaggedUnion::RequireTagged(
+    std::size_t index, const char* access) const {
+  if (index != Tag()) {
     throw SimulationError(
-        "read of a tagged union member inconsistent with the current tag "
-        "(LRM 11.9)");
+        std::format(
+            "{} a tagged union member inconsistent with the current tag "
+            "(LRM 11.9)",
+            access));
   }
-  return payload_.front();
 }
 
-void RuntimeTaggedUnion::SetComponent(std::size_t index, RuntimeValue value) {
-  if (index != tag_index_) {
-    throw SimulationError(
-        "write to a tagged union member inconsistent with the current tag "
-        "(LRM 11.9)");
-  }
-  payload_.front() = std::move(value);
+auto RuntimeTaggedUnion::Component(std::size_t index) const -> const AnyValue& {
+  RequireTagged(index, "read of");
+  return Live().Value();
 }
 
-auto RuntimeTaggedUnion::operator==(const RuntimeTaggedUnion& other) const
-    -> PackedArray {
-  if (tag_index_ != other.tag_index_) {
-    return PackedArray::Bit(false);
-  }
-  return RuntimeValueEqual(payload_.front(), other.payload_.front());
-}
-
-auto RuntimeTaggedUnion::operator!=(const RuntimeTaggedUnion& other) const
-    -> PackedArray {
-  return !(*this == other);
-}
-
-auto RuntimeTaggedUnion::CaseEqual(const RuntimeTaggedUnion& other) const
-    -> PackedArray {
-  if (tag_index_ != other.tag_index_) {
-    return PackedArray::Bit(false);
-  }
-  return RuntimeValueCaseEqual(payload_.front(), other.payload_.front());
-}
-
-auto RuntimeTaggedUnion::IsBitIdentical(const RuntimeTaggedUnion& other) const
-    -> bool {
-  return tag_index_ == other.tag_index_ &&
-         RuntimeValueBitIdentical(payload_.front(), other.payload_.front());
-}
-
-auto RuntimeTaggedUnion::HasUnknown() const -> bool {
-  return RuntimeValueHasUnknown(payload_.front());
-}
-
-auto RuntimeTaggedUnion::IsUnknown() const -> PackedArray {
-  return PackedArray::Bit(HasUnknown());
+void RuntimeTaggedUnion::SetComponent(std::size_t index, AnyValue value) {
+  RequireTagged(index, "write to");
+  Live() = HeldMember(index, std::move(value));
 }
 
 }  // namespace lyra::value

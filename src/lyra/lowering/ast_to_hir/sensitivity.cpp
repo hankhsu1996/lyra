@@ -140,15 +140,15 @@ auto IsStateOutside(
 }
 
 // The bits `[lo, hi]` of `symbol` as the source names them: the prefixes among
-// `paths` rooted at it whose bits lie inside the range, one per distinct run of
-// bits, where together they leave none of it out -- and the run itself where
-// they do not.
+// `paths` rooted at it whose bits lie inside the range, one per distinct set of
+// bits, where together they leave none of it out -- and the bits themselves
+// where they do not.
 auto PartReached(
     const slang::ast::ValueSymbol& symbol,
     std::pair<std::uint64_t, std::uint64_t> range,
     std::span<const slang::ast::ValuePath> paths)
-    -> std::variant<WholePart, SelectedParts, BitRunPart> {
-  const BitRunPart unnamed{.first = range.first, .last = range.second};
+    -> std::variant<WholePart, SelectedParts, UnselectedBits> {
+  const UnselectedBits unnamed{.first = range.first, .last = range.second};
   std::vector<const slang::ast::ValuePath*> inside;
   for (const slang::ast::ValuePath& path : paths) {
     if (path.lsp == nullptr || path.rootSymbol() != &symbol) continue;
@@ -194,9 +194,9 @@ auto NamesReaching(
   return names;
 }
 
-// Flattens slang's `(symbol, bitMap)` `ReadSet` into one read per run of a
+// Flattens slang's `(symbol, bitMap)` `ReadSet` into one read per range of a
 // symbol's bits, each named by the prefixes in `paths` that make it up.
-// Disjoint runs of the same symbol stay disjoint so downstream can preserve
+// Disjoint ranges of the same symbol stay disjoint so downstream can preserve
 // precision.
 //
 // What comes back stands for a set (LRM 9.4.2.1), and is in the order the
@@ -230,7 +230,7 @@ auto FlattenWrites(
     const slang::ast::ValueSymbol& symbol = *lvalue.symbol;
     const slang::ast::Type& type = symbol.getType();
     // A write is taken out of a read only where the two compare exactly. A
-    // packed value's bits do, so a run of them is stated; anything else is
+    // packed value's bits do, so the bits written are stated; anything else is
     // watched whole, so only a write of the whole of it is stated, and a write
     // of part of one is left out rather than taking the whole away.
     const bool bit_addressed = type.isIntegral() && !type.isEnum();

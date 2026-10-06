@@ -95,7 +95,7 @@ auto BuildPriorTickRead(
 }
 
 // The least significant bit of a packed value, which is the whole of what
-// `$rose` and `$fell` read (LRM 16.9.3): the run of one bit at the value's own
+// `$rose` and `$fell` read (LRM 16.9.3): the one bit at the value's own
 // position zero, whatever range it was declared with.
 auto BuildLeastSignificantBit(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value,

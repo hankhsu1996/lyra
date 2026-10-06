@@ -1,8 +1,12 @@
 # Aggregate values are runtime-owned opaque values on the JIT, not monomorphized
 
-Date: 2026-07-18 Status: accepted for unions and containers; superseded for tuples by
+Date: 2026-07-18 Status: accepted for unions and containers, which stay runtime-owned objects behind
+a handle; superseded for tuples by
 [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md), once every value came to live
-in its maker's frame rather than behind a handle.
+in its maker's frame rather than behind a handle; revised 2026-10-05 for what those objects hold. A
+container holds its elements as the element type's bytes and acts on them through that type's
+operations, and a union holds its member with the member's type, as
+[a-value-is-its-machine-data](a-value-is-its-machine-data.md) decides.
 
 ## Why this decision matters
 
@@ -21,9 +25,8 @@ here rather than re-argued per container.
 
 ## The realization levels
 
-- **Erasure.** One runtime-owned, type-erased value object behind a single opaque handle: a struct
-  is `value::RuntimeTuple` (a `vector<value::RuntimeValue>` owning its components by value), reached
-  through one handle; every operation is a runtime-library call.
+- **Erasure.** One runtime-owned value object behind a single opaque handle, whose type the library
+  was compiled without and asks of at run time; every operation is a runtime-library call.
 - **Structural monomorphization.** Codegen specializes each concrete aggregate type into an LLVM
   aggregate of component handles (`{ptr, ptr, ...}`); construct / extract / update become native
   `insertvalue` / `extractvalue`; the components stay opaque handles, so a component's own
@@ -53,9 +56,10 @@ The LIR aggregate operations -- `AggregateExtractInstr`, `AggregateUpdateInstr`,
 is entirely below LIR, in LIR-to-LLVM codegen; LIR does not change with it, and a future physical
 layout changes only the codegen realization of the same LIR operations.
 
-`value::RuntimeTuple` and `value::RuntimeValue` are the aggregate members of the opaque-handle value
-model, not a temporary tuple mechanism. A later physical layout would make them an optimization
-alternative, not retroactively make the erased object wrong.
+The containers and unions are the aggregate members of the opaque-handle value model, not a
+temporary mechanism. What they hold was revised on 2026-10-05: a value whose type the library was
+compiled without is held as its bytes beside its type's operations, never as one erased object that
+answers every operation by asking what kind of value it is.
 
 ## Why erasure, not structural monomorphization
 
@@ -95,13 +99,12 @@ alternative, not retroactively make the erased object wrong.
 - Aggregate operations are runtime-library calls; a struct field access is a call, not a native
   `extractvalue`. This is the accepted baseline cost, the aggregate counterpart of every scalar
   operation being a runtime call on the execution backend.
-- **Whatever the monomorphized container gets from its type parameters, the erased one has to be
+- **Whatever the monomorphized container gets from its type parameters, the library's one has to be
   given.** A template parameterized on its element and key types ends a walk at the leaf type and
-  picks a comparator from the key type without anyone writing either down; the erased container's
-  elements and indices are type-erased values, so an operation phrased over them has nothing to end
-  at and nothing to choose by. It stays invisible until a feature needs it: imaging an array across
-  the DPI-C boundary, formatting an aggregate, and ordering the entries of a wildcard-indexed array
-  each found it separately.
+  picks a comparator from the key type without anyone writing either down; the library's container
+  is handed its element and key types instead, and asks them. It stays invisible until a feature
+  needs it: imaging an array across the DPI-C boundary, formatting an aggregate, and ordering the
+  entries of a wildcard-indexed array each found it separately.
 
   What the three needed was not the same thing in each case, and which side each fact comes from is
   decided in

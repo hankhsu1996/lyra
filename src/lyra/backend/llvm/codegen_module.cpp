@@ -549,10 +549,6 @@ auto LibraryRecord(support::RuntimeClass which) -> RecordLayout {
 // `operator delete(void*, std::size_t)`).
 constexpr std::string_view kSizedOperatorDelete = "_ZdlPvm";
 
-// What a table holds where no class of the lineage gives a behavior a body: the
-// host's C++ runtime ends the program if it is ever entered.
-constexpr std::string_view kNoBody = "__cxa_pure_virtual";
-
 }  // namespace
 
 auto CodeGenModule::PlaceMembers(
@@ -1198,31 +1194,23 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
   // Which protocol a body answers to follows from what it results in and what
   // it is handed: a coroutine yields the handle its caller drives, a body
   // resulting in nothing runs to completion, and one resulting in a value
-  // states which representation that value comes back in, and for a tuple
-  // which tuple -- taking an entry and its position beyond the receiver is
-  // what separates the two that do.
+  // states the type that value comes back in. Taking an entry and its position
+  // beyond the receiver is what separates the two that answer a value.
   const lir::Function& invoke = unit_->functions.Get(closure.invoke);
   const lir::Type& result = unit_->types.Get(invoke.result_type);
   std::size_t entry = offsetof(ClosureDefinition, run);
-  support::ValueDomain domain{};
-  llvm::Constant* tuple = llvm::ConstantPointerNull::get(types_.Ptr());
+  llvm::Constant* type = llvm::ConstantPointerNull::get(types_.Ptr());
   if (result.Is<lir::CoroutineType>()) {
     entry = offsetof(ClosureDefinition, start);
   } else if (!result.Is<lir::VoidType>()) {
-    const std::optional<support::ValueDomain> settled =
-        ValueDomainOf(*unit_, invoke.result_type);
-    if (!settled) {
-      throw InternalError(
-          "llvm codegen: a closure body answering a value settles a runtime "
-          "value");
-    }
-    domain = *settled;
     entry = invoke.params.size() > 1
                 ? offsetof(ClosureDefinition, run_per_element)
                 : offsetof(ClosureDefinition, run_value);
-    if (result.IsProduct()) {
-      tuple = tuples_.Operations(invoke.result_type);
+    auto answered = ValueTypeOf(invoke.result_type);
+    if (!answered) {
+      return std::unexpected(std::move(answered.error()));
     }
+    type = *answered;
   }
   ConstantRecord out(*context_, sizeof(ClosureDefinition));
   // Each body entry the protocol does not use stays null.
@@ -1235,11 +1223,7 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
                 ? llvm::cast<llvm::Constant>(UnitFunction(closure.invoke))
                 : llvm::ConstantPointerNull::get(types_.Ptr()));
   }
-  out.Place(
-      offsetof(ClosureDefinition, result_domain),
-      Int(static_cast<std::uint64_t>(domain),
-          sizeof(ClosureDefinition::result_domain)));
-  out.Place(offsetof(ClosureDefinition, result_tuple), tuple);
+  out.Place(offsetof(ClosureDefinition, result_type), type);
   out.Place(
       offsetof(ClosureDefinition, size),
       Int(captures->size, sizeof(ClosureDefinition::size)));
@@ -1247,6 +1231,33 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
   DefineConstant(symbol, std::move(out).Build())
       ->setAlignment(llvm::Align(alignof(ClosureDefinition)));
   return {};
+}
+
+auto CodeGenModule::ValueTypeOf(lir::TypeId type)
+    -> diag::Result<llvm::Constant*> {
+  if (unit_->types.Get(type).IsProduct()) {
+    return tuples_.TypeOf(type);
+  }
+  auto domain = DomainOf(type);
+  if (!domain) {
+    return std::unexpected(std::move(domain.error()));
+  }
+  return DefinitionGlobal(RuntimeSymbol(*domain, RuntimeOp::kValueType));
+}
+
+auto CodeGenModule::DomainOf(lir::TypeId type) const
+    -> diag::Result<support::ValueDomain> {
+  const std::optional<support::ValueDomain> domain =
+      ValueDomainOf(*unit_, type);
+  if (!domain) {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedTypeKind,
+        std::format(
+            "llvm codegen: a value of type {} has no runtime library "
+            "realization",
+            unit_->types.Get(type).KindName()));
+  }
+  return *domain;
 }
 
 auto CodeGenModule::SharedStorageOf(const lir::StaticStorage& storage)

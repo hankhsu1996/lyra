@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -42,10 +41,9 @@ class Observable {
 
   void Subscribe(
       CoroutineHandle handle, Observation observation,
-      std::uint64_t lsb_bit_offset, std::uint64_t bit_width) {
+      value::BitPositions reads) {
     Registration& reg = handle->Park(waiters_);
-    reg.lsb_bit_offset = lsb_bit_offset;
-    reg.bit_width = bit_width;
+    reg.reads = reads;
     reg.observation = std::move(observation);
   }
 
@@ -55,11 +53,11 @@ class Observable {
   // whose evaluation only reads storage by what its expression is worth now,
   // and every other wait by having been reached at all, its process deciding
   // once it runs (LRM 4.5, 9.2.2.2.1, 9.4.2, 15.5.1).
-  [[nodiscard]] auto TakeFiringWaiters(const ProjectionUnchanged& unchanged)
+  [[nodiscard]] auto TakeFiringWaiters(const Change& change)
       -> std::vector<CoroutineHandle> {
     std::vector<CoroutineHandle> woken;
     waiters_.ForEach([&](Registration& reg) {
-      if (reg.bit_width != 0 && unchanged(reg.lsb_bit_offset, reg.bit_width)) {
+      if (change.KnownUnchanged(reg.reads)) {
         return;
       }
       if (!reg.FiresNow()) {
@@ -74,9 +72,5 @@ class Observable {
  private:
   RegistrationList waiters_;
 };
-
-// The answer for a change whose parts are not bit ranges: nothing about a
-// leaf's bits can be shown untouched, so every wait on it is asked.
-auto MakeWholeValueProjectionTest() -> ProjectionUnchanged;
 
 }  // namespace lyra::runtime

@@ -17,24 +17,25 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// The runs one operand of a side names. A concatenation names its own operands'
-// runs in the order written, which is most significant first, so nesting one
-// inside another needs nothing of its own. Anything else is a net or a constant
-// select of one, which is its own longest static prefix (LRM 11.5.3) and names
-// the part of the net its one run covers whole.
-auto RunsOf(
+// The positions one operand of a side names. A concatenation names its own
+// operands' positions in the order written, which is most significant first,
+// so nesting one inside another needs nothing of its own. Anything else is a
+// net or a constant select of one, which is its own longest static prefix (LRM
+// 11.5.3) and names the part of the net whose positions it covers whole.
+auto PositionsOf(
     StructuralScopeLowerer& scope, slang::ast::EvalContext& eval_context,
     const slang::ast::Expression& expr, diag::SourceSpan span,
     diag::DiagCode code, WalkFrame frame) -> diag::Result<hir::NetSide> {
   if (expr.kind == slang::ast::ExpressionKind::Concatenation) {
-    hir::NetSide runs;
+    hir::NetSide operands;
     for (const slang::ast::Expression* operand :
          expr.as<slang::ast::ConcatenationExpression>().operands()) {
-      auto named = RunsOf(scope, eval_context, *operand, span, code, frame);
+      auto named =
+          PositionsOf(scope, eval_context, *operand, span, code, frame);
       if (!named) return std::unexpected(std::move(named.error()));
-      runs.insert(runs.end(), named->begin(), named->end());
+      operands.insert(operands.end(), named->begin(), named->end());
     }
-    return runs;
+    return operands;
   }
   const slang::ast::ValuePath path(expr, eval_context);
   const slang::ast::ValueSymbol* root = path.rootSymbol();
@@ -44,21 +45,21 @@ auto RunsOf(
         span, code,
         "an operand that is neither a net nor a constant select of one "
         "(LRM 10.11) is not yet supported where a connection or an alias "
-        "names a run of positions");
+        "names some of a net's bits");
   }
-  // A run is counted in the positions of a bit vector. A net whose data type is
-  // an unpacked aggregate resolves per bit as well (LRM 6.7.1), but it keeps no
-  // runs of positions another net could join, whether the whole of it is named
-  // or one element.
+  // Positions are counted in the bits of a vector. A net whose data type is an
+  // unpacked aggregate resolves per bit as well (LRM 6.7.1), but it keeps no
+  // positions another net could join, whether the whole of it is named or one
+  // element.
   if (!root->getType().isIntegral()) {
     return diag::Fail(
         span, code,
         "a net whose data type is an unpacked aggregate is not yet supported "
-        "where a connection or an alias names a run of positions");
+        "where a connection or an alias names some of a net's bits");
   }
   auto part = scope.LowerExpr(expr, frame);
   if (!part) return std::unexpected(std::move(part.error()));
-  return hir::NetSide{hir::NetRun{
+  return hir::NetSide{hir::NetPositions{
       .part = frame.Exprs().Add(*std::move(part)),
       .offset = 0,
       .width = static_cast<std::uint32_t>(
@@ -67,12 +68,12 @@ auto RunsOf(
 
 }  // namespace
 
-auto NetRunsOfLvalue(
+auto NetPositionsOfLvalue(
     StructuralScopeLowerer& scope, const slang::ast::Symbol& eval_scope,
     const slang::ast::Expression& expr, diag::SourceSpan span,
     diag::DiagCode code, WalkFrame frame) -> diag::Result<hir::NetSide> {
   slang::ast::EvalContext eval_context(eval_scope);
-  return RunsOf(scope, eval_context, expr, span, code, frame);
+  return PositionsOf(scope, eval_context, expr, span, code, frame);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

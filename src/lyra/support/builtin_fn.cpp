@@ -44,7 +44,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kTagMatches:
       return {.name = "tag_matches", .declaration = Method{"IsTagged"}};
     case BuiltinFn::kMakeActiveMember:
-      return {.name = "make", .declaration = StaticFactory{"Make"}};
+      return {
+          .name = "make",
+          .declaration = StaticFactory{"Make"},
+          .member_operand = 0};
     case BuiltinFn::kRequire:
       return {
           .name = "require",

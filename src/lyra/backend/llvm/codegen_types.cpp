@@ -12,7 +12,7 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/runtime/object_layout.hpp"
-#include "lyra/support/tuple_operations.hpp"
+#include "lyra/value/runtime_tuple.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -160,8 +160,8 @@ auto CodeGenTypes::LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout& {
       .components = {components->begin(), components->end()},
       .offsets = {},
       .storage = {
-          .size = support::kTupleOperationsSize,
-          .align = alignof(const support::TupleOperations*),
+          .size = sizeof(const value::TupleType*),
+          .align = alignof(const value::TupleType*),
           .ends_with_nothing_to_do = true}};
   layout.offsets.reserve(layout.components.size());
   for (const lir::TypeId component : layout.components) {

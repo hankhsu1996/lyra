@@ -291,17 +291,17 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
             return as_place(
                 LowerHirInterfaceMemberAccessExpr(lowerer, frame, sel));
           },
-          // A join of destinations (LRM 11.4.12) stands for a run of places and
-          // is not one itself: the assignment that consumes it gives each its
-          // share. A context that reaches one here is one where the write is
-          // not a procedural assignment statement of its own.
+          // A join of destinations (LRM 11.4.12) stands for a sequence of
+          // places and is not one itself: the assignment that consumes it gives
+          // each its share. A context that reaches one here is one where the
+          // write is not a procedural assignment statement of its own.
           [&](const hir::ConcatExpr&) -> diag::Result<AccessPath> {
             return diag::Fail(
                 expr.span, diag::DiagCode::kUnsupportedExpressionForm,
                 "a concatenation is not yet supported as the target of this "
                 "kind of write (LRM 11.4.12)");
           },
-          // A stream stands for a run of destinations in the same way, and
+          // A stream stands for a sequence of destinations in the same way, and
           // what fills each of them is a share of a sequence of bits rather
           // than a share of a value laid out like the targets.
           [&](const hir::StreamingConcatExpr&) -> diag::Result<AccessPath> {

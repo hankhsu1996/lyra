@@ -770,15 +770,20 @@ class Type {
   // writing the whole it is a view of.
   [[nodiscard]] auto PartsAreStorage() const -> bool;
 
+  // True for a value whose bits lie contiguously (LRM 7.4.1), so a write into
+  // some of them lands on those bits where they lie, at the cost of those bits,
+  // rather than writing the whole they are part of.
+  [[nodiscard]] auto BitsAreWrittenInPlace() const -> bool;
+
   // The value a capability wrapper wraps; throws where there is none.
   [[nodiscard]] auto WrappedValueType() const -> TypeId;
 
-  // The type of the elements this one holds a run of, or nothing where it
+  // The type of the elements this one holds a sequence of, or nothing where it
   // holds none: the unpacked array (LRM 7.4), the dynamic array (7.5), the
   // associative array (7.8) and the queue (7.10). Narrower than holding
-  // values: a machine array and a vector hold a run of them and are still not
-  // containers, being shapes a lowering builds rather than types a declaration
-  // named.
+  // values: a machine array and a vector hold a sequence of them and are still
+  // not containers, being shapes a lowering builds rather than types a
+  // declaration named.
   [[nodiscard]] auto ContainerElementType() const -> std::optional<TypeId>;
 
   template <typename T>

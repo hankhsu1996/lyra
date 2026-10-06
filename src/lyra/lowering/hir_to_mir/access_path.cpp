@@ -216,7 +216,7 @@ auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
 }
 
 // The type of the value the last step of `path`, which takes at least one,
-// selects within. Every step into a packed value is a run of that one vector
+// selects within. Every step into a packed value names bits of that one vector
 // (LRM 7.2.1), so where the steps at the end of the descent each enter a packed
 // value, what the last of them selects within is the outermost of those.
 auto ValueSelectedWithin(
@@ -307,9 +307,11 @@ auto PathPlace(
     // The write is opened on the wrapper, the whole of what the wrapper holds
     // is designated within it, and each step into a part that is storage of its
     // own designates that part within the same write, so the write knows what
-    // forming each one did. Where the value stepped into has no such parts --
-    // or the step reached a slice, several elements rather than one place --
-    // the write lands, and any step left reaches into the value landed on.
+    // forming each one did. Bits of a packed value are designated the same
+    // way, so the write knows which bits it reached. Where the value
+    // stepped into has no such parts -- or the step reached a slice, several
+    // elements or bits rather than one place -- the write lands, and any step
+    // left reaches into the value landed on.
     mir::TypeId value = owner_ty.WrappedValueType();
     const auto designated = [&](mir::TypeId part) {
       return unit.types.Intern(mir::Type{mir::DesignationType{.value = part}});
@@ -329,7 +331,8 @@ auto PathPlace(
         block, support::BuiltinFn::kDesignateWhole, std::nullopt, write, {},
         designated(value));
     while (step != path.descent.end() &&
-           unit.types.Get(value).PartsAreStorage()) {
+           (unit.types.Get(value).PartsAreStorage() ||
+            unit.types.Get(value).BitsAreWrittenInPlace())) {
       const DescentStep& taken = *step++;
       const DesignatingStep designating = DesignatingStepOf(taken);
       value = taken.part_type;
@@ -630,23 +633,23 @@ auto ReadThenWrite(
   return ReadThenWritten{.place = std::move(settled), .incoming = incoming};
 }
 
-auto RunWithinOwner(
+auto BitsWithinOwner(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
-    -> PathRun {
+    -> PathBits {
   mir::ExprId first = BuildConstantPosition(unit, block, 0);
   for (const DescentStep& step : path.descent) {
-    // A step that reaches a run is the one that states a count, and its one
-    // operand is where the run starts.
+    // A step that reaches bits is the one that states a count, and its one
+    // operand is where those bits start.
     if (!step.count.has_value()) {
       throw InternalError(
-          "access path: a part of a packed value is reached by runs of a fixed "
-          "count from one start, and this descent takes a step that is not "
-          "one");
+          "access path: a part of a packed value is reached by steps naming a "
+          "fixed count of bits from one start, and this descent takes a step "
+          "that is not one");
     }
     first = BuildPositionSum(unit, block, first, step.operands.front());
   }
   const mir::TypeId part = PathValueType(unit, block, path);
-  return PathRun{
+  return PathBits{
       .first = first, .width = unit.types.Get(part).PackedShape().BitWidth()};
 }
 

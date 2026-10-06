@@ -202,8 +202,8 @@ auto ParseFormatString(std::string_view text) -> FormatParseResult {
       if (IsRealConversion(spec_or->kind)) {
         mods.left_align = minus_written;
         mods.zero_pad = zero_written;
-        // A run of exactly "0" is the fill flag alone, leaving C's field width
-        // unstated.
+        // Digits that are exactly "0" are the fill flag alone, leaving C's
+        // field width unstated.
         if (zero_written && digit_count == 1U) {
           mods.width = -1;
         }

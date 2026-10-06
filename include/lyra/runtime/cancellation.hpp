@@ -171,8 +171,8 @@ void SettleRaised(RuntimeEffects& effects, const std::exception_ptr& raised);
 // Call only while an exception is being handled, as above.
 [[nodiscard]] auto ReceiveDeparture() -> ControlEffect;
 
-// Runs `stretch`, a run of the design's code that no activation holds, as its
-// own landing, which settles it the way an activation's landing settles a
+// Runs `stretch`, a stretch of the design's code that no activation holds, as
+// its own landing, which settles it the way an activation's landing settles a
 // body: a departure no region claimed ends it there, and a run-time error that
 // left it is settled, and either way the caller carries on to the run's end. A
 // claimable departure never arrives here: it names a region the departing

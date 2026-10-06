@@ -218,8 +218,7 @@ Each is reversed only for the write side of a value interior, and only in mechan
   union-specific reference concept: the write form is an ordinary reference into the active member's
   storage" -- and D5's composition of a nested member write on that reference. A union member
   becomes a selector; a nested write is a two-step path, not composition on a reference. The
-  active-member value model, member activation as part of the write, and the inactive-read default
-  are unchanged.
+  active-member value model and member activation as part of the write are unchanged.
 - [unpacked-array-representation](unpacked-array-representation.md) invariant 2 -- the write-side
   slice proxy "whose destructor scatters back into the receiver's storage", and the out-of-range
   reference to a shield slot. Both become realizations admitted under D8, not the model; the

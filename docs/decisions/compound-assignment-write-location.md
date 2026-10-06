@@ -63,18 +63,18 @@ write-side locations.
    6.16.3 / 6.16.2) stay for the method-call forms; `Element` / `ElementRef` are the indexing forms.
 
 3. **A union member access is a matched value / reference pair, like a struct member.** The read
-   `u.f` is `UnionGetExpr` rendering `Union::Get<I>()` (the active-member value, the inactive-member
-   default if `I` is not active); the write is `UnionGetRefExpr` rendering `Union::GetRef<I>()`, a
-   reference to the active member's storage that makes `I` active first if it is not. `Get` /
-   `GetRef` is the same verb a struct member uses (`std::get<I>` is the standard accessor for both a
-   `std::tuple` and a `std::variant`, the runtime realizations of struct and union). The two are
-   separate access forms because a union member's read realization (a value) differs from its write
-   realization (an activating reference) -- whereas a struct member's read and write are one `T&`,
-   so a struct collapses to a single `Get`. The write reference is a real reference, not a proxy, so
-   `u.f = v`, `u.f op= v`, and a nested `u.f.g = v` or `u.h[i] = v` all compose on it exactly as a
-   struct member's reference does. The only difference from a struct member is the activation step;
-   the active-member representation (not a byte overlay, see `unpacked-union-representation.md`) is
-   why a write activates the member rather than reinterprets shared bytes.
+   `u.f` is `UnionGetExpr` rendering `Union::Get<I>()` (the active-member value); the write is
+   `UnionGetRefExpr` rendering `Union::GetRef<I>()`, a reference to the active member's storage that
+   makes `I` active first if it is not. `Get` / `GetRef` is the same verb a struct member uses
+   (`std::get<I>` is the standard accessor for both a `std::tuple` and a `std::variant`, the runtime
+   realizations of struct and union). The two are separate access forms because a union member's
+   read realization (a value) differs from its write realization (an activating reference) --
+   whereas a struct member's read and write are one `T&`, so a struct collapses to a single `Get`.
+   The write reference is a real reference, not a proxy, so `u.f = v`, `u.f op= v`, and a nested
+   `u.f.g = v` or `u.h[i] = v` all compose on it exactly as a struct member's reference does. The
+   only difference from a struct member is the activation step; the active-member representation
+   (not a byte overlay, see `unpacked-union-representation.md`) is why a write activates the member
+   rather than reinterprets shared bytes.
 
 4. **MIR carries one compound shape.** `AssignExpr{target, compound_op, value}` is the single
    representation; `target` is the lvalue expression (a container-access chain ending in

@@ -111,13 +111,13 @@ void WriteMemWithin(
     const value::String& filename, const value::PackedArray& base,
     const value::PackedArray& start, const value::PackedArray& finish);
 
-// The same four memories, held as the erased values the execution backend
-// realizes them by. A load answers with the memory it filled rather than with
-// a completion, because what a completion is made of belongs to the boundary
-// that builds one. Nothing about the addressing changes: the words are taken
-// out in address order, the same cores fill or render them, and the memory is
-// rebuilt around them -- which is what a value that cannot be written in place
-// needs in order to keep the words the file does not reach.
+// The same four memories, as the library holds them for the execution
+// backend. A load answers with the memory it filled rather than with a
+// completion, because what a completion is made of belongs to the boundary
+// that builds one. Nothing about the addressing changes: the same cores fill or
+// render the words in address order, each word read and written where it lies
+// in a copy of the memory, so a word the file does not reach keeps what it
+// held.
 auto ReadMem(
     RuntimeEffects& runtime, const value::RuntimeUnpackedArray& dest,
     const value::String& filename, std::span<const value::UnpackedRange> dims,

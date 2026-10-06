@@ -10,7 +10,7 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// A run of steps under construction: a child scope of the enclosing block,
+// A sequence of steps under construction: a child scope of the enclosing block,
 // lowered through the enclosing callable's own binding context. A construct
 // reaches for one when its evaluation takes several steps -- an SV subroutine
 // call that writes back to its actuals, a system function that both yields a

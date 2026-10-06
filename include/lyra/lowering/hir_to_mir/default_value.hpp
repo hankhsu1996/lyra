@@ -56,10 +56,10 @@ namespace lyra::lowering::hir_to_mir {
     const mir::Type& source, const mir::Type& destination) -> bool;
 
 // A container's element type, for a caller whose own construction guarantees
-// there is one. Which types hold a run of elements is the type's own question
-// and is answered there; this adds only what an absent answer means here.
-// Where the guarantee did not hold, the producer built something it should not
-// have, so this reports a compiler bug rather than answering.
+// there is one. Which types hold a sequence of elements is the type's own
+// question and is answered there; this adds only what an absent answer means
+// here. Where the guarantee did not hold, the producer built something it
+// should not have, so this reports a compiler bug rather than answering.
 [[nodiscard]] auto RequiredContainerElementType(
     const mir::CompilationUnit& unit, mir::TypeId container) -> mir::TypeId;
 

@@ -54,7 +54,7 @@ struct Directive {
 };
 
 // The directives at the top of a source, in the order they appear. The header
-// is the run of comment and blank lines before the first line of code, so prose
+// is the comment and blank lines before the first line of code, so prose
 // may sit beside the directives and is passed over rather than parsed.
 auto ReadDirectives(std::string_view source, const std::filesystem::path& path)
     -> std::vector<Directive> {

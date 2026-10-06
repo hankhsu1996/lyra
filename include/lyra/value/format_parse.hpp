@@ -23,9 +23,10 @@ struct FormatModifiers {
   bool left_align = false;
 };
 
-// One piece of a parsed format string. A directive is a run of literal text, a
-// `%m` hierarchical-name directive that consumes no operand (LRM 21.2.1.5), or
-// a value directive that consumes one operand and formats it under `kind`.
+// One piece of a parsed format string. A directive is a stretch of literal
+// text, a `%m` hierarchical-name directive that consumes no operand (LRM
+// 21.2.1.5), or a value directive that consumes one operand and formats it
+// under `kind`.
 struct FormatDirective {
   enum class Role : std::uint8_t {
     kLiteral,

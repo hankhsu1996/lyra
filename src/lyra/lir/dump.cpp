@@ -295,10 +295,6 @@ class LirDumper {
             [&](const ArrayInstr& array) -> std::string {
               return std::format("array({})", FormatOperands(array.elements));
             },
-            [&](const UnionInstr& u) -> std::string {
-              return std::format(
-                  "union({}, {})", u.index.value, FormatOperand(u.value));
-            },
             [&](const CastInstr& cast) -> std::string {
               return std::format("cast {}", FormatOperand(cast.operand));
             },

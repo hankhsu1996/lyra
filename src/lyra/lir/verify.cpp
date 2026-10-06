@@ -154,9 +154,8 @@ void VerifyInstr(
                   "every capture its declaration lists");
             }
           },
-          [](const ArrayInstr&) {}, [](const UnionInstr&) {},
-          [](const TagTestInstr&) {}, [](const BinaryInstr&) {},
-          [](const UnaryInstr&) {},
+          [](const ArrayInstr&) {}, [](const TagTestInstr&) {},
+          [](const BinaryInstr&) {}, [](const UnaryInstr&) {},
           // Where it may stand is a property of the block rather than of the
           // instruction, so it is held where the blocks are walked.
           [](const ReceiveDepartureInstr&) {}, [](const OpenVariablesInstr&) {},

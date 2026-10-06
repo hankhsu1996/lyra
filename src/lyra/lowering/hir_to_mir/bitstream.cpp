@@ -117,8 +117,8 @@ auto BuildReorderedStream(
 auto BuildFromBitstream(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId bits_id,
     mir::TypeId dst_type, diag::SourceSpan span) -> diag::Result<mir::ExprId> {
-  // A stream is a run of bits, so its own shape is on its type and asking for
-  // it cannot fail; only the destination can be a type with no stream. By
+  // A stream is a sequence of bits, so its own shape is on its type and asking
+  // for it cannot fail; only the destination can be a type with no stream. By
   // value: the pool's view does not survive the interning below.
   const mir::PackedArrayType stream =
       unit.types.Get(block.exprs.Get(bits_id).type).PackedShape();

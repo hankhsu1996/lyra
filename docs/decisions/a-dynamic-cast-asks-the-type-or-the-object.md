@@ -5,8 +5,8 @@ Date: 2026-09-17 Status: the object half is superseded by
 the view to the destination class, as clang's dynamic cast does, through the type descriptor every
 class carries, and the answer is whether that view refers to an object. So the object question is
 one node beside the ordinary conversion rather than a runtime entry asked about a class's record,
-and no body names a record to ask it. The type half, and the run of steps the construct lowers to,
-stand.
+and no body names a record to ask it. The type half, and the sequence of steps the construct lowers
+to, stand.
 
 ## Why this decision matters
 
@@ -44,7 +44,7 @@ answer = <the object this handle refers to is of Dest, or of a class extending i
 
 ## The decision
 
-### D1. The construct is a run of steps ending in the answer
+### D1. The construct is a sequence of steps ending in the answer
 
 The value is settled once, the question is asked of it, the destination takes it where the answer is
 yes, and the answer is what the whole expression is. One value is asked about and stored, so the
@@ -89,9 +89,9 @@ accepts.
 ### D5. No semantic layer gains an alternative
 
 HIR gains the construct, because the construct is what the source wrote. Below it the whole thing is
-nodes that already exist: a run of steps ending in a value, a conditional, a store, a conversion, a
-call, and the severity report every tool-issued report already goes through. The two questions are a
-per-type function and a runtime entry, neither of which is a node.
+nodes that already exist: a sequence of steps ending in a value, a conditional, a store, a
+conversion, a call, and the severity report every tool-issued report already goes through. The two
+questions are a per-type function and a runtime entry, neither of which is a node.
 
 What did gain an alternative is LIR, and it is a gap this reached rather than a shape this invented:
 a body can now name a class's record. The execution backend already reads a class off an object type

@@ -63,13 +63,13 @@ leaves 32 to 140 distinct shapes per design however large it is -- XiangShan gro
 between its small and its default configuration -- against 87 to 598 counted whole, which is the
 bound principle 3 asks for.
 
-**D4. A packed value is laid out as the standard describes it: one contiguous run of bits.** An
-element or member at a run-time index is reached by bit addressing -- a word index and an offset
-computed from the index, one or two words read, shifted and masked -- which costs the element, not
-the collection. LRM 7.4.1 makes a packed array "a contiguous set of bits" and 7.2.1 a packed
-structure "packed together in memory without gaps"; no clause lets a user observe a layout, and
-every way out of the language (DPI, VPI, `$readmem`) copies through a fixed format. Laying each
-element in a slot of its own was considered and rejected below.
+**D4. A packed value is laid out as the standard describes it: its bits, contiguous.** An element or
+member at a run-time index is reached by bit addressing -- a word index and an offset computed from
+the index, one or two words read, shifted and masked -- which costs the element, not the collection.
+LRM 7.4.1 makes a packed array "a contiguous set of bits" and 7.2.1 a packed structure "packed
+together in memory without gaps"; no clause lets a user observe a layout, and every way out of the
+language (DPI, VPI, `$readmem`) copies through a fixed format. Laying each element in a slot of its
+own was considered and rejected below.
 
 **D5. Nothing reads a description of a type while the program runs.** Every type is known where it
 is used, so what is specific to a type is code the compiler generates there: `$display` calls the
@@ -96,7 +96,7 @@ storage. Which waits are decided at the write is unchanged
 
 - **A runtime type per value, with fast paths inside it.** The structure this replaces. Three rounds
   made the object cheaper inside the same boundary -- the shape out of the value, a 48-byte object
-  with its planes in one run, positions settled at compile time -- and the operations still cost
+  with its planes in one array, positions settled at compile time -- and the operations still cost
   hundreds of instructions, because what remains is the boundary itself.
 - **Identifying a type by its storage size, the exact width an argument of each operation**
   (Verilator's helpers). It keeps the count of types down when that count is the whole design's

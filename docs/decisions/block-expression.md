@@ -7,8 +7,8 @@ Date: 2026-08-28. Status: accepted.
 Some evaluations take several steps and still stand where the grammar admits only an expression. A
 subroutine call that writes back to its actuals yields a result and performs writes; a scan yields a
 matched-conversion count and parses into its output arguments (LRM 21.3.4.3); a foreign call
-marshals across a boundary and hands back a value (LRM 35.5). Each is a run of statements that ends
-in a value, sitting inside a larger expression:
+marshals across a boundary and hands back a value (LRM 35.5). Each is a sequence of statements that
+ends in a value, sitting inside a larger expression:
 
 ```systemverilog
 n = $sscanf(s, fmt, a, b) + 1;
@@ -47,7 +47,7 @@ invoked closure is a substitute for it.
 
 ```text
 callable, closure   -- a function. A value. Holds a return.
-block expression    -- a run of statements and the value it ends with. Not a value-producing
+block expression    -- a sequence of statements and the value it ends with. Not a value-producing
                        entity of its own, not a function, and it holds nothing.
 ```
 
@@ -90,14 +90,15 @@ D3. A block expression is pure sequencing: it has no control-flow effect. Its st
 D4. A closure is the other concept and keeps its own job: a callable value, for a body someone else
     holds and invokes later. A body invoked where it is written is not a closure.
 
-D5. A block expression always yields a value. A run of steps that settles none is a statement, and
+D5. A block expression always yields a value. A sequence of steps that settles none is a statement, and
     a block statement over the same scope is what says so.
 ```
 
 ### Why D5 admits no valueless form
 
 The node kind exists to put a statement sequence in value position. Remove the value and that reason
-is gone, and what is left is a run of statements -- which the language already has a statement for.
+is gone, and what is left is a sequence of statements -- which the language already has a statement
+for.
 
 The tempting counter is that a void-typed expression is ordinary. It is, but not for this node, and
 the difference is worth stating because it decides the shape. A call is an expression **because

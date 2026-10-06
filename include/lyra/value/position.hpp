@@ -12,7 +12,7 @@ class PackedArray;
 // from the least significant end of a packed value, an element from the left of
 // an unpacked one. Whatever the source wrote to name it -- a declared range,
 // its direction, which part-select form -- has already been read by then, so an
-// access is handed the place itself and a run of that many parts.
+// access is handed the place itself and how many parts follow it.
 //
 // A position reaches an access as an integral value, because one computed while
 // the program runs carries whatever the index it came from held. An x or z bit

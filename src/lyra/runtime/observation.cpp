@@ -1,30 +1,34 @@
 #include "lyra/runtime/observation.hpp"
 
+#include <functional>
 #include <memory>
 #include <utility>
 
 #include "lyra/support/event_edge.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/runtime_value.hpp"
 
 namespace lyra::runtime {
 
-template auto Settled<value::PackedArray>(value::PackedArray)
-    -> value::RuntimeValue;
-template auto Settled<value::String>(value::String) -> value::RuntimeValue;
-template auto Settled<value::Real>(value::Real) -> value::RuntimeValue;
-template auto Settled<value::ShortReal>(value::ShortReal)
-    -> value::RuntimeValue;
-template auto Settled<value::Chandle>(value::Chandle) -> value::RuntimeValue;
-
-ValueWatch::~ValueWatch() = default;
-
-ArmedObservation::~ArmedObservation() = default;
-
-auto ArmedObservation::EdgeOf(const value::PackedArray& edge)
-    -> support::EventEdge {
+auto EventEdgeOf(const value::PackedArray& edge) -> support::EventEdge {
   return static_cast<support::EventEdge>(edge.ToInt64());
 }
+
+auto IsEdge(
+    support::EventEdge edge, value::FourStateBit before,
+    value::FourStateBit now) -> bool {
+  return EdgeMatches(edge, ClassifyEdge(before, now));
+}
+
+ValueWatch::ValueWatch() = default;
+ValueWatch::~ValueWatch() = default;
+
+ArmedObservation::ArmedObservation(
+    std::unique_ptr<ValueWatch> watch,
+    std::move_only_function<value::PackedArray()> condition)
+    : watch_(std::move(watch)), condition_(std::move(condition)) {
+}
+
+ArmedObservation::~ArmedObservation() = default;
 
 Observation::Observation() = default;
 Observation::Observation(const Observation&) = default;

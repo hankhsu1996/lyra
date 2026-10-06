@@ -363,7 +363,7 @@ auto ConnectInterfacePort(
 }
 
 // The join a bidirectional port connection states (LRM 23.3.3, 23.3.3.7). Both
-// sides are a sequence of runs of net positions: the actual may name a
+// sides are a sequence of net positions: the actual may name a
 // concatenation of nets, and the child's port may stand for part of one of its
 // own declarations, which that unit answers for on its signature because only
 // its own source says which part. The two are laid over each other from the
@@ -372,26 +372,26 @@ auto ConnectInterfacePort(
 auto ConnectBidirectionalPort(
     StructuralScopeLowerer& scope, const slang::ast::Symbol& eval_scope,
     const slang::ast::Expression& actual, hir::Expr child_net,
-    hir::PublishedRun child_run, diag::SourceSpan span, WalkFrame frame)
-    -> diag::Result<hir::NetJoin> {
-  auto outside = NetRunsOfLvalue(
+    hir::PublishedPositions child_positions, diag::SourceSpan span,
+    WalkFrame frame) -> diag::Result<hir::NetJoin> {
+  auto outside = NetPositionsOfLvalue(
       scope, eval_scope, actual, span,
       diag::DiagCode::kUnsupportedPortConnectionForm, frame);
   if (!outside) return std::unexpected(std::move(outside.error()));
   std::uint32_t named = 0;
-  for (const hir::NetRun& run : *outside) {
-    named += run.width;
+  for (const hir::NetPositions& operand : *outside) {
+    named += operand.width;
   }
-  if (named != child_run.width) {
+  if (named != child_positions.width) {
     return PortConnectionUnsupported(
         span,
         "an inout port connected to a net of a different width is not yet "
         "supported");
   }
-  hir::NetSide inside = {hir::NetRun{
+  hir::NetSide inside = {hir::NetPositions{
       .part = frame.Exprs().Add(std::move(child_net)),
-      .offset = child_run.position,
-      .width = child_run.width}};
+      .offset = child_positions.position,
+      .width = child_positions.width}};
   return hir::NetJoin{
       .span = span, .sides = {*std::move(outside), std::move(inside)}};
 }
@@ -543,15 +543,15 @@ auto ConnectDataPort(
           span, "const ref port connection is not yet supported");
     case hir::PortDirection::kInOut: {
       // A bidirectional connection is not a directional edge: it states that
-      // runs of the nets on both sides are one physical net, resolving over the
-      // contributions of all of them (LRM 23.3.3, 23.3.3.7), so it reads
-      // nothing, drives nothing, and waits on nothing. It is therefore not a
-      // data port connection at all, and is recorded as the join it is.
-      if (!projection->run.has_value()) {
+      // positions of the nets on both sides are one physical net, resolving
+      // over the contributions of all of them (LRM 23.3.3, 23.3.3.7), so it
+      // reads nothing, drives nothing, and waits on nothing. It is therefore
+      // not a data port connection at all, and is recorded as the join it is.
+      if (!projection->positions.has_value()) {
         return PortConnectionUnsupported(
             span,
-            "an inout port standing for a part of an internal name that is no "
-            "run of its positions is not yet supported");
+            "an inout port standing for a part of an internal name that is not "
+            "a range of its bits is not yet supported");
       }
       if (!std::holds_alternative<hir::NetStorage>(member.storage)) {
         throw InternalError(
@@ -570,7 +570,7 @@ auto ConnectDataPort(
           scope, *child.instance,
           expr->as<slang::ast::AssignmentExpression>().left(),
           unit_lowerer.MakeRoutedMemberRef(child.home_frame, port_route, span),
-          *projection->run, span, frame);
+          *projection->positions, span, frame);
       if (!join) return std::unexpected(std::move(join.error()));
       frame.current_structural_scope->net_joins.push_back(*std::move(join));
       return {};

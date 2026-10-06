@@ -17,6 +17,9 @@ module Top;
   bit all_unknown;
   bit struct_known;
   bit struct_has_x;
+  pair_t pairs[2];
+  bit array_known;
+  bit array_has_z;
 
   initial begin
     value = 4'b0101;
@@ -33,6 +36,12 @@ module Top;
     struct_known = $isunknown(pair);
     pair.b = 4'b01x1;
     struct_has_x = $isunknown(pair);
+
+    pairs[0] = '{1, 4'b0101};
+    pairs[1] = '{2, 4'b0011};
+    array_known = $isunknown(pairs);
+    pairs[1].b = 4'b0z11;
+    array_has_z = $isunknown(pairs);
   end
 
   final begin
@@ -53,6 +62,12 @@ module Top;
     if (struct_has_x !== 1'b1)
       $fatal(1, "$isunknown of a struct with an x bit was %b, expected 1",
              struct_has_x);
+    if (array_known !== 1'b0)
+      $fatal(1, "$isunknown of a fully known array of structs was %b",
+             array_known);
+    if (array_has_z !== 1'b1)
+      $fatal(1, "$isunknown of an array of structs with a z bit was %b",
+             array_has_z);
     $display("All checks passed");
   end
 endmodule

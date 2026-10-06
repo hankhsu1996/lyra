@@ -100,7 +100,7 @@ for the collector's sake.
 
 - **A per-aggregate description the compiler emits for the collector.** The answer of every runtime
   whose compiler knows the physical layout of what it describes. Ours does not: the layout belongs
-  to the runtime library, and the erased value already carries its own domain, so a description
+  to the runtime library, and each value it holds is held with its own type, so a description
   emitted beside it would be a second statement of one fact that can disagree with the first.
 
 - **Making the aggregate a collector root.** An aggregate always lives in storage that is already a

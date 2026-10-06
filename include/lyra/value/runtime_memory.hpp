@@ -1,38 +1,38 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <span>
-#include <vector>
 
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
-#include "lyra/value/runtime_value.hpp"
 #include "lyra/value/unpacked_range.hpp"
+#include "lyra/value/value_type.hpp"
 
-// An unpacked memory of any nesting depth, read and rebuilt through the
+// An unpacked memory of any nesting depth, read and written through the
 // coordinates its declaration names. A memory task addresses words in ascending
-// address at every dimension, row-major (LRM 21.4.3), and an erased memory
+// address at every dimension, row-major (LRM 21.4.3), and the library's memory
 // carries its depth as a run-time fact -- so the bounds the declaration
 // supplies are the whole of what drives the walk.
 namespace lyra::value {
 
-// The word an element holds. Every memory's element is a packed vector
-// (LRM 21.4.1 / 21.5.1) and the front end rejects anything else, so an element
-// of another domain is a compiler bug.
-[[nodiscard]] auto MemoryWordOf(const RuntimeValue& element)
+// The word an element of `type` lying at `element` holds. Every memory's
+// element is a packed vector (LRM 21.4.1 / 21.5.1) and the front end rejects
+// anything else, so an element of another type is a compiler bug.
+[[nodiscard]] auto MemoryWordOf(const ValueType& type, const void* element)
     -> const PackedArray&;
+[[nodiscard]] auto MemoryWordOf(const ValueType& type, void* element)
+    -> PackedArray&;
 
-// The words of `memory` in address order. `dims` is one declared range per
-// dimension, the addressed dimension first and the rest describing the leaves
-// each address expands to.
-[[nodiscard]] auto MemoryWords(
-    const RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims)
-    -> std::vector<PackedArray>;
-
-// `memory` holding `words` in that same order. The two are inverse, so a word
-// a caller leaves as it read it comes back where it was -- which is what keeps
-// an address the file does not reach holding what it held (LRM 21.4).
-[[nodiscard]] auto MemoryWithWords(
+// The word at one grid coordinate of `memory`, where it lies: `top` is an
+// address of the addressed dimension, `dims[0]`, and `ordinal` counts the
+// leaves that address expands to across the rest of `dims`, one declared range
+// per dimension.
+[[nodiscard]] auto MemoryLeaf(
+    RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
+    std::int64_t top, std::size_t ordinal) -> PackedArray&;
+[[nodiscard]] auto MemoryLeaf(
     const RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
-    std::span<const PackedArray> words) -> RuntimeUnpackedArray;
+    std::int64_t top, std::size_t ordinal) -> const PackedArray&;
 
 }  // namespace lyra::value

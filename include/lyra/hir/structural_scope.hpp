@@ -412,34 +412,36 @@ struct PortConnection {
   auto operator==(const PortConnection&) const -> bool = default;
 };
 
-// A run of one net's positions, as one operand of a side names it. `part` is
+// Some of one net's positions, as one operand of a side names them. `part` is
 // the part of a net the source wrote -- the net whole, or a constant select of
-// it -- and `offset` and `width` say where among that part's positions the run
-// starts, counted from the part's lowest, and how many it covers. A select's
+// it -- and `offset` and `width` say where among that part's positions they
+// start, counted from the part's lowest, and how many there are. A select's
 // index may be a value each construction is given, so the part is stated as
 // the select rather than as the positions one construction settles it to.
 //
-// A run is counted in positions, never in the range the net was declared with:
-// LRM 10.11 gives an overlay the bit overlay rules of a packed union, and LRM
-// 7.6 makes whole-value correspondence positional rather than range-relative.
-struct NetRun {
+// They are counted in positions, never in the `[msb:lsb]` the net was declared
+// with: LRM 10.11 gives an overlay the bit overlay rules of a packed union, and
+// LRM 7.6 makes whole-value correspondence positional rather than
+// range-relative.
+struct NetPositions {
   ExprId part;
   std::uint32_t offset{};
   std::uint32_t width{};
 
-  auto operator==(const NetRun&) const -> bool = default;
+  auto operator==(const NetPositions&) const -> bool = default;
 };
 
-// One side of a join: the runs it names, most significant first. A side naming
-// one whole net is the one-run case, and a concatenation names one run per
-// operand (LRM 10.11 `net_lvalue`).
-using NetSide = std::vector<NetRun>;
+// One side of a join: the positions each of its operands names, most
+// significant first. A side naming one whole net has one operand, and a
+// concatenation names the positions of each of its operands (LRM 10.11
+// `net_lvalue`).
+using NetSide = std::vector<NetPositions>;
 
 // The sides one construct states are the same physical nets (LRM 23.3.3.7,
 // 10.11), each named once, in the order the source lists them. Every side
 // covers the same number of positions, and the sides are laid over each other
-// position-wise from the most significant end, so which run of one net meets
-// which run of another follows from the sides.
+// position-wise from the most significant end, so which positions of one net
+// meet which of another follows from the sides.
 //
 // Nothing is driven, read, or waited on: a bidirectional connection (LRM
 // 23.3.3), whose two sides are the actual and the port, and an `alias` (LRM
@@ -684,9 +686,9 @@ struct StructuralScope {
   base::Registry<InstanceMemberDecl, InstanceMemberId> instance_members;
   base::Arena<InterfacePortDecl, InterfacePortId> interface_ports;
   base::Arena<PortConnection, PortConnectionId> port_connections;
-  // The runs of nets this scope's constructs place in one resolution. A plain
-  // list rather than an arena because nothing names one: no reference reaches a
-  // join, and what it states is already complete when it is recorded.
+  // The positions of nets this scope's constructs place in one resolution. A
+  // plain list rather than an arena because nothing names one: no reference
+  // reaches a join, and what it states is already complete when it is recorded.
   std::vector<NetJoin> net_joins;
   ScopeRoutes routes;
   // The cells something in this scope reads a sampled value of (LRM 16.5.1),

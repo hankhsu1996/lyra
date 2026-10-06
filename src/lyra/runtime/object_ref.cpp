@@ -42,10 +42,10 @@ auto GcObject::Watched() const -> bool {
 void GcObject::PublishChange() {
   RuntimeEffects& runtime = current_runtime();
   if (event_source_ != nullptr && event_source_->HasWaiter()) {
-    runtime.WakeWaitersOf(*event_source_, MakeWholeValueProjectionTest());
+    runtime.WakeWaitersOf(*event_source_, Change::Whole());
   }
   if (Observable& every = runtime.EveryObject(); every.HasWaiter()) {
-    runtime.WakeWaitersOf(every, MakeWholeValueProjectionTest());
+    runtime.WakeWaitersOf(every, Change::Whole());
   }
 }
 

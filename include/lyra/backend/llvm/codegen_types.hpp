@@ -49,8 +49,8 @@ class CodeGenTypes {
   auto Ptr() const -> llvm::PointerType* {
     return ptr_ty_;
   }
-  // A contiguous run of values named by its first-element pointer and length,
-  // which is the shape a run of them crosses the runtime boundary in.
+  // A contiguous array of values named by its first-element pointer and length,
+  // which is the shape a sequence of them crosses the runtime boundary in.
   auto Span() const -> llvm::StructType* {
     return span_ty_;
   }

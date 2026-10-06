@@ -518,10 +518,10 @@ class Type {
   // union is a caller error.
   [[nodiscard]] auto UnionMemberTypes() const -> std::vector<TypeId>;
 
-  // The type of the elements this one holds a run of, or nothing where it
+  // The type of the elements this one holds a sequence of, or nothing where it
   // holds none: the unpacked array (LRM 7.4), the dynamic array (7.5), the
   // associative array (7.8) and the queue (7.10). Narrower than holding values:
-  // a machine array and a vector hold a run of them and are still not
+  // a machine array and a vector hold a sequence of them and are still not
   // containers, being shapes a lowering builds rather than types a declaration
   // named.
   [[nodiscard]] auto ContainerElementType() const -> std::optional<TypeId>;

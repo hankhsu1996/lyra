@@ -19,7 +19,7 @@ namespace {
 
 constexpr std::uint64_t kWordBits = 64U;
 
-// `count` positions, right-aligned. A step of a run covers at least one
+// `count` positions, right-aligned. A step over bits covers at least one
 // position and at most a whole word, and a whole word is the case a shift
 // cannot express.
 auto LowBits(std::uint64_t count) -> std::uint64_t {
@@ -46,17 +46,17 @@ auto BitsAt(
   return bits & LowBits(count);
 }
 
-// Where a run's next step lands: which destination word, how far into it, and
-// how many positions of that word the step covers.
-struct RunStep {
+// Where the next step over bits lands: which destination word, how far into
+// it, and how many positions of that word the step covers.
+struct WordStep {
   std::size_t word;
   std::uint64_t offset;
   std::uint64_t count;
 };
 
-auto StepAt(std::uint64_t position, std::uint64_t remaining) -> RunStep {
+auto StepAt(std::uint64_t position, std::uint64_t remaining) -> WordStep {
   const std::uint64_t offset = position % kWordBits;
-  return RunStep{
+  return WordStep{
       .word = static_cast<std::size_t>(position / kWordBits),
       .offset = offset,
       .count = std::min(kWordBits - offset, remaining)};
@@ -64,12 +64,12 @@ auto StepAt(std::uint64_t position, std::uint64_t remaining) -> RunStep {
 
 }  // namespace
 
-auto MoveBitRun(
+auto MoveBits(
     std::span<const std::uint64_t> src, std::uint64_t src_offset,
     std::span<std::uint64_t> dst, std::uint64_t dst_offset, std::uint64_t count)
     -> void {
   for (std::uint64_t moved = 0U; moved < count;) {
-    const RunStep step = StepAt(dst_offset + moved, count - moved);
+    const WordStep step = StepAt(dst_offset + moved, count - moved);
     const std::uint64_t mask = LowBits(step.count) << step.offset;
     const std::uint64_t bits = BitsAt(src, src_offset + moved, step.count);
     dst[step.word] = (dst[step.word] & ~mask) | (bits << step.offset);
@@ -77,11 +77,25 @@ auto MoveBitRun(
   }
 }
 
-auto SetBitRun(
+auto BitsEqual(
+    std::span<const std::uint64_t> lhs, std::span<const std::uint64_t> rhs,
+    std::uint64_t offset, std::uint64_t count) -> bool {
+  for (std::uint64_t compared = 0U; compared < count;) {
+    const WordStep step = StepAt(offset + compared, count - compared);
+    const std::uint64_t at = offset + compared;
+    if (BitsAt(lhs, at, step.count) != BitsAt(rhs, at, step.count)) {
+      return false;
+    }
+    compared += step.count;
+  }
+  return true;
+}
+
+auto SetBits(
     std::span<std::uint64_t> dst, std::uint64_t offset, std::uint64_t count)
     -> void {
   for (std::uint64_t set = 0U; set < count;) {
-    const RunStep step = StepAt(offset + set, count - set);
+    const WordStep step = StepAt(offset + set, count - set);
     dst[step.word] |= LowBits(step.count) << step.offset;
     set += step.count;
   }

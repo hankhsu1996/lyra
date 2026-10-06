@@ -76,8 +76,8 @@ void Assign(
 }
 
 // One position set as body locals, one per word of the automaton's width. A
-// set operation is then the same run of word operations wherever it appears,
-// and a one-word automaton is that run at length one.
+// set operation is then the same sequence of word operations wherever it
+// appears, and a one-word automaton is that sequence at length one.
 auto DeclareWords(
     CallableBindings& bindings, mir::Block& block, mir::TypeId type,
     const PositionSet& initial) -> std::vector<mir::LocalId> {

@@ -263,15 +263,17 @@ struct ValueCellTarget {
 // designated within it. `kLand` is where the write lands: the part designated,
 // whose value from before the write the write keeps where anything will ask
 // whether the write changed the variable (LRM 4.3); it answers with where the
-// part lies. `kAssignSlice` writes a slice of the designated container's
-// elements within the write (LRM 7.6), telling it whether an element moved.
-// `value` is what the part or the container holds, and the domain it is
-// realized in names the runtime entry.
+// part lies. `kAssignSlice` writes a slice of what is designated within the
+// write -- a container's elements (LRM 7.6), a packed value's bits (LRM 11.5.1)
+// -- telling it what moved. `kReadSlice` answers with that slice as it stands,
+// which an assignment operator combines before the slice is written (LRM
+// 11.4.1). `value` is what the part or the container holds, and the domain it
+// is realized in names the runtime entry.
 // A LIR-only target with no MIR twin: MIR states the landing as a dereference
 // and the slice write as an assignment into a designated slice, and a place is
-// named by an address here, so both are calls on the designation.
+// named by an address here, so each is a call on the designation.
 struct OpenWriteTarget {
-  enum class Op : std::uint8_t { kLand, kAssignSlice };
+  enum class Op : std::uint8_t { kLand, kAssignSlice, kReadSlice };
   Op op;
   TypeId value;
 };
@@ -404,18 +406,6 @@ struct ClosureInstr {
 // instruction is the same operation whichever one consumes it.
 struct ArrayInstr {
   std::vector<Operand> elements;
-};
-
-// Builds an active-member value -- a union or tagged union -- naming which
-// member `index` is live and carrying `value`. Its result is that value; unlike
-// a product it names one member rather than all of them, because a union holds
-// one at a time. The result type says whether the tag is observable and a
-// mismatched access faults (a tagged union) or is erased with a cross-member
-// read defaulted (an untagged one); this instruction is the same build for
-// both.
-struct UnionInstr {
-  base::ComponentIndex index;
-  Operand value;
 };
 
 // Names a member of an active-member value by its declaration-order position,
@@ -656,11 +646,11 @@ struct CloseVariablesInstr {
 };
 
 using InstrData = std::variant<
-    CallInstr, TupleInstr, ClosureInstr, ArrayInstr, UnionInstr,
-    AggregateExtractInstr, AggregateUpdateInstr, TagTestInstr, LoadInstr,
-    StoreInstr, AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr,
-    HandleCastInstr, DynamicCastInstr, ReceiveDepartureInstr,
-    OpenVariablesInstr, VariableAddressInstr, CloseVariablesInstr>;
+    CallInstr, TupleInstr, ClosureInstr, ArrayInstr, AggregateExtractInstr,
+    AggregateUpdateInstr, TagTestInstr, LoadInstr, StoreInstr, AddrOfInstr,
+    BinaryInstr, UnaryInstr, CastInstr, HandleCastInstr, DynamicCastInstr,
+    ReceiveDepartureInstr, OpenVariablesInstr, VariableAddressInstr,
+    CloseVariablesInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

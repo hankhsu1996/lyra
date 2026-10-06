@@ -41,11 +41,11 @@ locate-divergence feedback loop; this one owns the readability of what the loop 
       for a reason of its own -- an interior write names storage, and a local there holds a value --
       so the case is recorded against that path and returns when its storage model does.
 - [x] The same again where the aggregate is packed. A packed value's own repeat form describes a
-      uniform one in constant size, and a run of elements taking the default between two named ones
-      is one such repeat however long it is, so the aggregate costs its named positions to describe
-      rather than its length. Both execution paths take this shape: a packed value is a single
-      value, so it is built as one expression with nothing written into afterwards, and the storage
-      question that holds the unpacked case back does not arise.
+      uniform one in constant size, and a sequence of elements taking the default between two named
+      ones is one such repeat however long it is, so the aggregate costs its named positions to
+      describe rather than its length. Both execution paths take this shape: a packed value is a
+      single value, so it is built as one expression with nothing written into afterwards, and the
+      storage question that holds the unpacked case back does not arise.
 - [x] A scope's children are linked implicitly at construction; the traversal the scheduler walks is
       not spelled out again in every emitted class.
 - [x] A generated class reads top-down: nested scopes, then construction, then behavior, then state.

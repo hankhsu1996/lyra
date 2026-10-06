@@ -40,9 +40,9 @@ Neither fact is written down a second time.**
 
 - **The signature comes from the values crossing.** Callee resolution runs after the arguments are
   marshalled, so the function type is built from what is actually being passed -- including this
-  target's own encoding of the call, such as a run of values crossing as a `{pointer, length}` span.
-  An entry and its call cannot disagree about what crosses, because the call is where the types come
-  from.
+  target's own encoding of the call, such as a sequence of values crossing as a `{pointer, length}`
+  span. An entry and its call cannot disagree about what crosses, because the call is where the
+  types come from.
 
 - **The symbol has one form.** `lyra_rt_<domain>_<operation>` where the library realizes the
   operation once per value representation, and `lyra_rt_<operation>` where it realizes it once.
@@ -145,12 +145,12 @@ constructs.
 **What this does not reach, stated so nobody assumes otherwise.** A signature taken from the call
 agrees about how many values cross and what shape each one has, and that is all it agrees about.
 Where a value is a `{pointer, length}` span, what the pointer points _at_ is outside the signature
-entirely: the per-axis indices of a hierarchy segment crossed as a run of opaque value handles and
-were read back as a run of machine integers, and both sides typed the argument `{pointer, length}`,
-so nothing here or in the host compiler could have noticed. Every index was the low half of a heap
-address, which made `%m` print one and made a lookup by index match nothing. A span's element type
-is a contract of its own, and the only thing holding it today is that one side writes it and the
-other reads it in the same words.
+entirely: the per-axis indices of a hierarchy segment crossed as a sequence of opaque value handles
+and were read back as a sequence of machine integers, and both sides typed the argument
+`{pointer, length}`, so nothing here or in the host compiler could have noticed. Every index was the
+low half of a heap address, which made `%m` print one and made a lookup by index match nothing. A
+span's element type is a contract of its own, and the only thing holding it today is that one side
+writes it and the other reads it in the same words.
 
 ## Cross-references
 

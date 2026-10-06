@@ -49,9 +49,8 @@ query on the expression, since queries read it.
 - A wait or a join may carry a position that is an expression rather than a literal; both backends
   already took one.
 - A connection or an alias reaching a net whose data type is an unpacked aggregate is refused by
-  name, whether it names the whole net or one element. Such a net keeps no runs of positions another
-  net could join. It used to stop the run with an internal error, or produce C++ that did not
-  compile.
+  name, whether it names the whole net or one element. Such a net keeps no positions another net
+  could join. It used to stop the run with an internal error, or produce C++ that did not compile.
 
 ## Rejected alternatives
 

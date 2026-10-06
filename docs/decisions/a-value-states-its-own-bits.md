@@ -99,7 +99,7 @@ a library call, never a cast node.
 A stream is a value, and its type states a width. Where a stream expression is dynamically sized
 there is no width to state, so no type names it and the lowering refuses. The traversal is
 unaffected -- the entries recurse over whatever a value holds -- so what the dynamic form waits on
-is a way to name a run of bits whose length the program fixes, and nothing else.
+is a way to name bits whose number the program fixes, and nothing else.
 
 ## Rejected alternatives
 
@@ -134,8 +134,8 @@ is a way to name a run of bits whose length the program fixes, and nothing else.
   factory is.
 - Both backends run the whole cut. No path record gains an entry.
 - A streaming target list is distributed by the assignment that consumes it rather than by a place:
-  a stream stands for a run of destinations but not for storage laid out like them, so what each
-  target takes is a share of a sequence rather than a share of a value.
+  a stream stands for a sequence of destinations but not for storage laid out like them, so what
+  each target takes is a share of a sequence rather than a share of a value.
 
 ## Cross-references
 

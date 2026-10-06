@@ -47,8 +47,8 @@ scope exits only through statements will silently leak exactly there. It is the 
 coroutine's destroy takes in C++, where the language emits it and nobody has to notice.
 
 Which leaves the question that decides how much of this a value costs: **does the value's
-representation own anything?** A flat run of bits owns nothing and ends by the scope's storage going
-away, with nothing emitted. A run-time-sized container owns storage and must be ended. So the
+representation own anything?** A flat sequence of bits owns nothing and ends by the scope's storage
+going away, with nothing emitted. A run-time-sized container owns storage and must be ended. So the
 automatic regime's real work is confined to the values of the second kind, and a representation that
 gives the first kind something to own is paying that work for nothing
 (`../decisions/jit-value-realization.md` states the current realization and what it defers).

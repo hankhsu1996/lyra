@@ -30,7 +30,7 @@ enum class Truthiness : std::uint8_t { kKnownZero, kKnownNonzero, kUnknown };
 // are read as signed, whether a position may hold x or z, and the bits. How a
 // declaration divides those bits is one fact per declaration rather than one
 // per value, so an operation that names a position inside a value takes it as
-// an argument. That is what lets one run of bits answer as `bit [7:0]` at one
+// an argument. That is what lets the same bits answer as `bit [7:0]` at one
 // site and as `bit [3:0][1:0]` at another, which is what the two declarations
 // mean. Storage layout is private to this class and disjoint from the API
 // contract.
@@ -449,13 +449,13 @@ class PackedArray {
   [[nodiscard]] auto Dominating(const PackedArray& weaker) const -> PackedArray;
 
   // LRM 11.5.1 bit-select and part-select, and a packed aggregate's member
-  // (LRM 7.2.1), which are one operation: a run of `width` bits starting at
-  // `position`, counted from this value's least significant bit. What the
-  // source wrote to name that run has been read before it gets here, so the
-  // start arrives as a position and the width as a count.
+  // (LRM 7.2.1), which are one operation: `width` bits starting at `position`,
+  // counted from this value's least significant bit. What the source wrote to
+  // name those bits has been read before it gets here, so the start arrives as
+  // a position and the width as a count.
   //
-  // A read materializes the run as an owned value, unsigned as a run taken out
-  // of a value is. Bits the run reaches for outside this value read x, or 0 in
+  // A read materializes the bits as an owned value, unsigned as bits taken out
+  // of a value are. Bits it reaches for outside this value read x, or 0 in
   // a two-state value, and a start that names no position reads all of them
   // that way. A write lands on the bits inside this value and leaves the rest
   // alone, so a start that names no position writes nothing. The functional
@@ -469,12 +469,12 @@ class PackedArray {
       const PackedArray& position, std::int64_t width,
       const PackedArray& value) const -> PackedArray;
 
-  // The same run where the caller holds its start as a machine offset rather
-  // than as a value the program computed, so there is no unknown start to
-  // answer for.
-  [[nodiscard]] auto ExtractRun(std::int64_t start, std::uint64_t width) const
+  // The same bits where the caller holds their start as a machine offset
+  // rather than as a value the program computed, so there is no unknown start
+  // to answer for.
+  [[nodiscard]] auto ExtractBits(std::int64_t start, std::uint64_t width) const
       -> PackedArray;
-  auto AssignRun(
+  auto InsertBits(
       std::int64_t start, std::uint64_t width, const PackedArray& value)
       -> void;
 
@@ -544,7 +544,7 @@ class PackedArray {
       const PackedArray& other, NetResolution fold) const -> PackedArray;
 
   // Writable planes, which is sound only while nothing else can observe this
-  // value -- a result being filled, or a designated run being written through.
+  // value -- a result being filled, or designated bits being written through.
   [[nodiscard]] auto MutableValueWords() -> std::span<std::uint64_t>;
   [[nodiscard]] auto MutableUnknownWords() -> std::span<std::uint64_t>;
 
@@ -582,20 +582,102 @@ class PackedArray {
   // Bit i of the value is bit i%64 of word i/64, in as many words as the width
   // needs. A four-state value carries a second plane the same length after the
   // first, whose set positions are the ones holding x or z; a two-state value
-  // carries none, which is what having no such state means. One run holds both
-  // so that a value fitting one word -- nearly every value a design computes --
-  // keeps both planes in place, and making, copying or discarding it never
-  // reaches the allocator.
+  // carries none, which is what having no such state means. One array holds
+  // both so that a value fitting one word -- nearly every value a design
+  // computes -- keeps both planes in place, and making, copying or discarding
+  // it never reaches the allocator.
   PackedWordArray planes_;
 };
 
-// A writable designation into a run of a `PackedArray`, named by where the run
-// starts in the root and how long it is. A further step composes onto it by
-// naming a run inside this one, and assigning writes the root under the LRM
+// LRM 11.4.1 assignment operators, and LRM 11.4.2 increment and decrement, on
+// writable bits of a packed value -- a part-select or a bit-select -- that
+// `Target` names: each reads the bits once, combines them, and assigns
+// the result through `Target`'s own assignment, which is the one place they
+// are written. Inc/dec return a materialized value -- prefix the new bits,
+// postfix the old -- so an outer rvalue use (`b = ++var[3:0]`) does not hold a
+// transient proxy past the end of the full expression.
+template <class Target>
+class AssignmentOperators {
+ public:
+  auto operator+=(const PackedArray& rhs) -> Target& {
+    return Self() = Self().ToOwned() + rhs;
+  }
+  auto operator-=(const PackedArray& rhs) -> Target& {
+    return Self() = Self().ToOwned() - rhs;
+  }
+  auto operator*=(const PackedArray& rhs) -> Target& {
+    return Self() = Self().ToOwned() * rhs;
+  }
+  auto operator/=(const PackedArray& rhs) -> Target& {
+    return Self() = Self().ToOwned() / rhs;
+  }
+  auto operator%=(const PackedArray& rhs) -> Target& {
+    return Self() = Self().ToOwned() % rhs;
+  }
+  auto operator&=(const PackedArray& rhs) -> Target& {
+    return Self() = Self().ToOwned() & rhs;
+  }
+  auto operator|=(const PackedArray& rhs) -> Target& {
+    return Self() = Self().ToOwned() | rhs;
+  }
+  auto operator^=(const PackedArray& rhs) -> Target& {
+    return Self() = Self().ToOwned() ^ rhs;
+  }
+  auto ShiftLeftAssign(const PackedArray& rhs) -> Target& {
+    return Self() = Self().ToOwned().ShiftLeft(rhs);
+  }
+  auto LogicalShiftRightAssign(const PackedArray& rhs) -> Target& {
+    return Self() = Self().ToOwned().LogicalShiftRight(rhs);
+  }
+  auto ArithmeticShiftRightAssign(const PackedArray& rhs) -> Target& {
+    return Self() = Self().ToOwned().ArithmeticShiftRight(rhs);
+  }
+
+  auto operator++() -> PackedArray {
+    const PackedArray current = Self().ToOwned();
+    PackedArray updated = current + One(current);
+    Self() = updated;
+    return updated;
+  }
+  auto operator++(int) -> PackedArray {
+    PackedArray prior = Self().ToOwned();
+    Self() = prior + One(prior);
+    return prior;
+  }
+  auto operator--() -> PackedArray {
+    const PackedArray current = Self().ToOwned();
+    PackedArray updated = current - One(current);
+    Self() = updated;
+    return updated;
+  }
+  auto operator--(int) -> PackedArray {
+    PackedArray prior = Self().ToOwned();
+    Self() = prior - One(prior);
+    return prior;
+  }
+
+ private:
+  friend Target;
+  AssignmentOperators() = default;
+
+  [[nodiscard]] auto Self() -> Target& {
+    return static_cast<Target&>(*this);
+  }
+
+  // A one of `bits`'s own shape.
+  [[nodiscard]] static auto One(const PackedArray& bits) -> PackedArray {
+    return PackedArray::FromInt(
+        1, bits.BitWidth(), bits.IsSigned(), bits.IsFourState());
+  }
+};
+
+// A writable designation of some bits of a `PackedArray`, named by where they
+// start in the root and how many there are. A further step composes onto it by
+// naming bits inside these, and assigning writes the root under the LRM
 // 11.5.1 partial-write rules; reading materializes a fresh value. A start that
 // names no position at any step names none for the whole chain, which makes the
 // final write a no-op and the read all x.
-class PackedArrayRef {
+class PackedArrayRef : public AssignmentOperators<PackedArrayRef> {
  public:
   PackedArrayRef(
       PackedArray& root, std::optional<std::int64_t> start,
@@ -617,86 +699,26 @@ class PackedArrayRef {
   // visible at the call site.
   [[nodiscard]] auto ToOwned() const -> PackedArray;
 
+  // The one write of the bits; the compound assignments write through it. The
+  // start and width this designation holds are the eval-once mechanism: the
+  // chain is built once by the caller, the designation captures where it
+  // lands, and the read and the write of a compound assignment use that same
+  // place with no re-evaluation of indices.
   auto operator=(const PackedArray& value) -> PackedArrayRef&;
 
-  // LRM 11.4 compound assignments. Read the current run once, combine with
-  // `rhs` (the front end converts rhs to the target's type), write it back.
-  // The start and width this designation holds are the eval-once mechanism:
-  // the chain is built once by the caller, the designation captures where it
-  // lands, and both the read and the write here use that same place with no
-  // re-evaluation of indices.
-  auto operator+=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = ToOwned() + rhs;
-  }
-  auto operator-=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = ToOwned() - rhs;
-  }
-  auto operator*=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = ToOwned() * rhs;
-  }
-  auto operator/=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = ToOwned() / rhs;
-  }
-  auto operator%=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = ToOwned() % rhs;
-  }
-  auto operator&=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = ToOwned() & rhs;
-  }
-  auto operator|=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = ToOwned() | rhs;
-  }
-  auto operator^=(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = ToOwned() ^ rhs;
-  }
-  auto ShiftLeftAssign(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = ToOwned().ShiftLeft(rhs);
-  }
-  auto LogicalShiftRightAssign(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = ToOwned().LogicalShiftRight(rhs);
-  }
-  auto ArithmeticShiftRightAssign(const PackedArray& rhs) -> PackedArrayRef& {
-    return *this = ToOwned().ArithmeticShiftRight(rhs);
-  }
-
-  // LRM 11.4.2 inc/dec on a partial-write proxy. Both forms return PackedArray
-  // by value -- prefix returns the new sub-slice, postfix returns the old --
-  // so an outer rvalue use (`b = ++var[3:0]`) consumes a materialized value
-  // instead of holding a transient proxy past the end of the full expression.
-  auto operator++() -> PackedArray {
-    PackedArray current = ToOwned();
-    auto updated =
-        current + PackedArray::FromInt(
-                      1, bit_width_, current.IsSigned(), current.IsFourState());
-    *this = updated;
-    return updated;
-  }
-  auto operator++(int) -> PackedArray {
-    PackedArray prior = ToOwned();
-    *this = prior + PackedArray::FromInt(
-                        1, bit_width_, prior.IsSigned(), prior.IsFourState());
-    return prior;
-  }
-  auto operator--() -> PackedArray {
-    PackedArray current = ToOwned();
-    auto updated =
-        current - PackedArray::FromInt(
-                      1, bit_width_, current.IsSigned(), current.IsFourState());
-    *this = updated;
-    return updated;
-  }
-  auto operator--(int) -> PackedArray {
-    PackedArray prior = ToOwned();
-    *this = prior - PackedArray::FromInt(
-                        1, bit_width_, prior.IsSigned(), prior.IsFourState());
-    return prior;
-  }
-
-  // Chain composition: a run of this run, its start counted from this run's
-  // least significant bit. The step stays a designation, so the assignment at
-  // the tail writes through to the root.
+  // Chain composition: bits within these bits, their start counted from these
+  // bits' least significant one. The step stays a designation, so the
+  // assignment at the tail writes through to the root.
   [[nodiscard]] auto SliceRef(
       const PackedArray& position, std::int64_t width) const -> PackedArrayRef;
+
+  // The value these bits are of, and which of its bits a write through this
+  // designation reaches -- those inside it -- none where the designation names
+  // no position or lies wholly outside the value.
+  [[nodiscard]] auto Root() const -> const PackedArray& {
+    return *root_;
+  }
+  [[nodiscard]] auto Reached() const -> std::optional<BitPositions>;
 
  private:
   PackedArray* root_;

@@ -21,7 +21,7 @@ namespace lyra::lowering::hir_to_mir {
 
 // The step `receiver[idx]` takes (LRM 7.4.5 / 7.5 / 7.8 / 7.10 / 11.5.1), with
 // `idx` written in the coordinates the receiver was declared with. A packed
-// value is reached by the run of bits one element of its outermost dimension
+// value is reached by the bits one element of its outermost dimension
 // occupies, an associative array by the key itself, and every other array by
 // the element's position. Every site that reaches an element states the step
 // the same way, whether the source wrote a select or an assignment pattern
@@ -36,7 +36,7 @@ namespace lyra::lowering::hir_to_mir {
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
     mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr;
 
-// The three below read a run of a packed value's vector by position, for a
+// The three below read bits of a packed value's vector by position, for a
 // consumer that has no source-level select to lower: pattern matching (LRM
 // 12.6) destructures a value the source named only as a whole. Each names
 // `base` more than once where a tag is involved, so `base` is a read that
@@ -44,7 +44,7 @@ namespace lyra::lowering::hir_to_mir {
 
 // The `width` bits starting at `bit_offset`, as an owned value of
 // `result_type`. Unguarded: the caller states which bits it wants.
-[[nodiscard]] auto BuildPackedRunRead(
+[[nodiscard]] auto BuildPackedBitsRead(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
     std::uint64_t bit_offset, std::uint64_t bit_width, mir::TypeId result_type)
     -> mir::Expr;

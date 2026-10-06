@@ -2,336 +2,230 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <optional>
-#include <ranges>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/value_type.hpp"
 
-// LRM 7.12 array manipulation algorithms. The locator / reduction / map family
-// runs over a container's entry stream -- a lazily iterated sequence of
-// `(index, element)` pairs in the container's natural order. The index is the
-// container's index type (an ordinal int for the sequence containers, the
-// key for an associative array), so these algorithms never synthesize it and
-// never name a container type; they are generic combinators over any range
-// whose element is an `Entry`. The container supplies that range (see each
-// container's `Entries()`), and shapes the result. The ordering family
-// (`reverse` / `sort`) is a separate, sequence-only in-place permutation
-// that needs random-access storage; it stays on the positional `Seq&` form
-// below.
+// LRM 7.12 array manipulation algorithms, written once over positions. Every
+// method of the clause asks, per entry of a container in its natural order,
+// what the entry's key is -- the element itself, or what a `with` clause
+// answers for it -- and answers with positions: which entries a locator found,
+// the order a sort puts them in, or the one fold of their keys. The container
+// then shapes the answer out of its own elements and indices, so nothing here
+// knows what an element or an index is, and one body serves a container
+// compiled with its element type and one compiled with that type's table.
+//
+// What the algorithms ask of a key is answered by the free functions below,
+// found by argument-dependent lookup: an order, whether two keys are the same,
+// whether a key holds as a condition, and the five reductions.
 namespace lyra::value::detail {
 
-// One entry of a container's 7.12 stream: the element by const pointer (a
-// Regular non-owning handle, so an Entry composes with every generic algorithm)
-// and its index value. The handle is a pointer rather than a reference because
-// the algorithms below feed entries through `std::ranges` machinery that
-// assumes a Regular (copyable, assignable) value; a reference member would
-// forfeit that.
-template <typename Index, typename Element>
-struct Entry {
-  using IndexType = Index;
-  using ElementType = Element;
-  Index index;
-  const Element* element;
-};
-
-template <typename R>
-using EntryOf = std::ranges::range_value_t<std::remove_cvref_t<R>>;
-template <typename R>
-using IndexOf = typename EntryOf<R>::IndexType;
-template <typename R>
-using ElementOf = typename EntryOf<R>::ElementType;
-
-// LRM 7.12.1 locator comparison over a key type (the element itself for the
-// no-`with` form, or the `with`-expression result otherwise). `PackedArray`
-// returns a 1-bit truth value whose X/Z collapses to false in a boolean
-// context; `String` / `Real` return a plain `bool`.
+// LRM 7.12.1 / 7.12.2: the order keys compare in. A 4-state key carrying x / z
+// compares indeterminate, which reads as not before.
 template <typename K>
-[[nodiscard]] auto LocatorKeyLess(const K& a, const K& b) -> bool {
+[[nodiscard]] auto KeyBefore(const K& a, const K& b) -> bool {
   return static_cast<bool>(a < b);
 }
 
-// Uniqueness equality. 4-state integral keys compare bit-exact (LRM 11.4.5
-// `===`), so two X-valued keys are the same value while X never equals a known
-// bit; non-integral keys have no unknown plane and use value equality.
+// LRM 7.12.1 `unique`: whether two keys are one value. Keys compare bit-exact
+// (LRM 11.4.5 `===`), so two x-valued keys are the same value while an x never
+// equals a known bit.
 template <typename K>
-[[nodiscard]] auto LocatorKeySame(const K& a, const K& b) -> bool {
-  if constexpr (std::is_same_v<K, PackedArray>) {
-    return static_cast<bool>(a.CaseEqual(b));
-  } else {
-    return a.IsBitIdentical(b);
-  }
-}
-
-// Whether two elements hold the same bits (LRM 4.3's change of state), for an
-// element type that answers for itself.
-template <typename E>
-[[nodiscard]] auto ElementBitIdentical(const E& a, const E& b) -> bool {
+[[nodiscard]] auto KeySame(const K& a, const K& b) -> bool {
   return a.IsBitIdentical(b);
 }
 
+// LRM 7.12.1: whether a locator's condition holds. An unknown selects nothing.
 template <typename K>
-[[nodiscard]] auto SeenContains(const std::vector<K>& seen, const K& k)
-    -> bool {
-  for (const auto& s : seen) {
-    if (LocatorKeySame(k, s)) {
-      return true;
+[[nodiscard]] auto KeyHolds(const K& condition) -> bool {
+  return static_cast<bool>(condition);
+}
+
+// LRM 7.12.3: two keys folded by one of the clause's reductions.
+template <typename K>
+[[nodiscard]] auto KeyReduce(Reduction reduction, const K& a, const K& b) -> K {
+  return Reduced(reduction, a, b);
+}
+
+// LRM 7.12.1 `find` and its index form: every position whose condition holds,
+// in order.
+template <typename Condition>
+[[nodiscard]] auto MatchingPositions(std::size_t count, Condition condition)
+    -> std::vector<std::size_t> {
+  std::vector<std::size_t> found;
+  for (std::size_t i = 0; i < count; ++i) {
+    if (KeyHolds(condition(i))) {
+      found.push_back(i);
     }
   }
-  return false;
+  return found;
 }
 
-// Collect a lazy view into a vector. The value layer is built under two
-// toolchains (the emit clang and the bazel GCC); `std::ranges::to` is absent on
-// the GCC libstdc++ the bazel build uses, and a 7.12 result is shaped into an
-// SV container by the caller anyway, so the projected values are gathered here.
-template <typename V>
-[[nodiscard]] auto ToVector(V view)
-    -> std::vector<std::ranges::range_value_t<V>> {
-  std::vector<std::ranges::range_value_t<V>> out;
-  for (auto&& x : view) {
-    out.push_back(static_cast<decltype(x)>(x));
-  }
-  return out;
-}
-
-// LRM 7.12.1 find core: the entries satisfying `pred`, as a lazy view. The
-// locator family composes over it -- `find` collects every match, `find_first`
-// is `take(1)`, `find_last` is `reverse | take(1)` -- so "leftmost" and
-// "rightmost" are view adaptors rather than a hand-rolled scan mode.
-template <typename R, typename Pred>
-[[nodiscard]] auto Matching(R entries, Pred pred) {
-  return entries | std::views::filter([pred](const auto& e) {
-           return static_cast<bool>(pred(*e.element, e.index));
-         });
-}
-
-template <typename R, typename F>
-[[nodiscard]] auto ArrayFind(R entries, F pred) -> std::vector<ElementOf<R>> {
-  return ToVector(
-      Matching(entries, pred) |
-      std::views::transform([](const auto& e) { return *e.element; }));
-}
-template <typename R, typename F>
-[[nodiscard]] auto ArrayFindIndex(R entries, F pred)
-    -> std::vector<IndexOf<R>> {
-  return ToVector(
-      Matching(entries, pred) |
-      std::views::transform([](const auto& e) { return e.index; }));
-}
-template <typename R, typename F>
-[[nodiscard]] auto ArrayFindFirst(R entries, F pred)
-    -> std::vector<ElementOf<R>> {
-  return ToVector(
-      Matching(entries, pred) | std::views::take(1) |
-      std::views::transform([](const auto& e) { return *e.element; }));
-}
-template <typename R, typename F>
-[[nodiscard]] auto ArrayFindFirstIndex(R entries, F pred)
-    -> std::vector<IndexOf<R>> {
-  return ToVector(
-      Matching(entries, pred) | std::views::take(1) |
-      std::views::transform([](const auto& e) { return e.index; }));
-}
-template <typename R, typename F>
-[[nodiscard]] auto ArrayFindLast(R entries, F pred)
-    -> std::vector<ElementOf<R>> {
-  return ToVector(
-      Matching(entries, pred) | std::views::reverse | std::views::take(1) |
-      std::views::transform([](const auto& e) { return *e.element; }));
-}
-template <typename R, typename F>
-[[nodiscard]] auto ArrayFindLastIndex(R entries, F pred)
-    -> std::vector<IndexOf<R>> {
-  return ToVector(
-      Matching(entries, pred) | std::views::reverse | std::views::take(1) |
-      std::views::transform([](const auto& e) { return e.index; }));
-}
-
-// LRM 7.12.1 min / max: the element of the entry whose projected key is least
-// (`min`) or greatest (`max`), first on ties. Empty receiver yields an empty
-// queue.
-template <typename R, typename F>
-[[nodiscard]] auto ArrayMin(R entries, F key) -> std::vector<ElementOf<R>> {
-  auto proj = [&](const auto& e) { return key(*e.element, e.index); };
-  auto cmp = [](const auto& a, const auto& b) { return LocatorKeyLess(a, b); };
-  std::vector<ElementOf<R>> out;
-  auto it = std::ranges::min_element(entries, cmp, proj);
-  if (it != std::ranges::end(entries)) {
-    auto e = *it;
-    out.push_back(*e.element);
-  }
-  return out;
-}
-template <typename R, typename F>
-[[nodiscard]] auto ArrayMax(R entries, F key) -> std::vector<ElementOf<R>> {
-  auto proj = [&](const auto& e) { return key(*e.element, e.index); };
-  auto cmp = [](const auto& a, const auto& b) { return LocatorKeyLess(a, b); };
-  std::vector<ElementOf<R>> out;
-  auto it = std::ranges::max_element(entries, cmp, proj);
-  if (it != std::ranges::end(entries)) {
-    auto e = *it;
-    out.push_back(*e.element);
-  }
-  return out;
-}
-
-// LRM 7.12.1 unique core: the first-occurrence entry of each distinct
-// projected-key value, in first-seen order. The standard library offers only
-// adjacent de-duplication, so the first-occurrence pass is explicit; the
-// element / index split is then the same `transform` the find family uses.
-template <typename R, typename F>
-[[nodiscard]] auto UniqueEntries(R entries, F key) -> std::vector<EntryOf<R>> {
-  using KeyT = std::invoke_result_t<F&, const ElementOf<R>&, const IndexOf<R>&>;
-  std::vector<EntryOf<R>> out;
-  std::vector<KeyT> seen;
-  for (const auto& e : entries) {
-    auto k = key(*e.element, e.index);
-    if (!SeenContains(seen, k)) {
-      seen.push_back(k);
-      out.push_back(e);
+// LRM 7.12.1 `find_first` / `find_last`: the leftmost or rightmost such
+// position, none where there is none.
+template <typename Condition>
+[[nodiscard]] auto FirstMatching(std::size_t count, Condition condition)
+    -> std::vector<std::size_t> {
+  for (std::size_t i = 0; i < count; ++i) {
+    if (KeyHolds(condition(i))) {
+      return {i};
     }
   }
-  return out;
+  return {};
 }
-template <typename R, typename F>
-[[nodiscard]] auto ArrayUnique(R entries, F key) -> std::vector<ElementOf<R>> {
-  return ToVector(
-      UniqueEntries(entries, key) |
-      std::views::transform([](const auto& e) { return *e.element; }));
-}
-template <typename R, typename F>
-[[nodiscard]] auto ArrayUniqueIndex(R entries, F key)
-    -> std::vector<IndexOf<R>> {
-  return ToVector(
-      UniqueEntries(entries, key) |
-      std::views::transform([](const auto& e) { return e.index; }));
-}
-
-// LRM 7.12.3 reduction: fold the closure-projected values with `comb`, seeded
-// by the first projected value so an empty receiver yields `proto` (LRM is
-// silent on empty input, so the producer supplies the result-shaped zero rather
-// than this inventing one). The result type follows the closure's return type,
-// so a
-// width-widening `with`-expression widens the result.
-template <typename R, typename Key, typename Comb, typename Acc>
-[[nodiscard]] auto ArrayFold(R entries, Acc proto, Key key, Comb comb) -> Acc {
-  auto vals = entries | std::views::transform([&](const auto& e) {
-                return key(*e.element, e.index);
-              });
-  return std::ranges::fold_left_first(vals, comb).value_or(std::move(proto));
-}
-
-// LRM 7.12.5 projection into the closure's return type, in entry order. The
-// caller pairs the result with each entry's index when the result container is
-// keyed (associative); a sequence container drops the index.
-template <typename R, typename F>
-[[nodiscard]] auto ArrayMap(R entries, F closure) -> std::vector<
-    std::invoke_result_t<F&, const ElementOf<R>&, const IndexOf<R>&>> {
-  using U = std::invoke_result_t<F&, const ElementOf<R>&, const IndexOf<R>&>;
-  std::vector<U> out;
-  for (const auto& e : entries) {
-    out.push_back(closure(*e.element, e.index));
+template <typename Condition>
+[[nodiscard]] auto LastMatching(std::size_t count, Condition condition)
+    -> std::vector<std::size_t> {
+  for (std::size_t i = count; i-- > 0;) {
+    if (KeyHolds(condition(i))) {
+      return {i};
+    }
   }
-  return out;
+  return {};
 }
 
-// LRM 7.12.2 reverse: in-place reversal. The elements are pure values, so the
-// underlying swap is an ordinary whole-value exchange.
-template <typename Seq>
-auto ArrayReverse(Seq& data) -> void {
-  std::ranges::reverse(data);
-}
-
-// LRM 7.12.2 sort / rsort: in-place ordering by the closure-projected key.
-// Selection sort rather than `std::ranges::sort` because the SV comparison over
-// 4-state keys is not a strict weak ordering: a key carrying an x / z compares
-// indeterminate, so `a < b` and `b < a` can both be false while a definite
-// `a < c` still holds, breaking transitivity of the induced equivalence.
-// `std::ranges::sort` is undefined behaviour on such a comparator, whereas a
-// pairwise selection sort yields a defined order with no UB; test-sized arrays
-// make the O(n^2) cost a non-issue. The per-element key is materialised once,
-// then the elements move in sync. The ordering family is positional (LRM 7.12.2
-// is sequence-only), so the index passed to the key closure is the ordinal
-// position.
-template <typename Seq, typename F, typename Compare>
-auto ArraySortByKey(Seq& data, F key, Compare cmp) -> void {
-  using KeyT = std::invoke_result_t<
-      F&, const typename Seq::value_type&, const PackedArray&>;
-  std::vector<KeyT> keys;
-  keys.reserve(data.size());
-  for (std::size_t i = 0; i < data.size(); ++i) {
-    keys.push_back(key(data[i], PackedArray::Int(static_cast<int>(i))));
+// LRM 7.12.1 `min` / `max`: the position whose key no other key comes before
+// under `outranks`, the first of several, none for no entries.
+template <typename KeyOf, typename Outranks>
+[[nodiscard]] auto ExtremePosition(
+    std::size_t count, KeyOf key, Outranks outranks)
+    -> std::vector<std::size_t> {
+  using K = std::decay_t<decltype(key(std::size_t{0}))>;
+  std::vector<std::size_t> best;
+  std::optional<K> best_key;
+  for (std::size_t i = 0; i < count; ++i) {
+    K candidate = key(i);
+    if (!best_key.has_value() || outranks(candidate, *best_key)) {
+      best = {i};
+      best_key = std::move(candidate);
+    }
   }
-  using std::swap;
-  for (std::size_t i = 0; i + 1 < data.size(); ++i) {
-    std::size_t pick = i;
-    for (std::size_t j = i + 1; j < data.size(); ++j) {
-      if (static_cast<bool>(cmp(keys[j], keys[pick]))) {
-        pick = j;
+  return best;
+}
+template <typename KeyOf>
+[[nodiscard]] auto LeastPosition(std::size_t count, KeyOf key)
+    -> std::vector<std::size_t> {
+  return ExtremePosition(
+      count, key, [](const auto& a, const auto& b) { return KeyBefore(a, b); });
+}
+template <typename KeyOf>
+[[nodiscard]] auto GreatestPosition(std::size_t count, KeyOf key)
+    -> std::vector<std::size_t> {
+  return ExtremePosition(
+      count, key, [](const auto& a, const auto& b) { return KeyBefore(b, a); });
+}
+
+// LRM 7.12.1 `unique`: the first position of each distinct key, in the order
+// first seen.
+template <typename KeyOf>
+[[nodiscard]] auto UniquePositions(std::size_t count, KeyOf key)
+    -> std::vector<std::size_t> {
+  using K = std::decay_t<decltype(key(std::size_t{0}))>;
+  std::vector<std::size_t> found;
+  std::vector<K> seen;
+  for (std::size_t i = 0; i < count; ++i) {
+    K candidate = key(i);
+    const bool repeated = std::ranges::any_of(
+        seen, [&](const K& s) { return KeySame(candidate, s); });
+    if (!repeated) {
+      seen.push_back(std::move(candidate));
+      found.push_back(i);
+    }
+  }
+  return found;
+}
+
+// LRM 7.12.3: every key folded by `reduction`, the first seeding the fold, so
+// a fold of no entries is `empty` (LRM is silent on empty input, so the
+// producer supplies the answer of the result's shape rather than this
+// inventing one). The result is of the key's type, so a widening `with`
+// expression widens it.
+template <typename KeyOf, typename K>
+[[nodiscard]] auto Folded(
+    std::size_t count, KeyOf key, Reduction reduction, K empty) -> K {
+  if (count == 0) {
+    return empty;
+  }
+  K folded = key(0);
+  for (std::size_t i = 1; i < count; ++i) {
+    folded = KeyReduce(reduction, folded, key(i));
+  }
+  return folded;
+}
+
+// LRM 7.12.2 reverse: the position each element comes from once the order is
+// reversed.
+[[nodiscard]] inline auto ReversedPositions(std::size_t count)
+    -> std::vector<std::size_t> {
+  std::vector<std::size_t> order(count);
+  for (std::size_t k = 0; k < count; ++k) {
+    order[k] = count - 1 - k;
+  }
+  return order;
+}
+
+// LRM 7.12.2 sort / rsort: the position each element comes from once ordered
+// by its key, ascending or descending, equal keys keeping their order. The SV
+// comparison over 4-state keys is not a strict weak ordering -- a key carrying
+// an x / z compares indeterminate, so `a < b` and `b < a` can both be false
+// while a definite `a < c` still holds -- and a sort assuming one may read
+// outside its range. A merge reads only within the two runs it merges whatever
+// the comparison answers, so this one is defined for any comparison, and costs
+// n log n comparisons.
+template <typename K>
+[[nodiscard]] auto SortedPositions(const std::vector<K>& keys, bool descending)
+    -> std::vector<std::size_t> {
+  const auto before = [&](std::size_t a, std::size_t b) {
+    return descending ? KeyBefore(keys[b], keys[a])
+                      : KeyBefore(keys[a], keys[b]);
+  };
+  const std::size_t count = keys.size();
+  std::vector<std::size_t> order(count);
+  for (std::size_t k = 0; k < count; ++k) {
+    order[k] = k;
+  }
+  std::vector<std::size_t> merged(count);
+  for (std::size_t width = 1; width < count; width *= 2) {
+    for (std::size_t lo = 0; lo < count; lo += 2 * width) {
+      const std::size_t mid = std::min(lo + width, count);
+      const std::size_t hi = std::min(lo + (2 * width), count);
+      std::size_t left = lo;
+      std::size_t right = mid;
+      std::size_t out = lo;
+      while (left < mid && right < hi) {
+        // The right run's key goes first only where it is strictly before the
+        // left's, so equal keys keep their order.
+        if (before(order[right], order[left])) {
+          merged[out++] = order[right++];
+        } else {
+          merged[out++] = order[left++];
+        }
+      }
+      while (left < mid) {
+        merged[out++] = order[left++];
+      }
+      while (right < hi) {
+        merged[out++] = order[right++];
       }
     }
-    if (pick != i) {
-      swap(keys[i], keys[pick]);
-      swap(data[i], data[pick]);
-    }
+    std::swap(order, merged);
   }
+  return order;
 }
 
-// LRM 7.4.5 contiguous-range gather: `count` elements from ordinal `start`. An
-// element outside the array yields `canonical`, and a start that names no
-// position (an x / z one) makes the whole result canonical. The flat vector is
-// wrapped by the caller as a fixed-size unpacked array.
-template <typename T>
-[[nodiscard]] auto ArraySliceGather(
-    const std::vector<T>& data, const T& canonical,
-    std::optional<std::int64_t> start, std::size_t count) -> std::vector<T> {
-  std::vector<T> result;
-  if (!start) {
-    result.assign(count, canonical);
-    return result;
-  }
-  result.reserve(count);
-  const auto size = static_cast<std::int64_t>(data.size());
+// The keys of positions `0..count-1`, in order.
+template <typename KeyOf>
+[[nodiscard]] auto KeysOf(std::size_t count, KeyOf key) {
+  using K = std::decay_t<decltype(key(std::size_t{0}))>;
+  std::vector<K> keys;
+  keys.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
-    const auto pos = *start + static_cast<std::int64_t>(i);
-    const bool in_bounds = pos >= 0 && pos < size;
-    result.push_back(
-        in_bounds ? data[static_cast<std::size_t>(pos)] : canonical);
+    keys.push_back(key(i));
   }
-  return result;
-}
-
-// LRM 7.6 + 7.4.5 whole-slice scatter. Each of the `count` values lands at
-// ordinal `start + i`; an element outside the array is skipped, and a start
-// that names no position performs no operation, matching the invalid-index
-// write contract. Answers whether any element took a different value, which is
-// whether the write changed the array (LRM 4.3); an element already holding
-// its value is left alone, so the answer costs the slice and not the array.
-template <typename T>
-auto ArraySliceScatter(
-    std::vector<T>& data, std::optional<std::int64_t> start, std::size_t count,
-    const std::vector<T>& values) -> bool {
-  if (!start) {
-    return false;
-  }
-  const auto size = static_cast<std::int64_t>(data.size());
-  bool moved = false;
-  for (std::size_t i = 0; i < count; ++i) {
-    const auto pos = *start + static_cast<std::int64_t>(i);
-    if (pos < 0 || pos >= size) {
-      continue;
-    }
-    T& element = data[static_cast<std::size_t>(pos)];
-    if (ElementBitIdentical(element, values[i])) {
-      continue;
-    }
-    element = values[i];
-    moved = true;
-  }
-  return moved;
+  return keys;
 }
 
 }  // namespace lyra::value::detail

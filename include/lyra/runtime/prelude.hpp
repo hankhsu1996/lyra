@@ -58,7 +58,6 @@
 #include "lyra/runtime/trigger.hpp"              // IWYU pragma: keep
 #include "lyra/runtime/value_families.hpp"       // IWYU pragma: keep
 #include "lyra/runtime/var.hpp"                  // IWYU pragma: keep
-#include "lyra/value/array_case_equal.hpp"       // IWYU pragma: keep
 #include "lyra/value/associative_array.hpp"      // IWYU pragma: keep
 #include "lyra/value/chandle.hpp"                // IWYU pragma: keep
 #include "lyra/value/dpi_canonical.hpp"          // IWYU pragma: keep

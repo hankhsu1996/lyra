@@ -61,8 +61,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "const";
     case RuntimeOp::kToBool:
       return "to_bool";
-    case RuntimeOp::kValueBox:
-      return "value_box";
     case RuntimeOp::kMake:
       return "make";
     case RuntimeOp::kTagMatches:
@@ -123,6 +121,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "move";
     case RuntimeOp::kAssign:
       return "assign";
+    case RuntimeOp::kValueType:
+      return "value_type";
   }
   throw InternalError("llvm codegen: unknown runtime operation");
 }
@@ -688,7 +688,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFromString:
     case support::BuiltinFn::kFromBool:
     case support::BuiltinFn::kArrayConformSize:
-    case support::BuiltinFn::kFromBitstream:
       return NamedByResult{};
 
     // LRM 7.6 assignment between unpacked array kinds crosses two container
@@ -951,6 +950,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // what it guards decides nothing about the code: one realization serves
     // every value, and serves a cell reached through the same access too.
     case support::BuiltinFn::kRequire:
+    // A value built from a stream of bits under a prototype (LRM 6.24.3), asked
+    // of the type the prototype crosses with, so one function serves every
+    // type.
+    case support::BuiltinFn::kFromBitstream:
     // The DPI-C boundary marshaling (LRM 35.5.6, Annex H.7.7, H.10). Each of
     // these is one library function and not a family: what a canonical buffer,
     // an `svLogic` scalar and an open-array image hold is fixed by the C ABI,

@@ -78,7 +78,7 @@ auto SubjectMember(
 
 // The test that `subject`, whose type is `subject_type`, currently holds the
 // component at `index`. The two representations answer it differently -- an
-// unpacked union carries the tag as its own discriminant, a packed one as a run
+// unpacked union carries the tag as its own discriminant, a packed one as bits
 // of the vector -- so the test is the one place a pattern walk still sees which
 // representation it is standing on.
 auto BuildTagTest(

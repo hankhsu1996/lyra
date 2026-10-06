@@ -3,9 +3,8 @@
 #include <cstdint>
 #include <memory>
 
-#include "lyra/support/tuple_operations.hpp"
-#include "lyra/support/value_domain.hpp"
-#include "lyra/value/runtime_value.hpp"
+#include "lyra/value/any_value.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
 
@@ -24,9 +23,8 @@ namespace lyra::runtime {
 // run. Whoever runs a closure asks for the protocol it runs it under.
 //
 // A body that answers a value builds it in storage its caller gives, and states
-// which representation it comes back in, because a handle carries no type: it
-// is a fact only whoever compiled the body holds. A tuple answer also names its
-// type, which is what says how much storage it needs.
+// the type it comes back in, because a handle carries no type: it is a fact
+// only whoever compiled the body holds.
 //
 // The captures lie in the value itself, after what this library keeps there,
 // where the code building the closure placed them and fills them. So of the
@@ -39,8 +37,7 @@ struct ClosureDefinition {
   void* (*run_per_element)(
       void* self, const void* item, const void* index, void* out) = nullptr;
   void* (*run_value)(void* self, void* out) = nullptr;
-  support::ValueDomain result_domain{};
-  const support::TupleOperations* result_tuple = nullptr;
+  const value::ValueType* result_type = nullptr;
   std::uint64_t size = 0;
   void (*end_captures)(void* self) = nullptr;
 };
@@ -87,17 +84,31 @@ class ClosureValue {
   // having run no statement of it; the caller drives it from there.
   [[nodiscard]] auto Start() -> void*;
 
-  // Runs a per-element body on one entry (LRM 7.12.4) and answers the value it
-  // settled on.
-  [[nodiscard]] auto RunPerElement(
-      const value::RuntimeValue& item, const value::RuntimeValue& index)
-      -> value::RuntimeValue;
+  // Runs a per-element body on one entry, handed the element and its index
+  // where each lies (LRM 7.12.4), and answers the value it settled on.
+  [[nodiscard]] auto RunPerElement(const void* item, const void* index)
+      -> value::AnyValue;
 
   // Runs a body that takes nothing and answers what it settled on.
-  [[nodiscard]] auto RunValue() -> value::RuntimeValue;
+  [[nodiscard]] auto RunValue() -> value::AnyValue;
+
+  // The same, for a body answering a value of `type`, one of the library's own
+  // kinds.
+  template <typename T>
+  [[nodiscard]] auto RunValueOf(const value::ValueTypeOf<T>& type) -> T {
+    RequireAnswers(type);
+    return value::TakeBuilt<T>([&](void* out) { RunValueInto(out); });
+  }
 
  private:
   explicit ClosureValue(const ClosureDefinition* definition);
+
+  // Refuses a caller expecting a value of another type than the body answers.
+  void RequireAnswers(const value::ValueType& type) const;
+
+  // Runs a body that takes nothing into `out`, which is sized for the type it
+  // answers.
+  void RunValueInto(void* out);
 
   const ClosureDefinition* definition_;
 };

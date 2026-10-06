@@ -5,8 +5,8 @@
 
 namespace lyra::support {
 
-// The runtime value type a library entry operates on, that a storage cell is
-// realized as, and that an erased value holds. It enumerates the value types
+// The runtime value type a library entry operates on, and that a storage cell
+// is realized as. It enumerates the value types
 // the runtime library has, not the type kinds a source language has: several
 // source types share one domain -- an enumeration and an integral are both a
 // packed value -- and a source type the runtime has no realization for has no

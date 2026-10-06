@@ -486,12 +486,12 @@ auto Synthesizer::FromBitstream() -> mir::StructMethod {
         for (const mir::TypeId member : members_) {
           const std::uint64_t width = FixedStreamShapeOf(Unit(), member)->width;
           taken += width;
-          const mir::ExprId run = block.exprs.Add(BuildPackedRunRead(
+          const mir::ExprId bits = block.exprs.Add(BuildPackedBitsRead(
               *lowerer_, block, Read(block, p[0], stream), shape.width - taken,
               width,
               mir::PackedVectorOf(Unit().types, width, shape.state_kind)));
           auto read = BuildFromBitstream(
-              Unit(), block, run, member, diag::SourceSpan{});
+              Unit(), block, bits, member, diag::SourceSpan{});
           if (!read) {
             throw InternalError(
                 "Synthesizer::FromBitstream: a member of a structure whose "

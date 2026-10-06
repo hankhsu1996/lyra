@@ -3,113 +3,104 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <utility>
-#include <variant>
-#include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/value/library_value_types.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
-#include "lyra/value/runtime_value.hpp"
 #include "lyra/value/unpacked_range.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
 
 namespace {
 
-// The storage position an address names at one level, which is where the
-// declared range is read (LRM 7.4.5). A bounds list describes the value it came
-// from, so an address the range does not name is a caller defect.
+void RequirePackedWord(const ValueType& type) {
+  if (&type != &lyra_rt_packed_value_type) {
+    throw InternalError("memory: an element is a packed word");
+  }
+}
+
+// The storage position an address names in a level of `count` parts, which is
+// where the declared range is read (LRM 7.4.5). A bounds list describes the
+// value it came from, so an address the range does not name is a caller
+// defect.
 auto PositionOf(
-    const RuntimeUnpackedArray& level, std::int64_t address,
-    const UnpackedRange& range) -> std::size_t {
-  const auto size = static_cast<std::int64_t>(level.Size().ToInt64());
+    std::size_t count, std::int64_t address, const UnpackedRange& range)
+    -> std::size_t {
   const std::int64_t ordinal = range.ToOrdinal(address);
-  if (ordinal < 0 || ordinal >= size) {
+  if (ordinal < 0 || ordinal >= static_cast<std::int64_t>(count)) {
     throw InternalError(
         "memory walk: the bounds name an address the memory does not hold");
   }
   return static_cast<std::size_t>(ordinal);
 }
 
-// The level below the one an address named, where the bounds say the nesting
-// goes further.
-auto LevelOf(const RuntimeValue& value) -> const RuntimeUnpackedArray& {
-  const auto* level = std::get_if<RuntimeUnpackedArray>(&value.value);
-  if (level == nullptr) {
-    throw InternalError(
-        "memory walk: the bounds describe more dimensions than the memory has");
+// The address the leaf `ordinal` of one top address has in dimension `d`: the
+// leaves an address expands to run in ascending address at every lower
+// dimension, the last fastest (LRM 21.4.3).
+auto InnerAddress(
+    std::span<const UnpackedRange> dims, std::size_t d, std::size_t ordinal)
+    -> std::int64_t {
+  std::size_t below = 1;
+  for (const UnpackedRange& lower : dims.subspan(d + 1)) {
+    below *= lower.Count();
   }
-  return *level;
+  return dims[d].Low() +
+         static_cast<std::int64_t>((ordinal / below) % dims[d].Count());
 }
 
-void CollectLevel(
-    const RuntimeUnpackedArray& level, std::span<const UnpackedRange> dims,
-    std::vector<PackedArray>& out) {
-  const UnpackedRange& range = dims[0];
-  const std::span<const UnpackedRange> inner = dims.subspan(1);
-  for (std::int64_t address = range.Low(); address <= range.High(); ++address) {
-    const RuntimeValue& element =
-        level.ElementAt(PositionOf(level, address, range));
-    if (inner.empty()) {
-      out.push_back(MemoryWordOf(element));
-    } else {
-      CollectLevel(LevelOf(element), inner, out);
-    }
-  }
+// The part of `level` at storage position `position`, for reading where the
+// level is, and as storage a write lands in where it may be written.
+auto PartOf(const ValueType& type, const void* level, std::size_t position)
+    -> const void* {
+  return type.PartAt(level, position);
+}
+auto PartOf(const ValueType& type, void* level, std::size_t position) -> void* {
+  return type.PartRefAt(level, position);
 }
 
-auto RebuildLevel(
-    const RuntimeUnpackedArray& level, std::span<const UnpackedRange> dims,
-    std::span<const PackedArray> words, std::size_t& cursor)
-    -> RuntimeUnpackedArray {
-  const UnpackedRange& range = dims[0];
-  const std::span<const UnpackedRange> inner = dims.subspan(1);
-  const auto size = static_cast<std::size_t>(level.Size().ToInt64());
-  std::vector<RuntimeValue> elements;
-  elements.reserve(size);
-  for (std::size_t position = 0; position < size; ++position) {
-    elements.push_back(level.ElementAt(position));
+// The leaf at one grid coordinate, each level reached through its type's
+// ordered parts, one level per declared dimension.
+template <typename Level>
+auto LeafAt(
+    Level memory, std::span<const UnpackedRange> dims, std::int64_t top,
+    std::size_t ordinal) -> decltype(auto) {
+  Level level = memory;
+  const ValueType* type = &lyra_rt_unpackedarray_value_type;
+  for (std::size_t d = 0; d < dims.size(); ++d) {
+    const std::int64_t address = d == 0 ? top : InnerAddress(dims, d, ordinal);
+    const ValueType& part = type->PartType(level);
+    level = PartOf(
+        *type, level, PositionOf(type->PartCount(level), address, dims[d]));
+    type = &part;
   }
-  for (std::int64_t address = range.Low(); address <= range.High(); ++address) {
-    const std::size_t position = PositionOf(level, address, range);
-    if (inner.empty()) {
-      if (cursor >= words.size()) {
-        throw InternalError("memory walk: the words run out before the memory");
-      }
-      elements[position] = RuntimeValue{words[cursor]};
-      ++cursor;
-    } else {
-      elements[position] = RuntimeValue{
-          RebuildLevel(LevelOf(elements[position]), inner, words, cursor)};
-    }
-  }
-  return {level.ElementDefault(), std::move(elements), 1};
+  return MemoryWordOf(*type, level);
 }
 
 }  // namespace
 
-auto MemoryWordOf(const RuntimeValue& element) -> const PackedArray& {
-  const auto* word = std::get_if<PackedArray>(&element.value);
-  if (word == nullptr) {
-    throw InternalError("memory: an element is a packed word");
-  }
-  return *word;
+auto MemoryWordOf(const ValueType& type, void* element) -> PackedArray& {
+  RequirePackedWord(type);
+  return *static_cast<PackedArray*>(element);
 }
 
-auto MemoryWords(
-    const RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims)
-    -> std::vector<PackedArray> {
-  std::vector<PackedArray> words;
-  CollectLevel(memory, dims, words);
-  return words;
+auto MemoryWordOf(const ValueType& type, const void* element)
+    -> const PackedArray& {
+  RequirePackedWord(type);
+  return *static_cast<const PackedArray*>(element);
 }
 
-auto MemoryWithWords(
+auto MemoryLeaf(
+    RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
+    std::int64_t top, std::size_t ordinal) -> PackedArray& {
+  return LeafAt(static_cast<void*>(&memory), dims, top, ordinal);
+}
+
+auto MemoryLeaf(
     const RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
-    std::span<const PackedArray> words) -> RuntimeUnpackedArray {
-  std::size_t cursor = 0;
-  return RebuildLevel(memory, dims, words, cursor);
+    std::int64_t top, std::size_t ordinal) -> const PackedArray& {
+  return LeafAt(static_cast<const void*>(&memory), dims, top, ordinal);
 }
 
 }  // namespace lyra::value

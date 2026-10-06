@@ -1151,10 +1151,14 @@ struct RuntimeEntry {
   // since both cross the boundary the same way.
   std::optional<std::size_t> index_operand = std::nullopt;
   // Which operand is a whole container crossing erased -- a spread
-  // concatenation part (LRM 10.10) whose own domain the entry cannot name, so
-  // it boxes into a runtime value in that domain and is read back element by
-  // element. Absent for an entry that has none.
+  // concatenation part (LRM 10.10) whose own kind the entry cannot name, so it
+  // crosses with its type and is read back element by element. Absent for an
+  // entry that has none.
   std::optional<std::size_t> spread_operand = std::nullopt;
+  // Which operand is the value a union is built holding as its live member (LRM
+  // 7.3). Every member type reaches the one entry, so the value crosses with
+  // the type its member is declared as.
+  std::optional<std::size_t> member_operand = std::nullopt;
   // Which operand is the prototype the entry's result takes its shape from,
   // absent for an entry whose result the object it acts on already shapes. A
   // prototype stands for the result before there is one -- an empty

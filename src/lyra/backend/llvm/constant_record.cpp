@@ -21,8 +21,8 @@ namespace lyra::backend::llvm_backend {
 namespace {
 
 // A field's size where its type is one a constant record holds: an address of
-// the host, an integer of whole bytes, or a record or a run of them built the
-// same way.
+// the host, an integer of whole bytes, or a record or an array of them built
+// the same way.
 auto TypeSize(const llvm::Type* type) -> std::uint64_t {
   if (type->isPointerTy()) {
     return sizeof(void*);
@@ -77,7 +77,7 @@ void AppendFieldsOf(
 template <typename T>
 void AppendRecord(
     std::vector<FieldLayout>& out, std::uint64_t at,
-    const runtime::ConstantRun<T>& record) {
+    const runtime::ConstantSpan<T>& record) {
   const auto& [data, size] = record;
   AppendFieldsOf(out, at, record, data, size);
 }

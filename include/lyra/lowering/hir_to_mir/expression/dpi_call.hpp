@@ -64,7 +64,7 @@ auto LowerForeignImportCall(
 
 // The one import call above that is not an expression: a function whose
 // boundary needs body locals and whose foreign side returns nothing. Crossing
-// the boundary is the whole of what it does, so it lowers to a run of
+// the boundary is the whole of what it does, so it lowers to a sequence of
 // statements with no value for an enclosing expression to have wanted. Returns
 // nullopt for every other import call, which the expression form lowers.
 auto LowerForeignImportCallStmtForm(

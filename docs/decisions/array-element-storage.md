@@ -53,7 +53,7 @@ whatever the slot currently holds.
 rewrite the values held by the existing slots. They move no storage, outdate no reference, and leave
 every bound reference denoting the index it was bound to.
 
-**D3. A dynamic array generation owns a fixed-size contiguous run of positional element storage.**
+**D3. A dynamic array generation owns a fixed-size contiguous block of positional element storage.**
 Its size never changes in place. In the common case the representation is a flat buffer and an
 element reference is a pointer into it.
 

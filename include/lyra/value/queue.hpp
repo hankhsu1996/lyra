@@ -1,38 +1,205 @@
 #pragma once
 
-#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
-#include <functional>
-#include <optional>
-#include <ranges>
 #include <span>
 #include <utility>
+#include <vector>
 
-#include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/basic_queue.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/element_policy.hpp"
+#include "lyra/value/element_sequence.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/oob_shield.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/position.hpp"
-#include "lyra/value/queue_bound.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
 
-// SystemVerilog queue (LRM 7.10): a variable-size ordered collection with
-// efficient insertion and removal at both ends, so the storage is a
-// `std::deque<T>` rather than the `std::vector<T>` the dynamic array uses.
-// Default value is the empty queue (LRM Table 6-7). The element default --
-// returned on an invalid-index read and copied to seed growth (the `q[$+1]`
-// append), slice results, and an empty-queue pop -- and the invalid-index
-// discard target are carried by an `OobShield`.
 template <typename T>
-class Queue {
+class Queue;
+
+// The LRM 7.12 methods of an unpacked array whose index is the ordinal
+// position -- a fixed-size array, a dynamic array, a queue -- over the C++
+// closures the C++ backend writes, each closure taking an element and its
+// position. A located family answers with a queue (LRM 7.12.1); `map` answers
+// with an array of the receiver's own kind over the closure's result type
+// (LRM 7.12.5), which `Self` names as its `Rebound`. `proto` is what the
+// producer supplies as the result's element default, and, for a reduction, its
+// answer for no entries.
+template <typename Self, typename T>
+class OrdinalArrayMethods {
+ public:
+  template <typename F, typename R>
+  [[nodiscard]] auto Sum(F key, R proto) const -> R {
+    return detail::Folded(
+        Count(), KeyOf(key), Reduction::kSum, std::move(proto));
+  }
+  template <typename F, typename R>
+  [[nodiscard]] auto Product(F key, R proto) const -> R {
+    return detail::Folded(
+        Count(), KeyOf(key), Reduction::kProduct, std::move(proto));
+  }
+  template <typename F, typename R>
+  [[nodiscard]] auto And(F key, R proto) const -> R {
+    return detail::Folded(
+        Count(), KeyOf(key), Reduction::kAnd, std::move(proto));
+  }
+  template <typename F, typename R>
+  [[nodiscard]] auto Or(F key, R proto) const -> R {
+    return detail::Folded(
+        Count(), KeyOf(key), Reduction::kOr, std::move(proto));
+  }
+  template <typename F, typename R>
+  [[nodiscard]] auto Xor(F key, R proto) const -> R {
+    return detail::Folded(
+        Count(), KeyOf(key), Reduction::kXor, std::move(proto));
+  }
+
+  template <typename F>
+  [[nodiscard]] auto Find(F pred, T proto) const {
+    return Elements(
+        std::move(proto), detail::MatchingPositions(Count(), KeyOf(pred)));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindIndex(F pred, PackedArray proto) const {
+    return Indices(
+        std::move(proto), detail::MatchingPositions(Count(), KeyOf(pred)));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindFirst(F pred, T proto) const {
+    return Elements(
+        std::move(proto), detail::FirstMatching(Count(), KeyOf(pred)));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindFirstIndex(F pred, PackedArray proto) const {
+    return Indices(
+        std::move(proto), detail::FirstMatching(Count(), KeyOf(pred)));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindLast(F pred, T proto) const {
+    return Elements(
+        std::move(proto), detail::LastMatching(Count(), KeyOf(pred)));
+  }
+  template <typename F>
+  [[nodiscard]] auto FindLastIndex(F pred, PackedArray proto) const {
+    return Indices(
+        std::move(proto), detail::LastMatching(Count(), KeyOf(pred)));
+  }
+  template <typename F>
+  [[nodiscard]] auto Min(F key, T proto) const {
+    return Elements(
+        std::move(proto), detail::LeastPosition(Count(), KeyOf(key)));
+  }
+  template <typename F>
+  [[nodiscard]] auto Max(F key, T proto) const {
+    return Elements(
+        std::move(proto), detail::GreatestPosition(Count(), KeyOf(key)));
+  }
+  template <typename F>
+  [[nodiscard]] auto Unique(F key, T proto) const {
+    return Elements(
+        std::move(proto), detail::UniquePositions(Count(), KeyOf(key)));
+  }
+  template <typename F>
+  [[nodiscard]] auto UniqueIndex(F key, PackedArray proto) const {
+    return Indices(
+        std::move(proto), detail::UniquePositions(Count(), KeyOf(key)));
+  }
+
+  template <typename F, typename U>
+  [[nodiscard]] auto Map(F closure, U proto) const {
+    return typename Self::template Rebound<U>(
+        std::move(proto), detail::KeysOf(Count(), KeyOf(closure)));
+  }
+
+  // LRM 7.12.2 ordering: a positional permutation, by the closure-projected key
+  // with the ordinal position as index for `sort` / `rsort`; `reverse` takes no
+  // closure. How the elements move under it is the container's own.
+  auto Reverse() -> void {
+    MutableThis().core_.Permute(detail::ReversedPositions(Count()));
+  }
+  template <typename F>
+  auto Sort(F key) -> void {
+    MutableThis().core_.Permute(SortOrder(key, false));
+  }
+  template <typename F>
+  auto Rsort(F key) -> void {
+    MutableThis().core_.Permute(SortOrder(key, true));
+  }
+
+ private:
+  friend Self;
+  OrdinalArrayMethods() = default;
+
+  [[nodiscard]] auto This() const -> const Self& {
+    return static_cast<const Self&>(*this);
+  }
+  [[nodiscard]] auto MutableThis() -> Self& {
+    return static_cast<Self&>(*this);
+  }
+
+  // The order `key` puts the elements in, ascending or descending.
+  template <typename F>
+  [[nodiscard]] auto SortOrder(F& key, bool descending) const
+      -> std::vector<std::size_t> {
+    return detail::SortedPositions(
+        detail::KeysOf(Count(), KeyOf(key)), descending);
+  }
+  [[nodiscard]] auto Count() const -> std::size_t {
+    return This().RawSize();
+  }
+
+  // What `closure` answers for the element at a position and that position.
+  template <typename F>
+  [[nodiscard]] auto KeyOf(F& closure) const {
+    return [this, &closure](std::size_t i) {
+      return closure(
+          This().RawAt(i), PackedArray::Int(static_cast<std::int32_t>(i)));
+    };
+  }
+
+  // The located elements, or positions, as the queue a locator answers with,
+  // whose element default is the one the producer supplies. Each builds a
+  // queue only where it is instantiated, which is after the queue is complete.
+  template <typename Element>
+  [[nodiscard]] auto Elements(
+      Element proto, const std::vector<std::size_t>& positions) const
+      -> Queue<Element> {
+    std::vector<Element> found;
+    found.reserve(positions.size());
+    for (const std::size_t i : positions) {
+      found.push_back(This().RawAt(i));
+    }
+    return Queue<Element>(std::move(proto), found);
+  }
+  template <typename Index>
+  [[nodiscard]] static auto Indices(
+      Index proto, const std::vector<std::size_t>& positions) -> Queue<Index> {
+    std::vector<Index> found;
+    found.reserve(positions.size());
+    for (const std::size_t i : positions) {
+      found.push_back(Index::Int(static_cast<std::int32_t>(i)));
+    }
+    return Queue<Index>(std::move(proto), found);
+  }
+};
+
+// SystemVerilog queue (LRM 7.10) of the C++ type `T`: the queue every element
+// type shares, with its elements read and written as `T` and the LRM 7.12
+// methods run over the closures the C++ backend writes. Default value is the
+// empty queue (LRM Table 6-7). The element default is what an invalid-index
+// read returns and what growth (the `q[$+1]` append), slice results and an
+// empty-queue pop are seeded with.
+template <typename T>
+class Queue : public OrdinalArrayMethods<Queue<T>, T> {
  public:
   using ElementType = T;
+  template <typename U>
+  using Rebound = Queue<U>;
 
   // Empty queue carrying no element shape, the unestablished state of a
   // freshly value-initialized cell before its declared representation is
@@ -43,46 +210,38 @@ class Queue {
 
   // An empty queue of a known element shape, which a functional operation
   // yielding no element starts from.
-  explicit Queue(T element_default) : shield_(std::move(element_default)) {
+  explicit Queue(T element_default)
+      : core_(StaticElem<T>(std::move(element_default))) {
   }
 
-  // LRM 10.9.1 assignment-pattern construction: shield seeded, elements taken
-  // from the pattern's list. The list is a span so the emit side hands in a
-  // `std::array<T, N>{...}` literal, mirroring `DynamicArray`.
+  // LRM 10.9.1 assignment-pattern construction: the element default seeded,
+  // elements taken from the pattern's list. The list is a span so the emit side
+  // hands in a `std::array<T, N>{...}` literal, mirroring `DynamicArray`.
   Queue(T element_default, std::span<const T> init)
-      : shield_(std::move(element_default)), data_(init.begin(), init.end()) {
+      : Queue(std::move(element_default)) {
+    core_.Assign(detail::ReplicatedAddresses(init, 1));
   }
 
   // LRM 10.9.1 `'{count{...}}` pattern: `count` replications of `unit`.
   // Taking the repeat unit and the count separately keeps the value O(unit)
   // to build rather than O(unit * count).
   Queue(T element_default, std::span<const T> unit, std::size_t count)
-      : shield_(std::move(element_default)) {
-    for (std::size_t i = 0; i < count; ++i) {
-      data_.insert(data_.end(), unit.begin(), unit.end());
-    }
+      : Queue(std::move(element_default)) {
+    core_.Assign(detail::ReplicatedAddresses(unit, count));
   }
 
-  // LRM 7.10.5 bounded queue initialized by an assignment pattern: take the
-  // pattern's elements, record the bound, and trim any overflow on entry.
+  // LRM 7.10.5 bounded queue initialized by an assignment pattern or a
+  // replication: the pattern's elements, held to the bound on entry.
   Queue(
       T element_default, std::span<const T> init, const PackedArray& max_bound)
-      : shield_(std::move(element_default)),
-        data_(init.begin(), init.end()),
-        max_bound_(BoundOf(max_bound)) {
-    EnforceBound();
+      : Queue(std::move(element_default), init) {
+    core_.SetBound(max_bound);
   }
-
-  // LRM 7.10.5 bounded queue initialized by a replication: repeat `unit`
-  // `count` times, record the bound, and trim any overflow on entry.
   Queue(
       T element_default, std::span<const T> unit, std::size_t count,
       const PackedArray& max_bound)
-      : shield_(std::move(element_default)), max_bound_(BoundOf(max_bound)) {
-    for (std::size_t i = 0; i < count; ++i) {
-      data_.insert(data_.end(), unit.begin(), unit.end());
-    }
-    EnforceBound();
+      : Queue(std::move(element_default), unit, count) {
+    core_.SetBound(max_bound);
   }
 
   // LRM 7.6: a queue assigned an array of any of the three unpacked kinds is
@@ -100,11 +259,8 @@ class Queue {
       const C& source, T element_default, const PackedArray& max_bound)
       -> Queue {
     Queue result(std::move(element_default));
-    result.max_bound_ = BoundOf(max_bound);
-    for (std::size_t i = 0; i < source.RawSize(); ++i) {
-      result.data_.push_back(source.RawAt(i));
-    }
-    result.EnforceBound();
+    result.core_.SetBound(max_bound);
+    result.core_.Assign(detail::OrdinalAddresses(source));
     return result;
   }
 
@@ -122,10 +278,7 @@ class Queue {
   // value means unbounded) and this queue's element shape and contents, trimmed
   // to the bound.
   [[nodiscard]] auto ConformBound(const PackedArray& bound) const -> Queue {
-    Queue result = *this;
-    result.max_bound_ = BoundOf(bound);
-    result.EnforceBound();
-    return result;
+    return Queue(core_.WithBound(bound));
   }
 
   // LRM 7.10.2.1: size() yields an SV int.
@@ -134,437 +287,124 @@ class Queue {
   }
 
   [[nodiscard]] auto RawSize() const -> std::size_t {
-    return data_.size();
+    return core_.Count();
   }
 
   [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
-    return data_[i];
+    return *static_cast<const T*>(core_.At(i));
   }
 
   // The element type's default (LRM Table 7-1), the shape an out-of-range read
   // returns and a derived container seeds its own out-of-range source with.
   [[nodiscard]] auto ElementDefault() const -> const T& {
-    return shield_.Default();
+    return core_.Element().DefaultValue();
   }
 
   [[nodiscard]] auto ToOwned() const -> Queue {
     return *this;
   }
 
-  // LRM 11.2.2 aggregate equality / 11.4.5: element-wise reduction over
-  // matching positions. A size mismatch yields 0; matching empties yield 1
-  // (LRM is silent on both, matching industry convention). `==` / `!=`
-  // propagate X / Z; `CaseEqual` matches X / Z as values and is deterministic.
   [[nodiscard]] auto operator==(const Queue& other) const -> PackedArray {
-    // LRM 11.4.5: the answer carries the state class an element's own equality
-    // produces, because that is what a run of them reduces to. Reading the
-    // class off the element shape rather than off a first element leaves an
-    // empty queue no case of its own -- it is the run of no elements -- and
-    // leaves a size mismatch, which is definitely unequal, answering in the
-    // same class as every other comparison of this queue.
-    const bool four_state =
-        (shield_.Default() == shield_.Default()).IsFourState();
-    if (data_.size() != other.data_.size()) {
-      return PackedArray::FromInt(0, 1, false, four_state);
-    }
-    PackedArray result = PackedArray::FromInt(1, 1, false, four_state);
-    for (std::size_t i = 0; i < data_.size(); ++i) {
-      result = result && (data_[i] == other.data_[i]);
-    }
-    return result;
+    return detail::SequenceEqual(core_, other.core_);
   }
   [[nodiscard]] auto operator!=(const Queue& other) const -> PackedArray {
     return !(*this == other);
   }
-
   [[nodiscard]] auto CaseEqual(const Queue& other) const -> PackedArray {
-    if (data_.size() != other.data_.size()) {
-      return PackedArray::FromInt(0, 1, false, false);
-    }
-    if (data_.empty()) {
-      return PackedArray::FromInt(1, 1, false, false);
-    }
-    PackedArray result = detail::ArrayCaseEqElement(data_[0], other.data_[0]);
-    for (std::size_t i = 1; i < data_.size(); ++i) {
-      result = result && detail::ArrayCaseEqElement(data_[i], other.data_[i]);
-    }
-    return result;
+    return detail::SequenceCaseEqual(core_, other.core_);
   }
-
-  // LRM 9.4.2 update event predicate (engine change-detection hook): are the
-  // two queues element-wise bit-identical. A size mismatch is a change.
   [[nodiscard]] auto IsBitIdentical(const Queue& other) const -> bool {
-    if (data_.size() != other.data_.size()) {
-      return false;
-    }
-    for (std::size_t i = 0; i < data_.size(); ++i) {
-      if (!data_[i].IsBitIdentical(other.data_[i])) {
-        return false;
-      }
-    }
-    return true;
+    return detail::SequenceBitIdentical(core_, other.core_);
   }
-
-  // LRM 20.9: any element carrying an unknown bit propagates up.
   [[nodiscard]] auto HasUnknown() const -> bool {
-    for (const auto& e : data_) {
-      if (e.HasUnknown()) return true;
-    }
-    return false;
+    return detail::SequenceHasUnknown(core_);
   }
-
   [[nodiscard]] auto IsUnknown() const -> PackedArray {
     return PackedArray::Bit(HasUnknown());
   }
-
-  // LRM 20.6.2 `$bits`: the current bit count is the sum of the elements' own
-  // bit counts, so a dynamically sized element contributes its current width.
   [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
-    PackedArray total = PackedArray::Int(0);
-    for (const auto& e : data_) {
-      total = total + e.BitstreamWidth();
-    }
-    return total;
+    return detail::SequenceBitstreamWidth(core_);
   }
-
-  // LRM 20.9 `$countbits`: the bit stream this value contributes is its
-  // elements' streams laid end to end, so the count over it is the sum of the
-  // elements' own counts under the same control bits.
   [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
       -> PackedArray {
-    PackedArray total = PackedArray::Int(0);
-    for (const auto& e : data_) {
-      total = total + e.CountBits(control_bits);
-    }
-    return total;
+    return detail::SequenceCountBits(core_, control_bits);
   }
-
-  // LRM 11.4.11: the two arms of a conditional operator whose condition is
-  // ambiguous, combined element by element -- an element the arms agree on
-  // survives, and one they disagree on, or cannot know, takes the element
-  // default (Table 7-1). Arms of unequal size put no elements in
-  // correspondence, so the result is the empty queue that is a queue's own
-  // default.
   [[nodiscard]] auto MergeConditional(const Queue& other) const -> Queue {
-    Queue result = *this;
-    if (RawSize() != other.RawSize()) {
-      result.data_.clear();
-      return result;
-    }
-    for (std::size_t i = 0; i < result.data_.size(); ++i) {
-      if ((data_[i] == other.data_[i]).Truth() != Truthiness::kKnownNonzero) {
-        result.data_[i] = shield_.Default();
-      }
-    }
-    return result;
+    return Queue(core_.MergeConditional(other.core_));
   }
 
-  // LRM 7.10.1 / 7.4.5 read: an index outside `0..size-1` (or carrying x/z)
-  // misses. Reads never grow the queue -- the write path owns the `q[$+1]`
-  // append semantic. The non-const overload returns the shield's discard
-  // target; the const overload returns the element default by direct reference.
+  // LRM 7.10.1 / 7.4.5: the element a position names, the element default
+  // where it names none; the non-const form is where a write lands, which is
+  // nowhere a read sees where the position names no element. A read never
+  // grows the queue -- only the write form appends at `$+1`.
   [[nodiscard]] auto Element(const PackedArray& position) -> T& {
-    const auto ordinal = ElementOrdinal(position, data_.size());
-    if (!ordinal) {
-      return shield_.DiscardTarget();
-    }
-    return data_[*ordinal];
+    return *static_cast<T*>(core_.ExistingAt(position));
   }
-
   [[nodiscard]] auto Element(const PackedArray& position) const -> const T& {
-    const auto ordinal = ElementOrdinal(position, data_.size());
-    if (!ordinal) {
-      return shield_.Default();
-    }
-    return data_[*ordinal];
+    return *static_cast<const T*>(core_.ElementAt(position));
   }
-
-  // LRM 7.10.1 write: `q[$+1] = v` (index == size) appends a default-shaped
-  // slot and returns it. An x/z, negative, or beyond-`$+1` index lands on
-  // the discard sink so the write is ignored. The backend routes here
-  // only for an element-write lvalue, so a read of `index == size` still
-  // sees the default rather than growing the queue. An append a bounded queue
-  // cannot keep (LRM 7.10.5) leaves the queue as it was.
   [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
       -> T& {
-    if (const auto ordinal = ElementOrdinal(position, data_.size())) {
-      formed = Formation::kExisting;
-      return data_[*ordinal];
-    }
-    const std::optional<std::int64_t> at = ReadPosition(position);
-    if (at && static_cast<std::uint64_t>(*at) == data_.size()) {
-      data_.push_back(shield_.Default());
-      EnforceBound();
-      if (static_cast<std::uint64_t>(*at) < data_.size()) {
-        formed = Formation::kMade;
-        return data_[static_cast<std::size_t>(*at)];
-      }
-    }
-    formed = Formation::kNowhere;
-    return shield_.DiscardTarget();
+    return *static_cast<T*>(core_.ElementRef(position, formed));
   }
   [[nodiscard]] auto ElementRef(const PackedArray& position) -> T& {
     Formation formed{};
     return ElementRef(position, formed);
   }
 
-  // LRM 7.10.1 queue slice: the elements from position `lo` through `hi`. A
-  // bound that names no position, or `lo > hi` after clamping, yields the empty
-  // queue; `lo` clamps up to 0 and `hi` down to the last index. The result
-  // carries this queue's element shape.
+  // LRM 7.10.1 queue slice: the elements from position `lo` through `hi`.
   [[nodiscard]] auto Slice(const PackedArray& lo, const PackedArray& hi) const
       -> Queue {
-    Queue out(shield_.Default());
-    const std::optional<std::int64_t> first = ReadPosition(lo);
-    const std::optional<std::int64_t> last = ReadPosition(hi);
-    if (!first || !last) {
-      return out;
-    }
-    const std::int64_t a = std::max<std::int64_t>(*first, 0);
-    const std::int64_t b = std::min<std::int64_t>(
-        *last, static_cast<std::int64_t>(data_.size()) - 1);
-    for (std::int64_t i = a; i <= b; ++i) {
-      out.data_.push_back(data_[static_cast<std::size_t>(i)]);
-    }
-    return out;
+    return Queue(core_.Slice(lo, hi));
   }
 
   // LRM 7.10.2.7 / 7.10.2.6: append / prepend a single element.
   auto PushBack(const T& item) -> void {
-    data_.push_back(item);
-    EnforceBound();
+    core_.PushBack(&item);
   }
   auto PushFront(const T& item) -> void {
-    data_.push_front(item);
-    EnforceBound();
+    core_.PushFront(&item);
   }
 
   // LRM 10.10 unpacked concatenation, as the two-operand steps a join folds to:
   // this queue with one element appended, or with every element of a spread
-  // part appended in order. A part is one element unless the program spreads a
-  // container. Value-returning so the fold chains them without mutating a
-  // shared queue, and the declared bound is enforced as the elements land (LRM
-  // 7.10.5).
+  // part appended in order.
   [[nodiscard]] auto ConcatElement(const T& item) const -> Queue {
-    Queue out = *this;
-    out.data_.push_back(item);
-    out.EnforceBound();
-    return out;
+    const std::array<const void*, 1> items{&item};
+    return Queue(core_.Concat(items));
   }
   template <typename C>
   [[nodiscard]] auto ConcatSpread(const C& part) const -> Queue {
-    Queue out = *this;
-    for (std::size_t i = 0; i < part.RawSize(); ++i) {
-      out.data_.push_back(part.RawAt(i));
-    }
-    out.EnforceBound();
-    return out;
+    return Queue(core_.Concat(detail::OrdinalAddresses(part)));
   }
 
-  // LRM 7.10.2.4 / 7.10.2.5: remove and return the first / last element. On an
-  // empty queue the result is the element type's LRM Table 7-1 default and the
-  // queue is left unchanged.
+  // LRM 7.10.2.4 / 7.10.2.5: remove and return the first / last element, the
+  // element default on an empty queue.
   auto PopFront() -> T {
-    if (data_.empty()) {
-      return shield_.Default();
-    }
-    T front = std::move(data_.front());
-    data_.pop_front();
-    return front;
+    return TakeBuilt<T>([&](void* out) { core_.PopFront(out); });
   }
   auto PopBack() -> T {
-    if (data_.empty()) {
-      return shield_.Default();
-    }
-    T back = std::move(data_.back());
-    data_.pop_back();
-    return back;
+    return TakeBuilt<T>([&](void* out) { core_.PopBack(out); });
   }
 
-  // LRM 7.10.2.2: insert before `index`. The index is `integer` (4-state) so
-  // x/z, negative, or `> size` is detectable and makes the call a no-op;
-  // `index == size` is a valid append.
+  // LRM 7.10.2.2 / 7.10.2.3.
   auto Insert(const PackedArray& index, const T& item) -> void {
-    if (index.HasUnknown()) {
-      return;
-    }
-    const auto v = index.ToInt64();
-    if (v < 0 || static_cast<std::uint64_t>(v) > data_.size()) {
-      return;
-    }
-    data_.insert(data_.begin() + static_cast<std::ptrdiff_t>(v), item);
-    EnforceBound();
+    core_.Insert(index, &item);
   }
-
-  // LRM 7.10.2.3: clearing the queue and removing the element an index names
-  // are two requests the source spells with one word, so each has a name of
-  // its own. An x/z, negative, or `>= size` index is a no-op.
   auto Delete() -> void {
-    data_.clear();
+    core_.Delete();
   }
   auto DeleteIndex(const PackedArray& index) -> void {
-    const auto ordinal = ElementOrdinal(index, data_.size());
-    if (!ordinal) {
-      return;
-    }
-    data_.erase(data_.begin() + static_cast<std::ptrdiff_t>(*ordinal));
-  }
-
-  // LRM 7.12.2 ordering: an in-place positional permutation (queues are
-  // unpacked arrays, LRM 7.10.1). `reverse` takes no closure; `sort` / `rsort`
-  // order by the closure-projected key with the ordinal position as index.
-  auto Reverse() -> void {
-    detail::ArrayReverse(data_);
-  }
-  template <typename F>
-  auto Sort(F&& key) -> void {
-    detail::ArraySortByKey(data_, std::forward<F>(key), std::less<>{});
-  }
-  template <typename F>
-  auto Rsort(F&& key) -> void {
-    detail::ArraySortByKey(data_, std::forward<F>(key), std::greater<>{});
-  }
-
-  // LRM 7.12.3 reduction over the entry stream. `proto` is the
-  // producer-supplied result default for an empty receiver and carries the
-  // result shape otherwise.
-  template <typename F, typename R>
-  [[nodiscard]] auto Sum(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a + v; });
-  }
-  template <typename F, typename R>
-  [[nodiscard]] auto Product(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a * v; });
-  }
-  template <typename F, typename R>
-  [[nodiscard]] auto And(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a & v; });
-  }
-  template <typename F, typename R>
-  [[nodiscard]] auto Or(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a | v; });
-  }
-  template <typename F, typename R>
-  [[nodiscard]] auto Xor(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a ^ v; });
-  }
-
-  // LRM 7.12.1 locator methods over the entry stream. Value locators return a
-  // queue of elements; index locators return a queue of the ordinal index.
-  // Both seed the result with the producer-supplied `proto`. No match or an
-  // empty receiver yields an empty queue.
-  template <typename F>
-  [[nodiscard]] auto Find(F pred, T proto) const -> Queue<T> {
-    return Queue<T>(std::move(proto), detail::ArrayFind(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindIndex(F pred, PackedArray proto) const
-      -> Queue<PackedArray> {
-    return Queue<PackedArray>(
-        std::move(proto), detail::ArrayFindIndex(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindFirst(F pred, T proto) const -> Queue<T> {
-    return Queue<T>(std::move(proto), detail::ArrayFindFirst(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindFirstIndex(F pred, PackedArray proto) const
-      -> Queue<PackedArray> {
-    return Queue<PackedArray>(
-        std::move(proto), detail::ArrayFindFirstIndex(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindLast(F pred, T proto) const -> Queue<T> {
-    return Queue<T>(std::move(proto), detail::ArrayFindLast(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto FindLastIndex(F pred, PackedArray proto) const
-      -> Queue<PackedArray> {
-    return Queue<PackedArray>(
-        std::move(proto), detail::ArrayFindLastIndex(Entries(), pred));
-  }
-  template <typename F>
-  [[nodiscard]] auto Min(F&& key, T proto) const -> Queue<T> {
-    return Queue<T>(
-        std::move(proto), detail::ArrayMin(Entries(), std::forward<F>(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Max(F&& key, T proto) const -> Queue<T> {
-    return Queue<T>(
-        std::move(proto), detail::ArrayMax(Entries(), std::forward<F>(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto Unique(F key, T proto) const -> Queue<T> {
-    return Queue<T>(
-        std::move(proto), detail::ArrayUnique(Entries(), std::move(key)));
-  }
-  template <typename F>
-  [[nodiscard]] auto UniqueIndex(F key, PackedArray proto) const
-      -> Queue<PackedArray> {
-    return Queue<PackedArray>(
-        std::move(proto), detail::ArrayUniqueIndex(Entries(), std::move(key)));
-  }
-
-  // LRM 7.12.5 projection into a same-shape queue; `proto` seeds the result
-  // element type's canonical default (producer-supplied, since the result
-  // element type may differ from this queue's).
-  template <typename F, typename U>
-  [[nodiscard]] auto Map(F closure, U proto) const -> Queue<U> {
-    return Queue<U>(std::move(proto), detail::ArrayMap(Entries(), closure));
+    core_.DeleteIndex(index);
   }
 
  private:
-  // The LRM 7.12 entry stream: a lazy view pairing each element with its
-  // ordinal index, front-to-back.
-  [[nodiscard]] auto Entries() const {
-    return std::views::enumerate(data_) |
-           std::views::transform([](auto&& pair) {
-             auto&& [i, e] = pair;
-             return detail::Entry<PackedArray, T>{
-                 PackedArray::Int(static_cast<int>(i)), &e};
-           });
+  friend class OrdinalArrayMethods<Queue<T>, T>;
+
+  explicit Queue(BasicQueue<StaticElem<T>> core) : core_(std::move(core)) {
   }
 
-  // A bound is the greatest index the queue may hold (LRM 7.10.5). A queue with
-  // no bound spells that as a negative one, so a bound and its absence reach
-  // every construction and every store as the same operand rather than as two
-  // argument lists.
-  [[nodiscard]] static auto BoundOf(const PackedArray& max_bound)
-      -> std::optional<std::uint64_t> {
-    const std::int64_t bound = max_bound.ToInt64();
-    if (bound < 0) {
-      return std::nullopt;
-    }
-    return static_cast<std::uint64_t>(bound);
-  }
-
-  // LRM 7.10.5: a bounded queue holds no element whose index exceeds the bound,
-  // so once a write grows it past `max_bound_ + 1` elements the overflow is
-  // discarded and a warning is issued. A no-op for an unbounded queue.
-  auto EnforceBound() -> void {
-    if (!max_bound_.has_value()) {
-      return;
-    }
-    const std::size_t cap = static_cast<std::size_t>(*max_bound_) + 1;
-    if (data_.size() > cap) {
-      data_.resize(cap);
-      ReportBoundOverflow();
-    }
-  }
-
-  detail::OobShield<T> shield_;
-  std::deque<T> data_;
-  std::optional<std::uint64_t> max_bound_ = std::nullopt;
+  BasicQueue<StaticElem<T>> core_;
 };
 
 static_assert(LyraValue<Queue<PackedArray>>);

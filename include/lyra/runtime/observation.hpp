@@ -5,13 +5,12 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <utility>
-#include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/support/event_edge.hpp"
 #include "lyra/value/packed_array.hpp"
-#include "lyra/value/runtime_value.hpp"
 
 namespace lyra::runtime {
 
@@ -73,23 +72,17 @@ inline auto EdgeMatches(support::EventEdge edge, EdgeTransition transition)
   throw InternalError("runtime::EdgeMatches: unknown EventEdge");
 }
 
-// What an expression settled, as the carrier a comparison is made in.
-template <typename Value>
-[[nodiscard]] inline auto Settled(Value value) -> value::RuntimeValue {
-  return value::RuntimeValue{std::move(value)};
-}
+// Which edge an event control names, as it crosses into a runtime entry: a
+// PackedArray literal, the way every compile-time scalar does.
+[[nodiscard]] auto EventEdgeOf(const value::PackedArray& edge)
+    -> support::EventEdge;
 
-// What an expression settles is usually a value no design shapes, so those are
+// Whether a bit going from `before` to `now` is the edge `edge` names. Every
+// unit stating an edge control reaches it, and no design shapes it, so it is
 // compiled once, in the library.
-extern template auto Settled<value::PackedArray>(value::PackedArray)
-    -> value::RuntimeValue;
-extern template auto Settled<value::String>(value::String)
-    -> value::RuntimeValue;
-extern template auto Settled<value::Real>(value::Real) -> value::RuntimeValue;
-extern template auto Settled<value::ShortReal>(value::ShortReal)
-    -> value::RuntimeValue;
-extern template auto Settled<value::Chandle>(value::Chandle)
-    -> value::RuntimeValue;
+[[nodiscard]] auto IsEdge(
+    support::EventEdge edge, value::FourStateBit before,
+    value::FourStateBit now) -> bool;
 
 // The expression an event control is watching, and what it was worth when the
 // wait began (LRM 9.4.2).
@@ -102,66 +95,75 @@ extern template auto Settled<value::Chandle>(value::Chandle)
 // consecutive observed states: watching for a posedge while the operand sits at
 // 1, a fall to 0 does not fire, and without advancing, the rise back to 1 would
 // compare 1 against 1 and miss the edge.
-//
-// What a unit stating an event control reaches -- building the watch, arming
-// it, destroying it -- is the constructor, which the expression shapes, and
-// members defined in the library. What only the engine reaches, when a change
-// asks whether it was an event, is written here so the engine's own sources
-// fold it into the wake they perform; no unit calls it, so none compiles it.
 class ValueWatch {
  public:
-  // Building the watch evaluates nothing: an evaluation belongs to whoever
-  // arms or asks it, which is what decides the process it runs in.
-  template <std::invocable Evaluate>
-  ValueWatch(Evaluate evaluate, support::EventEdge edge)
-      : evaluate_([evaluate = std::move(evaluate)]() -> value::RuntimeValue {
-          return Settled(evaluate());
-        }),
-        edge_(edge) {
-  }
-
   ValueWatch(const ValueWatch&) = delete;
   auto operator=(const ValueWatch&) -> ValueWatch& = delete;
   ValueWatch(ValueWatch&&) = delete;
   auto operator=(ValueWatch&&) -> ValueWatch& = delete;
-  ~ValueWatch();
+  virtual ~ValueWatch();
 
   // Takes the expression's current value as the baseline every later comparison
   // is against.
-  void Arm() {
-    baseline_ = evaluate_();
-  }
+  virtual void Arm() = 0;
 
   // Whether the expression moved the way this control asks for, advancing the
   // baseline either way. An edge reads only the expression's least significant
   // bit; any other event is a change anywhere in its value (LRM 9.4.2).
-  [[nodiscard]] auto TakeTransition() -> bool {
-    value::RuntimeValue current = evaluate_();
-    const bool moved =
-        edge_ == support::EventEdge::kAnyChange
-            ? !value::RuntimeValueBitIdentical(baseline_, current)
-            : EdgeMatches(edge_, ClassifyEdge(Lsb(baseline_), Lsb(current)));
+  [[nodiscard]] virtual auto TakeTransition() -> bool = 0;
+
+ protected:
+  ValueWatch();
+};
+
+// A watch over an expression whose value is whatever `Evaluate` answers, which
+// it compares as that value's own type does.
+//
+// What a unit stating an event control reaches is building and destroying the
+// watch, which the expression shapes; what only the engine reaches, when a
+// change asks whether it was an event, is called through the watch it holds.
+template <std::invocable Evaluate>
+class ValueWatchOf final : public ValueWatch {
+ public:
+  // Building the watch evaluates nothing: an evaluation belongs to whoever
+  // arms or asks it, which is what decides the process it runs in.
+  ValueWatchOf(Evaluate evaluate, support::EventEdge edge)
+      : evaluate_(std::move(evaluate)), edge_(edge) {
+  }
+
+  void Arm() override {
+    baseline_.emplace(evaluate_());
+  }
+
+  [[nodiscard]] auto TakeTransition() -> bool override {
+    Value current = evaluate_();
+    const bool moved = Moved(*baseline_, current);
     baseline_ = std::move(current);
     return moved;
   }
 
  private:
+  using Value = std::invoke_result_t<Evaluate&>;
+
   // An edge is a transition of one bit, so the expression it watches is a
   // packed value; the front end admits no other operand under an edge
   // specifier, and one reaching here is a lowering that let it through.
-  [[nodiscard]] static auto Lsb(const value::RuntimeValue& value)
-      -> value::FourStateBit {
-    const auto* packed = std::get_if<value::PackedArray>(&value.value);
-    if (packed == nullptr) {
+  [[nodiscard]] auto Moved(const Value& before, const Value& now) const
+      -> bool {
+    if (edge_ == support::EventEdge::kAnyChange) {
+      return !before.IsBitIdentical(now);
+    }
+    if constexpr (std::same_as<Value, value::PackedArray>) {
+      return IsEdge(edge_, before.Lsb(), now.Lsb());
+    } else {
       throw InternalError(
           "ValueWatch: an edge event control watches a value with no bits");
     }
-    return packed->Lsb();
   }
 
-  std::move_only_function<value::RuntimeValue()> evaluate_;
-  value::RuntimeValue baseline_;
-  support::EventEdge edge_ = support::EventEdge::kAnyChange;
+  Evaluate evaluate_;
+  std::optional<Value> baseline_;
+  support::EventEdge edge_;
 };
 
 // What decides whether reaching a wait is an event for it, held while the
@@ -182,34 +184,21 @@ class ValueWatch {
 // process, whose evaluation the change schedules (LRM 4.5); an evaluation that
 // can call, write or fail is only ever the waiting process's.
 //
-// As with a single watch, what a unit reaches is the constructors the
-// expression and the qualifier shape, and members defined in the library; what
-// only the engine asks is written here.
+// As with a single watch, what a unit reaches is what the expression and the
+// qualifier shape, and members defined in the library; what only the engine
+// asks is written here.
 class ArmedObservation {
  public:
   // Built where execution reaches the event control, unarmed: it has nothing
-  // to compare against until the expression is first evaluated. `edge` arrives
-  // as a PackedArray literal, the way every compile-time scalar crosses into a
-  // runtime entry.
-  template <std::invocable Evaluate>
-  ArmedObservation(Evaluate evaluate, const value::PackedArray& edge)
-      : watch_(std::in_place, std::move(evaluate), EdgeOf(edge)) {
-  }
-
-  template <std::invocable Evaluate, std::invocable Condition>
+  // to compare against until the expression is first evaluated. A wait whose
+  // target decides by being reached -- a named event's trigger is the event --
+  // watches nothing, and `iff` is the whole of what can still hold it back.
+  // The qualifier arrives already reduced to LRM 12.4 truth as a one-bit value,
+  // because that reduction is the language's and belongs where the expression
+  // is compiled rather than here.
   ArmedObservation(
-      Evaluate evaluate, const value::PackedArray& edge, Condition condition)
-      : watch_(std::in_place, std::move(evaluate), EdgeOf(edge)),
-        condition_(WrapCondition(std::move(condition))) {
-  }
-
-  // The qualifier alone, for a wait whose target decides by being reached: a
-  // named event's trigger is the event, and `iff` is the whole of what can
-  // still hold it back.
-  template <std::invocable Condition>
-  explicit ArmedObservation(Condition condition)
-      : condition_(WrapCondition(std::move(condition))) {
-  }
+      std::unique_ptr<ValueWatch> watch,
+      std::move_only_function<value::PackedArray()> condition);
 
   ArmedObservation(const ArmedObservation&) = delete;
   auto operator=(const ArmedObservation&) -> ArmedObservation& = delete;
@@ -221,7 +210,7 @@ class ArmedObservation {
   // from: where the wait begins, and again where a stopped process starts
   // waiting afresh (LRM 9.7).
   void Arm() {
-    if (watch_.has_value()) {
+    if (watch_ != nullptr) {
       watch_->Arm();
     }
     armed_ = true;
@@ -247,34 +236,13 @@ class ArmedObservation {
       Arm();
       return false;
     }
-    return (!watch_.has_value() || watch_->TakeTransition()) &&
-           (!condition_ || condition_());
+    return (watch_ == nullptr || watch_->TakeTransition()) &&
+           (!condition_ || condition_().IsTruthy());
   }
 
  private:
-  [[nodiscard]] static auto EdgeOf(const value::PackedArray& edge)
-      -> support::EventEdge;
-
-  // The qualifier arrives already reduced to LRM 12.4 truth as a one-bit value,
-  // because that reduction is the language's and belongs where the expression
-  // is compiled rather than here.
-  template <std::invocable Condition>
-  [[nodiscard]] static auto WrapCondition(Condition condition)
-      -> std::move_only_function<bool()> {
-    return [condition = std::move(condition)]() -> bool {
-      const value::RuntimeValue held{condition()};
-      const auto* packed = std::get_if<value::PackedArray>(&held.value);
-      if (packed == nullptr) {
-        throw InternalError(
-            "ArmedObservation: an `iff` qualifier answers a value with no "
-            "bits");
-      }
-      return packed->IsTruthy();
-    };
-  }
-
-  std::optional<ValueWatch> watch_;
-  std::move_only_function<bool()> condition_;
+  std::unique_ptr<ValueWatch> watch_;
+  std::move_only_function<value::PackedArray()> condition_;
   bool armed_ = false;
 };
 
@@ -308,8 +276,8 @@ class Observation {
   template <std::invocable Evaluate>
   [[nodiscard]] static auto OfValue(
       Evaluate evaluate, const value::PackedArray& edge) -> Observation {
-    return Observation{
-        std::make_shared<ArmedObservation>(std::move(evaluate), edge)};
+    return Observation{std::make_shared<ArmedObservation>(
+        Watching(std::move(evaluate), edge), nullptr)};
   }
 
   template <std::invocable Evaluate, std::invocable Condition>
@@ -317,13 +285,13 @@ class Observation {
       Evaluate evaluate, const value::PackedArray& edge, Condition condition)
       -> Observation {
     return Observation{std::make_shared<ArmedObservation>(
-        std::move(evaluate), edge, std::move(condition))};
+        Watching(std::move(evaluate), edge), std::move(condition))};
   }
 
   template <std::invocable Condition>
   [[nodiscard]] static auto Qualified(Condition condition) -> Observation {
     return Observation{
-        std::make_shared<ArmedObservation>(std::move(condition))};
+        std::make_shared<ArmedObservation>(nullptr, std::move(condition))};
   }
 
   // The engine asks this of every wait a change reaches, and no unit does, so
@@ -343,6 +311,14 @@ class Observation {
 
  private:
   explicit Observation(std::shared_ptr<ArmedObservation> held);
+
+  template <std::invocable Evaluate>
+  [[nodiscard]] static auto Watching(
+      Evaluate evaluate, const value::PackedArray& edge)
+      -> std::unique_ptr<ValueWatch> {
+    return std::make_unique<ValueWatchOf<Evaluate>>(
+        std::move(evaluate), EventEdgeOf(edge));
+  }
 
   std::shared_ptr<ArmedObservation> held_;
 };

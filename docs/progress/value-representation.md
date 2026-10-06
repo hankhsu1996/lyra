@@ -16,25 +16,43 @@ cycle.
 
 ## Phase 1: what is specific to a type is generated, not described
 
-- [ ] A runtime facility that acts on a value of any type -- formatting, DPI conversion, file and
+- [x] A runtime facility that acts on a value of any type -- formatting, DPI conversion, file and
       memory-image reading and writing, sampled history, a wait's comparison -- is handed the
       functions the compiler generated for that type, and the erased any-value form goes.
-- [ ] A write reports the range it reached, and a wait decided at the write tests that range against
+- [x] A write reports the range it reached, and a wait decided at the write tests that range against
       what it watches on the words, without materializing either side.
-- [ ] On the execution backend, a queue, a dynamic array and an associative array hold their
-      elements as raw storage acted on through the element type's generated functions, and an
-      element at an index is addressed without a call.
+- [x] On the execution backend, a queue, a dynamic array, an associative array and a fixed-size
+      array hold their elements as raw storage acted on through the element type's generated
+      functions, a union holds its member with the member's type, and a value whose representation
+      an entry cannot know crosses as itself and its type.
+
+Measured 2026-10-05 on Ibex, whole run under callgrind, `--release`, both programs ending at
+`$finish` at 26548 as the reference run did: the C++ backend 10.87 G instructions (819 K per cycle)
+and the execution backend 13.13 G (990 K per cycle), against 12.26 G and 14.96 G at the reference
+point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
 
 ## Phase 2: a packed value is its words
 
 - [ ] A packed value is its value words, followed by its unknown words when four-state, in one
-      contiguous run of bits; a type is identified by its exact width, signedness and state domain.
+      contiguous sequence of bits; a type is identified by its exact width, signedness and state
+      domain.
 - [ ] Every operation on a packed value is generated for its type: inline up to 64 bits, a loop over
       a fixed word count above, a call taking the words only for the long algorithms.
 - [ ] An element or a member at a run-time index is reached by bit addressing at the cost of the
       element.
+- [ ] A wait on part of an unpacked aggregate is passed over by a write that reached another part of
+      it.
 - [ ] The execution backend lays out values, cells and frames from the type, and constants are
-      compile-time constants on both backends.
+      compile-time constants on both backends. A tuple's bytes no longer open with its type: every
+      holder of one -- a cell, a reference, a designated part, a net, a sampled history -- states
+      the type of what it holds.
+- [ ] An unpacked union is one storage its members overlay, laid out from its type. A structure
+      member's common initial sequence then reads what was written through another member (LRM 7.3),
+      and a union streams its first-declared member whichever is live (LRM 11.4.14.1). Both are
+      refused today, since a union holds only its live member.
+- [ ] On the execution backend, an element of a queue or a dynamic array at an index is addressed
+      without a call. It waits on the packed value being its words, since reading the index is a
+      call while a packed value is a library object.
 - [ ] Runtime scalars that were packed values -- descriptors, delays, seeds -- are machine integers.
 - [ ] The C++ backend's compile time on Ibex and on the largest open designs available is measured
       against the run before, and stated here.
@@ -50,6 +68,9 @@ cycle.
 
 ## Not this workstream
 
-- A process the language makes a reaction (a continuous assignment, `always_comb`, `always_ff`)
-  realized as a function subscribed once rather than a coroutine that waits again. It is the other
-  half of the gap to Verilator and is designed on its own.
+- How the engine carries out a wait and a wake: a wait whose places are fixed registered once rather
+  than at every activation, an edge decided where the write lands, a nonblocking assignment held as
+  a value of its type, and a process the language makes a reaction (a continuous assignment,
+  `always_comb`, `always_ff`) realized as a function rather than a coroutine that waits again.
+  Measured on Ibex, that per-event work is a larger part of the gap to Verilator than the value work
+  here, and it is designed on its own.

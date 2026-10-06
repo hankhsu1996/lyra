@@ -6,9 +6,8 @@
 #include <string_view>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/runtime/erased_value.hpp"
-#include "lyra/value/runtime_tuple.hpp"
-#include "lyra/value/runtime_value.hpp"
+#include "lyra/value/any_value.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
 
@@ -36,20 +35,6 @@ auto Entered(Entry entry, std::string_view protocol) -> Entry {
             protocol));
   }
   return entry;
-}
-
-// What a body answering a value built in storage given here, taken out of it.
-// A tuple is built in storage its own type sizes, which the runtime then holds
-// it in; every other value fits storage laid out for any value.
-template <typename Run>
-auto Answered(const ClosureDefinition& definition, Run run)
-    -> value::RuntimeValue {
-  if (definition.result_tuple != nullptr) {
-    return value::RuntimeValue{value::RuntimeTuple::Built(
-        *definition.result_tuple, [&](void* out) { run(out); })};
-  }
-  AnswerStorage answer{};
-  return TakeValue(definition.result_domain, run(answer.bytes.data()));
 }
 
 }  // namespace
@@ -82,21 +67,31 @@ auto ClosureValue::Start() -> void* {
   return Entered(definition_->start, "entered as a coroutine")(this);
 }
 
-auto ClosureValue::RunPerElement(
-    const value::RuntimeValue& item, const value::RuntimeValue& index)
-    -> value::RuntimeValue {
+auto ClosureValue::RunPerElement(const void* item, const void* index)
+    -> value::AnyValue {
   const auto run = Entered(definition_->run_per_element, "run per entry");
   // The element and the index are borrowed for the call: the container holds
   // them and the body only reads them.
-  return Answered(*definition_, [&](void* out) {
-    return run(this, HandleOf(item), HandleOf(index), out);
+  return value::AnyValue::Built(*definition_->result_type, [&](void* out) {
+    run(this, item, index, out);
   });
 }
 
-auto ClosureValue::RunValue() -> value::RuntimeValue {
-  const auto run =
-      Entered(definition_->run_value, "that answers a value on its own");
-  return Answered(*definition_, [&](void* out) { return run(this, out); });
+auto ClosureValue::RunValue() -> value::AnyValue {
+  return value::AnyValue::Built(
+      *definition_->result_type, [&](void* out) { RunValueInto(out); });
+}
+
+void ClosureValue::RequireAnswers(const value::ValueType& type) const {
+  if (definition_->result_type != &type) {
+    throw InternalError(
+        "ClosureValue: a body is run for a value of a type it does not answer "
+        "-- please report this as a bug");
+  }
+}
+
+void ClosureValue::RunValueInto(void* out) {
+  Entered(definition_->run_value, "that answers a value on its own")(this, out);
 }
 
 }  // namespace lyra::runtime

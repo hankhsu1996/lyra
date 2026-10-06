@@ -5,9 +5,9 @@
 Define what a SystemVerilog net is and how its value is produced. A net's value is not written; it
 is the resolution of a set of independent driver contributions under the net type's resolution
 policy. What that resolution covers is not always one net, and not always the whole of one: a
-bidirectional connection and an `alias` each state that runs of positions across several nets are
-the same physical net, resolving over the contributions of all of them, and a net nothing reached is
-that same resolution with nothing coupled to it. This document owns the driver / contribution /
+bidirectional connection and an `alias` each state that positions across several nets are the same
+physical net, resolving over the contributions of all of them, and a net nothing reached is that
+same resolution with nothing coupled to it. This document owns the driver / contribution /
 resolution model, what one resolution covers, and the distinction between a net and a variable. It
 is the design-global net-resolution concern that `reference_resolution.md` places outside its own
 scope.
@@ -42,15 +42,16 @@ scope.
   one resolution (LRM 10.11, 23.3.3.7). It is an object of its own, carrying the fold, the net
   type's own contribution and any procedural continuous assignment over those positions -- the facts
   a resolution needs and a name does not. Every name in one covers the whole of it, so a declared
-  net reaches one per run of its own positions, holding its own contributions, its own observers and
-  a copy of what each of those resolutions produced over the run it covers; a net no connection
-  reached is the one name of the single resolution covering it exactly.
+  net reaches one per range of its own positions, holding its own contributions, its own observers
+  and a copy of what each of those resolutions produced over the positions it covers; a net no
+  connection reached is the one name of the single resolution covering it exactly.
 
-  **A physical net is therefore one object per run of positions the design connects identically,
-  rather than one per position.** That is a compression of the bit-wise model above and is what
-  gives it its own rule: a run is exactly a maximal set of positions that agree on what they are
-  connected to, so a connection reaching part of one leaves it no longer maximal and it is cut. A
-  design that connects whole nets writes one run per net and never meets the cut.
+  **A physical net is therefore one object per set of adjacent positions the design connects
+  identically, rather than one per position.** That is a compression of the bit-wise model above and
+  is what gives it its own rule: a physical net covers exactly a maximal set of adjacent positions
+  that agree on what they are connected to, so a connection reaching part of one leaves it no longer
+  maximal and it is cut. A design that connects whole nets has one physical net per net and never
+  meets the cut.
 
 - The rule that a resolution pools the contributions reaching its positions and never makes one
   resolution's value an input to another's.
@@ -68,21 +69,21 @@ scope.
 - The capability-type family and the observable-cell access protocol that a net's resolved value and
   a driver handle are members of (`mir.md`).
 - Waking dependent processes when a net's resolved value changes (`scheduling.md`).
-- Which connections join nets, and which run of each they reach. Whether a construct places nets in
-  one resolution is a property of the construct -- a port's direction, an alias statement -- and so
-  is which of their positions it reaches, which a select, a concatenation and an assignment pattern
-  each state in their own terms. Turning what the source wrote into a run belongs to whatever owns
-  that construct; this document owns what being in one resolution means.
+- Which connections join nets, and which positions of each they reach. Whether a construct places
+  nets in one resolution is a property of the construct -- a port's direction, an alias statement --
+  and so is which of their positions it reaches, which a select, a concatenation and an assignment
+  pattern each state in their own terms. Turning what the source wrote into positions belongs to
+  whatever owns that construct; this document owns what being in one resolution means.
 
 ## Core Invariants
 
 1. A net's value is the resolution of its contributions under the net type's resolver. With zero
    drivers the value is what the net type's own contribution resolves to; a single driver and many
    drivers are the N=1 and N>1 cases of the same resolution, with no separate single-driver
-   representation. Where a connection has placed runs of other nets in one resolution with a run of
-   this one, "its contributions" are the contributions reaching every run that resolution covers,
-   each read at the positions it occupies here; a net nothing reached is the case with nothing
-   coupled to it and has no representation of its own.
+   representation. Where a connection has placed positions of other nets in one resolution with
+   positions of this one, "its contributions" are the contributions reaching every position that
+   resolution covers, each read at the positions it occupies here; a net nothing reached is the case
+   with nothing coupled to it and has no representation of its own.
 2. A driver is an independent contribution with identity and provenance. A driver writes only its
    own contribution and never the net's resolved value directly. The net owns the contribution
    storage; the driver names its contribution by a stable identity, never by a borrowed pointer into
@@ -161,15 +162,15 @@ scope.
 - A join realized by giving each side a driver fed by the other side's resolved value. That is
   strength-reducing, which is the one property the standard names for a bidirectional connection,
   and it turns a resolution into a fixpoint over values that never met at a common strength.
-- A separate representation for a net no connection joined. Such a net is the one run of positions
+- A separate representation for a net no connection joined. Such a net is one range of positions
   that covers it, reaching the one resolution over it, which is the same walk every other net takes
   rather than a case beside it.
 - A fact the resolution owns kept on a name: the fold, the contribution the net type makes to its
   own resolution, or a procedural continuous assignment over the positions. A name cannot state one
-  per run, so keeping any of them there makes two positions of one name unable to resolve
-  differently, which the standard requires of them (LRM 23.3.3.7 is read per bit range).
+  per range of its positions, so keeping any of them there makes two positions of one name unable to
+  resolve differently, which the standard requires of them (LRM 23.3.3.7 is read per bit range).
 - A resolution the names in it encode between them rather than an object they reach. A ring of the
-  names, or a closed set of runs relating them pairwise, is correct for the values and wrong for
+  names, or a closed set of links relating them pairwise, is correct for the values and wrong for
   everything a resolution owns, and costs a walk per name where an object costs one.
 
 ## Notes / Examples
@@ -182,7 +183,7 @@ assign w = a;           // one contribution
 assign w = b;           // another, independent of the first
 
 wire [7:0] p, q;
-alias p = q;            // one resolution now covers runs of both
+alias p = q;            // one resolution now covers positions of both
 assign p = 8'hA5;       // q is driven by nothing and still has a value
 ```
 
@@ -195,7 +196,7 @@ flowchart LR
 
   DP["assign p = 8'hA5"] -->|contribution| RP
   TP["the net type's own<br/>contribution"] -->|contribution| RP
-  RP{{"one resolution,<br/>covering runs of p and of q"}} --> P["p's value"]
+  RP{{"one resolution,<br/>covering positions of p and of q"}} --> P["p's value"]
   RP --> Q["q's value"]
 
   W --> OB["an observer wakes only where<br/>the resolved value moved"]

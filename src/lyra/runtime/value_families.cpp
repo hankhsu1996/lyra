@@ -1,19 +1,40 @@
 #include "lyra/runtime/value_families.hpp"
 
-#include <variant>
-
-#include "lyra/value/runtime_value.hpp"
+#include "lyra/support/value_domain.hpp"
 
 namespace lyra::runtime {
+
+namespace {
 
 // Every family below is stated over the domains a value may have, so a domain
 // gained is a domain each of them needs. Nothing would otherwise report a
 // family that missed one: it compiles, and every unit that uses it goes back to
-// compiling its own copy silently. This is what fails instead.
-static_assert(
-    std::variant_size_v<decltype(value::RuntimeValue::value)> == 14,
-    "a value domain was added or removed -- give each family below the same "
-    "treatment and then correct this count");
+// compiling its own copy silently. A switch naming every domain is what fails
+// instead: a domain added or removed is a case missing or gone here, so give
+// each family below the same treatment and then correct this list.
+constexpr auto FamiliesCover(support::ValueDomain domain) -> bool {
+  switch (domain) {
+    case support::ValueDomain::kPacked:
+    case support::ValueDomain::kString:
+    case support::ValueDomain::kReal:
+    case support::ValueDomain::kShortReal:
+    case support::ValueDomain::kChandle:
+    case support::ValueDomain::kEmpty:
+    case support::ValueDomain::kTuple:
+    case support::ValueDomain::kUnion:
+    case support::ValueDomain::kTaggedUnion:
+    case support::ValueDomain::kDynArray:
+    case support::ValueDomain::kUnpackedArray:
+    case support::ValueDomain::kQueue:
+    case support::ValueDomain::kAssocArray:
+    case support::ValueDomain::kManagedRef:
+      return true;
+  }
+  return false;
+}
+static_assert(FamiliesCover(support::ValueDomain::kPacked));
+
+}  // namespace
 
 template class ValueStorageCore<value::PackedArray>;
 template class ValueStorageCore<value::String>;

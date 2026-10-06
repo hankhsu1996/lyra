@@ -102,8 +102,8 @@ ownership, or native in-frame layout) for every value.
       variable of its own, and comes into existence from the pointer a foreign call hands back --
       the only way one ever holds a value, since the language admits no other literal for it. It is
       an object in the frame like every other value, one that owns nothing, so ending it is nothing.
-- [x] **A class handle as a value domain** (LRM 8.3) -- realized on the execution backend as the
-      erased value a type-erased aggregate holds, beside the member slot and the local it already
+- [x] **A class handle as a value domain** (LRM 8.3) -- realized on the execution backend as an
+      element or member a library aggregate holds, beside the member slot and the local it already
       lived in. A handle is an element of a fixed-size unpacked array, a dynamic array, a queue and
       an associative array, a member of an unpacked structure, and an associative array's index
       whose entries order by which object each names (LRM 7.8.3, a null index included). It takes
@@ -197,9 +197,10 @@ ownership, or native in-frame layout) for every value.
       An untagged union holds one member at a time, so its value is that member plus which one it
       is, and a member write makes the written member the live one; a tagged union adds a checked
       tag, so an access whose tag does not match the live one is a run-time error. Pattern matching
-      (LRM 12.6) rides on the tagged form. One corner stays deferred: reading an untagged union
-      member other than the one last written -- undefined in SV (LRM 7.3) -- is reported rather than
-      returning that member's default, because only the live member is stored.
+      (LRM 12.6) rides on the tagged form. Reading an untagged union member other than the one last
+      written is reported, on both backends: LRM 7.3 defines it where the members are structures
+      sharing a common initial sequence, which then reads what was written, and a union that stores
+      only its live member has no such part to read.
 - [x] **The managed reference** (LRM 8.3, and the LRM 9.7 `process` a handle names) -- realized on
       the execution backend as a value domain: the object's address together with a share of its
       ownership, with the object's type erased, so one representation serves every object a handle

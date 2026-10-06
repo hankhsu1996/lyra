@@ -1117,8 +1117,8 @@ void ReachFromConnections(ArenaReaches& reaches, const StructuralScope& scope) {
   const auto from_join = ReachFrom(reaches, std::nullopt, "a net join");
   for (const NetJoin& join : scope.net_joins) {
     for (const NetSide& side : join.sides) {
-      for (const NetRun& run : side) {
-        from_join(run.part, Slot::kOperand);
+      for (const NetPositions& operand : side) {
+        from_join(operand.part, Slot::kOperand);
       }
     }
   }

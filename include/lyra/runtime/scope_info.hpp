@@ -6,12 +6,13 @@
 
 namespace lyra::runtime {
 
-// A run of entries a unit holds as a constant array: where the array is and how
-// many entries it has, which is what a table is in a C program and what a slice
-// is in Rust. The array is named as storage rather than as its first entry, so
-// a producer states its address with no conversion of its own.
+// The entries a unit holds as a constant array: where the array is and how
+// many entries it has, which is what a table is in a C program, a `std::span`
+// is in C++, and a slice is in Rust. The array is named as storage rather than
+// as its first entry, so a producer states its address with no conversion of
+// its own.
 template <typename T>
-struct ConstantRun {
+struct ConstantSpan {
   const void* data = nullptr;
   std::uint64_t size = 0;
 
@@ -58,7 +59,7 @@ struct ScopeCallable {
 
 // The entry published under `name`, or null when the table holds none.
 [[nodiscard]] inline auto FindInCallableTable(
-    ConstantRun<ScopeCallable> table, std::string_view name) -> ErasedEntry {
+    ConstantSpan<ScopeCallable> table, std::string_view name) -> ErasedEntry {
   for (const ScopeCallable& published : table.Entries()) {
     if (published.name == name) {
       return published.entry;
@@ -76,7 +77,7 @@ struct ScopeCallable {
 // publishes of its object has none of this, since no instance is built of it.
 struct ScopeInfo {
   ScopeMetadata metadata;
-  ConstantRun<ScopeCallable> exports;
+  ConstantSpan<ScopeCallable> exports;
 };
 
 }  // namespace lyra::runtime

@@ -36,15 +36,13 @@ inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<support::ValueDomain>;
 
-// Whether a coordinate into this container has to say which representation it
-// is in. An associative array holds no prototype for an index -- LRM 7.8 gives
-// it no index bounds and no index default -- so nothing on the far side could
-// know an index's representation and the index states its own; every other
-// container selects by an ordinal its entries already name. Which
-// representation that is stays the coordinate's own answer, never the
-// container's: a wildcard index type (LRM 7.8.1) is a rule about what indices
-// are admitted rather than a value's type, so a container declaring one
-// declares nothing an entry could be named by.
+// Whether a coordinate into this container crosses with its type. An
+// associative array holds no index type, so an index crosses with the one it
+// was written in; every other container selects by an ordinal its entries
+// already name. That type stays the coordinate's own, never the container's:
+// a wildcard index type (LRM 7.8.1) is a rule about what indices are admitted
+// rather than a value's type, so a container declaring one declares nothing an
+// index could be read by.
 auto SelectsByStatedIndex(
     const lir::CompilationUnit& unit, lir::TypeId container) -> bool;
 
@@ -72,7 +70,6 @@ enum class RuntimeOp : std::uint8_t {
   kHandleWithView,
   kConst,
   kToBool,
-  kValueBox,
   kMake,
   kTagMatches,
   kWithComponent,
@@ -109,6 +106,9 @@ enum class RuntimeOp : std::uint8_t {
   kCopy,
   kMove,
   kAssign,
+  // The type of a value of one of the library's own kinds, which the library
+  // defines once per kind and generated code hands over beside such a value.
+  kValueType,
 };
 
 // What a member slot is for, which two declarations answer differently for a
@@ -212,7 +212,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming;
 
 // The symbol a runtime entry is published under. An operation realized per
 // value representation leads with that representation, so one library serves
-// every representation and nothing about a value's type crosses at run time.
+// every representation.
 //
 // Every overload takes the operation as itself rather than as text, so a symbol
 // cannot be spelled from a string: an operation is nameable here only if some

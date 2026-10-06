@@ -1,203 +1,152 @@
 #include "lyra/value/runtime_dynamic_array.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/simulation_error.hpp"
-#include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/basic_dynamic_array.hpp"
+#include "lyra/value/element_policy.hpp"
+#include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/position.hpp"
-#include "lyra/value/runtime_unpacked_array.hpp"
-#include "lyra/value/runtime_value.hpp"
 #include "lyra/value/unpacked_array.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
 
-RuntimeDynamicArray::RuntimeDynamicArray()
-    : element_default_(std::make_unique<RuntimeValue>()) {
-}
-
-RuntimeDynamicArray::RuntimeDynamicArray(RuntimeValue element_default)
-    : element_default_(
-          std::make_unique<RuntimeValue>(std::move(element_default))) {
-}
+RuntimeDynamicArray::RuntimeDynamicArray() = default;
 
 RuntimeDynamicArray::RuntimeDynamicArray(
-    const PackedArray& n, RuntimeValue element_default)
-    : element_default_(
-          std::make_unique<RuntimeValue>(std::move(element_default))) {
-  const std::int64_t count = n.ToInt64();
-  if (count < 0) {
-    throw SimulationError(
-        "dynamic array new[N]: size operand is negative (LRM 7.5.1)");
-  }
-  data_.assign(static_cast<std::size_t>(count), *element_default_);
+    const ValueType& element, const void* element_default, std::size_t count,
+    const RuntimeDynamicArray* from)
+    : core_(
+          std::in_place, WitnessedElem(element, element_default), count,
+          from == nullptr ? nullptr : &from->Core()) {
 }
 
-RuntimeDynamicArray::RuntimeDynamicArray(
-    const PackedArray& n, RuntimeValue element_default,
-    const RuntimeDynamicArray& src)
-    : element_default_(
-          std::make_unique<RuntimeValue>(std::move(element_default))),
-      data_(src.data_) {
-  const std::int64_t count = n.ToInt64();
-  if (count < 0) {
-    throw SimulationError(
-        "dynamic array new[N](src): size operand is negative (LRM 7.5.1)");
-  }
-  data_.resize(static_cast<std::size_t>(count), *element_default_);
+RuntimeDynamicArray::RuntimeDynamicArray(BasicDynamicArray<WitnessedElem> core)
+    : core_(std::move(core)) {
 }
 
-RuntimeDynamicArray::RuntimeDynamicArray(
-    RuntimeValue element_default, std::vector<RuntimeValue> elements)
-    : element_default_(
-          std::make_unique<RuntimeValue>(std::move(element_default))),
-      data_(std::move(elements)) {
-}
-
-RuntimeDynamicArray::RuntimeDynamicArray(const RuntimeDynamicArray& other)
-    : element_default_(std::make_unique<RuntimeValue>(*other.element_default_)),
-      data_(other.data_) {
-}
-
+RuntimeDynamicArray::RuntimeDynamicArray(const RuntimeDynamicArray&) = default;
 RuntimeDynamicArray::RuntimeDynamicArray(RuntimeDynamicArray&&) noexcept =
     default;
-
-auto RuntimeDynamicArray::operator=(const RuntimeDynamicArray& other)
-    -> RuntimeDynamicArray& {
-  if (this != &other) {
-    element_default_ = std::make_unique<RuntimeValue>(*other.element_default_);
-    data_ = other.data_;
-  }
-  return *this;
-}
-
+auto RuntimeDynamicArray::operator=(const RuntimeDynamicArray&)
+    -> RuntimeDynamicArray& = default;
 auto RuntimeDynamicArray::operator=(RuntimeDynamicArray&&) noexcept
     -> RuntimeDynamicArray& = default;
-
 RuntimeDynamicArray::~RuntimeDynamicArray() = default;
 
-auto RuntimeDynamicArray::Size() const -> PackedArray {
-  return PackedArray::Int(static_cast<std::int32_t>(data_.size()));
-}
-
-auto RuntimeDynamicArray::ElementDefault() const -> const RuntimeValue& {
-  return *element_default_;
-}
-
-auto RuntimeDynamicArray::Element(const PackedArray& position) const
-    -> const RuntimeValue& {
-  const std::optional<std::size_t> ordinal =
-      ElementOrdinal(position, data_.size());
-  if (!ordinal) {
-    return *element_default_;
+// An array whose declaration has not installed its element type has no
+// elements to act on, so being asked to act on one is a lowering defect.
+void RuntimeDynamicArray::RequireInstalled() const {
+  if (!core_.has_value()) {
+    throw InternalError(
+        "RuntimeDynamicArray: an array is used before its declaration "
+        "installs its element type -- please report this as a bug");
   }
-  return data_[*ordinal];
 }
 
-auto RuntimeDynamicArray::ElementAt(std::size_t position) const
-    -> const RuntimeValue& {
-  if (position >= data_.size()) {
+auto RuntimeDynamicArray::Core() const
+    -> const BasicDynamicArray<WitnessedElem>& {
+  RequireInstalled();
+  return *core_;
+}
+
+auto RuntimeDynamicArray::Core() -> BasicDynamicArray<WitnessedElem>& {
+  RequireInstalled();
+  return *core_;
+}
+
+auto RuntimeDynamicArray::FromElements(
+    const ValueType& element, const void* element_default,
+    std::span<const void* const> items) -> RuntimeDynamicArray {
+  return RuntimeDynamicArray(
+      BasicDynamicArray<WitnessedElem>(WitnessedElem(element, element_default))
+          .Extended(items));
+}
+
+auto RuntimeDynamicArray::ElementType() const -> const ValueType& {
+  return Core().Element().Type();
+}
+
+auto RuntimeDynamicArray::ElementDefault() const -> const void* {
+  return Core().Element().Default();
+}
+
+auto RuntimeDynamicArray::Count() const -> std::size_t {
+  return core_.has_value() ? core_->Count() : 0;
+}
+
+auto RuntimeDynamicArray::Size() const -> PackedArray {
+  return PackedArray::Int(static_cast<std::int32_t>(Count()));
+}
+
+auto RuntimeDynamicArray::ElementAt(std::size_t position) const -> const void* {
+  if (position >= Count()) {
     throw InternalError(
         "RuntimeDynamicArray::ElementAt: the position is past the last");
   }
-  return data_[position];
+  return Core().At(position);
+}
+
+auto RuntimeDynamicArray::ElementAt(std::size_t position) -> void* {
+  if (position >= Count()) {
+    throw InternalError(
+        "RuntimeDynamicArray::ElementAt: the position is past the last");
+  }
+  return Core().At(position);
+}
+
+auto RuntimeDynamicArray::Element(const PackedArray& position) const -> const
+    void* {
+  return Core().ElementAt(position);
 }
 
 auto RuntimeDynamicArray::ElementRef(
-    const PackedArray& position, Formation& formed) -> RuntimeValue& {
-  const std::optional<std::size_t> ordinal =
-      ElementOrdinal(position, data_.size());
-  if (!ordinal) {
-    formed = Formation::kNowhere;
-    return DiscardTarget(*element_default_);
-  }
-  formed = Formation::kExisting;
-  return data_[*ordinal];
-}
-
-auto RuntimeDynamicArray::ElementRef(const PackedArray& position)
-    -> RuntimeValue& {
-  Formation formed{};
-  return ElementRef(position, formed);
+    const PackedArray& position, Formation& formed) -> void* {
+  return Core().ElementRef(position, formed);
 }
 
 void RuntimeDynamicArray::Delete() {
-  data_.clear();
+  Core().Delete();
 }
 
-auto RuntimeDynamicArray::Slice(const PackedArray& start, std::int64_t count)
-    const -> RuntimeUnpackedArray {
-  return RuntimeUnpackedArray::FromValues(
-      *element_default_,
-      detail::ArraySliceGather(
-          data_, *element_default_, ReadPosition(start), SliceCount(count)));
+auto RuntimeDynamicArray::SliceElements(
+    const PackedArray& start, std::int64_t count) const
+    -> std::vector<const void*> {
+  return Core().SliceElements(ReadPosition(start), SliceCount(count));
 }
 
 auto RuntimeDynamicArray::AssignSlice(
     const PackedArray& start, std::int64_t count,
-    const RuntimeUnpackedArray& replacement) -> bool {
-  const std::size_t window = SliceCount(count);
-  std::vector<RuntimeValue> replacement_values;
-  replacement_values.reserve(window);
-  for (std::size_t i = 0; i < window; ++i) {
-    replacement_values.push_back(replacement.ElementAt(i));
-  }
-  return detail::ArraySliceScatter(
-      data_, ReadPosition(start), window, replacement_values);
+    std::span<const void* const> replacement) -> bool {
+  return Core().AssignSlice(
+      ReadPosition(start), SliceCount(count), replacement);
 }
 
-auto RuntimeDynamicArray::ConcatElement(RuntimeValue item) const
+auto RuntimeDynamicArray::Concat(std::span<const void* const> items) const
     -> RuntimeDynamicArray {
-  RuntimeDynamicArray result(*this);
-  result.data_.push_back(std::move(item));
-  return result;
+  return RuntimeDynamicArray(Core().Extended(items));
 }
 
-auto RuntimeDynamicArray::ConcatSpread(const RuntimeValue& part) const
-    -> RuntimeDynamicArray {
-  RuntimeDynamicArray result(*this);
-  const std::size_t count = RuntimeValueContainerSize(part);
-  for (std::size_t i = 0; i < count; ++i) {
-    result.data_.push_back(RuntimeValueContainerElementAt(part, i));
-  }
-  return result;
+void RuntimeDynamicArray::Permute(std::span<const std::size_t> order) {
+  Core().Permute(order);
 }
 
-auto RuntimeDynamicArray::FromArray(
-    const RuntimeValue& source, RuntimeValue element_default)
-    -> RuntimeDynamicArray {
-  RuntimeDynamicArray result(std::move(element_default));
-  const std::size_t count = RuntimeValueContainerSize(source);
-  for (std::size_t i = 0; i < count; ++i) {
-    result.data_.push_back(RuntimeValueContainerElementAt(source, i));
-  }
-  return result;
-}
-
+// An array with no element type yet holds no elements, which is all a
+// comparison with one can read.
 auto RuntimeDynamicArray::operator==(const RuntimeDynamicArray& other) const
     -> PackedArray {
-  // LRM 11.4.5: the answer carries the state class an element's own equality
-  // produces, because that is what a run of them reduces to. Reading the class
-  // off the element shape leaves an empty array no case of its own, and leaves
-  // a size mismatch answering in the same class as every other comparison.
-  const bool four_state =
-      RuntimeValueEqual(ElementDefault(), ElementDefault()).IsFourState();
-  if (data_.size() != other.data_.size()) {
-    return PackedArray::FromInt(0, 1, false, four_state);
+  if (!core_.has_value() || !other.core_.has_value()) {
+    return PackedArray::Bit(Count() == other.Count());
   }
-  PackedArray result = PackedArray::FromInt(1, 1, false, four_state);
-  for (std::size_t i = 0; i < data_.size(); ++i) {
-    result = result && RuntimeValueEqual(data_[i], other.data_[i]);
-  }
-  return result;
+  return detail::SequenceEqual(*core_, *other.core_);
 }
 
 auto RuntimeDynamicArray::operator!=(const RuntimeDynamicArray& other) const
@@ -207,33 +156,22 @@ auto RuntimeDynamicArray::operator!=(const RuntimeDynamicArray& other) const
 
 auto RuntimeDynamicArray::CaseEqual(const RuntimeDynamicArray& other) const
     -> PackedArray {
-  if (data_.size() != other.data_.size()) {
-    return PackedArray::Bit(false);
+  if (!core_.has_value() || !other.core_.has_value()) {
+    return PackedArray::Bit(Count() == other.Count());
   }
-  PackedArray result = PackedArray::Bit(true);
-  for (std::size_t i = 0; i < data_.size(); ++i) {
-    result = result && RuntimeValueCaseEqual(data_[i], other.data_[i]);
-  }
-  return result;
+  return detail::SequenceCaseEqual(*core_, *other.core_);
 }
 
 auto RuntimeDynamicArray::IsBitIdentical(const RuntimeDynamicArray& other) const
     -> bool {
-  if (data_.size() != other.data_.size()) {
-    return false;
+  if (!core_.has_value() || !other.core_.has_value()) {
+    return Count() == other.Count();
   }
-  for (std::size_t i = 0; i < data_.size(); ++i) {
-    if (!RuntimeValueBitIdentical(data_[i], other.data_[i])) {
-      return false;
-    }
-  }
-  return true;
+  return detail::SequenceBitIdentical(*core_, *other.core_);
 }
 
 auto RuntimeDynamicArray::HasUnknown() const -> bool {
-  return std::ranges::any_of(data_, [](const RuntimeValue& element) {
-    return RuntimeValueHasUnknown(element);
-  });
+  return core_.has_value() && detail::SequenceHasUnknown(*core_);
 }
 
 auto RuntimeDynamicArray::IsUnknown() const -> PackedArray {
@@ -241,20 +179,14 @@ auto RuntimeDynamicArray::IsUnknown() const -> PackedArray {
 }
 
 auto RuntimeDynamicArray::BitstreamWidth() const -> PackedArray {
-  PackedArray total = PackedArray::Int(0);
-  for (const RuntimeValue& element : data_) {
-    total = total + RuntimeValueBitstreamWidth(element);
-  }
-  return total;
+  return core_.has_value() ? detail::SequenceBitstreamWidth(*core_)
+                           : PackedArray::Int(0);
 }
 
 auto RuntimeDynamicArray::CountBits(const PackedArray& control_bits) const
     -> PackedArray {
-  PackedArray total = PackedArray::Int(0);
-  for (const RuntimeValue& element : data_) {
-    total = total + RuntimeValueCountBits(element, control_bits);
-  }
-  return total;
+  return core_.has_value() ? detail::SequenceCountBits(*core_, control_bits)
+                           : PackedArray::Int(0);
 }
 
 }  // namespace lyra::value

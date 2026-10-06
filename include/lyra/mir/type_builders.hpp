@@ -18,7 +18,7 @@ namespace lyra::mir {
 // alternative whose fields are all the caller's own is spelled at each of them
 // and shares nothing.
 
-// A run of `width` bits whose width follows from an operation -- composing,
+// `width` bits whose width follows from an operation -- composing,
 // replicating, slicing, counting -- rather than from any declared type. It is
 // unsigned, and that is the fact this settles: signedness reaches a value from
 // the declaration that named it, and nothing declared these, so treating them

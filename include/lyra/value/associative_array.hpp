@@ -1,164 +1,58 @@
 #pragma once
 
-#include <algorithm>
+#include <cstddef>
 #include <cstdint>
-#include <functional>
-#include <iterator>
-#include <map>
 #include <optional>
-#include <ranges>
 #include <span>
-#include <string>
 #include <utility>
 #include <vector>
 
-#include "lyra/value/array_case_equal.hpp"
 #include "lyra/value/array_manipulation.hpp"
-#include "lyra/value/chandle.hpp"
+#include "lyra/value/basic_associative_array.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/format.hpp"
+#include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/object_ref.hpp"
-#include "lyra/value/oob_shield.hpp"
+#include "lyra/value/index_order.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
-#include "lyra/value/wildcard_index.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
 
-// Numerical key ordering for integral-indexed associative arrays (LRM 7.8.4):
-// the SystemVerilog `<` operator respects the shared signedness of the index
-// type, so a 1-bit result of 1 means strictly-less. Every key carries the same
-// declared index shape (slang casts each index expression to the index type),
-// so the comparison is total over the keys actually stored.
-struct PackedArrayKeyLess {
-  [[nodiscard]] auto operator()(
-      const PackedArray& a, const PackedArray& b) const -> bool {
-    return static_cast<bool>(a < b);
-  }
-};
-
-// LRM 7.8.2 string-keyed associative array: keys order lexicographically. The
-// value-type `<` returns a 1-bit `PackedArray`; the host predicate `std::map`
-// needs is recovered with the explicit-bool conversion.
-struct StringKeyLess {
-  [[nodiscard]] auto operator()(const String& a, const String& b) const
-      -> bool {
-    return static_cast<bool>(a < b);
-  }
-};
-
-// LRM 7.8.1 wildcard index `[*]`: a key this container holds normalized, so
-// that the per-comparison work is the comparison alone.
-//
-// The conversion from a plain index value is implicit so that every key-taking
-// operation (element access, `exists`, `delete`) accepts the index expression
-// directly, with no caller and no per-call-site wrap to distinguish a wildcard
-// array from a string- or integral-keyed one.
-class WildcardKey {
- public:
-  WildcardKey(const PackedArray& index)  // NOLINT(google-explicit-constructor)
-      : value_(WildcardIndexValue(index)) {
-  }
-
-  [[nodiscard]] auto Value() const -> const PackedArray& {
-    return value_;
-  }
-  [[nodiscard]] auto HasUnknown() const -> bool {
-    return value_.HasUnknown();
-  }
-
- private:
-  PackedArray value_;
-};
-
-struct WildcardKeyLess {
-  [[nodiscard]] auto operator()(
-      const WildcardKey& a, const WildcardKey& b) const -> bool {
-    return WildcardIndexBefore(a.Value(), b.Value());
-  }
-};
-
+// The index type `K` of an associative array compiled with it: a key is a `K`,
+// ordered as its traits say. LRM 7.8.6 makes a key carrying x or z name no
+// entry, decided by the key's own x/z predicate where it has one (an integral
+// or wildcard key reports its unknown bits; a string's is always false); a key
+// type with no notion of x/z is always valid.
 template <typename K>
-struct AssocKeyTraits;
-
-template <>
-struct AssocKeyTraits<String> {
-  using Less = StringKeyLess;
-};
-
-// LRM 7.8.4: integral keys order by signed/unsigned numerical value.
-template <>
-struct AssocKeyTraits<PackedArray> {
-  using Less = PackedArrayKeyLess;
-};
-
-template <>
-struct AssocKeyTraits<WildcardKey> {
-  using Less = WildcardKeyLess;
-};
-
-// LRM 6.14: a chandle may key an associative array, and the relative ordering
-// of two entries is explicitly allowed to vary between runs. The order is
-// therefore a host storage choice, not an SV operator -- `<` is not defined on
-// a chandle
-// -- and `std::less` supplies the total order `std::map` needs over unrelated
-// pointers.
-struct ChandleKeyLess {
-  [[nodiscard]] auto operator()(const Chandle& a, const Chandle& b) const
-      -> bool {
-    return std::less<>{}(a.Ptr(), b.Ptr());
+struct StaticKey {
+  using Stored = K;
+  using Probe = K;
+  using Less = typename AssocKeyTraits<K>::Less;
+  [[nodiscard]] static auto Order() -> Less {
+    return Less{};
+  }
+  [[nodiscard]] static auto Invalid(const K& key) -> bool {
+    if constexpr (requires { key.HasUnknown(); }) {
+      return key.HasUnknown();
+    } else {
+      return false;
+    }
+  }
+  [[nodiscard]] static auto Owned(const K& key) -> K {
+    return key;
   }
 };
 
-template <>
-struct AssocKeyTraits<Chandle> {
-  using Less = ChandleKeyLess;
-};
-
-// LRM 7.8.3: a class may key an associative array, its entries order
-// deterministically but arbitrarily, and null is a valid index. Which object a
-// handle names is therefore the order, which no SV operator states -- `<` is
-// not defined on a handle -- so `std::less` over the identity supplies the
-// total order the storage needs, and null takes its place in it like any
-// other.
-struct ObjectRefKeyLess {
-  [[nodiscard]] auto operator()(const ObjectRef& a, const ObjectRef& b) const
-      -> bool {
-    return std::less<>{}(a.Handle().Share().get(), b.Handle().Share().get());
-  }
-};
-
-template <>
-struct AssocKeyTraits<ObjectRef> {
-  using Less = ObjectRefKeyLess;
-};
-
-// A wildcard key formats as its underlying integral value (LRM 21.2.1.6 prints
-// associative entries in key order; the key prints in the element format).
-template <>
-struct Formatter<WildcardKey> {
-  static auto Format(const FormatSpec& spec, const WildcardKey& key)
-      -> std::string {
-    return lyra::value::Format(spec, MakeFormatArg(key.Value()));
-  }
-};
-
-// SystemVerilog associative array (LRM 7.8): a sparse lookup table allocated
-// entry-by-entry. `K` is the index type (`String` for string-indexed arrays,
-// `PackedArray` for integral-indexed arrays, `WildcardKey` for the wildcard
-// index) and `V` the element type. Storage is an ordered `std::map` so
-// iteration and `%p` formatting follow the LRM 7.8 key ordering and stay
-// deterministic.
-//
-// The element shape and the invalid-key discard target are carried by an
-// `OobShield`; there is no boundary trigger as in an indexed array -- an
-// associative array has no index bounds -- so the shield fires on a missing or
-// invalid key instead. What a read of a nonexistent or invalid key answers with
-// (LRM 7.8.6) is its own persistent value, which a `default:` clause names
-// (LRM 7.9.11) and which is otherwise the element type's default.
+// SystemVerilog associative array (LRM 7.8) of the C++ index type `K` and
+// element type `V`: the associative array every index and element type
+// shares, with its keys and elements read and written as `K` and `V` and the
+// LRM 7.12 methods run over the closures the C++ backend writes. `K` is
+// `String` for string-indexed arrays, `PackedArray` for integral-indexed ones
+// and `WildcardKey` for the wildcard index. The keys are kept in LRM 7.8 key
+// order, so iteration and `%p` formatting follow it and stay deterministic.
 template <typename K, typename V>
 class AssociativeArray {
  public:
@@ -171,17 +65,19 @@ class AssociativeArray {
   AssociativeArray() = default;
 
   // LRM 7.9.11 associative literal `'{key: value, ...}`: seed the map from the
-  // (key, value) entries. The shield carries the element shape; `user_default`
-  // is what a read of an absent key returns (LRM 7.8.6) and the seed for an
-  // entry a later write allocates (LRM 7.8.7), which a `default:` clause names
-  // and which is otherwise the element type's own default.
+  // (key, value) entries. `element_default` carries the element shape;
+  // `user_default` is what a read of an absent key returns (LRM 7.8.6) and the
+  // seed for an entry a later write allocates (LRM 7.8.7), which a `default:`
+  // clause names and which is otherwise the element type's own default.
   AssociativeArray(
-      V element_default, std::span<const Tuple<K, V>> entries, V user_default)
-      : shield_(std::move(element_default)),
-        user_default_(std::move(user_default)) {
+      V element_default, std::span<const Tuple<K, V>> entries,
+      const V& user_default)
+      : core_(
+            StaticKey<K>{}, StaticElem<V>(std::move(element_default)),
+            &user_default) {
     for (const auto& entry : entries) {
-      data_.insert_or_assign(
-          entry.template Component<0>(), entry.template Component<1>());
+      core_.Store(
+          entry.template Component<0>(), &entry.template Component<1>());
     }
   }
 
@@ -193,57 +89,34 @@ class AssociativeArray {
 
   // LRM 7.9.1: num() and size() both return the entry count as an SV int.
   [[nodiscard]] auto Size() const -> PackedArray {
-    return PackedArray::Int(static_cast<std::int32_t>(data_.size()));
+    return PackedArray::Int(static_cast<std::int32_t>(core_.Count()));
   }
 
-  // LRM 7.9.3: exists() yields an SV int 1 / 0. An invalid integral key never
-  // matches an entry, so it reports absent.
+  // LRM 7.9.3: exists() yields an SV int 1 / 0.
   [[nodiscard]] auto Exists(const K& key) const -> PackedArray {
-    if (IsInvalidKey(key)) {
-      return PackedArray::Int(0);
-    }
-    return PackedArray::Int(data_.contains(key) ? 1 : 0);
+    return PackedArray::Int(core_.Exists(key) ? 1 : 0);
   }
 
   // LRM 7.9.2: clearing the whole array and deleting the one element a key
   // names (no warning if absent) are two requests the source spells with one
-  // word, so each has a name of its own. An invalid key is a no-op.
+  // word, so each has a name of its own.
   auto Delete() -> void {
-    data_.clear();
+    core_.Clear();
   }
   auto DeleteIndex(const K& key) -> void {
-    if (IsInvalidKey(key)) {
-      return;
-    }
-    data_.erase(key);
+    core_.Erase(key);
   }
 
   // LRM 7.8.6 / 7.9.11: a read of a nonexistent or invalid key returns the
-  // user-specified default if one was set, otherwise the element-type default,
-  // without allocating.
+  // array's own value without allocating.
   [[nodiscard]] auto Element(const K& key) const -> const V& {
-    if (IsInvalidKey(key)) {
-      return MissValue();
-    }
-    auto it = data_.find(key);
-    if (it == data_.end()) {
-      return MissValue();
-    }
-    return it->second;
+    return *static_cast<const V*>(core_.ElementAt(key));
   }
 
-  // LRM 7.8.7 / 7.9.11: a write target allocates the absent entry seeded with
-  // the user-specified default if one was set, otherwise the element-type
-  // default, then yields a reference the caller stores into. An invalid key
-  // (LRM 7.8.6) yields the discard sink instead, so the write is discarded.
+  // LRM 7.8.7 / 7.9.11: a write target allocates the absent entry, and an
+  // invalid key (LRM 7.8.6) lands where the write is discarded.
   [[nodiscard]] auto ElementRef(const K& key, Formation& formed) -> V& {
-    if (IsInvalidKey(key)) {
-      formed = Formation::kNowhere;
-      return shield_.DiscardTarget();
-    }
-    auto [it, made] = data_.try_emplace(key, user_default_);
-    formed = made ? Formation::kMade : Formation::kExisting;
-    return it->second;
+    return *static_cast<V*>(core_.ElementRef(key, formed));
   }
   [[nodiscard]] auto ElementRef(const K& key) -> V& {
     Formation formed{};
@@ -252,24 +125,18 @@ class AssociativeArray {
 
   template <typename Fn>
   auto ForEachEntry(const Fn& fn) const -> void {
-    for (const auto& [key, value] : data_) {
-      fn(key, value);
+    for (const auto& [key, slot] : core_.Entries()) {
+      fn(key, *static_cast<const V*>(slot));
     }
   }
 
   // LRM 7.9.4 / 7.9.5: the smallest / largest stored index, or absent when the
   // array is empty.
   [[nodiscard]] auto FirstIndex() const -> std::optional<K> {
-    if (data_.empty()) {
-      return std::nullopt;
-    }
-    return data_.begin()->first;
+    return Found(core_.FirstKey());
   }
   [[nodiscard]] auto LastIndex() const -> std::optional<K> {
-    if (data_.empty()) {
-      return std::nullopt;
-    }
-    return data_.rbegin()->first;
+    return Found(core_.LastKey());
   }
 
   // LRM 20.7 `$low` / `$high` over an associative dimension: the smallest and
@@ -285,21 +152,11 @@ class AssociativeArray {
 
   // LRM 7.9.6 / 7.9.7: the smallest stored index strictly greater than `probe`
   // (next) or the largest strictly less (prev), or absent when none exists.
-  // `probe` shares the stored indices' type, so the bound lookup runs directly
-  // in index space.
   [[nodiscard]] auto NextIndex(const K& probe) const -> std::optional<K> {
-    auto it = data_.upper_bound(probe);
-    if (it == data_.end()) {
-      return std::nullopt;
-    }
-    return it->first;
+    return Found(core_.KeyAfter(probe));
   }
   [[nodiscard]] auto PrevIndex(const K& probe) const -> std::optional<K> {
-    auto it = data_.lower_bound(probe);
-    if (it == data_.begin()) {
-      return std::nullopt;
-    }
-    return std::prev(it)->first;
+    return Found(core_.KeyBefore(probe));
   }
 
   // LRM 7.9.4 -- 7.9.7 traversal: the SV int answer paired with the index
@@ -329,85 +186,99 @@ class AssociativeArray {
   // The closure receives each value and its key; `proto` is the
   // producer-supplied result default returned for an empty array.
   template <typename F, typename R>
-  [[nodiscard]] auto Sum(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a + v; });
+  [[nodiscard]] auto Sum(F key, R proto) const -> R {
+    return Folded(key, Reduction::kSum, std::move(proto));
   }
   template <typename F, typename R>
-  [[nodiscard]] auto Product(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a * v; });
+  [[nodiscard]] auto Product(F key, R proto) const -> R {
+    return Folded(key, Reduction::kProduct, std::move(proto));
   }
   template <typename F, typename R>
-  [[nodiscard]] auto And(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a & v; });
+  [[nodiscard]] auto And(F key, R proto) const -> R {
+    return Folded(key, Reduction::kAnd, std::move(proto));
   }
   template <typename F, typename R>
-  [[nodiscard]] auto Or(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a | v; });
+  [[nodiscard]] auto Or(F key, R proto) const -> R {
+    return Folded(key, Reduction::kOr, std::move(proto));
   }
   template <typename F, typename R>
-  [[nodiscard]] auto Xor(F&& key, R proto) const -> R {
-    return detail::ArrayFold(
-        Entries(), std::move(proto), std::forward<F>(key),
-        [](auto a, auto v) { return a ^ v; });
+  [[nodiscard]] auto Xor(F key, R proto) const -> R {
+    return Folded(key, Reduction::kXor, std::move(proto));
   }
 
-  // LRM 7.12.1 locator family over the entry stream. Value locators return a
-  // queue of values; index locators return a queue of the KEY, since an
-  // associative receiver's index is its key (LRM 7.12.1), not an ordinal int.
-  // Both seed the result with the producer-supplied `proto`.
+  // LRM 7.12.1 locator family. Value locators return a queue of values; index
+  // locators return a queue of the KEY, since an associative receiver's index
+  // is its key (LRM 7.12.1), not an ordinal int. Both seed the result with the
+  // producer-supplied `proto`.
   template <typename F>
   [[nodiscard]] auto Find(F pred, V proto) const -> Queue<V> {
-    return Queue<V>(std::move(proto), detail::ArrayFind(Entries(), pred));
+    const Snapshot entries = Entries();
+    return Values(
+        entries, std::move(proto),
+        detail::MatchingPositions(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
   [[nodiscard]] auto FindIndex(F pred, K proto) const -> Queue<K> {
-    return Queue<K>(std::move(proto), detail::ArrayFindIndex(Entries(), pred));
+    const Snapshot entries = Entries();
+    return Keys(
+        entries, std::move(proto),
+        detail::MatchingPositions(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
   [[nodiscard]] auto FindFirst(F pred, V proto) const -> Queue<V> {
-    return Queue<V>(std::move(proto), detail::ArrayFindFirst(Entries(), pred));
+    const Snapshot entries = Entries();
+    return Values(
+        entries, std::move(proto),
+        detail::FirstMatching(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
   [[nodiscard]] auto FindFirstIndex(F pred, K proto) const -> Queue<K> {
-    return Queue<K>(
-        std::move(proto), detail::ArrayFindFirstIndex(Entries(), pred));
+    const Snapshot entries = Entries();
+    return Keys(
+        entries, std::move(proto),
+        detail::FirstMatching(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
   [[nodiscard]] auto FindLast(F pred, V proto) const -> Queue<V> {
-    return Queue<V>(std::move(proto), detail::ArrayFindLast(Entries(), pred));
+    const Snapshot entries = Entries();
+    return Values(
+        entries, std::move(proto),
+        detail::LastMatching(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
   [[nodiscard]] auto FindLastIndex(F pred, K proto) const -> Queue<K> {
-    return Queue<K>(
-        std::move(proto), detail::ArrayFindLastIndex(Entries(), pred));
+    const Snapshot entries = Entries();
+    return Keys(
+        entries, std::move(proto),
+        detail::LastMatching(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
-  [[nodiscard]] auto Min(F&& key, V proto) const -> Queue<V> {
-    return Queue<V>(
-        std::move(proto), detail::ArrayMin(Entries(), std::forward<F>(key)));
+  [[nodiscard]] auto Min(F key, V proto) const -> Queue<V> {
+    const Snapshot entries = Entries();
+    return Values(
+        entries, std::move(proto),
+        detail::LeastPosition(entries.size(), KeyOf(entries, key)));
   }
   template <typename F>
-  [[nodiscard]] auto Max(F&& key, V proto) const -> Queue<V> {
-    return Queue<V>(
-        std::move(proto), detail::ArrayMax(Entries(), std::forward<F>(key)));
+  [[nodiscard]] auto Max(F key, V proto) const -> Queue<V> {
+    const Snapshot entries = Entries();
+    return Values(
+        entries, std::move(proto),
+        detail::GreatestPosition(entries.size(), KeyOf(entries, key)));
   }
   template <typename F>
   [[nodiscard]] auto Unique(F key, V proto) const -> Queue<V> {
-    return Queue<V>(
-        std::move(proto), detail::ArrayUnique(Entries(), std::move(key)));
+    const Snapshot entries = Entries();
+    return Values(
+        entries, std::move(proto),
+        detail::UniquePositions(entries.size(), KeyOf(entries, key)));
   }
   template <typename F>
   [[nodiscard]] auto UniqueIndex(F key, K proto) const -> Queue<K> {
-    return Queue<K>(
-        std::move(proto), detail::ArrayUniqueIndex(Entries(), std::move(key)));
+    const Snapshot entries = Entries();
+    return Keys(
+        entries, std::move(proto),
+        detail::UniquePositions(entries.size(), KeyOf(entries, key)));
   }
 
   // LRM 7.12.5 projection into a same-key associative array: each value maps
@@ -417,133 +288,52 @@ class AssociativeArray {
   template <typename F, typename U>
   [[nodiscard]] auto Map(F closure, U proto) const -> AssociativeArray<K, U> {
     std::vector<Tuple<K, U>> pairs;
-    for (const auto& [k, v] : data_) {
-      pairs.emplace_back(k, closure(v, k));
+    for (const auto& [k, value] : Entries()) {
+      pairs.emplace_back(*k, closure(*value, *k));
     }
     // Mapping writes no `default:` clause of its own, so what a read of an
     // absent key answers with is the projected element type's own default.
-    U miss = proto;
+    const U miss = proto;
     return AssociativeArray<K, U>(
-        std::move(proto), std::span<const Tuple<K, U>>{pairs}, std::move(miss));
+        std::move(proto), std::span<const Tuple<K, U>>{pairs}, miss);
   }
 
-  // LRM 11.2.2 aggregate equality / 11.4.5: same key set and each paired value
-  // compares equal. A different key set or a different size yields 0; matching
-  // empties yield 1. `==` / `!=` propagate X / Z through the per-value `==`;
-  // `CaseEqual` matches X / Z as values and is deterministic.
   [[nodiscard]] auto operator==(const AssociativeArray& other) const
       -> PackedArray {
-    if (data_.size() != other.data_.size()) {
-      return PackedArray::FromInt(0, 1, false, false);
-    }
-    if (data_.empty()) {
-      return PackedArray::FromInt(1, 1, false, false);
-    }
-    PackedArray result = PackedArray::FromInt(1, 1, false, false);
-    for (const auto& [k, v] : data_) {
-      auto it = other.data_.find(k);
-      if (it == other.data_.end()) {
-        return PackedArray::FromInt(0, 1, false, false);
-      }
-      result = result && (v == it->second);
-    }
-    return result;
+    return core_.Equal(other.core_);
   }
   [[nodiscard]] auto operator!=(const AssociativeArray& other) const
       -> PackedArray {
     return !(*this == other);
   }
-
   [[nodiscard]] auto CaseEqual(const AssociativeArray& other) const
       -> PackedArray {
-    if (data_.size() != other.data_.size()) {
-      return PackedArray::FromInt(0, 1, false, false);
-    }
-    if (data_.empty()) {
-      return PackedArray::FromInt(1, 1, false, false);
-    }
-    PackedArray result = PackedArray::FromInt(1, 1, false, false);
-    for (const auto& [k, v] : data_) {
-      auto it = other.data_.find(k);
-      if (it == other.data_.end()) {
-        return PackedArray::FromInt(0, 1, false, false);
-      }
-      result = result && detail::ArrayCaseEqElement(v, it->second);
-    }
-    return result;
+    return core_.CaseEqual(other.core_);
   }
-
-  // LRM 9.4.2 update event predicate (engine change-detection hook): the
-  // persistent default, the key set, and each paired value all match. The
-  // default is part of the value, so changing it alone is an observable change.
   [[nodiscard]] auto IsBitIdentical(const AssociativeArray& other) const
       -> bool {
-    if (!user_default_.IsBitIdentical(other.user_default_)) {
-      return false;
-    }
-    if (data_.size() != other.data_.size()) {
-      return false;
-    }
-    for (const auto& [k, v] : data_) {
-      auto it = other.data_.find(k);
-      if (it == other.data_.end()) {
-        return false;
-      }
-      if (!v.IsBitIdentical(it->second)) {
-        return false;
-      }
-    }
-    return true;
+    return core_.IsBitIdentical(other.core_);
   }
-
-  // LRM 20.9: any value carrying an unknown bit propagates up. Keys with
-  // unknown bits are rejected at write time (LRM 7.8.1), so they cannot
-  // appear here.
   [[nodiscard]] auto HasUnknown() const -> bool {
-    for (const auto& [k, v] : data_) {
-      if (v.HasUnknown()) return true;
-    }
-    return false;
+    return core_.HasUnknown();
   }
-
   [[nodiscard]] auto IsUnknown() const -> PackedArray {
     return PackedArray::Bit(HasUnknown());
   }
-
-  // LRM 20.6.2 `$bits`: the current bit count sums the allocated entries' value
-  // bit counts (a key is not part of the stored bitstream), so a dynamically
-  // sized value contributes its current width.
   [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
-    PackedArray total = PackedArray::Int(0);
-    for (const auto& [key, value] : data_) {
-      total = total + value.BitstreamWidth();
-    }
-    return total;
+    return core_.BitstreamWidth();
   }
-
-  // LRM 20.9 `$countbits`: the bit stream this value contributes is its
-  // elements' streams laid end to end, so the count over it is the sum of the
-  // elements' own counts under the same control bits.
   [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
       -> PackedArray {
-    PackedArray total = PackedArray::Int(0);
-    for (const auto& [key, value] : data_) {
-      total = total + value.CountBits(control_bits);
-    }
-    return total;
+    return core_.CountBits(control_bits);
   }
 
  private:
-  [[nodiscard]] auto IsInvalidKey(const K& key) const -> bool {
-    // LRM 7.8.6: a key carrying x/z is invalid. Decided by the key's own x/z
-    // predicate where it has one (an integral or wildcard key reports its
-    // unknown bits; a string's is always false); a key type with no notion of
-    // x/z is always valid.
-    if constexpr (requires { key.HasUnknown(); }) {
-      return key.HasUnknown();
-    } else {
-      return false;
+  [[nodiscard]] static auto Found(const K* key) -> std::optional<K> {
+    if (key == nullptr) {
+      return std::nullopt;
     }
+    return *key;
   }
 
   static auto Visited(K probe, std::optional<K> visited)
@@ -554,26 +344,56 @@ class AssociativeArray {
     return Tuple<PackedArray, K>{PackedArray::Int(1), *std::move(visited)};
   }
 
-  // The value a read of an absent or invalid key yields (LRM 7.8.6 / 7.9.11):
-  // the persistent default the array was built with.
-  [[nodiscard]] auto MissValue() const -> const V& {
-    return user_default_;
+  // The entries an LRM 7.12 method walks, in LRM 7.8 key order, so a method's
+  // positions name them. The key is the entry's index, so an index locator
+  // yields keys and `item.index` reads the key.
+  using Snapshot = std::vector<std::pair<const K*, const V*>>;
+  [[nodiscard]] auto Entries() const -> Snapshot {
+    Snapshot entries;
+    entries.reserve(core_.Count());
+    for (const auto& [key, slot] : core_.Entries()) {
+      entries.emplace_back(&key, static_cast<const V*>(slot));
+    }
+    return entries;
   }
 
-  // The LRM 7.12 entry stream: a
-  // lazy view pairing each value with its key, in LRM 7.8 key order (the map's
-  // iteration order). The key is the entry index, so an index locator yields
-  // keys and `item.index` reads the key. The map already stores (key, value)
-  // pairs, so the view is a direct transform over its entries.
-  [[nodiscard]] auto Entries() const {
-    return data_ | std::views::transform([](const auto& kv) {
-             return detail::Entry<K, V>{kv.first, &kv.second};
-           });
+  // What `closure` answers for the entry at a position: its value and key.
+  template <typename F>
+  [[nodiscard]] static auto KeyOf(const Snapshot& entries, F& closure) {
+    return [&entries, &closure](std::size_t i) {
+      return closure(*entries[i].second, *entries[i].first);
+    };
   }
 
-  detail::OobShield<V> shield_;
-  V user_default_;
-  std::map<K, V, typename AssocKeyTraits<K>::Less> data_;
+  template <typename F, typename R>
+  [[nodiscard]] auto Folded(F& key, Reduction reduction, R empty) const -> R {
+    const Snapshot entries = Entries();
+    return detail::Folded(
+        entries.size(), KeyOf(entries, key), reduction, std::move(empty));
+  }
+
+  [[nodiscard]] static auto Values(
+      const Snapshot& entries, V proto,
+      const std::vector<std::size_t>& positions) -> Queue<V> {
+    std::vector<V> found;
+    found.reserve(positions.size());
+    for (const std::size_t i : positions) {
+      found.push_back(*entries[i].second);
+    }
+    return Queue<V>(std::move(proto), found);
+  }
+  [[nodiscard]] static auto Keys(
+      const Snapshot& entries, K proto,
+      const std::vector<std::size_t>& positions) -> Queue<K> {
+    std::vector<K> found;
+    found.reserve(positions.size());
+    for (const std::size_t i : positions) {
+      found.push_back(*entries[i].first);
+    }
+    return Queue<K>(std::move(proto), found);
+  }
+
+  BasicAssociativeArray<StaticKey<K>, StaticElem<V>> core_;
 };
 
 static_assert(LyraValue<AssociativeArray<String, PackedArray>>);

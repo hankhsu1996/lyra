@@ -6,7 +6,6 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::mir {
 
@@ -28,13 +27,6 @@ auto CalleeReceiver(const Callee& callee) -> std::optional<ExprId> {
           [](const Indirect&) { return std::optional<ExprId>{}; },
           [](const Construct&) { return std::optional<ExprId>{}; }},
       callee);
-}
-
-auto IsMutatingCallee(const Callee& callee) -> bool {
-  const auto* direct = std::get_if<Direct>(&callee);
-  if (direct == nullptr) return false;
-  const auto* id = std::get_if<support::BuiltinFn>(&direct->target);
-  return id != nullptr && support::RuntimeEntryOf(*id).mutates_receiver;
 }
 
 }  // namespace lyra::mir

@@ -97,13 +97,16 @@ auto CallMakesValue(const CallTarget& target) -> bool {
     throw InternalError("lir: unknown value cell operation");
   }
   // Landing a write keeps what the part held, inside the write, and answers
-  // with where the part lies; writing a slice lands it in the elements already
-  // there. Neither answers with a value of its own.
+  // with where the part lies; writing a slice lands it where the slice lies.
+  // Neither answers with a value of its own. Reading a slice answers with the
+  // slice as a value.
   if (const auto* write = std::get_if<OpenWriteTarget>(&target)) {
     switch (write->op) {
       case OpenWriteTarget::Op::kLand:
       case OpenWriteTarget::Op::kAssignSlice:
         return false;
+      case OpenWriteTarget::Op::kReadSlice:
+        return true;
     }
     throw InternalError("lir: unknown open-write operation");
   }
@@ -134,7 +137,6 @@ auto MakesValue(const InstrData& instr) -> bool {
           [](const DynamicCastInstr&) { return true; },
           [](const TupleInstr&) { return true; },
           [](const ClosureInstr&) { return true; },
-          [](const UnionInstr&) { return true; },
           [](const AggregateExtractInstr&) { return true; },
           [](const AggregateUpdateInstr&) { return true; },
           [](const BinaryInstr&) { return true; },
@@ -182,8 +184,8 @@ auto PlaceType(
                   unit.types.Get(current).ContainerElementType();
               if (!element) {
                 throw InternalError(
-                    "lir: an element step over a type that holds no run of "
-                    "elements");
+                    "lir: an element step over a type that holds no sequence "
+                    "of elements");
               }
               current = *element;
             },

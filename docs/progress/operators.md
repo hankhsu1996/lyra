@@ -116,10 +116,10 @@ merged node.
   The four forms below are rejected, and they are not one gap. Each says what it waits on.
   - [ ] A dynamically sized value wherever it meets a stream -- packed into one (LRM 11.4.14.4),
         filled from one, or standing as the source an unpack consumes. What it waits on is a type
-        naming a run of bits whose length the program fixes: the runtime already holds a packed
-        value's width on the value rather than in its type, so the value side is ready and the type
-        side is not. This is the only one of the four whose answer changes what is already built,
-        because the stream's own type is what would move.
+        naming bits whose number the program fixes: the runtime already holds a packed value's width
+        on the value rather than in its type, so the value side is ready and the type side is not.
+        This is the only one of the four whose answer changes what is already built, because the
+        stream's own type is what would move.
   - [ ] A class handle as a stream expression (LRM 11.4.14.1 streams the object's data members in
         declaration order, a base's before a derived's). What it waits on is a traversal over an
         object rather than over a value: a class object is reached through a managed reference and

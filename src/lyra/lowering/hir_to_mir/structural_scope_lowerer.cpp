@@ -1097,43 +1097,43 @@ void InstallInterfacePortConnection(
                   unit_lowerer.Unit().builtins, target, value))});
 }
 
-// One run of a join's side: the part of a net the source wrote, as a path that
-// evaluates nothing, and where among that part's positions the run starts and
-// how many it covers. A run that meets several runs of the side beside it, or
-// that stands between two sides, is named at each place it meets one, which a
-// path that evaluates nothing may be.
-struct JoinedRun {
+// The positions one operand of a join's side names: the part of a net the
+// source wrote, as a path that evaluates nothing, and where among that part's
+// positions they start and how many there are. Positions that meet several of
+// the side beside them, or that stand between two sides, are named at each
+// place they meet one, which a path that evaluates nothing may be.
+struct JoinedPositions {
   AccessPath part;
   std::uint32_t offset = 0;
   std::uint32_t width = 0;
 };
 
-// The runs one side of a join names, each with what reaching its part computes
-// evaluated in the frame's block, once.
+// The positions one side of a join names, operand by operand, each with what
+// reaching its part computes evaluated in the frame's block, once.
 auto JoinedSideOf(
     const StructuralScopeLowerer& lowerer, WalkFrame resolve_frame,
-    const hir::NetSide& side) -> diag::Result<std::vector<JoinedRun>> {
-  std::vector<JoinedRun> runs;
-  runs.reserve(side.size());
-  for (const hir::NetRun& run : side) {
+    const hir::NetSide& side) -> diag::Result<std::vector<JoinedPositions>> {
+  std::vector<JoinedPositions> operands;
+  operands.reserve(side.size());
+  for (const hir::NetPositions& operand : side) {
     auto named = lowerer.LowerAccessPath(
-        lowerer.HirScope().exprs.Get(run.part), resolve_frame);
+        lowerer.HirScope().exprs.Get(operand.part), resolve_frame);
     if (!named) return std::unexpected(std::move(named.error()));
-    runs.push_back(
-        JoinedRun{
+    operands.push_back(
+        JoinedPositions{
             .part = Settled(lowerer.Owner(), resolve_frame, *std::move(named)),
-            .offset = run.offset,
-            .width = run.width});
+            .offset = operand.offset,
+            .width = operand.width});
   }
-  return runs;
+  return operands;
 }
 
-// The position within its net that lies `offset` positions into the part `run`
-// names.
+// The position within its net that lies `offset` positions into the part
+// `operand` names.
 auto PositionWithinNet(
-    mir::CompilationUnit& unit, mir::Block& block, const JoinedRun& run,
-    std::uint32_t offset) -> mir::ExprId {
-  const PathRun within = RunWithinOwner(unit, block, run.part);
+    mir::CompilationUnit& unit, mir::Block& block,
+    const JoinedPositions& operand, std::uint32_t offset) -> mir::ExprId {
+  const PathBits within = BitsWithinOwner(unit, block, operand.part);
   return ConvertToType(
       unit, block,
       BuildPositionSum(
@@ -1143,34 +1143,34 @@ auto PositionWithinNet(
       unit.builtins.int_type);
 }
 
-// Equally many positions of two runs that one construct places in the same
-// resolution: where the shared positions start in the part each run names, and
-// how many there are.
+// Equally many positions of two operands that one construct places in the same
+// resolution: where the shared positions start in the part each operand names,
+// and how many there are.
 struct Coupling {
-  const JoinedRun* here = nullptr;
+  const JoinedPositions* here = nullptr;
   std::uint32_t here_offset = 0;
-  const JoinedRun* there = nullptr;
+  const JoinedPositions* there = nullptr;
   std::uint32_t there_offset = 0;
   std::uint32_t width = 0;
 };
 
 // What two sides of one construct say about each other. LRM 10.11 gives an
 // overlay the bit overlay rules of a packed union with the same member types,
-// so correspondence runs position-wise from the most significant end. The two
-// sides' runs need not fall at the same boundaries, so each coupling is as
-// wide as the shorter of the two runs it stands between, and whichever side it
-// exhausts advances.
+// so correspondence goes position-wise from the most significant end. The two
+// sides' operands need not fall at the same boundaries, so each coupling is as
+// wide as the shorter of the two operands it stands between, and whichever side
+// it exhausts advances.
 auto CoupleSides(
-    std::span<const JoinedRun> left, std::span<const JoinedRun> right)
-    -> std::vector<Coupling> {
+    std::span<const JoinedPositions> left,
+    std::span<const JoinedPositions> right) -> std::vector<Coupling> {
   std::vector<Coupling> couplings;
   std::size_t at_left = 0;
   std::size_t at_right = 0;
   std::uint32_t taken_left = 0;
   std::uint32_t taken_right = 0;
   while (at_left < left.size() && at_right < right.size()) {
-    const JoinedRun& here = left[at_left];
-    const JoinedRun& there = right[at_right];
+    const JoinedPositions& here = left[at_left];
+    const JoinedPositions& there = right[at_right];
     const std::uint32_t width =
         std::min(here.width - taken_left, there.width - taken_right);
     couplings.push_back(
@@ -1226,23 +1226,23 @@ auto BuildNetJoinStmt(
                   unit.builtins.void_type))}};
 }
 
-// Realizes the runs of nets this scope's constructs place in one resolution
-// (LRM 23.3.3.7, 10.11), as statements in the resolve body, beside the `ref`
-// port's bind: no driver is attached and no process is registered, because
-// what a join states is which contributions resolve together and not an edge
-// anything travels along. Being the same physical net is transitive, so
+// Realizes the positions of nets this scope's constructs place in one
+// resolution (LRM 23.3.3.7, 10.11), as statements in the resolve body, beside
+// the `ref` port's bind: no driver is attached and no process is registered,
+// because what a join states is which contributions resolve together and not an
+// edge anything travels along. Being the same physical net is transitive, so
 // stating it between each side and the next states it among all of them.
 auto InstallNetJoins(StructuralScopeLowerer& lowerer, WalkFrame resolve_frame)
     -> diag::Result<void> {
   mir::Block& block = *resolve_frame.current_block;
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   for (const hir::NetJoin& join : lowerer.HirScope().net_joins) {
-    std::vector<std::vector<JoinedRun>> sides;
+    std::vector<std::vector<JoinedPositions>> sides;
     sides.reserve(join.sides.size());
     for (const hir::NetSide& side : join.sides) {
-      auto runs = JoinedSideOf(lowerer, resolve_frame, side);
-      if (!runs) return std::unexpected(std::move(runs.error()));
-      sides.push_back(*std::move(runs));
+      auto operands = JoinedSideOf(lowerer, resolve_frame, side);
+      if (!operands) return std::unexpected(std::move(operands.error()));
+      sides.push_back(*std::move(operands));
     }
     for (std::size_t next = 1; next < sides.size(); ++next) {
       for (const Coupling& coupling :
