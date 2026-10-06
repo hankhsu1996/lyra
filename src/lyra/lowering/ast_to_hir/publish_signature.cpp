@@ -452,12 +452,11 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
         .direction = direction,
         .type = importer.Import(*interned),
         .target = hir::ImportProjection(
-            importer,
-            hir::MemberProjection{
-                .member = member_of(*peeled->base),
-                .path = *std::move(path),
-                .positions =
-                    PositionsOfPortExpression(*peeled->base, written)})}};
+            importer, hir::MemberProjection{
+                          .member = member_of(*peeled->base),
+                          .path = *std::move(path),
+                          .positions = PositionsOfPortExpression(
+                              *peeled->base, written)})}};
   };
 
   // The ports are read before the members are given their storage, because a
