@@ -33,6 +33,7 @@
 namespace {
 
 using lyra::test::MakeScratchDir;
+using lyra::test::ReadJson;
 using lyra::test::ResolveLyra;
 using lyra::test::RunChildProcess;
 using lyra::test::TerminationKind;
@@ -1372,11 +1373,6 @@ TEST(LyraRun, AKilledProcessTellsItsForeignFramesTheyWereDisabled) {
       << run.stdout_text << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("step answered 1"), std::string::npos)
       << run.stdout_text;
-}
-
-auto ReadJson(const std::filesystem::path& path) -> nlohmann::json {
-  std::ifstream in(path);
-  return nlohmann::json::parse(in, nullptr, false);
 }
 
 // Every detail the trace's spans of one name carry, for each name.

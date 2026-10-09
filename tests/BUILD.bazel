@@ -51,6 +51,7 @@ cc_library(
         "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
         "@googletest//:gtest",
+        "@nlohmann_json//:json",
         "@yaml-cpp//:yaml-cpp",
     ],
 )
@@ -231,6 +232,30 @@ cc_test(
         "//:driver",
         "@googletest//:gtest_main",
         "@nlohmann_json//:json",
+    ],
+)
+
+# Each design is compiled at one size and at twice that, on both backends, and
+# a time found past its bound is measured again, so the cost is a few compiles
+# per design and is spread over shards. The execution backend links a program
+# with the host C++ compiler, whichever one the executing machine has.
+cc_test(
+    name = "growth_tests",
+    size = "medium",
+    srcs = ["growth_test.cpp"],
+    copts = LYRA_COPTS,
+    data = ["//:lyra"] + glob([
+        "growth/*.sv",
+        "growth/*.yaml",
+        "paths/*.growth.yaml",
+    ]),
+    shard_count = 4,
+    deps = [
+        ":framework",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@googletest//:gtest_main",
+        "@nlohmann_json//:json",
+        "@yaml-cpp//:yaml-cpp",
     ],
 )
 

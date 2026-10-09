@@ -1,0 +1,13 @@
+# What the cpp path lets grow with a design's size, one entry per growth design:
+# the design's name, and what its larger run exceeds, in the words the check
+# reports it in.
+#
+# A design is held to exactly what is listed for it. Something new exceeding
+# fails the run, and so does something listed that has stopped, until it goes --
+# so this file only ever shrinks, which makes it the record of what a design's
+# size still costs on this path that it should not.
+instance_array: [bytes]
+loop_choosing_by_outer_index: [files, bytes, time declare units]
+loop_of_instances: [files, bytes, time declare units]
+loop_of_one_body: [files, bytes, time declare units]
+loop_selecting_by_index: [files, bytes, time declare units]

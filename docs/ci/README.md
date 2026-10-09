@@ -103,11 +103,38 @@ On top of the default set, what a change touches selects what else to run:
   from the build rather than from the text.
 - **The command line, the prelude PCH, or what the shipped runtime headers oblige a unit to emit**
   -- `cli_tests`, `pch_audit_test` and `runtime_surface_test`, already in the gate.
+- **What a repeated construct costs to compile** -- `growth_tests`, already in the gate.
 - **Anything else** -- HIR, MIR, LIR, the execution backend, the runtime value library -- the
   default set is the whole answer.
 
 As the LLVM path fills in, this shortens rather than grows: `cpp_tests` stops being the backend
 under test.
+
+## What a design's size may cost
+
+The corpus cannot say what a compile costs: a compiler that writes a file per repetition, or
+declares a loop in the square of its count, passes every case and is fast on each. Nor can one
+compile, at any size. So `growth_tests` compiles each design under `tests/growth/` at one size and
+at twice that, on both backends, each run asked for its trace and its statistics, and holds the
+larger run to the smaller: nothing more left behind, and each stage's time and peak memory under
+three times what it was.
+
+Holding a time is what the rest of this document declines to do, and the reason it gives does not
+reach here. A duration reports on the machine that ran it, and comparing one to another day's needs
+a baseline. A ratio of two runs made back to back on one machine needs neither, which is the same
+property the benchmark job's comparison against Verilator rests on. Go holds its own compiler and
+runtime to linear growth the same way, timing a function at n and at 2n and failing past three
+times. What a ratio can tell apart is a line from a square, which is a factor of two; a regression
+of a few percent is still only found by counting instructions outside the run.
+
+One run of a pair can still be stretched by a loaded machine, so a time or a peak past its bound is
+measured again, and counts as exceeded only if it is on every attempt. Counts and sizes of files are
+the same on every run and are never measured again.
+
+What a design exceeds today is recorded per path, in `tests/paths/<path>.growth.yaml`, beside that
+path's refusal and defect records and by the same rule. A design is held to exactly what is listed
+for it: something new exceeding fails the run, and so does something listed that has stopped, until
+it goes. So the file only shrinks, and what is left in it is what that path still owes.
 
 ## The corpus runs the program a user builds
 

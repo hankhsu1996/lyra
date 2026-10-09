@@ -8,6 +8,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 
@@ -55,6 +56,11 @@ auto WriteTrivialSource(const std::filesystem::path& path) -> void {
   out << "module Test;\n"
       << "  initial $display(\"ran %0d\", 6 * 7);\n"
       << "endmodule\n";
+}
+
+auto ReadJson(const std::filesystem::path& path) -> nlohmann::json {
+  std::ifstream in(path);
+  return nlohmann::json::parse(in, nullptr, false);
 }
 
 }  // namespace lyra::test
