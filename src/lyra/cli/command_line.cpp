@@ -24,7 +24,7 @@
 #include <slang/util/CommandLine.h>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/cli/design_manifest.hpp"
+#include "lyra/cli/manifest.hpp"
 #include "lyra/driver/artifact_store.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
@@ -435,7 +435,7 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "program is right either way");
   cmd.add(
       "--config", opts.config,
-      "read this design declaration instead of searching for one", "<file>",
+      "read this lyra.toml instead of searching for one", "<file>",
       slang::CommandLineFlags::FilePath);
   cmd.add(
       "--release", opts.release,
@@ -611,7 +611,7 @@ auto ResolveDesignDeclaration(
     -> diag::Result<DesignDeclaration> {
   const auto load =
       [](const std::filesystem::path& path) -> diag::Result<DesignDeclaration> {
-    auto loaded = LoadDesignManifest(path);
+    auto loaded = LoadManifest(path);
     if (!loaded) {
       return std::unexpected(std::move(loaded.error()));
     }
@@ -629,50 +629,64 @@ auto ResolveDesignDeclaration(
   if (ec) {
     return DesignDeclaration{NoSearchNeeded{}};
   }
-  auto search = FindDesignManifest(here);
+  auto search = FindManifest(here);
   if (const auto* absent = std::get_if<ManifestAbsent>(&search)) {
     return DesignDeclaration{*absent};
   }
   return load(std::get<ManifestFound>(search).path);
 }
 
-auto ApplyDesignManifest(
-    const DesignManifest& manifest, slang::driver::Driver& driver)
+auto ApplyManifest(const Manifest& manifest, slang::driver::Driver& driver)
     -> diag::Result<void> {
-  for (const auto& file : manifest.files) {
-    driver.sourceLoader.addFiles(file);
-  }
-  // Added after the command line's, which is what keeps a search path given
-  // there ahead of the design's own: the first directory holding a file wins.
-  for (const auto& dir : manifest.incdir) {
-    if (const std::error_code ec =
-            driver.sourceManager.addUserDirectories(dir)) {
-      return diag::Fail(
-          diag::DiagCode::kHostInvalidManifest,
-          std::format(
-              "{}: include directory '{}': {}", manifest.path.string(), dir,
-              ec.message()));
+  // The design is read after the library it stands on, as the command line is
+  // read after both.
+  const std::array<const SourceSet*, 2> sets = {
+      &manifest.library.sources, &manifest.design.sources};
+  // Inserted ahead of the command line's, because the last definition of a
+  // macro, or of a parameter, stands.
+  auto defines_at = driver.options.defines.begin();
+  auto undefines_at = driver.options.undefines.begin();
+  for (const SourceSet* set : sets) {
+    for (const auto& file : set->files) {
+      driver.sourceLoader.addFiles(file);
     }
+    // Added after the command line's, which is what keeps a search path given
+    // there ahead of a declared one: the first directory holding a file wins.
+    for (const auto& dir : set->incdir) {
+      if (const std::error_code ec =
+              driver.sourceManager.addUserDirectories(dir)) {
+        return diag::Fail(
+            diag::DiagCode::kHostInvalidManifest,
+            std::format(
+                "{}: include directory '{}': {}", manifest.path.string(), dir,
+                ec.message()));
+      }
+    }
+    for (const auto& dir : set->searchdir) {
+      driver.sourceLoader.addSearchDirectories(dir);
+    }
+    for (const auto& extension : set->searchext) {
+      driver.sourceLoader.addSearchExtension(extension);
+    }
+    defines_at = std::next(
+        driver.options.defines.insert(
+            defines_at, set->defines.begin(), set->defines.end()),
+        std::ssize(set->defines));
+    undefines_at = std::next(
+        driver.options.undefines.insert(
+            undefines_at, set->undefines.begin(), set->undefines.end()),
+        std::ssize(set->undefines));
   }
-  for (const auto& dir : manifest.libdir) {
-    driver.sourceLoader.addSearchDirectories(dir);
-  }
-  for (const auto& extension : manifest.libext) {
-    driver.sourceLoader.addSearchExtension(extension);
-  }
-  // Inserted ahead of the command line's, for the same reason read from the
-  // other end: the last definition of a macro, or of a parameter, stands.
-  driver.options.defines.insert(
-      driver.options.defines.begin(), manifest.defines.begin(),
-      manifest.defines.end());
-  driver.options.undefines.insert(
-      driver.options.undefines.begin(), manifest.undefines.begin(),
-      manifest.undefines.end());
   driver.options.paramOverrides.insert(
-      driver.options.paramOverrides.begin(), manifest.params.begin(),
-      manifest.params.end());
+      driver.options.paramOverrides.begin(), manifest.design.params.begin(),
+      manifest.design.params.end());
   if (driver.options.topModules.empty()) {
-    driver.options.topModules = manifest.top;
+    driver.options.topModules = manifest.design.top;
+  }
+  // Every cell compiled here belongs to the declared library: it is this
+  // build's default library (LRM 33.3.1), under its own name.
+  if (!driver.options.defaultLibName) {
+    driver.options.defaultLibName = manifest.library.name;
   }
   if (!driver.options.languageVersion) {
     driver.options.languageVersion = manifest.language_version;
@@ -687,7 +701,7 @@ auto ApplyDesignManifest(
 }
 
 auto ResolveCliOptions(
-    const CliOptions& opts, const DesignManifest* manifest, CommandKind cmd,
+    const CliOptions& opts, const Manifest* manifest, CommandKind cmd,
     std::span<const std::string> simulation_args)
     -> std::expected<ParsedArgs, std::string> {
   ParsedArgs out;
@@ -714,11 +728,14 @@ auto ResolveCliOptions(
           : std::nullopt);
   out.rebuild = opts.rebuild.value_or(false);
 
-  // The design's own foreign sources are the base; the command line's are
-  // extras this invocation adds, so they follow.
+  // The declared foreign sources are the base; the command line's are extras
+  // this invocation adds, so they follow.
   if (manifest != nullptr) {
-    out.design_name = manifest->name;
-    out.dpi_link_sources = manifest->dpi_sources;
+    out.library_name = manifest->library.name;
+    out.dpi_link_sources = manifest->library.sources.dpi;
+    out.dpi_link_sources.insert(
+        out.dpi_link_sources.end(), manifest->design.sources.dpi.begin(),
+        manifest->design.sources.dpi.end());
     if (manifest->assertions) {
       out.assertions = *manifest->assertions;
     }

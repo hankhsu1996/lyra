@@ -1,5 +1,5 @@
-// What the command line itself decides: what a design declares about itself,
-// what an invocation adds to or replaces in that declaration, which top a
+// What the command line itself decides: what a `lyra.toml` declares, what an
+// invocation adds to or replaces in that declaration, which top a
 // design element may be, what a unit publishes to whoever reads it, and how a
 // design that fails at run time is reported.
 //
@@ -315,11 +315,13 @@ TEST(LyraEmit, AReferrerCompilesAgainstThePartItRead) {
       base, EmitAndReadCounterInput(lyra, *tmp_or, "own_class", true, false));
 }
 
-// A design spread over a directory, declared by a `lyra.toml` beside it. Every
-// path in the declaration is relative, which is what makes the file's own
-// directory -- rather than whatever directory a command was typed in -- the
-// thing these tests are about.
-auto WriteDeclaredDesign(const std::filesystem::path& root) -> void {
+// A library spread over a directory with a testbench beside it, declared by a
+// `lyra.toml`. Every path in the declaration is relative, which is what makes
+// the file's own directory -- rather than whatever directory a command was
+// typed in -- the thing these tests are about. The testbench, the define only
+// it reads and a configuration naming it are the design's, apart from what the
+// library is made of.
+auto WriteDeclaredLibrary(const std::filesystem::path& root) -> void {
   std::filesystem::create_directories(root / "rtl");
   std::filesystem::create_directories(root / "include");
   std::filesystem::create_directories(root / "sub");
@@ -340,26 +342,35 @@ auto WriteDeclaredDesign(const std::filesystem::path& root) -> void {
       << "  initial $display(\"tb trace %0d\", `TRACE);\n"
       << "endmodule\n";
 
+  std::ofstream config(root / "rtl" / "soc_cfg.sv");
+  config << "config soc_cfg;\n"
+         << "  design soc.soc_tb;\n"
+         << "  default liblist soc;\n"
+         << "endconfig\n";
+
   std::ofstream manifest(root / "lyra.toml");
-  manifest << "[design]\n"
+  manifest << "[library]\n"
            << "name = \"soc\"\n"
-           << "top = [\"soc_tb\"]\n"
-           << "files = [\"rtl/alu.sv\", \"rtl/soc_tb.sv\"]\n"
+           << "files = [\"rtl/alu.sv\"]\n"
            << "incdir = [\"include\"]\n"
+           << "\n[design]\n"
+           << "top = [\"soc_tb\"]\n"
+           << "files = [\"rtl/soc_tb.sv\", \"rtl/soc_cfg.sv\"]\n"
            << "defines = [\"TRACE=1\"]\n"
            << "\n[compile]\nsingle_unit = true\n";
 }
 
-// The whole point of the file: a design describes itself once, and the command
-// line that runs it carries nothing. Running from a subdirectory is the same
-// test asking whether a relative path in the declaration was resolved against
-// the declaration or against whatever directory the command was typed in.
-TEST(LyraDesignManifest, DeclaresTheDesignFromAnyDirectoryWithin) {
+// The whole point of the file: a library and what is run of it are described
+// once, and the command line that runs it carries nothing. Running from a
+// subdirectory is the same test asking whether a relative path in the
+// declaration was resolved against the declaration or against whatever
+// directory the command was typed in.
+TEST(LyraManifest, DeclaresWhatIsRunFromAnyDirectoryWithin) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-  WriteDeclaredDesign(*tmp_or);
+  WriteDeclaredLibrary(*tmp_or);
 
   for (const auto& from : {*tmp_or, *tmp_or / "sub"}) {
     const auto run = RunLyraFrom(lyra, from, "run --backend llvm");
@@ -371,15 +382,35 @@ TEST(LyraDesignManifest, DeclaresTheDesignFromAnyDirectoryWithin) {
   }
 }
 
-// The precedence rule in both directions at once: a define given on the command
-// line joins the declaration's rather than replacing it, while a top given
-// there replaces the declaration's rather than joining it.
-TEST(LyraDesignManifest, CommandLineJoinsMaterialAndReplacesSelection) {
+// The declared name is the library the cells compiled here belong to (LRM
+// 33.3.1), so a configuration may name its own library by it (LRM 33.4.1.1):
+// the design statement and the library list below resolve only if the front end
+// was told the name.
+TEST(LyraManifest, TheCellsBelongToTheDeclaredLibrary) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-  WriteDeclaredDesign(*tmp_or);
+  WriteDeclaredLibrary(*tmp_or);
+
+  const auto run =
+      RunLyraFrom(lyra, *tmp_or, "run --backend llvm --top soc_cfg");
+  ASSERT_EQ(run.exit_code, 0) << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("tb trace 1"), std::string::npos)
+      << run.stdout_text;
+  EXPECT_NE(run.stdout_text.find("alu width 8"), std::string::npos)
+      << run.stdout_text;
+}
+
+// The precedence rule in both directions at once: a define given on the command
+// line joins the declaration's rather than replacing it, while a top given
+// there replaces the declaration's rather than joining it.
+TEST(LyraManifest, CommandLineJoinsMaterialAndReplacesSelection) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  WriteDeclaredLibrary(*tmp_or);
 
   const auto joined =
       RunLyraFrom(lyra, *tmp_or, "run --backend llvm -D LYRA_WIDTH=16");
@@ -404,12 +435,12 @@ TEST(LyraDesignManifest, CommandLineJoinsMaterialAndReplacesSelection) {
 // Naming a source is naming a design outright, so no declaration is searched
 // for -- which is what makes an invocation mean the same thing in any
 // directory. The tell is that the design's other half is missing.
-TEST(LyraDesignManifest, NamingASourceUsesNoDeclaration) {
+TEST(LyraManifest, NamingASourceUsesNoDeclaration) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-  WriteDeclaredDesign(*tmp_or);
+  WriteDeclaredLibrary(*tmp_or);
 
   const auto checked = RunLyraFrom(lyra, *tmp_or, "check rtl/soc_tb.sv");
   EXPECT_NE(checked.exit_code, 0) << checked.stdout_text;
@@ -418,9 +449,9 @@ TEST(LyraDesignManifest, NamingASourceUsesNoDeclaration) {
 }
 
 // Every refusal the schema makes, in one case because they are one feature: a
-// declaration states what the design is, and anything else in it is a mistake
-// that has to be reported rather than ignored.
-TEST(LyraDesignManifest, RefusesWhatADesignCannotDeclare) {
+// declaration states what a library is and what is run of it, and anything else
+// in it is a mistake that has to be reported rather than ignored.
+TEST(LyraManifest, RefusesWhatAFileCannotDeclare) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
@@ -431,10 +462,13 @@ TEST(LyraDesignManifest, RefusesWhatADesignCannotDeclare) {
     std::string_view body;
     std::string_view expected;
   };
-  static constexpr std::array<Refusal, 6> kRefusals = {
+  static constexpr std::array<Refusal, 8> kRefusals = {
       {{.name = "unknown-key.toml",
         .body = "[design]\ntops = [\"a\"]\n",
         .expected = "unrecognized key"},
+       {.name = "roots-in-the-library.toml",
+        .body = "[library]\nname = \"a\"\ntop = [\"a\"]\n",
+        .expected = "[library] top: unrecognized key"},
        {.name = "unknown-table.toml",
         .body = "[designs]\ntop = [\"a\"]\n",
         .expected = "unrecognized table"},
@@ -442,14 +476,17 @@ TEST(LyraDesignManifest, RefusesWhatADesignCannotDeclare) {
         .body = "[compile]\nrelease = true\n",
         .expected = "pass it on the command line"},
        {.name = "pattern.toml",
-        .body = "[design]\nfiles = [\"rtl/*.sv\"]\n",
+        .body = "[library]\nfiles = [\"rtl/*.sv\"]\n",
         .expected = "is a pattern"},
        {.name = "bad-policy.toml",
         .body = "[compile]\nassertions = \"loud\"\n",
         .expected = "is not one of check, skip"},
        {.name = "no-name.toml",
         .body = "[design]\ntop = [\"a\"]\n",
-        .expected = "a design has to say what it is called"}}};
+        .expected = "a library has to say what it is called"},
+       {.name = "name-not-an-identifier.toml",
+        .body = "[library]\nname = \"riscv-cpu\"\n",
+        .expected = "is not an identifier"}}};
 
   for (const auto& refusal : kRefusals) {
     const auto path = *tmp_or / refusal.name;
@@ -573,7 +610,7 @@ TEST(LyraEmit, AConstructNotYetSupportedIsRefusedBeforeAnythingIsWritten) {
 // ways of arriving there look identical without that: nothing declared
 // anywhere, or a declaration that itself named no sources -- and the
 // declaration that applied may be several directories above the caller.
-TEST(LyraDesignManifest, ReportsNoInputAndWhyThereIsNone) {
+TEST(LyraManifest, ReportsNoInputAndWhyThereIsNone) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
@@ -588,10 +625,10 @@ TEST(LyraDesignManifest, ReportsNoInputAndWhyThereIsNone) {
       searched.stderr_text.find("searched for lyra.toml"), std::string::npos)
       << searched.stderr_text;
 
-  std::ofstream(*tmp_or / "lyra.toml") << "[design]\nname = \"hollow\"\n";
+  std::ofstream(*tmp_or / "lyra.toml") << "[library]\nname = \"hollow\"\n";
   const auto declared = RunLyraFrom(lyra, *tmp_or, "check");
   EXPECT_NE(declared.exit_code, 0) << declared.stdout_text;
-  EXPECT_NE(declared.stderr_text.find("design 'hollow'"), std::string::npos)
+  EXPECT_NE(declared.stderr_text.find("library 'hollow'"), std::string::npos)
       << declared.stderr_text;
   EXPECT_NE(
       declared.stderr_text.find("declares no source files"), std::string::npos)

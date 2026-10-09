@@ -1,4 +1,6 @@
-[design]
+[library]
 name = "hello"
+
+[design]
 top = ["Top"]
 files = ["hello.sv"]

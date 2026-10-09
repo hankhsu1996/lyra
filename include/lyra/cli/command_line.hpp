@@ -13,7 +13,7 @@
 #include <slang/driver/Driver.h>
 #include <slang/util/CommandLine.h>
 
-#include "lyra/cli/design_manifest.hpp"
+#include "lyra/cli/manifest.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
@@ -61,8 +61,8 @@ struct ParsedArgs {
   std::optional<std::filesystem::path> store;
   // Build as though the store held nothing, and keep what was built.
   bool rebuild = false;
-  // The name the design declares itself under, for a design that has one.
-  std::optional<std::string> design_name;
+  // The name of the library a declaration was read for, when one was.
+  std::optional<std::string> library_name;
   // The simulation's own arguments, which is where LRM 21.6 plusargs land: the
   // program takes them as its argv. Everything after a standalone `--`, so a
   // simulation argument never has to be told apart from a compiler one by its
@@ -146,7 +146,7 @@ auto UseColor(const CliOptions& opts) -> bool;
 struct NoSearchNeeded {};
 
 using DesignDeclaration =
-    std::variant<DesignManifest, ManifestAbsent, NoSearchNeeded>;
+    std::variant<Manifest, ManifestAbsent, NoSearchNeeded>;
 
 // A declaration named outright is read whatever else was said. Otherwise one is
 // searched for, and only when the command line named no source of its own --
@@ -163,16 +163,15 @@ auto ResolveDesignDeclaration(
 // front end's parser keeps the first value a single-valued option is given, so
 // applying a declaration ahead of the command line makes it win every selection
 // rather than lose them.
-auto ApplyDesignManifest(
-    const DesignManifest& manifest, slang::driver::Driver& driver)
+auto ApplyManifest(const Manifest& manifest, slang::driver::Driver& driver)
     -> diag::Result<void>;
 
 // Turns what the parser recorded into the choices the rest of the run needs,
 // applying Lyra's defaults and rejecting a value no command can act on. A
-// design's declaration is read first and the command line over it, which is the
-// whole of the precedence rule: material accumulates, selection replaces.
+// declaration is read first and the command line over it, which is the whole of
+// the precedence rule: material accumulates, selection replaces.
 auto ResolveCliOptions(
-    const CliOptions& opts, const DesignManifest* manifest, CommandKind cmd,
+    const CliOptions& opts, const Manifest* manifest, CommandKind cmd,
     std::span<const std::string> simulation_args)
     -> std::expected<ParsedArgs, std::string>;
 

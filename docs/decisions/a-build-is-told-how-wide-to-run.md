@@ -83,8 +83,7 @@ An emitted project bakes in the compiler that produced it and the optimization i
 because each decides what the build produces or whether it works at all. The width decides neither:
 the program is identical however many compiles ran at once. A committed artifact recording how much
 of one machine to take would be answering for every machine that ever builds it, which is the line
-[project-file](project-file.md) D2 draws for the design declaration and which holds here for the
-same reason.
+[project-file](project-file.md) D2 draws for `lyra.toml` and which holds here for the same reason.
 
 So the recipe takes `-j` of its own, exactly as it already takes `--no-pch` -- the other value that
 is about the running machine rather than about the program.
@@ -117,9 +116,9 @@ every unit is what saves the run each remaining one would otherwise cost -- the 
   standing integration target, four at a time is most of the available gain, while a width of twenty
   would hold twenty compiles' peak memory at once against a machine that does not have it.
 
-- **A field in the design declaration.** Refused by name in `project-file.md` D2, and the
-  re-derivation agrees rather than defers: a manifest is committed and shared, so a value true of
-  one developer's machine poisons it for everyone else who builds the design.
+- **A field in `lyra.toml`.** Refused by name in `project-file.md` D2, and the re-derivation agrees
+  rather than defers: a manifest is committed and shared, so a value true of one developer's machine
+  poisons it for everyone else who builds the design.
 
 - **A recipe that emits a dependency graph for `make` or `ninja` to run.** It is Verilator's shape,
   and it hands the width to a scheduler that already knows how to compose. Rejected because an

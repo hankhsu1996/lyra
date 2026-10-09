@@ -1,4 +1,4 @@
-#include "lyra/cli/design_manifest.hpp"
+#include "lyra/cli/manifest.hpp"
 
 #include <algorithm>
 #include <array>
@@ -63,7 +63,8 @@ auto CheckKeys(
       return Fail(
           file, std::format(
                     "[{}] {}: this names a property of one invocation or one "
-                    "machine, not of the design; pass it on the command line",
+                    "machine, not of what the file declares; pass it on the "
+                    "command line",
                     table, name));
     }
     return Fail(file, std::format("[{}] {}: unrecognized key", table, name));
@@ -108,11 +109,11 @@ auto ReadPaths(
       return Fail(
           file,
           std::format(
-              "{}: '{}' is a pattern. A design declares its parts, and a "
+              "{}: '{}' is a pattern. A declaration names its parts, and a "
               "pattern names whatever the filesystem happens to hold -- which "
               "also leaves source order undefined, and source order is "
-              "significant. List the files, and use libdir with libext to find "
-              "a module by name",
+              "significant. List the files, and use searchdir with searchext "
+              "to find a cell by name",
               where, entry));
     }
     out.push_back((base / entry).lexically_normal().string());
@@ -173,42 +174,83 @@ auto ReadAssertionPolicy(
           "[compile] assertions: '{}' is not one of check, skip", *spelled));
 }
 
-auto ReadDesign(
-    const fs::path& file, const toml::table& table, DesignManifest& out)
+struct SourceSetField {
+  std::string_view key;
+  diag::Result<void> (*read)(
+      const fs::path&, std::string_view, const toml::node*,
+      std::vector<std::string>&);
+  std::vector<std::string> SourceSet::* member;
+};
+
+constexpr std::array<SourceSetField, 7> kSourceSetFields = {
+    {{.key = "files", .read = ReadPaths, .member = &SourceSet::files},
+     {.key = "incdir", .read = ReadPaths, .member = &SourceSet::incdir},
+     {.key = "defines", .read = ReadStrings, .member = &SourceSet::defines},
+     {.key = "undefines", .read = ReadStrings, .member = &SourceSet::undefines},
+     {.key = "searchdir", .read = ReadPaths, .member = &SourceSet::searchdir},
+     {.key = "searchext", .read = ReadStrings, .member = &SourceSet::searchext},
+     {.key = "dpi", .read = ReadPaths, .member = &SourceSet::dpi}}};
+
+// A table that holds a source set takes the set's keys beside its own.
+auto ReadSourceSet(
+    const fs::path& file, std::string_view table_name, const toml::table& table,
+    std::span<const std::string_view> own_keys, SourceSet& out)
     -> diag::Result<void> {
-  static constexpr std::array<std::string_view, 9> kKeys = {
-      "name",   "top",    "files",  "incdir",   "defines",
-      "params", "libdir", "libext", "undefines"};
-  if (auto ok = CheckKeys(file, "design", table, kKeys); !ok) {
+  std::vector<std::string_view> known(own_keys.begin(), own_keys.end());
+  for (const SourceSetField& field : kSourceSetFields) {
+    known.push_back(field.key);
+  }
+  if (auto ok = CheckKeys(file, table_name, table, known); !ok) {
     return std::unexpected(std::move(ok.error()));
   }
+  for (const SourceSetField& field : kSourceSetFields) {
+    if (auto ok = field.read(
+            file, std::format("[{}] {}", table_name, field.key),
+            table.get(field.key), out.*field.member);
+        !ok) {
+      return std::unexpected(std::move(ok.error()));
+    }
+  }
+  return {};
+}
 
-  std::optional<std::string> name;
-  if (auto ok = ReadString(file, "[design] name", table.get("name"), name);
+// LRM 5.6: a simple identifier.
+auto IsSimpleIdentifier(std::string_view text) -> bool {
+  const auto is_letter = [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+  };
+  const auto is_digit = [](char c) { return c >= '0' && c <= '9'; };
+  return !text.empty() && is_letter(text.front()) &&
+         std::ranges::all_of(text, [&](char c) {
+           return is_letter(c) || is_digit(c) || c == '$';
+         });
+}
+
+auto ReadLibrary(
+    const fs::path& file, const toml::table& table, DeclaredLibrary& out)
+    -> diag::Result<void> {
+  static constexpr std::array<std::string_view, 1> kKeys = {"name"};
+  if (auto ok = ReadSourceSet(file, "library", table, kKeys, out.sources);
       !ok) {
+    return std::unexpected(std::move(ok.error()));
+  }
+  std::optional<std::string> name;
+  if (auto ok = ReadString(file, "[library] name", table.get("name"), name);
+      !ok) {
+    return std::unexpected(std::move(ok.error()));
+  }
+  out.name = name.value_or("");
+  return {};
+}
+
+auto ReadDesign(
+    const fs::path& file, const toml::table& table, DeclaredDesign& out)
+    -> diag::Result<void> {
+  static constexpr std::array<std::string_view, 2> kKeys = {"top", "params"};
+  if (auto ok = ReadSourceSet(file, "design", table, kKeys, out.sources); !ok) {
     return std::unexpected(std::move(ok.error()));
   }
   if (auto ok = ReadStrings(file, "[design] top", table.get("top"), out.top);
-      !ok) {
-    return std::unexpected(std::move(ok.error()));
-  }
-  if (auto ok =
-          ReadPaths(file, "[design] files", table.get("files"), out.files);
-      !ok) {
-    return std::unexpected(std::move(ok.error()));
-  }
-  if (auto ok =
-          ReadPaths(file, "[design] incdir", table.get("incdir"), out.incdir);
-      !ok) {
-    return std::unexpected(std::move(ok.error()));
-  }
-  if (auto ok = ReadStrings(
-          file, "[design] defines", table.get("defines"), out.defines);
-      !ok) {
-    return std::unexpected(std::move(ok.error()));
-  }
-  if (auto ok = ReadStrings(
-          file, "[design] undefines", table.get("undefines"), out.undefines);
       !ok) {
     return std::unexpected(std::move(ok.error()));
   }
@@ -217,23 +259,12 @@ auto ReadDesign(
       !ok) {
     return std::unexpected(std::move(ok.error()));
   }
-  if (auto ok =
-          ReadPaths(file, "[design] libdir", table.get("libdir"), out.libdir);
-      !ok) {
-    return std::unexpected(std::move(ok.error()));
-  }
-  if (auto ok =
-          ReadStrings(file, "[design] libext", table.get("libext"), out.libext);
-      !ok) {
-    return std::unexpected(std::move(ok.error()));
-  }
-  out.name = name.value_or("");
   return {};
 }
 
 }  // namespace
 
-auto FindDesignManifest(const fs::path& start) -> ManifestSearch {
+auto FindManifest(const fs::path& start) -> ManifestSearch {
   std::error_code ec;
   fs::path dir = fs::absolute(start, ec);
   if (ec) {
@@ -246,7 +277,7 @@ auto FindDesignManifest(const fs::path& start) -> ManifestSearch {
       return ManifestFound{.path = dir / kManifestFileName};
     }
     // A repository boundary ends the search: a declaration above a repository's
-    // root belongs to whatever contains that repository, not to this design.
+    // root belongs to whatever contains that repository.
     if (fs::exists(dir / ".git", ec)) {
       return ManifestAbsent{.started = started, .stopped = dir};
     }
@@ -258,7 +289,7 @@ auto FindDesignManifest(const fs::path& start) -> ManifestSearch {
   }
 }
 
-auto LoadDesignManifest(const fs::path& path) -> diag::Result<DesignManifest> {
+auto LoadManifest(const fs::path& path) -> diag::Result<Manifest> {
   const toml::parse_result parsed = toml::parse_file(path.string());
   if (!parsed) {
     const auto& error = parsed.error();
@@ -270,7 +301,7 @@ auto LoadDesignManifest(const fs::path& path) -> diag::Result<DesignManifest> {
 
   const toml::table& root = parsed.table();
   static constexpr std::array<std::string_view, 3> kTables = {
-      "design", "compile", "dpi"};
+      "library", "design", "compile"};
   for (const auto& entry : root) {
     const std::string_view name = entry.first.str();
     if (!Contains(kTables, name)) {
@@ -279,7 +310,7 @@ auto LoadDesignManifest(const fs::path& path) -> diag::Result<DesignManifest> {
             path,
             std::format(
                 "{}: this names a property of one invocation or one machine, "
-                "not of the design; pass it on the command line",
+                "not of what the file declares; pass it on the command line",
                 name));
       }
       return Fail(path, std::format("{}: unrecognized table", name));
@@ -289,11 +320,18 @@ auto LoadDesignManifest(const fs::path& path) -> diag::Result<DesignManifest> {
     }
   }
 
-  DesignManifest manifest;
+  Manifest manifest;
   manifest.path = path;
+  if (const auto* library = root.get_as<toml::table>("library");
+      library != nullptr) {
+    if (auto ok = ReadLibrary(path, *library, manifest.library); !ok) {
+      return std::unexpected(std::move(ok.error()));
+    }
+  }
+
   if (const auto* design = root.get_as<toml::table>("design");
       design != nullptr) {
-    if (auto ok = ReadDesign(path, *design, manifest); !ok) {
+    if (auto ok = ReadDesign(path, *design, manifest.design); !ok) {
       return std::unexpected(std::move(ok.error()));
     }
   }
@@ -330,23 +368,18 @@ auto LoadDesignManifest(const fs::path& path) -> diag::Result<DesignManifest> {
     }
   }
 
-  if (const auto* dpi = root.get_as<toml::table>("dpi"); dpi != nullptr) {
-    static constexpr std::array<std::string_view, 1> kKeys = {"sources"};
-    if (auto ok = CheckKeys(path, "dpi", *dpi, kKeys); !ok) {
-      return std::unexpected(std::move(ok.error()));
-    }
-    if (auto ok = ReadPaths(
-            path, "[dpi] sources", dpi->get("sources"), manifest.dpi_sources);
-        !ok) {
-      return std::unexpected(std::move(ok.error()));
-    }
-  }
-
   // Checked last, so a misspelled table or key is reported as the mistake it is
-  // rather than as a missing name. A design with no name is the shape this file
-  // is not: a bag of options, which the command line already carries better.
-  if (manifest.name.empty()) {
-    return Fail(path, "[design] name: a design has to say what it is called");
+  // rather than as a missing name. A file with no name is the shape this one is
+  // not: a bag of options, which the command line already carries better.
+  if (manifest.library.name.empty()) {
+    return Fail(path, "[library] name: a library has to say what it is called");
+  }
+  if (!IsSimpleIdentifier(manifest.library.name)) {
+    return Fail(
+        path, std::format(
+                  "[library] name: '{}' is not an identifier, which a "
+                  "library's name has to be (LRM 33.3.1)",
+                  manifest.library.name));
   }
 
   return manifest;

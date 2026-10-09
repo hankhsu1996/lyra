@@ -33,7 +33,7 @@ bazel_dep(name = "yaml-cpp", version = "0.8.0")
 # JSON parsing for test results
 bazel_dep(name = "nlohmann_json", version = "3.11.3")
 
-# TOML parsing for a design's declaration
+# TOML parsing for `lyra.toml`
 bazel_dep(name = "tomlplusplus", version = "3.4.0.bcr.1")
 
 # LLVM for code generation, as a library. The module also offers a hermetic

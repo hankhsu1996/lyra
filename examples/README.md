@@ -7,8 +7,9 @@ Sample designs, each of which runs end to end.
 | `hello/`     | A single module printing with `$display`                             |
 | `riscv-cpu/` | Packages, a module hierarchy, parameterized modules, and `$readmemh` |
 
-Each carries a `lyra.toml` declaring its name, its top and its sources, so a command run from the
-example's directory names none of them.
+Each carries a `lyra.toml` naming a library and stating what is run of it, so a command run from the
+example's directory names nothing. `riscv-cpu/` shows the two apart: the core is the library's
+sources, and the testbenches with their top are the design's.
 
 ## hello
 
