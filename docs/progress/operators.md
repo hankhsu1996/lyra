@@ -205,7 +205,7 @@ merged node.
       (`a < b < c`), which converts that answer at every link, and a run that alternates `->` with
       `<->`, where each operator's second operand is the rest of the run. How long a run may be is
       bounded by the stack the compiler follows it on: a run of three thousand operands is held by a
-      conformance case and one of ten thousand compiles, while one of forty thousand ends the
+      test of its own and one of ten thousand compiles, while one of forty thousand ends the
       compiler, which says that it ran out of stack.
 
 ## Cross-references
