@@ -4,6 +4,7 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <functional>
 #include <optional>
 #include <poll.h>
 #include <span>
@@ -25,6 +27,8 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/driver/signals.hpp"
+#include "lyra/status/status.hpp"
 #include "lyra/support/statistics.hpp"
 
 namespace lyra::driver {
@@ -96,6 +100,37 @@ struct StreamOwner {
   bool is_stdout = false;
 };
 
+// Starts `exe` with `argv`, its streams arranged by `actions` where any are
+// given. This process holds off the signals that ask it to end so that one
+// thread can answer them, and a child started as it is would hold them off too,
+// so the child is started receiving every signal. Answers the child, or what
+// the system said in refusing to start one.
+auto Spawn(
+    const std::string& exe, std::vector<std::string>& argv,
+    const posix_spawn_file_actions_t* actions)
+    -> std::expected<pid_t, std::string> {
+  auto argv_ptrs = ToCharPointers(argv);
+  sigset_t none_held;
+  ::sigemptyset(&none_held);
+  posix_spawnattr_t attributes{};
+  ::posix_spawnattr_init(&attributes);
+  ::posix_spawnattr_setsigmask(&attributes, &none_held);
+  ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK);
+  int refused = 0;
+  const std::optional<pid_t> child = StartChild([&]() -> std::optional<pid_t> {
+    pid_t pid = 0;
+    refused = ::posix_spawn(
+        &pid, exe.c_str(), actions, &attributes, argv_ptrs.data(), environ);
+    return refused == 0 ? std::optional<pid_t>{pid} : std::nullopt;
+  });
+  ::posix_spawnattr_destroy(&attributes);
+  if (!child) {
+    return std::unexpected(
+        std::format("failed to spawn '{}': {}", exe, std::strerror(refused)));
+  }
+  return *child;
+}
+
 auto SpawnCaptured(
     const std::filesystem::path& exe, std::span<const std::string> args,
     std::size_t index) -> std::expected<Running, std::string> {
@@ -121,27 +156,22 @@ auto SpawnCaptured(
   posix_spawn_file_actions_addclose(&actions, err_pipe[0]);
   posix_spawn_file_actions_addclose(&actions, err_pipe[1]);
 
-  std::string exe_str = exe.string();
+  const std::string exe_str = exe.string();
   auto argv = BuildArgv(exe_str, args);
-  auto argv_ptrs = ToCharPointers(argv);
 
-  pid_t pid = 0;
   const auto started = std::chrono::steady_clock::now();
-  const int spawn_result = posix_spawn(
-      &pid, exe_str.c_str(), &actions, nullptr, argv_ptrs.data(), environ);
+  const auto pid = Spawn(exe_str, argv, &actions);
   posix_spawn_file_actions_destroy(&actions);
   close(out_pipe[1]);
   close(err_pipe[1]);
 
-  if (spawn_result != 0) {
+  if (!pid) {
     close(out_pipe[0]);
     close(err_pipe[0]);
-    return std::unexpected(
-        std::format(
-            "failed to spawn '{}': {}", exe_str, std::strerror(spawn_result)));
+    return std::unexpected(pid.error());
   }
   return Running{
-      .pid = pid,
+      .pid = *pid,
       .out_fd = out_pipe[0],
       .err_fd = err_pipe[0],
       .index = index,
@@ -173,62 +203,19 @@ auto Reap(pid_t pid) -> std::expected<Reaped, std::string> {
           std::format("wait4 failed: {}", std::strerror(errno)));
     }
   }
+  ChildReaped(pid);
   return Reaped{
       .exit_code =
           WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status),
       .cpu_us = Microseconds(usage.ru_utime) + Microseconds(usage.ru_stime)};
 }
 
-}  // namespace
-
-auto FindOnPath(std::string_view name)
-    -> std::expected<std::filesystem::path, std::string> {
-  const std::filesystem::path candidate(name);
-  if (candidate.is_absolute() || candidate.has_parent_path()) {
-    auto absolute = std::filesystem::absolute(candidate);
-    if (IsExecutableFile(absolute)) {
-      return absolute;
-    }
-    return std::unexpected(
-        std::format("'{}' is not an executable file", absolute.string()));
-  }
-  const char* path_env = std::getenv("PATH");
-  if (path_env == nullptr) {
-    return std::unexpected("PATH is unset");
-  }
-  std::string_view path(path_env);
-  while (!path.empty()) {
-    const auto sep = path.find(':');
-    const auto entry = path.substr(0, sep);
-    if (!entry.empty()) {
-      auto full = std::filesystem::path(entry) / candidate;
-      if (IsExecutableFile(full)) {
-        return full;
-      }
-    }
-    if (sep == std::string_view::npos) {
-      break;
-    }
-    path.remove_prefix(sep + 1);
-  }
-  return std::unexpected(
-      std::format("'{}' not found on PATH", candidate.string()));
-}
-
-auto RunProcessCaptured(
-    const std::filesystem::path& exe, std::span<const std::string> args)
-    -> std::expected<ProcessResult, std::string> {
-  const std::array<ProcessRequest, 1> one = {
-      ProcessRequest{.exe = exe, .args = {args.begin(), args.end()}}};
-  auto results = RunProcessesCaptured(one, 1);
-  if (!results) {
-    return std::unexpected(std::move(results.error()));
-  }
-  return std::move(results->front());
-}
-
-auto RunProcessesCaptured(
-    std::span<const ProcessRequest> requests, std::size_t max_concurrent)
+// Runs every request, at most `max_concurrent` at once, telling `started` and
+// `ended` a request's position as it starts and as it ends.
+auto RunProcesses(
+    std::span<const ProcessRequest> requests, std::size_t max_concurrent,
+    const std::function<void(std::size_t)>& started,
+    const std::function<void(std::size_t)>& ended)
     -> std::expected<std::vector<ProcessResult>, std::string> {
   std::vector<ProcessResult> results(requests.size());
   std::vector<Running> running;
@@ -247,6 +234,7 @@ auto RunProcessesCaptured(
         break;
       }
       running.push_back(*spawned);
+      started(next);
       ++next;
     }
     if (running.empty()) {
@@ -323,6 +311,7 @@ auto RunProcessesCaptured(
                       std::chrono::steady_clock::now() - child->started)
                       .count()),
               .cpu_us = reaped->cpu_us});
+      ended(child->index);
       child = running.erase(child);
     }
   }
@@ -333,23 +322,84 @@ auto RunProcessesCaptured(
   return results;
 }
 
+}  // namespace
+
+auto FindOnPath(std::string_view name)
+    -> std::expected<std::filesystem::path, std::string> {
+  const std::filesystem::path candidate(name);
+  if (candidate.is_absolute() || candidate.has_parent_path()) {
+    auto absolute = std::filesystem::absolute(candidate);
+    if (IsExecutableFile(absolute)) {
+      return absolute;
+    }
+    return std::unexpected(
+        std::format("'{}' is not an executable file", absolute.string()));
+  }
+  const char* path_env = std::getenv("PATH");
+  if (path_env == nullptr) {
+    return std::unexpected("PATH is unset");
+  }
+  std::string_view path(path_env);
+  while (!path.empty()) {
+    const auto sep = path.find(':');
+    const auto entry = path.substr(0, sep);
+    if (!entry.empty()) {
+      auto full = std::filesystem::path(entry) / candidate;
+      if (IsExecutableFile(full)) {
+        return full;
+      }
+    }
+    if (sep == std::string_view::npos) {
+      break;
+    }
+    path.remove_prefix(sep + 1);
+  }
+  return std::unexpected(
+      std::format("'{}' not found on PATH", candidate.string()));
+}
+
+auto RunProcessCaptured(
+    const std::filesystem::path& exe, std::span<const std::string> args)
+    -> std::expected<ProcessResult, std::string> {
+  const std::array<ProcessRequest, 1> one = {
+      ProcessRequest{.exe = exe, .args = {args.begin(), args.end()}}};
+  auto results = RunProcessesCaptured(one, 1);
+  if (!results) {
+    return std::unexpected(std::move(results.error()));
+  }
+  return std::move(results->front());
+}
+
+auto RunProcessesCaptured(
+    std::span<const ProcessRequest> requests, std::size_t max_concurrent)
+    -> std::expected<std::vector<ProcessResult>, std::string> {
+  const auto unsaid = [](std::size_t) {};
+  return RunProcesses(requests, max_concurrent, unsaid, unsaid);
+}
+
+auto RunProcessesCaptured(
+    std::span<const ProcessRequest> requests, std::size_t max_concurrent,
+    std::span<const std::string> names)
+    -> std::expected<std::vector<ProcessResult>, std::string> {
+  status::Pieces(requests.size());
+  std::vector<std::optional<status::Piece>> pieces(requests.size());
+  return RunProcesses(
+      requests, max_concurrent,
+      [&](std::size_t i) { pieces[i].emplace(names[i]); },
+      [&](std::size_t i) { pieces[i].reset(); });
+}
+
 auto RunProcessStreaming(
     const std::filesystem::path& exe, std::span<const std::string> args)
     -> std::expected<int, std::string> {
-  std::string exe_str = exe.string();
+  const std::string exe_str = exe.string();
   auto argv = BuildArgv(exe_str, args);
-  auto argv_ptrs = ToCharPointers(argv);
-
-  pid_t pid = 0;
-  const int spawn_result = posix_spawn(
-      &pid, exe_str.c_str(), nullptr, nullptr, argv_ptrs.data(), environ);
-  if (spawn_result != 0) {
-    return std::unexpected(
-        std::format(
-            "failed to spawn '{}': {}", exe_str, std::strerror(spawn_result)));
+  const auto pid = Spawn(exe_str, argv, nullptr);
+  if (!pid) {
+    return std::unexpected(pid.error());
   }
 
-  auto reaped = Reap(pid);
+  auto reaped = Reap(*pid);
   if (!reaped) {
     return std::unexpected(std::move(reaped.error()));
   }

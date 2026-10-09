@@ -26,6 +26,7 @@
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/driver/subprocess.hpp"
 #include "lyra/profiling/time_trace.hpp"
+#include "lyra/status/status.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 #include "lyra/support/statistics.hpp"
 
@@ -268,11 +269,16 @@ auto RenderDpiRecipe(
 
 auto RenderBuildScript(
     const std::filesystem::path& cxx, std::span<const DpiLinkInput> dpi_inputs,
-    std::span<const std::string> translation_units, Optimization optimization)
-    -> std::string {
+    std::span<const TranslationUnit> translation_units,
+    Optimization optimization) -> std::string {
   const std::string_view optimization_flag = OptimizationFlag(optimization);
   const DpiRecipe dpi = RenderDpiRecipe(dpi_inputs, optimization_flag);
-  const std::string sources = JoinWords(translation_units);
+  std::vector<std::string> relpaths;
+  relpaths.reserve(translation_units.size());
+  for (const TranslationUnit& unit : translation_units) {
+    relpaths.push_back(unit.relpath);
+  }
+  const std::string sources = JoinWords(relpaths);
   // Named locals, because the bindings below hold `string_view`s and are read
   // after this statement: a temporary would already have died.
   const std::string cxx_exe = cxx.string();
@@ -319,6 +325,7 @@ auto FormatSources(
   for (const std::string& relpath : relpaths) {
     args.push_back((dir / relpath).string());
   }
+  const status::Phase phase("Formatting");
   auto run = RunProcessCaptured(*clang_format, args);
   if (!run) {
     return diag::Fail(diag::DiagCode::kHostIoError, std::move(run.error()));
@@ -347,8 +354,8 @@ auto CopyDpiSources(
   return {};
 }
 
-// One compile the build has to run, what the link takes from it, and what to
-// name if it fails.
+// One compile the build has to run, what the link takes from it, the file to
+// name if it fails, and what the design's author calls what is being compiled.
 //
 // `plain` needs nothing prepared in advance and therefore always works. `fast`
 // is the same compile handed a precompiled header, which the compiler may
@@ -359,15 +366,17 @@ struct CompileStep {
   ProcessRequest plain;
   std::optional<ProcessRequest> fast;
   std::string subject;
+  std::string source_name;
   std::string object;
 };
 
 // What compiling one translation unit costs the host compiler, as a request
 // rather than a run, so the caller decides how many happen at once.
 auto UnitCompileStep(
-    const std::filesystem::path& dir, const std::string& source,
+    const std::filesystem::path& dir, const TranslationUnit& unit,
     const std::filesystem::path& include_root, const HostBuild& host,
     const std::optional<std::filesystem::path>& prelude) -> CompileStep {
+  const std::string& source = unit.relpath;
   const std::string object = (dir / kObjectDir / (source + ".o")).string();
   const auto command =
       [&](const std::optional<std::filesystem::path>& prepared) {
@@ -392,6 +401,7 @@ auto UnitCompileStep(
                   ? std::optional<ProcessRequest>{command(prelude)}
                   : std::nullopt,
       .subject = source,
+      .source_name = unit.source_name,
       .object = object};
 }
 
@@ -410,7 +420,9 @@ auto RunCompileSteps(
     std::span<const CompileStep> steps, const HostBuild& host,
     const std::optional<std::filesystem::path>& prelude) -> diag::Result<void> {
   std::vector<ProcessRequest> requests;
+  std::vector<std::string> names;
   requests.reserve(steps.size());
+  names.reserve(steps.size());
   for (const CompileStep& step : steps) {
     std::error_code ec;
     const std::filesystem::path home =
@@ -423,8 +435,10 @@ auto RunCompileSteps(
               "failed to create '{}': {}", home.string(), ec.message()));
     }
     requests.push_back(step.fast.value_or(step.plain));
+    names.push_back(step.source_name);
   }
-  auto results = RunProcessesCaptured(requests, host.compile_width);
+  const status::Phase phase("Compiling C++");
+  auto results = RunProcessesCaptured(requests, host.compile_width, names);
   if (!results) {
     return IoError(std::move(results.error()));
   }
@@ -477,7 +491,7 @@ auto RunCompileSteps(
 
 auto CompileProgram(
     const std::filesystem::path& dir,
-    std::span<const std::string> translation_units,
+    std::span<const TranslationUnit> translation_units,
     const RuntimeLocation& runtime,
     std::span<const std::filesystem::path> foreign_objects,
     const std::filesystem::path& program, const HostBuild& host)
@@ -489,9 +503,9 @@ auto CompileProgram(
 
   std::vector<CompileStep> steps;
   steps.reserve(translation_units.size());
-  for (const std::string& source : translation_units) {
+  for (const TranslationUnit& unit : translation_units) {
     steps.push_back(
-        UnitCompileStep(dir, source, runtime.include_root, host, prelude));
+        UnitCompileStep(dir, unit, runtime.include_root, host, prelude));
   }
   if (auto r = RunCompileSteps(steps, host, prelude); !r) {
     return r;
@@ -519,6 +533,7 @@ auto LinkProgram(
   args.push_back(runtime_lib.string());
   args.emplace_back("-o");
   args.push_back(program.string());
+  const status::Phase phase("Linking");
   auto result_or = RunProcessCaptured(cxx, args);
   if (!result_or) {
     return IoError(std::move(result_or.error()));
@@ -538,11 +553,13 @@ auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
   const backend::cpp::CppUnitArtifacts artifacts =
       backend::cpp::EmitCppUnit(unit, refused);
   if (refused.HasErrors()) {
+    status::Errors(refused.Diagnostics().size());
     return RefusedUnit{.refusals = refused.Diagnostics()};
   }
   WrittenUnit written{
       .files = {},
-      .translation_unit = artifacts.code.relpath,
+      .translation_unit =
+          {.relpath = artifacts.code.relpath, .source_name = unit.source_name},
       .dpi_fragment = dpi::AbiFragmentOf(unit)};
   std::vector<support::Artifact> recorded;
   const auto write = [&](const backend::cpp::CppArtifact& file,
@@ -610,7 +627,7 @@ auto CppProjectSink::Finish(const mir::CompilationUnit& root)
   Collect(
       WrittenUnit{
           .files = {host_main.relpath},
-          .translation_unit = host_main.relpath,
+          .translation_unit = {.relpath = host_main.relpath, .source_name = {}},
           .dpi_fragment = std::nullopt});
   if (formatting_ == SourceFormatting::kOn) {
     return FormatSources(written_, dir_);

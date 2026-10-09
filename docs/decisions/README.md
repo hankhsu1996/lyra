@@ -915,6 +915,16 @@ the detail lives in the entry itself.
   then executing on both backends. On the LLVM path each unit's object is kept the same way, so the
   only join after the signature barrier is the link. A directory per project, keying on the sources,
   linking out of the store, and keeping an execution session for `run` are rejected.
+- [a-build-answers-for-what-it-starts](a-build-answers-for-what-it-starts.md) -- a file a request
+  names is claimed when the request is read, by beginning the write, so a place that cannot be
+  written is refused before the design is read and never holds half a file. A process asked to end
+  passes the request to the tools it started, removes what it was building in, and ends by that
+  signal; a build killed outright is cleaned up by the next. A command shows what it is doing now on
+  the error stream, in the words of whoever wrote the design: redrawn in place on a terminal, a line
+  at lengthening intervals elsewhere, and nothing for a command soon over. A writability check apart
+  from the write, removing from the signal handler, building beside the output, ending tools through
+  the kernel, a line per event, the trace's stage names as the status, and status only on request
+  are rejected.
 - [waiting-is-an-operation](waiting-is-an-operation.md) -- the declaration both backends read names
   an operation and never one target's own protocol object, so a call that may park its caller does
   the whole operation and answers whether the caller must give up control; a body then stops to wait

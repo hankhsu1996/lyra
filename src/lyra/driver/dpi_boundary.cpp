@@ -15,6 +15,7 @@
 #include "lyra/driver/file_output.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/subprocess.hpp"
+#include "lyra/status/status.hpp"
 
 namespace lyra::driver {
 
@@ -102,7 +103,9 @@ auto CompileDpiObjects(
             "failed to create '{}': {}", work_dir.string(), created.message()));
   }
   std::vector<ProcessRequest> requests;
+  std::vector<std::string> names;
   requests.reserve(inputs.size());
+  names.reserve(inputs.size());
   for (const DpiLinkInput& input : inputs) {
     // One compilation per input, because the language each is compiled as is
     // its own and a driver invocation carries one output path. The object's
@@ -116,9 +119,11 @@ auto CompileDpiObjects(
                      input.source.string(), "-I", header_dir.string(), "-o",
                      objects.back().string()});
     requests.push_back(ProcessRequest{.exe = cxx, .args = std::move(args)});
+    names.push_back(input.source.filename().string());
   }
 
-  auto compiled = RunProcessesCaptured(requests, width);
+  const status::Phase phase("Compiling DPI sources");
+  auto compiled = RunProcessesCaptured(requests, width, names);
   if (!compiled) {
     return diag::Fail(
         diag::DiagCode::kHostIoError, std::move(compiled.error()));

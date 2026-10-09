@@ -72,6 +72,16 @@ auto ScopeLoweredFor(const slang::ast::Symbol& home)
       "element's body, or a `$unit` scope");
 }
 
+// The identifier the source declares `home` under. An instance body is one
+// elaboration of a definition and carries the definition's; a `$unit` scope
+// (LRM 3.12.1) was declared under none.
+auto SourceNameOf(const slang::ast::Symbol& home) -> std::string {
+  if (const auto* body = home.as_if<slang::ast::InstanceBodySymbol>()) {
+    return std::string(body->getDefinition().name);
+  }
+  return std::string(home.name);
+}
+
 }  // namespace
 
 UnitLowerer::UnitLowerer(
@@ -82,6 +92,7 @@ UnitLowerer::UnitLowerer(
       scope_(&ScopeLoweredFor(home)),
       unit_{std::move(name)} {
   unit_.role = role;
+  unit_.source_name = SourceNameOf(home);
   signature_.unit_name = unit_.name;
 }
 

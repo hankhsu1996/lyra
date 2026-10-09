@@ -242,6 +242,11 @@ struct CompilationUnit {
   // namespace rather than a class (a package) still has a stable identity
   // independent of any member.
   std::string name;
+  // The identifier the source declares the unit under, which several units
+  // share where one definition is compiled once per specialization, and which
+  // a unit the source gave no identifier lacks. It is what a person is told
+  // the compiler is working on; nothing is named from it.
+  std::string source_name;
   TypePool types;
   // The values this unit settles before the program runs, each held once and
   // named by every occurrence: the constant integral values the source wrote,

@@ -1,7 +1,9 @@
 // What the command line itself decides: what a `lyra.toml` declares, what an
 // invocation adds to or replaces in that declaration, which top a
-// design element may be, what a unit publishes to whoever reads it, and how a
-// design that fails at run time is reported.
+// design element may be, what a unit publishes to whoever reads it, how a
+// design that fails at run time is reported, and what a build owes whoever
+// started it besides the program: a refusal before the work, nothing left
+// behind, and a word on where it is.
 //
 // None of it is a statement about a backend, so a case that has to run a design
 // asks for the one that compiles no C++, and the file costs seconds and gates.
@@ -1430,6 +1432,182 @@ TEST(LyraCommandLine, LeavesBehindOnlyWhatItWasAskedFor) {
   EXPECT_TRUE(std::filesystem::is_regular_file(work / "program"));
 }
 
+// Every file an invocation names as something to write is found unwritable
+// before the design is read, so the refusal costs nothing. The design here does
+// not elaborate, and the place named sits under a regular file, which no
+// permission makes writable: a command that read the design first would report
+// the design. A directory that is only missing is made.
+TEST(LyraCommandLine, RefusesAPlaceItCannotWriteBeforeReadingTheDesign) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto broken = *tmp_or / "broken.sv";
+  std::ofstream(broken) << "module Test;\n  Missing u ();\nendmodule\n";
+  const auto a_file = *tmp_or / "a_file";
+  std::ofstream(a_file) << "held\n";
+  const std::string under_a_file = (a_file / "named").string();
+  const std::string writable = (*tmp_or / "program").string();
+
+  const std::vector<std::vector<std::string>> named = {
+      {"build", "--backend", "llvm", "-o", under_a_file},
+      {"emit", "cpp", "-o", under_a_file},
+      {"build", "--backend", "llvm", "-o", writable, "--time-trace",
+       under_a_file},
+      {"build", "--backend", "llvm", "-o", writable, "--stats-file",
+       under_a_file},
+      {"check", "--time-trace", under_a_file}};
+  for (std::vector<std::string> args : named) {
+    const std::string label = std::format("{} ... {}", args[0], args.back());
+    args.push_back(broken.string());
+    const auto refused = RunChildProcess(lyra, args, 60s);
+    EXPECT_EQ(refused.exit_code, 1) << label;
+    EXPECT_NE(refused.stderr_text.find(under_a_file), std::string::npos)
+        << label << ": " << refused.stderr_text;
+    EXPECT_EQ(refused.stderr_text.find("Missing"), std::string::npos)
+        << label << ": the design was read first: " << refused.stderr_text;
+  }
+  EXPECT_EQ(ReadWholeFile(a_file), "held\n");
+
+  const auto src = *tmp_or / "test.sv";
+  WriteTrivialSource(src);
+  const auto made = *tmp_or / "made" / "on" / "the" / "way";
+  const std::vector<std::string> args = {
+      "build",
+      "--backend",
+      "llvm",
+      "--top",
+      "Test",
+      "-o",
+      (made / "program").string(),
+      "--time-trace",
+      (made / "traces" / "trace.json").string(),
+      "--stats-file",
+      (made / "numbers" / "stats.json").string(),
+      "--cache-dir",
+      (*tmp_or / "cache").string(),
+      src.string()};
+  const auto built = RunChildProcess(lyra, args, 120s);
+  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+  EXPECT_TRUE(std::filesystem::is_regular_file(made / "program"));
+  EXPECT_FALSE(ReadJson(made / "traces" / "trace.json").is_discarded());
+  EXPECT_FALSE(ReadJson(made / "numbers" / "stats.json").is_discarded());
+  EXPECT_EQ(CountEntries(made), 3U)
+      << "something besides the three files named was left beside them";
+}
+
+// A host compiler that says it started and then never finishes, so a build
+// reaches the tool and stays there.
+auto WriteCompilerThatNeverFinishes(
+    const std::filesystem::path& path, const std::filesystem::path& started)
+    -> void {
+  std::ofstream(path) << "#!/bin/sh\n"
+                      << "echo $$ > '" << started.string() << "'\n"
+                      << "exec sleep 600\n";
+  std::filesystem::permissions(
+      path, std::filesystem::perms::owner_all,
+      std::filesystem::perm_options::add);
+}
+
+// What a build that was ended from outside left, and whether the tool it had
+// started was still running a few seconds on.
+struct EndedBuild {
+  lyra::test::ProcessOutcome outcome;
+  std::size_t left_in_temporary = 0;
+  std::size_t left_beside_the_program = 0;
+};
+
+// Starts a build under `root` whose host compiler never finishes, sends the
+// build `signal` once that compiler has started, and reports what is left. The
+// shell says `tool-left-running` where the compiler outlived the build by five
+// seconds, and ends it either way.
+auto EndABuildAtItsTool(
+    const std::filesystem::path& lyra, const std::filesystem::path& root,
+    std::string_view signal) -> EndedBuild {
+  const auto temporary = root / "temporary";
+  const auto out = root / "out";
+  const auto started = root / "started";
+  const auto compiler = root / "never-finishes";
+  std::filesystem::create_directories(temporary);
+  std::filesystem::remove(started);
+  WriteTrivialSource(root / "test.sv");
+  WriteCompilerThatNeverFinishes(compiler, started);
+
+  auto sh_or = lyra::driver::FindOnPath("sh");
+  EXPECT_TRUE(sh_or.has_value());
+  if (!sh_or) return {};
+  const std::string script = std::format(
+      "TMPDIR='{0}' '{1}' build --rebuild --backend llvm --cxx '{2}' "
+      "--cache-dir '{3}' --top Test -o '{4}' '{5}' &\n"
+      "build=$!\n"
+      "n=0\n"
+      "while [ ! -s '{6}' ] && [ $n -lt 600 ]; do sleep 0.1; n=$((n+1)); done\n"
+      "kill -{7} $build\n"
+      "wait $build\n"
+      "status=$?\n"
+      "tool=$(cat '{6}')\n"
+      "n=0\n"
+      "while kill -0 $tool 2>/dev/null && [ $n -lt 50 ]; do\n"
+      "  sleep 0.1; n=$((n+1))\n"
+      "done\n"
+      "if kill -0 $tool 2>/dev/null; then\n"
+      "  echo tool-left-running; kill -KILL $tool\n"
+      "fi\n"
+      "exit $status\n",
+      temporary.string(), lyra.string(), compiler.string(),
+      (root / "cache").string(), (out / "program").string(),
+      (root / "test.sv").string(), started.string(), signal);
+  const std::vector<std::string> argv = {"-c", script};
+  EndedBuild ended{
+      .outcome = RunChildProcess(*sh_or, argv, 120s),
+      .left_in_temporary = 0,
+      .left_beside_the_program = 0};
+  ended.left_in_temporary = CountEntries(temporary);
+  ended.left_beside_the_program = CountEntries(out);
+  return ended;
+}
+
+// A build asked to end takes what it made with it: the directory it built in,
+// the file it had begun at the place named, and the tool it was waiting on. One
+// that is killed outright has no turn to do so, and the next build removes the
+// directory it left.
+TEST(LyraBuild, ABuildThatIsEndedLeavesNothingItStarted) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  for (const std::string_view signal : {"TERM", "HUP"}) {
+    SCOPED_TRACE(signal);
+    const auto ended = EndABuildAtItsTool(lyra, *tmp_or / signal, signal);
+    EXPECT_NE(ended.outcome.exit_code, 0) << ended.outcome.stderr_text;
+    EXPECT_EQ(ended.left_in_temporary, 0U);
+    EXPECT_EQ(ended.left_beside_the_program, 0U);
+    EXPECT_EQ(
+        ended.outcome.stdout_text.find("tool-left-running"), std::string::npos);
+  }
+
+  const auto root = *tmp_or / "KILL";
+  const auto killed = EndABuildAtItsTool(lyra, root, "KILL");
+  EXPECT_EQ(killed.left_in_temporary, 1U)
+      << "a build killed outright is expected to leave the directory it built "
+         "in, which is what the next build is then seen to remove";
+
+  auto sh_or = lyra::driver::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  const std::vector<std::string> next = {
+      "-c", std::format(
+                "TMPDIR='{}' '{}' build --backend llvm --cache-dir '{}' --top "
+                "Test -o '{}' '{}'",
+                (root / "temporary").string(), lyra.string(),
+                (root / "cache").string(), (root / "next").string(),
+                (root / "test.sv").string())};
+  const auto built = RunChildProcess(*sh_or, next, 120s);
+  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+  EXPECT_EQ(CountEntries(root / "temporary"), 0U)
+      << "the next build left the killed one's directory where it was";
+}
+
 // Foreign code that calls an exported subroutine once its execution thread is
 // in the disabled state breaks the protocol, and a simulator is obliged to
 // report it (LRM 35.9 item d). The run ending puts it in that state too, and
@@ -1867,6 +2045,75 @@ TEST(LyraEmit, TheStatisticsNameEveryFileAUnitWrote) {
       EXPECT_TRUE(file.at("made").get<bool>());
     }
   }
+}
+
+// A command that is over in seconds says nothing of where it was, whatever its
+// error stream is, so whoever reads that stream reads diagnostics and nothing
+// else; and how it shows where it is takes one of three values.
+TEST(LyraBuild, ACommandThatIsSoonOverShowsNoStatus) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteTwoUnitDesign(src);
+  const std::string design = std::format("--top Test '{}'", src.string());
+  const std::string store =
+      std::format("--cache-dir '{}'", (*tmp_or / "cache").string());
+
+  for (const std::string& command :
+       {std::format("build --backend llvm -o program {}", store),
+        std::format("build --progress=plain --backend llvm -o again {}", store),
+        std::format("run --backend llvm {}", store), std::string("check"),
+        std::string("emit cpp -o project"), std::string("dump mir")}) {
+    const auto ran =
+        RunLyraFrom(lyra, *tmp_or, std::format("{} {}", command, design));
+    ASSERT_EQ(ran.exit_code, 0) << command << ": " << ran.stderr_text;
+    EXPECT_EQ(ran.stderr_text, "") << command;
+  }
+
+  const auto refused = RunLyraFrom(
+      lyra, *tmp_or, std::format("check --progress=loud {}", design));
+  EXPECT_NE(refused.exit_code, 0);
+  EXPECT_NE(
+      refused.stderr_text.find(
+          "--progress: 'loud' is not one of auto, plain, none"),
+      std::string::npos)
+      << refused.stderr_text;
+}
+
+// A build that is still going after ten seconds says which phase it is in, on
+// a line of its own where its error stream is not a terminal, so whoever
+// watches that stream can tell a slow build from one that has stopped.
+TEST(LyraBuild, ALongBuildSaysWhichPhaseItIsIn) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto root = *tmp_or;
+  const auto said = root / "said";
+  const auto compiler = root / "never-finishes";
+  std::filesystem::create_directories(root / "temporary");
+  WriteTrivialSource(root / "test.sv");
+  WriteCompilerThatNeverFinishes(compiler, root / "started");
+
+  auto sh_or = lyra::driver::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  const std::string script = std::format(
+      "TMPDIR='{0}' '{1}' build --rebuild --backend llvm --cxx '{2}' "
+      "--cache-dir '{3}' --top Test -o '{4}' '{5}' 2> '{6}' &\n"
+      "build=$!\n"
+      "n=0\n"
+      "while [ ! -s '{6}' ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n+1)); done\n"
+      "kill -TERM $build\n"
+      "wait $build\n"
+      "cat '{6}'\n",
+      (root / "temporary").string(), lyra.string(), compiler.string(),
+      (root / "cache").string(), (root / "program").string(),
+      (root / "test.sv").string(), said.string());
+  const std::vector<std::string> argv = {"-c", script};
+  const auto ended = RunChildProcess(*sh_or, argv, 120s);
+  EXPECT_EQ(ended.stdout_text, "[10s] Linking\n");
 }
 
 }  // namespace

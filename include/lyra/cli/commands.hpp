@@ -1,6 +1,6 @@
 #pragma once
 
-#include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -14,8 +14,10 @@
 #include "lyra/diag/render.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
+#include "lyra/driver/claimed_file.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/frontend/load.hpp"
+#include "lyra/status/status.hpp"
 
 namespace lyra::cli {
 
@@ -29,11 +31,13 @@ class Reporter {
 
   void operator()(
       diag::Diagnostic diag, const diag::SourceManager* mgr = nullptr) const {
+    status::Clear();
     fmt::print(stderr, "{}", diag::RenderDiagnostic(diag, mgr, opts_));
   }
 
   void operator()(
       const diag::DiagnosticSink& sink, const diag::SourceManager* mgr) const {
+    status::Clear();
     fmt::print(stderr, "{}", diag::RenderDiagnostics(sink, mgr, opts_));
   }
 
@@ -68,13 +72,19 @@ inline constexpr int kCompilerFailureExit = 2;
 // Carries out the command and answers with the process exit code.
 auto RunCommand(const Invocation& invocation) -> int;
 
+// The files a run was asked to write about itself, each claimed before the
+// command starts.
+struct SelfReport {
+  std::optional<driver::ClaimedFile> time_trace;
+  std::optional<driver::ClaimedFile> statistics;
+};
+
 // Whether the run records where its cost went is settled before the command
-// starts, so the record covers all of it, and what was recorded is written once
-// the command is done.
-auto StartSelfReport(const CliOptions& options)
-    -> std::expected<void, std::string>;
-auto WriteSelfReport(const CliOptions& options)
-    -> std::expected<void, std::string>;
+// starts, so the record covers all of it and a file that cannot be written is
+// refused before the work it would have described. What was recorded is written
+// once the command is done.
+auto StartSelfReport(const CliOptions& options) -> diag::Result<SelfReport>;
+auto WriteSelfReport(SelfReport& report) -> diag::Result<void>;
 
 // What a command that reads a design receives: the request, what the front end
 // elaborated from it, and the channel for anything it has to report. A command

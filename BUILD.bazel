@@ -76,6 +76,17 @@ cc_library(
     ],
 )
 
+# What a command says of where it is while it works, kept apart from `support`
+# because the runtime library a program links says nothing of the kind.
+cc_library(
+    name = "status",
+    srcs = glob(["src/lyra/status/*.cpp"]),
+    hdrs = glob(["include/lyra/status/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
 # The compiler's record of where a run's time went, kept apart from `support`
 # because it is LLVM's profiler and `support` reaches the runtime library.
 cc_library(
@@ -334,6 +345,7 @@ cc_library(
         ":mir",
         ":profiling",
         ":runtime",
+        ":status",
         ":support",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Passes",
@@ -357,6 +369,7 @@ cc_library(
         ":mir",
         ":mir_to_lir",
         ":profiling",
+        ":status",
         ":support",
     ],
 )
@@ -378,6 +391,7 @@ cc_library(
         ":dpi",
         ":mir",
         ":profiling",
+        ":status",
         ":support",
         "@bazel_tools//tools/cpp/runfiles",
     ],
@@ -410,6 +424,7 @@ cc_library(
         ":mir",
         ":profiling",
         ":program",
+        ":status",
         ":support",
         "@fmt",
         "@slang",
@@ -432,6 +447,7 @@ cc_binary(
         ":compiler",
         ":diag",
         ":driver",
+        ":status",
         "@fmt",
         "@slang",
     ],

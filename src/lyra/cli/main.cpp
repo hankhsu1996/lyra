@@ -16,9 +16,12 @@
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/render.hpp"
 #include "lyra/diag/sink.hpp"
+#include "lyra/driver/signals.hpp"
+#include "lyra/status/status.hpp"
 
 auto main(int argc, char** argv) -> int {
   try {
+    lyra::driver::EndOnSignal();
     lyra::compiler::GiveStartingThreadCompileStack();
     const std::span<char* const> raw_args(argv, static_cast<std::size_t>(argc));
     const std::string program_path =
@@ -65,12 +68,19 @@ auto main(int argc, char** argv) -> int {
       return 1;
     }
 
-    if (auto started = lyra::cli::StartSelfReport(cli_options); !started) {
-      report(
-          lyra::diag::Make(
-              lyra::diag::DiagCode::kHostInvalidCliArgs, started.error()));
+    auto self_report = lyra::cli::StartSelfReport(cli_options);
+    if (!self_report) {
+      report(std::move(self_report.error()));
       return 1;
     }
+    const auto look = lyra::cli::StatusLookOf(*command, cli_options, use_color);
+    if (!look) {
+      report(
+          lyra::diag::Make(
+              lyra::diag::DiagCode::kHostInvalidCliArgs, look.error()));
+      return 1;
+    }
+    const lyra::status::Shown shown(*look);
     const int exit_code = lyra::cli::RunCommand(
         lyra::cli::Invocation{
             .driver = &driver,
@@ -79,10 +89,9 @@ auto main(int argc, char** argv) -> int {
             .simulation_args = std::move(argv_split.child),
             .program_path = program_path,
             .report = &report});
-    if (auto written = lyra::cli::WriteSelfReport(cli_options); !written) {
-      report(
-          lyra::diag::Make(
-              lyra::diag::DiagCode::kHostIoError, written.error()));
+    lyra::status::Clear();
+    if (auto written = lyra::cli::WriteSelfReport(*self_report); !written) {
+      report(std::move(written.error()));
       return exit_code == 0 ? 1 : exit_code;
     }
     return exit_code;

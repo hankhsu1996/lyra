@@ -18,6 +18,7 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/profiling/time_trace.hpp"
+#include "lyra/status/status.hpp"
 
 namespace lyra::compiler {
 
@@ -64,10 +65,11 @@ void LowerToHir(
     Produce produce, Consume consume) {
   using Produced = std::invoke_result_t<Produce, hir::CompilationUnit>;
   const profiling::StageScope stage("lower units");
+  status::Pieces(design.units.UnitCount());
   ProduceInOrder(
       design.units.UnitCount(), width,
       [&](std::size_t i) -> Produced {
-        return diag::ContainFailure([&]() -> Produced {
+        Produced produced = diag::ContainFailure([&]() -> Produced {
           auto unit = design.units.LowerUnit(i);
           if (!unit) {
             return std::unexpected(std::move(unit.error()));
@@ -76,8 +78,13 @@ void LowerToHir(
           // copy that lasts as long as the work on it.
           const std::string name = unit->name;
           const auto in_unit = diag::FailureContext::InUnit(name);
+          const status::Piece piece(unit->source_name);
           return produce(*std::move(unit));
         });
+        if (!produced) {
+          status::Errors(1);
+        }
+        return produced;
       },
       [&](Produced produced) {
         if (produced) {
