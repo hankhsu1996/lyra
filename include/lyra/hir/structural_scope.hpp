@@ -76,20 +76,21 @@ struct InUnitBase {
   auto operator==(const InUnitBase&) const -> bool = default;
 };
 
-// The route leaves the referrer's instance and starts at the enclosing instance
-// of the class `scope_class` records: the nearest instance enclosing the
-// referrer that is of that class, or past the topmost of them a top-level
-// instance of it -- the scope a name searched upward lands in (LRM 23.8), or
-// the top-level instance a path from the top names (LRM 23.6). Which instance
-// that is depends on where the referrer's instance stands, so the class is what
-// the route states and the instance is found where it resolves.
-struct EnclosingInstanceBase {
+// The route leaves the referrer's instance and starts at the enclosing scope
+// of the class `scope_class` records: the nearest scope enclosing the referrer
+// that is of that class, an instance or a generate block, or past the topmost
+// of them a top-level instance of it -- the scope a name searched upward lands
+// in (LRM 23.8), or the top-level instance a path from the top names (LRM
+// 23.6). Which scope that is depends on where the referrer's instance stands,
+// so the class is what the route states and the scope is found where it
+// resolves.
+struct EnclosingScopeBase {
   ExternalScopeClassId scope_class;
 
-  auto operator==(const EnclosingInstanceBase&) const -> bool = default;
+  auto operator==(const EnclosingScopeBase&) const -> bool = default;
 };
 
-using RouteBase = std::variant<InUnitBase, EnclosingInstanceBase>;
+using RouteBase = std::variant<InUnitBase, EnclosingScopeBase>;
 
 // What a route ends at, grouped by the use the name is put to, since the use
 // decides what the name may reach. Within a use, the end is named in one of
@@ -154,12 +155,12 @@ using PublishedDecl = std::variant<
 // its entries is the scope's own declaration, keyed by its position there. The
 // subroutines are the class's methods.
 //
-// The signature's class name is the one a referrer reaches the class by. A
-// scope standing for several blocks of a loop stands for each of them, so it
-// answers to the name of each, the others being its `aliases`.
+// The signature's class path is the one a referrer reaches the class by.
+// Several scopes of a unit may state one class: the block instances of one
+// application of a generate block are objects of one class (LRM 27.3), and
+// those of them that lowered apart are that class realized by a scope each.
 struct ScopePublication {
   ScopeClassSignature signature;
-  std::vector<std::string> aliases;
   base::Translation<PublishedMemberId, PublishedDecl> members;
   base::Translation<PublishedGenerateId, GenerateId> generates;
   base::Translation<PublishedDisableTargetId, ProceduralScopeId>
@@ -474,10 +475,10 @@ struct BlocksStandAlone {
 // A body is built once at every index the loop counts out (LRM 27.4). What
 // makes one body serve many indices is that the index reaches the block as a
 // value construction supplies rather than as a constant folded into its body;
-// blocks that still lower apart -- a width their index fixes -- are distinct
-// bodies, and `taken` says which body the block at each index is, one entry
-// per index in the order the loop counts them out. Blocks that all lower alike
-// are one body every index takes.
+// blocks of different classes and blocks of one class that still lower apart
+// are distinct bodies, and `taken` says which body the block at each index is,
+// one entry per index in the order the loop counts them out. Blocks that all
+// lower alike are one body every index takes.
 //
 // `variable` is the loop's index, declared by the scope holding the generate,
 // and the three expressions are the loop's own: where the index starts,

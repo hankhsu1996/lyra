@@ -13,8 +13,8 @@ resolution serves both accessing the target's value and observing its changes.
 - The rule that a step realizes as typed navigation -- through an in-artifact member identity, or
   through a member the target scope published, resolved at the referrer's compile time -- and that a
   name the target scope did not publish is refused where the referrer compiles.
-- The anchor of an upward name: the enclosing instance of the class the front end's search landed
-  on.
+- The anchor of an upward name: the enclosing scope of the class the front end's search landed on,
+  an instance or a generate block.
 - The contract that route execution is total: a route that fails to seal is either a
   user-diagnosable elaboration error (a non-constructed target, a forwarding cycle with no storage
   root) or a compiler-invariant violation, never a runtime fallback.
@@ -107,12 +107,13 @@ resolution serves both accessing the target's value and observing its changes.
    member and a behavior to a body. For a virtual behavior that is the virtual call on the object
    the reference holds, so which override finally runs is still the object's own answer at the
    moment of the call, and no route commits it.
-10. An upward name (LRM 23.8) is anchored at the nearest enclosing instance of the class the front
-    end's search landed on -- or, past the topmost, a top-level instance of it -- reached by one
-    runtime query and a static downcast to that class. Which class the search lands on is part of
-    what tells a referrer's unit apart (LRM 23.8 resolves an upward name per instance, so two
-    instances of one definition may land on different declarations of different types), and a route
-    never carries a type that differs between the instances sharing its code.
+10. An upward name (LRM 23.8) is anchored at the nearest enclosing scope of the class the front
+    end's search landed on -- an instance or a generate block, since the search passes through both
+    -- or, past the topmost, a top-level instance of it, reached by one runtime query and a static
+    downcast to that class. Which class the search lands on is part of what tells a referrer's unit
+    apart (LRM 23.8 resolves an upward name per instance, so two instances of one definition may
+    land on different declarations of different types), and a route never carries a type that
+    differs between the instances sharing its code.
 
 ## Boundary to Adjacent Layers
 
@@ -228,10 +229,10 @@ Nothing about a route is decided by how many units it crosses, by how deep it go
 that named the target; every step is the same kind of typed step.
 
 **An upward name.** `always_comb y = Top.g;` inside a module instantiated somewhere below `Top`. The
-front end's search lands on `Top`'s class; the route's anchor is the nearest enclosing instance of
-that class, found by one runtime query and a static downcast, and `g` is a member of `Top`'s
-published class. Another instance of the same module whose search landed on a different class is a
-different unit, so neither carries a type the other would need.
+front end's search lands on `Top`'s class; the route's anchor is the nearest enclosing scope of that
+class, found by one runtime query and a static downcast, and `g` is a member of `Top`'s published
+class. Another instance of the same module whose search landed on a different class is a different
+unit, so neither carries a type the other would need.
 
 **A route that continues past an object reference.** `holder.h.tag`, where `h` is a class-typed
 variable of another unit and the class is declared inside that unit's design element. The step

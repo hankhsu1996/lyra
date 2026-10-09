@@ -362,7 +362,8 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_sequence_make", &lyra_rt_sequence_make);
   add("lyra_rt_sequence_extend", &lyra_rt_sequence_extend);
   add("lyra_rt_sequence_element", &lyra_rt_sequence_element);
-  add("lyra_rt_enclosing_instance", &lyra_rt_enclosing_instance);
+  add("lyra_rt_enclosing_scope", &lyra_rt_enclosing_scope);
+  add("lyra_rt_is_of_class", &lyra_rt_is_of_class);
   add("lyra_rt_run_program", &lyra_rt_run_program);
 }
 

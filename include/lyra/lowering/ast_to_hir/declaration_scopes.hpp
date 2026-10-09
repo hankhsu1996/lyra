@@ -1,6 +1,9 @@
 #pragma once
 
+#include <algorithm>
+#include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <slang/ast/Scope.h>
@@ -20,23 +23,34 @@ namespace lyra::lowering::ast_to_hir {
 // before anything inside it. A visitor that can fail answers with a
 // `diag::Result<void>` and the walk stops at its first failure; one that cannot
 // answers with nothing, and so does the walk.
-template <typename Visit>
-auto WalkDeclarationScopes(const slang::ast::Scope& scope, Visit& visit)
+//
+// The front end lists a generic's specializations in no order a second
+// compilation repeats, so they are visited in the order of what `name_of`
+// answers for each, which tells the specializations of one generic apart.
+template <typename Visit, typename NameOf>
+auto WalkDeclarationScopes(
+    const slang::ast::Scope& scope, Visit& visit, const NameOf& name_of)
     -> std::invoke_result_t<Visit&, const slang::ast::Symbol&> {
   constexpr bool kCanFail =
       !std::is_void_v<std::invoke_result_t<Visit&, const slang::ast::Symbol&>>;
   for (const auto& member : scope.members()) {
     std::vector<const slang::ast::Scope*> inner;
     if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
+      std::vector<std::pair<std::string, const slang::ast::ClassType*>>
+          specializations;
       for (const auto& spec :
            member.as<slang::ast::GenericClassDefSymbol>().specializations()) {
         const auto& cls = spec.getCanonicalType().as<slang::ast::ClassType>();
+        specializations.emplace_back(name_of(cls), &cls);
+      }
+      std::ranges::sort(specializations);
+      for (const auto& [_, cls] : specializations) {
         if constexpr (kCanFail) {
-          if (auto r = visit(cls); !r) return r;
+          if (auto r = visit(*cls); !r) return r;
         } else {
-          visit(cls);
+          visit(*cls);
         }
-        inner.push_back(&cls);
+        inner.push_back(cls);
       }
     } else if constexpr (kCanFail) {
       if (auto r = visit(member); !r) return r;
@@ -58,9 +72,11 @@ auto WalkDeclarationScopes(const slang::ast::Scope& scope, Visit& visit)
     }
     for (const slang::ast::Scope* scope_within : inner) {
       if constexpr (kCanFail) {
-        if (auto r = WalkDeclarationScopes(*scope_within, visit); !r) return r;
+        if (auto r = WalkDeclarationScopes(*scope_within, visit, name_of); !r) {
+          return r;
+        }
       } else {
-        WalkDeclarationScopes(*scope_within, visit);
+        WalkDeclarationScopes(*scope_within, visit, name_of);
       }
     }
   }

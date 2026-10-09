@@ -27,6 +27,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/struct_id.hpp"
+#include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -214,13 +215,16 @@ auto CodeGenTuples::KeyOf(lir::TypeId tuple) -> const std::string& {
     return found->second;
   }
   // A struct is its declaration, which names it from any module; a tuple is
-  // its components.
+  // its components. The declaration is spelled as a symbol's parts are, each
+  // stating its own extent, so no two declarations share a key.
   if (const std::optional<lir::TypeDeclarationRef> declared =
           DeclarationOf(tuple)) {
     return keys_
         .emplace(
             tuple,
-            std::format("{{{}::{}}}", declared->unit_name, declared->name))
+            std::format(
+                "{{{}{}}}", lir::SymbolPart::Name(declared->unit_name).encoded,
+                lir::SymbolPartOf(declared->path).encoded))
         .first->second;
   }
   std::string key = "{";

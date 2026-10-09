@@ -34,6 +34,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/unary_op.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/strength_level.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -194,7 +195,8 @@ auto FormatClassRef(const ClassRef& ref) -> std::string {
           },
           [](const ExternalClassRef& r) -> std::string {
             return std::format(
-                "Class[external={}::{}]", r.unit_name, r.class_name);
+                "Class[external={}::{}]", r.unit_name,
+                support::DisplayOf(r.class_path));
           }},
       ref);
 }
@@ -208,8 +210,8 @@ auto FormatClassPropertyTarget(const ClassPropertyTarget& target)
           },
           [](const ExternalClassPropertyTarget& t) -> std::string {
             return std::format(
-                "Class[external={}::{}].{}", t.unit_name, t.class_name,
-                t.property.value);
+                "Class[external={}::{}].{}", t.unit_name,
+                support::DisplayOf(t.class_path), t.property.value);
           }},
       target);
 }
@@ -228,8 +230,8 @@ auto FormatStaticPropertyTarget(const StaticPropertyTarget& target)
           },
           [](const ExternalStaticPropertyTarget& t) -> std::string {
             return std::format(
-                "Class[external={}::{}].{}", t.unit_name, t.class_name,
-                t.property_name);
+                "Class[external={}::{}].{}", t.unit_name,
+                support::DisplayOf(t.class_path), t.property_name);
           }},
       target);
 }
@@ -241,14 +243,15 @@ auto FormatLocalClassMethod(const LocalClassMethodTarget& t) -> std::string {
 auto FormatExternalClassMethod(const ExternalClassMethodTarget& t)
     -> std::string {
   return std::format(
-      "Class[external={}::{}].{}", t.unit_name, t.class_name, t.method_name);
+      "Class[external={}::{}].{}", t.unit_name,
+      support::DisplayOf(t.class_path), t.method_name);
 }
 
 auto FormatExternalDispatchSlot(const ExternalDispatchSlot& slot)
     -> std::string {
   return std::format(
-      "Class[external={}::{}]#{}", slot.unit_name, slot.class_name,
-      slot.behavior.value);
+      "Class[external={}::{}]#{}", slot.unit_name,
+      support::DisplayOf(slot.class_path), slot.behavior.value);
 }
 
 auto FormatOverriddenBehavior(const OverriddenBehavior& taken) -> std::string {
@@ -393,7 +396,8 @@ class HirDumper {
               }
               return std::format(
                   "UnpackedStruct({}::{}, fields=[{}])",
-                  s.declaration.unit_name, s.declaration.name, fields);
+                  s.declaration.unit_name,
+                  support::DisplayOf(s.declaration.path), fields);
             },
             [](const UnpackedUnionType& u) -> std::string {
               std::string fields;
@@ -448,7 +452,7 @@ class HirDumper {
             [](const UnitObjectType& u) -> std::string {
               return std::format(
                   "UnitObjectType(unit={}, class={})", u.unit_name,
-                  u.class_name);
+                  support::DisplayOf(u.class_path));
             },
             [](const UnitObjectsType& u) -> std::string {
               std::string ranges;
@@ -459,7 +463,7 @@ class HirDumper {
               for (const UnitObjectType& kind : u.kinds) {
                 kinds += std::format(
                     "{}{}::{}", kinds.empty() ? "" : " | ", kind.unit_name,
-                    kind.class_name);
+                    support::DisplayOf(kind.class_path));
               }
               // Which kind each position takes says nothing where there is one.
               std::string taken;
@@ -1073,7 +1077,8 @@ class HirDumper {
                   "ExternalUnitMethod {} \"{}::{}\" recv={}",
                   callable.interface.kind == SubroutineKind::kTask ? "task"
                                                                    : "function",
-                  published.class_name, callable.name, receiver);
+                  support::DisplayOf(published.class_path), callable.name,
+                  receiver);
             },
         },
         callee);
@@ -1461,10 +1466,12 @@ class HirDumper {
         if (!u.classes.IsDefined(id)) {
           Line(
               std::format(
-                  "[{}] <declared> \"{}\"", id.value, u.classes.NameOf(id)));
+                  "[{}] <declared> \"{}\"", id.value,
+                  support::DisplayOf(u.classes.PathOf(id))));
           continue;
         }
-        DumpClass(id, u.classes.NameOf(id), u.classes.Get(id));
+        DumpClass(
+            id, support::DisplayOf(u.classes.PathOf(id)), u.classes.Get(id));
       }
       Dedent();
     }
@@ -1477,7 +1484,7 @@ class HirDumper {
         Line(
             std::format(
                 "[{}] {}::{}", id.value, record.unit_name,
-                record.signature.class_name));
+                support::DisplayOf(record.signature.class_path)));
         Indent();
         for (const PublishedMemberId member_id :
              record.signature.members.Ids()) {
@@ -1594,10 +1601,8 @@ class HirDumper {
       if (!positions.empty()) positions += ", ";
       positions += position;
     };
-    add(std::format("as \"{}\"", published.signature.class_name));
-    for (const std::string& alias : published.aliases) {
-      add(std::format("also as \"{}\"", alias));
-    }
+    add(std::format(
+        "as \"{}\"", support::DisplayOf(published.signature.class_path)));
     for (const PublishedDecl& decl : published.members) {
       add(std::visit(
           Overloaded{
@@ -1733,7 +1738,7 @@ class HirDumper {
             [](const InUnitBase& b) {
               return std::format("self^{}", b.hops.value);
             },
-            [](const EnclosingInstanceBase& b) {
+            [](const EnclosingScopeBase& b) {
               return std::format(
                   "enclosing ExternalScopeClass[{}]", b.scope_class.value);
             }},

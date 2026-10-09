@@ -47,6 +47,7 @@
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 #include "lyra/profiling/time_trace.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -106,7 +107,7 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
       "declare unit", [&] { return unit_.name; });
   {
     const profiling::TimeTraceScope step("declare structural identities");
-    DeclareStructuralIdentities(*scope_, hir::InstanceClassName(unit_.name));
+    DeclareStructuralIdentities(*scope_, support::DefPath{});
   }
   {
     const profiling::TimeTraceScope step("declare classes");
@@ -213,17 +214,25 @@ auto UnitLowerer::NextWithClauseId() -> hir::WithClauseId {
 // call or a hierarchical reference resolves regardless of source order
 // (LRM 13.4.2, 23.9).
 void UnitLowerer::DeclareStructuralIdentities(
-    const slang::ast::Scope& scope, std::string class_name) {
+    const slang::ast::Scope& scope, support::DefPath class_path) {
   const ScopeFrameId frame = NextScopeFrameId();
   scope_frames_.emplace(&scope, frame);
   ScopeDeclarations& decls = scope_declarations_[&scope];
   ScopePublicationRecord& published = scope_publications_[&scope];
-  published.class_name = std::move(class_name);
+  published.class_path = std::move(class_path);
   publishing_scopes_.push_back(&scope);
   for (const auto& member : scope.members()) {
     if (!Owns(member)) continue;
     DeclareMemberIdentities(member, decls, published, frame);
   }
+}
+
+void UnitLowerer::DeclareBlockIdentities(
+    const slang::ast::GenerateBlockSymbol& block,
+    const ScopePublicationRecord& holder) {
+  DeclareStructuralIdentities(
+      block, support::Extended(
+                 holder.class_path, Specialization().BlockStepOf(block)));
 }
 
 // Every slang symbol kind is listed and there is no `default`, so a kind a
@@ -426,7 +435,8 @@ void UnitLowerer::DeclareConditionalGenerate(
     ScopePublicationRecord& published, ScopeFrameId frame) {
   if (!OpensItsConstruct(block)) return;
   const hir::GenerateId generate = decls.generates.Declare();
-  ScopePublicationRecord::Choice choice{.id = generate, .built = {}};
+  ScopePublicationRecord::Choice choice{
+      .id = generate, .construct = block.constructIndex, .built = {}};
   std::uint32_t position = 0;
   for (const auto* arm : AlternativesOfConstruct(block)) {
     MapOwnedChildBinding(
@@ -439,8 +449,7 @@ void UnitLowerer::DeclareConditionalGenerate(
     ++position;
     if (arm->isUninstantiated) continue;
     choice.built.push_back(arm);
-    DeclareStructuralIdentities(
-        *arm, BlockClassName(published.class_name, *arm));
+    DeclareBlockIdentities(*arm, published);
   }
   published.generates.emplace_back(std::move(choice));
 }
@@ -465,8 +474,7 @@ void UnitLowerer::DeclareLoopGenerate(
             .names = hir::GenerateLoopRef{.generate = generate},
             .selects = {block}});
     ++block;
-    DeclareStructuralIdentities(
-        *entry, BlockClassName(published.class_name, *entry));
+    DeclareBlockIdentities(*entry, published);
   }
 }
 
@@ -495,7 +503,8 @@ void UnitLowerer::DeclareSubroutine(
   MapSubroutineBinding(sub, frame, id);
   published.callables.emplace_back(
       ScopePublicationRecord::Subroutine{.symbol = &sub, .id = id});
-  std::vector<std::string> path{std::string{sub.name}};
+  support::DefPath path =
+      support::Extended(published.class_path, ProceduralStepOf(sub));
   published.disable_targets.push_back(
       ScopePublicationRecord::DisableTarget{.symbol = &sub, .path = path});
   DeclareProceduralStatics(
@@ -549,11 +558,11 @@ void UnitLowerer::DeclareProcess(
   // list -- its body, or where the body opens no scope of its own, each block
   // written directly inside it -- so the process is the only place that says
   // which of those blocks are its own. A process is unnamed, so each of them
-  // heads its own path.
+  // stands directly in this scope.
   for (const auto* block : proc.getBlocks()) {
-    std::optional<std::vector<std::string>> path;
+    std::optional<support::DefPath> path;
     if (!block->name.empty()) {
-      path.emplace(1, std::string{block->name});
+      path = support::Extended(published.class_path, ProceduralStepOf(*block));
       published.disable_targets.push_back(
           ScopePublicationRecord::DisableTarget{
               .symbol = block, .path = *path});
@@ -567,14 +576,13 @@ void UnitLowerer::DeclareProceduralStatics(
     const slang::ast::Scope& block, const slang::ast::Symbol& body_symbol,
     hir::ProceduralBodyRef body, ScopeFrameId frame,
     ScopePublicationRecord& published,
-    const std::optional<std::vector<std::string>>& within) {
+    const std::optional<support::DefPath>& within) {
   for (const auto& member : block.members()) {
     if (member.kind == slang::ast::SymbolKind::StatementBlock) {
       const auto& nested = member.as<slang::ast::StatementBlockSymbol>();
-      std::optional<std::vector<std::string>> path;
+      std::optional<support::DefPath> path;
       if (within.has_value() && !nested.name.empty()) {
-        path = *within;
-        path->emplace_back(nested.name);
+        path = support::Extended(*within, ProceduralStepOf(nested));
         published.disable_targets.push_back(
             ScopePublicationRecord::DisableTarget{
                 .symbol = &nested, .path = *path});
@@ -719,7 +727,7 @@ auto UnitLowerer::TakesDeclaringInstance(
             return own->second.takes_declaring_instance;
           },
           [&](const hir::ExternalClassRef& ext) {
-            return ExternalClassOf(ext.unit_name, ext.class_name)
+            return ExternalClassOf(ext.unit_name, ext.class_path)
                 .takes_declaring_instance;
           }},
       *ref);
@@ -798,7 +806,6 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
   }
   hir::ScopePublication publication{
       .signature = std::move(stated->second),
-      .aliases = {},
       .members =
           base::Translation<hir::PublishedMemberId, hir::PublishedDecl>{
               published.members.size()},

@@ -23,6 +23,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -86,9 +87,7 @@ struct DeclaringInstance {
 // class per identity, so nothing downstream pairs two views of one class.
 struct ClassShape {
   // Absent for a class nothing outside this unit names.
-  std::optional<std::string> name;
-  // The further names the same class is published under.
-  std::vector<std::string> aliases;
+  std::optional<support::DefPath> path;
   std::optional<mir::ClassRef> base;
   // Interface class contracts (LRM 8.26) this class commits to satisfying.
   // Populated from the source `implements` clause of a regular class or the

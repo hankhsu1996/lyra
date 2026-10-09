@@ -14,6 +14,7 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/published_method.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
 
@@ -84,7 +85,7 @@ using PublishedProperties = base::Arena<PublishedProperty, PublishedPropertyId>;
 }
 
 // A class of another unit this one reaches into, as that unit's signature
-// published it, named by the unit that declares it and its canonical name. The
+// published it, named by the unit that declares it and its path in it. The
 // lists below are ordered rather than sets, since a property's slot and a
 // virtual method's ordinal are counted out of them. Every type here is this
 // unit's own -- taken into its pool where the
@@ -96,7 +97,7 @@ using PublishedProperties = base::Arena<PublishedProperty, PublishedPropertyId>;
 // and converted to its views wherever it is held.
 struct ExternalClass {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
   // The class it extends, as its own unit published, and absent where it
   // extends nothing. No property or method this class inherited is here;
   // reaching one is a walk along this chain, and each step is another unit's
@@ -132,14 +133,14 @@ struct ExternalClass {
   auto operator==(const ExternalClass&) const -> bool = default;
 };
 
-// The record kept of the class `class_name` of unit `unit_name`, or nothing
+// The record kept of the class `class_path` of unit `unit_name`, or nothing
 // where this unit holds no published record of it -- a class no signature the
 // design compiles carries.
 [[nodiscard]] inline auto FindExternalClass(
     std::span<const ExternalClass> records, std::string_view unit_name,
-    std::string_view class_name) -> const ExternalClass* {
+    const support::DefPath& class_path) -> const ExternalClass* {
   for (const ExternalClass& record : records) {
-    if (record.unit_name == unit_name && record.class_name == class_name) {
+    if (record.unit_name == unit_name && record.class_path == class_path) {
       return &record;
     }
   }

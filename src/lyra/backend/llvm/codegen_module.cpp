@@ -20,7 +20,6 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
-#include <llvm/IR/GlobalAlias.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Type.h>
@@ -190,9 +189,6 @@ auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
       llvm::FunctionType::get(types_.Map(fn.result_type), params, false);
   llvm::Function* declared = llvm::Function::Create(
       fn_ty, LinkageOf(fn.definition), fn.name, module_.get());
-  for (const std::string& alias : fn.aliases) {
-    llvm::GlobalAlias::create(alias, declared);
-  }
   // A body the runtime calls back through a tuple's table answers a
   // predicate as a C++ `bool`, which is read as a whole byte.
   if (unit_->types.Get(fn.result_type).Is<lir::MachineBoolType>()) {
@@ -411,7 +407,7 @@ auto CodeGenModule::DeclarationOf(lir::TypeId type) const -> Declared {
   }
   if (const auto* cross = named.As<lir::CrossUnitClassType>()) {
     const lir::ExternalClass* published =
-        lir::FindExternalClass(*unit_, cross->unit_name, cross->class_name);
+        lir::FindExternalClass(*unit_, cross->unit_name, cross->class_path);
     if (published == nullptr) {
       throw InternalError(
           "llvm codegen: a class of another unit is read that this unit "

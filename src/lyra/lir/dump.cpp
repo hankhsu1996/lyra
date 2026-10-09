@@ -17,6 +17,7 @@
 #include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -77,7 +78,10 @@ class LirDumper {
  private:
   void DumpStruct(StructId id) {
     const Struct& declared = unit_->structs.Get(id);
-    Line(std::format(R"(Struct "{}" (#{}))", declared.name, id.value));
+    Line(
+        std::format(
+            R"(Struct "{}" (#{}))", support::DisplayOf(declared.path),
+            id.value));
     Indent();
     DumpElements(declared.elements);
     for (const StructMethod& method : declared.methods) {
@@ -93,7 +97,7 @@ class LirDumper {
     Line(
         std::format(
             "ExternalStruct \"{}.{}\"", external.declaration.unit_name,
-            external.declaration.name));
+            support::DisplayOf(external.declaration.path)));
     Indent();
     DumpElements(external.elements);
     Dedent();
@@ -106,7 +110,10 @@ class LirDumper {
   }
 
   void DumpExternalClass(const ExternalClass& cls) {
-    Line(std::format("ExternalClass \"{}.{}\"", cls.unit_name, cls.class_name));
+    Line(
+        std::format(
+            "ExternalClass \"{}.{}\"", cls.unit_name,
+            support::DisplayOf(cls.class_path)));
     Indent();
     if (cls.base.has_value()) {
       Line(std::format("base: {}", FormatType(*cls.base)));
@@ -126,8 +133,9 @@ class LirDumper {
     Line(
         std::format(
             "Class{} (#{})",
-            cls.name.has_value() ? std::format(" \"{}\"", *cls.name)
-                                 : std::string{},
+            cls.path.has_value()
+                ? std::format(" \"{}\"", support::DisplayOf(*cls.path))
+                : std::string{},
             id.value));
     Indent();
     if (cls.base.has_value()) {
@@ -241,9 +249,6 @@ class LirDumper {
             "fn \"{}\"({}) -> {}", fn.name, params,
             FormatType(fn.result_type)));
     Indent();
-    for (const std::string& alias : fn.aliases) {
-      Line(std::format("alias \"{}\"", alias));
-    }
     for (std::size_t v = 0; v < fn.variables.size(); ++v) {
       Line(std::format("var {}: {}", v, FormatType(fn.variables[v])));
     }
@@ -552,7 +557,9 @@ class LirDumper {
         Overloaded{
             [](StructId id) { return std::format("#{}", id.value); },
             [](const TypeDeclarationRef& declared) {
-              return std::format("{}.{}", declared.unit_name, declared.name);
+              return std::format(
+                  "{}.{}", declared.unit_name,
+                  support::DisplayOf(declared.path));
             }},
         ref);
   }

@@ -34,6 +34,7 @@
 #include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
 #include "lyra/value/format.hpp"
@@ -93,7 +94,8 @@ auto FormatClass(const DeclaredClassRef& cls) -> std::string {
           },
           [](const CrossUnitClassRef& cross) {
             return std::format(
-                "Class[{}::{}]", cross.unit_name, cross.class_name);
+                "Class[{}::{}]", cross.unit_name,
+                support::DisplayOf(cross.class_path));
           }},
       cls);
 }
@@ -279,11 +281,12 @@ class MirDumper {
             [this](const IntraUnitClassRef& i) -> std::string {
               return std::format(
                   "IntraUnit[#{}]{}", i.class_id.value,
-                  FormatName(unit_->GetClass(i.class_id).name));
+                  FormatPath(unit_->GetClass(i.class_id).path));
             },
             [](const CrossUnitClassRef& e) -> std::string {
               return std::format(
-                  "CrossUnit(\"{}::{}\")", e.unit_name, e.class_name);
+                  "CrossUnit(\"{}::{}\")", e.unit_name,
+                  support::DisplayOf(e.class_path));
             },
             [](const ObjectTreeRootRef&) -> std::string {
               return "ObjectTreeRoot";
@@ -311,8 +314,8 @@ class MirDumper {
             },
             [](const ExternalVirtualSlot& e) -> std::string {
               return std::format(
-                  "External({}::{}#{})", e.unit_name, e.class_name,
-                  e.ordinal.value);
+                  "External({}::{}#{})", e.unit_name,
+                  support::DisplayOf(e.class_path), e.ordinal.value);
             }},
         s);
   }
@@ -482,7 +485,8 @@ class MirDumper {
                       },
                       [](const TypeDeclarationRef& ref) {
                         return std::format(
-                            "Struct({}::{})", ref.unit_name, ref.name);
+                            "Struct({}::{})", ref.unit_name,
+                            support::DisplayOf(ref.path));
                       }},
                   s.declaration);
             },
@@ -632,8 +636,8 @@ class MirDumper {
             },
             [](const OverridesExternalSlot& e) -> std::string {
               return std::format(
-                  "OverridesExternalSlot[{}::{}#{}]", e.unit_name, e.class_name,
-                  e.ordinal.value);
+                  "OverridesExternalSlot[{}::{}#{}]", e.unit_name,
+                  support::DisplayOf(e.class_path), e.ordinal.value);
             },
             [](const OverridesLibraryVirtual& l) -> std::string {
               return std::format(
@@ -681,13 +685,14 @@ class MirDumper {
             },
             [](const ExternalUnitClassMethodTarget& e) -> std::string {
               return std::format(
-                  "external_class_method={}::{}::{}", e.unit_name, e.class_name,
-                  e.method_name);
+                  "external_class_method={}::{}::{}", e.unit_name,
+                  support::DisplayOf(e.class_path), e.method_name);
             },
             [](const StructMethodTarget& s) -> std::string {
               return std::format(
                   R"(struct_method={}::{} "{}")", s.declaration.unit_name,
-                  s.declaration.name, support::ValueOperationName(s.answers));
+                  support::DisplayOf(s.declaration.path),
+                  support::ValueOperationName(s.answers));
             },
             [](const ExternalUnitMintedEntryTarget& e) -> std::string {
               return std::format(
@@ -767,7 +772,7 @@ class MirDumper {
             [](const ExternalStaticPropertyRef& r) -> std::string {
               return std::format(
                   "ExternalStaticPropertyRef external={}::{}::{}", r.unit_name,
-                  r.class_name, r.property_name);
+                  support::DisplayOf(r.class_path), r.property_name);
             },
             [](const ClassConstantRef& r) -> std::string {
               return std::format(
@@ -909,9 +914,10 @@ class MirDumper {
     return name.has_value() ? std::format(" \"{}\"", *name) : std::string{};
   }
 
-  static auto FormatName(const std::optional<std::string>& name)
+  static auto FormatPath(const std::optional<support::DefPath>& path)
       -> std::string {
-    return name.has_value() ? std::format(" \"{}\"", *name) : std::string{};
+    return path.has_value() ? std::format(" \"{}\"", support::DisplayOf(*path))
+                            : std::string{};
   }
 
   // A constant is an expression tree with no statements, so what is dumped
@@ -927,12 +933,9 @@ class MirDumper {
     dumped_.insert(id.value);
     scope_stack_.push_back(&s);
     const std::string kind = s.is_interface_class ? "InterfaceClass" : "Class";
-    Line(std::format("{}{} (#{})", kind, FormatName(s.name), id.value));
+    Line(std::format("{}{} (#{})", kind, FormatPath(s.path), id.value));
     Indent();
 
-    for (const std::string& alias : s.aliases) {
-      Line(std::format("Alias: {}", alias));
-    }
     if (s.base.has_value()) {
       Line(std::format("Base: {}", FormatClassRef(*s.base)));
     }
@@ -1056,8 +1059,8 @@ class MirDumper {
   void DumpStruct(StructId id, const StructDecl& decl) {
     Line(
         std::format(
-            R"(Struct (#{}) "{}" elems=[{}])", id.value, decl.name,
-            FormatTypeList(decl.elements)));
+            R"(Struct (#{}) "{}" elems=[{}])", id.value,
+            support::DisplayOf(decl.path), FormatTypeList(decl.elements)));
     Indent();
     for (const StructMethod& method : decl.methods) {
       Line(
@@ -1077,7 +1080,8 @@ class MirDumper {
     Line(
         std::format(
             "Struct({}::{}) elems=[{}]", external.declaration.unit_name,
-            external.declaration.name, FormatTypeList(external.elements)));
+            support::DisplayOf(external.declaration.path),
+            FormatTypeList(external.elements)));
   }
 
   void DumpParams(const CallableCode& code) {

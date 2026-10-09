@@ -106,7 +106,7 @@ auto UnitLowerer::TranslateStructType(const hir::UnpackedStructType& src)
     return mir::StructType{.declaration = unit_.structs.Declare()};
   }
   mir::TypeDeclarationRef declaration{
-      .unit_name = src.declaration.unit_name, .name = src.declaration.name};
+      .unit_name = src.declaration.unit_name, .path = src.declaration.path};
   // A struct another unit declares brings that unit's statement of its
   // operations with it, which is a dependency on that unit.
   unit_.ConsumeNamespaceOf(declaration.unit_name);
@@ -126,11 +126,11 @@ void UnitLowerer::DefineOwnStruct(
   std::vector<mir::StructMethod> methods = StructMethodsOf(
       *this,
       mir::TypeDeclarationRef{
-          .unit_name = unit_.name, .name = src.declaration.name},
+          .unit_name = unit_.name, .path = src.declaration.path},
       structure, elements);
   unit_.structs.Define(
       id, mir::StructDecl{
-              .name = src.declaration.name,
+              .path = src.declaration.path,
               .elements = std::move(elements),
               .methods = std::move(methods)});
 }
@@ -288,7 +288,7 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
           // name alone reads nothing.
           [&](const hir::UnitObjectType& src) -> mir::Type {
             return mir::Type{mir::ObjectType{
-                .of = ClassIdentityOf(src.unit_name, src.class_name)}};
+                .of = ClassIdentityOf(src.unit_name, src.class_path)}};
           },
           // A set of objects is a sequence per dimension, never a value array:
           // an object is reached by its address and has no value form, and
@@ -302,7 +302,7 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
                                  ? mir::Type{mir::ObjectType{
                                        .of = ClassIdentityOf(
                                            src.kinds.front().unit_name,
-                                           src.kinds.front().class_name)}}
+                                           src.kinds.front().class_path)}}
                                  : mir::Type{mir::RuntimeClassType{
                                        .which = support::RuntimeClass::kScope}};
             for (std::size_t d = 0; d < src.ranges.size(); ++d) {

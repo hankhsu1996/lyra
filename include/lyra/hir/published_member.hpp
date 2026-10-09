@@ -4,12 +4,12 @@
 #include <cstdint>
 #include <string>
 #include <variant>
-#include <vector>
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/pool_id.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
 
@@ -60,13 +60,20 @@ struct BorrowedObjectStorage {
 using PublishedStorage = std::variant<
     VariableStorage, NetStorage, ReferenceStorage, BorrowedObjectStorage>;
 
-// One declaration a scope exposes to another unit by name. `within` is the
-// path of named blocks and subroutines of the scope the declaration sits in,
-// outermost first, which a hierarchical name spells before it (LRM 23.9); it is
-// empty for a declaration of the scope itself.
+// One declaration a scope exposes to another unit by name.
+//
+// `holder` is the scope of the unit the source declares it in, which together
+// with its name tells it from every other the unit declares (LRM 23.6): the
+// publishing scope itself, a subroutine or labelled block inside it for a
+// static variable a hierarchical name reaches through those (LRM 23.9), or a
+// class for a static property (LRM 8.9) of one each object of the scope has as
+// a type of its own (LRM 6.22). The holder need not lie inside the publishing
+// scope: the scope keeping a class's cell is the one replicating the class,
+// and a specialization bound to a type of an inner scope is replicated below
+// where its generic was declared (LRM 8.25).
 struct PublishedMember {
   std::string name;
-  std::vector<std::string> within;
+  support::DefPath holder;
   TypeId type;
   PublishedStorage storage;
 

@@ -43,6 +43,7 @@
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -241,8 +242,7 @@ auto LowerUnpackedStruct(
           hir::TypeDeclarationRef{
               .unit_name = CompilationUnitName(
                   UnitHomeOf(struct_type), unit_lowerer.Specialization()),
-              .name = TypeDeclarationName(
-                  struct_type, unit_lowerer.Specialization())},
+              .path = DefPathOf(struct_type, unit_lowerer.Specialization())},
       .fields = *std::move(fields_or)};
 }
 
@@ -866,7 +866,7 @@ auto UnitLowerer::ConstructorDeclaresFormals(
   if (!ref) return std::unexpected(std::move(ref.error()));
   if (const auto* ext = std::get_if<hir::ExternalClassRef>(&*ref)) {
     const hir::ExternalClass& published =
-        ExternalClassOf(ext->unit_name, ext->class_name);
+        ExternalClassOf(ext->unit_name, ext->class_path);
     return published.constructor.has_value() &&
            !published.constructor->params.empty();
   }
@@ -885,7 +885,7 @@ auto UnitLowerer::MakeClassMethodTarget(
   const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
   return hir::ExternalClassMethodTarget{
       .unit_name = ext.unit_name,
-      .class_name = ext.class_name,
+      .class_path = ext.class_path,
       .method_name = std::string(method.name)};
 }
 
@@ -906,13 +906,13 @@ auto UnitLowerer::MakeMethodCallee(
   // 8.20) are read off that class's signature. Both are taken before anything
   // else is read, since reading another signature may move the records.
   const hir::PublishedMethod* declared = hir::FindMethod(
-      ExternalClassOf(ext.unit_name, ext.class_name).methods, method.name);
+      ExternalClassOf(ext.unit_name, ext.class_path).methods, method.name);
   if (declared == nullptr) {
     throw InternalError(
         std::format(
             "UnitLowerer::MakeMethodCallee: '{}::{}' declares '{}' and "
             "published no such method",
-            ext.unit_name, ext.class_name, method.name));
+            ext.unit_name, support::DisplayOf(ext.class_path), method.name));
   }
   hir::ExternalCalleeInterface interface = declared->prototype.interface;
   const bool is_virtual = std::visit(
@@ -941,7 +941,7 @@ auto UnitLowerer::PublishedMethodOf(
   if (!declaring) return std::unexpected(std::move(declaring.error()));
   if (const auto* ext = std::get_if<hir::ExternalClassRef>(&*declaring)) {
     if (const hir::PublishedMethod* declared = hir::FindMethod(
-            ExternalClassOf(ext->unit_name, ext->class_name).methods,
+            ExternalClassOf(ext->unit_name, ext->class_path).methods,
             method.name)) {
       return std::optional{*declared};
     }
@@ -1023,7 +1023,7 @@ auto UnitLowerer::ParentsOf(
           },
           [&](const hir::ExternalClassRef& ext) -> diag::Result<ClassParents> {
             const hir::ExternalClass& published =
-                ExternalClassOf(ext.unit_name, ext.class_name);
+                ExternalClassOf(ext.unit_name, ext.class_path);
             ClassParents parents;
             if (published.base.has_value()) {
               parents.base = AsLocalOrPublished(*published.base);
@@ -1043,7 +1043,7 @@ auto UnitLowerer::NameOf(const LocalOrPublishedClass& cls) const
           [&](const slang::ast::ClassType* local) {
             return hir::ExternalClassRef{
                 .unit_name = unit_.name,
-                .class_name = SpecializationName(*local, Specialization())};
+                .class_path = DefPathOf(*local, Specialization())};
           },
           [](const hir::ExternalClassRef& ext) { return ext; }},
       cls);
@@ -1104,7 +1104,7 @@ auto UnitLowerer::MethodNamesOf(const LocalOrPublishedClass& iface)
           [&](const hir::ExternalClassRef& ext) {
             std::vector<std::string> names;
             for (const hir::PublishedMethod& method :
-                 ExternalClassOf(ext.unit_name, ext.class_name).methods) {
+                 ExternalClassOf(ext.unit_name, ext.class_path).methods) {
               names.push_back(method.prototype.name);
             }
             return names;
@@ -1172,7 +1172,7 @@ auto UnitLowerer::StateConformance(
               // reads further signatures, which may move the records.
               std::vector<std::string> introduced;
               for (const hir::PublishedMethod& method :
-                   ExternalClassOf(ext.unit_name, ext.class_name).methods) {
+                   ExternalClassOf(ext.unit_name, ext.class_path).methods) {
                 if (std::holds_alternative<hir::IntroducesVirtual>(
                         method.dispatch)) {
                   introduced.push_back(method.prototype.name);
@@ -1187,7 +1187,7 @@ auto UnitLowerer::StateConformance(
                 decl.conforming.emplace_back(
                     hir::ExternalDispatchSlot{
                         .unit_name = ext.unit_name,
-                        .class_name = ext.class_name,
+                        .class_path = ext.class_path,
                         .behavior = ordinal},
                     *std::move(answered_by));
                 ++ordinal.value;
@@ -1233,7 +1233,7 @@ auto UnitLowerer::MakeExternalDispatchSlot(
       std::format(
           "'{}' is introduced by no class this unit can read through '{}::{}', "
           "so there is nothing to name the behavior by",
-          method_name, cls.unit_name, cls.class_name));
+          method_name, cls.unit_name, support::DisplayOf(cls.class_path)));
 }
 
 auto UnitLowerer::IntroducerOf(
@@ -1250,19 +1250,19 @@ auto UnitLowerer::IntroducerOf(
     std::optional<hir::PublishedBehaviorId> behavior;
     std::optional<hir::ExternalClassRef> base;
     if (at->unit_name == unit_.name) {
-      const hir::ClassSignature& own = OwnClassSignature(at->class_name);
+      const hir::ClassSignature& own = OwnClassSignature(at->class_path);
       behavior = hir::FindIntroducedVirtual(own.methods, method_name);
       base = own.base;
     } else {
       const hir::ExternalClass& published =
-          ExternalClassOf(at->unit_name, at->class_name);
+          ExternalClassOf(at->unit_name, at->class_path);
       behavior = hir::FindIntroducedVirtual(published.methods, method_name);
       base = published.base;
     }
     if (behavior.has_value()) {
       return hir::ExternalDispatchSlot{
           .unit_name = at->unit_name,
-          .class_name = at->class_name,
+          .class_path = at->class_path,
           .behavior = *behavior};
     }
     at = std::move(base);
@@ -1270,15 +1270,15 @@ auto UnitLowerer::IntroducerOf(
   return std::nullopt;
 }
 
-auto UnitLowerer::OwnClassSignature(const std::string& class_name) const
+auto UnitLowerer::OwnClassSignature(const support::DefPath& class_path) const
     -> const hir::ClassSignature& {
-  const auto it = own_classes_by_name_.find(class_name);
-  if (it == own_classes_by_name_.end()) {
+  const auto it = own_classes_by_path_.find(class_path);
+  if (it == own_classes_by_path_.end()) {
     throw InternalError(
         std::format(
             "UnitLowerer::OwnClassSignature: this unit holds no class '{}' -- "
             "please report this as a bug",
-            class_name));
+            support::DisplayOf(class_path)));
   }
   return own_class_signatures_.at(it->second);
 }
@@ -1286,13 +1286,13 @@ auto UnitLowerer::OwnClassSignature(const std::string& class_name) const
 auto UnitLowerer::AsLocalOrPublished(const hir::ExternalClassRef& named) const
     -> LocalOrPublishedClass {
   if (named.unit_name != unit_.name) return named;
-  const auto it = own_classes_by_name_.find(named.class_name);
-  if (it == own_classes_by_name_.end()) {
+  const auto it = own_classes_by_path_.find(named.class_path);
+  if (it == own_classes_by_path_.end()) {
     throw InternalError(
         std::format(
             "UnitLowerer::AsLocalOrPublished: this unit holds no class '{}' -- "
             "please report this as a bug",
-            named.class_name));
+            support::DisplayOf(named.class_path)));
   }
   return it->second;
 }
@@ -1335,17 +1335,17 @@ auto UnitLowerer::MakeClassPropertyTarget(
   // bodies name (LRM 8.18), and those compile in the unit declaring it.
   const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
   const std::optional<hir::PublishedPropertyId> property = hir::FindProperty(
-      ExternalClassOf(ext.unit_name, ext.class_name).properties, prop.name);
+      ExternalClassOf(ext.unit_name, ext.class_path).properties, prop.name);
   if (!property.has_value()) {
     throw InternalError(
         std::format(
             "UnitLowerer::MakeClassPropertyTarget: '{}::{}' declares '{}' and "
             "published no such property",
-            ext.unit_name, ext.class_name, prop.name));
+            ext.unit_name, support::DisplayOf(ext.class_path), prop.name));
   }
   return hir::ExternalClassPropertyTarget{
       .unit_name = ext.unit_name,
-      .class_name = ext.class_name,
+      .class_path = ext.class_path,
       .property = *property};
 }
 
@@ -1363,7 +1363,7 @@ auto UnitLowerer::ResolveClassRef(
     const auto [it, _] = class_cache_.emplace(
         &cls, hir::ClassRef{hir::ExternalClassRef{
                   .unit_name = CompilationUnitName(home, Specialization()),
-                  .class_name = SpecializationName(cls, Specialization())}});
+                  .class_path = DefPathOf(cls, Specialization())}});
     return it->second;
   }
   // A local class not yet minted (e.g. a class nested inside a generate
@@ -1387,9 +1387,9 @@ auto UnitLowerer::InternLocalClass(
     return std::get<hir::LocalClassRef>(it->second).class_id;
   }
   const hir::ClassId id =
-      unit_.classes.Declare(SpecializationName(cls, Specialization()));
+      unit_.classes.Declare(DefPathOf(cls, Specialization()));
   class_cache_.emplace(&cls, hir::ClassRef{hir::LocalClassRef{.class_id = id}});
-  own_classes_by_name_.emplace(unit_.classes.NameOf(id), &cls);
+  own_classes_by_path_.emplace(unit_.classes.PathOf(id), &cls);
 
   auto decl_owner = std::make_unique<hir::ClassDecl>();
   hir::ClassDecl& decl = *decl_owner;
@@ -1426,7 +1426,7 @@ auto UnitLowerer::InternLocalClass(
             [&](const hir::LocalClassRef& local) {
               return hir::ExternalClassRef{
                   .unit_name = unit_.name,
-                  .class_name = unit_.classes.NameOf(local.class_id)};
+                  .class_path = unit_.classes.PathOf(local.class_id)};
             },
             [](const hir::ExternalClassRef& ext) { return ext; }},
         ref);
@@ -1564,7 +1564,7 @@ auto UnitLowerer::InternLocalClass(
   // describe different positions. Which classes a unit publishes is a separate
   // question, settled where the signature is derived.
   hir::ClassSignature own_signature{
-      .class_name = unit_.classes.NameOf(id),
+      .class_path = unit_.classes.PathOf(id),
       .base = published_base,
       .is_interface_class = decl.is_interface_class,
       .implements = std::move(published_interfaces),
@@ -1695,10 +1695,10 @@ void UnitLowerer::ReadSignaturesOfNamedClasses() {
     }
   }
   std::ranges::sort(named, {}, [](const hir::ExternalClassRef& ref) {
-    return std::tie(ref.unit_name, ref.class_name);
+    return std::tie(ref.unit_name, ref.class_path);
   });
   for (const hir::ExternalClassRef& ref : named) {
-    ExternalClassOf(ref.unit_name, ref.class_name);
+    ExternalClassOf(ref.unit_name, ref.class_path);
   }
 }
 

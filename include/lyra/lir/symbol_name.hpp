@@ -9,6 +9,7 @@
 #include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -42,9 +43,11 @@ enum class SymbolCategory : std::uint8_t {
   kTypeInfo,
 };
 
-// One component of a symbol: a name the source wrote, or an ordinal the
-// compiler counted. Both self-delimit, so a sequence of them composes to one
-// string no other sequence composes to.
+// One component of a symbol: a name the source wrote, an ordinal the compiler
+// counted, or the steps of the path that tells a declaration from the others
+// of its unit. Each self-delimits and says which kind it is, so a sequence of
+// them composes to one string no other sequence composes to: a block and a
+// class carrying one label are different parts.
 struct SymbolPart {
   static auto Name(std::string_view name) -> SymbolPart;
   static auto Ordinal(std::uint32_t value) -> SymbolPart;
@@ -58,7 +61,18 @@ struct SymbolPart {
 // the source named can never compose the symbol of one it did not.
 auto SymbolPartOf(std::optional<std::string_view> name, std::uint32_t ordinal)
     -> SymbolPart;
-auto SymbolPartOf(const std::optional<std::string>& name, std::uint32_t ordinal)
+
+// What a declaration another unit names contributes: one part per step of its
+// path, in order, each opening with the marker of the kind of scope it is. A
+// step is told from every other kind of part by its marker, so the steps end
+// where a part of another kind begins or the symbol does, and the class an
+// instance of its unit is, which has no step, contributes nothing.
+auto SymbolPartOf(const support::DefPath& path) -> SymbolPart;
+
+// The same for a class of this unit, which has a path where another unit names
+// it and the position it sits at where none does.
+auto SymbolPartOf(
+    const std::optional<support::DefPath>& path, std::uint32_t ordinal)
     -> SymbolPart;
 
 // The symbol a declaration is linked under, program-wide.
@@ -91,7 +105,7 @@ auto ClassCallableSymbol(
 // A struct's method (LRM 7.2), under the struct the unit declares. The
 // operation it answers is its name, since a struct has one method for each.
 auto StructMethodSymbol(
-    std::string_view unit_name, std::string_view structure,
+    std::string_view unit_name, const support::DefPath& structure,
     support::ValueOperation operation) -> std::string;
 // A class's cell, under the class that owns it. The pool holding a class's
 // cells also takes what its bodies keep for the whole class, which the source

@@ -297,17 +297,19 @@ auto CollectSpecializationHomes(
       homes.placed[&home].push_back(cls);
     }
   };
+  const auto name_of = [&](const slang::ast::ClassType& cls) {
+    return SpecializationName(cls, policy);
+  };
   for (const auto* package : CollectPackages(facts)) {
-    WalkDeclarationScopes(*package, visit);
+    WalkDeclarationScopes(*package, visit, name_of);
   }
   for (const auto* cu : facts.Compilation().getRoot().compilationUnits) {
-    WalkDeclarationScopes(*cu, visit);
+    WalkDeclarationScopes(*cu, visit, name_of);
   }
-  // The front end lists a generic's specializations in no order a second
-  // compilation repeats, so they are taken in the order of their names.
+  // Specializations of several generics meet in one list, so each list is
+  // taken in the order of its names.
   const auto by_name = [&](const slang::ast::ClassType* cls) {
-    return CompilationUnitName(UnitHomeOf(*cls), policy) +
-           SpecializationName(*cls, policy);
+    return CompilationUnitName(UnitHomeOf(*cls), policy) + name_of(*cls);
   };
   std::ranges::sort(homes.own_units, {}, by_name);
   for (auto& [_, placed] : homes.placed) {
@@ -516,6 +518,38 @@ auto DefinitionsLoweredApart(
   return apart;
 }
 
+// The definitions a unit of which took two block instances for one application
+// of their generate block and found them publishing different classes. Such a
+// unit states a signature no body can be held against, and its definition is
+// declared again with every index of its loops deciding by its own value -- so
+// the program is the one each block describes and only the sharing is lost,
+// which is said as a remark against the definition.
+auto DefinitionsPublishedApart(
+    const LoweringFacts& facts,
+    std::span<const std::unique_ptr<UnitLowerer>> lowerers,
+    diag::DiagnosticSink& sink) -> Definitions {
+  Definitions apart;
+  for (const std::unique_ptr<UnitLowerer>& lowerer : lowerers) {
+    if (!lowerer->BlocksPublishedApart()) continue;
+    const auto& definition = lowerer->SourceScope()
+                                 .asSymbol()
+                                 .as<slang::ast::InstanceBodySymbol>()
+                                 .getDefinition();
+    if (apart.insert(&definition).second) {
+      sink.Report(
+          diag::Make(
+              facts.SourceMapper().PointSpanOf(definition.location),
+              diag::DiagCode::kRemarkLostSharing,
+              std::format(
+                  "sharing lost: every generate block of '{}' is compiled "
+                  "once per index, because blocks built at different indices "
+                  "published apart",
+                  definition.name)));
+    }
+  }
+  return apart;
+}
+
 }  // namespace
 
 // What the design's units hold between declaring and lowering their bodies.
@@ -597,9 +631,10 @@ struct DeclaredDesign::Units {
   }
 };
 
-// A definition whose instances lowered apart is declared again kept whole. A
-// definition kept whole is supplied nothing at construction, so none of its
-// instances can lower apart again, and the set grows every time round: at
+// A definition whose instances lowered apart, or whose block instances
+// published apart, is declared again kept whole. A definition kept whole is
+// supplied nothing at construction and tells every index of its loops apart,
+// so neither can happen to it again, and the set grows every time round: at
 // worst every definition is kept whole and each parameter value is its own
 // unit. Nothing else reads the frontend until this returns, so the check reads
 // it without taking turns.
@@ -628,8 +663,14 @@ auto DeclaredDesign::Declare(
     if (sink.HasErrors()) {
       return std::nullopt;
     }
-    const Definitions apart = DefinitionsLoweredApart(
-        units->facts, collected, units->signatures, sink);
+    // What the signatures already show is settled before any body is lowered
+    // against them.
+    Definitions apart =
+        DefinitionsPublishedApart(units->facts, units->lowerers, sink);
+    if (apart.empty()) {
+      apart = DefinitionsLoweredApart(
+          units->facts, collected, units->signatures, sink);
+    }
     if (apart.empty()) {
       units->tops = *std::move(tops);
       return DeclaredDesign(std::move(units));

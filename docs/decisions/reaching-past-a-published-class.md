@@ -69,8 +69,8 @@ Two constraints pull in opposite directions, and a third settles it.
 ### D1. A published class promises what it declares and the class it extends, never what it inherited
 
 The properties it declares, in the order that fixes their slots; the behaviors it introduces, in the
-order that fixes their ordinals; the class it extends, named by declaring unit and canonical name;
-and whether it is an interface class. Nothing that came from an ancestor appears, because the
+order that fixes their ordinals; the class it extends, named by declaring unit and its path in that
+unit; and whether it is an interface class. Nothing that came from an ancestor appears, because the
 promise is derived from the unit's own declarations and an ancestor's may be elsewhere.
 
 Whether it is an interface class is on the promise for the same reason its name is: a class commits

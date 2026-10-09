@@ -63,7 +63,7 @@ auto ImportScopeClass(TypeImporter& importer, ScopeClassSignature published)
   // itself, and wrong for a type: it would keep indexing the pool it came from
   // and mean something else here, with nothing to report it.
   ScopeClassSignature imported{
-      .class_name = std::move(published.class_name),
+      .class_path = std::move(published.class_path),
       .members = {},
       .callables = {},
       .generates = std::move(published.generates),
@@ -114,7 +114,7 @@ auto ImportExternalClass(
     TypePool& into) -> ExternalClass {
   ExternalClass cls{
       .unit_name = signature.unit_name,
-      .class_name = published.class_name,
+      .class_path = published.class_path,
       .base = published.base,
       .is_interface_class = published.is_interface_class,
       .implements = published.implements,

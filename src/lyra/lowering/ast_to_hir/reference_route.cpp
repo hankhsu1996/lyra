@@ -45,6 +45,7 @@
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -115,10 +116,13 @@ auto NamedHopInto(const slang::ast::Symbol& symbol) -> std::optional<NamedHop> {
           .loop = std::string{block->getParentScope()->asSymbol().name},
           .index = LoopIndexOf(*block)};
     }
-    return LabeledBlockHop{.name = name};
+    return ChosenBlockHop{
+        .construct = block->constructIndex,
+        .position = AlternativePositionOf(*block)};
   }
-  if (IsProceduralScope(symbol)) {
-    return ProceduralHop{.name = name};
+  if (symbol.kind == slang::ast::SymbolKind::Subroutine ||
+      symbol.kind == slang::ast::SymbolKind::StatementBlock) {
+    return ProceduralHop{.step = ProceduralStepOf(symbol)};
   }
   return std::nullopt;
 }
@@ -197,7 +201,7 @@ auto AddCoordinate(DescentHop& hop, std::uint32_t position) -> bool {
                       return true;
                     },
                     [](LoopBlockHop&) { return false; },
-                    [](LabeledBlockHop&) { return false; },
+                    [](ChosenBlockHop&) { return false; },
                     [](ProceduralHop&) { return false; }},
                 named);
           }},
@@ -210,7 +214,7 @@ auto AddCoordinate(DescentHop& hop, std::uint32_t position) -> bool {
 struct PublishedBlockAt {
   hir::PublishedGenerateId generate;
   std::vector<std::uint32_t> selects;
-  std::string class_name;
+  support::DefPath class_path;
 };
 
 // A loop's block is found by the value its index stood at, and selected by its
@@ -232,7 +236,8 @@ auto FindPublishedBlock(
                   return PublishedBlockAt{
                       .generate = at,
                       .selects = {block},
-                      .class_name = loop.blocks[block].class_name};
+                      .class_path =
+                          loop.classes.at(loop.blocks[block].class_at)};
                 }
               }
               return std::nullopt;
@@ -246,13 +251,13 @@ auto FindPublishedBlock(
   return std::nullopt;
 }
 
-// A block that stands alone or was chosen by a conditional is found by the
-// name the source gave it, and is the one block its construct holds (LRM
-// 27.5).
+// A block that stands alone or was chosen by a conditional is found by where
+// the source wrote it, and is the one block its construct holds in the scope
+// the name stands in (LRM 27.5).
 auto FindPublishedBlock(
     const base::Arena<hir::PublishedGenerate, hir::PublishedGenerateId>&
         generates,
-    const LabeledBlockHop& hop) -> std::optional<PublishedBlockAt> {
+    const ChosenBlockHop& hop) -> std::optional<PublishedBlockAt> {
   for (const hir::PublishedGenerateId at : generates.Ids()) {
     auto found = std::visit(
         Overloaded{
@@ -261,12 +266,13 @@ auto FindPublishedBlock(
             },
             [&](const hir::PublishedChoice& choice)
                 -> std::optional<PublishedBlockAt> {
+              if (choice.construct != hop.construct) return std::nullopt;
               for (const hir::PublishedAlternative& block : choice.blocks) {
-                if (block.name == hop.name) {
+                if (block.position == hop.position) {
                   return PublishedBlockAt{
                       .generate = at,
                       .selects = {},
-                      .class_name = block.class_name};
+                      .class_path = block.class_path};
                 }
               }
               return std::nullopt;
@@ -350,15 +356,17 @@ auto UnitLowerer::ResolveRouteTarget(
   return std::visit(
       Overloaded{
           // A route that landed on a scope of another unit names what that
-          // scope published, under the named blocks and subroutines the name
-          // went on through, and the signature also states what storage it is
-          // -- so nothing about it is read off the unit that declared it. Every
-          // declaration a name may reach is published (LRM 23.6), so one that
-          // is not is a form this compiler does not publish yet.
+          // scope published, as held by the scope the named blocks and
+          // subroutines the name went on through lead to, and the signature
+          // also states what storage it is -- so nothing about it is read off
+          // the unit that declared it. Every declaration a name may reach is
+          // published (LRM 23.6), so one that is not is a form this compiler
+          // does not publish yet.
           [&](const InExternalScope& on) -> diag::Result<hir::DataLeaf> {
-            const auto member =
-                unit_.external_scope_classes.Get(on.scope_class)
-                    .signature.FindMember(value.name, on.within);
+            const hir::ScopeClassSignature& published =
+                unit_.external_scope_classes.Get(on.scope_class).signature;
+            const auto member = published.FindMember(
+                value.name, support::Extended(published.class_path, on.within));
             if (!member.has_value()) return unsupported();
             return ExternalMemberLeafOf(on.scope_class, *member);
           },
@@ -460,9 +468,11 @@ auto UnitLowerer::DisableTargetOf(
   if (minted.has_value()) {
     leaf = hir::DisableTargetLeaf{.scope = minted->scope};
   } else if (const auto* on = std::get_if<InExternalScope>(&route->place)) {
+    const hir::ScopeClassSignature& signature =
+        unit_.external_scope_classes.Get(on->scope_class).signature;
     const std::optional<hir::PublishedDisableTargetId> published =
-        unit_.external_scope_classes.Get(on->scope_class)
-            .signature.FindDisableTarget(on->within);
+        signature.FindDisableTarget(
+            support::Extended(signature.class_path, on->within));
     if (published.has_value()) {
       leaf = hir::ExternalDisableTargetLeaf{
           .scope_class = on->scope_class, .target = *published};
@@ -542,13 +552,14 @@ auto UnitLowerer::StartOf(
         .leading = std::move(reach.hop)}};
   }
 
-  // Upward the name stands in the instance it landed in, or in the one
-  // holding the generate block it landed in; the unit is told apart by which
-  // block that was, so the walk down to it is the same in every instance of
-  // the unit. A name that never leaves the instance starts at the reader.
+  // Upward the name stands in the scope it landed in, an instance or a
+  // generate block the reader stands in or a top-level instance; the unit is
+  // told apart by the class of that scope, so every instance of the unit
+  // starts at a scope of that class and the walk down is the one the name
+  // writes. A name that never leaves the instance starts at the reader.
   const std::optional<ClimbAnchor> climb = ClimbOutOf(reference, *reader->body);
   if (!climb.has_value()) return RouteOrigin{FromReader{}};
-  return RouteOrigin{StartInEnclosing(*climb->instance)};
+  return RouteOrigin{StartInEnclosing(*climb->scope)};
 }
 
 auto UnitLowerer::StartsOfNames(
@@ -760,7 +771,7 @@ auto UnitLowerer::PlaceThroughPort(
   if (selects.size() != objects.ranges.size()) return OnSeveralObjects{};
   const hir::UnitObjectType& kind = objects.KindAt(selects);
   return InExternalScope{
-      .scope_class = ExternalScopeClassOf(kind.unit_name, kind.class_name),
+      .scope_class = ExternalScopeClassOf(kind.unit_name, kind.class_path),
       .within = {}};
 }
 
@@ -952,12 +963,12 @@ auto UnitLowerer::RouteToScope(
 
 auto UnitLowerer::ClassifyDescent(ScopeRoute& route, std::span<DescentHop> hops)
     -> bool {
-  // A route starting at the enclosing instance of another unit stands on that
-  // unit's object from the start.
+  // A route starting at an enclosing scope stands on an object of that scope's
+  // class from the start, which is read through what its unit published.
   RoutePlace standing = std::visit(
       Overloaded{
           [](const hir::InUnitBase&) -> RoutePlace { return InOwnScope{}; },
-          [](const hir::EnclosingInstanceBase& base) -> RoutePlace {
+          [](const hir::EnclosingScopeBase& base) -> RoutePlace {
             return InExternalScope{
                 .scope_class = base.scope_class, .within = {}};
           }},
@@ -1033,7 +1044,7 @@ auto UnitLowerer::DescendPublishedFrom(
                                  InstanceHop& instance) -> bool {
     const hir::ScopeClassSignature& record =
         unit_.external_scope_classes.Get(on.scope_class).signature;
-    const auto member = record.FindMember(instance.name);
+    const auto member = record.FindMember(instance.name, record.class_path);
     if (!member.has_value()) return false;
     const auto* objects = unit_.types.Get(record.members.Get(*member).type)
                               .As<hir::UnitObjectsType>();
@@ -1058,7 +1069,7 @@ auto UnitLowerer::DescendPublishedFrom(
     }
     descended.place = InExternalScope{
         .scope_class =
-            ExternalScopeClassOf(lands_on->unit_name, lands_on->class_name),
+            ExternalScopeClassOf(lands_on->unit_name, lands_on->class_path),
         .within = {}};
     return true;
   };
@@ -1073,7 +1084,7 @@ auto UnitLowerer::DescendPublishedFrom(
     if (!found.has_value()) return false;
     const std::string unit_name = record.unit_name;
     const hir::ExternalScopeClassId result_class =
-        ExternalScopeClassOf(unit_name, found->class_name);
+        ExternalScopeClassOf(unit_name, found->class_path);
     descended.open.clear();
     descended.steps.push_back(
         hir::ExternalStep{
@@ -1102,11 +1113,11 @@ auto UnitLowerer::DescendPublishedFrom(
             [&](const LoopBlockHop& block) {
               return !past_procedural && into_block(*on, block);
             },
-            [&](const LabeledBlockHop& block) {
+            [&](const ChosenBlockHop& block) {
               return !past_procedural && into_block(*on, block);
             },
             [&](ProceduralHop& procedural) {
-              on->within.push_back(std::move(procedural.name));
+              on->within.push_back(std::move(procedural.step));
               return true;
             }},
         hop);
@@ -1158,13 +1169,16 @@ auto UnitLowerer::ResolveValueTarget(
   return hir::ValueTarget{*std::move(*route)};
 }
 
-auto UnitLowerer::StartInEnclosing(const slang::ast::InstanceBodySymbol& body)
+auto UnitLowerer::StartInEnclosing(const slang::ast::Scope& scope)
     -> RouteStart {
+  // The class is the one the unit of the instance holding `scope` published
+  // the scope as, which this unit names the way that unit does.
+  const hir::ExternalScopeClassId scope_class = ExternalScopeClassOf(
+      Specialization().NameOf(InstanceHolding(scope)),
+      DefPathOf(scope.asSymbol(), Specialization()));
   return RouteStart{
-      .below = &body,
-      .base =
-          hir::EnclosingInstanceBase{
-              .scope_class = ScopeClassOfInstance(InstantiationOf(body))},
+      .below = &scope,
+      .base = hir::EnclosingScopeBase{.scope_class = scope_class},
       .leading = std::nullopt};
 }
 
@@ -1177,8 +1191,8 @@ auto UnitLowerer::StartReaching(const slang::ast::Scope& target)
   return std::visit(
       Overloaded{
           [](const FromReader&) { return RouteOrigin{FromReader{}}; },
-          [&](const FromInstance& from) {
-            return RouteOrigin{StartInEnclosing(*from.body)};
+          [&](const FromScope& from) {
+            return RouteOrigin{StartInEnclosing(*from.scope)};
           }},
       *start);
 }
@@ -1251,9 +1265,8 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
 
   // A class another design element declares inside one of its scopes is a
   // type of that scope's instance (LRM 6.22), so what the class keeps for
-  // itself is a cell of the instance, which the scope published under the
-  // name the class was published as. It is reached the way any declaration of
-  // another instance is.
+  // itself is a cell of the instance, which the scope published as that
+  // class's. It is reached the way any declaration of another instance is.
   const auto other_instance_cell =
       [&](const hir::ExternalClassRef& ext) -> diag::Result<hir::ValueTarget> {
     const auto refuse = [&] {
@@ -1269,9 +1282,8 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
                          ? std::get_if<InExternalScope>(&route->place)
                          : nullptr;
     if (on == nullptr) return refuse();
-    const std::vector<std::string> within{ext.class_name};
     const auto member = unit_.external_scope_classes.Get(on->scope_class)
-                            .signature.FindMember(prop.name, within);
+                            .signature.FindMember(prop.name, ext.class_path);
     if (!member.has_value()) return refuse();
     return hir::ValueTarget{hir::RoutedValueRef{
         .id = MapOrGetRoute(
@@ -1286,13 +1298,13 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
   const auto namespace_cell =
       [&](const hir::ExternalClassRef& ext) -> diag::Result<hir::ValueTarget> {
     for (const hir::PublishedProperty& property :
-         ExternalClassOf(ext.unit_name, ext.class_name).static_properties) {
+         ExternalClassOf(ext.unit_name, ext.class_path).static_properties) {
       if (property.name == prop.name) {
         return hir::ValueTarget{hir::StaticPropertyRef{
             .target =
                 hir::ExternalStaticPropertyTarget{
                     .unit_name = ext.unit_name,
-                    .class_name = ext.class_name,
+                    .class_path = ext.class_path,
                     .property_name = std::string{prop.name}},
             .value_type = property.type}};
       }
@@ -1302,7 +1314,7 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
             "UnitLowerer::ResolveStaticPropertyTarget: '{}::{}' publishes "
             "every static property another unit may name, and '{}' is not "
             "among them",
-            ext.unit_name, ext.class_name, prop.name));
+            ext.unit_name, support::DisplayOf(ext.class_path), prop.name));
   };
 
   return std::visit(

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <format>
 #include <limits>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -37,6 +38,7 @@
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/instance_context.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -54,13 +56,71 @@ auto Fnv1a64(std::string_view bytes) -> std::uint64_t {
   return hash;
 }
 
+// A name and the digest of what was fixed under it, as one bounded identifier:
+// the name alone where nothing was fixed.
+auto WithDigest(std::string name, const std::optional<std::uint64_t>& digest)
+    -> std::string {
+  if (digest.has_value()) name += std::format("__{:016x}", *digest);
+  return name;
+}
+
+// A declaration's path in its unit as an identity: each step as its kind and
+// then the length of its name and the name, or the position it stands at and a
+// terminator, and after a name whatever else tells the step from its siblings,
+// each behind a mark no kind is written with. So two paths that differ anywhere
+// never answer alike whatever characters a name holds (LRM 5.6.1).
+auto DefPathIdentity(const support::DefPath& path) -> std::string {
+  const auto named = [](char kind, std::string_view name) {
+    return std::format("{}{}:{}", kind, name.size(), name);
+  };
+  const auto placed = [](char kind, std::uint32_t position) {
+    return std::format("{}{};", kind, position);
+  };
+  const auto bound = [](const std::optional<std::uint64_t>& arguments) {
+    return arguments.has_value() ? std::format("#{:016x};", *arguments)
+                                 : std::string{};
+  };
+  std::string out;
+  for (const support::DefPathData& step : path.data) {
+    out += std::visit(
+        Overloaded{
+            [&](const support::GenerateBlockStep& block) {
+              std::string step = named('b', block.label);
+              if (block.disambiguator != 0) {
+                step += std::format("~{};", block.disambiguator);
+              }
+              return step + bound(block.arguments);
+            },
+            [&](const support::ClassStep& cls) {
+              return named('c', cls.name) + bound(cls.arguments);
+            },
+            [&](const support::SubroutineStep& subroutine) {
+              return named('s', subroutine.name);
+            },
+            [&](const support::NamedBlockStep& block) {
+              return named('n', block.name);
+            },
+            [&](const support::UnnamedBlockStep& block) {
+              return placed('u', block.position);
+            },
+            [&](const support::TypeStep& type) {
+              return named('t', type.name);
+            },
+            [&](const support::UnnamedTypeStep& type) {
+              return placed('a', type.position);
+            }},
+        step);
+  }
+  return out;
+}
+
 // One type's identity, as this compiler tells types apart. SystemVerilog
 // identifies most types by their shape, and the frontend renders a shape
 // faithfully, so those answer with that rendering. A class and an unpacked
 // structure are the exceptions: each is identified by its declaration (LRM 8.3,
 // 6.22.1), so two with identical members are still two types, and its identity
-// is the unit that declares it together with its own name -- the same pair
-// every cross-unit reference to one carries.
+// is the unit that declares it together with which declaration of that unit it
+// is -- the same pair every cross-unit reference to one carries.
 //
 // A type built out of others answers with its own form over the identities of
 // what it holds, so a class inside one is named the way it would be alone. Only
@@ -90,9 +150,10 @@ auto TypeIdentity(
   switch (canonical.kind) {
     case SymbolKind::ClassType: {
       const auto& cls = canonical.as<slang::ast::ClassType>();
+      const std::string unit = CompilationUnitName(UnitHomeOf(cls), policy);
       return std::format(
-          "{}::{}", CompilationUnitName(UnitHomeOf(cls), policy),
-          SpecializationName(cls, policy));
+          "class {}:{} {}", unit.size(), unit,
+          DefPathIdentity(DefPathOf(cls, policy)));
     }
     case SymbolKind::FixedSizeUnpackedArrayType: {
       const auto& array =
@@ -119,10 +180,13 @@ auto TypeIdentity(
       return std::format(
           "[{}]{}", index, TypeIdentity(assoc.elementType, policy));
     }
-    case SymbolKind::UnpackedStructType:
+    case SymbolKind::UnpackedStructType: {
+      const std::string unit =
+          CompilationUnitName(UnitHomeOf(canonical), policy);
       return std::format(
-          "struct {}::{}", CompilationUnitName(UnitHomeOf(canonical), policy),
-          TypeDeclarationName(canonical, policy));
+          "struct {}:{} {}", unit.size(), unit,
+          DefPathIdentity(DefPathOf(canonical, policy)));
+    }
     case SymbolKind::UnpackedUnionType: {
       const auto& u = canonical.as<slang::ast::UnpackedUnionType>();
       return (u.isTagged ? "tagged union" : "union") + field_identities(u);
@@ -263,25 +327,6 @@ auto IsInstanceScope(const slang::ast::Scope& scope) -> bool {
          kind == slang::ast::SymbolKind::GenerateBlock;
 }
 
-// The generate blocks between a declaration and the compilation unit that owns
-// it, outermost first. Each is a declaration scope of its own, so two of them
-// may declare the same class name; the path is what tells those declarations
-// apart in a name space that has no nesting of its own.
-auto DeclaringBlockPath(const slang::ast::Symbol& decl)
-    -> std::vector<std::string> {
-  std::vector<std::string> path;
-  for (const slang::ast::Scope* scope = decl.getParentScope(); scope != nullptr;
-       scope = scope->asSymbol().getParentScope()) {
-    const slang::ast::Symbol& sym = scope->asSymbol();
-    if (sym.kind == slang::ast::SymbolKind::GenerateBlock) {
-      path.push_back(
-          GenerateBlockStep(sym.as<slang::ast::GenerateBlockSymbol>()));
-    }
-  }
-  std::ranges::reverse(path);
-  return path;
-}
-
 // The bytes a key folds to. Every part is written with its own delimiter, so
 // two keys that differ anywhere differ here; nothing rests on this being read
 // back, and nothing compares keys through it -- a key answers that itself.
@@ -309,14 +354,14 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
             [](const SuppliedAtConstruction&) {
               return std::string{"<supplied>"};
             },
-            [](const LandsIn& v) { return std::format("<in {}>", v.scope); },
+            [](const LandsIn& v) {
+              return std::format(
+                  "<in {}:{} {}>", v.unit.size(), v.unit,
+                  DefPathIdentity(v.scope));
+            },
             [](const LandsBack& v) {
-              std::string at = std::format("<back {}", v.levels);
-              for (const std::string& block : v.blocks) {
-                at += ' ';
-                at += block;
-              }
-              return at + '>';
+              return std::format(
+                  "<back {} {}>", v.levels, DefPathIdentity(v.blocks));
             },
             [](const BindInstantiation& v) {
               return std::format("<bound by {}>", v.directive);
@@ -336,20 +381,49 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
 auto LandingOf(
     const slang::ast::Scope& scope, const SpecializationPolicy& policy)
     -> SpecializationInputKind {
-  std::vector<std::string> blocks;
+  support::DefPath blocks;
   const slang::ast::Symbol* at = &scope.asSymbol();
   while (at->kind != slang::ast::SymbolKind::InstanceBody) {
     if (const auto* block = at->as_if<slang::ast::GenerateBlockSymbol>()) {
-      blocks.push_back(GenerateBlockStep(*block));
+      blocks.data.emplace_back(policy.BlockStepOf(*block));
     }
     at = &at->getHierarchicalParent()->asSymbol();
   }
   if (const auto levels =
           policy.LevelsOutTo(at->as<slang::ast::InstanceBodySymbol>())) {
-    std::ranges::reverse(blocks);
+    std::ranges::reverse(blocks.data);
     return LandsBack{.levels = *levels, .blocks = std::move(blocks)};
   }
-  return LandsIn{.scope = ScopeClassName(scope, policy)};
+  return LandsIn{
+      .unit = policy.NameOf(
+          InstantiationOf(at->as<slang::ast::InstanceBodySymbol>())),
+      .scope = DefPathOf(scope.asSymbol(), policy)};
+}
+
+// Something written elsewhere about the instance at `path`, as a part of the
+// key of whatever holds that instance.
+auto OverrideInput(
+    const std::string& path, const OverrideEffect& effect,
+    const SpecializationPolicy& policy) -> SpecializationInput {
+  return std::visit(
+      Overloaded{
+          [&](const ParameterGivenElsewhere& given) {
+            SpecializationInput input =
+                ParameterInput(*given.parameter, policy);
+            input.name = std::format("{}.{}", path, input.name);
+            return input;
+          },
+          [&](const InsertedByBind& bound) {
+            return SpecializationInput{
+                .name = path,
+                .kind = BindInstantiation{.directive = bound.directive}};
+          },
+          [&](const CellChosenByConfiguration& chosen) {
+            return SpecializationInput{
+                .name = path,
+                .kind = BoundToCell{.cell = CellName(*chosen.cell)}};
+          }},
+      effect);
 }
 
 // One thing an instance below fixed, as a part of the key of the instance
@@ -364,28 +438,27 @@ auto InputOf(const FixedBelow& fixed, const SpecializationPolicy& policy)
                 .kind = LandingOf(*name.scope, policy)};
           },
           [&](const OverrideEffect& effect) {
-            return std::visit(
-                Overloaded{
-                    [&](const ParameterGivenElsewhere& given) {
-                      SpecializationInput input =
-                          ParameterInput(*given.parameter, policy);
-                      input.name = std::format("{}.{}", fixed.path, input.name);
-                      return input;
-                    },
-                    [&](const InsertedByBind& bound) {
-                      return SpecializationInput{
-                          .name = fixed.path,
-                          .kind =
-                              BindInstantiation{.directive = bound.directive}};
-                    },
-                    [&](const CellChosenByConfiguration& chosen) {
-                      return SpecializationInput{
-                          .name = fixed.path,
-                          .kind = BoundToCell{.cell = CellName(*chosen.cell)}};
-                    }},
-                effect);
+            return OverrideInput(fixed.path, effect, policy);
           }},
       fixed.what);
+}
+
+// Whether `scope` declares a class (LRM 8.3), itself or in a generate block
+// inside it.
+auto DeclaresAClass(const slang::ast::Scope& scope) -> bool {
+  return std::ranges::any_of(
+      scope.members(), [](const slang::ast::Symbol& member) {
+        if (member.kind == slang::ast::SymbolKind::ClassType ||
+            member.kind == slang::ast::SymbolKind::GenericClassDef) {
+          return true;
+        }
+        if (const auto* block =
+                member.as_if<slang::ast::GenerateBlockSymbol>()) {
+          return !block->isUninstantiated && DeclaresAClass(*block);
+        }
+        const auto* loop = member.as_if<slang::ast::GenerateBlockArraySymbol>();
+        return loop != nullptr && DeclaresAClass(*loop);
+      });
 }
 
 }  // namespace
@@ -398,6 +471,29 @@ auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
         "definition, so one that belongs to none was never built");
   }
   return *body.parentInstance;
+}
+
+namespace {
+
+// The body `scope` is or stands in.
+auto InstanceBodyHolding(const slang::ast::Scope& scope)
+    -> const slang::ast::InstanceBodySymbol& {
+  for (const slang::ast::Scope* level = &scope; level != nullptr;
+       level = level->asSymbol().getParentScope()) {
+    if (const auto* body =
+            level->asSymbol().as_if<slang::ast::InstanceBodySymbol>()) {
+      return *body;
+    }
+  }
+  throw InternalError(
+      "InstanceBodyHolding: the scope stands in the body of no instance");
+}
+
+}  // namespace
+
+auto InstanceHolding(const slang::ast::Scope& scope)
+    -> const slang::ast::InstanceSymbol& {
+  return InstantiationOf(InstanceBodyHolding(scope));
 }
 
 namespace {
@@ -532,6 +628,51 @@ auto SpecializationPolicy::ContextOf(
   return InstanceContextOf(inst, context_);
 }
 
+auto SpecializationPolicy::BlockStepOf(
+    const slang::ast::GenerateBlockSymbol& block) const
+    -> support::GenerateBlockStep {
+  if (const auto kept = block_steps_.find(&block); kept != block_steps_.end()) {
+    return kept->second;
+  }
+  SpecializationKey key{.definition = GenerateBlockLabel(block), .inputs = {}};
+  if (const slang::ast::ParameterSymbol* index = LoopIndexParameterOf(block)) {
+    if (DeclaresAClass(block)) {
+      key.inputs.push_back(ParameterInput(*index, *this));
+    } else {
+      std::uint32_t place = 0;
+      for (const std::string& folded :
+           WhatItDecides(InstanceHolding(block), *index)) {
+        key.inputs.push_back(
+            SpecializationInput{
+                .name = std::format("{}#{}", index->name, place++),
+                .kind = FixedValue{.value = folded}});
+      }
+    }
+  }
+  for (const OverriddenBelow& overridden : OverridesBelow(block, context_)) {
+    key.inputs.push_back(
+        OverrideInput(overridden.path, overridden.effect, *this));
+  }
+  support::GenerateBlockStep step{
+      .label = key.definition,
+      .disambiguator = LabelDisambiguatorOf(block),
+      .arguments = ArgumentsDigest(key)};
+  // What is fixed below may name a type by a unit whose own name is still
+  // being worked out, and a name asked then can differ from the one the unit
+  // has alone, so the answer is kept only when no name is in progress.
+  if (!names_in_progress_.empty()) return step;
+  if (const auto folded = folded_blocks_.find(step);
+      folded == folded_blocks_.end()) {
+    folded_blocks_.emplace(step, std::move(key));
+  } else if (folded->second != key) {
+    throw InternalError(
+        "SpecializationPolicy::BlockStepOf: two applications reached one "
+        "digest, so the step no longer tells them apart");
+  }
+  block_steps_.emplace(&block, step);
+  return step;
+}
+
 void SpecializationPolicy::EnterNaming(
     const slang::ast::InstanceBodySymbol& body) const {
   naming_.push_back(&body);
@@ -559,27 +700,23 @@ auto SpecializationPolicy::LevelsOutTo(
   return std::nullopt;
 }
 
-auto SpecializationName(const SpecializationKey& key) -> std::string {
-  if (key.inputs.empty()) {
-    return key.definition;
-  }
-  return std::format("{}__{:016x}", key.definition, Fnv1a64(KeyBytes(key)));
+auto ArgumentsDigest(const SpecializationKey& key)
+    -> std::optional<std::uint64_t> {
+  if (key.inputs.empty()) return std::nullopt;
+  return Fnv1a64(KeyBytes(key));
 }
 
-auto SpecializationKeyOf(
-    const slang::ast::ClassType& cls, const SpecializationPolicy& policy)
-    -> SpecializationKey {
-  // A class carries one identifier through compilation, and a compilation unit
-  // holds every class it declares in one flat name space, so the identifier has
-  // to be unique there. The source name alone is not: SystemVerilog scopes the
-  // declaration, so sibling generate blocks may each declare the same one.
-  std::string definition;
-  for (const std::string& block : DeclaringBlockPath(cls)) {
-    definition += block;
-    definition += '_';
-  }
-  definition += cls.name;
+auto SpecializationName(const SpecializationKey& key) -> std::string {
+  return WithDigest(key.definition, ArgumentsDigest(key));
+}
 
+namespace {
+
+// The key of the class `cls` under `definition`, the name its declaration is
+// told from others by wherever the key is used.
+auto ClassKeyUnder(
+    std::string definition, const slang::ast::ClassType& cls,
+    const SpecializationPolicy& policy) -> SpecializationKey {
   SpecializationKey key{.definition = std::move(definition), .inputs = {}};
   if (cls.genericClass == nullptr) {
     return key;
@@ -590,41 +727,64 @@ auto SpecializationKeyOf(
   return key;
 }
 
+// A class is declared in a design element, a package, a generate block or
+// another class (LRM 8.3, A.1.4, A.1.9), so no other scope stands above one.
+[[noreturn]] void ThrowClassDeclaredIn(std::string_view what) {
+  throw InternalError(
+      std::format("SpecializationKeyOf: a class is declared inside {}", what));
+}
+
+}  // namespace
+
+auto SpecializationKeyOf(
+    const slang::ast::ClassType& cls, const SpecializationPolicy& policy)
+    -> SpecializationKey {
+  // The key names a class inside its compilation unit by one string, and the
+  // source name alone does not: SystemVerilog scopes the declaration, so
+  // sibling generate blocks may each declare the same one (LRM 27.3), and so
+  // may two classes (LRM 8.23).
+  const support::DefPath path = DefPathOf(cls, policy);
+  std::string definition;
+  for (const support::DefPathData& enclosing :
+       std::span{path.data}.first(path.data.size() - 1)) {
+    definition += std::visit(
+        Overloaded{
+            [](const support::GenerateBlockStep& block) -> std::string {
+              std::string text = block.label;
+              if (block.disambiguator != 0) {
+                text += std::format("#{}", block.disambiguator);
+              }
+              return WithDigest(std::move(text), block.arguments);
+            },
+            [](const support::ClassStep& outer) -> std::string {
+              return WithDigest(outer.name, outer.arguments);
+            },
+            [](const support::SubroutineStep&) -> std::string {
+              ThrowClassDeclaredIn("a subroutine");
+            },
+            [](const support::NamedBlockStep&) -> std::string {
+              ThrowClassDeclaredIn("a procedural block");
+            },
+            [](const support::UnnamedBlockStep&) -> std::string {
+              ThrowClassDeclaredIn("a procedural block");
+            },
+            [](const support::TypeStep&) -> std::string {
+              ThrowClassDeclaredIn("a structure or a union");
+            },
+            [](const support::UnnamedTypeStep&) -> std::string {
+              ThrowClassDeclaredIn("a structure or a union");
+            }},
+        enclosing);
+    definition += '_';
+  }
+  definition += cls.name;
+  return ClassKeyUnder(std::move(definition), cls, policy);
+}
+
 auto SpecializationName(
     const slang::ast::ClassType& cls, const SpecializationPolicy& policy)
     -> std::string {
   return SpecializationName(SpecializationKeyOf(cls, policy));
-}
-
-auto ScopeClassName(
-    const slang::ast::Scope& scope, const SpecializationPolicy& policy)
-    -> std::string {
-  const slang::ast::Symbol& symbol = scope.asSymbol();
-  if (const auto* body = symbol.as_if<slang::ast::InstanceBodySymbol>()) {
-    return policy.NameOf(InstantiationOf(*body));
-  }
-  const auto* block = symbol.as_if<slang::ast::GenerateBlockSymbol>();
-  if (block == nullptr) {
-    throw InternalError(
-        "ScopeClassName: an object stands for an instance or a generate "
-        "block, and for no other scope");
-  }
-  const slang::ast::Scope* holder = block->getParentScope();
-  while (holder != nullptr && !IsInstanceScope(*holder)) {
-    holder = holder->asSymbol().getParentScope();
-  }
-  if (holder == nullptr) {
-    throw InternalError(
-        "ScopeClassName: a generate block stands in an instance's body or in "
-        "another generate block");
-  }
-  return BlockClassName(ScopeClassName(*holder, policy), *block);
-}
-
-auto BlockClassName(
-    std::string_view holder, const slang::ast::GenerateBlockSymbol& block)
-    -> std::string {
-  return std::format("{}::{}", holder, GenerateBlockStep(block));
 }
 
 auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
@@ -712,18 +872,6 @@ auto InnermostSpecialization(const slang::ast::Symbol& decl)
   return nullptr;
 }
 
-auto InstanceBodyOf(const slang::ast::Scope& scope)
-    -> const slang::ast::Symbol& {
-  for (const slang::ast::Scope* level = &scope; level != nullptr;
-       level = level->asSymbol().getParentScope()) {
-    if (level->asSymbol().kind == slang::ast::SymbolKind::InstanceBody) {
-      return level->asSymbol();
-    }
-  }
-  throw InternalError(
-      "UnitHomeOf: an instance's scope lies in a design element's body");
-}
-
 }  // namespace
 
 auto ReplicatingScope(const slang::ast::Symbol& decl)
@@ -766,7 +914,7 @@ auto ReplicatingScope(const slang::ast::Symbol& decl)
 
 auto UnitHomeOf(const slang::ast::Symbol& decl) -> const slang::ast::Symbol& {
   const slang::ast::Scope& replicating = ReplicatingScope(decl);
-  if (IsInstanceScope(replicating)) return InstanceBodyOf(replicating);
+  if (IsInstanceScope(replicating)) return InstanceBodyHolding(replicating);
   if (const slang::ast::ClassType* spec = InnermostSpecialization(decl)) {
     return *spec;
   }
@@ -829,24 +977,6 @@ auto CompilationUnitName(
 
 namespace {
 
-// What a scope between a declaration and its unit is called on the path to it:
-// a generate block as the hierarchy spells it, a class as its specialization,
-// and a block with no label as where it sits, since it has nothing else.
-auto ScopeStep(
-    const slang::ast::Symbol& scope, const SpecializationPolicy& policy)
-    -> std::string {
-  if (scope.kind == slang::ast::SymbolKind::GenerateBlock) {
-    return GenerateBlockStep(scope.as<slang::ast::GenerateBlockSymbol>());
-  }
-  if (scope.kind == slang::ast::SymbolKind::ClassType) {
-    return SpecializationName(scope.as<slang::ast::ClassType>(), policy);
-  }
-  if (!scope.name.empty()) {
-    return std::string{scope.name};
-  }
-  return std::format("${}", static_cast<std::uint32_t>(scope.getIndex()));
-}
-
 // Whether `candidate` is the type the declaration `type` came from declares. A
 // type written in place of a name is one type for every data object its
 // declaration statement declares (LRM 6.22.1 c), while the front end elaborates
@@ -858,57 +988,100 @@ auto DeclaredBySameText(
                                  canonical.getSyntax() == type.getSyntax());
 }
 
-// The name a type answers to in the scope that declares it: the typedef
-// declaring it, or else the first data object its declaration statement
-// declares (LRM 6.22.1 c). A type declared some other way has nothing to answer
-// to but where it sits.
-auto NameInScope(const slang::ast::Type& type) -> std::string {
+// The step a type is in the scope that declares it: under the name it answers
+// to there -- the typedef declaring it, or else the first data object its
+// declaration statement declares (LRM 6.22.1 c) -- and where nothing declares
+// it by name, by where it sits.
+auto TypeStepOf(const slang::ast::Type& type) -> support::DefPathData {
   for (const auto& member : type.getParentScope()->members()) {
     if (const auto* alias = member.as_if<slang::ast::TypeAliasType>()) {
       if (DeclaredBySameText(alias->targetType.getType(), type)) {
-        return std::string{alias->name};
+        return support::TypeStep{.name = std::string{alias->name}};
       }
       continue;
     }
     if (const auto* value = member.as_if<slang::ast::ValueSymbol>()) {
       if (DeclaredBySameText(value->getType(), type)) {
-        return std::string{value->name};
+        return support::TypeStep{.name = std::string{value->name}};
       }
     }
   }
-  return std::format("${}", static_cast<std::uint32_t>(type.getIndex()));
+  return support::UnnamedTypeStep{
+      .position = static_cast<std::uint32_t>(type.getIndex())};
+}
+
+// The step `scope` is on the path to whatever it holds, or nothing for a loop
+// generate, which is no scope a declaration stands in: its blocks are, and
+// each already answers to the loop's label (LRM 27.4).
+auto StepOf(const slang::ast::Symbol& scope, const SpecializationPolicy& policy)
+    -> std::optional<support::DefPathData> {
+  using slang::ast::SymbolKind;
+  if (scope.kind == SymbolKind::GenerateBlockArray) return std::nullopt;
+  if (const auto* block = scope.as_if<slang::ast::GenerateBlockSymbol>()) {
+    return policy.BlockStepOf(*block);
+  }
+  // A class is told from the others of its scope by its name and, for a
+  // specialization of a generic class, what its parameters were bound to
+  // (LRM 8.25).
+  if (const auto* cls = scope.as_if<slang::ast::ClassType>()) {
+    return support::ClassStep{
+        .name = std::string{cls->name},
+        .arguments = ArgumentsDigest(
+            ClassKeyUnder(std::string{cls->name}, *cls, policy))};
+  }
+  if (scope.kind == SymbolKind::Subroutine ||
+      scope.kind == SymbolKind::StatementBlock) {
+    return ProceduralStepOf(scope);
+  }
+  if (scope.kind == SymbolKind::UnpackedStructType ||
+      scope.kind == SymbolKind::UnpackedUnionType) {
+    return TypeStepOf(scope.as<slang::ast::Type>());
+  }
+  throw InternalError(
+      std::format(
+          "DefPathOf: a {} is no scope a declaration of a unit is identified "
+          "through",
+          slang::ast::toString(scope.kind)));
 }
 
 }  // namespace
 
-auto TypeDeclarationName(
-    const slang::ast::Type& type, const SpecializationPolicy& policy)
-    -> std::string {
-  std::vector<std::string> path{NameInScope(type)};
-  const slang::ast::Symbol& home = UnitHomeOf(type);
-  for (const slang::ast::Scope* scope = type.getParentScope(); scope != nullptr;
-       scope = scope->asSymbol().getParentScope()) {
-    const slang::ast::Symbol& owner = scope->asSymbol();
-    if (IsCompilationUnit(owner) || &owner == &home) {
-      break;
-    }
-    // A type written in place inside another is named inside that one's name.
-    if (owner.kind == slang::ast::SymbolKind::UnpackedStructType ||
-        owner.kind == slang::ast::SymbolKind::UnpackedUnionType) {
-      path.push_back(TypeDeclarationName(owner.as<slang::ast::Type>(), policy));
-      break;
-    }
-    path.push_back(ScopeStep(owner, policy));
+auto ProceduralStepOf(const slang::ast::Symbol& scope) -> support::DefPathData {
+  if (scope.kind == slang::ast::SymbolKind::Subroutine) {
+    return support::SubroutineStep{.name = std::string{scope.name}};
   }
-  std::ranges::reverse(path);
-  std::string name;
-  for (const std::string& step : path) {
-    if (!name.empty()) {
-      name += '.';
-    }
-    name += step;
+  if (scope.kind != slang::ast::SymbolKind::StatementBlock) {
+    throw InternalError(
+        std::format(
+            "ProceduralStepOf: a {} is neither a subroutine nor a block of "
+            "statements",
+            slang::ast::toString(scope.kind)));
   }
-  return name;
+  if (scope.name.empty()) {
+    return support::UnnamedBlockStep{
+        .position = static_cast<std::uint32_t>(scope.getIndex())};
+  }
+  return support::NamedBlockStep{.name = std::string{scope.name}};
+}
+
+auto DefPathOf(
+    const slang::ast::Symbol& declaration, const SpecializationPolicy& policy)
+    -> support::DefPath {
+  support::DefPath path;
+  for (const slang::ast::Symbol* at = &declaration; !IsCompilationUnit(*at);) {
+    if (auto step = StepOf(*at, policy)) {
+      path.data.push_back(*std::move(step));
+    }
+    const slang::ast::Scope* holder = at->getParentScope();
+    if (holder == nullptr) {
+      throw InternalError(
+          "DefPathOf: every declaration lies in a package, a design element's "
+          "body, or the file-set scope");
+    }
+    at = &holder->asSymbol();
+  }
+  std::ranges::reverse(path.data);
+  return path;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

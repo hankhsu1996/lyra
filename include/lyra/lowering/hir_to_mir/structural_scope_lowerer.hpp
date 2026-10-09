@@ -68,16 +68,6 @@ struct ConstructionValue {
   mir::TypeId type;
 };
 
-// One subroutine a unit published: the position its signature gave it, the
-// identifier a referrer spells, and the body of the realizing class that
-// carries it out. The published class states a method under that identifier,
-// entering the body on the object.
-struct PublishedSubroutine {
-  hir::PublishedCallableId published;
-  std::string name;
-  mir::CallableId body;
-};
-
 // How a hierarchical route reaches an owned child: the parent's borrowed
 // handle on it, and the child's own lowerer. The handle's type carries the
 // declaration's multiplicity, so each select of the element naming the child
@@ -148,6 +138,12 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto PublishedClassId() const -> mir::ClassId {
     return published_class_id_;
   }
+
+  // Settles every class `unit_lowerer`'s unit published of its scopes, once
+  // every class realizing one is settled: its published members, and a method
+  // per published subroutine entering the body of whichever realizing class
+  // the object is.
+  static void DefinePublishedClasses(UnitLowerer& unit_lowerer);
 
   // The values whoever builds this scope hands it, in the order they are
   // handed.
@@ -501,10 +497,11 @@ class StructuralScopeLowerer {
   // referrer compiles against this one and holds nothing else, so what the unit
   // adds while lowering its bodies moves no field a referrer reads.
   mir::ClassId published_class_id_{};
-  // The subroutines this scope published, each with the position its signature
-  // gave it. Settled while the shape is declared, where a subroutine's identity
-  // is taken; read where the published class is built.
-  std::vector<PublishedSubroutine> published_subroutines_;
+  // This scope's body for each subroutine it published, by the position its
+  // signature gave the subroutine. Settled while the shape is declared, where
+  // a subroutine's identity is taken; read where the published class is built.
+  base::Translation<hir::PublishedCallableId, mir::CallableId>
+      published_subroutines_;
   // The lowering of each block of each generate construct this scope holds,
   // by the construct's position and then the block's, built with this one.
   std::vector<std::vector<std::unique_ptr<StructuralScopeLowerer>>>
@@ -561,7 +558,7 @@ auto BuildClassPropertyAccess(
           [&](const mir::CrossUnitClassRef& other) {
             const mir::ExternalClass* published = mir::FindExternalClass(
                 unit_lowerer.Unit().external_classes, other.unit_name,
-                other.class_name);
+                other.class_path);
             if (published == nullptr) {
               throw InternalError(
                   "FieldTypeOf: a field of another unit's class is reached "

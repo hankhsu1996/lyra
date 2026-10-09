@@ -25,6 +25,7 @@
 #include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -109,7 +110,7 @@ class UnitLowerer {
   // identity, which is what lets a property step and a dispatch on one name the
   // declaration without an id of this unit standing for it.
   [[nodiscard]] auto ExternalClassValueType(
-      const std::string& unit_name, const std::string& class_name) const
+      const std::string& unit_name, const support::DefPath& class_path) const
       -> lir::TypeId;
 
   // The LIR function a class's callable lowers to. Throws if `callable` has no
@@ -154,7 +155,7 @@ class UnitLowerer {
   // The behavior a class of another unit introduced, named by that class and
   // which of its introductions the behavior is.
   [[nodiscard]] auto ExternalMethodRef(
-      const std::string& unit_name, const std::string& class_name,
+      const std::string& unit_name, const support::DefPath& class_path,
       mir::BehaviorOrdinal ordinal) const -> lir::StatedDispatchRef;
 
   // The type of what a class extends: a class some unit declares, or the

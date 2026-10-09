@@ -78,11 +78,11 @@ TEST(ClassDefinitionTest, AnUpwardNameStartsAtTheNearestInstanceOfItsClass) {
   Scope* inner = middle->AddOwnedChild(
       std::make_unique<Scope>(nullptr, Segment("i"), &kInner));
 
-  EXPECT_EQ(inner->EnclosingInstance(&kMiddle), middle);
-  EXPECT_EQ(inner->EnclosingInstance(&kOuterExtended), outer);
-  EXPECT_EQ(inner->EnclosingInstance(&kOuter), outer);
-  EXPECT_EQ(inner->EnclosingInstance(&kOther), other);
-  EXPECT_THROW(std::ignore = inner->EnclosingInstance(&kInner), InternalError);
+  EXPECT_EQ(inner->EnclosingScope(&kMiddle), middle);
+  EXPECT_EQ(inner->EnclosingScope(&kOuterExtended), outer);
+  EXPECT_EQ(inner->EnclosingScope(&kOuter), outer);
+  EXPECT_EQ(inner->EnclosingScope(&kOther), other);
+  EXPECT_THROW(std::ignore = inner->EnclosingScope(&kInner), InternalError);
 }
 
 extern const ObjectDefinition kOwnClassScope;

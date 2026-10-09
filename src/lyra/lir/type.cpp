@@ -12,6 +12,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lir {
 
@@ -23,6 +24,10 @@ void Combine(std::size_t& seed, std::uint64_t value) {
 
 void Combine(std::size_t& seed, const std::string& value) {
   base::HashField(seed, value);
+}
+
+void Combine(std::size_t& seed, const support::DefPath& path) {
+  base::HashField(seed, path);
 }
 
 void Combine(std::size_t& seed, TypeId id) {
@@ -182,7 +187,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ObjectType& t) { Combine(seed, t.class_id); },
           [&](const CrossUnitClassType& t) {
             Combine(seed, t.unit_name);
-            Combine(seed, t.class_name);
+            Combine(seed, t.class_path);
           },
           [&](const RuntimeClassType& t) { Combine(seed, t.which); },
           [&](const ClosureType& t) { Combine(seed, t.closure_id.value); },
@@ -209,7 +214,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
                     [&](StructId id) { Combine(seed, id.value); },
                     [&](const TypeDeclarationRef& ref) {
                       Combine(seed, ref.unit_name);
-                      Combine(seed, ref.name);
+                      Combine(seed, ref.path);
                     }},
                 t.declaration);
           },

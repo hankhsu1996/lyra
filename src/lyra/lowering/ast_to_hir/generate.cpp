@@ -42,22 +42,6 @@ auto LowerGenerateScope(
   return scope_or;
 }
 
-// The implicit localparam the index name denotes inside one block (LRM 27.4).
-// Every block declares its own, holding the value the index had when that block
-// elaborated. The clause gives it the genvar's name, and the front end marks
-// which declaration it is; the mark is what this asks, because a block's other
-// parameters share the loop's name with nothing and must not be taken for it.
-auto BlockIndexParameter(const slang::ast::GenerateBlockSymbol& block)
-    -> const slang::ast::ParameterSymbol* {
-  for (const auto& member : block.members()) {
-    const auto* parameter = member.as_if<slang::ast::ParameterSymbol>();
-    if (parameter != nullptr && parameter->isFromGenvar()) {
-      return parameter;
-    }
-  }
-  return nullptr;
-}
-
 // The values the loop's index stood at, one per block it counted out, in the
 // order it counted them.
 auto IndexValuesOf(const slang::ast::GenerateBlockArraySymbol& array)
@@ -79,7 +63,7 @@ auto IndexValuesOf(const slang::ast::GenerateBlockArraySymbol& array)
 auto LoopSurvivedElaboration(const slang::ast::GenerateBlockArraySymbol& array)
     -> bool {
   return array.valid && !array.entries.empty() &&
-         BlockIndexParameter(*array.entries.front()) != nullptr &&
+         LoopIndexParameterOf(*array.entries.front()) != nullptr &&
          !array.name.empty() && array.loopVariable != nullptr &&
          array.initialExpression != nullptr &&
          array.stopExpression != nullptr && array.iterExpression != nullptr;
@@ -182,7 +166,8 @@ auto BuildStandAloneGenerate(
   for (std::size_t at = 0; at < blocks.size(); ++at) {
     const slang::ast::GenerateBlockSymbol& entry = *array.entries[at];
     std::vector<hir::ExprId> arguments;
-    if (const slang::ast::ParameterSymbol* index = BlockIndexParameter(entry)) {
+    if (const slang::ast::ParameterSymbol* index =
+            LoopIndexParameterOf(entry)) {
       const auto span =
           unit_lowerer.SourceMapper().PointSpanOf(index->location);
       auto type = unit_lowerer.InternType(index->getType(), span);

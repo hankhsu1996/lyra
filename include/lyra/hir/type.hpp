@@ -15,6 +15,7 @@
 #include "lyra/hir/constant_value.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/imported_runtime_class.hpp"
 
 namespace lyra::hir {
@@ -133,13 +134,13 @@ struct UnpackedAggregateField {
 };
 
 // The declaration a type is, named the way any unit names it: the unit that
-// declares it and the name it has there. SystemVerilog identifies a structure
-// by its declaration rather than by its members (LRM 6.22.1), and a type that
-// crosses a unit boundary is declared by a unit the crossing ones already
-// depend on (LRM 6.22), so the pair identifies it from anywhere.
+// holds it and which declaration of that unit it is. SystemVerilog identifies
+// a structure by its declaration rather than by its members (LRM 6.22.1), and a
+// type that crosses a unit boundary is declared by a unit the crossing ones
+// already depend on (LRM 6.22), so the pair identifies it from anywhere.
 struct TypeDeclarationRef {
   std::string unit_name;
-  std::string name;
+  support::DefPath path;
 
   auto operator==(const TypeDeclarationRef&) const -> bool = default;
 };
@@ -267,7 +268,7 @@ struct ImportedClassHandleType {
 // published is reachable through it.
 struct UnitObjectType {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
 
   auto operator==(const UnitObjectType&) const -> bool = default;
 };

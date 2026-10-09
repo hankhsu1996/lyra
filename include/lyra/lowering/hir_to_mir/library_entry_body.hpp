@@ -1,9 +1,12 @@
 #pragma once
 
+#include <span>
+
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -25,17 +28,26 @@ auto EntryOf(
     const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
     mir::CallableId callable, mir::TypeId object) -> mir::CallableId;
 
-// The body handed the object as `object`, viewing it as `cls` -- class `id` of
-// `unit` -- and calling exactly `callable` on it with what it was handed after
-// the object, completing as that call does. It is entered on the object, which
-// is its receiver, so a class the object is also of can state it as a method
-// of its own.
+// The body handed the object as `object`, a class each of `bodies` is a body
+// of a class extending, which enters the body of whichever of those classes the
+// object is with what it was handed after the object, completing as that call
+// does. It is entered on the object, which is its receiver, so the class the
+// object was handed over as states it as a method of its own. Every class of
+// `bodies` is settled in `unit`, and their bodies take the same things after
+// the receiver, being bodies of one subroutine.
 //
 //   auto Published::f(Args... args) -> R {
-//     return static_cast<Class*>(this)->f_body(args...);
+//     if (IsOfClass(&First::sv_definition)) {
+//       return static_cast<First*>(this)->f_body(args...);
+//     }
+//     return static_cast<Last*>(this)->f_body(args...);
 //   }
+//
+// The object is of exactly one of them, so the last is entered untested, and a
+// class realized one way states no test at all.
 auto ForwardingMethod(
-    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
-    mir::CallableId callable, mir::TypeId object) -> mir::CallableCode;
+    const mir::CompilationUnit& unit,
+    std::span<const mir::CallableTarget> bodies, mir::TypeId object)
+    -> mir::CallableCode;
 
 }  // namespace lyra::lowering::hir_to_mir

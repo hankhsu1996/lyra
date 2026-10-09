@@ -216,9 +216,13 @@ Rules:
         not a reason to read one: it says the value is known, not that the
         artifact has to hold it. What a unit publishes about its ports and
         what a type is are exempt: both are part of the unit's identity, so a
-        value deciding either is already one artifact per value. A port's
-        default is not among them -- it is evaluated for each instance that
-        leaves the port unconnected (LRM 23.2.2.4).
+        value deciding either is already one artifact per value. So is what
+        tells two applications of a generate block apart: where a block's
+        index decides what the block declares, the constant settled from it
+        there is read as the identity itself, which makes fewer artifacts
+        than the index would and never one more. A port's default is not
+        among them -- it is evaluated for each instance that leaves the port
+        unconnected (LRM 23.2.2.4).
         Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
         include/lyra/lowering/ast_to_hir.
 
@@ -1043,11 +1047,16 @@ A023_PATTERN = re.compile(r"(?:->|\.)\s*(?:getConstant|eval)\s*\(")
 # Where reading one is not the lowering of a body. What a unit publishes about
 # its ports and what a type is are part of the unit's identity: a value that
 # decides either is one a parameter keeps in the key, so the artifact is already
-# one per value and reading the value costs no second one. Everything else is
-# the case the rule is for, a port's default included -- it is written in the
-# header, but it is evaluated for each instance that leaves the port
-# unconnected (LRM 23.2.2.4), and so is a body's expression like any other.
+# one per value and reading the value costs no second one. What a parameter
+# decides is the same identity one step earlier: the file working that out
+# lowers nothing, and reads a settled constant only where a generate block's
+# index was found to decide a declaration, to tell two applications of the
+# block apart by it. Everything else is the case the rule is for, a port's
+# default included -- it is written in the header, but it is evaluated for each
+# instance that leaves the port unconnected (LRM 23.2.2.4), and so is a body's
+# expression like any other.
 A023_EXEMPT = (
+    "src/lyra/lowering/ast_to_hir/parameter_value_source.cpp",
     "src/lyra/lowering/ast_to_hir/publish_signature.cpp",
     "src/lyra/lowering/ast_to_hir/type.cpp",
 )

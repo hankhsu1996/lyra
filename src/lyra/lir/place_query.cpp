@@ -13,6 +13,7 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lir {
 
@@ -57,17 +58,18 @@ auto DeclaredMembers(const CompilationUnit& unit, TypeId type)
             // kind, as for a closure.
             return MemberList{
                 .members = cls.members,
-                .owner = cls.name.has_value() ? std::string_view{*cls.name}
+                .owner = cls.path.has_value() ? support::DisplayOf(*cls.path)
                                               : "a class the lowering built"};
           },
           [&](const CrossUnitClassType& cls) -> std::optional<MemberList> {
             const ExternalClass* record =
-                FindExternalClass(unit, cls.unit_name, cls.class_name);
+                FindExternalClass(unit, cls.unit_name, cls.class_path);
             if (record == nullptr) {
               return std::nullopt;
             }
             return MemberList{
-                .members = record->members, .owner = record->class_name};
+                .members = record->members,
+                .owner = support::DisplayOf(record->class_path)};
           },
           [&](const ClosureType& closure) -> std::optional<MemberList> {
             const Closure& decl = unit.closures.Get(closure.closure_id);

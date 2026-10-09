@@ -94,7 +94,10 @@ class Scope : public GcObject {
   // them a top-level instance of it (LRM 23.6, 23.8). The front end resolved
   // the name to a declaration of that class, so one stands there in every
   // instance that resolution covered.
-  [[nodiscard]] auto EnclosingInstance(const ObjectDefinition* cls) -> Scope*;
+  [[nodiscard]] auto EnclosingScope(const ObjectDefinition* cls) -> Scope*;
+
+  // Whether this scope is an object of the class `cls` or of one extending it.
+  [[nodiscard]] auto IsOfClass(const ObjectDefinition* cls) const -> bool;
 
   // This instance's own source of seeds for the static processes and static
   // initializers declared within it (LRM 18.14.1). Meaningful on a module,

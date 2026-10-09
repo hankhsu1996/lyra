@@ -26,24 +26,27 @@ struct UnitText {
   TargetText code;
 };
 
-// `class C;` for every class of the unit, written ahead of every class so a
-// field or parameter can point at a class defined later, followed by
-// `using A = C;` for each further name the class goes by: into the forward
-// header for a class other units may name, into the code file otherwise.
+// `class C;` for every class of the unit that C++ can declare ahead of its
+// definition, written ahead of every class so a field or parameter can point
+// at a class defined later: into the forward header for a class other units
+// may name, into the code file otherwise. A class declared inside another is
+// declared where that one is defined, and nowhere else.
 auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
     -> UnitText;
 
-// A class another unit may name, whose text goes into a header of its own.
+// A class another unit may name, whose text goes into a header.
 struct PublishedClass {
   mir::ClassId id;
   TargetText text;
 };
 
-// Every class of the unit, split by file. A class another unit may name goes
-// into a header of its own; every other class goes into the code file. Member
-// function definitions all go into the code file after every class, since one
-// may use any class of the unit: a scope's body reads its parent's members,
-// and the parent's body builds that scope.
+// Every class of the unit, split by who reads it. A class another unit may
+// name goes into a header, each after the classes it derives from and the one
+// it is declared inside, so those sharing a header are in an order that
+// compiles; every other class goes into the code file. Member function
+// definitions all go into the code file after every class, since one may use
+// any class of the unit: a scope's body reads its parent's members, and the
+// parent's body builds that scope.
 struct UnitClasses {
   std::vector<PublishedClass> published;
   TargetText internal;

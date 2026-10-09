@@ -11,8 +11,10 @@
 // same, because the unit naming itself and every unit naming it must reach the
 // same answer with no shared table.
 
+#include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -23,6 +25,7 @@
 #include <vector>
 
 #include "lyra/lowering/ast_to_hir/instance_context.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace slang {
 class ConstantValue;
@@ -60,6 +63,11 @@ enum class ParameterValueSource {
 // so it belongs to exactly one and is never asked what it is a specialization
 // of on its own.
 [[nodiscard]] auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
+    -> const slang::ast::InstanceSymbol&;
+
+// The instance `scope` is the body of or stands in: an instance's body, or a
+// scope declared somewhere inside one.
+[[nodiscard]] auto InstanceHolding(const slang::ast::Scope& scope)
     -> const slang::ast::InstanceSymbol&;
 
 // A value as an identity: every bit of it, unknowns included, so two values
@@ -112,11 +120,13 @@ struct SuppliedAtConstruction {
 };
 
 // The scope a hierarchical name lands in once it leaves the instance, named
-// the way the class of that scope is. The name resolves per instance (LRM
-// 23.8), and what it reaches from there are that scope's declarations, so two
-// instances whose names land in different scopes compile differently.
+// the way the class of that scope is: by the unit holding it and the class's
+// path there. The name resolves per instance (LRM 23.8), and what it reaches
+// from there are that scope's declarations, so two instances whose names land
+// in different scopes compile differently.
 struct LandsIn {
-  std::string scope;
+  std::string unit;
+  support::DefPath scope;
 
   auto operator==(const LandsIn&) const -> bool = default;
 };
@@ -124,12 +134,13 @@ struct LandsIn {
 // The same, where the name lands in an instance whose own name is still being
 // worked out -- the instance writing it, or one whose name asked for this
 // one's. `levels` counts how far out on that chain it is, the instance itself
-// being none, and `blocks` is the path of generate blocks below it the name
-// lands in. Stated so, the scope is named by where it stands relative to the
-// instance being named, which is all two instances could differ in there.
+// being none, and `blocks` names the generate blocks below it the name lands
+// in, each as the application of its definition it is. Stated so, the scope is
+// named by where it stands relative to the instance being named, which is all
+// two instances could differ in there.
 struct LandsBack {
   std::uint32_t levels = 0;
-  std::vector<std::string> blocks;
+  support::DefPath blocks;
 
   auto operator==(const LandsBack&) const -> bool = default;
 };
@@ -190,9 +201,11 @@ struct SpecializationKey {
 // value makes every value one unit, and the instance is handed it when it is
 // built.
 //
-// A definition kept whole supplies nothing: an earlier lowering found two of
-// its instances handed different values lowered apart. Every party naming a
-// unit reads the same policy, so a parent and the child it names still agree.
+// A definition kept whole supplies nothing, and every index of its loops
+// decides by its own value: an earlier lowering found two of its instances
+// handed different values lowered apart, or two of its block instances taken
+// for one application publishing different classes. Every party naming a unit
+// reads the same policy, so a parent and the child it names still agree.
 //
 // The answer is worked out from the source once per instance and kept, which
 // is why the lookup is const and the table is not: naming asks it many times
@@ -221,18 +234,48 @@ class SpecializationPolicy {
       const slang::ast::InstanceSymbol& inst,
       const slang::ast::ParameterSymbol& param) const -> ParameterValueSource;
 
+  // What tells two values of `index` apart in what is compiled, for the index
+  // a loop's block inside `inst` declares (LRM 27.4): the constants the front
+  // end settled from it wherever its value decides something, in the order the
+  // body states them, or its own value where one of those places kept none.
+  // Nothing where it is only ever read as a value. So two blocks whose indices
+  // fold alike everywhere are told apart by nothing here.
+  [[nodiscard]] auto WhatItDecides(
+      const slang::ast::InstanceSymbol& inst,
+      const slang::ast::ParameterSymbol& index) const
+      -> std::span<const std::string>;
+
   // What follows for `inst` from where it stands, worked out once and kept.
   [[nodiscard]] auto ContextOf(const slang::ast::InstanceSymbol& inst) const
       -> const InstanceContext&;
+
+  // The step the block instance `block` is in the scope holding it: its label,
+  // which one it is among the blocks of that scope sharing the label (LRM
+  // 27.5), and which application of its definition it is. A generate block is
+  // a definition nested in the scope holding it, and each block
+  // instance built from it applies it to arguments, the way an instance applies
+  // a design element (LRM 27.3): the index a loop built it at (LRM 27.4), and
+  // what is written elsewhere about an instance it holds
+  // (LRM 23.10.1, 23.11, 33.4). An index enters only through what its value
+  // decides about what is compiled; one only read as a value is handed over
+  // when the block is built, so the blocks of a loop that differ in nothing
+  // else are one application. A block declaring a class is the exception,
+  // entering with the index itself: a class's bodies are compiled against the
+  // scope its block lowered to, and which blocks lower to one scope is not
+  // known where a name is.
+  //
+  // The definition is named by the label the source gave it, and what was
+  // fixed is stated beside the label as a digest, absent where nothing was.
+  [[nodiscard]] auto BlockStepOf(const slang::ast::GenerateBlockSymbol& block)
+      const -> support::GenerateBlockStep;
 
   // The name of the specialization `inst` is an application of, folded from
   // what the design fixed for it: its parameters (LRM 6.20, 23.10), the
   // interface each of its interface ports is connected to (LRM 25.3), the scope
   // each name written in it or below it lands in once it leaves the instance
   // (LRM 23.8), and everything written elsewhere that reaches an instance below
-  // it -- a
-  // parameter a defparam or a configuration sets (LRM 23.10.1, 33.4.3), an
-  // instantiation a bind inserts (LRM 23.11), a cell a configuration binds
+  // it -- a parameter a defparam or a configuration sets (LRM 23.10.1, 33.4.3),
+  // an instantiation a bind inserts (LRM 23.11), a cell a configuration binds
   // (LRM 33.4.1.6) -- each under its path from `inst`. A parameter fixed by the
   // specialization enters with its value; one supplied at construction enters
   // only as being supplied, and one computed at construction not at all, so
@@ -271,6 +314,9 @@ class SpecializationPolicy {
   struct PerInstance {
     std::vector<const slang::ast::ParameterSymbol*> supplied;
     std::unordered_set<const slang::ast::ParameterSymbol*> varying;
+    std::unordered_map<
+        const slang::ast::ParameterSymbol*, std::vector<std::string>>
+        folded_to;
   };
 
   using InstanceBodies =
@@ -305,6 +351,11 @@ class SpecializationPolicy {
   // Two keys reaching one name would silently make two units into one, so a
   // name kept is held against the key it was folded from.
   mutable std::unordered_map<std::string, SpecializationKey> folded_;
+  mutable std::unordered_map<
+      const slang::ast::GenerateBlockSymbol*, support::GenerateBlockStep>
+      block_steps_;
+  mutable std::map<support::GenerateBlockStep, SpecializationKey>
+      folded_blocks_;
 };
 
 // The key of a SystemVerilog class specialization (LRM 8.25). Two
@@ -317,11 +368,16 @@ auto SpecializationKeyOf(
     const slang::ast::ClassType& cls, const SpecializationPolicy& policy)
     -> SpecializationKey;
 
-// The name a key is known by. The definition's name when nothing was fixed, and
-// otherwise that name plus a content hash of the key -- bounded, so it serves
-// as an identifier, and computed by folding only bytes, so the producer (the
+// The digest of everything a key says was fixed, or nothing for a key under
+// which nothing was. It is computed by folding only bytes, so the producer (the
 // unit naming itself) and every consumer (a parent naming a child) reach the
 // same answer across separate compilations with no shared table.
+auto ArgumentsDigest(const SpecializationKey& key)
+    -> std::optional<std::uint64_t>;
+
+// The name a key is known by. The definition's name when nothing was fixed, and
+// otherwise that name plus the digest of what was -- bounded, so it serves as
+// an identifier.
 auto SpecializationName(const SpecializationKey& key) -> std::string;
 
 // The name the class specialization `cls` is, for a caller that wants the name
@@ -330,19 +386,29 @@ auto SpecializationName(
     const slang::ast::ClassType& cls, const SpecializationPolicy& policy)
     -> std::string;
 
-// The name of the class an object standing for `scope` is: the unit's, for an
-// instance's body, and the unit's followed by the generate blocks down to it,
-// each as the hierarchy spells it (LRM 27.6), for a generate block.
-auto ScopeClassName(
-    const slang::ast::Scope& scope, const SpecializationPolicy& policy)
-    -> std::string;
+// The step a subroutine or a block of statements is in the scope holding it:
+// under its name (LRM 13, 9.3.4), or for a block the source gave no label by
+// where it sits. The unit publishing what such a scope holds and a unit
+// reaching into it by a hierarchical name (LRM 23.9) both ask here.
+auto ProceduralStepOf(const slang::ast::Symbol& scope) -> support::DefPathData;
 
-// The same for the generate block `block`, for a caller already holding the
-// name of the class of the scope `block` stands in: a scope declaring its
-// blocks knows what it is called and asks nobody.
-auto BlockClassName(
-    std::string_view holder, const slang::ast::GenerateBlockSymbol& block)
-    -> std::string;
+// Which declaration of its compilation unit `declaration` is: one step for
+// each scope the source nests it in, from the unit's own scope down, and one
+// for the declaration itself, which is a scope too -- a generate block as the
+// application of its definition it is (LRM 27.3), a class under its name and
+// what its parameters were bound to (LRM 8.3, 8.25), a subroutine or a labelled
+// block under its name (LRM 13, 9.3.4), a structure or union under the name it
+// answers to (LRM 6.22.1), and a block or type with no name by where it sits.
+// The unit's own scope is the path of no steps, so the block instances of one
+// application are one declaration, as the instances of one specialization are.
+//
+// The source alone decides the answer, so the unit declaring something and
+// every unit naming it compute the same path here, and a class or a structure
+// SystemVerilog identifies by its declaration (LRM 8.3, 6.22.1) is identified
+// from anywhere by the name of the unit holding it and this path.
+auto DefPathOf(
+    const slang::ast::Symbol& declaration, const SpecializationPolicy& policy)
+    -> support::DefPath;
 
 // The symbol whose compilation unit owns `decl`, found by climbing its parent
 // scopes to the first that is one: a package (LRM 26), a design element's body
@@ -409,16 +475,6 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
 // symbol.
 auto CompilationUnitName(
     const slang::ast::Symbol& unit, const SpecializationPolicy& policy)
-    -> std::string;
-
-// The name a type declaration has inside the unit holding it, for a type
-// SystemVerilog identifies by its declaration (LRM 6.22.1): the scopes between
-// the unit and the declaration, then what the declaration answers to there.
-// Together with the holding unit's name it identifies the type from anywhere,
-// and the unit holding it and every unit naming it compute it alike from the
-// same frontend symbol.
-auto TypeDeclarationName(
-    const slang::ast::Type& type, const SpecializationPolicy& policy)
     -> std::string;
 
 }  // namespace lyra::lowering::ast_to_hir

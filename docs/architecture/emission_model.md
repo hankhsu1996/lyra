@@ -96,9 +96,8 @@ many of them it works on at a time.
    or member via a typed access expression, steps into a generate block through the construct's
    published entry viewed as the block's published class, and calls a published subroutine directly.
    No step carries a string and none is an SDK lookup by name; the one SDK call a route may make is
-   the anchor of an upward name, which asks for the nearest enclosing instance of a class and
-   downcasts statically to it. The sealed endpoint is one access point however many steps the route
-   contained.
+   the anchor of an upward name, which asks for the nearest enclosing scope of a class and downcasts
+   statically to it. The sealed endpoint is one access point however many steps the route contained.
 
 6. **A scope is two classes: the published part and the realization extending it.** The published
    part holds the published members first, in the order the publication states, and one non-virtual
@@ -125,11 +124,13 @@ many of them it works on at a time.
    body edit therefore moves no published member, and a referrer's access to one costs what an
    access to its own member costs, with nothing dispatched.
 
-   **Each block of a generate loop keeps its own published name; sharing lies beneath it.** Where
-   the blocks of one loop compile to one class -- decided only after every body lowered -- each
-   block's name is an alias of that class, and each named body an alias of the shared one. Data
-   needs no alias, since its offsets come from the publication. A referrer names the block it means
-   and is unaffected by whether that block's code was shared.
+   **A published class is named from declarations alone, and how many classes realize it is no
+   referrer's concern.** A generate block is a definition nested in the scope holding it, and each
+   block instance is an application of it; an application is one published class, named before any
+   body lowers. Block instances of one application whose bodies lower apart are that class realized
+   more than once, each realization extending it. A referrer names the published class and is
+   unaffected by how many realizations stand beneath it, so a body edit that changes the count
+   changes nothing a referrer read.
 
 9. **The design's own link-level unit is a unit, and invariant 2 binds it.** A design needs one
    artifact nothing in the source declares -- the one whose construct elaborates the design by
@@ -185,9 +186,13 @@ many of them it works on at a time.
   carried by a route. It replaces a compile-time check with an unchecked cast, surfaces a misspelt
   name or a type that differs between instances at run time, and makes every instance pay a
   registration per declaration. The access is typed against the published class instead.
-- A virtual method on a scope's published part, or dispatch through one, to reach a published
-  subroutine or member. The language dispatches no such call, and a referrer that knows the
-  published class has nothing to dispatch on.
+- A virtual method on a scope's published part, or a referrer dispatching through one, to reach a
+  published subroutine or member. The language dispatches no such call, and a referrer that knows
+  the published class has nothing to dispatch on. A published subroutine's own method asking which
+  of its unit's classes realizes the object is not this shape: the referrer still calls one method
+  directly, and the question is one only the declaring unit can ask.
+- A published class whose name, or whose existence, depends on a comparison of lowered bodies. Which
+  class a name reaches would then move with a body edit, and every referrer with it.
 - A signature artifact that also carries the unit's bodies, so that editing a body re-emits the
   unit's referrers. The file boundary is not the dependency boundary.
 - A route mechanism dispatched on the frontend's lexical-form classification or on source order.
@@ -215,24 +220,24 @@ flowchart TB
   subgraph LOW["unit low"]
     LO["low.opening<br/>names, cells, bodies"]
     LT["low.Thing<br/>one published class"]
-    LU["low umbrella<br/>the name a referrer writes"]
+    LU["low<br/>its scopes' classes, where it has any"]
     LC["low code<br/>every body"]
   end
   subgraph HIGH["unit high"]
     HO["high.opening"]
     HD["high.Derived<br/>extends low::Thing"]
-    HU["high umbrella"]
+    HU["high"]
     HC["high code"]
   end
   LT --> LO
   LU --> LO
-  LU --> LT
   LC --> LU
+  LC --> LT
   HD --> HO
   HD --> LT
   HU --> HO
-  HU --> HD
   HC --> HU
+  HC --> HD
   HC --> LT
   HC --> LO
 ```
@@ -244,8 +249,8 @@ never bodies, so `low`'s bodies can still be changing while `high` compiles.
 
 **The arrows between units land on a part, never on a unit.** `high.Derived` reads `low.Thing`
 because that is the class it extends, and `high`'s code reads `low.opening` because that is where
-the subroutine it calls is declared. Neither reads `low`'s umbrella, so a second class of `low` that
-`high` never named is text `high` never sees.
+the subroutine it calls is declared. Neither reads a file holding the rest of `low`, so a second
+class of `low` that `high` never named is text `high` never sees.
 
 **A code file names every part its unit read, including the ones its own declarations already
 brought.** `high`'s code reads `low.Thing` although `high.Derived` did too. The repetition is the
@@ -258,13 +263,18 @@ class-extends graph -- which no program can make circular, since a class may not
 ancestor. A unit's declarations that name another design element's published classes draw an arrow
 to what declares those classes without defining them, and that reads nothing, so it ends every path
 it is on. Two units whose names reach each other -- one calling the other's task while the other
-names the first upward -- therefore read each other's declarations without a cycle. An umbrella is
-read by code files alone, so it starts arrows and never receives one from another unit.
+names the first upward -- therefore read each other's declarations without a cycle. The file holding
+a unit's scope classes is read by code files alone, so it starts arrows and never receives one from
+another unit's declarations.
 
 _Current implementation, C++ backend:_ each unit writes a `<Unit>.forward.hpp` holding every class
-other units may name, declared and not defined, plus a `using` line per further name a generate
-block goes by; a unit's opening header includes the forward headers of the units whose classes it
-names. The LLVM backend states each further name of a shared block's body as a symbol alias.
+other units may name that C++ can declare ahead of its definition, and a unit's opening header
+includes the forward headers of the units whose classes it names. A design element's scope classes
+are nested classes written together in `<Unit>.hpp`, the class of a generate block declared inside
+the class of the scope holding it; a class the source declared has a file of its own, since another
+unit's class may extend it. A nested class cannot be declared ahead of its definition, so text
+naming another unit's block class reads that unit's `<Unit>.hpp`; only a code file does, because a
+scope's class holds what it reaches in another unit as the class every scope extends.
 
 **Same-unit sibling reference.** `always_comb from_b = b.bx;` inside generate block `a` of `Top`.
 The route has two steps: `a -> Top` (typed; the parent edge whose target class lives in Top's
@@ -288,7 +298,7 @@ invariant 8 states.
 
 **Cross-unit upward reference.** `always_comb x = Top.g;`. The referrer does not instantiate `Top`.
 The front end's search lands on `Top`'s class; the route's anchor asks the runtime for the nearest
-enclosing instance of that class and downcasts statically to it, and `g` is a member of `Top`'s
+enclosing scope of that class and downcasts statically to it, and `g` is a member of `Top`'s
 published class. The referrer's artifact carries no knowledge of Top's body; the route arrives as
 ordinary MIR primitives in the emitted resolve code, not as type payload -- `backend_contract.md`
 keeps render mechanical.

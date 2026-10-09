@@ -2049,8 +2049,13 @@ auto lyra_rt_add_owned_child(void* parent, void* child) -> void* {
       std::unique_ptr<Scope>(static_cast<Scope*>(child)));
 }
 
-auto lyra_rt_enclosing_instance(void* self, const void* definition) -> void* {
-  return static_cast<Scope*>(self)->EnclosingInstance(
+auto lyra_rt_enclosing_scope(void* self, const void* definition) -> void* {
+  return static_cast<Scope*>(self)->EnclosingScope(
+      static_cast<const ObjectDefinition*>(definition));
+}
+
+auto lyra_rt_is_of_class(void* self, const void* definition) -> bool {
+  return static_cast<Scope*>(self)->IsOfClass(
       static_cast<const ObjectDefinition*>(definition));
 }
 

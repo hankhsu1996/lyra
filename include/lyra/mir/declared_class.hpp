@@ -4,6 +4,7 @@
 #include <variant>
 
 #include "lyra/mir/class_id.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::mir {
 
@@ -15,13 +16,12 @@ struct IntraUnitClassRef {
   auto operator==(const IntraUnitClassRef&) const -> bool = default;
 };
 
-// A class another compilation unit declares, named the way every cross-unit
-// name is: by the declaring unit and the class's canonical name. The pair is
-// the identity; how it is spelled belongs to whichever target a backend emits,
-// so nothing here composes one.
+// A class another compilation unit declares, named by the declaring unit and
+// the class's path in it. The pair is the identity; how it is spelled belongs
+// to whichever target a backend emits, so nothing here composes one.
 struct CrossUnitClassRef {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
 
   auto operator==(const CrossUnitClassRef&) const -> bool = default;
 };

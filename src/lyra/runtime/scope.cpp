@@ -91,30 +91,26 @@ void Scope::sv_initialize() {
 void Scope::sv_create_processes() {
 }
 
-namespace {
-
-auto IsOfClass(const Scope& scope, const ObjectDefinition* cls) -> bool {
-  for (const ObjectDefinition* at = scope.Definition(); at != nullptr;
+auto Scope::IsOfClass(const ObjectDefinition* cls) const -> bool {
+  for (const ObjectDefinition* at = Definition(); at != nullptr;
        at = at->base) {
     if (at == cls) return true;
   }
   return false;
 }
 
-}  // namespace
-
-auto Scope::EnclosingInstance(const ObjectDefinition* cls) -> Scope* {
+auto Scope::EnclosingScope(const ObjectDefinition* cls) -> Scope* {
   for (Scope* level = parent_; level != nullptr; level = level->parent_) {
-    if (IsOfClass(*level, cls)) return level;
+    if (level->IsOfClass(cls)) return level;
     if (level->parent_ != nullptr) continue;
     for (const auto& top : level->attached_children_) {
-      if (IsOfClass(*top, cls)) return top.get();
+      if (top->IsOfClass(cls)) return top.get();
     }
   }
   throw InternalError(
       std::format(
-          "Scope::EnclosingInstance: '{}' stands in no instance of the class "
-          "its name was resolved against",
+          "Scope::EnclosingScope: '{}' stands in no scope of the class its "
+          "name was resolved against",
           HierarchicalPath().CStr()));
 }
 

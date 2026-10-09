@@ -21,8 +21,10 @@ struct LoopBodies {
 // still differ in is which alternative of a conditional written beneath them
 // stood, at any depth, because what selects an alternative is an expression
 // reading the index (LRM 27.4, 27.5); a body then holds every alternative any
-// of its blocks selected. Blocks that differ in anything else -- a width their
-// index fixes -- are distinct bodies, each built at the indices that take it.
+// of its blocks selected. Blocks that differ in anything else are distinct
+// bodies, each built at the indices that take it: blocks that are objects of
+// different classes, and blocks of one class that still lowered apart, which
+// are that class realized more than one way.
 //
 // The blocks carry no hierarchy index yet. A loop's blocks differ in it by
 // definition, so it takes no part in the question.

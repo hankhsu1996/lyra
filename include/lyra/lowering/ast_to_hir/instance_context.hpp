@@ -21,6 +21,7 @@
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 
 namespace slang::ast {
+class GenerateBlockSymbol;
 class InstanceBodySymbol;
 class InstanceSymbol;
 class Scope;
@@ -65,5 +66,20 @@ using InstanceContexts =
 [[nodiscard]] auto InstanceContextOf(
     const slang::ast::InstanceSymbol& inst, InstanceContexts& known)
     -> const InstanceContext&;
+
+// Something written elsewhere about an instance a generate block holds, or
+// about one below such an instance: `path` leads from the block to it.
+struct OverriddenBelow {
+  std::string path;
+  OverrideEffect effect;
+};
+
+// Everything written elsewhere that reaches an instance standing in `block`
+// or below one, in the order the block holds them. It tells block instances of
+// one text apart the way it tells instances of one definition apart: the scope
+// names the class of every instance it builds.
+[[nodiscard]] auto OverridesBelow(
+    const slang::ast::GenerateBlockSymbol& block, InstanceContexts& known)
+    -> std::vector<OverriddenBelow>;
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -12,6 +12,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -85,10 +86,59 @@ auto SymbolPartOf(std::optional<std::string_view> name, std::uint32_t ordinal)
                           : SymbolPart::Ordinal(ordinal);
 }
 
-auto SymbolPartOf(const std::optional<std::string>& name, std::uint32_t ordinal)
+auto SymbolPartOf(const support::DefPath& path) -> SymbolPart {
+  // A step opens with the marker of its kind, then states its own extent: the
+  // length of its name before the name, or a terminator after its position.
+  // What else tells a step from its siblings follows the name, each behind a
+  // mark of its own and ended by a terminator.
+  const auto named = [](char kind, std::string_view name) {
+    return std::format("${}{}:{}", kind, name.size(), name);
+  };
+  const auto placed = [](char kind, std::uint32_t position) {
+    return std::format("${}{};", kind, position);
+  };
+  const auto bound = [](const std::optional<std::uint64_t>& arguments) {
+    return arguments.has_value() ? std::format("#{:016x};", *arguments)
+                                 : std::string{};
+  };
+  SymbolPart steps;
+  for (const support::DefPathData& step : path.data) {
+    steps.encoded += std::visit(
+        Overloaded{
+            [&](const support::GenerateBlockStep& block) {
+              std::string part = named('g', block.label);
+              if (block.disambiguator != 0) {
+                part += std::format("~{};", block.disambiguator);
+              }
+              return part + bound(block.arguments);
+            },
+            [&](const support::ClassStep& cls) {
+              return named('c', cls.name) + bound(cls.arguments);
+            },
+            [&](const support::SubroutineStep& subroutine) {
+              return named('s', subroutine.name);
+            },
+            [&](const support::NamedBlockStep& block) {
+              return named('b', block.name);
+            },
+            [&](const support::UnnamedBlockStep& block) {
+              return placed('u', block.position);
+            },
+            [&](const support::TypeStep& type) {
+              return named('t', type.name);
+            },
+            [&](const support::UnnamedTypeStep& type) {
+              return placed('a', type.position);
+            }},
+        step);
+  }
+  return steps;
+}
+
+auto SymbolPartOf(
+    const std::optional<support::DefPath>& path, std::uint32_t ordinal)
     -> SymbolPart {
-  return name.has_value() ? SymbolPart::Name(*name)
-                          : SymbolPart::Ordinal(ordinal);
+  return path.has_value() ? SymbolPartOf(*path) : SymbolPart::Ordinal(ordinal);
 }
 
 auto SymbolName(
@@ -117,11 +167,11 @@ auto ClassCallableSymbol(
 }
 
 auto StructMethodSymbol(
-    std::string_view unit_name, std::string_view structure,
+    std::string_view unit_name, const support::DefPath& structure,
     support::ValueOperation operation) -> std::string {
   return SymbolName(
       SymbolCategory::kStructMethod,
-      {SymbolPart::Name(unit_name), SymbolPart::Name(structure),
+      {SymbolPart::Name(unit_name), SymbolPartOf(structure),
        SymbolPart::Name(support::ValueOperationName(operation))});
 }
 
@@ -209,7 +259,7 @@ auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
           },
           [](const CrossUnitClassType& c) {
             return ClassDefinitionSymbol(
-                c.unit_name, SymbolPart::Name(c.class_name));
+                c.unit_name, SymbolPartOf(c.class_path));
           },
           [&](const ClosureType& c) {
             return DefinitionSymbol(unit, c.closure_id);
@@ -219,7 +269,7 @@ auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
 
 auto DefinitionSymbol(const CompilationUnit& unit, ClassId id) -> std::string {
   return ClassDefinitionSymbol(
-      unit.name, SymbolPartOf(unit.classes.Get(id).name, id.value));
+      unit.name, SymbolPartOf(unit.classes.Get(id).path, id.value));
 }
 
 // A closure has no declaration of the source to take a name from, so what

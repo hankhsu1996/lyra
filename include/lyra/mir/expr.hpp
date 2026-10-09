@@ -27,6 +27,7 @@
 #include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
@@ -241,13 +242,13 @@ struct ExternalUnitMintedEntryTarget {
 // subroutine a scope of the design hierarchy published, which a hierarchical
 // name calls on that scope's object (LRM 23.6). The declaring class carries no
 // unit-local id here, so the target names the declaring unit, the class's
-// canonical (specialization) name, and the method's source name, resolved
+// path in it, and the method's source name, resolved
 // against that unit's signature at link time. Whether the call dispatches on an
 // object is the presence of the callee's receiver, so every form is one
 // identity here.
 struct ExternalUnitClassMethodTarget {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
   std::string method_name;
 
   auto operator==(const ExternalUnitClassMethodTarget&) const -> bool = default;
@@ -374,12 +375,12 @@ struct LocalVirtualSlot {
 
 // Identity of a behavior a class of another compilation unit introduced. The
 // introducing class carries no unit-local id here, so it is named by (declaring
-// unit, class canonical name) together with which of that class's introductions
+// unit, class path) together with which of that class's introductions
 // this is, counted out of what it published -- the same coordinate an
 // intra-unit slot carries, with the class named by its parts.
 struct ExternalVirtualSlot {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
   BehaviorOrdinal ordinal;
 
   auto operator==(const ExternalVirtualSlot&) const -> bool = default;
@@ -604,13 +605,13 @@ struct ExternalUnitVariableRef {
 
 // A static property (LRM 8.9 / 8.10) declared on a class of another
 // compilation unit. Its owner has no unit-local id here; the property is
-// named by (declaring unit, class canonical name, property name), which a
+// named by (declaring unit, class path, property name), which a
 // backend resolves once it has taken in what that unit published. `Expr::type`
 // is the property's observable-cell type, exactly as on the intra-unit
 // reference, so the two read alike.
 struct ExternalStaticPropertyRef {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
   std::string property_name;
 };
 

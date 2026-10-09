@@ -35,39 +35,65 @@ auto InstanceStep(const slang::ast::InstanceSymbol& inst) -> std::string {
   return step;
 }
 
-// Reads one instance's own body: the names it writes that leave it, and the
-// instances it holds, each with its path from the body. What an instantiation
-// hands an instance is written in the body holding it, so those expressions
-// are read here and the held instance's body is not entered.
-struct BodyReader
-    : slang::ast::ASTVisitor<BodyReader, slang::ast::VisitFlags::AllGood> {
-  struct Held {
-    const slang::ast::InstanceSymbol* instance;
-    std::string path;
-  };
+// An instance a scope holds, with its path from that scope.
+struct HeldInstance {
+  const slang::ast::InstanceSymbol* instance;
+  std::string path;
+};
 
-  explicit BodyReader(const slang::ast::InstanceBodySymbol& body)
-      : body(&body) {
-  }
-
-  const slang::ast::InstanceBodySymbol* body;
-  std::vector<ClimbAnchor> climbs;
-  std::vector<Held> held;
+// Collects the instances standing in the scope it is handed the members of,
+// through the generate blocks of that scope. A held instance's body is not
+// entered.
+struct HeldInstances
+    : slang::ast::ASTVisitor<HeldInstances, slang::ast::VisitFlags::Symbols> {
+  std::vector<HeldInstance> held;
   std::string blocks;
 
   void handle(const slang::ast::InstanceSymbol& inst) {
-    inst.visitExprs(*this);
     held.push_back(
-        Held{.instance = &inst, .path = blocks + InstanceStep(inst)});
+        HeldInstance{.instance = &inst, .path = blocks + InstanceStep(inst)});
   }
 
   void handle(const slang::ast::GenerateBlockSymbol& block) {
     if (block.isUninstantiated) return;
     const std::size_t outer = blocks.size();
-    blocks += GenerateBlockStep(block);
+    blocks += BlockInstancePathName(block);
     blocks += '.';
     visitDefault(block);
     blocks.resize(outer);
+  }
+};
+
+// The instances standing in `scope`, an instance's body or a generate block,
+// in the order the scope holds them.
+auto InstancesHeldIn(const slang::ast::Scope& scope)
+    -> std::vector<HeldInstance> {
+  HeldInstances reader;
+  for (const auto& member : scope.members()) {
+    member.visit(reader);
+  }
+  return std::move(reader.held);
+}
+
+// Reads the names one instance's own body writes that leave it. What an
+// instantiation hands an instance is written in the body holding it, so those
+// expressions are read here and the held instance's body is not entered.
+struct LeavingNames
+    : slang::ast::ASTVisitor<LeavingNames, slang::ast::VisitFlags::AllGood> {
+  explicit LeavingNames(const slang::ast::InstanceBodySymbol& body)
+      : body(&body) {
+  }
+
+  const slang::ast::InstanceBodySymbol* body;
+  std::vector<ClimbAnchor> climbs;
+
+  void handle(const slang::ast::InstanceSymbol& inst) {
+    inst.visitExprs(*this);
+  }
+
+  void handle(const slang::ast::GenerateBlockSymbol& block) {
+    if (block.isUninstantiated) return;
+    visitDefault(block);
   }
 
   void handle(const slang::ast::HierarchicalValueExpression& e) {
@@ -101,15 +127,17 @@ auto InstanceContextOf(
     return kept->second;
   }
 
-  BodyReader reader(inst.body);
+  LeavingNames names(inst.body);
+  std::vector<HeldInstance> holds;
   {
     const profiling::TimeTraceScope span(
         "read instance context", [&] { return std::string{inst.name}; });
-    inst.body.visit(reader);
+    inst.body.visit(names);
+    holds = InstancesHeldIn(inst.body);
   }
 
-  InstanceContext context{.climbs = std::move(reader.climbs), .below = {}};
-  for (const BodyReader::Held& held : reader.held) {
+  InstanceContext context{.climbs = std::move(names.climbs), .below = {}};
+  for (const HeldInstance& held : holds) {
     for (OverrideEffect& effect : OverridesOn(*held.instance)) {
       context.below.push_back(
           FixedBelow{.path = held.path, .what = std::move(effect)});
@@ -143,6 +171,28 @@ auto InstanceContextOf(
     }
   }
   return known.emplace(&inst, std::move(context)).first->second;
+}
+
+auto OverridesBelow(
+    const slang::ast::GenerateBlockSymbol& block, InstanceContexts& known)
+    -> std::vector<OverriddenBelow> {
+  std::vector<OverriddenBelow> overrides;
+  for (const HeldInstance& held : InstancesHeldIn(block)) {
+    for (OverrideEffect& effect : OverridesOn(*held.instance)) {
+      overrides.push_back(
+          OverriddenBelow{.path = held.path, .effect = std::move(effect)});
+    }
+    for (const FixedBelow& fixed :
+         InstanceContextOf(*held.instance, known).below) {
+      if (const auto* effect = std::get_if<OverrideEffect>(&fixed.what)) {
+        overrides.push_back(
+            OverriddenBelow{
+                .path = std::format("{}.{}", held.path, fixed.path),
+                .effect = *effect});
+      }
+    }
+  }
+  return overrides;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

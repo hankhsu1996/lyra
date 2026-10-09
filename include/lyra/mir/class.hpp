@@ -22,6 +22,7 @@
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/value_build.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::mir {
 
@@ -102,18 +103,14 @@ struct ConformingBehavior {
 };
 
 struct Class {
-  // The name another unit reaches this class by, absent where nothing outside
+  // The path another unit reaches this class by, absent where nothing outside
   // this unit ever names it -- a class the lowering builds for its own use.
   // Present for a class the source declared (LRM 8.3) and for what a scope of
   // the design hierarchy published, which a hierarchical name reaches (LRM
   // 23.6). It is the class's cross-unit identity, which is why it sits here
-  // rather than in a relation: a name a referrer resolves and a name a backend
-  // spells are the same string.
-  std::optional<std::string> name;
-  // Further names another unit reaches this same class by: a loop whose blocks
-  // compiled to one scope publishes that scope once per block (LRM 27.4), each
-  // block under a name of its own, and a referrer names the block it reached.
-  std::vector<std::string> aliases;
+  // rather than in a relation: what a referrer resolves and what a symbol is
+  // made from are the same steps.
+  std::optional<support::DefPath> path;
   std::optional<ClassRef> base;
   // The interfaces the class's declaration names, in the order written. A
   // value of the class is also a value of each, of every interface those

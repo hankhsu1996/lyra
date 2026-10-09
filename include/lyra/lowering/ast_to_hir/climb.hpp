@@ -40,18 +40,20 @@ struct ClimbAnchor {
 
 // Where a reader starts reaching a scope it writes no path to -- the scope a
 // class it uses belongs to (LRM 6.22), which may stand in another instance:
-// from the reader itself, or from the instance whose body is `body`.
+// from the reader itself, or from `scope`, an instance's body or a generate
+// block outside the reader.
 struct FromReader {};
-struct FromInstance {
-  const slang::ast::InstanceBodySymbol* body = nullptr;
+struct FromScope {
+  const slang::ast::Scope* scope = nullptr;
 };
-using ReachStart = std::variant<FromReader, FromInstance>;
+using ReachStart = std::variant<FromReader, FromScope>;
 
 // Where `reader`, whose names land at `climbs`, starts reaching `target`. From
-// the reader where `target` stands in it; from where the first of its names
-// passing through that class landed once it left the instance; or from the
-// instance enclosing the reader that `target` stands in, where a type handed
-// down from there belongs to it (LRM 6.20.3). Nothing where none applies.
+// the reader where `target` stands in it; from `target` itself where the
+// reader stands in it, as a type handed down from there does (LRM 6.20.3);
+// from where the first of its names passing through that class landed once it
+// left the instance; or from the instance enclosing the reader that `target`
+// stands in. Nothing where none applies.
 //
 // Each is chosen by what the source writes and by where its names land, which
 // tells a unit apart already, so every instance of one unit starts from the

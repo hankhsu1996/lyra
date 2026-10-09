@@ -618,7 +618,11 @@ auto lyra_rt_add_owned_child(void* parent, void* child) -> void*;
 // Where a hierarchical name leaving the instance `self` stands in starts (LRM
 // 23.6 / 23.8): the nearest scope above it of the class `definition` describes,
 // or past the topmost a top-level instance of it.
-auto lyra_rt_enclosing_instance(void* self, const void* definition) -> void*;
+auto lyra_rt_enclosing_scope(void* self, const void* definition) -> void*;
+
+// Whether the scope `self` is an object of the class `definition` describes or
+// of one extending it.
+auto lyra_rt_is_of_class(void* self, const void* definition) -> bool;
 
 // The sequence of handles a declaration standing for several objects builds,
 // in the order its coordinates count, and the handle at a position in one. A

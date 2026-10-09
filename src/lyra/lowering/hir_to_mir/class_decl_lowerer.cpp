@@ -257,8 +257,7 @@ auto ClassDeclLowerer::DeclareShape(
   }
 
   ClassShape shape{
-      .name = unit_lowerer.Hir().classes.NameOf(hir_class_id_),
-      .aliases = {},
+      .path = unit_lowerer.Hir().classes.PathOf(hir_class_id_),
       .base = base_ref,
       .implements = std::move(implements),
       .self_pointer_type = self_pointer_type,

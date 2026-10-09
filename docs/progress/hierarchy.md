@@ -142,7 +142,7 @@ consume. Coverage is demonstrated through Stage D and Stage E.
 - [x] D2 -- An upward reference reads and writes a signal directly on the matched ancestor, at any
       depth (LRM 23.8; a nearer ancestor whose instance name happens to equal the module name does
       not shadow the target). The child cannot know its depth when compiled, so the reference starts
-      at the nearest enclosing instance of the scope the name landed on, found once at construction,
+      at the nearest enclosing scope of the class the name landed on, found once at construction,
       and reaches the signal as a member that scope published -- so a misspelt or mistyped name is
       refused where the child compiles. Two instances of one module whose upward names land on
       different classes compile separately (see
@@ -171,7 +171,7 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       through `<sibling_label>.<member>` resolves through this path; sibling-of-grandparent at any
       depth resolves through the same path. The frontend canonicalizes the head's identity (LRM 23.9
       instance-name precedence applies at the front end's resolution step), so the reference starts
-      at the enclosing instance of the scope the front end landed on.
+      at the enclosing scope of the class the front end landed on.
 - [x] D2e -- A hierarchical reference whose head is a named procedural block (a named `begin`/`end`,
       LRM 9.3.5 / 23.9). A named block is a first-class structural declaration of the compilation
       unit: it becomes a child runtime scope of its nearest enclosing addressable scope when
@@ -213,13 +213,20 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       if/case construct's alternatives share a name (LRM 27.5) the reference binds whichever
       alternative was instantiated. Every generate block publishes what it declares, and the scope
       holding a generate construct publishes which block was built at each index or label, so each
-      step is checked where the referrer compiles. Each block of a loop keeps its own name even
-      where its code is shared with its siblings. Covered for every head: an upward reference whose
-      downward tail enters the generate; a reference from the scope that owns the generate
-      descending into its own block (and regardless of whether the reference precedes the generate
-      in source); a reference originating inside a generate block (see D2b); and a reference from an
-      enclosing scope into a child instance's generate block (`leaf.g.x`, `leaf.bank[i].y`, and
-      deeper through an instance inside the block).
+      step is checked where the referrer compiles. The blocks of a loop that differ in nothing a
+      class declares are objects of one published class, named from the source alone
+      ([../decisions/a-generate-block-is-a-nested-definition.md](../decisions/a-generate-block-is-a-nested-definition.md)).
+      Covered for every head: an upward reference whose downward tail enters the generate; a
+      reference from the scope that owns the generate descending into its own block (and regardless
+      of whether the reference precedes the generate in source); a reference originating inside a
+      generate block (see D2b); and a reference from an enclosing scope into a child instance's
+      generate block (`leaf.g.x`, `leaf.bank[i].y`, and deeper through an instance inside the
+      block).
+- [x] D7a -- An instance inside a generate block names the block that holds it, or one enclosing
+      that, by an upward name (LRM 23.8), and stays one unit however many blocks the loop counts
+      out: the name starts at the nearest enclosing scope of the block's class, and every block of
+      one application is of that class. A subroutine a block publishes is called from another module
+      on whichever block the name selects, also where the blocks' code came out different.
 - [x] D8 -- A loop-generate iteration reads another iteration of the same loop by hierarchical name
       from inside its own body (`g[i-1].v` -- the systolic / pipeline / carry-chain shape),
       including a forward read of an iteration constructed after the referrer. The reference binds

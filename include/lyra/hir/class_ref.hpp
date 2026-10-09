@@ -11,6 +11,7 @@
 #include "lyra/hir/method_id.hpp"
 #include "lyra/hir/published_method.hpp"
 #include "lyra/hir/static_property_id.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
 
@@ -24,15 +25,14 @@ struct LocalClassRef {
 };
 
 // A reference to a class declared by another compilation unit. Named by the
-// declaring unit's name and the class's canonical name (the specialization
-// name for a parameterized class, the bare name otherwise). The producer (the
-// unit naming itself) and every consumer (a referring unit naming a class it
-// reaches) compute the same canonical class name from the same bindings by
-// the same deterministic function, so a cross-unit reference matches by name
-// with no shared table.
+// declaring unit's name and the class's path inside that unit. The producer
+// (the unit naming itself) and every consumer (a referring unit naming a class
+// it reaches) compute the same path from the same declarations and bindings by
+// the same deterministic function, so a cross-unit reference matches with no
+// shared table.
 struct ExternalClassRef {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
 
   auto operator==(const ExternalClassRef&) const -> bool = default;
 };
@@ -67,13 +67,13 @@ struct PublishedPropertyId {
 };
 
 // A reference to a class property (LRM 8.4) declared by another compilation
-// unit: the declaring unit, the class's canonical name, and which of that
-// class's properties this is. It names the class that declares the property,
+// unit: the declaring unit, the class's path in it, and which of that class's
+// properties this is. It names the class that declares the property,
 // which is often an ancestor of the one the source wrote and is the one the
 // front end resolved the name to.
 struct ExternalClassPropertyTarget {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
   PublishedPropertyId property;
 
   auto operator==(const ExternalClassPropertyTarget&) const -> bool = default;
@@ -95,11 +95,11 @@ struct LocalStaticPropertyTarget {
 };
 
 // A reference to a class static property (LRM 8.9) declared by another
-// compilation unit: the declaring unit, the class's canonical name, and the
+// compilation unit: the declaring unit, the class's path in it, and the
 // property's source name.
 struct ExternalStaticPropertyTarget {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
   std::string property_name;
 
   auto operator<=>(const ExternalStaticPropertyTarget&) const
@@ -117,12 +117,12 @@ struct LocalClassMethodTarget {
 };
 
 // A reference to a class method (LRM 8.6 / 8.10) declared by another
-// compilation unit: the declaring unit, the class's canonical name, and the
+// compilation unit: the declaring unit, the class's path in it, and the
 // method's source name. The declaring unit's arena position is not visible
 // here, so the method is named directly.
 struct ExternalClassMethodTarget {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
   std::string method_name;
 
   auto operator==(const ExternalClassMethodTarget&) const -> bool = default;
@@ -132,7 +132,7 @@ using ClassMethodTarget =
     std::variant<LocalClassMethodTarget, ExternalClassMethodTarget>;
 
 // One behavior a class of another compilation unit introduced (LRM 8.20): the
-// declaring unit, that class's canonical name, and which of the behaviors it
+// declaring unit, that class's path in it, and which of the behaviors it
 // published this is. It names the class that introduced the behavior, never the
 // one a call happened to reach it through, because every class extending the
 // introducer answers the same behavior under the same name -- so the class
@@ -140,7 +140,7 @@ using ClassMethodTarget =
 // what each published about the class it extends.
 struct ExternalDispatchSlot {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
   PublishedBehaviorId behavior;
 
   auto operator==(const ExternalDispatchSlot&) const -> bool = default;

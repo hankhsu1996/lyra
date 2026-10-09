@@ -76,12 +76,12 @@ auto TypeImporter::ImportClassRef(const ClassRef& ref) const -> ClassRef {
             if (!source_owner_.has_value()) {
               throw InternalError(
                   "TypeImporter: a pool that has left its unit names every "
-                  "class by declaring unit and name, so a local class id "
+                  "class by declaring unit and path, so a local class id "
                   "cannot appear in one");
             }
             return ExternalClassRef{
                 .unit_name = std::string{source_owner_->unit_name},
-                .class_name = source_owner_->classes->NameOf(local.class_id)};
+                .class_path = source_owner_->classes->PathOf(local.class_id)};
           },
           [](const ExternalClassRef& external) -> ClassRef {
             return external;
