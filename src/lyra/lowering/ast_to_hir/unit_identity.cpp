@@ -5,9 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <iterator>
 #include <limits>
-#include <ranges>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -15,13 +13,9 @@
 #include <variant>
 #include <vector>
 
-#include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Compilation.h>
-#include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
-#include <slang/ast/expressions/CallExpression.h>
-#include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
@@ -41,6 +35,7 @@
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
+#include "lyra/lowering/ast_to_hir/instance_context.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -267,29 +262,6 @@ auto IsInstanceScope(const slang::ast::Scope& scope) -> bool {
          kind == slang::ast::SymbolKind::GenerateBlock;
 }
 
-// A generate block (LRM 27.6) as a path to a declaration inside it spells it,
-// the way the hierarchy does, which is what tells two of them apart. A block
-// standing on its own answers to its own label; a loop's block carries no
-// label of its own and answers to the construct's label together with the
-// index it elaborated at (LRM 27.4), so both halves are needed for it. The
-// alternatives of one conditional may share a label (LRM 27.5), and one loop
-// body can hold several of them where its blocks selected differently, so an
-// alternative is told apart by its position among them as well.
-auto GenerateBlockStep(const slang::ast::GenerateBlockSymbol& block)
-    -> std::string {
-  if (block.getArrayIndex() == nullptr) {
-    if (!IsAlternative(block)) return std::string{block.name};
-    const auto alternatives = AlternativesOfConstruct(block);
-    const auto position = std::ranges::find(alternatives, &block);
-    return std::format(
-        "{}#{}", block.name, std::distance(alternatives.begin(), position));
-  }
-  const slang::ast::Scope* array = block.getHierarchicalParent();
-  return std::format(
-      "{}[{}]", array == nullptr ? std::string_view{} : array->asSymbol().name,
-      LoopIndexOf(block));
-}
-
 // The generate blocks between a declaration and the compilation unit that owns
 // it, outermost first. Each is a declaration scope of its own, so two of them
 // may declare the same class name; the path is what tells those declarations
@@ -379,157 +351,41 @@ auto LandingOf(
   return LandsIn{.scope = ScopeClassName(scope, policy)};
 }
 
-// One instance as a path spells it: its name, or its array's name with the
-// element's indices (LRM 23.3.2).
-auto InstanceStep(const slang::ast::InstanceSymbol& inst) -> std::string {
-  std::string step{inst.getArrayName()};
-  for (const std::uint32_t at : inst.arrayPath) {
-    step += std::format("[{}]", at);
-  }
-  return step;
-}
-
-// One context input as a part of the key of the instance it was noted on.
-auto InputOf(const ContextInput& input, const SpecializationPolicy& policy)
+// One thing an instance below fixed, as a part of the key of the instance
+// holding it.
+auto InputOf(const FixedBelow& fixed, const SpecializationPolicy& policy)
     -> SpecializationInput {
   return std::visit(
       Overloaded{
-          // A name is no parameter and declares no name of its own, so it is
-          // told apart from its writer's other names by its place among them.
           [&](const NameLanding& name) {
             return SpecializationInput{
-                .name = input.below.empty()
-                            ? std::format("^{}", name.written)
-                            : std::format("{}.^{}", input.below, name.written),
-                .kind = LandingOf(*name.lands_in, policy)};
+                .name = std::format("{}.^{}", fixed.path, name.written),
+                .kind = LandingOf(*name.scope, policy)};
           },
           [&](const OverrideEffect& effect) {
             return std::visit(
                 Overloaded{
                     [&](const ParameterGivenElsewhere& given) {
-                      SpecializationInput fixed =
+                      SpecializationInput input =
                           ParameterInput(*given.parameter, policy);
-                      fixed.name =
-                          std::format("{}.{}", input.below, fixed.name);
-                      return fixed;
+                      input.name = std::format("{}.{}", fixed.path, input.name);
+                      return input;
                     },
                     [&](const InsertedByBind& bound) {
                       return SpecializationInput{
-                          .name = input.below,
+                          .name = fixed.path,
                           .kind =
                               BindInstantiation{.directive = bound.directive}};
                     },
                     [&](const CellChosenByConfiguration& chosen) {
                       return SpecializationInput{
-                          .name = input.below,
+                          .name = fixed.path,
                           .kind = BoundToCell{.cell = chosen.cell}};
                     }},
                 effect);
           }},
-      input.what);
+      fixed.what);
 }
-
-using InstanceContexts =
-    std::unordered_map<const slang::ast::InstanceSymbol*, InstanceContext>;
-
-// Settles the context of every instance below where it starts, in one walk.
-// The front end's visitor does the descent, and the instances the walk is
-// inside are the ones a name passes on its way outward, so nothing here
-// searches a scope for what it holds.
-struct ContextGatherer
-    : slang::ast::ASTVisitor<ContextGatherer, slang::ast::VisitFlags::AllGood> {
-  // An instance the walk is inside: what is being settled for it, how many
-  // steps of `path` lead to it, and how many of its names have left it so far.
-  // Nothing is settled for one an earlier walk already reached.
-  struct Open {
-    const slang::ast::InstanceBodySymbol* body;
-    InstanceContext* settling;
-    std::size_t steps;
-    std::uint32_t names_left = 0;
-  };
-
-  explicit ContextGatherer(InstanceContexts& found) : found(&found) {
-  }
-
-  InstanceContexts* found;
-  std::vector<Open> open;
-  std::vector<std::string> path;
-
-  // The steps of `path` from `from` to the one at `to`, as a path spells them.
-  [[nodiscard]] auto Below(const Open& from, std::size_t to) const
-      -> std::string {
-    std::string below;
-    for (std::size_t at = from.steps; at < to; ++at) {
-      if (!below.empty()) below += '.';
-      below += path[at];
-    }
-    return below;
-  }
-
-  void handle(const slang::ast::InstanceSymbol& inst) {
-    // What the instantiation hands the instance is written where it stands.
-    inst.visitExprs(*this);
-    path.push_back(InstanceStep(inst));
-    for (const OverrideEffect& effect : OverridesOn(inst)) {
-      for (const Open& above : open) {
-        if (above.settling == nullptr) continue;
-        above.settling->inputs.push_back(
-            ContextInput{.below = Below(above, path.size()), .what = effect});
-      }
-    }
-    const auto [entry, first] = found->try_emplace(&inst);
-    open.push_back(
-        Open{
-            .body = &inst.body,
-            .settling = first ? &entry->second : nullptr,
-            .steps = path.size()});
-    inst.body.visit(*this);
-    open.pop_back();
-    path.pop_back();
-  }
-
-  void handle(const slang::ast::GenerateBlockSymbol& block) {
-    if (block.isUninstantiated) return;
-    path.push_back(GenerateBlockStep(block));
-    visitDefault(block);
-    path.pop_back();
-  }
-
-  void handle(const slang::ast::HierarchicalValueExpression& e) {
-    Note(e.ref);
-    visitDefault(e);
-  }
-
-  void handle(const slang::ast::ArbitrarySymbolExpression& e) {
-    Note(e.hierRef);
-    visitDefault(e);
-  }
-
-  void handle(const slang::ast::CallExpression& e) {
-    Note(e.lookupInfo.hierRef);
-    visitDefault(e);
-  }
-
-  // A name is noted on its writer and on each instance outward that it has
-  // left, which ends at the one it lands in.
-  void Note(const slang::ast::HierarchicalReference& ref) {
-    if (open.empty()) return;
-    Open& writer = open.back();
-    auto climb = ClimbOutOf(ref, *writer.body);
-    if (!climb) return;
-    const NameLanding name{
-        .written = writer.names_left++, .lands_in = climb->scope};
-    for (const Open& left : std::views::reverse(open)) {
-      if (left.body == climb->instance) break;
-      if (left.settling == nullptr) continue;
-      left.settling->inputs.push_back(
-          ContextInput{.below = Below(left, writer.steps), .what = name});
-    }
-    if (writer.settling != nullptr) {
-      writer.settling->climbs.push_back(*std::move(climb));
-    }
-  }
-};
 
 }  // namespace
 
@@ -577,9 +433,18 @@ auto SpecializationKeyOf(
       key.inputs.push_back(InterfacePortInput(*connection, policy));
     }
   }
+  const InstanceContext& context = policy.ContextOf(inst);
   policy.EnterNaming(inst.body);
-  for (const ContextInput& input : policy.ContextOf(inst).inputs) {
-    key.inputs.push_back(InputOf(input, policy));
+  // A name is no parameter and declares no name of its own, so it is told
+  // apart from its writer's other names by its place among them.
+  for (std::size_t written = 0; written < context.climbs.size(); ++written) {
+    key.inputs.push_back(
+        SpecializationInput{
+            .name = std::format("^{}", written),
+            .kind = LandingOf(*context.climbs[written].scope, policy)});
+  }
+  for (const FixedBelow& fixed : context.below) {
+    key.inputs.push_back(InputOf(fixed, policy));
   }
   policy.LeaveNaming();
   return key;
@@ -629,11 +494,7 @@ auto SpecializationPolicy::NameOf(const slang::ast::InstanceSymbol& inst) const
 
 auto SpecializationPolicy::ContextOf(
     const slang::ast::InstanceSymbol& inst) const -> const InstanceContext& {
-  if (!context_.contains(&inst)) {
-    ContextGatherer gatherer(context_);
-    inst.visit(gatherer);
-  }
-  return context_.at(&inst);
+  return InstanceContextOf(inst, context_);
 }
 
 void SpecializationPolicy::EnterNaming(

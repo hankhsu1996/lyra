@@ -1,10 +1,16 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
+#include <format>
+#include <iterator>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include <slang/ast/Scope.h>
+#include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/numeric/SVInt.h>
 
@@ -76,6 +82,29 @@ namespace lyra::lowering::ast_to_hir {
         "stood at");
   }
   return *value;
+}
+
+// A generate block (LRM 27.6) as a path to a declaration inside it spells it,
+// the way the hierarchy does, which is what tells two of them apart. A block
+// standing on its own answers to its own label; a loop's block carries no
+// label of its own and answers to the construct's label together with the
+// index it elaborated at (LRM 27.4), so both halves are needed for it. The
+// alternatives of one conditional may share a label (LRM 27.5), and one loop
+// body can hold several of them where its blocks selected differently, so an
+// alternative is told apart by its position among them as well.
+[[nodiscard]] inline auto GenerateBlockStep(
+    const slang::ast::GenerateBlockSymbol& block) -> std::string {
+  if (block.getArrayIndex() == nullptr) {
+    if (!IsAlternative(block)) return std::string{block.name};
+    const auto alternatives = AlternativesOfConstruct(block);
+    const auto position = std::ranges::find(alternatives, &block);
+    return std::format(
+        "{}#{}", block.name, std::distance(alternatives.begin(), position));
+  }
+  const slang::ast::Scope* array = block.getHierarchicalParent();
+  return std::format(
+      "{}[{}]", array == nullptr ? std::string_view{} : array->asSymbol().name,
+      LoopIndexOf(block));
 }
 
 // Whether the visit at this block is the visit that handles its construct,

@@ -117,14 +117,23 @@ beside it. From the first the name lands in the core itself, so it has left the 
 stage; from the second it also leaves the core and lands in the module holding both. The two
 controllers differ, so the two stages and the two cores do too.
 
-Each is found where it is written and noted on the instances it concerns going outward, in one walk
-the front end's visitor descends. Outward there is one edge, the enclosing instance; downward there
-are several (a member, a generate block, a block of a loop, an element of an instance array), and a
-key that searched below itself for these paid that search each time it was worked out, which was the
-whole of what a loop's blocks cost to declare. slang records a name the same way: it walks from
-where the name is written, outward, and adds it to every instance body it passes
-(`Compilation::noteUpwardReference`), then declines to share any body holding one
-(`DiagnosticVisitor::tryApplyFromCache`).
+**An instance states what leaves it, and the instance holding it reads that statement and not its
+body.** What follows for an instance from where it stands is one answer per instance, worked out
+once and kept: its own body is read for the names that leave it and the instances it holds, and each
+held instance is asked for its own answer, of which a name landing here stops and everything else
+passes up under the held instance's path. So each body is read once, an answer is a function of its
+instance alone and cannot depend on which instance was asked about first, and a unit compiled alone
+asks for exactly the answers it needs. A key that searched below itself for these paid that search
+each time it was worked out, which was the whole of what a loop's blocks cost to declare.
+
+rustc collects a closure's captured variables this way: a query per closure walks that closure's own
+body, and at a nested closure asks the same query of it and counts each answer as a use in the outer
+body (`upvars_mentioned`, `rustc_passes/src/upvars.rs`). clang and slang instead walk outward from
+the use over the scopes they have open, adding the capture or the name to each one passed
+(`Sema::tryCaptureVariable`; `Compilation::noteUpwardReference`, after which slang declines to share
+any body holding one, `DiagnosticVisitor::tryApplyFromCache`). That needs every enclosing scope open
+at once, which one pass over one translation unit or one elaboration has and a unit compiled alone
+does not; a walk of that shape was built here first and replaced for that reason.
 
 The inputs are still read off the instance tree the parent already stands on, so F1 holds: nothing
 needs a child's compiled body. Each is stated as itself, under the path from the instance to where
