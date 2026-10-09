@@ -98,21 +98,18 @@ struct Collected {
 // through, so an instance nested in a generate block is reached without this
 // code knowing the container taxonomy.
 //
-// The specialization key decides the dedup, because that is what identifies a
-// unit: a definition and everything fixed for it, which is what a referrer can
-// compute about the child it constructs. Two instances agreeing on it are one
-// unit however many bodies the frontend chose to build -- it declines to share
-// one when a name inside reaches outward, since the resolution differs per
-// instance, but that resolution is settled per instance at construction and
-// never inside the unit, so the unit itself is the same.
+// What an instance's specialization is called decides the dedup, because the
+// name stands for what identifies a unit: a definition and everything fixed for
+// it, which is what a referrer can compute about the child it constructs. Two
+// instances agreeing on it are one unit however many bodies the frontend chose
+// to build -- it declines to share one when a name inside reaches outward,
+// since the resolution differs per instance, but that resolution is settled per
+// instance at construction and never inside the unit, so the unit itself is the
+// same.
 //
 // Descending reaches each occurrence's own body, so a child is collected under
 // what its own parent fixed for it, and every occurrence is reached, because
 // each is held to the unit it shares.
-//
-// Two keys reaching one name would silently make two units into one, so the
-// name a unit is known by is checked against the key it came from rather than
-// standing in for it.
 //
 // A virtual interface's type names an interface together with its parameters
 // (LRM 25.9), and code reaching through one compiles against that unit's
@@ -125,7 +122,7 @@ struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
   }
 
   const SpecializationPolicy* policy;
-  std::unordered_map<std::string, SpecializationKey> seen;
+  std::unordered_set<std::string> named;
   std::set<Application> applications;
   Collected found;
 
@@ -161,14 +158,8 @@ struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
   }
 
   void handle(const slang::ast::InstanceSymbol& inst) {
-    SpecializationKey key = SpecializationKeyOf(inst, *policy);
-    std::string name = SpecializationName(key);
-    const auto [entry, fresh] = seen.try_emplace(name, key);
-    if (!fresh && entry->second != key) {
-      throw InternalError(
-          "UnitCollector: two specializations reached one name, so the name "
-          "no longer tells the units apart");
-    }
+    std::string name = policy->NameOf(inst);
+    const bool fresh = named.insert(name).second;
     const bool repeat =
         !applications.insert(ApplicationOf(inst, name, *policy)).second;
     std::vector<CollectedUnit>* collected_as = &found.witnesses;
@@ -409,7 +400,7 @@ auto TopLevelUnits(
     tops.emplace_back(
         TopLevelUnit{
             .instance_name = std::string{inst->name},
-            .unit_name = SpecializationName(*inst, policy)});
+            .unit_name = policy.NameOf(*inst)});
   }
   return tops;
 }

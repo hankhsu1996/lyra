@@ -82,8 +82,7 @@ auto ReachThroughHandle(
   if (instance != nullptr) {
     return HeldInstance{
         .access = std::move(descent->instance),
-        .unit_name =
-            SpecializationName(*instance, unit_lowerer.Specialization())};
+        .unit_name = unit_lowerer.Specialization().NameOf(*instance)};
   }
 
   const hir::ExternalScopeClassId scope_class = descent->place.scope_class;

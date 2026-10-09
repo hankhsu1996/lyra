@@ -548,8 +548,7 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
         std::vector<hir::UnitObjectType> per_position;
         per_position.reserve(elements.size());
         for (const slang::ast::InstanceSymbol* element : elements) {
-          std::string instance_unit =
-              SpecializationName(*element, Specialization());
+          std::string instance_unit = Specialization().NameOf(*element);
           std::string class_name = hir::InstanceClassName(instance_unit);
           per_position.push_back(
               hir::UnitObjectType{
@@ -862,7 +861,7 @@ auto UnitLowerer::ImportSignatureType(
 
 auto UnitLowerer::ScopeClassOfInstance(
     const slang::ast::InstanceSymbol& instance) -> hir::ExternalScopeClassId {
-  return ExternalScopeClassOf(SpecializationName(instance, Specialization()));
+  return ExternalScopeClassOf(Specialization().NameOf(instance));
 }
 
 auto UnitLowerer::ExternalScopeClassOf(const std::string& unit_name)

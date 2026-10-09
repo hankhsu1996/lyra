@@ -201,6 +201,35 @@ Rust cannot.
    own: each of the others is lowered and compared with the unit, and one that differs keeps its
    definition out of the sharing.
 
+7. **An instance's name is worked out once and kept, and keeping it changes no answer.** A key
+   states everything fixed below its instance, so working it out costs the instance, and every scope
+   the instance holds and every unit naming it asks; asked afresh each time, a loop of N blocks
+   under one overridden unit costs N squared, and so does a loop of N instances each naming their
+   parent. This is not the shared table F2 rules out: nobody agrees through it, and deleting it
+   leaves every name what it was. What makes that true is one rule. A name asked while another is
+   being worked out can differ from the one the instance has alone, where a hierarchical name it
+   writes lands in an instance still being named and is stated by how far out that instance is. So a
+   name is kept only when it met nothing outside itself, together with the instances it looked for
+   among those being named and did not find, and it answers a later asking only while none of those
+   is being named. clang keeps a declaration's mangled name the same way and declines where the name
+   "depends on whether the variable is referenced by a host or device host function"
+   (`CodeGenModule::getMangledName`); rustc's symbol name is a query per instance, and its trait
+   solver refuses a kept answer "if a nested goal of the global cache entry is on the stack"
+   (`search_graph`, `candidate_is_applicable`), which is the rule taken here. Two keys folding to
+   one name are refused where a name is kept.
+
+   **A design element does not ask what it is called to name the scopes it declares.** It is handed
+   its name when it is made, and names each generate block by joining it onto the scope holding it.
+   Asking the design for its own name there is a unit reaching through a design-level lookup to
+   answer a question about its own declarations.
+
+   **The name stays a question answered on demand, and is not settled by one walk of the design.**
+   Having the walk that collects the units name every instance, and refusing any later asking it did
+   not cover, was built and taken back: it makes a table one pass over the whole design fills the
+   thing every unit reads to refer to another, which is the shared table F2 rules out and what a
+   query model cannot keep. An answer kept under the instance it is about is a memoized query, and a
+   unit compiled alone can ask for exactly the names it needs.
+
 ## Consequences
 
 - Distinct keys produce distinct names, hence distinct artifacts; the current name-collision

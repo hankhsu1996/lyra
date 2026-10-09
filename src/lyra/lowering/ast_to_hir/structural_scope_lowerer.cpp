@@ -78,8 +78,7 @@ struct InstanceConstruction {
 auto ConstructionOf(
     const slang::ast::InstanceSymbol& instance,
     const SpecializationPolicy& policy) -> InstanceConstruction {
-  InstanceConstruction built{
-      .unit = SpecializationName(instance, policy), .arguments = {}};
+  InstanceConstruction built{.unit = policy.NameOf(instance), .arguments = {}};
   for (const slang::ast::ParameterSymbol* param :
        policy.SuppliedParametersOf(instance)) {
     built.arguments.push_back(
