@@ -6,7 +6,14 @@
 // copy back is observable: while the task is suspended the actual still holds
 // the value it had at the enable, however long ago the body wrote the formal.
 // A ref formal is not copied at all, so a write through it is in the caller's
-// variable at once (LRM 13.3, 13.5, 13.5.2).
+// variable at once. A task takes as many arguments as it declares, and each
+// output of several hundred is copied back like each of two (LRM 13.3, 13.5,
+// 13.5.2).
+`define N4(p) p``0, p``1, p``2, p``3
+`define N16(p) `N4(p``0), `N4(p``1), `N4(p``2), `N4(p``3)
+`define N64(p) `N16(p``0), `N16(p``1), `N16(p``2), `N16(p``3)
+`define N320(p) `N64(p``0), `N64(p``1), `N64(p``2), `N64(p``3), `N64(p``4)
+
 module Top;
   int given;
   int carried;
@@ -34,6 +41,18 @@ module Top;
     r = r + 1;
     #5;
   endtask
+
+  // 320 outputs, `o0000` through `o4333`, copied back to `many0000` through
+  // `many4333`.
+  int `N320(many);
+
+  task automatic many_outputs(output int `N320(o));
+    o0000 = 61;
+    o2000 = 62;
+    o4333 = 63;
+  endtask
+
+  initial many_outputs(`N320(many));
 
   initial begin
     given = 7;
@@ -69,6 +88,9 @@ module Top;
     if (slow_io !== 101) $fatal(1, "slow_io was %0d, expected 101", slow_io);
     if (slow_ref !== 201)
       $fatal(1, "slow_ref was %0d, expected 201", slow_ref);
+    if (many0000 !== 61 || many2000 !== 62 || many4333 !== 63)
+      $fatal(1, "of 320 outputs three read %0d, %0d and %0d, expected 61 to 63",
+             many0000, many2000, many4333);
     $display("All checks passed");
   end
 endmodule

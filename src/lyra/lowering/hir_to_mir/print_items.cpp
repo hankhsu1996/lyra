@@ -1,8 +1,10 @@
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -48,20 +50,9 @@ auto ToMirFormatModifiers(const value::FormatModifiers& m)
       .left_align = m.left_align};
 }
 
-// The print family does not permit positional elision, so the optional-bearing
-// argument list flattens to plain ids once and every walk over it works from
-// those. An elided slot indicates a frontend or HIR-lowering bug -- elision is
-// only legal at the $fread mem-form's start position.
-auto FlattenCallArgs(const hir::CallExpr& call) -> std::vector<hir::ExprId> {
-  std::vector<hir::ExprId> args;
-  args.reserve(call.arguments.size());
-  for (const auto& slot : call.arguments) {
-    if (!slot.has_value()) {
-      throw InternalError("print-family call argument is unexpectedly elided");
-    }
-    args.push_back(*slot);
-  }
-  return args;
+// What an empty argument contributes to the text (LRM 21.2.1).
+auto EmptyArgumentItem() -> mir::RuntimePrintItem {
+  return mir::RuntimePrintLiteral{.text = " "};
 }
 
 // LRM 21.2.1.6 asks for the entries of a container, and an associative array
@@ -260,11 +251,14 @@ auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
           .type = unit.builtins.string});
 }
 
+// What one directive of a format string contributes. A directive that formats
+// a value takes the argument at `next_argument` and moves past it.
 template <ExprLowerer Lowerer>
 auto LowerPrintItemForDirective(
     Lowerer& lowerer, WalkFrame frame, const value::FormatDirective& directive,
-    std::span<const hir::ExprId> args, std::size_t& value_index,
-    diag::SourceSpan span) -> diag::Result<mir::RuntimePrintItem> {
+    std::span<const std::optional<hir::ExprId>> arguments,
+    std::size_t& next_argument, diag::SourceSpan span)
+    -> diag::Result<mir::RuntimePrintItem> {
   switch (directive.role) {
     case value::FormatDirective::Role::kLiteral:
       return mir::RuntimePrintLiteral{.text = directive.literal};
@@ -281,14 +275,15 @@ auto LowerPrintItemForDirective(
               ToMirFormatModifiers(directive.modifiers)));
 
     case value::FormatDirective::Role::kValue: {
-      if (value_index >= args.size()) {
+      if (next_argument >= arguments.size()) {
         return diag::Fail(
             span, diag::DiagCode::kErrorDisplayMissingArg,
             "format string consumes more arguments than provided");
       }
-      const hir::ExprId hir_arg = args[value_index++];
+      const std::optional<hir::ExprId> argument = arguments[next_argument++];
+      if (!argument.has_value()) return EmptyArgumentItem();
       return BuildPrintValueItem(
-          lowerer, frame, hir_arg,
+          lowerer, frame, *argument,
           mir::FormatSpec(
               directive.kind, ToMirFormatModifiers(directive.modifiers)));
     }
@@ -438,73 +433,85 @@ auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind {
   throw InternalError("RadixToFormatKind: unknown PrintRadix");
 }
 
+// What a format string contributes: its text, and each argument one of its
+// directives formats, taken from `next_argument` on.
 template <ExprLowerer Lowerer>
-auto BuildRuntimePrintItemsFromCallArgs(
-    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
-    support::PrintRadix default_radix, std::size_t arg_offset)
+auto LowerFormatStringItems(
+    Lowerer& lowerer, WalkFrame frame, const LiteralFormatStringRef& literal,
+    const value::FormatParseResult& parsed,
+    std::span<const std::optional<hir::ExprId>> arguments,
+    std::size_t& next_argument)
     -> diag::Result<std::vector<mir::RuntimePrintItem>> {
-  const auto& hir_exprs = lowerer.HirExprs();
   std::vector<mir::RuntimePrintItem> items;
-  const std::vector<hir::ExprId> args = FlattenCallArgs(call);
-  std::size_t cursor = arg_offset;
-
-  std::optional<LiteralFormatStringRef> literal;
-  if (cursor < args.size()) {
-    literal = TryGetHirStringLiteral(hir_exprs, args[cursor]);
-  }
-  if (literal.has_value()) {
-    const value::FormatParseResult parsed =
-        value::ParseFormatString(literal->text);
-    if (parsed.error != value::FormatParseError::kNone) {
-      return FailFormatParse(parsed, literal->span);
-    }
-    ++cursor;
-    auto value_index = cursor;
-    for (const auto& directive : parsed.directives) {
-      auto item_or = LowerPrintItemForDirective(
-          lowerer, frame, directive, args, value_index, literal->span);
-      if (!item_or) return std::unexpected(std::move(item_or.error()));
-      items.push_back(*std::move(item_or));
-    }
-    cursor = value_index;
-  }
-
-  const value::FormatKind default_kind = RadixToFormatKind(default_radix);
-  while (cursor < args.size()) {
-    if (!items.empty()) {
-      items.emplace_back(mir::RuntimePrintLiteral{.text = " "});
-    }
-    auto item_or = BuildPrintValueItem(
-        lowerer, frame, args[cursor],
-        mir::FormatSpec(default_kind, mir::FormatModifiers{}));
+  items.reserve(parsed.directives.size());
+  for (const auto& directive : parsed.directives) {
+    auto item_or = LowerPrintItemForDirective(
+        lowerer, frame, directive, arguments, next_argument, literal.span);
     if (!item_or) return std::unexpected(std::move(item_or.error()));
     items.push_back(*std::move(item_or));
-    ++cursor;
   }
   return items;
 }
 
 template <ExprLowerer Lowerer>
-auto HasLiteralFormatString(
-    const Lowerer& lowerer, const hir::CallExpr& call, std::size_t arg_offset)
-    -> bool {
-  if (arg_offset >= call.arguments.size()) return false;
-  const auto& slot = call.arguments[arg_offset];
-  if (!slot.has_value()) return false;
-  return TryGetHirStringLiteral(lowerer.HirExprs(), *slot).has_value();
+auto BuildDisplayListPrintItems(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
+    support::PrintRadix default_radix, std::size_t arg_offset)
+    -> diag::Result<std::vector<mir::RuntimePrintItem>> {
+  const std::span<const std::optional<hir::ExprId>> arguments{call.arguments};
+  const value::FormatKind default_kind = RadixToFormatKind(default_radix);
+  std::vector<mir::RuntimePrintItem> items;
+  std::size_t next_argument = arg_offset;
+  while (next_argument < arguments.size()) {
+    const std::optional<hir::ExprId> argument = arguments[next_argument++];
+    if (!argument.has_value()) {
+      items.push_back(EmptyArgumentItem());
+      continue;
+    }
+    const auto literal = TryGetHirStringLiteral(lowerer.HirExprs(), *argument);
+    if (!literal.has_value()) {
+      auto item_or = BuildPrintValueItem(
+          lowerer, frame, *argument,
+          mir::FormatSpec(default_kind, mir::FormatModifiers{}));
+      if (!item_or) return std::unexpected(std::move(item_or.error()));
+      items.push_back(*std::move(item_or));
+      continue;
+    }
+    const value::FormatParseResult parsed =
+        value::ParseFormatString(literal->text);
+    if (parsed.error != value::FormatParseError::kNone) {
+      return FailFormatParse(parsed, literal->span);
+    }
+    auto formatted = LowerFormatStringItems(
+        lowerer, frame, *literal, parsed, arguments, next_argument);
+    if (!formatted) return std::unexpected(std::move(formatted.error()));
+    std::ranges::move(*formatted, std::back_inserter(items));
+  }
+  return items;
 }
 
+namespace {
+
+// The call yielding the formatted text where the parse of the format string
+// and the binding of its directives happen at simulation time (LRM 21.3.3).
+// The format string lowers to an SV `string` -- an integral or
+// unpacked-byte-array one converts, the same way a `%s` operand does -- and
+// each argument after it becomes a bare type-erased operand, since no
+// directive is known yet to bind it to a conversion.
 template <ExprLowerer Lowerer>
 auto BuildRuntimeFormatCallExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     std::size_t arg_offset) -> diag::Result<mir::Expr> {
   auto& unit = lowerer.Owner().Unit();
-  const std::vector<hir::ExprId> args = FlattenCallArgs(call);
-
-  if (arg_offset >= args.size()) {
-    throw InternalError(
-        "BuildRuntimeFormatCallExpr: the format-string slot is absent; the "
-        "subroutine's argument-count policy should have rejected the call");
+  std::vector<hir::ExprId> args;
+  args.reserve(call.arguments.size());
+  for (const std::optional<hir::ExprId>& argument : call.arguments) {
+    if (!argument.has_value()) {
+      throw InternalError(
+          "BuildRuntimeFormatCallExpr: an empty argument reached a call the "
+          "front end admits none to");
+    }
+    args.push_back(*argument);
   }
 
   // Naming each operand and formatting through those names are the steps of one
@@ -571,6 +578,8 @@ auto BuildRuntimeFormatCallExpr(
   return steps.Build(formatted);
 }
 
+}  // namespace
+
 auto BuildPrintItemsArray(
     mir::CompilationUnit& unit, mir::Block& block,
     const std::vector<mir::RuntimePrintItem>& items,
@@ -588,21 +597,54 @@ auto BuildPrintItemsArray(
       .type = array_type};
 }
 
-template auto HasLiteralFormatString(
-    const ProcessLowerer&, const hir::CallExpr&, std::size_t) -> bool;
-template auto HasLiteralFormatString(
-    const StructuralScopeLowerer&, const hir::CallExpr&, std::size_t) -> bool;
-template auto BuildRuntimePrintItemsFromCallArgs(
+template <ExprLowerer Lowerer>
+auto BuildFormatStringTextExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
+    std::size_t arg_offset) -> diag::Result<mir::Expr> {
+  const std::span<const std::optional<hir::ExprId>> arguments{call.arguments};
+  if (arg_offset >= arguments.size() || !arguments[arg_offset].has_value()) {
+    throw InternalError(
+        "BuildFormatStringTextExpr: the format-string slot is absent; the "
+        "subroutine's argument-count policy should have rejected the call");
+  }
+  const auto literal =
+      TryGetHirStringLiteral(lowerer.HirExprs(), *arguments[arg_offset]);
+  if (literal.has_value()) {
+    const value::FormatParseResult parsed =
+        value::ParseFormatString(literal->text);
+    if (parsed.error != value::FormatParseError::kNone) {
+      return FailFormatParse(parsed, literal->span);
+    }
+    const auto taken = static_cast<std::size_t>(std::ranges::count(
+        parsed.directives, value::FormatDirective::Role::kValue,
+        &value::FormatDirective::role));
+    std::size_t next_argument = arg_offset + 1;
+    if (taken >= arguments.size() - next_argument) {
+      auto items = LowerFormatStringItems(
+          lowerer, frame, *literal, parsed, arguments, next_argument);
+      if (!items) return std::unexpected(std::move(items.error()));
+      auto& unit = lowerer.Owner().Unit();
+      auto& block = *frame.current_block;
+      const mir::ExprId items_array = block.exprs.Add(BuildPrintItemsArray(
+          unit, block, *items,
+          static_cast<std::int64_t>(lowerer.Resolution().unit_power)));
+      return BuildFormatCallExpr(unit, block, items_array);
+    }
+  }
+  return BuildRuntimeFormatCallExpr(lowerer, frame, call, arg_offset);
+}
+
+template auto BuildDisplayListPrintItems(
     ProcessLowerer&, WalkFrame, const hir::CallExpr&, support::PrintRadix,
     std::size_t) -> diag::Result<std::vector<mir::RuntimePrintItem>>;
-template auto BuildRuntimePrintItemsFromCallArgs(
+template auto BuildDisplayListPrintItems(
     const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&,
     support::PrintRadix, std::size_t)
     -> diag::Result<std::vector<mir::RuntimePrintItem>>;
-template auto BuildRuntimeFormatCallExpr(
+template auto BuildFormatStringTextExpr(
     ProcessLowerer&, WalkFrame, const hir::CallExpr&, std::size_t)
     -> diag::Result<mir::Expr>;
-template auto BuildRuntimeFormatCallExpr(
+template auto BuildFormatStringTextExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::CallExpr&, std::size_t)
     -> diag::Result<mir::Expr>;
 

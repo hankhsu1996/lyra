@@ -28,6 +28,12 @@ module Top;
   string byte_word;
   int byte_number;
 
+  string string_source;
+  string string_format;
+  int from_string_operands;
+  int string_first;
+  int string_second;
+
   initial begin
     // "1234", "56 78", "%d %d", "%d %h", and "hello 42" followed by padding.
     two_state_source = 32'h31_32_33_34;
@@ -47,6 +53,11 @@ module Top;
     from_four_state_format = $sscanf("99 cafe", four_state_format,
                                      format_decimal, format_hexadecimal);
     from_byte_source = $sscanf(byte_source, "%s %d", byte_word, byte_number);
+
+    string_source = "31 47";
+    string_format = "%d %d";
+    from_string_operands = $sscanf(string_source, string_format, string_first,
+                                   string_second);
   end
 
   final begin
@@ -89,6 +100,13 @@ module Top;
     if (byte_number !== 42)
       $fatal(1, "the number read from a byte array was %0d, expected 42",
              byte_number);
+
+    if (from_string_operands !== 2)
+      $fatal(1, "a string source and control string returned %0d, expected 2",
+             from_string_operands);
+    if (string_first !== 31 || string_second !== 47)
+      $fatal(1, "the values read were %0d and %0d, expected 31 and 47",
+             string_first, string_second);
     $display("All checks passed");
   end
 endmodule

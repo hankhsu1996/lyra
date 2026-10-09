@@ -13,11 +13,15 @@ arrays, the integral-family declaration initializers, parameter references in ex
 including its methods wherever they may be written are complete. The variable-size aggregate family
 (dynamic array, queue, associative array) is complete as a value surface; what an element reference
 into one has to survive is not, and is recorded with the conformance gaps below. Unpacked struct and
-union, tagged and untagged, are complete. Default initialization (LRM Table 6-7) and value
-representation, including a wide value carrying X/Z across the 64-bit word boundary, are complete.
-Chandle is complete. Bit-stream casting is complete between fixed-size types; the dynamically sized
-form is the one gap, recorded below. Dynamic casting is complete for every operand family, in both
-of its spellings.
+union, tagged and untagged, are complete, with one gap on the C++ backend: a union declaring more
+than 256 members, tagged or not, emits a project that does not compile, because what holds its one
+live member is stated over all of them at once and the host compiler bounds how long such a
+statement may be. A structure of that many members had the same gap and no longer does; the
+execution backend runs both. Default initialization (LRM Table 6-7) and value representation,
+including a wide value carrying X/Z across the 64-bit word boundary, are complete. Chandle is
+complete. Bit-stream casting is complete between fixed-size types; the dynamically sized form is the
+one gap, recorded below. Dynamic casting is complete for every operand family, in both of its
+spellings.
 
 ## Tagged union
 

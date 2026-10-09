@@ -22,9 +22,11 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -112,11 +114,15 @@ auto LiftStringFormat(
 // -1 and convert nothing. The test is on the operand as written, since the lift
 // to string silently drops the unknown bits. A format is always an operand the
 // rule covers; a source is one only where the call names it, which `$fscanf`
-// does not -- its source is the file's buffered text.
+// does not -- its source is the file's buffered text. An operand whose type
+// holds no unknown bit, a `string` among them, is known by that type and is
+// asked nothing.
 auto EmitScanOperandsKnown(
-    mir::Block& body, mir::TypeId bit_t, std::optional<mir::ExprId> source,
-    mir::ExprId format) -> mir::ExprId {
-  const auto known = [&](mir::ExprId operand) {
+    const mir::CompilationUnit& unit, mir::Block& body, mir::TypeId bit_t,
+    std::optional<mir::ExprId> source, mir::ExprId format) -> mir::ExprId {
+  std::vector<mir::ExprId> known;
+  const auto ask = [&](mir::ExprId operand) {
+    if (!CarriesUnknowns(unit, body.exprs.Get(operand).type)) return;
     const mir::ExprId unknown_id = body.exprs.Add(
         mir::Expr{
             .data =
@@ -127,25 +133,16 @@ auto EmitScanOperandsKnown(
                             .receiver = operand},
                     .arguments = {}},
             .type = bit_t});
-    return body.exprs.Add(
+    known.push_back(body.exprs.Add(
         mir::Expr{
             .data =
                 mir::UnaryExpr{
                     .op = mir::UnaryOp::kLogicalNot, .operand = unknown_id},
-            .type = bit_t});
+            .type = bit_t}));
   };
-  if (!source.has_value()) {
-    return known(format);
-  }
-  const mir::ExprId source_known = known(*source);
-  return body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::BinaryExpr{
-                  .op = mir::BinaryOp::kLogicalAnd,
-                  .lhs = source_known,
-                  .rhs = known(format)},
-          .type = bit_t});
+  if (source.has_value()) ask(*source);
+  ask(format);
+  return BuildMirLogicalAnd(unit, body, bit_t, known);
 }
 
 auto ValidateTargetType(
@@ -245,7 +242,7 @@ auto LowerScanSystemSubroutineCall(
               : std::optional{body.exprs.Add(
                     mir::MakeLocalRefExpr(source_var, raw_source_type))};
   const mir::ExprId known_id = EmitScanOperandsKnown(
-      body, bit_t, rule_source,
+      unit, body, bit_t, rule_source,
       body.exprs.Add(mir::MakeLocalRefExpr(format_var, format_type)));
 
   mir::Block scan_body;

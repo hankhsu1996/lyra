@@ -24,39 +24,31 @@ namespace lyra::lowering::hir_to_mir {
 // FormatKind that drives single-argument format dispatch.
 auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind;
 
-// Whether the call's format-string slot holds a string literal, so its
-// directives are known at compile time. A caller whose format string is
-// mandatory (LRM 21.3.3) but absent from this slot formats through the runtime
-// parse instead.
+// The print items of a list of arguments as the display tasks read one (LRM
+// 21.2.1), from the argument at `arg_offset` on: the arguments contribute in
+// the order written with nothing between them. A string literal contributes
+// its text, each format specification in it formatting an argument after it;
+// an expression no specification took is formatted in `default_radix` (LRM
+// 21.2.1.1); an empty argument is a single space.
+//
+// `arg_offset` passes over what a task takes before its list: the descriptor
+// of a file-output task, the output variable of `$swrite`, the finish number
+// of `$fatal`.
 template <ExprLowerer Lowerer>
-auto HasLiteralFormatString(
-    const Lowerer& lowerer, const hir::CallExpr& call, std::size_t arg_offset)
-    -> bool;
-
-// Walks a system-subroutine call's argument list and produces the runtime
-// print-item sequence. The first argument at `arg_offset` is treated as
-// the format-string slot: if it is a `hir::StringLiteral` it is parsed as a
-// format string and the remaining arguments are consumed by its directives;
-// otherwise every argument from `arg_offset` onward is rendered with
-// `default_radix` (LRM 21.2.1.1 auto-format).
-// `arg_offset` is 1 for file-output variants whose first call argument
-// is the MCD/FD descriptor, or for `$sformat` / `$swrite*` whose first
-// argument is the output_var lvalue; 0 otherwise.
-template <ExprLowerer Lowerer>
-auto BuildRuntimePrintItemsFromCallArgs(
+auto BuildDisplayListPrintItems(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     support::PrintRadix default_radix, std::size_t arg_offset)
     -> diag::Result<std::vector<mir::RuntimePrintItem>>;
 
-// Builds the call yielding the formatted text for a format string whose value
-// is known only at simulation time (LRM 21.3.3). The format-string slot at
-// `arg_offset` lowers to an SV `string` -- an integral or unpacked-byte-array
-// format string converts, the same way a `%s` operand does -- and each
-// remaining argument becomes a bare type-erased operand, since no directive is
-// known yet to bind it to a conversion. Yields the SV `string` the call
-// produces, as the compile-time-parsed path does.
+// The text, an SV `string`, of a call that reads the argument at `arg_offset`,
+// and no other, as a format string (LRM 21.3.3), each argument after it
+// formatted by the directive that takes it. A literal format string taking
+// every one of them is bound to them now. Any other is parsed and bound at
+// simulation time: one whose text is known only then, and a literal that
+// leaves arguments over, for which the clause asks a warning and that
+// execution continue -- what that parse does with a surplus.
 template <ExprLowerer Lowerer>
-auto BuildRuntimeFormatCallExpr(
+auto BuildFormatStringTextExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     std::size_t arg_offset) -> diag::Result<mir::Expr>;
 

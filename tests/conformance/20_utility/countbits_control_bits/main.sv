@@ -3,7 +3,13 @@
 // bit contributes only its least significant bit, and a value named more than
 // once counts as though it had been named once. $countones, $onehot and
 // $onehot0 are defined in terms of it, counting only bits whose value is 1, so
-// an x bit is not a one (LRM 20.9).
+// an x bit is not a one. The list of control bits has no stated length (LRM
+// 20.9).
+`define X4(a) a, a, a, a
+`define X16(a) `X4(a), `X4(a), `X4(a), `X4(a)
+`define X64(a) `X16(a), `X16(a), `X16(a), `X16(a)
+`define X320(a) `X64(a), `X64(a), `X64(a), `X64(a), `X64(a)
+
 module Top;
   typedef struct {
     int p;
@@ -24,6 +30,7 @@ module Top;
   int repeated_control;
   int every_control;
   int wide_control;
+  int long_control_list;
 
   int two_state_unknown;
   int two_state_ones;
@@ -53,6 +60,7 @@ module Top;
     repeated_control = $countbits(mixed, 1'b1, 1'b1);
     every_control = $countbits(mixed, 1'b0, 1'b1, 1'bx, 1'bz);
     wide_control = $countbits(mixed, 2'b01);
+    long_control_list = $countbits(mixed, `X320(1'bx), 1'bz);
 
     known = 8'b1010_0100;
     two_state_unknown = $countbits(known, 1'bx);
@@ -99,6 +107,8 @@ module Top;
       $fatal(1, "every_control was %0d, expected 8", every_control);
     if (wide_control !== 3)
       $fatal(1, "wide_control was %0d, expected 3", wide_control);
+    if (long_control_list !== 2)
+      $fatal(1, "long_control_list was %0d, expected 2", long_control_list);
 
     if (two_state_unknown !== 0)
       $fatal(1, "two_state_unknown was %0d, expected 0", two_state_unknown);

@@ -4,6 +4,7 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <variant>
@@ -48,12 +49,15 @@ enum class ReturnConvention : std::uint8_t {
   kOperandType,
 };
 
+// How many arguments a call may carry. A subroutine whose syntax is a list of
+// arguments states no maximum, because the standard gives that list no length
+// (LRM 21.2.1, Syntax 21-1).
 struct ArgCountPolicy {
   std::uint16_t min_args;
-  std::uint16_t max_args;
+  std::optional<std::uint16_t> max_args;
 
   [[nodiscard]] constexpr auto Accepts(std::size_t count) const -> bool {
-    return count >= min_args && count <= max_args;
+    return count >= min_args && (!max_args.has_value() || count <= *max_args);
   }
 };
 
@@ -328,7 +332,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$display",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kDecimal,
@@ -341,7 +345,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$displayb",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kBinary,
@@ -354,7 +358,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$displayh",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kHex,
@@ -367,7 +371,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$displayo",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kOctal,
@@ -380,7 +384,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$write",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kDecimal,
@@ -393,7 +397,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$writeb",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kBinary,
@@ -406,7 +410,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$writeh",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kHex,
@@ -419,7 +423,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$writeo",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kOctal,
@@ -432,7 +436,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fdisplay",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kDecimal,
@@ -445,7 +449,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fdisplayb",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kBinary,
@@ -458,7 +462,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fdisplayh",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kHex,
@@ -471,7 +475,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fdisplayo",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kOctal,
@@ -484,7 +488,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fwrite",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kDecimal,
@@ -497,7 +501,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fwriteb",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kBinary,
@@ -510,7 +514,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fwriteh",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kHex,
@@ -523,7 +527,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fwriteo",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kOctal,
@@ -546,7 +550,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$info",
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             DiagnosticSystemSubroutineInfo{.builtin_fn = BuiltinFn::kEmitInfo},
     },
@@ -555,7 +559,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$warning",
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             DiagnosticSystemSubroutineInfo{
                 .builtin_fn = BuiltinFn::kEmitWarning},
@@ -565,7 +569,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$error",
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             DiagnosticSystemSubroutineInfo{.builtin_fn = BuiltinFn::kEmitError},
     },
@@ -685,7 +689,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$sscanf",
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInteger,
-        .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = std::nullopt},
         .semantic = ScanSystemSubroutineInfo{.source = ScanSourceKind::kString},
     },
     SystemSubroutineDesc{
@@ -693,7 +697,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fscanf",
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInteger,
-        .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 3, .max_args = std::nullopt},
         .semantic = ScanSystemSubroutineInfo{.source = ScanSourceKind::kFile},
     },
     SystemSubroutineDesc{
@@ -701,7 +705,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$swrite",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             SFormatSystemSubroutineInfo{
                 .radix = PrintRadix::kDecimal,
@@ -713,7 +717,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$swriteb",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             SFormatSystemSubroutineInfo{
                 .radix = PrintRadix::kBinary,
@@ -725,7 +729,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$swriteh",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             SFormatSystemSubroutineInfo{
                 .radix = PrintRadix::kHex,
@@ -737,7 +741,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$swriteo",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             SFormatSystemSubroutineInfo{
                 .radix = PrintRadix::kOctal,
@@ -749,7 +753,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$sformat",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = std::nullopt},
         .semantic =
             SFormatSystemSubroutineInfo{
                 .radix = PrintRadix::kDecimal,
@@ -761,7 +765,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$sformatf",
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kString,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             SFormatSystemSubroutineInfo{
                 .radix = PrintRadix::kDecimal,
@@ -773,7 +777,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$strobe",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kDecimal,
@@ -786,7 +790,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$strobeb",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kBinary,
@@ -799,7 +803,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$strobeh",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kHex,
@@ -812,7 +816,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$strobeo",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kOctal,
@@ -849,7 +853,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fstrobe",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kDecimal,
@@ -862,7 +866,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fstrobeb",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kBinary,
@@ -875,7 +879,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fstrobeh",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kHex,
@@ -888,7 +892,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fstrobeo",
         .kind = SystemSubroutineKind::kTask,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 1, .max_args = std::nullopt},
         .semantic =
             PrintSystemSubroutineInfo{
                 .radix = PrintRadix::kOctal,
@@ -917,7 +921,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$fatal",
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kVoid,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = std::nullopt},
         .semantic =
             DiagnosticSystemSubroutineInfo{.builtin_fn = BuiltinFn::kEmitFatal},
     },
@@ -982,7 +986,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$countbits",
         .kind = SystemSubroutineKind::kFunction,
         .result_conv = ReturnConvention::kInt32,
-        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = 255},
+        .arg_policy = ArgCountPolicy{.min_args = 2, .max_args = std::nullopt},
         .semantic =
             BitVectorSystemSubroutineInfo{
                 .values = BitValueSet::kControlArguments,
