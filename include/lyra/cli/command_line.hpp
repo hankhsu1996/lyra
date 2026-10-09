@@ -126,6 +126,12 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts);
 auto ParseCommandWords(slang::driver::Driver& driver, std::vector<char*>& words)
     -> std::expected<CommandKind, std::string>;
 
+// Defines the macro naming Lyra for every text this invocation reads, in every
+// library of the build. It goes ahead of what the command line defines: the
+// front end keeps the first definition it is given of a macro, so a `-D` gives
+// the name no other value, while a `-U` still takes it away.
+void PredefineToolIdentity(slang::driver::Driver& driver);
+
 // Refuses, by name, every one of Lyra's options the caller gave that the
 // command acts on none of, naming the commands that do. An option a command
 // acts on is never refused for having no effect this time -- `--no-pch` given
@@ -160,12 +166,12 @@ auto ResolveDesignDeclaration(
 // a selection only where the command line left one unmade.
 //
 // Every library of the build is read apart from the others (LRM 3.12.1): in
-// compilation units of its own, under what the command line said and what the
-// library declared for itself, with nothing of another library's. The one
-// being built is read under what its design declares besides. A cell
-// instantiated from a library's cell is searched for in that library and then
-// in the ones it declared it depends on, in the order it wrote them, and
-// nowhere else.
+// compilation units of its own, under the macro naming the tool, what the
+// command line said and what the library declared for itself, with nothing of
+// another library's. The one being built is read under what its design
+// declares besides. A cell instantiated from a library's cell is searched for
+// in that library and then in the ones it declared it depends on, in the order
+// it wrote them, and nowhere else.
 //
 // Call this after the command line is parsed. The order is load-bearing: the
 // front end's parser keeps the first value a single-valued option is given, so

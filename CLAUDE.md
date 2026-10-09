@@ -81,6 +81,10 @@ driver: every front-end option slang accepts -- `--top`, `-I`, `-D`, `-G`, `--si
 Lyra's command line; what follows is the simulation's own argv, where LRM 21.6 plusargs go.
 `lyra --help` prints the authoritative option list.
 
+Every text Lyra reads finds `__lyra__` defined as 1, in every library of a build, beside the front
+end's own `__slang__`: a source selects on the tool that will run it by the first and on the parser
+reading it by the second. A `-U` takes either away and a `-D` gives neither another value.
+
 **A `lyra.toml` beside the sources declares them, so a design is not respelled at every
 invocation.** `[library]` names a library and the sources, search paths, defines and native DPI-C
 sources it is made of; `[design]` states what is run of it -- the tops, their parameter overrides,
