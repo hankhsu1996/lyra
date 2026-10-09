@@ -47,6 +47,15 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   class_identities_ = {mir_->classes.size(), std::move(classes)};
 
+  // So is every struct this unit declares, since what another unit published
+  // may hold one -- a specialization of its generic on this unit's struct.
+  std::vector<lir::StructId> structs;
+  structs.reserve(mir_->structs.size());
+  for (std::size_t i = 0; i < mir_->structs.size(); ++i) {
+    structs.push_back(out_.structs.Declare());
+  }
+  struct_identities_ = {mir_->structs.size(), std::move(structs)};
+
   // What each class of another unit published, taken whole: a property step on
   // one names a slot counted out of the published list, and a class extending
   // one is placed after all of its storage and fills its table from all of its
@@ -61,9 +70,8 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
         .members = {},
         .dispatch = {},
         .implements = {}};
-    for (const mir::CrossUnitClassRef& iface : cls.implements) {
-      record.implements.push_back(
-          ExternalClassValueType(iface.unit_name, iface.class_name));
+    for (const mir::DeclaredClassRef& iface : cls.implements) {
+      record.implements.push_back(ClassRefValueType(iface));
     }
     record.members.reserve(cls.fields.size() + cls.private_field_types.size());
     for (const mir::FieldId id : cls.fields.Ids()) {
@@ -102,13 +110,6 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
             .invoke = out_.functions.Declare()});
   }
   closure_identities_ = {mir_->closures.size(), std::move(closures)};
-
-  std::vector<lir::StructId> structs;
-  structs.reserve(mir_->structs.size());
-  for (std::size_t i = 0; i < mir_->structs.size(); ++i) {
-    structs.push_back(out_.structs.Declare());
-  }
-  struct_identities_ = {mir_->structs.size(), std::move(structs)};
 
   // What every struct is made of is settled before any body lowers, since a
   // body reaching a component of one reads it -- a method of the struct

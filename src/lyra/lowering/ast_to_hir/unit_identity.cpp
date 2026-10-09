@@ -87,7 +87,7 @@ auto TypeIdentity(
     case SymbolKind::ClassType: {
       const auto& cls = canonical.as<slang::ast::ClassType>();
       return std::format(
-          "{}::{}", CompilationUnitName(DeclaringCompilationUnit(cls), policy),
+          "{}::{}", CompilationUnitName(UnitHomeOf(cls), policy),
           SpecializationName(cls, policy));
     }
     case SymbolKind::FixedSizeUnpackedArrayType: {
@@ -117,8 +117,7 @@ auto TypeIdentity(
     }
     case SymbolKind::UnpackedStructType:
       return std::format(
-          "struct {}::{}",
-          CompilationUnitName(DeclaringCompilationUnit(canonical), policy),
+          "struct {}::{}", CompilationUnitName(UnitHomeOf(canonical), policy),
           TypeDeclarationName(canonical, policy));
     case SymbolKind::UnpackedUnionType: {
       const auto& u = canonical.as<slang::ast::UnpackedUnionType>();
@@ -620,21 +619,142 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
       "element's body, or the file-set scope");
 }
 
-auto DeclaringStructuralScope(const slang::ast::ClassType& cls)
-    -> const slang::ast::Scope& {
-  for (const slang::ast::Scope* level = cls.getParentScope(); level != nullptr;
+namespace {
+
+auto IsInstanceScope(const slang::ast::Scope& scope) -> bool {
+  const slang::ast::SymbolKind kind = scope.asSymbol().kind;
+  return kind == slang::ast::SymbolKind::InstanceBody ||
+         kind == slang::ast::SymbolKind::GenerateBlock;
+}
+
+auto Encloses(const slang::ast::Scope& outer, const slang::ast::Scope& inner)
+    -> bool {
+  for (const slang::ast::Scope* level = &inner; level != nullptr;
        level = level->asSymbol().getParentScope()) {
-    const slang::ast::SymbolKind kind = level->asSymbol().kind;
+    if (level == &outer) return true;
+  }
+  return false;
+}
+
+// Of two scopes replicating parts of one type, the one replicating the whole:
+// an instance's scope over a namespace's, and the inner of two instances'
+// scopes. Two instance scopes neither of which encloses the other cannot both
+// reach one type, since a type an instance declares is named only inside it
+// (LRM 6.22).
+auto Innermost(const slang::ast::Scope* held, const slang::ast::Scope* other)
+    -> const slang::ast::Scope* {
+  if (other == nullptr || !IsInstanceScope(*other)) return held;
+  if (!IsInstanceScope(*held) || Encloses(*held, *other)) return other;
+  if (Encloses(*other, *held)) return held;
+  throw InternalError(
+      "ReplicatingScope: two instance scopes neither enclosing the other "
+      "replicate parts of one type");
+}
+
+auto ReplicatingScopeOfType(const slang::ast::Type& type)
+    -> const slang::ast::Scope* {
+  using slang::ast::SymbolKind;
+  const slang::ast::Type& canonical = type.getCanonicalType();
+  switch (canonical.kind) {
+    case SymbolKind::ClassType:
+    case SymbolKind::UnpackedStructType:
+    case SymbolKind::UnpackedUnionType:
+    case SymbolKind::PackedStructType:
+    case SymbolKind::PackedUnionType:
+    case SymbolKind::EnumType:
+      return &ReplicatingScope(canonical);
+    case SymbolKind::AssociativeArrayType: {
+      const auto& assoc = canonical.as<slang::ast::AssociativeArrayType>();
+      const slang::ast::Scope* element =
+          ReplicatingScopeOfType(assoc.elementType);
+      if (assoc.indexType == nullptr) return element;
+      const slang::ast::Scope* index = ReplicatingScopeOfType(*assoc.indexType);
+      if (element == nullptr) return index;
+      return Innermost(element, index);
+    }
+    default:
+      break;
+  }
+  if (const slang::ast::Type* element = canonical.getArrayElementType()) {
+    return ReplicatingScopeOfType(*element);
+  }
+  return nullptr;
+}
+
+// The innermost specialization of a generic class `decl` is or lies in, short
+// of its compilation unit.
+auto InnermostSpecialization(const slang::ast::Symbol& decl)
+    -> const slang::ast::ClassType* {
+  for (const slang::ast::Symbol* level = &decl;
+       level != nullptr && !IsCompilationUnit(*level);
+       level = level->getParentScope() == nullptr
+                   ? nullptr
+                   : &level->getParentScope()->asSymbol()) {
+    const auto* cls = level->as_if<slang::ast::ClassType>();
+    if (cls != nullptr && cls->genericClass != nullptr) return cls;
+  }
+  return nullptr;
+}
+
+auto InstanceBodyOf(const slang::ast::Scope& scope)
+    -> const slang::ast::Symbol& {
+  for (const slang::ast::Scope* level = &scope; level != nullptr;
+       level = level->asSymbol().getParentScope()) {
+    if (level->asSymbol().kind == slang::ast::SymbolKind::InstanceBody) {
+      return level->asSymbol();
+    }
+  }
+  throw InternalError(
+      "UnitHomeOf: an instance's scope lies in a design element's body");
+}
+
+}  // namespace
+
+auto ReplicatingScope(const slang::ast::Symbol& decl)
+    -> const slang::ast::Scope& {
+  const slang::ast::Scope* replicating = nullptr;
+  std::vector<const slang::ast::ClassType*> specializations;
+  for (const slang::ast::Symbol* level = &decl; replicating == nullptr;) {
+    if (const auto* cls = level->as_if<slang::ast::ClassType>();
+        cls != nullptr && cls->genericClass != nullptr) {
+      specializations.push_back(cls);
+    }
+    const slang::ast::Scope* parent = level->getParentScope();
+    if (parent == nullptr) {
+      throw InternalError(
+          "ReplicatingScope: every declaration lies inside a structural "
+          "scope");
+    }
+    const slang::ast::SymbolKind kind = parent->asSymbol().kind;
     if (kind == slang::ast::SymbolKind::InstanceBody ||
         kind == slang::ast::SymbolKind::GenerateBlock ||
         kind == slang::ast::SymbolKind::Package ||
         kind == slang::ast::SymbolKind::CompilationUnit) {
-      return *level;
+      replicating = parent;
+    }
+    level = &parent->asSymbol();
+  }
+  const slang::ast::Scope* innermost = replicating;
+  for (const slang::ast::ClassType* spec : specializations) {
+    for (const auto* param : spec->genericParameters) {
+      if (const auto* type_param =
+              param->as_if<slang::ast::TypeParameterSymbol>()) {
+        innermost = Innermost(
+            innermost,
+            ReplicatingScopeOfType(type_param->targetType.getType()));
+      }
     }
   }
-  throw InternalError(
-      "DeclaringStructuralScope: every class is declared inside a structural "
-      "scope");
+  return *innermost;
+}
+
+auto UnitHomeOf(const slang::ast::Symbol& decl) -> const slang::ast::Symbol& {
+  const slang::ast::Scope& replicating = ReplicatingScope(decl);
+  if (IsInstanceScope(replicating)) return InstanceBodyOf(replicating);
+  if (const slang::ast::ClassType* spec = InnermostSpecialization(decl)) {
+    return *spec;
+  }
+  return DeclaringCompilationUnit(decl);
 }
 
 auto IsDesignElement(const slang::ast::Symbol& unit) -> bool {
@@ -642,7 +762,7 @@ auto IsDesignElement(const slang::ast::Symbol& unit) -> bool {
 }
 
 auto BelongsToAnInstance(const slang::ast::ClassType& cls) -> bool {
-  return IsDesignElement(DeclaringCompilationUnit(cls));
+  return IsInstanceScope(ReplicatingScope(cls));
 }
 
 auto CompilationUnitName(
@@ -655,6 +775,11 @@ auto CompilationUnitName(
   if (unit.kind == SymbolKind::InstanceBody) {
     return SpecializationName(
         InstantiationOf(unit.as<slang::ast::InstanceBodySymbol>()), policy);
+  }
+  if (const auto* spec = unit.as_if<slang::ast::ClassType>()) {
+    return std::format(
+        "{}__{}", CompilationUnitName(DeclaringCompilationUnit(*spec), policy),
+        SpecializationName(*spec, policy));
   }
   if (unit.kind == SymbolKind::CompilationUnit) {
     // The anonymous $unit scope has no source name; its distinguishing identity
@@ -682,8 +807,8 @@ auto CompilationUnitName(
         "CompilationUnitName: compilation unit has no located member");
   }
   throw InternalError(
-      "CompilationUnitName: symbol is not a package, module body, or "
-      "compilation unit");
+      "CompilationUnitName: symbol is not a package, module body, compilation "
+      "unit, or specialization");
 }
 
 namespace {
@@ -744,10 +869,11 @@ auto TypeDeclarationName(
     const slang::ast::Type& type, const SpecializationPolicy& policy)
     -> std::string {
   std::vector<std::string> path{NameInScope(type)};
+  const slang::ast::Symbol& home = UnitHomeOf(type);
   for (const slang::ast::Scope* scope = type.getParentScope(); scope != nullptr;
        scope = scope->asSymbol().getParentScope()) {
     const slang::ast::Symbol& owner = scope->asSymbol();
-    if (IsCompilationUnit(owner)) {
+    if (IsCompilationUnit(owner) || &owner == &home) {
       break;
     }
     // A type written in place inside another is named inside that one's name.

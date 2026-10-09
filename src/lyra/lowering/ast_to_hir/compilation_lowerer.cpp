@@ -18,6 +18,7 @@
 #include <slang/ast/ASTVisitor.h>
 #include <slang/ast/Compilation.h>
 #include <slang/ast/SemanticFacts.h>
+#include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
@@ -32,6 +33,7 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/dump.hpp"
 #include "lyra/hir/unit_signatures.hpp"
+#include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -270,6 +272,73 @@ auto CollectCompilationUnits(const LowerCompilationFacts& facts)
   return units;
 }
 
+// Where each specialization of a generic class a namespace declares is held.
+// Its parameters are written wherever it is named (LRM 8.25), so the namespace
+// declaring the generic fixes none of them and holds none of its
+// specializations: one specialized on a type an instance replicates is held by
+// that instance's design element, and every other one is a unit of its own.
+//
+// The front end makes a specialization where an expression naming it is first
+// bound, and an instance body it judged a duplicate of another is bound only
+// when something reads it. So every body a unit is lowered from is bound
+// first; otherwise a specialization appears only once its unit is already
+// lowering, after the scope replicating it has settled what it holds.
+struct SpecializationHomes {
+  std::vector<const slang::ast::ClassType*> own_units;
+  PlacedSpecializations placed;
+};
+
+// Binds what one body holds, an instance inside it as far as the connections
+// the body writes for it, since the instance's own body is one of the collected
+// ones and is bound in its turn.
+struct BindsEveryExpression
+    : slang::ast::ASTVisitor<
+          BindsEveryExpression, slang::ast::VisitFlags::AllGood> {
+  void handle(const slang::ast::InstanceSymbol& child) {
+    child.visitExprs(*this);
+  }
+};
+
+auto CollectSpecializationHomes(
+    const LowerCompilationFacts& facts, const Collected& collected,
+    const SpecializationPolicy& policy) -> SpecializationHomes {
+  BindsEveryExpression binder;
+  for (const auto* bodies :
+       {&collected.units, &collected.witnesses, &collected.repeats}) {
+    for (const CollectedUnit& unit : *bodies) {
+      unit.body->visit(binder);
+    }
+  }
+  SpecializationHomes homes;
+  const auto visit = [&](const slang::ast::Symbol& member) {
+    const auto* cls = member.as_if<slang::ast::ClassType>();
+    if (cls == nullptr || cls->genericClass == nullptr) return;
+    const slang::ast::Symbol& home = UnitHomeOf(*cls);
+    if (&home == cls) {
+      homes.own_units.push_back(cls);
+    } else if (IsDesignElement(home)) {
+      homes.placed[&home].push_back(cls);
+    }
+  };
+  for (const auto* package : CollectPackages(facts)) {
+    WalkDeclarationScopes(*package, visit);
+  }
+  for (const auto* cu : facts.Compilation().getRoot().compilationUnits) {
+    WalkDeclarationScopes(*cu, visit);
+  }
+  // The front end lists a generic's specializations in no order a second
+  // compilation repeats, so they are taken in the order of their names.
+  const auto by_name = [&](const slang::ast::ClassType* cls) {
+    return CompilationUnitName(UnitHomeOf(*cls), policy) +
+           SpecializationName(*cls, policy);
+  };
+  std::ranges::sort(homes.own_units, {}, by_name);
+  for (auto& [_, placed] : homes.placed) {
+    std::ranges::sort(placed, {}, by_name);
+  }
+  return homes;
+}
+
 // The two port kinds IEEE 1800 forbids leaving unconnected. Every other
 // direction has a defined meaning with no connection -- an input takes its
 // declared default and an output drives nothing -- so only these two decide
@@ -467,13 +536,15 @@ auto DefinitionsLoweredApart(
 // What the design's units hold between declaring and lowering their bodies.
 // Everything a unit reads is here and outlives the unit reading it: the AST is
 // declared first, so it is released after every lowerer pointing into it, and
-// the export names, the sensitivity analysis and the specialization policy are
-// built beside the facts that point at them rather than handed in.
+// the export names, the sensitivity analysis, the specialization policy and
+// where each specialization is held are built beside the facts that point at
+// them rather than handed in.
 struct DeclaredDesign::Units {
   std::unique_ptr<slang::ast::Compilation> front_end;
   ForeignExportNames export_names;
   SensitivityAnalyzer sensitivity;
   SpecializationPolicy specialization;
+  SpecializationHomes specialization_homes;
   LoweringFacts facts;
   std::vector<TopLevelUnit> tops;
   std::vector<std::unique_ptr<UnitLowerer>> lowerers;
@@ -488,7 +559,7 @@ struct DeclaredDesign::Units {
       : front_end(std::move(elaborated)),
         facts(
             source_mapper, sensitivity, export_names, assertion_policy,
-            specialization) {
+            specialization, specialization_homes.placed) {
   }
 
   // Declares every unit the design has under the specialization policy held
@@ -513,6 +584,12 @@ struct DeclaredDesign::Units {
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
               facts, *cu, CompilationUnitName(*cu, specialization),
+              hir::UnitRole::kNamespace));
+    }
+    for (const slang::ast::ClassType* spec : specialization_homes.own_units) {
+      lowerers.push_back(
+          std::make_unique<UnitLowerer>(
+              facts, *spec, CompilationUnitName(*spec, specialization),
               hir::UnitRole::kNamespace));
     }
     for (const CollectedUnit& unit : collected.units) {
@@ -562,6 +639,8 @@ auto DeclaredDesign::Declare(
       return std::nullopt;
     }
     const Collected collected = CollectUnits(facts, units->specialization);
+    units->specialization_homes =
+        CollectSpecializationHomes(facts, collected, units->specialization);
     units->DeclareEveryUnit(facts, collected, sink);
     if (sink.HasErrors()) {
       return std::nullopt;

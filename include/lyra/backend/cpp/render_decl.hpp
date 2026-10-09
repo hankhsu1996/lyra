@@ -81,12 +81,22 @@ auto RenderUnitCallables(
     -> UnitText;
 
 // The structs the unit declares, each the C++ type every unit naming it spells
-// it as, with its methods as members. Each goes into the unit's types header,
-// which a unit naming it includes, and every method is defined once, in the
-// code file.
+// it as, with its methods as members. Each goes into a header of its own, which
+// a unit naming it includes, and every method is defined once, in the code
+// file.
+struct UnitStruct {
+  mir::StructId id;
+  TargetText declaration;
+};
+
+struct UnitStructs {
+  std::vector<UnitStruct> declared;
+  TargetText code;
+};
+
 auto RenderUnitStructs(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
-    -> UnitText;
+    -> UnitStructs;
 
 // The unit's package variables (LRM 26.2): declared in the header, so other
 // units can name them, and defined once in the code file.

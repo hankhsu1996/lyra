@@ -71,9 +71,15 @@ struct CppTupleComponents {
 
 void WriteOne(TargetText& out, const CppTupleComponents& components);
 
+// A name written into a file needs the file declaring it read first, and how
+// the name is used says whether a declaration is enough or the definition is
+// needed. A class's name says so as it is written, as a struct's does, so a
+// file's includes are what its own text asked for.
+
 // A class a reference names, as C++: its own name for a class of this unit,
 // `::Unit::Name` for another unit's, and the runtime's name for a runtime
-// class.
+// class. An object is reached through a pointer, so the name needs the class
+// declared and no more.
 class CppClassRef {
  public:
   CppClassRef(const mir::CompilationUnit& unit, mir::ClassRef ref)
@@ -96,6 +102,14 @@ class CppClassRef {
 };
 
 void WriteOne(TargetText& out, const CppClassRef& ref);
+
+// A class named as the base of another (LRM 8.13, 8.26). C++ lays the derived
+// class out over its base, so the name needs the base defined.
+struct CppBaseClass {
+  CppClassRef of;
+};
+
+void WriteOne(TargetText& out, const CppBaseClass& base);
 
 // How C++ dereferences a value of this type. A pointer takes the indirection
 // operator built in; a `ref` to a cell (LRM 23.3.3.2) and a write in progress

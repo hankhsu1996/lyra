@@ -243,12 +243,27 @@ class UnitLowerer {
         "UnitLowerer::ImportedRuntimeObjectType: unknown imported class");
   }
 
+  // A class some unit declared, `class_name` of `unit_name`, as this unit names
+  // it: one of its own where `unit_name` is this unit -- a signature of another
+  // unit names it so -- and otherwise the other unit's. Naming one records no
+  // dependency; the builders below are what record one.
+  [[nodiscard]] auto DeclaredClassIdentityOf(
+      const std::string& unit_name, const std::string& class_name) const
+      -> mir::DeclaredClassRef;
+
+  // What a signature names of a class, in MIR's terms. Reading a signature
+  // records no dependency, so neither does this; a reference that names the
+  // class records it where it takes the name.
+  [[nodiscard]] auto PublishedClass(const hir::ExternalClassRef& ref) const
+      -> mir::DeclaredClassRef;
+
   // Cross-unit reference builders. Each converts a HIR-level cross-unit
   // reference into its MIR peer AND records that this unit consumed the named
   // unit's signature, in one operation, so a caller never records the
   // dependency for itself and cannot build a reference that leaves one
   // unrecorded. Which reference it was is not kept, because what a unit depends
-  // on another for is that it read the signature.
+  // on another for is that it read the signature. A reference naming this
+  // unit's own class is to that class, and depends on nothing.
   //
   // The type is one of them, which is easy to read as too much: building a
   // value of a class names that class outright, and the type is the whole of
@@ -450,6 +465,10 @@ class UnitLowerer {
   // nothing else: a class of this unit reached through another unit's
   // signature arrives as one, and is resolved to this unit's class here.
   std::map<std::string, mir::ClassId, std::less<>> published_scope_classes_;
+  // The same, for the classes this unit declares: a signature of another unit
+  // names one by name -- a specialization of another unit's generic holding a
+  // value of it, say -- and it is resolved to this unit's class here.
+  std::map<std::string, mir::ClassId, std::less<>> declared_classes_;
   // Where each scope's own shape placed what the unit published of it, by the
   // class it was published as.
   std::map<mir::ClassId, ScopeClassLayout> own_scope_layouts_;

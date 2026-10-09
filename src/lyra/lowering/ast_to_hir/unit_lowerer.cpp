@@ -39,7 +39,6 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/verify.hpp"
-#include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
@@ -51,12 +50,43 @@
 
 namespace lyra::lowering::ast_to_hir {
 
+namespace {
+
+auto ScopeLoweredFor(const slang::ast::Symbol& home)
+    -> const slang::ast::Scope& {
+  const slang::ast::Symbol& lowered =
+      home.kind == slang::ast::SymbolKind::ClassType
+          ? DeclaringCompilationUnit(home)
+          : home;
+  if (const auto* body = lowered.as_if<slang::ast::InstanceBodySymbol>()) {
+    return *body;
+  }
+  if (const auto* package = lowered.as_if<slang::ast::PackageSymbol>()) {
+    return *package;
+  }
+  if (const auto* cu = lowered.as_if<slang::ast::CompilationUnitSymbol>()) {
+    return *cu;
+  }
+  throw InternalError(
+      "UnitLowerer: a unit is lowered from the scope of a package, a design "
+      "element's body, or a `$unit` scope");
+}
+
+}  // namespace
+
 UnitLowerer::UnitLowerer(
-    const LoweringFacts& facts, const slang::ast::Scope& scope,
+    const LoweringFacts& facts, const slang::ast::Symbol& home,
     std::string name, hir::UnitRole role)
-    : facts_(facts), scope_(&scope), unit_{std::move(name)} {
+    : facts_(facts),
+      home_(&home),
+      scope_(&ScopeLoweredFor(home)),
+      unit_{std::move(name)} {
   unit_.role = role;
   signature_.unit_name = unit_.name;
+}
+
+auto UnitLowerer::Owns(const slang::ast::Symbol& decl) const -> bool {
+  return &UnitHomeOf(decl) == home_;
 }
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
@@ -69,13 +99,13 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
   }
   {
     const profiling::TimeTraceScope step("declare classes");
-    if (auto r = InternOwnClassDeclarations(*scope_); !r) {
+    if (auto r = InternOwnClassDeclarations(); !r) {
       return std::unexpected(std::move(r.error()));
     }
   }
   {
     const profiling::TimeTraceScope step("declare structures");
-    if (auto r = InternOwnStructureDeclarations(*scope_); !r) {
+    if (auto r = InternOwnStructureDeclarations(); !r) {
       return std::unexpected(std::move(r.error()));
     }
   }
@@ -83,8 +113,7 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
   return PublishSignature();
 }
 
-auto UnitLowerer::InternOwnStructureDeclarations(const slang::ast::Scope& scope)
-    -> diag::Result<void> {
+auto UnitLowerer::InternOwnStructureDeclarations() -> diag::Result<void> {
   // A structure's typedef declares the type, and the declaration brings the
   // operations the language defines on a whole structure (LRM 7.2), so the
   // type exists in the unit that declares it whether or not that unit ever
@@ -107,7 +136,7 @@ auto UnitLowerer::InternOwnStructureDeclarations(const slang::ast::Scope& scope)
     }
     return {};
   };
-  return WalkDeclarationScopes(scope, visit);
+  return WalkOwnDeclarations(visit);
 }
 
 auto UnitLowerer::TakeSignature() -> hir::UnitSignature {
@@ -133,44 +162,31 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
   return std::move(unit_);
 }
 
-auto UnitLowerer::InternOwnClassDeclarations(const slang::ast::Scope& scope)
-    -> diag::Result<void> {
-  // A class is owned by the compilation unit that declares it. Slang exposes a
-  // class declaration at scope level as one of two kinds: a `ClassType` for a
-  // non-parameterized declaration (LRM 8.3), or a `GenericClassDefSymbol` for a
-  // parameterized one (LRM 8.25), which carries one `ClassType` per live
-  // specialization slang deduplicated during elaboration. Minting them before
-  // any body lowers keeps class identity queryable through the unit's registry
-  // from the moment any body resolves a reference, and gives a specialization
-  // reached only from another unit its home in the declaring unit.
+auto UnitLowerer::InternOwnClassDeclarations() -> diag::Result<void> {
+  // A class is held by the unit whose own source fixes it: a
+  // non-parameterized one (LRM 8.3) by the unit declaring it, and each live
+  // specialization of a parameterized one (LRM 8.25) by the unit its
+  // parameters place it in, which the walk reaches it from either way. Minting
+  // them before any body lowers keeps class identity queryable through the
+  // unit's registry from the moment any body resolves a reference.
   //
-  // The walk descends every structural scope, so which scope declares a class
-  // is settled before any body lowers rather than by whichever reference
+  // The walk descends every structural scope, so which scope replicates a
+  // class is settled before any body lowers rather than by whichever reference
   // reaches the class first (LRM 23.9 makes a class a scope of the name tree,
   // and a generate block declares its own).
   auto visit = [&](const slang::ast::Symbol& member) -> diag::Result<void> {
-    if (member.kind == slang::ast::SymbolKind::ClassType) {
-      if (auto r = InternLocalClass(
-              member.as<slang::ast::ClassType>(),
-              SourceMapper().PointSpanOf(member.location));
-          !r) {
-        return std::unexpected(std::move(r.error()));
-      }
+    if (member.kind != slang::ast::SymbolKind::ClassType) {
+      return {};
     }
-    if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
-      const diag::SourceSpan span = SourceMapper().PointSpanOf(member.location);
-      for (const auto& spec :
-           member.as<slang::ast::GenericClassDefSymbol>().specializations()) {
-        if (auto r = InternLocalClass(
-                spec.getCanonicalType().as<slang::ast::ClassType>(), span);
-            !r) {
-          return std::unexpected(std::move(r.error()));
-        }
-      }
+    if (auto r = InternLocalClass(
+            member.as<slang::ast::ClassType>(),
+            SourceMapper().PointSpanOf(member.location));
+        !r) {
+      return std::unexpected(std::move(r.error()));
     }
     return {};
   };
-  return WalkDeclarationScopes(scope, visit);
+  return WalkOwnDeclarations(visit);
 }
 
 auto UnitLowerer::NextScopeFrameId() -> ScopeFrameId {
@@ -194,6 +210,7 @@ void UnitLowerer::DeclareStructuralIdentities(
   published.class_name = std::move(class_name);
   publishing_scopes_.push_back(&scope);
   for (const auto& member : scope.members()) {
+    if (!Owns(member)) continue;
     DeclareMemberIdentities(member, decls, published, frame);
   }
 }
@@ -286,15 +303,13 @@ void UnitLowerer::DeclareMemberIdentities(
           ScopePublicationRecord::InterfacePort{
               .symbol = &member.as<slang::ast::InterfacePortSymbol>()});
       return;
-    case SymbolKind::ClassType:
-    case SymbolKind::GenericClassDef:
-      DeclareClassStatics(member, published);
-      return;
-
     // Nothing a body names before it lowers: a connection takes its identity
     // where the member walk builds it, a type is interned where it is declared
-    // or used, and the rest belongs to another scope or brings no structure of
-    // its own.
+    // or used -- a class publishing what it keeps for itself where it is
+    // interned -- and the rest belongs to another scope or brings no structure
+    // of its own.
+    case SymbolKind::ClassType:
+    case SymbolKind::GenericClassDef:
     case SymbolKind::ContinuousAssign:
     case SymbolKind::NetAlias:
     case SymbolKind::Sequence:
@@ -586,29 +601,21 @@ void UnitLowerer::DeclareProceduralStatics(
 }
 
 void UnitLowerer::DeclareClassStatics(
-    const slang::ast::Symbol& declared, ScopePublicationRecord& published) {
-  const auto of_class = [&](const slang::ast::ClassType& cls) {
-    for (const auto& member : cls.members()) {
-      const auto* property = member.as_if<slang::ast::ClassPropertySymbol>();
-      if (property != nullptr &&
-          property->lifetime == slang::ast::VariableLifetime::Static) {
-        published.members.emplace_back(
-            ScopePublicationRecord::ClassStatic{
-                .symbol = property, .owner = &cls});
-        continue;
-      }
-      DeclareClassStatics(member, published);
-    }
-  };
-  // A parameterized class is one class per specialization the design uses
-  // (LRM 8.25).
-  if (const auto* cls = declared.as_if<slang::ast::ClassType>()) {
-    of_class(*cls);
-  } else if (
-      const auto* generic =
-          declared.as_if<slang::ast::GenericClassDefSymbol>()) {
-    for (const auto& spec : generic->specializations()) {
-      of_class(spec.getCanonicalType().as<slang::ast::ClassType>());
+    const slang::ast::ClassType& cls, const slang::ast::Scope& replicating) {
+  const auto it = scope_publications_.find(&replicating);
+  if (it == scope_publications_.end()) {
+    throw InternalError(
+        "UnitLowerer::DeclareClassStatics: a class this unit holds is "
+        "replicated by a scope of this unit, which declared its identities "
+        "first");
+  }
+  for (const auto& member : cls.members()) {
+    const auto* property = member.as_if<slang::ast::ClassPropertySymbol>();
+    if (property != nullptr &&
+        property->lifetime == slang::ast::VariableLifetime::Static) {
+      it->second.members.emplace_back(
+          ScopePublicationRecord::ClassStatic{
+              .symbol = property, .owner = &cls});
     }
   }
 }
@@ -678,10 +685,9 @@ auto UnitLowerer::DeclaringScopeChain(const slang::ast::Scope& scope) const
   return chain;
 }
 
-auto UnitLowerer::DeclaredByAnotherDesignElement(
+auto UnitLowerer::HeldByAnotherDesignElement(
     const slang::ast::ClassType& cls) const -> bool {
-  return BelongsToAnInstance(cls) &&
-         &DeclaringCompilationUnit(cls) != &scope_->asSymbol();
+  return BelongsToAnInstance(cls) && &UnitHomeOf(cls) != home_;
 }
 
 auto UnitLowerer::TakesDeclaringInstance(
@@ -696,7 +702,7 @@ auto UnitLowerer::TakesDeclaringInstance(
             if (own == own_class_signatures_.end()) {
               throw InternalError(
                   "UnitLowerer::TakesDeclaringInstance: a class this unit "
-                  "declares states what it takes once it is interned");
+                  "holds states what it takes once it is interned");
             }
             return own->second.takes_declaring_instance;
           },
@@ -710,13 +716,13 @@ auto UnitLowerer::TakesDeclaringInstance(
 auto UnitLowerer::DeclaringScopeHopsFrom(
     const slang::ast::ClassType& cls, const WalkFrame& frame,
     diag::SourceSpan span) const -> diag::Result<hir::StructuralHops> {
-  if (!BelongsToAnInstance(cls) || DeclaredByAnotherDesignElement(cls)) {
+  if (!BelongsToAnInstance(cls) || HeldByAnotherDesignElement(cls)) {
     throw InternalError(
-        "UnitLowerer::DeclaringScopeHopsFrom: only a class this unit declares "
-        "in one of its structural scopes is counted out of this unit's scopes");
+        "UnitLowerer::DeclaringScopeHopsFrom: only a class one of this unit's "
+        "structural scopes replicates is counted out of this unit's scopes");
   }
-  const slang::ast::Scope& declaring = DeclaringStructuralScope(cls);
-  const auto hops = frame.HopsTo(LookupScopeFrame(declaring));
+  const slang::ast::Scope& replicating = ReplicatingScope(cls);
+  const auto hops = frame.HopsTo(LookupScopeFrame(replicating));
   if (!hops.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedClassFeature,
@@ -727,7 +733,7 @@ auto UnitLowerer::DeclaringScopeHopsFrom(
   return *hops;
 }
 
-auto UnitLowerer::TakeDeclaredClasses(const slang::ast::Scope& scope)
+auto UnitLowerer::TakeReplicatedClasses(const slang::ast::Scope& scope)
     -> std::vector<hir::ClassId> {
   const auto it = classes_by_scope_.find(&scope);
   if (it == classes_by_scope_.end()) return {};
@@ -1225,8 +1231,9 @@ void DeclareProceduralScopes(
     // too (LRM 8.13 inheritance), and this pass mints for one declaration
     // scope: a member declared elsewhere is that declaration's own to mint,
     // and minting a second identity for it would leave one of them unfilled.
+    // So would minting one for a member another unit holds.
     if (member.getParentScope() != &walked ||
-        process_blocks.contains(&member)) {
+        process_blocks.contains(&member) || !owner.Owns(member)) {
       continue;
     }
     const ScopeContribution contribution = ContributionOf(member, owner);

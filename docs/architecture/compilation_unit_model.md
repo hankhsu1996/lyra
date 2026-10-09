@@ -7,7 +7,8 @@ Define what a compilation unit is, what it owns, and the rules that make it self
 ## Owns
 
 - The identity of the compilation unit as the primary semantic boundary of the compiler.
-- The enumeration of compilation-unit kinds: module, package, interface.
+- The enumeration of compilation-unit kinds: module, package, interface, and a package generic's
+  specialization no instance replicates.
 - The rule that a compilation unit compiles independently, given only its own contents and the
   signatures of the units it references.
 - The signature a unit publishes across the compilation boundary: the declarations other units may
@@ -28,8 +29,10 @@ Define what a compilation unit is, what it owns, and the rules that make it self
 
 ## Core Invariants
 
-1. A compilation unit is the primary unit of compilation. Kinds include module, package, and
-   interface. No other construct qualifies as a compilation unit.
+1. A compilation unit is the primary unit of compilation. Kinds include module, package, interface,
+   and a specialization of a package's generic class that no instance replicates, whose parameters
+   are written wherever it is named and which the package declaring the generic therefore cannot
+   hold. A unit holds exactly the declarations its own source fixes.
 2. A compilation unit's compile-time artifacts are class-level. They do not depend on any specific
    instance.
 3. All semantic information needed to compile a unit is owned by the unit itself. Compilation never

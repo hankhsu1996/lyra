@@ -114,7 +114,7 @@ auto ClassScopesAlong(const slang::ast::HierarchicalReference& ref)
     -> std::vector<const slang::ast::Scope*> {
   std::vector<const slang::ast::Scope*> scopes;
   const auto note = [&](const slang::ast::ClassType& cls) {
-    const slang::ast::Scope* scope = &DeclaringStructuralScope(cls);
+    const slang::ast::Scope* scope = &ReplicatingScope(cls);
     if (std::ranges::find(scopes, scope) == scopes.end()) {
       scopes.push_back(scope);
     }

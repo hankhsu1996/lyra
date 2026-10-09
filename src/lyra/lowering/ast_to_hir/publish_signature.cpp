@@ -43,7 +43,6 @@
 #include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
-#include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -283,19 +282,13 @@ void UnitLowerer::PublishClassSignatures() {
             .takes_declaring_instance = own.takes_declaring_instance});
   };
   // A parameterized class is one class per specialization the design uses
-  // (LRM 8.25), each published on its own.
+  // (LRM 8.25), each published on its own by the unit holding it.
   const auto publish = [&](const slang::ast::Symbol& member) {
     if (const auto* cls = member.as_if<slang::ast::ClassType>()) {
       publish_class(*cls);
-    } else if (
-        const auto* generic =
-            member.as_if<slang::ast::GenericClassDefSymbol>()) {
-      for (const auto& spec : generic->specializations()) {
-        publish_class(spec.getCanonicalType().as<slang::ast::ClassType>());
-      }
     }
   };
-  WalkDeclarationScopes(*scope_, publish);
+  WalkOwnDeclarations(publish);
 }
 
 auto UnitLowerer::PublishNamespaceSubroutines() -> diag::Result<void> {
@@ -934,14 +927,19 @@ auto UnitLowerer::ExternalClassOf(
   // A value of the class is laid out after the whole of what it extends, and
   // is also a value of each interface class it names and of what those extend,
   // so reading its signature reads the signature of every class it names, and
-  // so on up: each states only what its own declaration says.
+  // so on up: each states only what its own declaration says. A class of this
+  // unit up that lineage is this unit's own, with no signature to read.
   hir::ExternalClass record =
       hir::ImportExternalClass(*signature, *published, unit_.types);
   for (const hir::ExternalClassRef& iface : record.implements) {
-    ExternalClassOf(iface.unit_name, iface.class_name);
+    if (iface.unit_name != unit_.name) {
+      ExternalClassOf(iface.unit_name, iface.class_name);
+    }
   }
   if (record.base.has_value()) {
-    ExternalClassOf(record.base->unit_name, record.base->class_name);
+    if (record.base->unit_name != unit_.name) {
+      ExternalClassOf(record.base->unit_name, record.base->class_name);
+    }
     // The method an override replaces is named the way a call names it, by the
     // class that introduced it, found along the classes just read. Every class
     // a published one extends is itself published, so a name that resolves to

@@ -714,14 +714,15 @@ struct StructuralScope {
   // arena; the unit owns it, because its foreign symbol is program-global and
   // belongs to no scope (LRM 35.4).
   base::Registry<SubroutineDecl, StructuralSubroutineId> structural_subroutines;
-  // The classes this scope declares (LRM 23.9 lists a class among the elements
-  // that define a scope). A class declared here is a type of this scope's
-  // instance (LRM 6.22), so an object of it belongs to the one instance it was
-  // created in and its bodies name that instance's declarations; stating the
+  // The classes that are types of this scope's instance: those it declares (LRM
+  // 23.9 lists a class among the elements that define a scope, and LRM 6.22
+  // makes one declared here a type of the instance), and the specializations of
+  // a generic on such a type (LRM 8.25). An object of one belongs to the one
+  // instance it was created in and its bodies reach that instance; stating the
   // relation on the scope is what lets the instance be supplied where it is
-  // known. Every class a unit declares is named by exactly one scope, the
+  // known. Every class a unit holds is named by exactly one scope, the
   // namespace unit's root scope included, so nothing is reached by elimination.
-  std::vector<ClassId> declared_classes;
+  std::vector<ClassId> replicated_classes;
   std::vector<ForeignExportDecl> foreign_exports;
   // Every scope's identity is minted before any body is lowered, so a `disable`
   // naming one (LRM 9.6.2) -- possibly from another process lowered first --

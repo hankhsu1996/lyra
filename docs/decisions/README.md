@@ -597,6 +597,13 @@ the detail lives in the entry itself.
   reaching it was written; what is known of a class is its own declaration or another unit's record;
   fields are named alike while callables keep their two coordinate spaces; a loop generate's blocks
   stay held as the scope every block is, since which blocks share a body is a fact of the bodies.
+- [a-specialization-is-held-where-its-arguments-are](a-specialization-is-held-where-its-arguments-are.md)
+  -- a generic's specialization is held by the design element whose instances replicate it, or is a
+  unit of its own where none does, never by the unit declaring the generic; the scope replicating a
+  type also places its static cells and the instance it takes. Every body is bound before placement,
+  a unit reading its own class through another's signature reads its own, and a C++ header holds one
+  struct. Making it in every naming unit, in the first unit needing it, or keeping it in the
+  generic's unit are rejected.
 - [cross-unit-class-translation](cross-unit-class-translation.md) -- AST-to-HIR splits class
   interning into a top-down `InternLocalClass` (never asks "which CU?") and a boundary
   `ResolveClassRef` (walks slang's parent chain only when a class is not already cached);

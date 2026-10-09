@@ -232,9 +232,7 @@ void WriteDirectCallee(
           [&](const mir::StructMethodTarget& t) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
-                CppUnitScope(t.declaration.unit_name),
-                "::", CppStructTypesNamespace(),
-                "::", ToCppName(t.declaration.name),
+                CppStructRef(t.declaration.unit_name, t.declaration.name),
                 "::", CppStructMethodName(t.answers));
           },
           // One of another unit's fixed entries: `::Pkg::sv_create`.

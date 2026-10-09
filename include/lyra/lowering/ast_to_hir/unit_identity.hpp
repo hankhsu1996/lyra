@@ -319,13 +319,30 @@ auto ScopeClassName(
 auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
     -> const slang::ast::Symbol&;
 
-// The structural scope whose instance `cls` is a type of (LRM 6.22): the
-// nearest instance body or generate block enclosing it, or the package or
-// `$unit` scope declaring it, which no instance replicates. A class nested
-// inside another class is a type of the same instance the outer one is, since
-// SystemVerilog gives it no reach into the outer object.
-[[nodiscard]] auto DeclaringStructuralScope(const slang::ast::ClassType& cls)
+// The structural scope whose instances each have their own copy of `decl`, a
+// declaration or a type (LRM 6.22): a type declared inside an instance is a
+// type of that instance. A specialization of a generic class is a type of its
+// own for each set of parameters (LRM 8.25), so one specialized on a type of an
+// instance is a type of that instance too, wherever the generic was declared.
+// So the answer is the innermost instance body or generate block among the one
+// enclosing `decl` and those replicating each type argument of a specialization
+// `decl` is or lies in; where none is, the package or `$unit` scope enclosing
+// `decl`, which no instance replicates. A class nested inside another class is
+// a type of the same instance the outer one is, since SystemVerilog gives it no
+// reach into the outer object.
+[[nodiscard]] auto ReplicatingScope(const slang::ast::Symbol& decl)
     -> const slang::ast::Scope&;
+
+// The symbol whose compilation unit holds `decl`: the one whose own source
+// fixes everything `decl` is, so no unit's content follows from how another
+// unit uses its declarations. A declaration an instance replicates belongs to
+// the design element's body that scope lies in. Otherwise, one that is or lies
+// in a specialization of a generic class belongs to that specialization, which
+// is a unit of its own, since its parameters are written wherever it is named
+// and the unit declaring the generic fixes none of them (LRM 8.25). Every other
+// declaration belongs to its declaring compilation unit.
+[[nodiscard]] auto UnitHomeOf(const slang::ast::Symbol& decl)
+    -> const slang::ast::Symbol&;
 
 // Whether `unit` is a design element (LRM 23.2.1) rather than a namespace one.
 // A design element is instantiated into the hierarchy, so a type it declares
@@ -334,10 +351,10 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
 // the file-set scope are named once and declare once.
 [[nodiscard]] auto IsDesignElement(const slang::ast::Symbol& unit) -> bool;
 
-// Whether `cls` belongs to an instance (LRM 6.22): a design element declares
-// it, so each instance of the scope declaring it has a type of its own. A class
-// a package or the `$unit` scope declares belongs to none, whichever unit
-// reaches it.
+// Whether `cls` belongs to an instance (LRM 6.22): an instance replicates it,
+// so each instance of that scope has a type of its own. A class a package or
+// the `$unit` scope declares belongs to none, whichever unit reaches it, unless
+// it is a specialization on a type that does.
 [[nodiscard]] auto BelongsToAnInstance(const slang::ast::ClassType& cls)
     -> bool;
 
@@ -348,17 +365,21 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
 // `$unit` file-set scope, modeled as a namespace unit with no source name)
 // publishes a name derived from its own source-input identity: the only
 // property distinguishing two such scopes is which compilation-unit input they
-// belong to, which the LRM uses to define the scope boundary itself. Both the
-// producer and every consumer compute this from the same slang unit symbol.
+// belong to, which the LRM uses to define the scope boundary itself. A
+// specialization that is a unit of its own publishes the name of the unit
+// declaring its generic joined to its own the way a specialization's name joins
+// its definition to the rest, so the name is an identifier as a module's is.
+// Both the producer and every consumer compute this from the same slang unit
+// symbol.
 auto CompilationUnitName(
     const slang::ast::Symbol& unit, const SpecializationPolicy& policy)
     -> std::string;
 
-// The name a type declaration has inside the unit declaring it, for a type
+// The name a type declaration has inside the unit holding it, for a type
 // SystemVerilog identifies by its declaration (LRM 6.22.1): the scopes between
 // the unit and the declaration, then what the declaration answers to there.
-// Together with the declaring unit's name it identifies the type from anywhere,
-// and the unit declaring it and every unit naming it compute it alike from the
+// Together with the holding unit's name it identifies the type from anywhere,
+// and the unit holding it and every unit naming it compute it alike from the
 // same frontend symbol.
 auto TypeDeclarationName(
     const slang::ast::Type& type, const SpecializationPolicy& policy)

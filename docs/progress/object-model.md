@@ -113,13 +113,11 @@ each stage establishes, not how.
       definition are the same type; distinct bindings produce distinct classes with per-
       specialization instance layout, static-property cells, and inheritance edge. Rides on the same
       identity mechanism a parameterized module uses -- generic-def name plus a canonical content
-      encoding of the bindings.
-  - [ ] A generic class that extends its own type parameter (`class W #(type T) extends T`, LRM
-        8.25). A specialization whose argument is declared in the same module aborts in lowering as
-        a compiler bug: the specialization is declared ahead of the class it extends, and lowering
-        requires every class after its base. One whose argument is declared in a generate block
-        inside that module is refused, since the argument's instance is not one the generic class
-        can reach from where it is declared.
+      encoding of the bindings. A package generic's specialization is compiled with its arguments
+      rather than with the package: on another package's types it is a unit of its own, and on a
+      type a module declares it is part of that module, with its static properties per instance.
+  - [x] A generic class that extends its own type parameter (`class W #(type T) extends T`, LRM
+        8.25), specialized on a class of another package, of a module, or of a generate block.
 
 - [x] Cross-unit class ownership: a class is owned by the compilation unit that declares it, and a
       reference from another unit reaches it by name -- the same by-name resolution package

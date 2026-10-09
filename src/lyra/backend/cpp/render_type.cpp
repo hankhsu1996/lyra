@@ -195,22 +195,16 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::ObjectType& o) {
             Write(out, CppClassRef(unit, o.of));
           },
-          // A struct is the type its declaring unit defines: named as that unit
-          // names it, inside the unit's types namespace where another unit
-          // names it too, and from another unit after that unit's qualifier.
           [&](const mir::StructType& s) {
             std::visit(
                 Overloaded{
                     [&](mir::StructId id) {
                       Write(
-                          out, CppStructTypesNamespace(),
-                          "::", CppStructName(unit.GetStruct(id)));
+                          out,
+                          CppStructRef(unit.name, unit.GetStruct(id).name));
                     },
                     [&](const mir::TypeDeclarationRef& ref) {
-                      Write(
-                          out, CppUnitScope(ref.unit_name),
-                          "::", CppStructTypesNamespace(),
-                          "::", ToCppName(ref.name));
+                      Write(out, CppStructRef(ref.unit_name, ref.name));
                     }},
                 s.declaration);
           },
@@ -575,10 +569,16 @@ void WriteOne(TargetText& out, const CppClassRef& ref) {
   const mir::CompilationUnit& unit = ref.Unit();
   std::visit(
       Overloaded{
+          // A class no other unit names is declared in the unit's code file,
+          // the one file that names it.
           [&](const mir::IntraUnitClassRef& i) {
+            if (mir::IsPublished(unit, i.class_id)) {
+              out.Require(UnitForwardFileOf(unit.name));
+            }
             Write(out, CppClassName(unit.GetClass(i.class_id), i.class_id));
           },
           [&](const mir::CrossUnitClassRef& e) {
+            out.Require(UnitForwardFileOf(e.unit_name));
             Write(
                 out, CppUnitScope(e.unit_name), "::", ToCppName(e.class_name));
           },
@@ -591,6 +591,28 @@ void WriteOne(TargetText& out, const CppClassRef& ref) {
             out += RuntimeClassCppType(support::RuntimeClass::kObject);
           }},
       ref.Ref());
+}
+
+void WriteOne(TargetText& out, const CppBaseClass& base) {
+  const mir::CompilationUnit& unit = base.of.Unit();
+  std::visit(
+      Overloaded{
+          // A class no other unit names is defined in the unit's code file,
+          // ahead of the classes there that derive from it.
+          [&](const mir::IntraUnitClassRef& i) {
+            if (mir::IsPublished(unit, i.class_id)) {
+              out.Require(UnitClassFileOf(
+                  unit.name,
+                  CppClassName(unit.GetClass(i.class_id), i.class_id)));
+            }
+          },
+          [&](const mir::CrossUnitClassRef& e) {
+            out.Require(UnitClassFileOf(e.unit_name, ToCppName(e.class_name)));
+          },
+          [](const mir::ObjectTreeRootRef&) {},
+          [](const mir::ManagedObjectRootRef&) {}},
+      base.of.Ref());
+  Write(out, base.of);
 }
 
 }  // namespace lyra::backend::cpp

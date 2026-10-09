@@ -333,7 +333,7 @@ void RenderClass(
     WriteSeparated(out, bases, ", ", [&](const Base& base) {
       Write(
           out, base.is_interface_class ? "public virtual " : "public ",
-          CppClassRef(unit, base.of));
+          CppBaseClass{.of = CppClassRef(unit, base.of)});
     });
   }
   out += " {\n";
@@ -618,21 +618,24 @@ auto RenderUnitCallables(
 
 auto RenderUnitStructs(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
-    -> UnitText {
+    -> UnitStructs {
   // Another unit names a struct by the declaration it answers to, so it is
   // declared where that unit reads, in the unit's types namespace, and its
   // methods are defined in the same namespace in the code file.
-  TargetText declared;
+  UnitStructs structs;
   TargetText definitions;
   for (const mir::StructId id : unit.structs.Ids()) {
-    const TargetText::Section declared_section(declared);
+    TargetText declared;
     const TargetText::Section defined_section(definitions);
     RenderStruct(unit, refusals, id, declared, definitions);
+    TargetText declaration;
+    AppendSectionInNamespace(declaration, CppStructTypesNamespace(), declared);
+    structs.declared.push_back(
+        UnitStruct{.id = id, .declaration = std::move(declaration)});
   }
-  UnitText text;
-  AppendSectionInNamespace(text.signature, CppStructTypesNamespace(), declared);
-  AppendSectionInNamespace(text.code, CppStructTypesNamespace(), definitions);
-  return text;
+  AppendSectionInNamespace(
+      structs.code, CppStructTypesNamespace(), definitions);
+  return structs;
 }
 
 // Package variables (LRM 26.2), one cell for the whole program: declared

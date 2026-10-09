@@ -1102,7 +1102,7 @@ class HirDumper {
 
   void RecordClassScopeChainsIn(const StructuralScope& scope) {
     scope_stack_.push_back(&scope);
-    for (const ClassId id : scope.declared_classes) {
+    for (const ClassId id : scope.replicated_classes) {
       class_scope_chains_.emplace(id, scope_stack_);
     }
     for (const auto& g : scope.generates) {

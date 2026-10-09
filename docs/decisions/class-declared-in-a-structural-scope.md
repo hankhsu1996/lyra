@@ -142,12 +142,16 @@ with one name are two perfectly good arena entries until something renders them 
 A generic class specialized on a scope-declared class constructs one, so its constructing body needs
 a declaring instance and obtains it by Decision 2's rule -- a member if the body belongs to an
 object that outlives the call, a parameter otherwise. Nothing about this is special to generics: the
-rule is applied once more, in a body that happens to live in another unit.
+rule is applied once more.
 
-The specialization itself is not replicated. Its type argument is a class of the declaring unit, of
-which the compiler knows exactly one, so a package generic specialized on it is one artifact. And a
-scope-declared class is nameable only inside the scope that declares it, so every call site that can
-exist has an instance to supply.
+The specialization is a type of each instance of that scope too (LRM 8.25: a specialization on a
+different type is a different type), so it is replicated by the scope its argument is, holds its
+static properties per instance, and is held by that scope's unit rather than by the package
+declaring the generic (`a-specialization-is-held-where-its-arguments-are.md`). This was first
+written with the specialization in the package, one artifact with one set of static properties for
+every instance, on the ground that the compiler knows exactly one argument class; it knows one per
+unit, and the type is one per instance. A scope-declared class is nameable only inside the scope
+that declares it, so every call site that can exist has an instance to supply.
 
 This is stated because the case invites the opposite conclusion. Refusing it would be rejecting a
 correct program because the per-unit shared form could not carry a value -- the shape

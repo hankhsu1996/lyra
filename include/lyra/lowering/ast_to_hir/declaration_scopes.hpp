@@ -15,28 +15,36 @@ namespace lyra::lowering::ast_to_hir {
 // declaration outside a body may stand in: a class (LRM 8.3 admits a class
 // declaration as a class item), each live specialization of a parameterized
 // one (LRM 8.25), and each generate block this elaboration built (LRM 27). A
-// member is visited before anything inside it. A visitor that can fail answers
-// with a `diag::Result<void>` and the walk stops at its first failure; one that
-// cannot answers with nothing, and so does the walk.
+// specialization is visited as the class it is, in place of the generic
+// declaration, since only a specialization is a type. A member is visited
+// before anything inside it. A visitor that can fail answers with a
+// `diag::Result<void>` and the walk stops at its first failure; one that cannot
+// answers with nothing, and so does the walk.
 template <typename Visit>
 auto WalkDeclarationScopes(const slang::ast::Scope& scope, Visit& visit)
     -> std::invoke_result_t<Visit&, const slang::ast::Symbol&> {
   constexpr bool kCanFail =
       !std::is_void_v<std::invoke_result_t<Visit&, const slang::ast::Symbol&>>;
   for (const auto& member : scope.members()) {
-    if constexpr (kCanFail) {
+    std::vector<const slang::ast::Scope*> inner;
+    if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
+      for (const auto& spec :
+           member.as<slang::ast::GenericClassDefSymbol>().specializations()) {
+        const auto& cls = spec.getCanonicalType().as<slang::ast::ClassType>();
+        if constexpr (kCanFail) {
+          if (auto r = visit(cls); !r) return r;
+        } else {
+          visit(cls);
+        }
+        inner.push_back(&cls);
+      }
+    } else if constexpr (kCanFail) {
       if (auto r = visit(member); !r) return r;
     } else {
       visit(member);
     }
-    std::vector<const slang::ast::Scope*> inner;
     if (member.kind == slang::ast::SymbolKind::ClassType) {
       inner.push_back(&member.as<slang::ast::ClassType>());
-    } else if (member.kind == slang::ast::SymbolKind::GenericClassDef) {
-      for (const auto& spec :
-           member.as<slang::ast::GenericClassDefSymbol>().specializations()) {
-        inner.push_back(&spec.getCanonicalType().as<slang::ast::ClassType>());
-      }
     } else if (member.kind == slang::ast::SymbolKind::GenerateBlock) {
       const auto& block = member.as<slang::ast::GenerateBlockSymbol>();
       if (!block.isUninstantiated) {
