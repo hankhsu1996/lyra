@@ -2609,8 +2609,9 @@ enough to warrant its own focused review.
 
 - [ ] R161 -- The compiler crashing without throwing -- a fault in memory, an abort, a stack
       overflow, a fatal error inside the code generator -- says nothing about what it was working
-      on, because nothing is unwound to collect it. No real design has met one. Target: a crash
-      prints the work in progress on the thread that crashed. Not blocked.
+      on, because nothing is unwound to collect it. Running out of stack says that it did, and not
+      on which expression. No real design has met one. Target: a crash prints the work in progress
+      on the thread that crashed. Not blocked.
 
 - [ ] R162 -- A loop that counts out no block at one index keeps the blocks of the loop around it
       apart. A loop written inside another, with a bound that reads the outer index -- a triangle, a

@@ -1,7 +1,8 @@
 // What the command line itself decides: what a `lyra.toml` declares, what an
 // invocation adds to or replaces in that declaration, which top a
 // design element may be, what a unit publishes to whoever reads it, and how a
-// design that fails at run time is reported.
+// design that fails at run time is reported, and how much stack the command
+// gives itself.
 //
 // None of it is a statement about a backend, so a case that has to run a design
 // asks for the one that compiles no C++, and the file costs seconds and gates.
@@ -1578,6 +1579,66 @@ TEST(LyraEmit, TheStatisticsNameEveryFileAUnitWrote) {
       EXPECT_TRUE(file.at("made").get<bool>());
     }
   }
+}
+
+// A design whose one expression is a sum of `operands` operands, which is as
+// deep as it is long.
+auto WriteLongSum(const std::filesystem::path& path, int operands) -> void {
+  std::ofstream out(path);
+  out << "module Test;\n  int v, sum;\n  initial sum = v";
+  for (int i = 1; i < operands; ++i) {
+    out << " + v";
+  }
+  out << ";\nendmodule\n";
+}
+
+// Runs `lyra check` on `src` in a shell that has first set its own stack limit
+// with `limit`, a `ulimit` invocation.
+auto CheckUnderStackLimit(
+    const std::filesystem::path& lyra, const std::filesystem::path& src,
+    std::string_view limit) -> lyra::test::ProcessOutcome {
+  auto sh_or = lyra::driver::FindOnPath("sh");
+  EXPECT_TRUE(sh_or.has_value());
+  if (!sh_or) return {};
+  const std::vector<std::string> args = {
+      "-c", std::format(
+                "{} && exec '{}' check --top Test '{}'", limit, lyra.string(),
+                src.string())};
+  return RunChildProcess(*sh_or, args, 60s);
+}
+
+// Following a long expression takes stack in proportion to its length, and the
+// command takes what that needs for itself where it was started with less and
+// is allowed more.
+TEST(LyraCommandLine, TakesTheStackALongExpressionNeeds) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteLongSum(src, 3000);
+
+  const auto checked = CheckUnderStackLimit(lyra, src, "ulimit -S -s 256");
+  EXPECT_EQ(checked.termination, TerminationKind::kExitedNormally)
+      << checked.stderr_text;
+}
+
+// Where it is allowed no more, running out is said in words before the run
+// ends, so the reader is not left with a signal's name.
+TEST(LyraCommandLine, SaysThatItRanOutOfStack) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteLongSum(src, 3000);
+
+  const auto checked = CheckUnderStackLimit(lyra, src, "ulimit -s 256");
+  EXPECT_NE(checked.termination, TerminationKind::kExitedNormally);
+  EXPECT_NE(
+      checked.stderr_text.find("the compiler ran out of stack"),
+      std::string::npos)
+      << checked.stderr_text;
 }
 
 }  // namespace

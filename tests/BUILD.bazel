@@ -202,11 +202,11 @@ cc_test(
 )
 
 cc_test(
-    name = "support_parallel_test",
-    srcs = ["support/parallel_test.cpp"],
+    name = "compiler_parallel_test",
+    srcs = ["compiler/parallel_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
-        "//:support",
+        "//:compiler",
         "@googletest//:gtest_main",
     ],
 )

@@ -1,4 +1,4 @@
-#include "lyra/support/parallel.hpp"
+#include "lyra/compiler/parallel.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -8,7 +8,7 @@
 
 namespace {
 
-using lyra::support::ProduceInOrder;
+using lyra::compiler::ProduceInOrder;
 
 // Results are consumed in index order whatever order they are produced in. The
 // first index waits until every other has been produced, so each later one

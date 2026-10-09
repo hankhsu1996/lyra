@@ -203,7 +203,10 @@ merged node.
       conformance case's written C++ is held to the nesting a C++ compiler has to accept. Two runs
       are not flat yet: a comparison whose answer is the next comparison's first operand
       (`a < b < c`), which converts that answer at every link, and a run that alternates `->` with
-      `<->`, where each operator's second operand is the rest of the run.
+      `<->`, where each operator's second operand is the rest of the run. How long a run may be is
+      bounded by the stack the compiler follows it on: a run of three thousand operands is held by a
+      conformance case and one of ten thousand compiles, while one of forty thousand ends the
+      compiler, which says that it ran out of stack.
 
 ## Cross-references
 
