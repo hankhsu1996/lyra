@@ -14,6 +14,7 @@ name: Address Sanitizer (Nightly)
 # It runs the merge gate's own set rather than the `nightly` complement, because
 # that is the set which exercises the compiler itself -- the pools live in
 # lowering, not in the emitted program that the host-compiling group builds.
+# `.bazelrc` states the one target of that set it leaves out, and why.
 #
 # Like the host C++ nightly and unlike the clang-tidy sweep, this gates its own
 # run: a sanitizer report is a defect with a stack trace, not a backlog item.

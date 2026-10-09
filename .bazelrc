@@ -101,6 +101,11 @@ build:asan --features=-symbol_check
 # adds, in code that is clean without it. That one stays a warning here; every
 # other warning is as fatal as in an ordinary build.
 build:asan --copt='-Wno-error=maybe-uninitialized'
+# Moving a pool on every append makes an append cost the pool, so whatever a
+# design repeats compiles in the square of its count here and a test of what a
+# compile costs measures this build rather than the compiler. The set is
+# otherwise the gate's own.
+test:asan --test_tag_filters=-nightly,-cost
 
 # Shared cache and result streaming with actions still running locally, so the
 # compiler is the one named above. Needs a BuildBuddy key via `--remote_header`.

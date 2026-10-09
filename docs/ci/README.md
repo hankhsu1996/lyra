@@ -213,6 +213,14 @@ so such a reference is reported on every execution that reads it; what the job s
 an execution the corpus does not reach. It runs under remote execution where the key is set, like
 the gate, because one image then both compiles the tests and runs them.
 
+Two things about it follow from what is instrumented. The compiler is; the runtime library a built
+program links is not, because that library is built as it ships whatever builds the compiler, and a
+user's link is told nothing about a sanitizer. So the job reports on lowering and says nothing about
+the memory a simulation touches while it runs. And `growth_tests` is left out of its set: moving a
+pool on every append makes an append cost the pool, so anything a design repeats compiles in the
+square of its count there, and a bound on what a compile costs would be measuring the
+instrumentation.
+
 `benchmark-nightly.yml` builds every case under `tests/benchmark/` and times it beside Verilator on
 the same sources, giving each tool the amount of work it needs to reach the same duration. It gates
 its own run on a narrower claim than a timing: a case that fails to build, fails to run, or outlives

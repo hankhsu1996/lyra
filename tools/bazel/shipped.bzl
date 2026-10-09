@@ -6,6 +6,11 @@ therefore a property of the artifact, not of how the tool that ships it happened
 to be built -- a compiler built for a quick edit-run loop must still hand out a
 runtime worth running.
 
+The same holds for whatever else a build was asked to compile and link with. A
+program a user builds links this library with their own compiler and nothing
+this build knew, so a library instrumented because the compiler around it is
+would ask that link for a runtime it was never told about.
+
 The surface a user compiles against answers to the same thing, and for a second
 reason: it has to be reachable as a set. A source file is staged by its place in
 this repository, so a tool that finds one of them and takes the directory around
@@ -15,12 +20,20 @@ build stated rather than what the tree looks like.
 """
 
 def _shipped_transition_impl(_settings, _attr):
-    return {"//command_line_option:compilation_mode": "opt"}
+    return {
+        "//command_line_option:compilation_mode": "opt",
+        "//command_line_option:copt": [],
+        "//command_line_option:linkopt": [],
+    }
 
 _shipped_transition = transition(
     implementation = _shipped_transition_impl,
     inputs = [],
-    outputs = ["//command_line_option:compilation_mode"],
+    outputs = [
+        "//command_line_option:compilation_mode",
+        "//command_line_option:copt",
+        "//command_line_option:linkopt",
+    ],
 )
 
 def _shipped_artifact_impl(ctx):
@@ -30,7 +43,7 @@ def _shipped_artifact_impl(ctx):
 
 shipped_artifact = rule(
     implementation = _shipped_artifact_impl,
-    doc = "Re-exports `lib` as `out`, built optimized whatever mode encloses it.",
+    doc = "Re-exports `lib` as `out`, built optimized and with no option the enclosing build added.",
     attrs = {
         "lib": attr.label(
             allow_single_file = True,

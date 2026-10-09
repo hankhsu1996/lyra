@@ -12,7 +12,7 @@ package(features = ["parse_headers"])
 # result from whatever machine state produced it. It is driven by
 # `tools/bench/run_benchmarks.py` instead.
 
-# Two facts about a test are marked here, and they are independent.
+# Three facts about a test are marked here, and they are independent.
 #
 # `no-remote-exec` says where it can run. A test that shells out to the host C++
 # compiler spawns something that is not a Bazel action, so it runs on whatever
@@ -38,6 +38,10 @@ package(features = ["parse_headers"])
 #
 # The two sides of `nightly` are complements, so every target is covered once
 # and none twice, and a new one joins whichever side its tag puts it on.
+#
+# `cost` says what a test answers: what the compiler costs as it is shipped. A
+# build that changes that cost on purpose, as the sanitizer one does to every
+# append, would be measuring itself, so it leaves the target out.
 
 cc_library(
     name = "framework",
@@ -263,6 +267,7 @@ cc_test(
         "paths/*.growth.yaml",
     ]),
     shard_count = 4,
+    tags = ["cost"],
     deps = [
         ":framework",
         "@bazel_tools//tools/cpp/runfiles",
