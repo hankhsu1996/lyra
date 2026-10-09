@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <iterator>
 #include <limits>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -234,7 +236,7 @@ auto InterfacePortInput(
           modport == nullptr ? std::string{} : std::string{modport->name}};
   fixed.taken.reserve(instances.size());
   for (const slang::ast::InstanceSymbol* instance : instances) {
-    std::string unit = SpecializationName(*instance, policy);
+    std::string unit = policy.NameOf(*instance);
     const auto known = std::ranges::find(fixed.units, unit);
     fixed.taken.push_back(
         static_cast<std::uint32_t>(known - fixed.units.begin()));
@@ -251,6 +253,12 @@ auto IsCompilationUnit(const slang::ast::Symbol& symbol) -> bool {
   return symbol.kind == slang::ast::SymbolKind::Package ||
          symbol.kind == slang::ast::SymbolKind::InstanceBody ||
          symbol.kind == slang::ast::SymbolKind::CompilationUnit;
+}
+
+auto IsInstanceScope(const slang::ast::Scope& scope) -> bool {
+  const slang::ast::SymbolKind kind = scope.asSymbol().kind;
+  return kind == slang::ast::SymbolKind::InstanceBody ||
+         kind == slang::ast::SymbolKind::GenerateBlock;
 }
 
 // A generate block (LRM 27.6) as a path to a declaration inside it spells it,
@@ -462,6 +470,8 @@ auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
   return *body.parentInstance;
 }
 
+namespace {
+
 auto SpecializationKeyOf(
     const slang::ast::InstanceSymbol& inst, const SpecializationPolicy& policy)
     -> SpecializationKey {
@@ -511,6 +521,48 @@ auto SpecializationKeyOf(
   return key;
 }
 
+}  // namespace
+
+auto SpecializationPolicy::AnswersNow(const KeptName& kept) const -> bool {
+  return std::ranges::none_of(
+      naming_, [&](const slang::ast::InstanceBodySymbol* body) {
+        return kept.depends_on.contains(body);
+      });
+}
+
+auto SpecializationPolicy::NameOf(const slang::ast::InstanceSymbol& inst) const
+    -> std::string {
+  if (const auto kept = names_.find(&inst);
+      kept != names_.end() && AnswersNow(kept->second)) {
+    for (NameInProgress& asking : names_in_progress_) {
+      asking.depends_on.insert(
+          kept->second.depends_on.begin(), kept->second.depends_on.end());
+    }
+    return kept->second.name;
+  }
+  names_in_progress_.push_back(
+      NameInProgress{
+          .chain_at_start = naming_.size(),
+          .met_nothing_outside = true,
+          .depends_on = {}});
+  SpecializationKey key = SpecializationKeyOf(inst, *this);
+  NameInProgress worked_out = std::move(names_in_progress_.back());
+  names_in_progress_.pop_back();
+  std::string name = SpecializationName(key);
+  if (!worked_out.met_nothing_outside) return name;
+  if (const auto folded = folded_.find(name); folded == folded_.end()) {
+    folded_.emplace(name, std::move(key));
+  } else if (folded->second != key) {
+    throw InternalError(
+        "SpecializationPolicy::NameOf: two specializations reached one name, "
+        "so the name no longer tells the units apart");
+  }
+  names_.insert_or_assign(
+      &inst,
+      KeptName{.name = name, .depends_on = std::move(worked_out.depends_on)});
+  return name;
+}
+
 auto SpecializationPolicy::ClimbsOutOf(const slang::ast::InstanceSymbol& inst)
     const -> std::span<const ClimbAnchor> {
   auto cached = climbs_.find(&inst);
@@ -533,9 +585,16 @@ auto SpecializationPolicy::LevelsOutTo(
     const slang::ast::InstanceBodySymbol& body) const
     -> std::optional<std::uint32_t> {
   for (std::size_t out = 0; out < naming_.size(); ++out) {
-    if (naming_[naming_.size() - 1 - out] == &body) {
+    const std::size_t at = naming_.size() - 1 - out;
+    if (naming_[at] == &body) {
+      for (NameInProgress& asking : names_in_progress_) {
+        if (asking.chain_at_start > at) asking.met_nothing_outside = false;
+      }
       return static_cast<std::uint32_t>(out);
     }
+  }
+  for (NameInProgress& asking : names_in_progress_) {
+    asking.depends_on.insert(&body);
   }
   return std::nullopt;
 }
@@ -545,12 +604,6 @@ auto SpecializationName(const SpecializationKey& key) -> std::string {
     return key.definition;
   }
   return std::format("{}__{:016x}", key.definition, Fnv1a64(KeyBytes(key)));
-}
-
-auto SpecializationName(
-    const slang::ast::InstanceSymbol& inst, const SpecializationPolicy& policy)
-    -> std::string {
-  return SpecializationName(SpecializationKeyOf(inst, policy));
 }
 
 auto SpecializationKeyOf(
@@ -588,7 +641,7 @@ auto ScopeClassName(
     -> std::string {
   const slang::ast::Symbol& symbol = scope.asSymbol();
   if (const auto* body = symbol.as_if<slang::ast::InstanceBodySymbol>()) {
-    return SpecializationName(InstantiationOf(*body), policy);
+    return policy.NameOf(InstantiationOf(*body));
   }
   const auto* block = symbol.as_if<slang::ast::GenerateBlockSymbol>();
   if (block == nullptr) {
@@ -596,13 +649,22 @@ auto ScopeClassName(
         "ScopeClassName: an object stands for an instance or a generate "
         "block, and for no other scope");
   }
-  std::string name =
-      CompilationUnitName(DeclaringCompilationUnit(*block), policy);
-  for (const std::string& step : DeclaringBlockPath(*block)) {
-    name += "::";
-    name += step;
+  const slang::ast::Scope* holder = block->getParentScope();
+  while (holder != nullptr && !IsInstanceScope(*holder)) {
+    holder = holder->asSymbol().getParentScope();
   }
-  return name + "::" + GenerateBlockStep(*block);
+  if (holder == nullptr) {
+    throw InternalError(
+        "ScopeClassName: a generate block stands in an instance's body or in "
+        "another generate block");
+  }
+  return BlockClassName(ScopeClassName(*holder, policy), *block);
+}
+
+auto BlockClassName(
+    std::string_view holder, const slang::ast::GenerateBlockSymbol& block)
+    -> std::string {
+  return std::format("{}::{}", holder, GenerateBlockStep(block));
 }
 
 auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
@@ -620,12 +682,6 @@ auto DeclaringCompilationUnit(const slang::ast::Symbol& decl)
 }
 
 namespace {
-
-auto IsInstanceScope(const slang::ast::Scope& scope) -> bool {
-  const slang::ast::SymbolKind kind = scope.asSymbol().kind;
-  return kind == slang::ast::SymbolKind::InstanceBody ||
-         kind == slang::ast::SymbolKind::GenerateBlock;
-}
 
 auto Encloses(const slang::ast::Scope& outer, const slang::ast::Scope& inner)
     -> bool {
@@ -773,8 +829,8 @@ auto CompilationUnitName(
     return std::string(unit.name);
   }
   if (unit.kind == SymbolKind::InstanceBody) {
-    return SpecializationName(
-        InstantiationOf(unit.as<slang::ast::InstanceBodySymbol>()), policy);
+    return policy.NameOf(
+        InstantiationOf(unit.as<slang::ast::InstanceBodySymbol>()));
   }
   if (const auto* spec = unit.as_if<slang::ast::ClassType>()) {
     return std::format(

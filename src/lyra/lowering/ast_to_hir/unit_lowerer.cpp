@@ -428,7 +428,8 @@ void UnitLowerer::DeclareConditionalGenerate(
     ++position;
     if (arm->isUninstantiated) continue;
     choice.built.push_back(arm);
-    DeclareStructuralIdentities(*arm, ScopeClassName(*arm, Specialization()));
+    DeclareStructuralIdentities(
+        *arm, BlockClassName(published.class_name, *arm));
   }
   published.generates.emplace_back(std::move(choice));
 }
@@ -454,7 +455,7 @@ void UnitLowerer::DeclareLoopGenerate(
             .selects = {block}});
     ++block;
     DeclareStructuralIdentities(
-        *entry, ScopeClassName(*entry, Specialization()));
+        *entry, BlockClassName(published.class_name, *entry));
   }
 }
 

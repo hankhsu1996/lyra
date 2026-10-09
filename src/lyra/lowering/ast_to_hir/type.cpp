@@ -467,9 +467,8 @@ auto TranslateType(
     // was given, which is exactly what names the unit an instance of it is.
     case slang::ast::SymbolKind::VirtualInterfaceType:
       return hir::Type{hir::VirtualInterfaceType{
-          .unit_name = SpecializationName(
-              canonical.as<slang::ast::VirtualInterfaceType>().iface,
-              unit_lowerer.Specialization())}};
+          .unit_name = unit_lowerer.Specialization().NameOf(
+              canonical.as<slang::ast::VirtualInterfaceType>().iface)}};
     default:
       return diag::Fail(
           decl_span, diag::DiagCode::kUnsupportedTypeKind,

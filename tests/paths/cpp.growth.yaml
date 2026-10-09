@@ -7,7 +7,8 @@
 # so this file only ever shrinks, which makes it the record of what a design's
 # size still costs on this path that it should not.
 instance_array: [bytes]
-loop_choosing_by_outer_index: [files, bytes, time declare units]
-loop_of_instances: [files, bytes, time declare units]
-loop_of_one_body: [files, bytes, time declare units]
-loop_selecting_by_index: [files, bytes, time declare units]
+loop_choosing_by_outer_index: [files, bytes]
+loop_of_instances: [files, bytes]
+loop_of_instances_reading_upward: [files, bytes]
+loop_of_one_body: [files, bytes]
+loop_selecting_by_index: [files, bytes]

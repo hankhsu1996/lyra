@@ -171,6 +171,19 @@ cc_test(
 )
 
 cc_test(
+    name = "instance_name_test",
+    srcs = ["instance_name_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:ast_to_hir",
+        "//:compiler",
+        "//:frontend",
+        "@googletest//:gtest_main",
+        "@slang",
+    ],
+)
+
+cc_test(
     name = "compiler_unit_failure_test",
     srcs = ["compiler/unit_failure_test.cpp"],
     copts = LYRA_COPTS,

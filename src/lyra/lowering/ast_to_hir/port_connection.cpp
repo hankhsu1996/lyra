@@ -672,7 +672,7 @@ auto ConnectArrayElements(
     auto r = ConnectElementPorts(
         scope, unit_lowerer, inst,
         unit_lowerer.Signatures().Instantiated(
-            SpecializationName(inst, unit_lowerer.Specialization())),
+            unit_lowerer.Specialization().NameOf(inst)),
         std::move(element_step), home_frame, frame);
     if (!r) return std::unexpected(std::move(r.error()));
   }
@@ -697,7 +697,7 @@ auto StructuralScopeLowerer::PopulatePortConnections(
       auto r = ConnectElementPorts(
           *this, *owner_, inst,
           owner_->Signatures().Instantiated(
-              SpecializationName(inst, owner_->Specialization())),
+              owner_->Specialization().NameOf(inst)),
           binding->step, binding->home_frame, frame);
       if (!r) return std::unexpected(std::move(r.error()));
     } else if (member.kind == slang::ast::SymbolKind::InstanceArray) {

@@ -6,6 +6,7 @@
 instance_array: 512
 loop_choosing_by_outer_index: 64
 loop_of_instances: 512
+loop_of_instances_reading_upward: 512
 loop_of_one_body: 512
 loop_selecting_by_index: 512
 unread_parameter_width: 16384
