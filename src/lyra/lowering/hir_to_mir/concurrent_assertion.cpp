@@ -489,10 +489,7 @@ auto LowerAdvance(
     call_stmt(
         seeded, support::BuiltinFn::kEvaluationAttemptsSeed,
         {Read(seeded, cursor, index_type),
-         seeded.exprs.Add(
-             mir::Expr{
-                 .data = mir::MachineBoolLiteral{.value = seed.same_tick},
-                 .type = unit.builtins.machine_bool})});
+         BuildMachineBool(unit, seeded, seed.same_tick)});
     AppendIf(
         sweep, AnyOf(sweep, unit, matched, seed.antecedent_last),
         std::move(seeded));
@@ -782,12 +779,7 @@ void AppendConcurrentAssertionInstall(
               BuildEvaluationAttemptsExpr(block, activate_frame, lowerer, id),
               {block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())),
                Word(block, unit.builtins.machine_word, installed.words),
-               block.exprs.Add(
-                   mir::Expr{
-                       .data =
-                           mir::MachineBoolLiteral{
-                               .value = installed.pending_holds},
-                       .type = unit.builtins.machine_bool}),
+               BuildMachineBool(unit, block, installed.pending_holds),
                arm(installed.pass_action), arm(installed.fail_action)},
               void_type)});
 }

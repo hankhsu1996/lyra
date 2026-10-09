@@ -4,6 +4,7 @@
 #include <expected>
 #include <span>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -16,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -285,14 +287,6 @@ auto BuildMirBinaryExpr(
   const auto library = [&](support::BuiltinFn entry) {
     return MakeLibraryCall(entry, lhs_id, {rhs_id}, result_type);
   };
-  const auto negated = [&](mir::ExprId answer) {
-    return block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::UnaryExpr{
-                    .op = mir::UnaryOp::kLogicalNot, .operand = answer},
-            .type = block.exprs.Get(answer).type});
-  };
 
   // LRM 8.4 admits `null` as either operand of a handle comparison, and the
   // front end leaves it at a type of its own, so both operands of an equality
@@ -354,7 +348,7 @@ auto BuildMirBinaryExpr(
     case hir::BinaryOp::kCaseEquality:
       return at_result_type(case_equality());
     case hir::BinaryOp::kCaseInequality:
-      return at_result_type(negated(case_equality()));
+      return at_result_type(BuildLogicalNot(block, case_equality()));
     case hir::BinaryOp::kWildcardEquality:
       return library(support::BuiltinFn::kWildcardEquals);
     // SV spells `!=?` as an operator of its own, answering with the negation of
@@ -362,7 +356,8 @@ auto BuildMirBinaryExpr(
     // conversion: the clause lets the answer be unknown, so it carries the
     // state class its operands do, which is the one the context asked for.
     case hir::BinaryOp::kWildcardInequality:
-      return block.exprs.Get(negated(
+      return block.exprs.Get(BuildLogicalNot(
+          block,
           block.exprs.Add(library(support::BuiltinFn::kWildcardEquals))));
     case hir::BinaryOp::kPower:
       return library(support::BuiltinFn::kPow);
@@ -388,7 +383,7 @@ auto BuildMirBinaryExpr(
     case hir::BinaryOp::kLogicalImplication:
       throw InternalError(
           "BuildMirBinaryExpr: the operator may leave its second operand "
-          "unevaluated, so it is a selection built before both are lowered");
+          "unevaluated, so it is built before both are lowered");
   }
   throw InternalError("BuildMirBinaryExpr: unknown HIR BinaryOp");
 }
@@ -406,47 +401,93 @@ auto LowerHirUnaryExpr(
       *std::move(operand_or), result_type);
 }
 
-// `&&`, `||` and `->` evaluate their second operand only where the first leaves
-// the answer open, and an unknown first operand leaves it open: the second is
-// evaluated and the two combine by the operator's table (LRM 11.4.7, 11.3.5).
-// That is the conditional operator over the first operand (LRM 11.4.11), with
-// the second operand's truth as one arm and the answer the first settles as
-// the other, since combining the two arms bit by bit is that table. Every other
-// operator evaluates both operands.
+// The operands of the run `root` heads, in the order the source wrote them: an
+// operand that is the same operator stands for its own operands. Sound for an
+// operator whose answer and whose evaluated operands are the same however a
+// run of it is grouped, which `&&`, `||` and `<->` are (LRM 11.4.7) and `->`
+// is not.
+template <ExprLowerer Lowerer>
+auto RunOperands(Lowerer& lowerer, const hir::BinaryExpr& root)
+    -> std::vector<hir::ExprId> {
+  std::vector<hir::ExprId> operands;
+  std::vector<hir::ExprId> unvisited{root.rhs, root.lhs};
+  while (!unvisited.empty()) {
+    const hir::ExprId next = unvisited.back();
+    unvisited.pop_back();
+    const auto* same =
+        std::get_if<hir::BinaryExpr>(&lowerer.HirExprs().Get(next).data);
+    if (same == nullptr || same->op != root.op) {
+      operands.push_back(next);
+      continue;
+    }
+    unvisited.push_back(same->rhs);
+    unvisited.push_back(same->lhs);
+  }
+  return operands;
+}
+
+// `&&` and `||` evaluate an operand only where the ones before it leave the
+// answer open, and an unknown operand leaves it open (LRM 11.4.7, 11.3.5), so
+// each is a search through its operands, and `->` is the search `||` makes.
+// Every other operator evaluates both operands.
 template <ExprLowerer Lowerer>
 auto LowerHirBinaryExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::BinaryExpr& b,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const Evaluation second_truth =
-      [&](const WalkFrame& at) -> diag::Result<mir::ExprId> {
-    auto second_or = LowerAndAddOperand(lowerer, at, b.rhs);
-    if (!second_or) return second_or;
-    mir::Block& block = *at.current_block;
-    return ConvertToType(
-        unit, block, BuildTruth(unit, block, *second_or), result_type);
+  mir::Block& block = *frame.current_block;
+  const auto search =
+      [&](SettledBy rule,
+          std::span<const Predicate> terms) -> diag::Result<mir::Expr> {
+    auto answer_or = BuildSearch(unit, frame, rule, terms, result_type);
+    if (!answer_or) return std::unexpected(std::move(answer_or.error()));
+    return block.exprs.Get(*answer_or);
   };
-  const auto settled = [&unit, result_type](bool answer) -> Evaluation {
-    return [&unit, result_type,
-            answer](const WalkFrame& at) -> diag::Result<mir::ExprId> {
-      mir::Block& block = *at.current_block;
-      return ConvertToType(
-          unit, block, BuildBit1Literal(unit, block, answer), result_type);
-    };
-  };
-  const auto select_on_first = [&](const Evaluation& then_arm,
-                                   const Evaluation& else_arm) {
-    return BuildSelection(
-        unit, frame, ExpressionPredicate(lowerer, b.lhs), result_type, then_arm,
-        else_arm);
+  const auto terms_of = [&](std::span<const hir::ExprId> operands) {
+    std::vector<Predicate> terms;
+    terms.reserve(operands.size());
+    for (const hir::ExprId operand : operands) {
+      terms.push_back(ExpressionPredicate(lowerer, operand));
+    }
+    return terms;
   };
   switch (b.op) {
     case hir::BinaryOp::kLogicalAnd:
-      return select_on_first(second_truth, settled(false));
+      return search(SettledBy::kFalseTerm, terms_of(RunOperands(lowerer, b)));
     case hir::BinaryOp::kLogicalOr:
-      return select_on_first(settled(true), second_truth);
-    case hir::BinaryOp::kLogicalImplication:
-      return select_on_first(second_truth, settled(true));
+      return search(SettledBy::kTrueTerm, terms_of(RunOperands(lowerer, b)));
+    // `a -> b` is `!a || b` (LRM 11.4.7), and a second operand that is itself
+    // an implication goes on with the same search, as the third operand of a
+    // conditional goes on with its selection.
+    case hir::BinaryOp::kLogicalImplication: {
+      std::vector<Predicate> terms;
+      const hir::BinaryExpr* implication = &b;
+      for (;;) {
+        terms.push_back(
+            Negated(unit, ExpressionPredicate(lowerer, implication->lhs)));
+        const auto* consequent = std::get_if<hir::BinaryExpr>(
+            &lowerer.HirExprs().Get(implication->rhs).data);
+        if (consequent == nullptr || consequent->op != b.op) break;
+        implication = consequent;
+      }
+      terms.push_back(ExpressionPredicate(lowerer, implication->rhs));
+      return search(SettledBy::kTrueTerm, terms);
+    }
+    // A run is asked first operand to last, each answer the first operand of
+    // the next question.
+    case hir::BinaryOp::kLogicalEquivalence: {
+      const std::vector<hir::ExprId> operands = RunOperands(lowerer, b);
+      auto answer_or = LowerAndAddOperand(lowerer, frame, operands.front());
+      if (!answer_or) return std::unexpected(std::move(answer_or.error()));
+      mir::ExprId answer = *answer_or;
+      for (const hir::ExprId next : std::span(operands).subspan(1)) {
+        auto next_or = LowerAndAddOperand(lowerer, frame, next);
+        if (!next_or) return std::unexpected(std::move(next_or.error()));
+        answer = block.exprs.Add(BuildMirBinaryExpr(
+            unit, block, b.op, answer, *next_or, result_type));
+      }
+      return block.exprs.Get(answer);
+    }
     case hir::BinaryOp::kAdd:
     case hir::BinaryOp::kSub:
     case hir::BinaryOp::kMul:
@@ -466,7 +507,6 @@ auto LowerHirBinaryExpr(
     case hir::BinaryOp::kGreaterThan:
     case hir::BinaryOp::kLessEqual:
     case hir::BinaryOp::kLessThan:
-    case hir::BinaryOp::kLogicalEquivalence:
     case hir::BinaryOp::kLogicalShiftLeft:
     case hir::BinaryOp::kArithmeticShiftLeft:
     case hir::BinaryOp::kLogicalShiftRight:
@@ -478,24 +518,25 @@ auto LowerHirBinaryExpr(
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   auto rhs_or = LowerAndAddOperand(lowerer, frame, b.rhs);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  return BuildMirBinaryExpr(
-      unit, *frame.current_block, b.op, *lhs_or, *rhs_or, result_type);
+  return BuildMirBinaryExpr(unit, block, b.op, *lhs_or, *rhs_or, result_type);
 }
 
-// The conditional operator: a selection on its predicate, a series of clauses,
-// between its two expressions (LRM 11.4.11, 12.6.3). Both arms carry the type
-// the conditional yields whatever their own expressions produced, because what
-// reads a conditional reads the type off the node. The identifiers a clause's
-// pattern introduces are declared in the block the expression stands in, which
-// encloses the clauses after it and the first expression, the two things that
-// may read them.
+// The conditional operator: a selection by its predicate, a series of clauses,
+// between its two expressions (LRM 11.4.11, 12.6.3). A third operand that is
+// itself a conditional of the same type goes on with the selection, so
+// `p ? a : q ? b : c` is one selection of two arms. Every value carries the
+// type the conditional yields whatever its own expression produced, because
+// what reads a conditional reads the type off the node. The identifiers a
+// clause's pattern introduces are declared in the block the whole selection
+// stands in, which encloses the clauses after it and its arm's expression, the
+// two things that may read them.
 template <ExprLowerer Lowerer>
 auto LowerHirConditionalExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const auto arm = [&lowerer, &unit,
-                    result_type](hir::ExprId value) -> Evaluation {
+  const auto value_of = [&lowerer, &unit,
+                         result_type](hir::ExprId value) -> Evaluation {
     return [&lowerer, &unit, value,
             result_type](const WalkFrame& at) -> diag::Result<mir::ExprId> {
       auto value_or = LowerAndAddOperand(lowerer, at, value);
@@ -503,9 +544,24 @@ auto LowerHirConditionalExpr(
       return ConvertToType(unit, *at.current_block, *value_or, result_type);
     };
   };
+  std::vector<SelectionArm> arms;
+  const hir::ConditionalExpr* conditional = &c;
+  for (;;) {
+    arms.push_back(
+        {.predicate =
+             ClauseSeriesPredicate(lowerer, frame, conditional->conditions),
+         .value = value_of(conditional->then_value)});
+    const hir::Expr& otherwise =
+        lowerer.HirExprs().Get(conditional->else_value);
+    const auto* nested = std::get_if<hir::ConditionalExpr>(&otherwise.data);
+    if (nested == nullptr ||
+        lowerer.Owner().TranslateType(otherwise.type) != result_type) {
+      break;
+    }
+    conditional = nested;
+  }
   return BuildSelection(
-      unit, frame, ClauseSeriesPredicate(lowerer, frame, c.conditions),
-      result_type, arm(c.then_value), arm(c.else_value));
+      unit, frame, arms, value_of(conditional->else_value), result_type);
 }
 
 template <ExprLowerer Lowerer>

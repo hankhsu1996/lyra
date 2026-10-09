@@ -171,12 +171,7 @@ auto BuildCancellableRegion(
                           .target = support::BuiltinFn::kEffectNamesTarget},
                   .arguments = {caught_ref, reached}},
           .type = unit.builtins.bit1});
-  const mir::ExprId declined = handler.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::UnaryExpr{
-                  .op = mir::UnaryOp::kLogicalNot, .operand = claims},
-          .type = unit.builtins.bit1});
+  const mir::ExprId declined = BuildLogicalNot(handler, claims);
 
   mir::Block decline;
   const mir::ExprId raised =

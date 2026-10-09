@@ -6,6 +6,7 @@
 // calls for them -- the conditional operator, the logical operators that may
 // skip an operand, and the conditional and case statements.
 
+#include <cstdint>
 #include <functional>
 #include <span>
 #include <vector>
@@ -61,13 +62,38 @@ struct Predicate {
 template <ExprLowerer Lowerer>
 auto ExpressionPredicate(Lowerer& lowerer, hir::ExprId id) -> Predicate;
 
-// A series of predicates as one: a sequential conjunction (LRM 12.6.2, 12.6.3).
-// A term is evaluated only once every one before it was true, so every term
-// after the first is conditionally evaluated, and the series is the truth of
-// the first that is not -- false, or unknown, which makes the series unknown as
-// a whole. The standard leaves open whether an unknown term ends the series;
-// ending it is what the front end's own constant evaluation does, so an
-// expression means the same folded or run. A lone term is itself.
+// The predicate that is true where `predicate` is false, false where it is
+// true, and unknown where it is (LRM 11.4.7).
+[[nodiscard]] auto Negated(
+    const mir::CompilationUnit& unit, Predicate predicate) -> Predicate;
+
+// What ends a search through terms before its last one.
+enum class SettledBy : std::uint8_t {
+  // `||`: a true term makes the answer 1, and an unknown one leaves it to the
+  // terms after it (LRM 11.4.7).
+  kTrueTerm,
+  // `&&`: a false term makes the answer 0, and an unknown one leaves it to the
+  // terms after it (LRM 11.4.7).
+  kFalseTerm,
+  // `&&&`: a term that is not true is the answer, false or unknown (LRM
+  // 12.6.2). The standard leaves open whether an unknown term ends the search;
+  // ending it is what the front end's own constant evaluation does, so an
+  // expression means the same folded or run.
+  kTermNotTrue,
+};
+
+// The truth, at `type`, of `terms` searched in order: a term is evaluated only
+// where the ones before it left the answer open (LRM 11.3.5), and the answer is
+// what the operator's table makes of the terms that were. A search of any
+// length is a run of steps one after another, never a step inside the one
+// before it. At least two terms: a search of one settles nothing.
+[[nodiscard]] auto BuildSearch(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, SettledBy rule,
+    std::span<const Predicate> terms, mir::TypeId type)
+    -> diag::Result<mir::ExprId>;
+
+// A series of predicates as one: a sequential conjunction (LRM 12.6.2, 12.6.3),
+// the search its terms make. A lone term is itself.
 [[nodiscard]] auto SeriesPredicate(
     const mir::CompilationUnit& unit, std::vector<Predicate> terms)
     -> Predicate;
@@ -81,16 +107,25 @@ auto ClauseSeriesPredicate(
     Lowerer& lowerer, const WalkFrame& declared_in,
     std::span<const hir::ConditionClause> clauses) -> Predicate;
 
-// The selection between two arms by one predicate (LRM 11.4.11), each arm
-// answering at `result_type`. A predicate that is true or false evaluates the
-// arm it selects and never the other, so each arm is conditionally evaluated.
-// One that is unknown selects neither: both are evaluated and their results
-// combined bit by bit, and only a predicate whose type can hold an unknown has
-// that outcome.
+// One arm of a selection: the predicate that selects it and the value it
+// answers with.
+struct SelectionArm {
+  Predicate predicate;
+  Evaluation value;
+};
+
+// The selection among `arms`, tried in order, and `otherwise` where none is
+// selected (LRM 11.4.11), every value answering at `result_type`. A true
+// predicate selects its arm and ends the selection; a false one passes it on,
+// so a predicate and a value are evaluated only where the selection reaches
+// them. An unknown one selects neither its arm nor what follows: the selection
+// goes on, and its arm's value is combined bit by bit with whatever the rest
+// answers. Only a predicate whose type can hold an unknown has that outcome.
+// A selection of any number of arms is as deep as one of a single arm. At
+// least one arm.
 [[nodiscard]] auto BuildSelection(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
-    const Predicate& predicate, mir::TypeId result_type,
-    const Evaluation& then_arm, const Evaluation& else_arm)
-    -> diag::Result<mir::Expr>;
+    std::span<const SelectionArm> arms, const Evaluation& otherwise,
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

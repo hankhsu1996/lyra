@@ -78,13 +78,11 @@ locate-divergence feedback loop; this one owns the readability of what the loop 
       backends, so it is sized for its own change set.
 - [x] An expression is parenthesized only where operator precedence requires it; an outermost
       expression carries no enclosing parentheses. An `else` holding one statement is written as
-      that statement, so an if-else-if and the items of a case read as a flat chain -- which needed
-      an `if` testing one condition to state its `else` as that `if`'s own, where it used to run the
-      else through a flag and a second `if`. An arm that tests several clauses or matches a pattern
-      cannot be a single `else`, so a chain holding one records in a flag that an arm ran and writes
-      each later arm after the one before, guarded on that flag, rather than inside it. Both were
-      also a correctness defect, not only a readability one: a chain the source wrote flat nested
-      one level per link, and past 256 links the target compiler refused the unit.
+      that statement, so an if-else-if and the items of a case read as a flat chain, whatever an arm
+      tests. An operator's result that a member function is then called on is written as the
+      operator's own function call, so a run mixing the two reads left to right with no enclosing.
+      Each was also a correctness defect, not only a readability one: a chain the source wrote flat
+      nested one level per link, and past 256 links the target compiler refused the unit.
 - [ ] A cell reads as the identifier the source wrote rather than as its position with the
       identifier after it. The position has to lead today because the target holds everything a
       class declares in one name space, and a class holds its storage beside the behaviors it takes

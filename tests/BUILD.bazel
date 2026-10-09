@@ -398,7 +398,8 @@ cc_test(
 
 # The corpus read as a set of designs rather than as a set of claims about
 # IEEE 1800: every one of them compiled twice, to hold the compiler to answering
-# the same way both times. It reads the emitted text in process and starts no
+# the same way both times, and the text it wrote to nesting no deeper than a C++
+# compiler has to accept. It reads the emitted text in process and starts no
 # host tool, so it runs wherever the cheap targets run.
 cc_test(
     name = "repeatable_emission_test",

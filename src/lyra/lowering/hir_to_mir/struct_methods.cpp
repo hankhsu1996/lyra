@@ -30,7 +30,6 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/value_operation.hpp"
 
@@ -325,12 +324,7 @@ auto Synthesizer::Inequality() -> mir::StructMethod {
             block, support::ValueOperator::kEquality,
             Read(block, p[0], structure_), {Read(block, p[1], structure_)},
             answer_type);
-        return block.exprs.Add(
-            mir::Expr{
-                .data =
-                    mir::UnaryExpr{
-                        .op = mir::UnaryOp::kLogicalNot, .operand = equal},
-                .type = answer_type});
+        return BuildLogicalNot(block, equal);
       });
 }
 

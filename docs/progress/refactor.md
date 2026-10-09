@@ -2919,6 +2919,33 @@ enough to warrant its own focused review.
       round, which a procedure with nothing to add fills with two empty ones. Target: the steps a
       repeating procedure is made of are ones its two kinds call in order. Not blocked.
 
+- [ ] R188 -- The test a disable landing makes, whether the effect it caught names its own target,
+      is stated in MIR as answering a one-bit SystemVerilog value, and the two backends realize it
+      differently: the execution backend's entry writes such a value, and the C++ backend's function
+      answers a machine boolean, which only the target's implicit conversions reconcile with the
+      type MIR gave it. A render that chose a spelling by that type wrote a member call on a machine
+      boolean. Target: a runtime test answers a machine boolean in MIR and on both backends, and no
+      call's MIR type differs from what its realization returns. Not blocked.
+
+- [ ] R189 -- Two runs the source writes flat still reach the C++ target a level deeper per
+      operator, where every other run of LRM Table 11-2 is as deep at three hundred links as at two.
+      A comparison whose answer is the next comparison's first operand (`a < b < c`, `a == b == c`)
+      has that one-bit answer converted to the operand's type at every link, and a conversion is
+      written as a function taking the value it converts, so the run so far becomes its argument:
+      three hundred links of `==` over `int` nest 305 deep, of the four relational operators 1205,
+      over strings 605. Target: a conversion is reached on the value it converts, which is the value
+      library's interface to change. Blocked on the packed value's representation, which replaces
+      the type that conversion belongs to. The other is a run alternating `->` with `<->`: both
+      group from the right, so each one's second operand is the rest of the run, an operand that may
+      be skipped holding an operation that holds the next such operand. Three hundred pairs nest 305
+      deep where no operand can be unknown and 905 where one can; a run of either operator alone is
+      flat. That nesting is the source's own grouping, so nothing short of a general cut answers it:
+      text past a depth written as a function defined ahead of its statement and called in place.
+      Such a cut has to keep a temporary whose end is an effect inside its statement, has no
+      statement to stand ahead of in a loop header, and cannot move a block past a scope that
+      declares a local it names. Not blocked. No corpus case writes either run, so the check that
+      holds every case's written text to the nesting a C++ compiler must accept does not see them.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

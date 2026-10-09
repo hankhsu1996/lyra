@@ -435,6 +435,26 @@ void WriteMemberReceiver(
         });
     return;
   }
+  // An operator form binds less tightly than a member access, so as an object
+  // it would be enclosed, and a run alternating the two -- `a ^ b ~^ c ^ d`,
+  // where one is an operator here and the other a member function -- nests a
+  // level per turn. The operator is the member function its first operand's
+  // type declares it as ([over.match.oper]), and called as one it is a member
+  // access itself, reached on that operand in turn.
+  if (const auto* unary =
+          std::get_if<mir::UnaryExpr>(&view.Expr(object).data)) {
+    WriteMemberReceiver(view, out, unary->operand);
+    Write(out, "operator", UnaryOpToken(unary->op), "().");
+    return;
+  }
+  if (const auto* binary =
+          std::get_if<mir::BinaryExpr>(&view.Expr(object).data)) {
+    WriteMemberReceiver(view, out, binary->lhs);
+    Write(
+        view, out, "operator", BinaryOpToken(binary->op), "(", binary->rhs,
+        ").");
+    return;
+  }
   Write(
       view, out, Operand{.expr = object, .at_least = Precedence::kPostfix},
       ".");
