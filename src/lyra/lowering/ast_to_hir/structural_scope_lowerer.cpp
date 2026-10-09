@@ -53,6 +53,7 @@
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+#include "lyra/profiling/time_trace.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -192,6 +193,9 @@ auto StructuralScopeLowerer::BuildInstanceMember(
 
 auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
     -> diag::Result<hir::StructuralScope> {
+  const profiling::TimeTraceScope span("lower scope", [this] {
+    return slang_scope_->asSymbol().getHierarchicalPath();
+  });
   hir::StructuralScope scope;
   // Filling a declaration is defining the identity a peer may already hold,
   // which is why this scope takes the pools rather than growing its own.

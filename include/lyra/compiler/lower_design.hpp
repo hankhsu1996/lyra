@@ -17,6 +17,7 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/profiling/time_trace.hpp"
 #include "lyra/support/parallel.hpp"
 
 namespace lyra::compiler {
@@ -63,6 +64,7 @@ void LowerToHir(
     ElaboratedDesign& design, diag::DiagnosticSink& sink, std::size_t width,
     Produce produce, Consume consume) {
   using Produced = std::invoke_result_t<Produce, hir::CompilationUnit>;
+  const profiling::StageScope stage("lower units");
   support::ProduceInOrder(
       design.units.UnitCount(), width,
       [&](std::size_t i) -> Produced {
@@ -112,8 +114,11 @@ auto LowerToSemantic(
   }
 
   const auto in_unit = diag::FailureContext::InUnit(kDesignRootUnitName);
-  auto root = SynthesizeDesignRoot(
-      design.units.Tops(), design.units.Signatures(), sources);
+  auto root = [&] {
+    const profiling::StageScope stage("design root");
+    return SynthesizeDesignRoot(
+        design.units.Tops(), design.units.Signatures(), sources);
+  }();
   if (!root) {
     sink.Report(std::move(root.error()));
     return std::nullopt;
@@ -145,7 +150,10 @@ auto LowerToExecutable(
   }
 
   const auto in_unit = diag::FailureContext::InUnit(kDesignRootUnitName);
-  auto root = LowerUnitToExecutable(semantic->root);
+  auto root = [&] {
+    const profiling::StageScope stage("lower root to LIR");
+    return LowerUnitToExecutable(semantic->root);
+  }();
   if (!root) {
     sink.Report(std::move(root.error()));
     return std::nullopt;

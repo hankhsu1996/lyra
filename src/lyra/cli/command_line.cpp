@@ -53,6 +53,9 @@ enum class LyraOption : std::uint8_t {
   kOut,
   kBackend,
   kDpiLink,
+  kTimeTrace,
+  kTimeTraceGranularity,
+  kStatsFile,
   kSimulationArgs,
 };
 
@@ -86,10 +89,15 @@ class OptionSet {
   std::uint32_t bits_ = 0;
 };
 
-// What every command reading a design acts on: how its report is coloured, and
-// where the design's declaration is.
+// What every command reading a design acts on: how its report is coloured,
+// where the design's declaration is, and whether the run reports on itself.
 constexpr OptionSet kReadsADesign = {
-    LyraOption::kColor, LyraOption::kNoColor, LyraOption::kConfig};
+    LyraOption::kColor,
+    LyraOption::kNoColor,
+    LyraOption::kConfig,
+    LyraOption::kTimeTrace,
+    LyraOption::kTimeTraceGranularity,
+    LyraOption::kStatsFile};
 // What every command lowering the design acts on besides: the policy lowering
 // follows, and whether what it could have done better reaches the report.
 constexpr OptionSet kLowersADesign =
@@ -210,6 +218,12 @@ auto Spelling(LyraOption option) -> std::string_view {
       return "--backend";
     case LyraOption::kDpiLink:
       return "--dpi-link";
+    case LyraOption::kTimeTrace:
+      return "--time-trace";
+    case LyraOption::kTimeTraceGranularity:
+      return "--time-trace-granularity";
+    case LyraOption::kStatsFile:
+      return "--stats-file";
     case LyraOption::kSimulationArgs:
       return "arguments after `--`";
   }
@@ -251,6 +265,12 @@ auto IsGiven(
       return opts.backend.has_value();
     case LyraOption::kDpiLink:
       return !opts.dpi_link.empty();
+    case LyraOption::kTimeTrace:
+      return opts.time_trace.has_value();
+    case LyraOption::kTimeTraceGranularity:
+      return opts.time_trace_granularity.has_value();
+    case LyraOption::kStatsFile:
+      return opts.stats_file.has_value();
     case LyraOption::kSimulationArgs:
       return has_simulation_args;
   }
@@ -452,6 +472,21 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
   cmd.add(
       "--dpi-link", opts.dpi_link,
       "native source (.c/.cpp) providing DPI-C foreign symbols to link",
+      "<file>", slang::CommandLineFlags::FilePath);
+  cmd.add(
+      "--time-trace", opts.time_trace,
+      "write where this run's time went, per stage, unit, scope and function, "
+      "as a Chrome trace",
+      "<file>", slang::CommandLineFlags::FilePath);
+  cmd.add(
+      "--time-trace-granularity", opts.time_trace_granularity,
+      "leave out of the time trace any span shorter than this many "
+      "microseconds; 500 when not given",
+      "<us>");
+  cmd.add(
+      "--stats-file", opts.stats_file,
+      "write this run's numbers as JSON: each stage's peak memory, what each "
+      "unit wrote, and how long each tool the build ran took",
       "<file>", slang::CommandLineFlags::FilePath);
 }
 

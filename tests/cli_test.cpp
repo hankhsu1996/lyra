@@ -17,6 +17,8 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <iterator>
+#include <map>
+#include <nlohmann/json.hpp>
 #include <regex>
 #include <set>
 #include <string>
@@ -24,7 +26,7 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/support/subprocess.hpp"
+#include "lyra/driver/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
 #include "tests/framework/process.hpp"
 
@@ -351,7 +353,7 @@ auto WriteDeclaredDesign(const std::filesystem::path& root) -> void {
 auto RunLyraFrom(
     const std::filesystem::path& lyra, const std::filesystem::path& dir,
     std::string_view args) -> lyra::test::ProcessOutcome {
-  auto sh_or = lyra::support::FindOnPath("sh");
+  auto sh_or = lyra::driver::FindOnPath("sh");
   EXPECT_TRUE(sh_or.has_value());
   if (!sh_or) return {};
   const std::vector<std::string> argv = {
@@ -858,7 +860,7 @@ TEST(LyraBuild, AValueEndsWithTheExpressionThatMadeIt) {
   ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
       << built.stdout_text << built.stderr_text;
 
-  auto sh_or = lyra::support::FindOnPath("sh");
+  auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value());
   const std::vector<std::string> capped = {
       "-c", std::format("ulimit -v 524288 && exec '{}'", program.string())};
@@ -1083,7 +1085,7 @@ TEST(LyraCommandLine, LeavesBehindOnlyWhatItWasAskedFor) {
   std::filesystem::create_directories(cache_home);
   WriteTrivialSource(work / "design.sv");
 
-  auto sh_or = lyra::support::FindOnPath("sh");
+  auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
   const auto run = [&](std::string_view args) {
     const std::vector<std::string> argv = {
@@ -1370,6 +1372,192 @@ TEST(LyraRun, AKilledProcessTellsItsForeignFramesTheyWereDisabled) {
       << run.stdout_text << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("step answered 1"), std::string::npos)
       << run.stdout_text;
+}
+
+auto ReadJson(const std::filesystem::path& path) -> nlohmann::json {
+  std::ifstream in(path);
+  return nlohmann::json::parse(in, nullptr, false);
+}
+
+// Every detail the trace's spans of one name carry, for each name.
+auto SpanDetails(const nlohmann::json& trace)
+    -> std::map<std::string, std::set<std::string>> {
+  std::map<std::string, std::set<std::string>> details;
+  for (const nlohmann::json& event : trace.at("traceEvents")) {
+    if (event.value("ph", "") != "X") {
+      continue;
+    }
+    std::set<std::string>& of_name = details[event.at("name")];
+    if (event.contains("args") && event.at("args").contains("detail")) {
+      of_name.insert(event.at("args").at("detail").get<std::string>());
+    }
+  }
+  return details;
+}
+
+// A design of two units, one of which a generate loop instantiates twice.
+auto WriteTwoUnitDesign(const std::filesystem::path& path) -> void {
+  std::ofstream(path) << "module Leaf (input logic a, output logic y);\n"
+                      << "  assign y = ~a;\n"
+                      << "endmodule\n"
+                      << "module Test;\n"
+                      << "  logic [1:0] a;\n"
+                      << "  logic [1:0] y;\n"
+                      << "  for (genvar i = 0; i < 2; i++) begin : g\n"
+                      << "    Leaf u (.a(a[i]), .y(y[i]));\n"
+                      << "  end\n"
+                      << "  initial begin\n"
+                      << "    a = 2'b01;\n"
+                      << "    #1 $display(\"y=%b\", y);\n"
+                      << "  end\n"
+                      << "endmodule\n";
+}
+
+// A run asked to report on itself writes two files. The trace says where the
+// time went: a span per stage, per unit within each stage a unit passes
+// through, and per scope a unit lowers. The statistics hold what a span
+// cannot: each stage's peak memory, what each unit left behind and whether
+// this run made it or took it from the store, and how long each tool the
+// build ran took. Building the same design again takes every object and the
+// program from the store, so no unit is made and nothing is spawned.
+TEST(LyraBuild, ARunReportsWhereItsCostWent) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteTwoUnitDesign(src);
+
+  for (const bool first : {true, false}) {
+    SCOPED_TRACE(first ? "first build" : "second build");
+    const auto trace_path = *tmp_or / "trace.json";
+    const auto stats_path = *tmp_or / "stats.json";
+    const std::vector<std::string> args = {
+        "build",
+        "--backend",
+        "llvm",
+        "--top",
+        "Test",
+        "-o",
+        (*tmp_or / "program").string(),
+        "--cache-dir",
+        (*tmp_or / "cache").string(),
+        "--time-trace",
+        trace_path.string(),
+        "--time-trace-granularity",
+        "0",
+        "--stats-file",
+        stats_path.string(),
+        src.string()};
+    const auto built = RunChildProcess(lyra, args, 120s);
+    ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
+        << built.stdout_text << built.stderr_text;
+
+    const nlohmann::json stats = ReadJson(stats_path);
+    ASSERT_FALSE(stats.is_discarded());
+    EXPECT_EQ(stats.at("width"), 1);
+    std::set<std::string> stages;
+    for (const nlohmann::json& stage : stats.at("stages")) {
+      stages.insert(stage.at("name").get<std::string>());
+      EXPECT_GT(stage.at("peak_rss_bytes").get<std::uint64_t>(), 0U)
+          << stage.at("name");
+    }
+    for (const std::string_view stage :
+         {"front end", "declare units", "lower units", "design root"}) {
+      EXPECT_TRUE(stages.contains(std::string(stage))) << stage;
+    }
+
+    const nlohmann::json trace = ReadJson(trace_path);
+    ASSERT_FALSE(trace.is_discarded());
+    const auto spans = SpanDetails(trace);
+    for (const std::string_view stage :
+         {"front end", "declare units", "lower units", "design root"}) {
+      EXPECT_TRUE(spans.contains(std::string(stage))) << stage;
+    }
+
+    // The design's own units are the ones the front end declared; the design
+    // root is composed from them afterwards and reaches only the stages below
+    // MIR.
+    ASSERT_TRUE(spans.contains("declare unit"));
+    const std::set<std::string> declared = spans.at("declare unit");
+    EXPECT_EQ(declared.size(), 2U);
+    EXPECT_TRUE(declared.contains("Test"));
+    for (const std::string_view per_unit :
+         {"lower to HIR", "lower to MIR", "generate object"}) {
+      ASSERT_TRUE(spans.contains(std::string(per_unit))) << per_unit;
+      EXPECT_EQ(spans.at(std::string(per_unit)), declared) << per_unit;
+    }
+
+    // Every unit left objects behind, the design root among them, and each
+    // was made by the first build and taken from the store by the second.
+    std::set<std::string> units;
+    for (const nlohmann::json& unit : stats.at("units")) {
+      units.insert(unit.at("name").get<std::string>());
+      EXPECT_FALSE(unit.at("artifacts").empty()) << unit.at("name");
+      for (const nlohmann::json& object : unit.at("artifacts")) {
+        EXPECT_EQ(object.at("kind"), "object");
+        EXPECT_GT(object.at("bytes").get<std::uint64_t>(), 0U);
+        EXPECT_EQ(object.at("made").get<bool>(), first) << unit.at("name");
+      }
+    }
+    EXPECT_EQ(units.size(), declared.size() + 1);
+    EXPECT_TRUE(std::ranges::includes(units, declared));
+
+    // The link is the one child a build on this backend spawns, and a program
+    // taken from the store needs none.
+    EXPECT_EQ(stats.at("children").size(), first ? 1U : 0U);
+    for (const nlohmann::json& child : stats.at("children")) {
+      EXPECT_GT(child.at("wall_us").get<std::uint64_t>(), 0U);
+      EXPECT_GT(child.at("cpu_us").get<std::uint64_t>(), 0U);
+    }
+    ASSERT_TRUE(spans.contains("lower scope"));
+    EXPECT_TRUE(
+        std::ranges::any_of(
+            spans.at("lower scope"),
+            [](const std::string& scope) { return scope.contains("g["); }))
+        << "no span names a generate block";
+  }
+}
+
+// What each unit wrote, on the backend that writes source: every file named
+// for the unit, at the size it has on disk, so a unit writing more files than
+// it has classes is read off one run.
+TEST(LyraEmit, TheStatisticsNameEveryFileAUnitWrote) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  WriteTwoUnitDesign(src);
+  const auto out_dir = *tmp_or / "out";
+  const auto stats_path = *tmp_or / "stats.json";
+
+  const std::vector<std::string> args = {"emit",         "cpp",
+                                         "--top",        "Test",
+                                         "-o",           out_dir.string(),
+                                         "--stats-file", stats_path.string(),
+                                         src.string()};
+  const auto emit = RunChildProcess(lyra, args, 60s);
+  ASSERT_EQ(emit.termination, TerminationKind::kExitedNormally)
+      << emit.stdout_text << emit.stderr_text;
+
+  const nlohmann::json stats = ReadJson(stats_path);
+  ASSERT_FALSE(stats.is_discarded());
+  // The design's two units and the design root composed from them.
+  EXPECT_EQ(stats.at("units").size(), 3U);
+  for (const nlohmann::json& unit : stats.at("units")) {
+    const std::string name = unit.at("name");
+    EXPECT_FALSE(unit.at("artifacts").empty()) << name;
+    for (const nlohmann::json& file : unit.at("artifacts")) {
+      const std::filesystem::path written = out_dir / file.at("name");
+      ASSERT_TRUE(std::filesystem::exists(written)) << written.string();
+      EXPECT_EQ(
+          file.at("bytes").get<std::uintmax_t>(),
+          std::filesystem::file_size(written))
+          << written.string();
+      EXPECT_TRUE(file.at("made").get<bool>());
+    }
+  }
 }
 
 }  // namespace

@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -28,7 +29,9 @@
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/profiling/time_trace.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
+#include "lyra/support/statistics.hpp"
 
 namespace lyra::program {
 
@@ -1705,7 +1708,11 @@ auto EmitUnitModule(const mir::CompilationUnit& unit)
   if (!lowered) {
     return std::unexpected(std::move(lowered.error()));
   }
-  auto emitted = backend::llvm_backend::EmitModule(*lowered);
+  auto emitted = [&] {
+    const profiling::TimeTraceScope span(
+        "emit LLVM IR", [&] { return unit.name; });
+    return backend::llvm_backend::EmitModule(*lowered);
+  }();
   if (!emitted) {
     return std::unexpected(std::move(emitted.error()));
   }
@@ -1730,13 +1737,21 @@ auto PipelineLevel(driver::Optimization optimization)
   throw InternalError("a build names no optimization level");
 }
 
+// An object this run has in hand, and whether it made it or took it from the
+// store, which is the difference between a unit that cost the run its code
+// generation and one that cost it nothing.
+struct CompiledObject {
+  ObjectFile file;
+  bool made = true;
+};
+
 // The object a module compiles to under this build: the kept one when there is
 // one and it may be taken, and otherwise one compiled now and kept. It is
 // written under its own name, which no other unit's object shares, since every
 // unit's module carries that unit's own symbols.
 auto CompileObject(
     backend::llvm_backend::EmittedModule module, const ObjectBuild& build)
-    -> diag::Result<ObjectFile> {
+    -> diag::Result<CompiledObject> {
   const llvm::OptimizationLevel level = PipelineLevel(build.optimization);
   driver::ContentNamer namer;
   namer.Add("module", module.Print());
@@ -1752,7 +1767,7 @@ auto CompileObject(
       return std::unexpected(std::move(kept.error()));
     }
     if (*kept) {
-      return object;
+      return CompiledObject{.file = std::move(object), .made = false};
     }
   }
   if (auto r = backend::llvm_backend::WriteObjectFile(
@@ -1764,7 +1779,25 @@ auto CompileObject(
     driver::KeepStored(
         *build.store, driver::kStoredObjectDir, object.name, object.path);
   }
-  return object;
+  return CompiledObject{.file = std::move(object), .made = true};
+}
+
+auto ArtifactOf(const CompiledObject& object)
+    -> diag::Result<support::Artifact> {
+  std::error_code ec;
+  const std::uintmax_t bytes = std::filesystem::file_size(object.file.path, ec);
+  if (ec) {
+    return diag::Fail(
+        diag::DiagCode::kHostIoError,
+        std::format(
+            "failed to read the size of '{}': {}", object.file.path.string(),
+            ec.message()));
+  }
+  return support::Artifact{
+      .kind = support::ArtifactKind::kObject,
+      .name = object.file.path.filename().string(),
+      .bytes = static_cast<std::uint64_t>(bytes),
+      .made = object.made};
 }
 
 }  // namespace
@@ -1775,12 +1808,22 @@ auto BuildUnit(const mir::CompilationUnit& unit, const ObjectBuild& build)
   if (!emitted) {
     return std::unexpected(std::move(emitted.error()));
   }
-  auto object = CompileObject(std::move(emitted->module), build);
+  auto object = [&] {
+    const profiling::TimeTraceScope span(
+        "generate object", [&] { return unit.name; });
+    return CompileObject(std::move(emitted->module), build);
+  }();
   if (!object) {
     return std::unexpected(std::move(object.error()));
   }
+  auto artifact = ArtifactOf(*object);
+  if (!artifact) {
+    return std::unexpected(std::move(artifact.error()));
+  }
+  support::RecordUnit(unit.name, {*std::move(artifact)});
   return BuiltUnit{
-      .object = *std::move(object), .dpi_fragment = dpi::AbiFragmentOf(unit)};
+      .object = std::move(object->file),
+      .dpi_fragment = dpi::AbiFragmentOf(unit)};
 }
 
 void ProgramSink::Collect(BuiltUnit unit) {
@@ -1810,8 +1853,17 @@ auto ProgramSink::Finish(
   if (!entry_object) {
     return std::unexpected(std::move(entry_object.error()));
   }
-  program_.objects.push_back(*std::move(root_object));
-  program_.objects.push_back(*std::move(entry_object));
+  std::vector<support::Artifact> artifacts;
+  for (const CompiledObject* object : {&*root_object, &*entry_object}) {
+    auto artifact = ArtifactOf(*object);
+    if (!artifact) {
+      return std::unexpected(std::move(artifact.error()));
+    }
+    artifacts.push_back(*std::move(artifact));
+  }
+  support::RecordUnit(root.name, std::move(artifacts));
+  program_.objects.push_back(std::move(root_object->file));
+  program_.objects.push_back(std::move(entry_object->file));
   return std::move(program_);
 }
 

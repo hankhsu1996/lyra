@@ -47,6 +47,7 @@
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+#include "lyra/profiling/time_trace.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -60,13 +61,25 @@ UnitLowerer::UnitLowerer(
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
-  DeclareStructuralIdentities(*scope_, hir::InstanceClassName(unit_.name));
-  if (auto r = InternOwnClassDeclarations(*scope_); !r) {
-    return std::unexpected(std::move(r.error()));
+  const profiling::TimeTraceScope span(
+      "declare unit", [&] { return unit_.name; });
+  {
+    const profiling::TimeTraceScope step("declare structural identities");
+    DeclareStructuralIdentities(*scope_, hir::InstanceClassName(unit_.name));
   }
-  if (auto r = InternOwnStructureDeclarations(*scope_); !r) {
-    return std::unexpected(std::move(r.error()));
+  {
+    const profiling::TimeTraceScope step("declare classes");
+    if (auto r = InternOwnClassDeclarations(*scope_); !r) {
+      return std::unexpected(std::move(r.error()));
+    }
   }
+  {
+    const profiling::TimeTraceScope step("declare structures");
+    if (auto r = InternOwnStructureDeclarations(*scope_); !r) {
+      return std::unexpected(std::move(r.error()));
+    }
+  }
+  const profiling::TimeTraceScope step("publish signature");
   return PublishSignature();
 }
 
@@ -105,6 +118,8 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
     -> diag::Result<hir::CompilationUnit> {
   signatures_ = &signatures;
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
+  const profiling::TimeTraceScope span(
+      "lower to HIR", [&] { return unit_.name; });
   WalkFrame frame;
   StructuralScopeLowerer root(*this, *scope_);
   auto root_scope_or = root.Run(frame);

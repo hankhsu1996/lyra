@@ -39,6 +39,7 @@
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/profiling/time_trace.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -90,6 +91,8 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   for (const lir::FunctionId id : unit_->functions.Ids()) {
     const auto in_function =
         diag::FailureContext::InFunction(unit_->functions.Get(id).name);
+    const profiling::TimeTraceScope span(
+        "emit function", [&] { return unit_->functions.Get(id).name; });
     auto generated = CodeGenFunction(*this, id).Run();
     if (!generated) {
       return std::unexpected(std::move(generated.error()));

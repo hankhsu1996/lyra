@@ -1,9 +1,11 @@
-#include "lyra/support/subprocess.hpp"
+#include "lyra/driver/subprocess.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <expected>
@@ -15,13 +17,17 @@
 #include <spawn.h>
 #include <string>
 #include <string_view>
+#include <sys/resource.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <system_error>
 #include <unistd.h>
 #include <utility>
 #include <vector>
 
-namespace lyra::support {
+#include "lyra/support/statistics.hpp"
+
+namespace lyra::driver {
 
 namespace {
 
@@ -57,7 +63,21 @@ auto ToCharPointers(std::vector<std::string>& argv) -> std::vector<char*> {
   return ptrs;
 }
 
-// A spawned child and the two pipes carrying its output. It keeps at least one
+// A child as the run's statistics name it: the command line it was started
+// with, which says what it was asked to do.
+auto CommandLine(const std::vector<std::string>& argv) -> std::string {
+  std::string line;
+  for (const std::string& word : argv) {
+    if (!line.empty()) {
+      line += ' ';
+    }
+    line += word;
+  }
+  return line;
+}
+
+// A spawned child, the two pipes carrying its output, and what the run's
+// statistics need to account for it once it is reaped. It keeps at least one
 // open stream until both reach end of file, which is when it is reaped -- so a
 // pool holding any child always has a descriptor to wait on.
 struct Running {
@@ -65,6 +85,8 @@ struct Running {
   int out_fd = -1;
   int err_fd = -1;
   std::size_t index = 0;
+  std::string command;
+  std::chrono::steady_clock::time_point started;
 };
 
 // Which child's which stream a poll entry belongs to, held beside the entries
@@ -104,6 +126,7 @@ auto SpawnCaptured(
   auto argv_ptrs = ToCharPointers(argv);
 
   pid_t pid = 0;
+  const auto started = std::chrono::steady_clock::now();
   const int spawn_result = posix_spawn(
       &pid, exe_str.c_str(), &actions, nullptr, argv_ptrs.data(), environ);
   posix_spawn_file_actions_destroy(&actions);
@@ -118,18 +141,42 @@ auto SpawnCaptured(
             "failed to spawn '{}': {}", exe_str, std::strerror(spawn_result)));
   }
   return Running{
-      .pid = pid, .out_fd = out_pipe[0], .err_fd = err_pipe[0], .index = index};
+      .pid = pid,
+      .out_fd = out_pipe[0],
+      .err_fd = err_pipe[0],
+      .index = index,
+      .command = CommandLine(argv),
+      .started = started};
 }
 
-auto Reap(pid_t pid) -> std::expected<int, std::string> {
+// How a child ended, and the processor time the system charged it.
+struct Reaped {
+  int exit_code = 0;
+  std::uint64_t cpu_us = 0;
+};
+
+auto Microseconds(const struct timeval& time) -> std::uint64_t {
+  return (static_cast<std::uint64_t>(time.tv_sec) * 1'000'000) +
+         static_cast<std::uint64_t>(time.tv_usec);
+}
+
+// Waits for the child to end. Its exit code is its own, or 128 plus the signal
+// that ended it, as a shell reports one. Its peak memory is not read: the
+// system starts a spawned child's figure at its parent's high-water mark, so
+// under a compiler holding a design it says how large the compiler was.
+auto Reap(pid_t pid) -> std::expected<Reaped, std::string> {
   int status = 0;
-  while (waitpid(pid, &status, 0) < 0) {
+  struct rusage usage{};
+  while (wait4(pid, &status, 0, &usage) < 0) {
     if (errno != EINTR) {
       return std::unexpected(
-          std::format("waitpid failed: {}", std::strerror(errno)));
+          std::format("wait4 failed: {}", std::strerror(errno)));
     }
   }
-  return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+  return Reaped{
+      .exit_code =
+          WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status),
+      .cpu_us = Microseconds(usage.ru_utime) + Microseconds(usage.ru_stime)};
 }
 
 }  // namespace
@@ -263,11 +310,19 @@ auto RunProcessesCaptured(
         ++child;
         continue;
       }
-      auto code = Reap(child->pid);
-      if (!code) {
-        return std::unexpected(std::move(code.error()));
+      auto reaped = Reap(child->pid);
+      if (!reaped) {
+        return std::unexpected(std::move(reaped.error()));
       }
-      results[child->index].exit_code = *code;
+      results[child->index].exit_code = reaped->exit_code;
+      support::RecordChild(
+          std::move(child->command),
+          support::ChildUsage{
+              .wall_us = static_cast<std::uint64_t>(
+                  std::chrono::duration_cast<std::chrono::microseconds>(
+                      std::chrono::steady_clock::now() - child->started)
+                      .count()),
+              .cpu_us = reaped->cpu_us});
       child = running.erase(child);
     }
   }
@@ -294,7 +349,11 @@ auto RunProcessStreaming(
             "failed to spawn '{}': {}", exe_str, std::strerror(spawn_result)));
   }
 
-  return Reap(pid);
+  auto reaped = Reap(pid);
+  if (!reaped) {
+    return std::unexpected(std::move(reaped.error()));
+  }
+  return reaped->exit_code;
 }
 
-}  // namespace lyra::support
+}  // namespace lyra::driver

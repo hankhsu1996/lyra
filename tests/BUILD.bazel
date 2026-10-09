@@ -47,7 +47,7 @@ cc_library(
     visibility = ["//tests:__subpackages__"],
     deps = [
         "//:base",
-        "//:support",
+        "//:driver",
         "@bazel_tools//tools/cpp/runfiles",
         "@fmt",
         "@googletest//:gtest",
@@ -228,8 +228,9 @@ cc_test(
     data = ["//:lyra"],
     deps = [
         ":framework",
-        "//:support",
+        "//:driver",
         "@googletest//:gtest_main",
+        "@nlohmann_json//:json",
     ],
 )
 
@@ -251,7 +252,7 @@ cc_test(
     ],
     deps = [
         ":framework",
-        "//:support",
+        "//:driver",
         "@googletest//:gtest_main",
     ],
 )
@@ -284,7 +285,6 @@ cc_test(
     deps = [
         ":framework",
         "//:driver",
-        "//:support",
         "@googletest//:gtest_main",
     ],
 )

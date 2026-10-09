@@ -11,7 +11,7 @@
 #include <optional>
 #include <string>
 
-#include "lyra/support/subprocess.hpp"
+#include "lyra/driver/subprocess.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 namespace lyra::test {
@@ -42,7 +42,7 @@ auto ResolveLyra() -> std::filesystem::path {
 }
 
 auto FindDefaultCxx() -> std::optional<std::filesystem::path> {
-  auto cxx_or = lyra::support::FindOnPath("clang++");
+  auto cxx_or = lyra::driver::FindOnPath("clang++");
   if (!cxx_or) return std::nullopt;
   if (cxx_or->filename().string().find("clang") == std::string::npos) {
     return std::nullopt;

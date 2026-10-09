@@ -219,11 +219,18 @@ layer directly.
       the tree named a defect that made a design wait on the wrong bits of a packed structure's
       first member, and the sanitizer run had failed at build on every run since it was added.
 
+- [x] D20 -- Where a compile's time, memory and output went is read off one run. Asked, a run writes
+      a trace with a span per stage, unit, scope and function, and a file with each stage's peak
+      memory, every file each unit left behind, and how long each tool it ran took. On a loop of a
+      thousand empty generate blocks beside a 16,384-bit parameter, the first trace put 3.24 s of
+      3.26 s in declaring the unit's structural identities, where the reported symptom had pointed
+      at lowering its bodies.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language
   features.
 - Comparison tooling that drives both Lyra and a reference simulator.
-- Performance instrumentation.
+- Instrumenting the simulated program's own run time.
 - Readability of the emitted C++ artifact (see `emit-readability.md`). This file owns the feedback
   loop; that one owns how legible its output is.

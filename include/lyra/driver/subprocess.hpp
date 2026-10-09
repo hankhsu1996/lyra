@@ -8,11 +8,12 @@
 #include <string_view>
 #include <vector>
 
-namespace lyra::support {
+namespace lyra::driver {
 
 // How a process ended and what it wrote. A process may write any amount, so
 // each stream is kept up to a bound, and one that went past it ends with a line
-// saying the rest is not shown.
+// saying the rest is not shown. A process a signal ended reports 128 plus the
+// signal, as a shell does.
 struct ProcessResult {
   int exit_code = 0;
   std::string stdout_text;
@@ -42,15 +43,18 @@ auto RunProcessCaptured(
 // and answer with one result per request in the order given. Every request is
 // run even where an earlier one exited non-zero, so a caller reports each
 // failure rather than the first. An error is returned only when a process
-// cannot be spawned or reaped.
+// cannot be spawned or reaped. How long each process took goes into the run's
+// statistics.
 auto RunProcessesCaptured(
     std::span<const ProcessRequest> requests, std::size_t max_concurrent)
     -> std::expected<std::vector<ProcessResult>, std::string>;
 
 // Run `exe args...` inheriting this process's stdout and stderr, so the child's
-// output streams straight to the terminal. Returns the child's exit code.
+// output streams straight to the terminal. Returns the child's exit code. This
+// is the program a run executes and not a tool the build ran, so the run's
+// statistics do not count it.
 auto RunProcessStreaming(
     const std::filesystem::path& exe, std::span<const std::string> args)
     -> std::expected<int, std::string>;
 
-}  // namespace lyra::support
+}  // namespace lyra::driver

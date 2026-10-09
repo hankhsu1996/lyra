@@ -24,8 +24,10 @@
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
+#include "lyra/driver/subprocess.hpp"
+#include "lyra/profiling/time_trace.hpp"
 #include "lyra/support/runtime_prelude.hpp"
-#include "lyra/support/subprocess.hpp"
+#include "lyra/support/statistics.hpp"
 
 namespace lyra::driver {
 
@@ -308,7 +310,7 @@ auto RenderBuildScript(
 auto FormatSources(
     std::span<const std::string> relpaths, const std::filesystem::path& dir)
     -> diag::Result<void> {
-  auto clang_format = support::FindOnPath("clang-format");
+  auto clang_format = FindOnPath("clang-format");
   if (!clang_format) {
     return diag::Fail(
         diag::DiagCode::kHostIoError, std::move(clang_format.error()));
@@ -317,7 +319,7 @@ auto FormatSources(
   for (const std::string& relpath : relpaths) {
     args.push_back((dir / relpath).string());
   }
-  auto run = support::RunProcessCaptured(*clang_format, args);
+  auto run = RunProcessCaptured(*clang_format, args);
   if (!run) {
     return diag::Fail(diag::DiagCode::kHostIoError, std::move(run.error()));
   }
@@ -354,8 +356,8 @@ auto CopyDpiSources(
 // that could prepare no header has no fast form, so the two are separate
 // rather than one command line with a flag.
 struct CompileStep {
-  support::ProcessRequest plain;
-  std::optional<support::ProcessRequest> fast;
+  ProcessRequest plain;
+  std::optional<ProcessRequest> fast;
   std::string subject;
   std::string object;
 };
@@ -382,13 +384,12 @@ auto UnitCompileStep(
         args.push_back((dir / source).string());
         args.emplace_back("-o");
         args.push_back(object);
-        return support::ProcessRequest{
-            .exe = host.cxx, .args = std::move(args)};
+        return ProcessRequest{.exe = host.cxx, .args = std::move(args)};
       };
   return CompileStep{
       .plain = command(std::nullopt),
       .fast = prelude.has_value()
-                  ? std::optional<support::ProcessRequest>{command(prelude)}
+                  ? std::optional<ProcessRequest>{command(prelude)}
                   : std::nullopt,
       .subject = source,
       .object = object};
@@ -408,7 +409,7 @@ auto UnitCompileStep(
 auto RunCompileSteps(
     std::span<const CompileStep> steps, const HostBuild& host,
     const std::optional<std::filesystem::path>& prelude) -> diag::Result<void> {
-  std::vector<support::ProcessRequest> requests;
+  std::vector<ProcessRequest> requests;
   requests.reserve(steps.size());
   for (const CompileStep& step : steps) {
     std::error_code ec;
@@ -423,7 +424,7 @@ auto RunCompileSteps(
     }
     requests.push_back(step.fast.value_or(step.plain));
   }
-  auto results = support::RunProcessesCaptured(requests, host.compile_width);
+  auto results = RunProcessesCaptured(requests, host.compile_width);
   if (!results) {
     return IoError(std::move(results.error()));
   }
@@ -435,13 +436,12 @@ auto RunCompileSteps(
     }
   }
   if (!retried.empty()) {
-    std::vector<support::ProcessRequest> plain;
+    std::vector<ProcessRequest> plain;
     plain.reserve(retried.size());
     for (std::size_t i : retried) {
       plain.push_back(steps[i].plain);
     }
-    auto plain_results =
-        support::RunProcessesCaptured(plain, host.compile_width);
+    auto plain_results = RunProcessesCaptured(plain, host.compile_width);
     if (!plain_results) {
       return IoError(std::move(plain_results.error()));
     }
@@ -519,7 +519,7 @@ auto LinkProgram(
   args.push_back(runtime_lib.string());
   args.emplace_back("-o");
   args.push_back(program.string());
-  auto result_or = support::RunProcessCaptured(cxx, args);
+  auto result_or = RunProcessCaptured(cxx, args);
   if (!result_or) {
     return IoError(std::move(result_or.error()));
   }
@@ -533,6 +533,7 @@ auto LinkProgram(
 
 auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
     -> diag::Result<EmittedUnit> {
+  const profiling::TimeTraceScope span("emit C++", [&] { return unit.name; });
   diag::DiagnosticSink refused;
   const backend::cpp::CppUnitArtifacts artifacts =
       backend::cpp::EmitCppUnit(unit, refused);
@@ -543,16 +544,30 @@ auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
       .files = {},
       .translation_unit = artifacts.code.relpath,
       .dpi_fragment = dpi::AbiFragmentOf(unit)};
+  std::vector<support::Artifact> recorded;
+  const auto write = [&](const backend::cpp::CppArtifact& file,
+                         support::ArtifactKind kind) -> diag::Result<void> {
+    if (auto r = WriteArtifact(file); !r) {
+      return r;
+    }
+    written.files.push_back(file.relpath);
+    recorded.push_back(
+        support::Artifact{
+            .kind = kind,
+            .name = file.relpath,
+            .bytes = file.content.size(),
+            .made = true});
+    return {};
+  };
   for (const backend::cpp::CppArtifact& declarations : artifacts.declarations) {
-    if (auto r = WriteArtifact(declarations); !r) {
+    if (auto r = write(declarations, support::ArtifactKind::kCppHeader); !r) {
       return std::unexpected(std::move(r.error()));
     }
-    written.files.push_back(declarations.relpath);
   }
-  if (auto r = WriteArtifact(artifacts.code); !r) {
+  if (auto r = write(artifacts.code, support::ArtifactKind::kCppSource); !r) {
     return std::unexpected(std::move(r.error()));
   }
-  written.files.push_back(artifacts.code.relpath);
+  support::RecordUnit(unit.name, std::move(recorded));
   return written;
 }
 

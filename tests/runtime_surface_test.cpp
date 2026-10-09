@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "lyra/driver/project_layout.hpp"
-#include "lyra/support/subprocess.hpp"
+#include "lyra/driver/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
 
 namespace {
@@ -183,7 +183,7 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
     GTEST_SKIP() << "measuring an object requires the compiler a project's "
                     "build recipe defaults to";
   }
-  auto nm_or = lyra::support::FindOnPath("nm");
+  auto nm_or = lyra::driver::FindOnPath("nm");
   if (!nm_or) {
     GTEST_SKIP() << "reading what an object defines requires nm";
   }
@@ -200,11 +200,11 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
   }
   const std::vector<std::string> emit_args = {
       "emit", "cpp", "--top", "Test", "-o", project.string(), design.string()};
-  auto emit_or = lyra::support::RunProcessCaptured(lyra_exe, emit_args);
+  auto emit_or = lyra::driver::RunProcessCaptured(lyra_exe, emit_args);
   ASSERT_TRUE(emit_or) << emit_or.error();
   ASSERT_EQ(emit_or->exit_code, 0) << emit_or->stderr_text;
 
-  std::vector<lyra::support::ProcessRequest> compiles;
+  std::vector<lyra::driver::ProcessRequest> compiles;
   std::vector<std::filesystem::path> objects;
   std::vector<std::string> unit_namespaces;
   for (const auto& entry : std::filesystem::directory_iterator(project)) {
@@ -215,7 +215,7 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
     std::filesystem::path object = entry.path();
     object.replace_extension(".o");
     compiles.push_back(
-        lyra::support::ProcessRequest{
+        lyra::driver::ProcessRequest{
             .exe = *cxx_or,
             .args = {
                 std::string{lyra::driver::kCxxStandardFlag},
@@ -227,7 +227,7 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
     objects.push_back(std::move(object));
   }
   ASSERT_FALSE(objects.empty()) << "the design emitted no translation unit";
-  auto compiled_or = lyra::support::RunProcessesCaptured(compiles, 4);
+  auto compiled_or = lyra::driver::RunProcessesCaptured(compiles, 4);
   ASSERT_TRUE(compiled_or) << compiled_or.error();
   for (const auto& compiled : *compiled_or) {
     ASSERT_EQ(compiled.exit_code, 0) << "an emitted unit did not compile:\n"
@@ -240,9 +240,9 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
         "--defined-only", object.string()};
     const std::vector<std::string> demangled_args = {
         "--defined-only", "--demangle", object.string()};
-    auto mangled_or = lyra::support::RunProcessCaptured(*nm_or, mangled_args);
+    auto mangled_or = lyra::driver::RunProcessCaptured(*nm_or, mangled_args);
     auto demangled_or =
-        lyra::support::RunProcessCaptured(*nm_or, demangled_args);
+        lyra::driver::RunProcessCaptured(*nm_or, demangled_args);
     ASSERT_TRUE(mangled_or) << mangled_or.error();
     ASSERT_TRUE(demangled_or) << demangled_or.error();
     const std::vector<std::string> mangled =

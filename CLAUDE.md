@@ -69,6 +69,12 @@ code changed. `--rebuild` builds as though nothing were kept; `--cache-dir` name
 one is the default. What a build produces is the same however many ran at once.
 `docs/decisions/a-build-is-told-how-wide-to-run.md` holds why.
 
+**Where a run's cost went is read off the run, never found by comparing builds.**
+`--time-trace <file>` writes a Chrome trace (open it in ui.perfetto.dev) with a span per stage,
+unit, scope and function; `--stats-file <file>` writes each stage's peak memory, what each unit left
+behind, and how long each tool the build ran took.
+`docs/decisions/the-compiler-reports-where-its-cost-went.md` holds why.
+
 Command words are positional, and everything after them is one command line shared with the slang
 driver: every front-end option slang accepts -- `--top`, `-I`, `-D`, `-G`, `--single-unit`, `-y`,
 `--libext`, `-f` / `-F` filelists, `-W` warnings -- reaches Lyra unchanged. A standalone `--` ends
