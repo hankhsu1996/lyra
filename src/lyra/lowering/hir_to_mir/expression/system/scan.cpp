@@ -133,12 +133,7 @@ auto EmitScanOperandsKnown(
                             .receiver = operand},
                     .arguments = {}},
             .type = bit_t});
-    known.push_back(body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::UnaryExpr{
-                    .op = mir::UnaryOp::kLogicalNot, .operand = unknown_id},
-            .type = bit_t}));
+    known.push_back(BuildLogicalNot(body, unknown_id));
   };
   if (source.has_value()) ask(*source);
   ask(format);

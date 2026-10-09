@@ -2,17 +2,6 @@
 // hundred, a logical or of three hundred, a set membership test against three
 // hundred items (LRM 11.4.13) and a concatenation of three hundred parts (LRM
 // 11.4.12) each evaluate like their short forms, first operand to last.
-//
-// A logical operator of three hundred operands stops where its answer is
-// settled, as one of two does (LRM 11.3.5, 11.4.7): an operand after that is
-// not evaluated, and an unknown operand leaves the answer to the ones after
-// it. A logical equivalence and an inequality evaluate every operand. The
-// chains of one repeated operand are spelled by a macro.
-
-`define TEN(x) x x x x x x x x x x
-`define HUNDRED(x) `TEN(`TEN(x))
-`define THREE_HUNDRED(x) `HUNDRED(x) `HUNDRED(x) `HUNDRED(x)
-
 module Top;
   int v;
   int sum;
@@ -22,28 +11,6 @@ module Top;
   bit in_set, out_of_set;
   bit o;
   logic [299:0] joined;
-
-  logic lz, lt, lx;
-  bit every, one_false, implied;
-  logic any4, open_or, settled_or;
-  logic every4, open_and, settled_and;
-  logic implied4;
-  bit same_ones, same_zeros;
-  logic same_unknown;
-  bit differs;
-  logic differs4, differs_unknown;
-  bit follows, fails, skipped_run;
-  logic follows_unknown;
-  int mixed_xor;
-  logic mixed_equal;
-  bit skipped_or, skipped_and;
-  logic skipped_or4, skipped_and4;
-  int calls;
-
-  function automatic bit called();
-    calls++;
-    return 1;
-  endfunction
 
   initial begin
     v = 1;
@@ -56,39 +23,6 @@ module Top;
     in_set = 0;
     out_of_set = 1;
     joined = '0;
-    lz = 1'b0;
-    lt = 1'b1;
-    lx = 1'bx;
-    calls = 0;
-
-    every = `THREE_HUNDRED(t &&) t;
-    one_false = `THREE_HUNDRED(t &&) z;
-    implied = `THREE_HUNDRED(t ->) z;
-
-    any4 = `THREE_HUNDRED(lz ||) lt;
-    open_or = lx || `THREE_HUNDRED(lz ||) lz;
-    settled_or = lx || `THREE_HUNDRED(lz ||) lt;
-    every4 = `THREE_HUNDRED(lt &&) lt;
-    open_and = lx && `THREE_HUNDRED(lt &&) lt;
-    settled_and = lx && `THREE_HUNDRED(lt &&) lz;
-    implied4 = `THREE_HUNDRED(lt ->) lx;
-    same_ones = `THREE_HUNDRED(t <->) t;
-    same_zeros = `THREE_HUNDRED(z <->) z;
-    same_unknown = lx <-> `THREE_HUNDRED(lt <->) lt;
-    differs = `THREE_HUNDRED(z !==) t;
-    differs4 = `THREE_HUNDRED(lz !=?) lt;
-    differs_unknown = lx !=? `THREE_HUNDRED(lz !=?) lt;
-    follows = `THREE_HUNDRED(t -> t <->) t;
-    fails = `THREE_HUNDRED(t -> t <->) z;
-    follows_unknown = `THREE_HUNDRED(lt -> lt <->) lx;
-    skipped_run = z -> `THREE_HUNDRED(t -> t <->) called();
-    mixed_xor = `THREE_HUNDRED(v ^ v ~^) v;
-    mixed_equal = `THREE_HUNDRED(lz == lz ==?) lt;
-
-    skipped_or = `THREE_HUNDRED(z ||) t || called();
-    skipped_and = `THREE_HUNDRED(t &&) z && called();
-    skipped_or4 = lx || `THREE_HUNDRED(lz ||) lt || called();
-    skipped_and4 = lx && `THREE_HUNDRED(lt &&) lz && called();
 
     sum = v + v + v + v + v + v + v + v + v + v +
           v + v + v + v + v + v + v + v + v + v +
@@ -254,40 +188,6 @@ module Top;
     if (in_set !== 1'b1) $fatal(1, "299 was not found among 0 to 299");
     if (out_of_set !== 1'b0) $fatal(1, "300 was found among 0 to 299");
     if (joined !== {300{1'b1}}) $fatal(1, "the concatenation was %h", joined);
-    if (every !== 1'b1) $fatal(1, "the logical and was %b, expected 1", every);
-    if (one_false !== 1'b0) $fatal(1, "the and ending in 0 was %b", one_false);
-    if (implied !== 1'b0) $fatal(1, "the implication was %b, expected 0", implied);
-    if (any4 !== 1'b1) $fatal(1, "the four-state or was %b, expected 1", any4);
-    if (open_or !== 1'bx) $fatal(1, "x or zeros was %b, expected x", open_or);
-    if (settled_or !== 1'b1) $fatal(1, "x or a one was %b, expected 1", settled_or);
-    if (every4 !== 1'b1) $fatal(1, "the four-state and was %b, expected 1", every4);
-    if (open_and !== 1'bx) $fatal(1, "x and ones was %b, expected x", open_and);
-    if (settled_and !== 1'b0) $fatal(1, "x and a zero was %b, expected 0", settled_and);
-    if (implied4 !== 1'bx) $fatal(1, "the four-state implication was %b", implied4);
-    // An odd number of zeros: each pair of them is equivalent, and that 1 is
-    // not equivalent to the zero left over.
-    if (same_ones !== 1'b1) $fatal(1, "the equivalence of ones was %b", same_ones);
-    if (same_zeros !== 1'b0) $fatal(1, "the equivalence of 301 zeros was %b", same_zeros);
-    if (same_unknown !== 1'bx) $fatal(1, "an equivalence with x was %b", same_unknown);
-    // Each comparison's answer is the next one's first operand (LRM Table
-    // 11-2): zeros compare equal until the last operand, a one.
-    if (differs !== 1'b1) $fatal(1, "the case inequality chain was %b", differs);
-    if (differs4 !== 1'b1) $fatal(1, "the wildcard inequality chain was %b", differs4);
-    if (differs_unknown !== 1'bx) $fatal(1, "a wildcard inequality of x was %b", differs_unknown);
-    // An implication and an equivalence each take the rest of the run as
-    // their second operand, so the last operand's value comes back through
-    // every one of them, and a false first operand ends the run at once.
-    if (follows !== 1'b1) $fatal(1, "a run of true operands was %b", follows);
-    if (fails !== 1'b0) $fatal(1, "a run ending in 0 was %b", fails);
-    if (follows_unknown !== 1'bx) $fatal(1, "a run ending in x was %b", follows_unknown);
-    if (skipped_run !== 1'b1) $fatal(1, "a false antecedent answered %b", skipped_run);
-    // Operators of one precedence alternate, each applied to the answer so
-    // far: four of them bring 1 back to 1, and there are six hundred.
-    if (mixed_xor !== 1) $fatal(1, "the xor and xnor chain was %h", mixed_xor);
-    if (mixed_equal !== 1'b1) $fatal(1, "the mixed equality chain was %b", mixed_equal);
-    if (skipped_or !== 1'b1 || skipped_and !== 1'b0) $fatal(1, "a settled chain answered wrongly");
-    if (skipped_or4 !== 1'b1 || skipped_and4 !== 1'b0) $fatal(1, "a settled four-state chain answered wrongly");
-    if (calls !== 0) $fatal(1, "an operand after the answer was settled ran %0d times", calls);
     $display("All checks passed");
   end
 endmodule

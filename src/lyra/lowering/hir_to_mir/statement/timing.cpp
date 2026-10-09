@@ -642,13 +642,8 @@ auto LowerWaitStmt(
   }
   mir::Block& test_block = test.Body();
   const mir::ExprId cond_id = test_block.exprs.Add(*std::move(cond_or));
-  const mir::ExprId not_yet = test_block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::UnaryExpr{
-                  .op = mir::UnaryOp::kLogicalNot,
-                  .operand = ReduceToCondition(unit, test_block, cond_id)},
-          .type = unit.builtins.machine_bool});
+  const mir::ExprId not_yet =
+      BuildLogicalNot(test_block, ReduceToCondition(unit, test_block, cond_id));
   const mir::ExprId waiting_id = wrapper.exprs.Add(test.Build(not_yet));
 
   mir::Block inner_block;

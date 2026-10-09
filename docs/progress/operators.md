@@ -200,9 +200,10 @@ merged node.
       one of two links whatever its length and whatever its operands can hold: a run of the
       operators of any one precedence level, a conditional whose third operand is a conditional, and
       a predicate of many `&&&` clauses, two-state or four-state, with or without a pattern. Every
-      conformance case's written C++ is held to the nesting a C++ compiler has to accept. One run is
-      not flat yet: a comparison whose answer is the next comparison's first operand (`a < b < c`),
-      which converts that answer at every link.
+      conformance case's written C++ is held to the nesting a C++ compiler has to accept. Two runs
+      are not flat yet: a comparison whose answer is the next comparison's first operand
+      (`a < b < c`), which converts that answer at every link, and a run that alternates `->` with
+      `<->`, where each operator's second operand is the rest of the run.
 
 ## Cross-references
 

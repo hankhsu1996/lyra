@@ -2,17 +2,13 @@
 
 #include <algorithm>
 #include <array>
-#include <cstddef>
 #include <expected>
 #include <span>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -32,7 +28,6 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -42,28 +37,6 @@ namespace {
 auto ReadLocal(mir::Block& block, mir::LocalId local, mir::TypeId type)
     -> mir::ExprId {
   return block.exprs.Add(mir::MakeLocalRefExpr(local, type));
-}
-
-// The negation of `operand`, at the type the operand has.
-auto BuildLogicalNot(mir::Block& block, mir::ExprId operand) -> mir::ExprId {
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::UnaryExpr{
-                  .op = mir::UnaryOp::kLogicalNot, .operand = operand},
-          .type = block.exprs.Get(operand).type});
-}
-
-auto MakeConditional(
-    mir::ExprId condition, mir::ExprId then_value, mir::ExprId else_value,
-    mir::TypeId type) -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::ConditionalExpr{
-              .condition = condition,
-              .then_value = then_value,
-              .else_value = else_value},
-      .type = type};
 }
 
 // LRM 11.4.11 combines the results of two arms neither of which was selected
@@ -106,15 +79,6 @@ auto BuildIsKnownFalse(
   return ReduceToCondition(unit, block, BuildLogicalNot(block, value));
 }
 
-auto BuildMachineBool(
-    const mir::CompilationUnit& unit, mir::Block& block, bool value)
-    -> mir::ExprId {
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::MachineBoolLiteral{.value = value},
-          .type = unit.builtins.machine_bool});
-}
-
 void AppendAssign(
     const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId local,
     mir::ExprId value) {
@@ -126,21 +90,15 @@ void AppendAssign(
                   unit.builtins, ReadLocal(block, local, type), value))});
 }
 
-// The selection where no predicate can be unknown: each arm is the third
-// operand of the one before it, so the selection is one conditional however
-// many arms it has.
-//
-//   p0 ? v0 : p1 ? v1 : ... : otherwise
+// The selection where no predicate can be unknown, which is the chain of its
+// arms: each predicate after the first, and every value, is evaluated only
+// where the chain reaches it.
 auto BuildDecidedSelection(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     std::span<const SelectionArm> arms, const Evaluation& otherwise,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    mir::TypeId result_type) -> diag::Result<mir::ExprId> {
   mir::Block& block = *frame.current_block;
-  struct ReachedArm {
-    mir::ExprId selected;
-    mir::ExprId value;
-  };
-  std::vector<ReachedArm> reached;
+  std::vector<SelectedValue> reached;
   reached.reserve(arms.size());
   for (const SelectionArm& arm : arms) {
     // The first predicate is evaluated wherever the selection is; each one
@@ -157,13 +115,7 @@ auto BuildDecidedSelection(
   }
   auto rest_or = ConditionallyEvaluated(frame, otherwise);
   if (!rest_or) return std::unexpected(std::move(rest_or.error()));
-  mir::ExprId rest = *rest_or;
-  for (std::size_t arm = reached.size(); arm-- > 1;) {
-    rest = block.exprs.Add(MakeConditional(
-        reached[arm].selected, reached[arm].value, rest, result_type));
-  }
-  return MakeConditional(
-      reached.front().selected, reached.front().value, rest, result_type);
+  return BuildSelectionChain(block, reached, *rest_or, result_type);
 }
 
 // The selection where a predicate can be unknown. The arms are tried one after
@@ -213,9 +165,12 @@ auto BuildMergingSelection(
         ReadLocal(block, held, result_type), result_type);
     AppendAssign(
         unit, block, answer,
-        block.exprs.Add(MakeConditional(
-            ReadLocal(block, answered, boolean), combined,
-            ReadLocal(block, held, result_type), result_type)));
+        BuildSelectionChain(
+            block,
+            std::array{SelectedValue{
+                .selected = ReadLocal(block, answered, boolean),
+                .value = combined}},
+            ReadLocal(block, held, result_type), result_type));
     AppendAssign(unit, block, answered, BuildMachineBool(unit, block, true));
     return {};
   };
@@ -286,33 +241,61 @@ auto ClausePredicate(
 }
 
 // The search where no term can be unknown, so each term either settles the
-// answer or passes it on: the terms as conditions, searched for the first that
-// settles.
+// answer or passes it on. That is a selection: every term but the last is an
+// arm, selected where the term settles and answering what it settles the
+// search as, and the last term's truth is what none of them settling leaves.
+//
+//   ||:  t0 ? 1 : t1 ? 1 : ... : truth(last)
+//   &&:  !t0 ? 0 : !t1 ? 0 : ... : truth(last)
 auto BuildDecidedSearch(
     const mir::CompilationUnit& unit, const WalkFrame& frame, SettledBy rule,
     std::span<const Predicate> terms, mir::TypeId type)
     -> diag::Result<mir::ExprId> {
-  mir::Block& block = *frame.current_block;
-  std::vector<mir::ExprId> conditions;
-  conditions.reserve(terms.size());
-  for (const Predicate& term : terms) {
-    auto term_or = conditions.empty()
-                       ? term.evaluate(frame)
-                       : ConditionallyEvaluated(frame, term.evaluate);
-    if (!term_or) return std::unexpected(std::move(term_or.error()));
-    conditions.push_back(*term_or);
-  }
-  const auto answer = [&](mir::ExprId holds) {
-    return ConvertToType(unit, block, ConditionAsBit(unit, block, holds), type);
+  const auto settled_as = [&unit, type](bool answer) -> Evaluation {
+    return [&unit, type,
+            answer](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+      mir::Block& block = *at.current_block;
+      return ConvertToType(
+          unit, block, BuildBit1Literal(unit, block, answer), type);
+    };
   };
-  switch (rule) {
-    case SettledBy::kTrueTerm:
-      return answer(AnyHolds(unit, block, conditions));
-    case SettledBy::kFalseTerm:
-    case SettledBy::kTermNotTrue:
-      return answer(AllHold(unit, block, conditions));
+  const auto is_false = [&unit](const Predicate& term) {
+    return Predicate{
+        .type = unit.builtins.machine_bool,
+        .evaluate = [&unit,
+                     &term](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+          auto value_or = term.evaluate(at);
+          if (!value_or) return value_or;
+          mir::Block& block = *at.current_block;
+          return BuildLogicalNot(
+              block, ReduceToCondition(unit, block, *value_or));
+        }};
+  };
+  const auto arm_for = [&](const Predicate& term) {
+    switch (rule) {
+      case SettledBy::kTrueTerm:
+        return SelectionArm{.predicate = term, .value = settled_as(true)};
+      case SettledBy::kFalseTerm:
+      case SettledBy::kTermNotTrue:
+        return SelectionArm{
+            .predicate = is_false(term), .value = settled_as(false)};
+    }
+    throw InternalError("BuildDecidedSearch: unknown SettledBy");
+  };
+
+  std::vector<SelectionArm> arms;
+  arms.reserve(terms.size() - 1);
+  for (const Predicate& term : terms.first(terms.size() - 1)) {
+    arms.push_back(arm_for(term));
   }
-  throw InternalError("BuildDecidedSearch: unknown SettledBy");
+  const Evaluation last_truth =
+      [&](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+    auto value_or = terms.back().evaluate(at);
+    if (!value_or) return value_or;
+    mir::Block& block = *at.current_block;
+    return ConvertToType(unit, block, BuildTruth(unit, block, *value_or), type);
+  };
+  return BuildDecidedSelection(unit, frame, arms, last_truth, type);
 }
 
 // The search where a term can be unknown. The answer starts as the first
@@ -378,105 +361,12 @@ auto BuildOpenSearch(
 
 }  // namespace
 
-// Each operand's truth is held in a local of its own, so the operands can be
-// evaluated in the order the source wrote them and combined in the other:
-//
-//   open = true
-//   for each operand, first to last:
-//     if (open) { v = truth(operand); after `->`: open = v is not known false }
-//   answer = v of the last operand
-//   for each operand before it, last to first:
-//     answer = after `->`: !v || answer;  after `<->`: v <-> answer
-//
-// An operand the run never reached holds 0, and nothing reads it: the `->`
-// whose false antecedent ended the run answers 1 whatever stands after it.
-auto BuildConsequenceRun(
-    const mir::CompilationUnit& unit, const WalkFrame& frame,
-    std::span<const ConsequenceLink> links, const Predicate& last,
-    mir::TypeId type) -> diag::Result<mir::ExprId> {
-  BlockBuilder steps(frame);
-  mir::Block& body = steps.Body();
-  const mir::TypeId boolean = unit.builtins.machine_bool;
-  const mir::LocalId open =
-      steps.DeclareLocal(boolean, BuildMachineBool(unit, body, true));
-  const auto declare_truth = [&] {
-    return steps.DeclareLocal(
-        type,
-        ConvertToType(unit, body, BuildBit1Literal(unit, body, false), type));
-  };
-  const auto evaluate_into = [&](const Predicate& term, mir::LocalId truth,
-                                 mir::Block& step) -> diag::Result<void> {
-    auto value_or = term.evaluate(steps.Frame().WithBlock(&step));
-    if (!value_or) return std::unexpected(std::move(value_or.error()));
-    AppendAssign(
-        unit, step, truth,
-        ConvertToType(unit, step, BuildTruth(unit, step, *value_or), type));
-    return {};
-  };
-  const auto append_while_open = [&](mir::Block step) {
-    body.AppendIfThen(ReadLocal(body, open, boolean), std::move(step));
-  };
-
-  std::vector<mir::LocalId> truths;
-  truths.reserve(links.size());
-  for (const ConsequenceLink& link : links) {
-    const mir::LocalId truth = declare_truth();
-    truths.push_back(truth);
-    mir::Block step;
-    auto evaluated = std::visit(
-        Overloaded{
-            [&](const Implies& implies) -> diag::Result<void> {
-              auto operand = evaluate_into(implies.operand, truth, step);
-              if (!operand) return operand;
-              AppendAssign(
-                  unit, step, open,
-                  BuildLogicalNot(
-                      step, BuildIsKnownFalse(
-                                unit, step, ReadLocal(step, truth, type))));
-              return {};
-            },
-            [&](const IsEquivalentTo& equivalent) {
-              return evaluate_into(equivalent.operand, truth, step);
-            }},
-        link);
-    if (!evaluated) return std::unexpected(std::move(evaluated.error()));
-    append_while_open(std::move(step));
-  }
-  const mir::LocalId answer = declare_truth();
-  mir::Block last_step;
-  auto evaluated = evaluate_into(last, answer, last_step);
-  if (!evaluated) return std::unexpected(std::move(evaluated.error()));
-  append_while_open(std::move(last_step));
-
-  for (std::size_t at = links.size(); at-- > 0;) {
-    const mir::ExprId truth = ReadLocal(body, truths[at], type);
-    const mir::ExprId rest = ReadLocal(body, answer, type);
-    AppendAssign(
-        unit, body, answer,
-        std::visit(
-            Overloaded{
-                [&](const Implies&) {
-                  return BuildMirLogicalOr(
-                      unit, body, type,
-                      std::array{BuildLogicalNot(body, truth), rest});
-                },
-                [&](const IsEquivalentTo&) {
-                  return body.exprs.Add(BuildMirBinaryExpr(
-                      unit, body, hir::BinaryOp::kLogicalEquivalence, truth,
-                      rest, type));
-                }},
-            links[at]));
-  }
-  return frame.current_block->exprs.Add(
-      steps.Build(ReadLocal(body, answer, type)));
-}
-
 auto BuildSearch(
     const mir::CompilationUnit& unit, const WalkFrame& frame, SettledBy rule,
     std::span<const Predicate> terms, mir::TypeId type)
     -> diag::Result<mir::ExprId> {
-  if (terms.empty()) {
-    throw InternalError("BuildSearch: a search has no terms");
+  if (terms.size() < 2) {
+    throw InternalError("BuildSearch: a search has fewer than two terms");
   }
   if (CarriesUnknowns(unit, type)) {
     return BuildOpenSearch(unit, frame, rule, terms, type);
@@ -525,6 +415,20 @@ auto ExpressionPredicate(Lowerer& lowerer, hir::ExprId id) -> Predicate {
         auto lowered = lowerer.LowerExpr(lowerer.HirExprs().Get(id), at);
         if (!lowered) return std::unexpected(std::move(lowered.error()));
         return at.current_block->exprs.Add(*std::move(lowered));
+      }};
+}
+
+auto Negated(const mir::CompilationUnit& unit, Predicate predicate)
+    -> Predicate {
+  const mir::TypeId type = OneBitAnswerType(unit, {&predicate.type, 1});
+  return Predicate{
+      .type = type,
+      .evaluate = [&unit, operand = std::move(predicate)](
+                      const WalkFrame& at) -> diag::Result<mir::ExprId> {
+        auto value_or = operand.evaluate(at);
+        if (!value_or) return value_or;
+        mir::Block& block = *at.current_block;
+        return BuildLogicalNot(block, BuildTruth(unit, block, *value_or));
       }};
 }
 
@@ -577,7 +481,10 @@ auto BuildSelection(
   if (can_be_unknown) {
     return BuildMergingSelection(unit, frame, arms, otherwise, result_type);
   }
-  return BuildDecidedSelection(unit, frame, arms, otherwise, result_type);
+  auto selection_or =
+      BuildDecidedSelection(unit, frame, arms, otherwise, result_type);
+  if (!selection_or) return std::unexpected(std::move(selection_or.error()));
+  return frame.current_block->exprs.Get(*selection_or);
 }
 
 template auto ExpressionPredicate(ProcessLowerer&, hir::ExprId) -> Predicate;

@@ -9,7 +9,6 @@
 #include <cstdint>
 #include <functional>
 #include <span>
-#include <variant>
 #include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
@@ -63,6 +62,11 @@ struct Predicate {
 template <ExprLowerer Lowerer>
 auto ExpressionPredicate(Lowerer& lowerer, hir::ExprId id) -> Predicate;
 
+// The predicate that is true where `predicate` is false, false where it is
+// true, and unknown where it is (LRM 11.4.7).
+[[nodiscard]] auto Negated(
+    const mir::CompilationUnit& unit, Predicate predicate) -> Predicate;
+
 // What ends a search through terms before its last one.
 enum class SettledBy : std::uint8_t {
   // `||`: a true term makes the answer 1, and an unknown one leaves it to the
@@ -82,38 +86,11 @@ enum class SettledBy : std::uint8_t {
 // where the ones before it left the answer open (LRM 11.3.5), and the answer is
 // what the operator's table makes of the terms that were. A search of any
 // length is a run of steps one after another, never a step inside the one
-// before it. At least one term.
+// before it. At least two terms: a search of one settles nothing.
 [[nodiscard]] auto BuildSearch(
     const mir::CompilationUnit& unit, const WalkFrame& frame, SettledBy rule,
     std::span<const Predicate> terms, mir::TypeId type)
     -> diag::Result<mir::ExprId>;
-
-// `a -> rest`: where `a` is false the answer is 1 and the rest is not
-// evaluated.
-struct Implies {
-  Predicate operand;
-};
-
-// `a <-> rest`: both are evaluated, and the answer is whether their truths
-// agree.
-struct IsEquivalentTo {
-  Predicate operand;
-};
-
-// An operand of a run of `->` and `<->` together with the operator written
-// after it (LRM 11.4.7), whose second operand is the rest of the run.
-using ConsequenceLink = std::variant<Implies, IsEquivalentTo>;
-
-// The truth, at `type`, of a run of `->` and `<->`: its links, then the last
-// operand. Both operators group from the right (LRM Table 11-2), so each one's
-// second operand is the rest of the run: the operands are evaluated first to
-// last, one after a false first operand of `->` not at all (LRM 11.3.5), and
-// the answer is combined from the last operand back. A run of any length is
-// steps one after another.
-[[nodiscard]] auto BuildConsequenceRun(
-    const mir::CompilationUnit& unit, const WalkFrame& frame,
-    std::span<const ConsequenceLink> links, const Predicate& last,
-    mir::TypeId type) -> diag::Result<mir::ExprId>;
 
 // A series of predicates as one: a sequential conjunction (LRM 12.6.2, 12.6.3),
 // the search its terms make. A lone term is itself.

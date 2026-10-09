@@ -468,26 +468,27 @@ at the arm whose predicate is known true. The same holds of every operator whose
 only where the earlier ones leave the answer open: SystemVerilog's `a || b` and `a && b` (LRM
 11.4.7) are a search through the operands' truths, each operand after the first evaluated by a
 statement that runs only while the answer is open, and folded in by the logical operator that
-combines two values already evaluated. `a -> b` and `a <-> b` group from the right, so a run of them
-holds each operand's truth as it is evaluated, first to last, and combines them from the last one
-back. So no operator of the expression set skips an operand and no backend's own rules decide
-whether one runs. Where nothing can be unknown a selection and a search are the conditional alone,
-the next arm or operand standing as its third operand. Either way a chain the source writes flat --
-three hundred operands of `||`, a conditional whose third operand is a conditional three hundred
-times over -- is a run of steps beside each other, as deep as one of two: a target compiler bounds
-how deeply text may nest, and a program the language accepts has to be one the target accepts. Which
-shape a source-level construct takes follows from whether its predicates can be unknown and is
-settled at HIR-to-MIR, so no consumer derives it. A write yields nothing, as an assignment does in
-Rust's MIR: what an assignment yields where the source reads it (LRM 11.3.6) is what it stored,
-which the lowering holds in a local and reads, so no backend's own rule for the value of an
-assignment -- C++'s is the target itself -- decides it, and an increment is a compound write by one.
-A value-build primitive spells a value rather than operating on values that already exist -- a
-structured literal is one, and so is every peer language's array or aggregate literal. Select
-expressions are access primitives. Each of these stays in MIR for the same reason: removing it would
-require expanding into a statement-form rewrite that does not fit the expression context. Composing
-values that already exist is not this. A concatenation or a replication is an operation over its
-operands, which every peer reaches through a library call and none of them spells as a node, so it
-is a `CallExpr` against the entry that performs it.
+combines two values already evaluated. `a -> b` is `!a || b` by that clause's own words, so it is
+the search `||` makes over the negated operand and has no shape of its own, and `a <-> b` evaluates
+both operands and is an operation over two values like any other. So no operator of the expression
+set skips an operand and no backend's own rules decide whether one runs. Where nothing can be
+unknown a selection and a search are the conditional alone, the next arm or operand standing as its
+third operand. Either way a chain the source writes flat -- three hundred operands of `||`, a
+conditional whose third operand is a conditional three hundred times over -- is a run of steps
+beside each other, as deep as one of two: a target compiler bounds how deeply text may nest, and a
+program the language accepts has to be one the target accepts. Which shape a source-level construct
+takes follows from whether its predicates can be unknown and is settled at HIR-to-MIR, so no
+consumer derives it. A write yields nothing, as an assignment does in Rust's MIR: what an assignment
+yields where the source reads it (LRM 11.3.6) is what it stored, which the lowering holds in a local
+and reads, so no backend's own rule for the value of an assignment -- C++'s is the target itself --
+decides it, and an increment is a compound write by one. A value-build primitive spells a value
+rather than operating on values that already exist -- a structured literal is one, and so is every
+peer language's array or aggregate literal. Select expressions are access primitives. Each of these
+stays in MIR for the same reason: removing it would require expanding into a statement-form rewrite
+that does not fit the expression context. Composing values that already exist is not this. A
+concatenation or a replication is an operation over its operands, which every peer reaches through a
+library call and none of them spells as a node, so it is a `CallExpr` against the entry that
+performs it.
 
 A callable is one concept: callable code (a signature, plus a body where the declaration defines it)
 and a callable value (code plus a bound environment). A closure is a callable value with a captured

@@ -1,9 +1,7 @@
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 
-#include <algorithm>
 #include <array>
 #include <expected>
-#include <optional>
 #include <span>
 #include <utility>
 #include <variant>
@@ -19,6 +17,7 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -288,14 +287,6 @@ auto BuildMirBinaryExpr(
   const auto library = [&](support::BuiltinFn entry) {
     return MakeLibraryCall(entry, lhs_id, {rhs_id}, result_type);
   };
-  const auto negated = [&](mir::ExprId answer) {
-    return block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::UnaryExpr{
-                    .op = mir::UnaryOp::kLogicalNot, .operand = answer},
-            .type = block.exprs.Get(answer).type});
-  };
 
   // LRM 8.4 admits `null` as either operand of a handle comparison, and the
   // front end leaves it at a type of its own, so both operands of an equality
@@ -357,7 +348,7 @@ auto BuildMirBinaryExpr(
     case hir::BinaryOp::kCaseEquality:
       return at_result_type(case_equality());
     case hir::BinaryOp::kCaseInequality:
-      return at_result_type(negated(case_equality()));
+      return at_result_type(BuildLogicalNot(block, case_equality()));
     case hir::BinaryOp::kWildcardEquality:
       return library(support::BuiltinFn::kWildcardEquals);
     // SV spells `!=?` as an operator of its own, answering with the negation of
@@ -365,7 +356,8 @@ auto BuildMirBinaryExpr(
     // conversion: the clause lets the answer be unknown, so it carries the
     // state class its operands do, which is the one the context asked for.
     case hir::BinaryOp::kWildcardInequality:
-      return block.exprs.Get(negated(
+      return block.exprs.Get(BuildLogicalNot(
+          block,
           block.exprs.Add(library(support::BuiltinFn::kWildcardEquals))));
     case hir::BinaryOp::kPower:
       return library(support::BuiltinFn::kPow);
@@ -409,73 +401,35 @@ auto LowerHirUnaryExpr(
       *std::move(operand_or), result_type);
 }
 
-// The operands of `root` and of every use of the same operator that is its
-// first operand, first to last: `a || b || c` groups as `(a || b) || c` (LRM
-// Table 11-2), and regrouping it changes neither which operands are evaluated
-// nor the answer, so the whole run is one search.
+// The operands of the run `root` heads, in the order the source wrote them: an
+// operand that is the same operator stands for its own operands. Sound for an
+// operator whose answer and whose evaluated operands are the same however a
+// run of it is grouped, which `&&`, `||` and `<->` are (LRM 11.4.7) and `->`
+// is not.
 template <ExprLowerer Lowerer>
-auto LeftGroupedOperands(Lowerer& lowerer, const hir::BinaryExpr& root)
+auto RunOperands(Lowerer& lowerer, const hir::BinaryExpr& root)
     -> std::vector<hir::ExprId> {
-  std::vector<hir::ExprId> operands{root.rhs};
-  hir::ExprId first = root.lhs;
-  for (;;) {
-    const auto* inner =
-        std::get_if<hir::BinaryExpr>(&lowerer.HirExprs().Get(first).data);
-    if (inner == nullptr || inner->op != root.op) break;
-    operands.push_back(inner->rhs);
-    first = inner->lhs;
+  std::vector<hir::ExprId> operands;
+  std::vector<hir::ExprId> unvisited{root.rhs, root.lhs};
+  while (!unvisited.empty()) {
+    const hir::ExprId next = unvisited.back();
+    unvisited.pop_back();
+    const auto* same =
+        std::get_if<hir::BinaryExpr>(&lowerer.HirExprs().Get(next).data);
+    if (same == nullptr || same->op != root.op) {
+      operands.push_back(next);
+      continue;
+    }
+    unvisited.push_back(same->rhs);
+    unvisited.push_back(same->lhs);
   }
-  operands.push_back(first);
-  std::ranges::reverse(operands);
   return operands;
-}
-
-// `first`, as the first operand of `op`, where `op` is one of the two
-// operators that group from the right and take the rest of their run as the
-// second operand (LRM Table 11-2); nothing for any other operator.
-template <ExprLowerer Lowerer>
-auto ConsequenceLinkOf(Lowerer& lowerer, hir::BinaryOp op, hir::ExprId first)
-    -> std::optional<ConsequenceLink> {
-  switch (op) {
-    case hir::BinaryOp::kLogicalImplication:
-      return Implies{.operand = ExpressionPredicate(lowerer, first)};
-    case hir::BinaryOp::kLogicalEquivalence:
-      return IsEquivalentTo{.operand = ExpressionPredicate(lowerer, first)};
-    case hir::BinaryOp::kLogicalAnd:
-    case hir::BinaryOp::kLogicalOr:
-    case hir::BinaryOp::kAdd:
-    case hir::BinaryOp::kSub:
-    case hir::BinaryOp::kMul:
-    case hir::BinaryOp::kDiv:
-    case hir::BinaryOp::kMod:
-    case hir::BinaryOp::kBitwiseAnd:
-    case hir::BinaryOp::kBitwiseOr:
-    case hir::BinaryOp::kBitwiseXor:
-    case hir::BinaryOp::kBitwiseXnor:
-    case hir::BinaryOp::kEquality:
-    case hir::BinaryOp::kInequality:
-    case hir::BinaryOp::kCaseEquality:
-    case hir::BinaryOp::kCaseInequality:
-    case hir::BinaryOp::kWildcardEquality:
-    case hir::BinaryOp::kWildcardInequality:
-    case hir::BinaryOp::kGreaterEqual:
-    case hir::BinaryOp::kGreaterThan:
-    case hir::BinaryOp::kLessEqual:
-    case hir::BinaryOp::kLessThan:
-    case hir::BinaryOp::kLogicalShiftLeft:
-    case hir::BinaryOp::kArithmeticShiftLeft:
-    case hir::BinaryOp::kLogicalShiftRight:
-    case hir::BinaryOp::kArithmeticShiftRight:
-    case hir::BinaryOp::kPower:
-      return std::nullopt;
-  }
-  throw InternalError("ConsequenceLinkOf: unknown HIR BinaryOp");
 }
 
 // `&&` and `||` evaluate an operand only where the ones before it leave the
 // answer open, and an unknown operand leaves it open (LRM 11.4.7, 11.3.5), so
-// each is a search through its operands. `->` and `<->` are a run combined
-// from its last operand back. Every other operator evaluates both operands.
+// each is a search through its operands, and `->` is the search `||` makes.
+// Every other operator evaluates both operands.
 template <ExprLowerer Lowerer>
 auto LowerHirBinaryExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::BinaryExpr& b,
@@ -499,29 +453,40 @@ auto LowerHirBinaryExpr(
   };
   switch (b.op) {
     case hir::BinaryOp::kLogicalAnd:
-      return search(
-          SettledBy::kFalseTerm, terms_of(LeftGroupedOperands(lowerer, b)));
+      return search(SettledBy::kFalseTerm, terms_of(RunOperands(lowerer, b)));
     case hir::BinaryOp::kLogicalOr:
-      return search(
-          SettledBy::kTrueTerm, terms_of(LeftGroupedOperands(lowerer, b)));
-    case hir::BinaryOp::kLogicalImplication:
-    case hir::BinaryOp::kLogicalEquivalence: {
-      std::vector<ConsequenceLink> links;
-      hir::ExprId last = b.rhs;
-      const hir::BinaryExpr* run = &b;
-      while (std::optional<ConsequenceLink> link =
-                 ConsequenceLinkOf(lowerer, run->op, run->lhs)) {
-        links.push_back(*std::move(link));
-        last = run->rhs;
-        const auto* rest =
-            std::get_if<hir::BinaryExpr>(&lowerer.HirExprs().Get(last).data);
-        if (rest == nullptr) break;
-        run = rest;
+      return search(SettledBy::kTrueTerm, terms_of(RunOperands(lowerer, b)));
+    // `a -> b` is `!a || b` (LRM 11.4.7), and a second operand that is itself
+    // an implication goes on with the same search, as the third operand of a
+    // conditional goes on with its selection.
+    case hir::BinaryOp::kLogicalImplication: {
+      std::vector<Predicate> terms;
+      const hir::BinaryExpr* implication = &b;
+      for (;;) {
+        terms.push_back(
+            Negated(unit, ExpressionPredicate(lowerer, implication->lhs)));
+        const auto* consequent = std::get_if<hir::BinaryExpr>(
+            &lowerer.HirExprs().Get(implication->rhs).data);
+        if (consequent == nullptr || consequent->op != b.op) break;
+        implication = consequent;
       }
-      auto answer_or = BuildConsequenceRun(
-          unit, frame, links, ExpressionPredicate(lowerer, last), result_type);
+      terms.push_back(ExpressionPredicate(lowerer, implication->rhs));
+      return search(SettledBy::kTrueTerm, terms);
+    }
+    // A run is asked first operand to last, each answer the first operand of
+    // the next question.
+    case hir::BinaryOp::kLogicalEquivalence: {
+      const std::vector<hir::ExprId> operands = RunOperands(lowerer, b);
+      auto answer_or = LowerAndAddOperand(lowerer, frame, operands.front());
       if (!answer_or) return std::unexpected(std::move(answer_or.error()));
-      return block.exprs.Get(*answer_or);
+      mir::ExprId answer = *answer_or;
+      for (const hir::ExprId next : std::span(operands).subspan(1)) {
+        auto next_or = LowerAndAddOperand(lowerer, frame, next);
+        if (!next_or) return std::unexpected(std::move(next_or.error()));
+        answer = block.exprs.Add(BuildMirBinaryExpr(
+            unit, block, b.op, answer, *next_or, result_type));
+      }
+      return block.exprs.Get(answer);
     }
     case hir::BinaryOp::kAdd:
     case hir::BinaryOp::kSub:
