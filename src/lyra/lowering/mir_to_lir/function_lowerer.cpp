@@ -980,7 +980,7 @@ auto FunctionLowerer::BindLocal(
     return std::nullopt;
   }
   const lir::ValueId slot = NewPlaceLocal(type);
-  locals_[local.value] = LocalBinding{PlaceBinding{.slot = slot}};
+  locals_[local.value] = PlaceBinding{.slot = slot};
   const bool owns = unit_->Types().Get(type).IsOwnedValue();
   Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
@@ -1087,12 +1087,12 @@ void FunctionLowerer::OpenVariables() {
             .pointee = lir::CellOf(unit_->Types(), value),
             .ownership = lir::PointerOwnership::kBorrowed,
             .mutability = lir::Mutability::kMutable}});
-    locals_[local.value] = LocalBinding{CellBinding{
+    locals_[local.value] = CellBinding{
         .cell = Emit(
             address, lir::VariableAddressInstr{
                          .variables = *variables_,
                          .position = lir::VariablePosition{
-                             *variable_slot_[local.value]}})}};
+                             *variable_slot_[local.value]}})};
   }
 }
 

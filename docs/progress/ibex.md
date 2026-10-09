@@ -27,26 +27,30 @@ needed and is not what widens a pass now. What remains true is that a list is st
 set: a construct behind one that failed inside the same body is still unseen, because a body that
 will not lower is reported and abandoned rather than lowered further.
 
-The whole Ibex RTL already parses, type-checks, and elaborates through the frontend with no errors
--- every gap below is in feature lowering or the missing execution path, not in the frontend.
+The whole Ibex RTL parses, type-checks, and elaborates through the front end with no errors -- every
+gap below was in feature lowering, not in the front end.
 
 ## Status
 
-`ibex_simple_system_tb` simulates end-to-end. The whole design lowers with no diagnostics, emits C++
-a host compiler accepts, links, loads `hello_test` through `$readmemh`, executes it, and terminates
-on the testbench's own software request -- with the program's expected output and a full instruction
-trace. Its sources, includes and defines are read from the `lyra.toml` at the design's root, so no
-setting has to be passed on the command line, which closes the last accepted-option gap between this
-and the condition above. Measured 2026-09-24. The program's own output lands in a log file beside
-the design rather than on stdout, so an empty terminal is what a correct run looks like.
+`ibex_simple_system_tb` simulates end-to-end on both backends. The whole design elaborates with no
+diagnostics, builds, loads `hello_test` through `$readmemh`, executes it, and terminates on the
+testbench's own software request at time 26548 -- with the program's expected output and a full
+instruction trace, the same on either backend. Its sources, includes and defines are read from the
+`lyra.toml` at the design's root, so no setting has to be passed on the command line, which closes
+the last accepted-option gap between this and the condition above. Measured 2026-10-09.
 
-**The run is silent.** It used to report `unique` and `priority` violations from nearly every
-module, and they were Lyra's error rather than the design's: every one of those statements spells
-out a `default` item or a final `else`, which covers the values the arms left and so discharges any
-claim that some arm matches (LRM 12.4.2, 12.5.3). Lyra reported anyway. The whole run now writes
-nothing, and the corpus states the requirement in both directions -- a qualified statement with a
-catch-all reports nothing, one without reports when nothing matched -- so it cannot regress
-unnoticed.
+The terminal shows what the testbench and the design themselves display: a banner, the memory being
+loaded, where the trace is written, the reset being released, and the `$finish`. The program's own
+output lands in a log file, and the instruction trace in another, both in the directory the run was
+started from. The run has to be started from the design's root, because the program image is named
+relative to it; started elsewhere it ends at time zero saying so.
+
+**The run reports no violation.** It used to report `unique` and `priority` violations from nearly
+every module, and they were Lyra's error rather than the design's: every one of those statements
+spells out a `default` item or a final `else`, which covers the values the arms left and so
+discharges any claim that some arm matches (LRM 12.4.2, 12.5.3). Lyra reported anyway. The corpus
+states the requirement in both directions -- a qualified statement with a catch-all reports nothing,
+one without reports when nothing matched -- so it cannot regress unnoticed.
 
 **Nothing runs this design automatically**, so every sentence here is only as fresh as the last time
 someone ran it by hand. It has stood false three times. The first time, a lowering identity minted
@@ -64,8 +68,8 @@ measurement rather than a property.
 
 1. **Feature-lowering gaps** -- the unsupported SystemVerilog forms below. This wall is down. What
    the list below now tracks is any further form a deeper pass turns up, not a standing blocker.
-2. **Execution backend** -- also down for the C++ path, which carries the run above. The LLVM path
-   is a separate backend tracked in `execution-backend.md`; it is not required for the C++ run.
+2. **Execution** -- also down, on both backends: each carries the run above. What the execution
+   backend still refuses elsewhere is tracked in `execution-backend.md`.
 
 ## Feature gaps
 
