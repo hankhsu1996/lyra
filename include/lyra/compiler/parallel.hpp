@@ -3,14 +3,16 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
-#include <future>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-namespace lyra::support {
+#include "lyra/compiler/stack.hpp"
+
+namespace lyra::compiler {
 
 // Calls `produce(i)` for every index below `count` on at most `width` threads
 // at once, and hands each result to `consume` in index order, whichever
@@ -43,15 +45,15 @@ void ProduceInOrder(
       }
     }
   };
-  std::vector<std::future<void>> threads;
+  std::vector<std::unique_ptr<StackThread>> threads;
   const std::size_t running = std::min(width, count);
   threads.reserve(running);
   for (std::size_t k = 0; k < running; ++k) {
-    threads.push_back(std::async(std::launch::async, drain));
+    threads.push_back(std::make_unique<StackThread>(drain));
   }
-  for (std::future<void>& thread : threads) {
-    thread.get();
+  for (const std::unique_ptr<StackThread>& thread : threads) {
+    thread->Join();
   }
 }
 
-}  // namespace lyra::support
+}  // namespace lyra::compiler

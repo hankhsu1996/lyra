@@ -9,8 +9,8 @@
 
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/design_root.hpp"
+#include "lyra/compiler/parallel.hpp"
 #include "lyra/compiler/unit_pipeline.hpp"
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
@@ -18,7 +18,6 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/profiling/time_trace.hpp"
-#include "lyra/support/parallel.hpp"
 
 namespace lyra::compiler {
 
@@ -65,7 +64,7 @@ void LowerToHir(
     Produce produce, Consume consume) {
   using Produced = std::invoke_result_t<Produce, hir::CompilationUnit>;
   const profiling::StageScope stage("lower units");
-  support::ProduceInOrder(
+  ProduceInOrder(
       design.units.UnitCount(), width,
       [&](std::size_t i) -> Produced {
         return diag::ContainFailure([&]() -> Produced {

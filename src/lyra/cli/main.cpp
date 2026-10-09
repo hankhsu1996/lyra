@@ -10,6 +10,7 @@
 
 #include "lyra/cli/command_line.hpp"
 #include "lyra/cli/commands.hpp"
+#include "lyra/compiler/stack.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
@@ -18,6 +19,7 @@
 
 auto main(int argc, char** argv) -> int {
   try {
+    lyra::compiler::GiveStartingThreadCompileStack();
     const std::span<char* const> raw_args(argv, static_cast<std::size_t>(argc));
     const std::string program_path =
         raw_args.empty() ? std::string{} : std::string(raw_args.front());
