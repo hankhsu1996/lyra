@@ -299,8 +299,9 @@ the detail lives in the entry itself.
   route ends only at what that use reaches; the path is one shape for all four. One reference with
   its use recovered from its end, and one table with per-use ids, are rejected.
 - [specialization-identity](specialization-identity.md) -- a specialization's identity is the module
-  name plus a content hash of its parameter bindings, computed independently by producer and
-  consumer.
+  name plus a content hash of what the design fixed for the instance -- its bindings, and what
+  follows from where it stands -- computed independently by producer and consumer, and enough to
+  settle the identity of every instance below.
 - [reference-as-data-type](reference-as-data-type.md) -- a reference is a direction at HIR and a
   data type at MIR; one type serves `ref` formals and `ref` ports, preserving the observable-cell
   protocol.

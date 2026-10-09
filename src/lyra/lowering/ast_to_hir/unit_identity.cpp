@@ -429,31 +429,29 @@ auto InputOf(const ContextInput& input, const SpecializationPolicy& policy)
       input.what);
 }
 
-using ContextInputs = std::unordered_map<
-    const slang::ast::InstanceSymbol*, std::vector<ContextInput>>;
+using InstanceContexts =
+    std::unordered_map<const slang::ast::InstanceSymbol*, InstanceContext>;
 
-// Notes what the design fixed by where an instance stands, on every instance
-// it concerns, in one walk of the instances below where it starts. The front
-// end's visitor does the descent, and the instances the walk is inside are the
-// ones a name passes on its way outward, so nothing here searches a scope for
-// what it holds.
+// Settles the context of every instance below where it starts, in one walk.
+// The front end's visitor does the descent, and the instances the walk is
+// inside are the ones a name passes on its way outward, so nothing here
+// searches a scope for what it holds.
 struct ContextGatherer
     : slang::ast::ASTVisitor<ContextGatherer, slang::ast::VisitFlags::AllGood> {
-  // An instance the walk is inside: where its notes go, how many steps of
-  // `path` lead to it, and how many of its names have left it so far. It takes
-  // notes only where this walk is the first to reach it, since an earlier one
-  // already settled it.
+  // An instance the walk is inside: what is being settled for it, how many
+  // steps of `path` lead to it, and how many of its names have left it so far.
+  // Nothing is settled for one an earlier walk already reached.
   struct Open {
     const slang::ast::InstanceBodySymbol* body;
-    std::vector<ContextInput>* noted;
+    InstanceContext* settling;
     std::size_t steps;
     std::uint32_t names_left = 0;
   };
 
-  explicit ContextGatherer(ContextInputs& found) : found(&found) {
+  explicit ContextGatherer(InstanceContexts& found) : found(&found) {
   }
 
-  ContextInputs* found;
+  InstanceContexts* found;
   std::vector<Open> open;
   std::vector<std::string> path;
 
@@ -474,8 +472,8 @@ struct ContextGatherer
     path.push_back(InstanceStep(inst));
     for (const OverrideEffect& effect : OverridesOn(inst)) {
       for (const Open& above : open) {
-        if (above.noted == nullptr) continue;
-        above.noted->push_back(
+        if (above.settling == nullptr) continue;
+        above.settling->inputs.push_back(
             ContextInput{.below = Below(above, path.size()), .what = effect});
       }
     }
@@ -483,7 +481,7 @@ struct ContextGatherer
     open.push_back(
         Open{
             .body = &inst.body,
-            .noted = first ? &entry->second : nullptr,
+            .settling = first ? &entry->second : nullptr,
             .steps = path.size()});
     inst.body.visit(*this);
     open.pop_back();
@@ -517,15 +515,18 @@ struct ContextGatherer
   void Note(const slang::ast::HierarchicalReference& ref) {
     if (open.empty()) return;
     Open& writer = open.back();
-    const auto climb = ClimbOutOf(ref, *writer.body);
+    auto climb = ClimbOutOf(ref, *writer.body);
     if (!climb) return;
     const NameLanding name{
         .written = writer.names_left++, .lands_in = climb->scope};
     for (const Open& left : std::views::reverse(open)) {
       if (left.body == climb->instance) break;
-      if (left.noted == nullptr) continue;
-      left.noted->push_back(
+      if (left.settling == nullptr) continue;
+      left.settling->inputs.push_back(
           ContextInput{.below = Below(left, writer.steps), .what = name});
+    }
+    if (writer.settling != nullptr) {
+      writer.settling->climbs.push_back(*std::move(climb));
     }
   }
 };
@@ -577,7 +578,7 @@ auto SpecializationKeyOf(
     }
   }
   policy.EnterNaming(inst.body);
-  for (const ContextInput& input : policy.ContextInputsOf(inst)) {
+  for (const ContextInput& input : policy.ContextOf(inst).inputs) {
     key.inputs.push_back(InputOf(input, policy));
   }
   policy.LeaveNaming();
@@ -626,18 +627,8 @@ auto SpecializationPolicy::NameOf(const slang::ast::InstanceSymbol& inst) const
   return name;
 }
 
-auto SpecializationPolicy::ClimbsOutOf(const slang::ast::InstanceSymbol& inst)
-    const -> std::span<const ClimbAnchor> {
-  auto cached = climbs_.find(&inst);
-  if (cached == climbs_.end()) {
-    cached = climbs_.emplace(&inst, ast_to_hir::ClimbsOutOf(inst.body)).first;
-  }
-  return cached->second;
-}
-
-auto SpecializationPolicy::ContextInputsOf(
-    const slang::ast::InstanceSymbol& inst) const
-    -> std::span<const ContextInput> {
+auto SpecializationPolicy::ContextOf(
+    const slang::ast::InstanceSymbol& inst) const -> const InstanceContext& {
   if (!context_.contains(&inst)) {
     ContextGatherer gatherer(context_);
     inst.visit(gatherer);

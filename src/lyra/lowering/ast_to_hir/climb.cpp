@@ -5,12 +5,9 @@
 #include <span>
 #include <vector>
 
-#include <slang/ast/ASTVisitor.h>
 #include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
-#include <slang/ast/expressions/CallExpression.h>
-#include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -79,33 +76,6 @@ auto Encloses(
   }
   return false;
 }
-
-// Every hierarchical name a body writes, in source order, stopping at a child
-// instance's body.
-struct EveryHierarchicalName
-    : slang::ast::ASTVisitor<
-          EveryHierarchicalName, slang::ast::VisitFlags::AllGood> {
-  std::vector<const slang::ast::HierarchicalReference*> found;
-
-  void handle(const slang::ast::HierarchicalValueExpression& e) {
-    found.push_back(&e.ref);
-    visitDefault(e);
-  }
-
-  void handle(const slang::ast::ArbitrarySymbolExpression& e) {
-    found.push_back(&e.hierRef);
-    visitDefault(e);
-  }
-
-  void handle(const slang::ast::CallExpression& e) {
-    found.push_back(&e.lookupInfo.hierRef);
-    visitDefault(e);
-  }
-
-  void handle(const slang::ast::InstanceSymbol& child) {
-    child.visitExprs(*this);
-  }
-};
 
 // The scopes the classes `ref` passes through belong to (LRM 6.22): the class
 // of each value its path holds a handle of, and the class each member it names
@@ -206,19 +176,6 @@ auto ClimbOutOf(
       .scope = landed,
       .instance = instance,
       .carries = ClassScopesAlong(reference)};
-}
-
-auto ClimbsOutOf(const slang::ast::InstanceBodySymbol& reader)
-    -> std::vector<ClimbAnchor> {
-  EveryHierarchicalName names;
-  reader.visit(names);
-  std::vector<ClimbAnchor> climbs;
-  for (const slang::ast::HierarchicalReference* ref : names.found) {
-    if (auto climb = ClimbOutOf(*ref, reader)) {
-      climbs.push_back(*std::move(climb));
-    }
-  }
-  return climbs;
 }
 
 auto StartOfReach(

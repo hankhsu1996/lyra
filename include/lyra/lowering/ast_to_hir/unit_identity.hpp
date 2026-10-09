@@ -82,6 +82,15 @@ struct ContextInput {
   std::variant<NameLanding, OverrideEffect> what;
 };
 
+// What follows for an instance from where it stands: where each name its own
+// body writes lands once it leaves the instance, in the order the body writes
+// them, and its context inputs, in the order the source writes what they come
+// from.
+struct InstanceContext {
+  std::vector<ClimbAnchor> climbs;
+  std::vector<ContextInput> inputs;
+};
+
 // The instantiation a body was elaborated for. A body is what one application
 // of a definition produced and states no bindings apart from that application,
 // so it belongs to exactly one and is never asked what it is a specialization
@@ -246,17 +255,12 @@ class SpecializationPolicy {
       const slang::ast::InstanceSymbol& inst,
       const slang::ast::ParameterSymbol& param) const -> ParameterValueSource;
 
-  // Where each hierarchical name `inst`'s body writes lands once it leaves the
-  // instance, in the order the body writes them.
-  [[nodiscard]] auto ClimbsOutOf(const slang::ast::InstanceSymbol& inst) const
-      -> std::span<const ClimbAnchor>;
-
-  // What the design fixed for `inst` by where it stands, in the order the
-  // source writes it. Each is found where it is written and noted on the
-  // instances it concerns going outward, so asking for an instance's walks the
-  // instances below it once and settles theirs too.
-  [[nodiscard]] auto ContextInputsOf(const slang::ast::InstanceSymbol& inst)
-      const -> std::span<const ContextInput>;
+  // What follows for `inst` from where it stands. Each part is found where it
+  // is written and noted on the instances it concerns going outward, so asking
+  // for an instance's walks the instances below it once and settles theirs
+  // too.
+  [[nodiscard]] auto ContextOf(const slang::ast::InstanceSymbol& inst) const
+      -> const InstanceContext&;
 
   // The name of the specialization `inst` is an application of, folded from
   // what the design fixed for it: its parameters (LRM 6.20, 23.10), the
@@ -330,11 +334,7 @@ class SpecializationPolicy {
   std::unordered_set<const slang::ast::DefinitionSymbol*> kept_whole_;
   mutable std::unordered_map<const slang::ast::InstanceSymbol*, PerInstance>
       per_instance_;
-  mutable std::unordered_map<
-      const slang::ast::InstanceSymbol*, std::vector<ClimbAnchor>>
-      climbs_;
-  mutable std::unordered_map<
-      const slang::ast::InstanceSymbol*, std::vector<ContextInput>>
+  mutable std::unordered_map<const slang::ast::InstanceSymbol*, InstanceContext>
       context_;
   mutable std::vector<const slang::ast::InstanceBodySymbol*> naming_;
   mutable std::unordered_map<const slang::ast::InstanceSymbol*, KeptName>

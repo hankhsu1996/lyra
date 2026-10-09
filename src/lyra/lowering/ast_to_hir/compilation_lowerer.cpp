@@ -406,9 +406,10 @@ auto LowerBodiesOf(
   return lowerer.LowerBodies(signatures);
 }
 
-// The first line two units' dumps disagree on, as a clause for a report. Two
-// units that compare unequal say nothing about where, and whoever reads the
-// report has only the two instances' names to start from otherwise.
+// Where two units' dumps first part, as a clause for a report: the line they
+// disagree on, the line one goes on with, or that neither shows the difference.
+// Two units that compare unequal say nothing about where, and whoever reads
+// the report has only the two instances' names to start from otherwise.
 auto WhereTheyFirstDiffer(
     const hir::CompilationUnit& unit, const hir::CompilationUnit& instance)
     -> std::string {

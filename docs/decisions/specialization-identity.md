@@ -88,38 +88,53 @@ selections fixed at an instantiation, and a body elaborated under those selectio
 halves have to come from the same one. An identity computed from one instantiation over a body
 elaborated under another describes nothing that exists, however correct each half is on its own.
 
-### F6. What the design fixes for an instance is more than its instantiation wrote
+### F6. An identity has to settle everything below the instance, and where it stands is part of that
 
-A `defparam` changes a parameter of any instance it names by a hierarchical path, and takes
-precedence over the instantiation's own assignment (LRM 23.10, 23.10.1); a `bind` inserts an
-instantiation into the instances it names (LRM 23.11); a configuration chooses which cell an
-instance is and may set its parameters (LRM 33.4.1.6, 33.4.3). Each is written somewhere other than
-the instantiation it reaches, and each can reach one instance of a module and not another -- so two
-parents whose own instantiations agree build different children, and the parents differ too. A key
-read off the instantiation alone names those parents one unit, and the comparison every instance is
-held to then stops the build on a legal design.
+A unit's code names the class of every instance it builds. So two instances are one unit only if
+everything below them is alike too, and an identity is sound only when it settles the identity of
+every instance below. The comparison every instance is held to checks exactly this, and stops the
+build on a legal design wherever it fails.
 
-The effect is still read off the instance tree the parent already stands on, so F1 holds: nothing
-needs a child's compiled body. It is stated as the effect, under the path from the instance to where
-it lands, rather than as the name of the child it lands in. A child's name may depend on where its
-upward names land -- in an ancestor -- and an ancestor's name stated through its children's names
-would then depend on the child's; stating the effect needs neither name. slang and Verilator answer
-the same question by never sharing a body an override reaches, and the ancestors on its path with it
+In C++ and Rust it holds with no effort: an instance is a definition and its arguments, the body is
+a function of those, and what a body instantiates is found by substituting them going down (rustc's
+monomorphization collector walks each body with its arguments applied). SystemVerilog differs in one
+condition. A body's meaning also depends on where its instance stands, in two ways:
+
+- **Something written elsewhere reaches it.** A `defparam` changes a parameter of any instance it
+  names by a hierarchical path, and takes precedence over the instantiation's own assignment (LRM
+  23.10, 23.10.1); a `bind` inserts an instantiation into the instances it names (LRM 23.11); a
+  configuration chooses which cell an instance is and may set its parameters (LRM 33.4.1.6, 33.4.3).
+  Each can reach one instance of a module and not another.
+- **A name it writes lands outside it.** The upward search resolves a hierarchical name per instance
+  (LRM 23.8), and the class of the scope it lands in decides what the writer compiles to.
+
+Both are arguments the source does not write as arguments, and the identity has to hold them for it
+to settle what is below. Each belongs to every instance it concerns: an effect to every instance
+above the one it reaches, a name to every instance it leaves on its way to where it lands. A
+lockstep pair shows the second: a core holds a stage that holds a controller writing
+`u_core.hart_id`, and the design has the core once as `u_core` and once more under another name
+beside it. From the first the name lands in the core itself, so it has left the controller and the
+stage; from the second it also leaves the core and lands in the module holding both. The two
+controllers differ, so the two stages and the two cores do too.
+
+Each is found where it is written and noted on the instances it concerns going outward, in one walk
+the front end's visitor descends. Outward there is one edge, the enclosing instance; downward there
+are several (a member, a generate block, a block of a loop, an element of an instance array), and a
+key that searched below itself for these paid that search each time it was worked out, which was the
+whole of what a loop's blocks cost to declare. slang records a name the same way: it walks from
+where the name is written, outward, and adds it to every instance body it passes
+(`Compilation::noteUpwardReference`), then declines to share any body holding one
+(`DiagnosticVisitor::tryApplyFromCache`).
+
+The inputs are still read off the instance tree the parent already stands on, so F1 holds: nothing
+needs a child's compiled body. Each is stated as itself, under the path from the instance to where
+it was written, rather than as the name of the child it concerns. A child's name may hold the class
+of an ancestor, where its name lands there, and an ancestor's name stated through its children's
+names would then hold the child's; stating the input needs neither name. slang and Verilator answer
+the override half by never sharing a body an override reaches, and the ancestors on its path with it
 (slang `InstanceCacheKey::isEligibleForCaching`; Verilator clones a module per instance path when a
 `defparam` lies beneath it). A content key keeps two instances overridden alike one unit, which a
 path cannot.
-
-A hierarchical name is the same thing in the other direction. It is written below and lands above:
-the upward search resolves it per instance (LRM 23.8), and the class of the scope it lands in
-decides what the instance writing it compiles to. So where it lands is fixed for every instance
-between the one writing it and the scope it lands in, since each of them builds the writer or an
-instance that does. A lockstep pair shows it: a core holds a stage that holds a controller writing
-`u_core.hart_id`, and the design has the core once as `u_core` and once more under another name
-beside it. From the first the name lands in the core itself; from the second it leaves the core and
-lands in the module holding both. The two controllers differ, so the two stages and the two cores do
-too. A name stops being carried at the instance it lands in or below, which is what leaves the first
-core's key without it. slang declines to share a body when a name inside it extends upward out of
-the instance (`DiagnosticVisitor::tryApplyFromCache`, on `upwardNames`).
 
 ### F7. Generic-language precedent points to injective mangling for a reason that does not bind us
 
@@ -139,11 +154,12 @@ Rust cannot.
    a `bind` inserts, a cell a configuration chose), and the scope each hierarchical name written in
    it or below it lands in once it leaves the instance, each under its path from the instance
    (F6).** The key holds those as its parts, each named and each carrying the identity of what it
-   was fixed to, and two keys are equal when their parts are. Nothing compares keys through a
-   rendering of them. An effect written inside the instance's own text is the same for every
-   instance of it, so stating it changes no sharing. A bound instance is named by the directive that
-   inserted it -- the declaration holding the directive and its position among that declaration's
-   binds -- since its connections are text of the directive.
+   was fixed to, and two keys are equal when their parts are. Together they settle the identity of
+   every instance below, which is what lets a unit name the classes it builds. Nothing compares keys
+   through a rendering of them. An effect written inside the instance's own text is the same for
+   every instance of it, so stating it changes no sharing. A bound instance is named by the
+   directive that inserted it -- the declaration holding the directive and its position among that
+   declaration's binds -- since its connections are text of the directive.
 
    **The name is derived from the key** -- the definition's name, plus a content hash of the key
    when anything was fixed. The producer and the consumer both build the same key from the same
@@ -214,22 +230,21 @@ Rust cannot.
    own: each of the others is lowered and compared with the unit, and one that differs keeps its
    definition out of the sharing.
 
-7. **An instance's name is worked out once and kept, and keeping it changes no answer.** A key
-   states everything fixed below its instance, so working it out costs the instance, and every scope
-   the instance holds and every unit naming it asks; asked afresh each time, a loop of N blocks
-   under one overridden unit costs N squared, and so does a loop of N instances each naming their
-   parent. This is not the shared table F2 rules out: nobody agrees through it, and deleting it
-   leaves every name what it was. What makes that true is one rule. A name asked while another is
-   being worked out can differ from the one the instance has alone, where a hierarchical name it
-   writes lands in an instance still being named and is stated by how far out that instance is. So a
-   name is kept only when it met nothing outside itself, together with the instances it looked for
-   among those being named and did not find, and it answers a later asking only while none of those
-   is being named. clang keeps a declaration's mangled name the same way and declines where the name
-   "depends on whether the variable is referenced by a host or device host function"
-   (`CodeGenModule::getMangledName`); rustc's symbol name is a query per instance, and its trait
-   solver refuses a kept answer "if a nested goal of the global cache entry is on the stack"
-   (`search_graph`, `candidate_is_applicable`), which is the rule taken here. Two keys folding to
-   one name are refused where a name is kept.
+7. **An instance's name is worked out once and kept, and keeping it changes no answer.** A key is
+   built from every part fixed for its instance and folded, and every scope the instance holds and
+   every unit naming it asks; asked afresh each time, a loop of N blocks builds its unit's key N
+   times, and so does a loop of N instances each naming their parent. This is not the shared table
+   F2 rules out: nobody agrees through it, and deleting it leaves every name what it was. What makes
+   that true is one rule. A name asked while another is being worked out can differ from the one the
+   instance has alone, where a hierarchical name it writes lands in an instance still being named
+   and is stated by how far out that instance is. So a name is kept only when it met nothing outside
+   itself, together with the instances it looked for among those being named and did not find, and
+   it answers a later asking only while none of those is being named. clang keeps a declaration's
+   mangled name the same way and declines where the name "depends on whether the variable is
+   referenced by a host or device host function" (`CodeGenModule::getMangledName`); rustc's symbol
+   name is a query per instance, and its trait solver refuses a kept answer "if a nested goal of the
+   global cache entry is on the stack" (`search_graph`, `candidate_is_applicable`), which is the
+   rule taken here. Two keys folding to one name are refused where a name is kept.
 
    **A design element does not ask what it is called to name the scopes it declares.** It is handed
    its name when it is made, and names each generate block by joining it onto the scope holding it.

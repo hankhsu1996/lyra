@@ -485,7 +485,7 @@ auto UnitLowerer::ReaderInstance() const -> std::optional<ReaderClimbs> {
   if (body == nullptr) return std::nullopt;
   return ReaderClimbs{
       .body = body,
-      .climbs = Specialization().ClimbsOutOf(InstantiationOf(*body))};
+      .climbs = Specialization().ContextOf(InstantiationOf(*body)).climbs};
 }
 
 auto UnitLowerer::StartOf(

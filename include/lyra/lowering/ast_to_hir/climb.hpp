@@ -38,13 +38,6 @@ struct ClimbAnchor {
     const slang::ast::HierarchicalReference& reference,
     const slang::ast::InstanceBodySymbol& reader) -> std::optional<ClimbAnchor>;
 
-// The same for every hierarchical name `reader` writes, in the order the
-// source writes them, leaving out those that never leave. A child instance's
-// body is the child's, but what the instantiation hands the child is written
-// here.
-[[nodiscard]] auto ClimbsOutOf(const slang::ast::InstanceBodySymbol& reader)
-    -> std::vector<ClimbAnchor>;
-
 // Where a reader starts reaching a scope it writes no path to -- the scope a
 // class it uses belongs to (LRM 6.22), which may stand in another instance:
 // from the reader itself, or from the instance whose body is `body`.
