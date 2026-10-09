@@ -240,6 +240,15 @@ layer directly.
       a loop cost the square of its count (0.3 s at 512 blocks, 1.2 s at 1024), and so did a loop of
       instances reading upward (1.7 s and 6.3 s). A name is now worked out once.
 
+- [x] D22 -- The address sanitizer run reaches the cases it was added to watch. It had built since
+      D19 and still reported nothing: the runtime library a built program links was instrumented
+      along with the compiler, so every case stopped where its program was linked, and each printed
+      more than a run's log keeps. The library is now built as it ships whatever builds the
+      compiler, and the run leaves out the one check that bounds what a compile costs, since under
+      the sanitizer an append costs the pool it lands in. On `main` the run is clean: no report over
+      the whole corpus. What a simulation's own memory does while it runs is not something this run
+      sees.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language
