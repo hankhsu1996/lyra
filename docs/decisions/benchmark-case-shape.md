@@ -45,8 +45,13 @@ reaches it. A simulation's amount is a runtime argument, so one build serves eve
 amount **is** the design -- more modules, wider signals -- so it has to be fixed before the build
 starts, which makes it a compile-time constant of necessity rather than by choice.
 
-That is the one place the two diverge. Everything else below holds for both, because both are a
-duration divided by an amount.
+That has a consequence the simulation does not share. Repeating a simulation's work costs in
+proportion to the repeats, by construction, so its amount divides out exactly. A design twice the
+size need not cost twice as much to build, and where it does not, the amount is part of the shape
+after all: the rate depends on the amount it was taken at. No case can rule that out in advance,
+because whether a compiler's cost is a line in the size of a design is the very thing such a case is
+there to find out. So the harness assumes nothing about it while choosing an amount, and says what
+it saw.
 
 ## The decisions
 
@@ -64,15 +69,18 @@ D2. A simulation's amount of work is a runtime argument, never a compile-time co
     a top-level parameter it is given (LRM 23.10), which is how a value reaches a design before
     elaboration, and every probe is a fresh build in a directory nothing has built in.
 
-D3. The harness chooses the amount, by measuring probes and scaling from them to reach a target
-    duration. No amount the measurement uses is written down anywhere, so none can go stale, and an
+D3. The harness chooses the amount, by measuring probes and raising the amount from what they cost
+    until one reaches a target duration. A probe is never far past the largest amount already
+    measured, so what an unexpected growth can cost is bounded by the step and not by the guess.
+    No amount the measurement uses is written down anywhere, so none can go stale, and an
     engine that gets a thousand times faster is followed automatically rather than by editing files.
     A case still carries a default for the amount, which is what it runs at when someone runs it by
     hand; nothing measured ever reads it.
 
 D4. The reported quantity is work per second, never elapsed time, and what a measurement cost before
     any of the work is taken out of it first. A time means nothing without the amount beside it; a
-    rate is the same number whatever the amount was, which is what lets D3 pick amounts freely. The
+    rate is the same number whatever the amount was, wherever the cost is proportional to the
+    amount (D11), which is what lets D3 pick amounts freely. The
     fixed part is a rounding error against a simulation and most of a small build, so leaving it in
     would make a build case's number move whenever the compiler's prelude cache did. Two probes
     separate it, which is why at least two are always taken.
@@ -102,6 +110,16 @@ D10. The benchmark is not a Bazel test and not a merge gate. A timing needs a ma
      running anything else, and a build system deliberately runs its tests in parallel. Its
      scheduled run gates on a case building and running, never on a duration, since a duration is a
      claim about the machine that produced it.
+
+D11. How the cost grew with the amount is reported beside the rate, as the power read off two
+     probes at least a doubling apart. A rate is one number only where that power is one. Elsewhere
+     it holds at the amount beside it, and a ratio against a tool given a different amount compares
+     two different designs.
+
+D12. Where the language or a tool bounds how much of its work a case can hold -- the width of a
+     packed type -- the case states that bound in a directive and no probe is spent past it. A case
+     that reaches its bound before the target reports the rate it reached, as one too slow to reach
+     the target at one unit does.
 ```
 
 ## Rejected alternatives

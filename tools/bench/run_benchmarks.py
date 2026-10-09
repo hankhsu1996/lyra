@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -53,15 +54,23 @@ BUILD_TARGET_SECONDS = 20.0
 
 TIMEOUT_SECONDS = 900
 
-# Below this, a duration is startup and scheduling rather than the work, so
-# nothing can be extrapolated from it.
-MIN_USEFUL_SECONDS = 0.002
+# A reading whose work took less than this share of the target is mostly what
+# a measurement costs before any work, so it says nothing about how far the
+# target is.
+MEASURED_SHARE = 0.1
 
-# One probe may not multiply the amount by more than this. A first probe that
-# lands near zero would otherwise ask for an amount that never finishes.
-MAX_GROWTH = 1000
+# How far one probe may raise the amount past the last one: after a reading that
+# says nothing, and after one that does. Nothing is known about how a case's
+# cost grows with its amount -- a build's amount is the design, and a design's
+# cost may be a square -- so a probe never reaches far past what was measured,
+# and what bounds an overshoot is these factors raised to that unknown power.
+BLIND_GROWTH = 4
+MEASURED_GROWTH = 2
 
-MAX_PROBES = 6
+# No tool is asked for more work than this, and each tool's own ceiling on a
+# generate loop is raised to it, so what a case reports is the tool's speed
+# and never where its default ceiling happened to be.
+MAX_AMOUNT = 1_000_000_000
 
 BINARY_NAME = "program"
 
@@ -74,7 +83,7 @@ STATUS_ERROR = "error"
 MEASURE_BUILD = "build"
 MEASURE_RUN = "run"
 
-_DIRECTIVES = {"measure", "work"}
+_DIRECTIVES = {"measure", "work", "work-max"}
 
 
 @dataclass(frozen=True)
@@ -83,6 +92,7 @@ class Case:
     name: str
     measure: str
     work_unit: str
+    work_max: int
     sources: tuple[Path, ...]
 
     @property
@@ -103,7 +113,8 @@ class Result:
     rate: float = 0.0
     build_s: float = 0.0
     binary_kb: int = 0
-    probes: int = 0
+    readings: tuple[tuple[int, float], ...] = ()
+    growth: float = 0.0
     detail: str = ""
 
 
@@ -193,6 +204,17 @@ def read_case(entry: Path, corpus_root: Path) -> Case:
             f"{entry}: @work must name what one unit of this case's work is "
             f"called, so its duration can be read as a rate")
 
+    work_max = MAX_AMOUNT
+    if "work-max" in directives:
+        try:
+            work_max = int(directives["work-max"])
+        except ValueError:
+            work_max = 0
+        if not 2 <= work_max <= MAX_AMOUNT:
+            raise ValueError(
+                f"{entry}: @work-max must be a count from 2 to {MAX_AMOUNT}, "
+                f"the most units of work this case can hold")
+
     relative = entry.parent.resolve().relative_to(corpus_root.resolve())
     if len(relative.parts) != 2:
         raise ValueError(
@@ -211,6 +233,7 @@ def read_case(entry: Path, corpus_root: Path) -> Case:
         name=name,
         measure=measure,
         work_unit=work_unit,
+        work_max=work_max,
         sources=(*companions, entry),
     )
 
@@ -232,34 +255,36 @@ def discover_cases(corpus_root: Path) -> list[Case]:
 
 
 def next_amount(
-    history: list[tuple[int, float]], target: float,
+    history: list[tuple[int, float]], target: float, ceiling: int,
 ) -> int:
     """The amount to probe next, from what the previous probes cost.
 
-    A measurement is a fixed cost plus a cost per unit of work, and the two
-    readings furthest apart separate them. Assuming proportionality instead
-    would undershoot badly wherever the fixed part is large, which is every
-    case that measures a build: the compiler's own startup is seconds before
-    any of the design is read.
+    A measurement is a fixed cost plus the cost of the work, and the first
+    reading stands for the fixed part: a build's is the compiler starting,
+    seconds before any of the design is read. One reading cannot separate the
+    two, so the first is read as all work. While the work is too small a share
+    of a reading to be told from the fixed part, the amount is only multiplied.
 
-    One reading cannot separate them, so the first step scales proportionally
-    and is corrected by the second. Every step is capped, because a reading at
-    the resolution floor says nothing about how far the target is.
+    Once it shows, the line through the first reading and the last says where
+    the target is, and it is believed no further than one step past the last
+    amount. Suites that repeat one operation follow such a line much further,
+    because repeating is proportional by construction; here the amount may be
+    the size of a design, whose cost a line understates wherever it bends.
     """
     amount, elapsed = history[-1]
-    if len(history) >= 2:
-        first_amount, first_elapsed = history[0]
-        per_unit = (elapsed - first_elapsed) / (amount - first_amount)
-        fixed = elapsed - per_unit * amount
-        if per_unit > 0.0 and target > fixed:
-            grown = (target - fixed) / per_unit
-            return max(amount + 1, min(int(grown), amount * MAX_GROWTH))
-    grown = amount * target / max(elapsed, MIN_USEFUL_SECONDS)
-    return max(amount + 1, min(int(grown), amount * MAX_GROWTH))
+    origin_amount, origin_elapsed = (
+        history[0] if len(history) >= 2 else (0, 0.0))
+    work_s = elapsed - origin_elapsed
+    if work_s < target * MEASURED_SHARE:
+        return min(ceiling, amount * BLIND_GROWTH)
+    per_unit = work_s / (amount - origin_amount)
+    on_the_line = origin_amount + int((target - origin_elapsed) / per_unit)
+    grown = min(on_the_line, amount * MEASURED_GROWTH)
+    return min(ceiling, max(amount + 1, grown))
 
 
 def converge(
-    measure_at: Callable[[int], ProcessRun], target: float,
+    measure_at: Callable[[int], ProcessRun], target: float, ceiling: int,
 ) -> tuple[int, ProcessRun, list[tuple[int, float]]]:
     """Raise the amount of work until one measurement reaches the target.
 
@@ -267,7 +292,8 @@ def converge(
     (amount, duration) pair taken along the way -- those pairs are what separate
     what a measurement costs before any work from what it costs per unit. A case
     too slow to reach the target even at one unit stops there and reports what
-    one unit cost, which is a rate like any other.
+    one unit cost, which is a rate like any other; so does one that reaches the
+    most work it can hold before it reaches the target.
     """
     amount = 1
     run = measure_at(amount)
@@ -281,9 +307,8 @@ def converge(
         # before reading it pays for the fill once, and charging that to the
         # single pass that followed reports the fill instead of the read.
         and (run.elapsed_s < target or len(history) < 2)
-        and len(history) < MAX_PROBES
     ):
-        candidate = next_amount(history, target)
+        candidate = next_amount(history, target, ceiling)
         if candidate == amount:
             break
         amount = candidate
@@ -311,6 +336,36 @@ def marginal_rate(history: list[tuple[int, float]]) -> float:
     return amount / elapsed if elapsed > 0.0 else 0.0
 
 
+def growth_exponent(history: list[tuple[int, float]], target: float) -> float:
+    """The power of the amount the work's cost grew as, or zero when unseen.
+
+    A rate is one number only where this is one: there, twice the work costs
+    twice the time whatever the amount, so the amount drops out. Anywhere else
+    the rate belongs to the amount it was taken at, and two tools given
+    different amounts were not measured on the same thing.
+
+    It is read off the last reading and the nearest one at most half its
+    amount: two readings closer than that differ by less than the noise in
+    either, and one further back says how the cost grew somewhere the search
+    has since left. Where the work does not show in that reading, nothing is
+    said.
+    """
+    first_amount, first_elapsed = history[0]
+    far_amount, far_elapsed = history[-1]
+    far_s = far_elapsed - first_elapsed
+    for near_amount, near_elapsed in reversed(history[1:-1]):
+        if far_amount < 2 * near_amount:
+            continue
+        near_s = near_elapsed - first_elapsed
+        if near_s < target * MEASURED_SHARE or far_s <= near_s:
+            return 0.0
+        return (
+            math.log(far_s / near_s)
+            / math.log(
+                (far_amount - first_amount) / (near_amount - first_amount)))
+    return 0.0
+
+
 def lyra_build_command(
     lyra: str, case: Case, out_dir: str, amount: int | None,
 ) -> list[str]:
@@ -324,6 +379,7 @@ def lyra_build_command(
     if case.measure == MEASURE_RUN:
         cmd.append("--release")
     cmd.extend(["--top", CASE_TOP])
+    cmd.extend(["--max-generate-steps", str(MAX_AMOUNT)])
     cmd.extend(["-o", str(Path(out_dir) / BINARY_NAME)])
     if amount is not None:
         cmd.extend(["-G", f"{WORK_PARAM}={amount}"])
@@ -340,12 +396,7 @@ def verilator_build_command(
         # measured, and listing the ones to silence is a list that grows
         # every time a case gets bigger. Errors still stop the build.
         "-Wno-fatal",
-        # A case whose work is its own size is grown until building it takes
-        # the target duration, and the faster tool is therefore handed the
-        # larger design. Its default ceiling on unrolling a generate loop is
-        # reached long before that, which would report the ceiling rather
-        # than the speed.
-        "--unroll-limit", "1000000",
+        "--unroll-limit", str(MAX_AMOUNT),
     ]
     if amount is not None:
         cmd.append(f"-G{WORK_PARAM}={amount}")
@@ -383,8 +434,9 @@ def measure_run_case(
     result.binary_kb = round(binary.stat().st_size / 1024)
 
     amount, run, history = converge(
-        lambda n: run_process([str(binary), f"+work={n}"]), target)
-    record_measurement(result, amount, run, history)
+        lambda n: run_process([str(binary), f"+work={n}"]), target,
+        case.work_max)
+    record_measurement(result, amount, run, history, target)
     return result
 
 
@@ -406,7 +458,7 @@ def measure_build_case(
         return run_process(
             tool.build(case, work, amount), cwd=work, env=tool.env)
 
-    amount, build, history = converge(build_at, target)
+    amount, build, history = converge(build_at, target, case.work_max)
     result.build_s = build.elapsed_s
 
     if not record_build_failure(result, build, tool):
@@ -428,7 +480,7 @@ def measure_build_case(
             first_error_line(proof) or f"exit code {proof.returncode}")
         return result
 
-    record_measurement(result, amount, build, history)
+    record_measurement(result, amount, build, history, target)
     return result
 
 
@@ -453,9 +505,9 @@ def record_build_failure(
 
 def record_measurement(
     result: Result, amount: int, run: ProcessRun,
-    history: list[tuple[int, float]],
+    history: list[tuple[int, float]], target: float,
 ) -> None:
-    result.probes = len(history)
+    result.readings = tuple(history)
     if run.timed_out:
         result.status = STATUS_ERROR
         result.detail = f"timed out after {TIMEOUT_SECONDS}s"
@@ -467,6 +519,7 @@ def record_measurement(
     result.work = amount
     result.seconds = run.elapsed_s
     result.rate = marginal_rate(history)
+    result.growth = growth_exponent(history, target)
 
 
 def first_error_line(run: ProcessRun) -> str:
@@ -526,6 +579,12 @@ def fmt_rate(rate: float) -> str:
     return f"{round(rate):,}"
 
 
+def fmt_growth(exponent: float) -> str:
+    if exponent <= 0.0:
+        return "-"
+    return f"n^{exponent:.1f}"
+
+
 def fmt_factor(factor: float) -> str:
     if factor >= 10.0:
         return f"{round(factor):,}x"
@@ -566,7 +625,9 @@ def print_report(results: list[Result], target: float) -> None:
     print(f"> git: `{get_git_sha()}` | target: {target:g}s per measurement")
     print(
         "> Each tool is given the amount of work it needs to reach that "
-        "target, so a rate is comparable across tools, machines, and runs.")
+        "target, so a rate is comparable across tools, machines, and runs "
+        "wherever the cost of the work grew as `n^1.0`. Where Lyra's did "
+        "not, its rate holds only at the amount beside it.")
 
     families: dict[str, list[str]] = {}
     for family, case in sorted(order):
@@ -578,10 +639,10 @@ def print_report(results: list[Result], target: float) -> None:
         print()
         print(
             "| Case | Unit | Lyra /s | Verilator /s | vs Verilator "
-            "| Lyra work | Binary (KB) |")
+            "| Lyra work | Lyra growth | Binary (KB) |")
         print(
             "|------|------|--------:|-------------:|:-------------"
-            "|----------:|------------:|")
+            "|----------:|:------------|------------:|")
         for name in cases:
             tools = by_case[name]
             lyra = tools.get("lyra")
@@ -592,12 +653,13 @@ def print_report(results: list[Result], target: float) -> None:
             ver_rate = ver.rate if ver_ok else 0.0
             unit = lyra.work_unit if lyra else ""
             work = f"{lyra.work:,}" if lyra_ok else "-"
+            growth = fmt_growth(lyra.growth) if lyra_ok else "-"
             binary = f"{lyra.binary_kb:,}" if lyra_ok else "-"
             print(
                 f"| {name} | {unit} | {fmt_rate(lyra_rate)} "
                 f"| {fmt_rate(ver_rate)} "
                 f"| {fmt_comparison(lyra_rate, ver_rate)} "
-                f"| {work} | {binary} |")
+                f"| {work} | {growth} | {binary} |")
 
     for status, heading in (
         (STATUS_UNSUPPORTED, "Not measured"),
@@ -628,14 +690,15 @@ def result_to_dict(r: Result) -> dict:
         "rate": r.rate,
         "build_s": r.build_s,
         "binary_kb": r.binary_kb,
-        "probes": r.probes,
+        "readings": [list(reading) for reading in r.readings],
+        "growth": r.growth,
         "detail": r.detail,
     }
 
 
 def write_json(results: list[Result], path: str, target: float) -> None:
     data = {
-        "schema_version": 5,
+        "schema_version": 6,
         "git": get_git_sha(),
         "target_seconds": target,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

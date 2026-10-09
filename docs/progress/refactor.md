@@ -1536,30 +1536,6 @@ enough to warrant its own focused review.
 
       Not blocked.
 
-- [ ] R98 -- The benchmark harness treats a rejected probe as a failure rather than as a bound, so
-      one case reports no rate at all and the whole run exits non-zero. The harness raises a case's
-      amount of work until a measurement reaches its target duration, extrapolating the next amount
-      from the slope of the previous two. The case whose work is a declared bit width has almost no
-      slope -- being flat in width is exactly what that case exists to show -- so the extrapolation
-      asks for far more than the curve needs, and nothing clamps it to what the language permits.
-      The probe lands above the maximum packed width, the front end rejects the design, and the case
-      gives up instead of stepping back toward the last amount that built.
-
-      Measured 2026-09-16: it asked for 16,992,729 bits against a maximum of 16,777,215, while a
-      build at two million bits takes about five and a half seconds against a twenty-second target
-      -- so an amount that would have converged very likely exists below the ceiling and the harness
-      simply never probes one.
-
-      **Target shape**: a probe the tool rejects is information about the upper bound, not the end
-      of the search -- step back toward the last amount that built and continue from there. A work
-      axis with a limit the language fixes says so, so no probe is spent past it. A case that
-      genuinely cannot reach the target reports the rate it did reach, which is what the harness
-      already does for a case too slow to get there at one unit.
-
-      Found while measuring R91, which lowered this case's per-bit build cost and so raised what the
-      extrapolation asks for. That is why it surfaced then; it is not what put the ceiling within
-      reach.
-
 - [ ] R99 -- Nobody owns the rule that a packed value's bits above its declared width are clear, so
       every step along a value's path re-establishes it. Masking the top word is a few percent of a
       profiled run on its own, and the passes that do it are not independent: a conversion masks its
