@@ -59,6 +59,7 @@
 #include <slang/syntax/AllSyntax.h>
 
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
+#include "lyra/lowering/ast_to_hir/library_cell.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -96,10 +97,9 @@ void Record(
   }
 }
 
-// Every reference the body makes to its own parameters, wherever it is --
-// except inside a child instance's body, whose references are to its own
-// parameters. What a child is handed is an expression of this body and is
-// collected here.
+// Every reference to the body's own parameters, wherever it is. A child
+// instance's body names its own parameters, so what is collected of a child is
+// what it is handed, which is an expression of this body.
 struct EveryReference
     : slang::ast::ASTVisitor<EveryReference, slang::ast::VisitFlags::AllGood> {
   explicit EveryReference(const ParameterSet& own) : own(&own) {
@@ -120,7 +120,11 @@ struct EveryReference
     VisitSettledFrom(param.getInitializer());
   }
 
-  // What this body hands the child, never what the child's body reads.
+  // What this body hands the child, and not what a child's body reads of its
+  // own parameters. A design element declared inside another reads the
+  // enclosing one's parameters by name (LRM 23.4, 23.9), and its instance is
+  // handed none of them when it is built, so what its body reads of them is
+  // read here, outside every place this body evaluates.
   void handle(const slang::ast::InstanceSymbol& child) {
     child.visitExprs(*this);
     for (const auto* param : child.body.getParameters()) {
@@ -131,6 +135,7 @@ struct EveryReference
         given->visit(*this);
       }
     }
+    if (!IsLibraryCell(child.getDefinition())) child.body.visit(*this);
   }
 
   void handle(const slang::ast::GenerateBlockSymbol& block) {
@@ -464,7 +469,7 @@ struct EvaluatedPlaces
 
   // What a child is handed is a value this body states, and whether that is a
   // place the run evaluates is the child's own answer about that parameter.
-  // The child's body reads its own parameters and is not walked.
+  // The child's body is no place this body evaluates and is not walked.
   void handle(const slang::ast::InstanceSymbol& child) const {
     for (const slang::ast::ParameterSymbol* param :
          policy->SuppliedParametersOf(child)) {

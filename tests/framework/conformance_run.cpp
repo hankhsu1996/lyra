@@ -104,6 +104,33 @@ auto ReportClaimBroken(const ReportClaim& claim, std::string_view diagnostics)
       claim);
 }
 
+// The design a case states, as the front end is handed it: what to elaborate,
+// the case's own options, its library map, and its sources.
+//
+// A supporting source is what the case is written against, and a reference
+// reaches only the part of a compilation-unit scope declared before it
+// (LRM 3.12.1), so the sources beside the entry one are compiled ahead of it.
+// Otherwise the file holding the checks could not be the file that reads what
+// the others declare.
+void AppendDesign(
+    const ConformanceCase& test_case, std::vector<std::string>& argv) {
+  for (const std::string& top : test_case.tops) {
+    argv.emplace_back("--top");
+    argv.push_back(top);
+  }
+  for (const std::string& arg : test_case.front_end_args) {
+    argv.push_back(arg);
+  }
+  if (test_case.library_map.has_value()) {
+    argv.emplace_back("--libmap");
+    argv.push_back(test_case.library_map->string());
+  }
+  for (const std::filesystem::path& supporting : test_case.supporting_sources) {
+    argv.push_back(supporting.string());
+  }
+  argv.push_back(test_case.entry.string());
+}
+
 auto BuildArgv(const ConformancePath& path, const ConformanceCase& test_case)
     -> std::vector<std::string> {
   std::vector<std::string> argv;
@@ -127,26 +154,11 @@ auto BuildArgv(const ConformancePath& path, const ConformanceCase& test_case)
     argv.emplace_back("--cache-dir");
     argv.push_back(std::string(scratch) + "/lyra-cache");
   }
-  for (const std::string& top : test_case.tops) {
-    argv.emplace_back("--top");
-    argv.push_back(top);
-  }
-  for (const std::string& arg : test_case.front_end_args) {
-    argv.push_back(arg);
-  }
   for (const std::filesystem::path& native : test_case.link_sources) {
     argv.emplace_back("--dpi-link");
     argv.push_back(native.string());
   }
-  // A supporting source is what the case is written against, and a reference
-  // reaches only the part of a compilation-unit scope declared before it
-  // (LRM 3.12.1), so the sources beside the entry one are compiled ahead of it.
-  // Otherwise the file holding the checks could not be the file that reads what
-  // the others declare.
-  for (const std::filesystem::path& supporting : test_case.supporting_sources) {
-    argv.push_back(supporting.string());
-  }
-  argv.push_back(test_case.entry.string());
+  AppendDesign(test_case, argv);
   if (!test_case.program_args.empty()) {
     argv.emplace_back("--");
     for (const std::string& arg : test_case.program_args) {
@@ -234,17 +246,7 @@ auto CheckParkedCase(
     const std::filesystem::path& lyra_exe, const ConformanceCase& test_case)
     -> std::optional<std::string> {
   std::vector<std::string> argv{"check", "--no-color"};
-  for (const std::string& top : test_case.tops) {
-    argv.emplace_back("--top");
-    argv.push_back(top);
-  }
-  for (const std::string& arg : test_case.front_end_args) {
-    argv.push_back(arg);
-  }
-  for (const std::filesystem::path& supporting : test_case.supporting_sources) {
-    argv.push_back(supporting.string());
-  }
-  argv.push_back(test_case.entry.string());
+  AppendDesign(test_case, argv);
 
   const ProcessOutcome outcome = RunChildProcess(lyra_exe, argv, kStuckAfter);
   const auto report = [&](std::string_view what) {

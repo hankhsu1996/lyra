@@ -24,6 +24,11 @@ inline constexpr std::string_view kCaseEntrySource = "main.sv";
 // not run one, so this name is what keeps it out of the corpus proper.
 inline constexpr std::string_view kParkedCaseEntry = "main.sv.deferred";
 
+// The library map a case's directory may hold. The standard's own examples
+// assume a file of this name beside the sources, read before any of them
+// (LRM 33.3.1).
+inline constexpr std::string_view kCaseLibraryMap = "lib.map";
+
 // What a case claims about the diagnostics its run writes. IEEE 1800 states
 // requirements whose whole observable is a message -- LRM 12.4.2 requires a
 // violation report where no condition of a qualified if matched, and forbids
@@ -64,6 +69,9 @@ struct ConformanceCase {
   // Native sources providing the foreign symbols this case's imports name
   // (LRM 35.4).
   std::vector<std::filesystem::path> link_sources;
+  // The library map saying which library each source belongs to (LRM 33.3.1),
+  // for a case whose subject is more than one library.
+  std::optional<std::filesystem::path> library_map;
   // The instances to elaborate. A case that names none elaborates `Top`.
   std::vector<std::string> tops;
   std::vector<std::string> front_end_args;

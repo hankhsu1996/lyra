@@ -72,11 +72,12 @@ the same symbol from the same two facts, so the two ends agree with nothing shar
   parameter bindings are encoded into its name -- and trades exact injectivity there for a bounded
   name under a wide hash; that trade is about the encoded bindings and is untouched here. What this
   record governs is the composition around such a name, which takes no such trade.
-- One position on this axis is still open: a specialization's unit name joins the definition's name
-  to its binding encoding with a separator, so a source unit whose name happens to end in that
-  separator and a matching encoding reaches the same string. It is the same defect as the ones above
-  and the same fix applies -- the parts, under a category -- but it crosses every cross-unit
-  reference, which names units by that string.
+- One position on this axis is still open: a specialization's unit name joins its parts with
+  separators -- a library to its cell, the unit declaring a nested design element to that element,
+  the definition to its binding encoding -- so a source name holding a separator can reach the
+  string another unit's parts compose. It is the same defect as the ones above and the same fix
+  applies -- the parts, under a category -- but it crosses every cross-unit reference, which names
+  units by that string.
 - A backend that spells a declaration in a target language answers one question -- what reaches this
   declaration from outside -- and spells the answer. It never works out which kind of declaration it
   is looking at.

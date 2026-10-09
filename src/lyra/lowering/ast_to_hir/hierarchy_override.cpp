@@ -15,6 +15,7 @@
 #include <slang/text/SourceManager.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/lowering/ast_to_hir/library_cell.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -68,11 +69,30 @@ auto BindDirectiveIdentity(const slang::ast::InstanceSymbol& bound)
         position_among(
             holder->as<slang::syntax::CompilationUnitSyntax>().members));
   }
-  const auto& declaration =
-      holder->as<slang::syntax::ModuleDeclarationSyntax>();
-  return std::format(
-      "{}#{}", declaration.header->name.valueText(),
-      position_among(declaration.members));
+  // The declaration is named as the design element it is, which its name
+  // alone does not say: the outermost one enclosing the directive is a library
+  // cell, and each one inside it is named in the one holding it (LRM 23.4).
+  std::vector<const slang::syntax::ModuleDeclarationSyntax*> enclosing;
+  for (const slang::syntax::SyntaxNode* node = holder; node != nullptr;
+       node = node->parent) {
+    if (slang::syntax::ModuleDeclarationSyntax::isKind(node->kind)) {
+      enclosing.push_back(&node->as<slang::syntax::ModuleDeclarationSyntax>());
+    }
+  }
+  const slang::ast::Scope& target = *bound.getParentScope();
+  const slang::ast::DefinitionSymbol* cell =
+      target.getCompilation().getDefinition(target, *enclosing.back());
+  if (cell == nullptr) {
+    throw InternalError(
+        "BindDirectiveIdentity: the declaration holding a bind directive is a "
+        "design element the front end declared");
+  }
+  std::string name = CellName(*cell);
+  for (std::size_t inner = enclosing.size() - 1; inner-- > 0;) {
+    name += "::";
+    name += enclosing[inner]->header->name.valueText();
+  }
+  return std::format("{}#{}", name, position_among(enclosing.front()->members));
 }
 
 // The configuration resolution of the instance whose body holds `inst`, or
@@ -99,17 +119,17 @@ auto OverridesOn(const slang::ast::InstanceSymbol& inst)
   if (inst.body.flags.has(slang::ast::InstanceFlags::FromBind)) {
     out.emplace_back(InsertedByBind{.directive = BindDirectiveIdentity(inst)});
   }
+  // A module declared inside another is no library cell (LRM 23.4, 33.2.1),
+  // so no configuration chooses it.
+  if (inst.resolvedConfig != nullptr && IsLibraryCell(inst.getDefinition())) {
+    out.emplace_back(CellChosenByConfiguration{.cell = &inst.getDefinition()});
+  }
   // A configuration hands an instance a resolution of its own only where one
   // of its rules selected that instance; every other instance under it holds
   // its parent's.
   const bool selected_by_rule = inst.resolvedConfig != nullptr &&
                                 inst.resolvedConfig != ResolutionAround(inst) &&
                                 inst.resolvedConfig->configRule != nullptr;
-  if (selected_by_rule) {
-    out.emplace_back(
-        CellChosenByConfiguration{
-            .cell = std::string{inst.getDefinition().name}});
-  }
   for (const auto* param : inst.body.getParameters()) {
     const auto* value = param->symbol.as_if<slang::ast::ParameterSymbol>();
     const bool given_elsewhere =

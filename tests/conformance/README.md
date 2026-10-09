@@ -79,6 +79,9 @@ directive has to say:
   reaches only the part of a compilation-unit scope declared before it (LRM 3.12.1), so a case is
   written against what its companions declare rather than the other way round.
 - Every `.c` and `.cpp` is built and linked as a source of foreign symbols (LRM 35.4).
+- A `lib.map` is the case's library map (LRM 33.3.1), saying which library each companion belongs
+  to. The standard leaves the file's name to the tool and writes its own examples against this one.
+  A path in it is relative to the map, so it names a companion by its file name.
 
 Name a companion for what it is within its case (`width_pkg.sv`, `foreign.c`), not for the case --
 the directory already says which case it belongs to.

@@ -144,8 +144,10 @@ struct BindInstantiation {
   auto operator==(const BindInstantiation&) const -> bool = default;
 };
 
-// The cell a configuration bound the instance to (LRM 33.4.1.6), where a rule
-// selected it rather than its instantiation's own name.
+// The cell a configuration bound the instance to (LRM 33.4), as its library
+// and its name. Under a configuration the same instantiation is bound to
+// different cells depending on where its instance stands, so the text holding
+// it does not say which.
 struct BoundToCell {
   std::string cell;
 
